@@ -94,8 +94,8 @@ describe("staging", () => {
     // Its own Worker: bound to its database, its settings, its secrets, the builder; Durable Objects of its own (a new Worker: no tombstone).
     const b = bindingsOf(mock.state, "erga-staging");
     expect(b.DB.database_id).toBe(db.uuid);
-    expect(b.DOCS).toMatchObject({ type: "durable_object_namespace", class_name: "DocHost" });
-    expect(b.DOCS.script_name).toBeUndefined();
+    expect(b.DOCUMENTS).toMatchObject({ type: "durable_object_namespace", class_name: "DocumentObject" });
+    expect(b.DOCUMENTS.script_name).toBeUndefined();
     expect(b.DEPLOY_TARGET.text).toBe("staging");
     expect(b.SNAPSHOT_IMPORT.text).toBe("1");
     expect(b.PAGES_DOMAIN.text).toBe("erga-pages-staging.dev");

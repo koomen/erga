@@ -685,7 +685,7 @@ function seedFleet(state: MockState) {
     ],
   });
   const prodBindings = [
-    { type: "durable_object_namespace", name: "DOCS", class_name: "DocHost" },
+    { type: "durable_object_namespace", name: "DOCUMENTS", class_name: "DocumentObject" },
     { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB },
     { type: "plain_text", name: "DEPLOY_TARGET", text: "production" },
     { type: "plain_text", name: "ERGA_VERSION", text: "prod00000000" },

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // The storage cutover, part one: every document of a server, to a folder on
-// this machine. Reads GET /api/admin/documents/export (server/admin/export.ts)
+// this machine. Reads GET /api/admin/documents/export (server/admin/cutover.ts)
 // with an admin-scope token, and writes nothing on the server.
 //
 //   ERGA_TOKEN=erga_... bun deploy/cutover/export.ts https://erga.dev ~/erga-export
@@ -17,7 +17,7 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { decodeFile, type ExportLine } from "../../server/admin/export.ts";
+import { decodeFile, type ExportLine } from "../../server/admin/cutover.ts";
 
 const [server, folder] = process.argv.slice(2);
 const token = process.env.ERGA_TOKEN;

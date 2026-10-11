@@ -188,6 +188,6 @@ export class SiteHost extends DurableObject<Env> {
 
   /** Everyone with the document open hears that its site's state changed. */
   private tell(docId: string): void {
-    this.ctx.waitUntil(this.env.DOCS.getByName(docId).notify({ type: "site" }).catch(() => {}));
+    this.ctx.waitUntil(this.env.DOCUMENTS.getByName(docId).notify({ type: "site" }).catch(() => {}));
   }
 }

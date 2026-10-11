@@ -1,4 +1,4 @@
-// The cutover's export over HTTP (GET /api/admin/documents/export): an admin-scope token reads every document;
+// The cutover's routes over HTTP: GET /api/admin/documents/export (an admin-scope token reads every document;
 // a documents-scope token does not (locally everyone is signed in as the admin DEV_LOGIN, so "no token" is not tested here; tests/export.test.ts has it).
 import { expect, servers, test } from "../../fixtures";
 import { getter, mint, publish } from "./access";
@@ -19,4 +19,11 @@ test("an admin token exports every document, one JSON line each, with its files;
   expect(mine?.record.owner).toBe("tester");
   expect(mine?.permissions?.map((p) => p.role)).toEqual(["owner"]);
   expect(mine?.files?.["index.html"]?.text).toContain("Exported one");
+
+  // POST /api/admin/documents/import takes a document back only under a row the directory has and no document yet.
+  const post = (token: string, body: unknown) => fetch(`${root}/api/admin/documents/import`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  expect((await post(docs, mine)).status).toBe(403);
+  expect((await post(admin, mine)).status).toBe(409);
+  expect((await post(admin, { ...mine, record: { ...mine!.record, id: "nope1234" } })).status).toBe(404);
+  expect((await post(admin, { record: { id: made.id } })).status).toBe(400);
 });

@@ -13,7 +13,7 @@ function memory() {
     get: (async (k: string | string[]) => Array.isArray(k) ? new Map(k.filter((x) => map.has(x)).map((x) => [x, map.get(x)])) : map.get(k)) as KV["get"],
     put: async (entries) => { for (const [k, v] of Object.entries(entries)) { map.set(k, v); puts.push(k); } },
   };
-  return { kv, map, puts, blobs: () => [...map.keys()].filter((k) => k.startsWith("b:")).length };
+  return { kv, map, puts, blobs: () => [...map.keys()].filter((k) => k.startsWith("blobs/")).length };
 }
 const enc = (s: string) => new TextEncoder().encode(s);
 const files = (o: Record<string, string | Uint8Array>) => new Map(Object.entries(o).map(([p, d]) => [p, typeof d == "string" ? enc(d) : d]));
@@ -41,13 +41,13 @@ test("unchanged files are stored once, shared by every version", async () => {
   m.puts.length = 0;
   const two = await v.cut(files({ "index.html": "two", "style.css": "css", "logo.png": logo }), "index.html", ["ada", "ada’s agent", "ada"]);
   // Only the changed file is written, with the version and the head.
-  expect(m.puts.filter((k) => k.startsWith("b:"))).toHaveLength(1);
+  expect(m.puts.filter((k) => k.startsWith("blobs/"))).toHaveLength(1);
   expect(m.blobs()).toBe(4);
   expect(two?.version.authors).toEqual(["ada", "ada’s agent"]);
   // Going back to an earlier text writes nothing new either.
   m.puts.length = 0;
   await v.cut(files({ "index.html": "one", "style.css": "css", "logo.png": logo }), "index.html", []);
-  expect(m.puts.filter((k) => k.startsWith("b:"))).toHaveLength(0);
+  expect(m.puts.filter((k) => k.startsWith("blobs/"))).toHaveLength(0);
   // Every version reads back whole.
   const v2 = (await v.get(2))!;
   expect(new TextDecoder().decode((await v.files(v2)).get("index.html"))).toBe("two");

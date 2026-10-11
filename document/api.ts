@@ -1,5 +1,5 @@
 // The host's HTTP API, declared once: what each endpoint takes, what it
-// answers and how it fails. server/doc-host.ts implements it; the editor
+// answers and how it fails. document/host.ts implements it; the editor
 // imports its types only, so none of this lands in the
 // browser bundle.
 //
@@ -13,7 +13,7 @@
 //
 // Not here: the WebSockets (/api/room, /api/events), the files (the editor's
 // own, and the document's under /doc/), and /api/stored, which moves raw
-// bytes with ETags. Those stay plain routes in server/doc-host.ts and cloudflare/document-object.ts.
+// bytes with ETags. Those stay plain routes in document/host.ts and cloudflare/document-object.ts.
 
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";

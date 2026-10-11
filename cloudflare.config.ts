@@ -38,6 +38,9 @@ export default defineConfig(({ mode }) => ({
     // /<owner>/<id>) and asks for the editor's files when it needs them.
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     exports: {
+      // Each document (cloudflare/document-object.ts), named by its id.
+      DocumentObject: exports.durableObject({ storage: "sqlite" }),
+      // The documents' namespace from before the storage cutover: kept, unbound, until the cutover is checked; deleted in its own deploy after.
       DocHost: exports.durableObject({ storage: "sqlite" }),
       // The deploy page's sessions (/deploy, cloudflare/deploy-session.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),
@@ -59,7 +62,7 @@ export default defineConfig(({ mode }) => ({
       DocList: exports.durableObject({ state: "deleted" }),
     },
     env: {
-      DOCS: bindings.durableObject({ worker: PROD.worker, exportName: "DocHost" }),
+      DOCUMENTS: bindings.durableObject({ worker: PROD.worker, exportName: "DocumentObject" }),
       DEPLOYS: bindings.durableObject({ worker: PROD.worker, exportName: "Deployer" }),
       PIPELINE: bindings.durableObject({ worker: PROD.worker, exportName: "Pipeline" }),
       SOURCE: bindings.durableObject({ worker: PROD.worker, exportName: "SourceHost" }),

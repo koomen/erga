@@ -54,7 +54,7 @@ export interface KV {
   put(entries: Record<string, unknown>): Promise<void>;
 }
 
-const HEAD = "v:head", VERSION = "v:", BLOB = "b:";
+const HEAD = "versions/head", VERSION = "versions/", BLOB = "blobs/";
 /** Durable Object storage takes at most 128 keys in one get or put. */
 const BATCH = 128;
 const key = (n: number) => VERSION + String(n).padStart(8, "0");
@@ -331,6 +331,6 @@ export function firePublished(e: PublishedEvent): void {
  * environment: the published version's, in "manual" mode, or the latest
  * state (up to the keystroke) in "latest" mode. Null if there's no such document.
  */
-export async function publishedFiles(env: { DOCS: { getByName(id: string): { publishedFiles(): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> } } }, docId: string): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> {
-  return env.DOCS.getByName(docId).publishedFiles();
+export async function publishedFiles(env: { DOCUMENTS: { getByName(id: string): { publishedFiles(): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> } } }, docId: string): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> {
+  return env.DOCUMENTS.getByName(docId).publishedFiles();
 }

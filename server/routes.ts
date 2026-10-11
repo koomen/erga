@@ -39,6 +39,7 @@
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
+import type { ExportedDocument } from "./admin/cutover.ts";
 import type { SiteOps } from "./site-publish.ts";
 import { OWN_ACCOUNT } from "./account-menu.ts";
 import { adminDoor } from "./admin/pages.ts";
@@ -164,6 +165,8 @@ export interface Platform {
     index(doc: Route): Promise<string | null>;
     /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
     snapshot(doc: Route, opts?: { published?: boolean }): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
+    /** The storage cutover: an exported document back under its id (server/admin/cutover.ts). */
+    importExported(doc: Route, exported: ExportedDocument, decode: (file: { text?: string; base64?: string }) => Uint8Array): Promise<{ ok: true; versions: number } | { ok: false; error: string }>;
     /** A document's versions, the current one and the published one; null if it has no host. */
     versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
     /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
@@ -420,7 +423,7 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
 /**
  * A token that opens one document's files on its pages origin, for a week, for the editor at `shell` (whose origin it names).
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
- * same all day: the browser's cache can answer for them (they're checked by ETag, server/routes.ts's pagesDoor and server/doc-host.ts's docFile).
+ * same all day: the browser's cache can answer for them (they're checked by ETag, server/routes.ts's pagesDoor and document/host.ts's docFile).
  */
 export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { published?: boolean; by?: string } = {}): Promise<string> {
   // published: for someone who may only view it, whose every file is the published version's, doc/ as pub/.

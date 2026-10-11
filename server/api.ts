@@ -1,6 +1,6 @@
 // The server's API for agents: everything a person can do in the app, for an
 // agent holding one of their agent tokens. It's the same token,
-// and the same mechanism, as a document's own external agent API (server/doc-host.ts,
+// and the same mechanism, as a document's own external agent API (document/host.ts,
 // /d/<id>/api/ext): this one covers the whole server, and offers each
 // document's tools for any document the person may edit.
 //
@@ -41,7 +41,7 @@ import type { PublishRequest } from "../document/versions";
 import { accessOf, appPage, crumbs, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./routes";
 import { byLine, VIA } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";
-import { cleanRel } from "./doc-host";
+import { cleanRel } from "../document/host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./tokens";
 import { LOCKED } from "./users";
 import { TEMPLATES, templateById } from "./templates";
@@ -457,7 +457,7 @@ async function versionsApi(request: Request, platform: Platform, session: Sessio
 }
 
 /**
- * A document's file tree (server/doc-host.ts, /api/tree): GET reads it, for whoever may
+ * A document's file tree (document/host.ts, /api/tree): GET reads it, for whoever may
  * open the document; POST does one operation, for its editors. Signed in
  * with the app's session (the tree's UI, from this site's pages only) or an
  * agent token. Answers JSON: the tree, or {error}.

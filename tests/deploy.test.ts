@@ -70,7 +70,7 @@ describe("deploying", () => {
     expect(worker.workersDev).toBe(true);
     expect(worker.modules.sort()).toEqual(Object.keys(release.modules).sort());
     const b = Object.fromEntries(worker.metadata.bindings.map((x: any) => [x.name, x]));
-    expect(b.DOCS).toMatchObject({ type: "durable_object_namespace", class_name: "DocHost" });
+    expect(b.DOCUMENTS).toMatchObject({ type: "durable_object_namespace", class_name: "DocumentObject" });
     expect(b.DEPLOYS).toMatchObject({ type: "durable_object_namespace", class_name: "Deployer" });
     expect(b.HOME).toMatchObject({ type: "durable_object_namespace", class_name: "Home" });
     expect(b.DB).toMatchObject({ type: "d1", database_id: db.uuid });
@@ -83,7 +83,7 @@ describe("deploying", () => {
     expect(b.ANTHROPIC_API_KEY).toBeUndefined();
     expect(b.PAGES_HOST.text).toBe("erga-pages.ada-mock.workers.dev");
     // Durable Objects as declarative exports (as cf deploy sends them), never migrations; erga.dev's tombstones (DocList, Factory, FactoryVm) left out.
-    expect(worker.metadata.exports).toEqual({ DocHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" }, SourceHost: { type: "durable-object", storage: "sqlite" }, Pipeline: { type: "durable-object", storage: "sqlite" }, Home: { type: "durable-object", storage: "sqlite" }, SiteHost: { type: "durable-object", storage: "sqlite" }, AdminAgentHost: { type: "durable-object", storage: "sqlite" } });
+    expect(worker.metadata.exports).toEqual({ DocumentObject: { type: "durable-object", storage: "sqlite" }, DocHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" }, SourceHost: { type: "durable-object", storage: "sqlite" }, Pipeline: { type: "durable-object", storage: "sqlite" }, Home: { type: "durable-object", storage: "sqlite" }, SiteHost: { type: "durable-object", storage: "sqlite" }, AdminAgentHost: { type: "durable-object", storage: "sqlite" } });
     // Not one of Erga's own branch-deploy targets, and no secrets kept from before: its own, new.
     expect(b.DEPLOY_TARGET.text).toBe("");
     expect(worker.metadata.keep_bindings).toBeUndefined();
@@ -122,7 +122,7 @@ describe("deploying", () => {
     expect(state.databases.length).toBe(1);
     expect(steps).toContain("migrations:done already up to date");
     expect(steps.find((s) => s.startsWith("database:done"))).toContain("from before");
-    expect(state.scripts.erga.metadata.exports.DocHost).toEqual({ type: "durable-object", storage: "sqlite" });
+    expect(state.scripts.erga.metadata.exports.DocumentObject).toEqual({ type: "durable-object", storage: "sqlite" });
     expect(state.assets.uploaded.length).toBe(uploaded);
   });
 

@@ -37,7 +37,7 @@ import { accountOf, OWN_ACCOUNT } from "../server/account-menu";
 import { roleMay, type DocRow } from "../server/directory";
 import { link, mayDeploy, whoOf, type Platform } from "../server/routes";
 import { HOME_FILES, homeHeader, IDLE, renderHome, type DeployStatus } from "../server/home";
-import { mimeOf } from "../server/doc-host";
+import { mimeOf } from "../document/host";
 import { directoryOf } from "./d1";
 import { byLine, SYSTEM } from "../shared/attribution";
 import type { Env } from "./env";
@@ -120,7 +120,7 @@ export class Home extends DurableObject<Env> {
   /** Everyone with the document open hears that its homepage state changed. */
   private async tell(...ids: (string | null | undefined)[]): Promise<void> {
     await Promise.all([...new Set(ids.filter((id): id is string => !!id))].map((id) =>
-      this.env.DOCS.getByName(id).notify({ type: "home" }).catch((e: unknown) => console.log(`couldn't tell ${id} about the homepage: ${e}`))));
+      this.env.DOCUMENTS.getByName(id).notify({ type: "home" }).catch((e: unknown) => console.log(`couldn't tell ${id} about the homepage: ${e}`))));
   }
 
   /**

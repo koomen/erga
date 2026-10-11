@@ -1,7 +1,7 @@
 import type { ArtifactsBinding } from "./artifacts";
 import type { AdminAgentHost } from "./admin-agent-host";
 import type { Deployer } from "./deploy-session";
-import type { DocHost } from "./document-object";
+import type { DocumentObject } from "./document-object";
 import type { SourceHost } from "./source-host";
 import type { Pipeline } from "./pipeline";
 import type { Home } from "./home";
@@ -10,7 +10,7 @@ import type { SiteHost } from "./site-host";
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
   /** One Durable Object per document, named by its id. */
-  DOCS: DurableObjectNamespace<DocHost>;
+  DOCUMENTS: DurableObjectNamespace<DocumentObject>;
   /** The homepage's deploys and its served snapshot: one Durable Object, named "home". */
   HOME: DurableObjectNamespace<Home>;
   /** Each admin's agent, its conversation and panel: one Durable Object, "admin". */

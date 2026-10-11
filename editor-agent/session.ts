@@ -11,7 +11,7 @@
 // attributed ("Pete's agent"), and its presence while it works: a labelled
 // cursor where it last edited, and whether it's busy, on awareness.
 //
-// This module is the Promise edge: pi's SDK is async, and server/doc-host.ts wraps
+// This module is the Promise edge: pi's SDK is async, and document/host.ts wraps
 // what it exposes in Effect.
 //
 // Configuration comes from the Worker's bindings (in local development,
@@ -514,7 +514,7 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
 
 /**
  * new_page, mkdir, mv and rm: the document's file tree, with the same powers
- * a person has in the editor's file tree (server/doc-host.ts, runTreeOp, checks each).
+ * a person has in the editor's file tree (document/host.ts, runTreeOp, checks each).
  */
 function treeTools(tree: (op: TreeOp) => Promise<void>, open?: (path: string) => Promise<OpenResult>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });

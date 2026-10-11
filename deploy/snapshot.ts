@@ -14,7 +14,7 @@
 // A document's snapshot is every key in its storage (its files, folders,
 // meta, its versions and the room's Yjs state: cloudflare/document-object.ts) and its
 // alarm (when an unedited one expires). Values go as JSON, bytes as base64.
-// The export only reads (DocHost.exportStorage: storage.list and getAlarm,
+// The export only reads (DocumentObject.exportStorage: storage.list and getAlarm,
 // nothing opened); the import empties the document's storage and writes the
 // snapshot in.
 //
@@ -75,7 +75,7 @@ const sizeOf = ([key, e]: [string, Encoded]) => key.length + 16 + ("b" in e ? e.
 /**
  * One part of a document's storage, read from `list` (the keys after
  * `after`, in order, at most `limit` of them) until it holds `budget`
- * characters: DocHost's export and the in-memory store's.
+ * characters: DocumentObject's export and the in-memory store's.
  */
 export async function exportPage(id: string, page: Page, alarm: number | null, list: (after: string | null, limit: number) => Promise<Map<string, unknown>>): Promise<DocSnapshot> {
   const entries: [string, Encoded][] = [];

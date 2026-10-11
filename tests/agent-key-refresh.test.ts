@@ -1,5 +1,5 @@
 // A key an admin stores, replaces or clears on /admin/api-keys reaches the
-// agent of a document that is already open, at its next turn (server/doc-host.ts reads
+// agent of a document that is already open, at its next turn (document/host.ts reads
 // the settings at each turn: cloudflare/agent-settings.ts). No real API call: a
 // fake fetch answers for Anthropic and records the key each request sent.
 
@@ -12,7 +12,7 @@ import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
 import { startAdminAgent } from "../agents/admin.ts";
 import { Directory, type Param, type Sql } from "../server/directory.ts";
-import { makeHost } from "../server/doc-host.ts";
+import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
 import { agentSettingsFrom, UNREADABLE_KEY } from "../cloudflare/agent-settings.ts";
 

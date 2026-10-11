@@ -898,7 +898,7 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // Share with an external agent: a prompt carrying this page's API and your
   // agent token (server/tokens.ts: the share button's, the same until rotated), which
-  // lets the agent call your agent's tools here (server/doc-host.ts, /api/ext) and act
+  // lets the agent call your agent's tools here (document/host.ts, /api/ext) and act
   // as you on the rest of the server.
   const shareBtn = $("btn-share");
   function promptFor(token: string): string {

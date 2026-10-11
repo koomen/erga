@@ -59,7 +59,7 @@ export const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pages
 const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1";
 export const platform = (env: Env): Platform => {
   const directory = directoryOf(env);
-  const host = (doc: Route) => env.DOCS.getByName(doc.id);
+  const host = (doc: Route) => env.DOCUMENTS.getByName(doc.id);
   return {
     directory,
     sessionOf: (request) => sessionOf(env, request),
@@ -82,6 +82,7 @@ export const platform = (env: Env): Platform => {
       paths: (doc) => counted("doc", () => host(doc).paths()),
       index: (doc) => counted("doc", () => host(doc).index()),
       snapshot: (doc, opts) => counted("doc", () => host(doc).snapshot(opts)),
+      importExported: (doc, exported, decode) => host(doc).importExported(exported, decode),
       versions: (doc, opts) => host(doc).versionsState(opts),
       setPublished: (doc, req) => host(doc).setPublished(req),
       restore: (doc, ref, by, path) => host(doc).restore(ref, by, path),
@@ -90,7 +91,7 @@ export const platform = (env: Env): Platform => {
       list: async (owner) => {
         return Promise.all((await directory.list(owner)).map(async (d) => {
           // In local development a document may be on disk: only it knows where.
-          const path = env.ERGA_LINK_SECRET ? await env.DOCS.getByName(d.id).diskPath().catch(() => null) : null;
+          const path = env.ERGA_LINK_SECRET ? await env.DOCUMENTS.getByName(d.id).diskPath().catch(() => null) : null;
           return {
             id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
             created: d.created, modified: d.modified ?? d.created, role: d.role, shared: d.shared,

@@ -496,7 +496,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       const scripts = await listScripts(cf, acc, target);
       const found = scripts.find((s) => s.id == target.workerName);
       // Ours: tagged by an earlier run (or, failing that, Erga's own Durable Object among its exports).
-      const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocHost");
+      const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocumentObject" || h.name == "DocHost");
       if (found && !ours(found)) {
         throw new DeployError(`Your account already has a Worker called ${target.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`);
       }
@@ -791,8 +791,8 @@ async function listScripts(cf: Cloudflare, acc: string, target: Target): Promise
   }
   const settings = await cf.call<{ tags?: string[]; bindings?: { type: string; class_name?: string }[] }>("GET", `${acc}/workers/scripts/${target.workerName}/settings`, `read ${target.workerName}'s settings`, undefined, { allow404: true });
   if (!settings) return [];
-  const docHost = settings.bindings?.some((b) => b.type == "durable_object_namespace" && b.class_name == "DocHost");
-  return [{ id: target.workerName, tags: settings.tags ?? [], named_handlers: docHost ? [{ name: "DocHost" }] : [] }];
+  const docHost = settings.bindings?.some((b) => b.type == "durable_object_namespace" && b.class_name == "DocumentObject");
+  return [{ id: target.workerName, tags: settings.tags ?? [], named_handlers: docHost ? [{ name: "DocumentObject" }] : [] }];
 }
 
 /** The release a Worker runs, by its ERGA_VERSION setting (the pipeline sets it), or null. */

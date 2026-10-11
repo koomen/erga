@@ -29,6 +29,7 @@
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
 //   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; cloudflare/admin-agent-host.ts)
 //   GET /api/admin/documents/export   every document's record, sharing and files, one JSON line each: the cutover's export script (admins)
+//   POST /api/admin/documents/import  one exported document back, under its id, whose row the directory has: the cutover's import script (admins)
 //   /admin/source, /api/source/...  the Source page (the dashboard of source and deploys; /source and /admin/factory
 //                              redirect there) and its API
 //                              Every /admin page has the same layout, and every /admin route is
@@ -55,7 +56,7 @@ import { serverApi, tokensDoor } from "../server/api";
 import { finishSignIn, isDev, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf } from "./d1";
 import { adminGate, isAdminPath } from "../server/admin/layout";
-import { exportDocuments } from "../server/admin/export";
+import { exportDocuments, importDocument } from "../server/admin/cutover";
 import { deployDoor } from "./deploy-routes";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent-host";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
@@ -65,6 +66,7 @@ import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../server/home";
 import { siteApi } from "../server/site-publish";
 import { mockSiteFile, siteOps } from "./site-host";
+import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
 import { pagesSite, platform } from "./platform";
@@ -72,7 +74,9 @@ import { adminsOnlyGate } from "./admins-only";
 import { releaseApi, withLive } from "./live";
 
 export { Deployer } from "./deploy-session";
-export { DocHost } from "./document-object";
+export { DocumentObject } from "./document-object";
+/** The documents' namespace from before the storage cutover: unbound and without code, kept until the cutover is checked (then deleted, in its own deploy). */
+export class DocHost extends DurableObject<Env> {}
 export { AdminAgentHost } from "./admin-agent-host";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
@@ -180,6 +184,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
   // Every document, for the cutover's export script (admins).
   if (path == "/api/admin/documents/export") return exportDocuments(withTokens(platform(env), url), request);
+  // The storage cutover's import: one exported document back, under its id (admins).
+  if (path == "/api/admin/documents/import") return importDocument(withTokens(platform(env), url), request);
   // The server's API for agents, and people's agent tokens.
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
@@ -219,13 +225,13 @@ async function linked(env: Env, request: Request, url: URL): Promise<Response> {
     // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
     const owner = (body.owner ?? session?.login)?.toLowerCase();
     if (!owner || !OWNER.test(owner) || session?.test || !body.id || !idShaped(body.id) || !body.index || !body.path) return new Response("Bad link", { status: 400 });
-    const doc = await env.DOCS.getByName(body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
+    const doc = await env.DOCUMENTS.getByName(body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
     return Response.json({ owner: doc.owner, id: doc.id, slug: doc.slug });
   }
   const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
   const route = id && idShaped(id) ? await directory.route(id) : null;
   if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
-  return env.DOCS.getByName(route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
+  return env.DOCUMENTS.getByName(route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
 }
 
 /** The directory's migrations, as `cf d1 migrations apply` would apply them. */

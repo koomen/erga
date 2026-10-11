@@ -15,20 +15,22 @@ AGENTS.md has the rules for working on it.
 ## The layout
 
     document/     one document, with no Cloudflare in it
+      document.ts     class Document: one running document over a Storage (files, room, versions, publishing, expiry)
+      storage.ts      the Storage a document needs; MemoryStorage for the tests
+      host.ts         the document's HTTP API: its routes, the agent sessions, the tabs
       content.ts      what a document room holds: files, assets, authors, folders (the shared Yjs doc)
       pages.ts        a document's files as pages, and their addresses
       room.ts         the document room: the shared doc and who is in it
       versions.ts     a document's versions and what is published
       merge.ts        an outside edit, as a small change to the open document
-      api.ts          the document API's contract (its routes are in server/doc-host.ts for now)
+      api.ts          the document API's contract (its routes are in document/host.ts for now)
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
       routes.ts       the front door: every route around the documents
-      doc-host.ts     one document's host: its API, its files, its agent sessions
       api.ts          the server's HTTP API for outside agents: tokens, /api, /mcp, the guide, /tokens, /settings
       directory.ts    documents, owners and permissions, in SQL; users.ts, settings.ts, api-keys.ts, tokens.ts, auth.ts beside it
       sites.ts, site-publish.ts   a document on its own domain
       home.ts         the homepage; account-menu.ts, who you are on every page; templates.ts, what a new document starts from
-      admin/          the admin pages (pages.ts), the layout they share (layout.ts), the cutover's export (export.ts)
+      admin/          the admin pages (pages.ts), the layout they share (layout.ts), the storage cutover's routes (cutover.ts)
       source/         Erga's own Git repository: the Git endpoint, the mirror, and the Source admin page
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     editor-agent/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
@@ -50,7 +52,7 @@ AGENTS.md has the rules for working on it.
     tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full)
 
 A file in `cloudflare/` with the same name as one in `server/` is its
-Cloudflare side: `cloudflare/document-object.ts` runs `server/doc-host.ts` in a
+Cloudflare side: `cloudflare/document-object.ts` runs `document/host.ts` in a
 Durable Object. The configs at the root are the ones their tools look for
 there: `cloudflare.config.ts` (the Worker and its bindings),
 `vite.config.ts`, `e2e.config.ts`, `tsconfig.json`.

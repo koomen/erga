@@ -1,6 +1,7 @@
-// GET /api/admin/documents/export: every document on the server, for the
-// storage cutover's script (deploy/cutover/export.ts). Admins only, with
-// admin power (a browser session, or an admin-scope token).
+// The storage cutover's two routes, for its scripts (deploy/cutover/): admins
+// only, with admin power (a browser session, or an admin-scope token).
+//
+// GET /api/admin/documents/export: every document on the server.
 //
 // The answer is one JSON line per document (application/x-ndjson):
 //
@@ -28,6 +29,30 @@ export interface ExportedDocument {
   publishedFiles?: Record<string, ExportedFile>;
 }
 export type ExportLine = ExportedDocument | { record: DocRow; missing: true };
+
+/**
+ * POST /api/admin/documents/import: one exported document back, under its
+ * own id. Its row must be in the directory already (D1 is not part of the
+ * cutover), with the same owner; the document itself must not exist yet.
+ * Answers { ok: true, versions } (how many versions it has now: two when it
+ * was published at another version, else one) or an error (400, 403, 404,
+ * 409).
+ */
+export async function importDocument(platform: Platform, request: Request): Promise<Response> {
+  if (request.method != "POST") return json({ error: "Not found" }, 404);
+  const session = await platform.sessionOf(request);
+  if (!session) return json({ error: "Sign in, or send an admin token." }, 401);
+  try { await platform.directory.users.mustAdmin({ login: session.login, admin: session.admin, test: !!session.test }); }
+  catch (e) { if (e instanceof NotAllowed) return json({ error: e.message }, 403); throw e; }
+  let doc: ExportedDocument;
+  try { doc = (await request.json()) as ExportedDocument; } catch { return json({ error: "Send one exported document as JSON." }, 400); }
+  if (!doc?.record?.id || typeof doc.record.owner != "string" || typeof doc.index != "string" || !doc.files || typeof doc.files != "object") return json({ error: "Send one exported document: { record, index, files, publishedFiles? }." }, 400);
+  const row = await platform.directory.get(doc.record.id);
+  if (!row) return json({ error: `The directory has no document ${doc.record.id}.` }, 404);
+  if (row.owner != doc.record.owner.toLowerCase()) return json({ error: `The directory's ${doc.record.id} belongs to ${row.owner}, the export's to ${doc.record.owner}.` }, 409);
+  const r = await platform.docs.importExported({ id: row.id, owner: row.owner, test: row.test }, { ...doc, record: row }, decodeFile);
+  return r.ok ? json(r) : json({ error: r.error }, 409);
+}
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 

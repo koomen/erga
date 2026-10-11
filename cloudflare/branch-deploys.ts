@@ -49,9 +49,9 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
       token: env.SNAPSHOT_TOKEN,
       importAllowed: env.SNAPSHOT_IMPORT == "1" && !production,
       store: {
-        export: (id, page) => env.DOCS.getByName(id).exportStorage(id, page),
-        import: (snap) => env.DOCS.getByName(snap.id).importStorage(snap),
-        wipe: (id) => env.DOCS.getByName(id).wipeStorage(),
+        export: (id, page) => env.DOCUMENTS.getByName(id).exportStorage(id, page),
+        import: (snap) => env.DOCUMENTS.getByName(snap.id).importStorage(snap),
+        wipe: (id) => env.DOCUMENTS.getByName(id).wipeStorage(),
       },
     })) ?? Response.json({ error: "Not found" }, { status: 404 });
   }

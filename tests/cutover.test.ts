@@ -1,4 +1,4 @@
-// The cutover's export (server/admin/export.ts): admins only, one JSON line
+// The cutover's export (server/admin/cutover.ts): admins only, one JSON line
 // per document with its row, who has it, its files and, when it is fixed at
 // another version, the published files.
 
@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql } from "../server/directory";
-import { exportDocuments, decodeFile, type ExportedDocument, type ExportLine } from "../server/admin/export";
+import { exportDocuments, decodeFile, type ExportedDocument, type ExportLine } from "../server/admin/cutover";
 import type { Platform, Session } from "../server/routes";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

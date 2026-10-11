@@ -2,7 +2,7 @@
 // with it, in SQL, on D1 (cloudflare/d1.ts; locally, the dev
 // server's D1). It sits behind the three-method `Sql` below, so the tests
 // run it on bun:sqlite. A document's content and live room stay with its own
-// host (a DocHost Durable Object, named by the document's id). The server's
+// host (a DocumentObject Durable Object, named by the document's id). The server's
 // users and admins and its settings are on the same
 // database, and reached through the directory: `dir.users`, `dir.config`,
 // and the API keys admins enter, `dir.credentials`.

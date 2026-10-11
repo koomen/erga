@@ -28,7 +28,7 @@ export interface Storage {
 }
 
 /** Storage keys: a file's bytes, a folder made as one (empty ones too), what the document is, the room's Yjs state. */
-export const KEYS = { file: "file:", dir: "dir:", meta: "meta", state: "state" } as const;
+export const KEYS = { file: "files/", dir: "folders/", meta: "info", state: "room-state" } as const;
 
 /** A Storage in memory, for the tests: `wake` runs when the alarm comes due. */
 export class MemoryStorage implements Storage {

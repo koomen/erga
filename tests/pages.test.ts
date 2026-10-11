@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
-import { relativeUrl, runTreeOp } from "../server/doc-host";
+import { relativeUrl, runTreeOp } from "../document/host";
 import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, TreeError, treeEntries } from "../document/pages";
 import { files, folders } from "../document/content";
 
