@@ -122,7 +122,7 @@ describe("staging", () => {
     const ours = mock.state.docs["erga-staging"].docs, theirs = mock.state.docs.erga.docs;
     expect([...ours.keys()].sort()).toEqual([...PROD_DOCS].sort());
     for (const id of PROD_DOCS) {
-      expect([...ours.get(id)!.entries]).toEqual([...theirs.get(id)!.entries]);
+      expect([...ours.get(id)!.entries].sort()).toEqual([...theirs.get(id)!.entries].sort());
       expect(ours.get(id)!.alarm).toBe(theirs.get(id)!.alarm);
     }
     expect(steps.find((s) => s.startsWith("documents:done"))).toContain("3 documents copied");
@@ -264,6 +264,50 @@ describe("the snapshot endpoints", () => {
     expect([...store.docs.keys()]).toEqual(["efgh6789"]);
     expect(store.docs.get("efgh6789")!.entries.get("state")).toEqual(new Uint8Array([9, 8]));
     expect(await door(new Request("https://x/api/other"))).toBeNull();
+  });
+
+  test("an answer carries at most its budget: a document in parts, continued after its last key", async () => {
+    const store = memoryStore();
+    const bytes = (n: number) => new Uint8Array(n).fill(7);
+    store.docs.set("abcd2345", { entries: new Map<string, unknown>([["meta", { id: "abcd2345" }], ["b:1", bytes(300)], ["b:2", bytes(300)], ["b:3", bytes(300)]]), alarm: 5 });
+    store.docs.set("efgh6789", { entries: new Map<string, unknown>([["meta", { id: "efgh6789" }]]), alarm: null });
+    const ask = async (body: unknown) => (await (await snapshotDoor(new Request("https://x/api/snapshot/docs", { method: "POST", headers: { Authorization: `Bearer ${MOCK_SNAPSHOT_TOKEN}` }, body: JSON.stringify(body) }), { token: MOCK_SNAPSHOT_TOKEN, importAllowed: false, store, budget: 500 }))!.json()) as any;
+    const keys = (a: any) => a.docs.map((d: any) => [d.id, d.entries.map(([k]: [string]) => k), d.more]);
+    // Each part stops at the entry that reaches the budget (400 characters of base64 each), in the order of the keys.
+    let a = await ask({ ids: ["abcd2345", "efgh6789"] });
+    expect([keys(a), a.done]).toEqual([[["abcd2345", ["b:1", "b:2"], "b:2"]], 0]);
+    a = await ask({ ids: ["abcd2345", "efgh6789"], after: "b:2" });
+    expect([keys(a), a.done]).toEqual([[["abcd2345", ["b:3", "meta"], undefined], ["efgh6789", ["meta"], undefined]], 2]);
+    expect(a.failed).toEqual([]);
+  });
+
+  test("a document larger than one Durable Object call carries is copied whole, in parts", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    // The real limits scaled down: 32 MiB per RPC, 8 MiB per answer, here 64 KB and 16 KB.
+    mock.state.snapshotBudget = 16_000;
+    mock.state.docs.erga.rpcLimit = 64_000;
+    mock.state.docs["erga-staging"] = Object.assign(memoryStore(), { rpcLimit: 64_000 });
+    // Production's first document has 40 versions' blobs of 8 KB: about 430 KB as base64.
+    const big = mock.state.docs.erga.docs.get(PROD_DOCS[0])!;
+    for (let i = 0; i < 40; i++) big.entries.set(`b:${String(i).padStart(4, "0")}`, crypto.getRandomValues(new Uint8Array(8_000)));
+    const { steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
+    expect(steps.find((s) => s.startsWith("documents:") && s != "documents:running")).toBe("documents:done 3 documents copied");
+    const ours = mock.state.docs["erga-staging"].docs, theirs = mock.state.docs.erga.docs;
+    for (const id of PROD_DOCS) {
+      expect([...ours.get(id)!.entries].sort()).toEqual([...theirs.get(id)!.entries].sort());
+      expect(ours.get(id)!.alarm).toBe(theirs.get(id)!.alarm);
+    }
+  });
+
+  test("a document production can't read is left empty, and the others are copied", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const prod = mock.state.docs.erga, read = prod.export.bind(prod);
+    prod.export = async (id, page) => { if (id == PROD_DOCS[1]) throw new Error("storage unreadable"); return read(id, page); };
+    // Staging has an older copy of it: emptied, not left as it was.
+    mock.state.docs["erga-staging"] = memoryStore(new Map([[PROD_DOCS[1], { entries: new Map<string, unknown>([["meta", { id: PROD_DOCS[1] }]]), alarm: null }]]));
+    const { steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
+    expect(steps.find((s) => s.startsWith("documents:") && s != "documents:running")).toBe(`documents:done 2 documents copied; 1 couldn't be read, and are empty here: ${PROD_DOCS[1]} (storage unreadable)`);
+    expect([...mock.state.docs["erga-staging"].docs.keys()].sort()).toEqual([PROD_DOCS[0], PROD_DOCS[2]].sort());
   });
 });
 

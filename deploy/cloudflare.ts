@@ -695,7 +695,8 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       const result = await copyDocuments({ ids, wipe: (carry.oldDocs ?? []).filter((id) => !ids.includes(id)), from: snap.origin, to: `https://${host}`, token: snap.token, fetch: site });
       if (result.unsupported) return `skipped: ${snap.origin} doesn't serve snapshots yet (it needs this version, and SNAPSHOT_TOKEN set); the documents are listed but empty`;
       carry.oldDocs = [];
-      return `${result.copied} documents copied${result.missing ? `, ${result.missing} gone from production since the database's copy` : ""}${result.wiped ? `, ${result.wiped} old ones emptied` : ""}`;
+      const failed = result.failed.length ? `; ${result.failed.length} couldn't be read, and are empty here: ${result.failed.slice(0, 5).map((f) => `${f.id} (${f.error})`).join(", ")}${result.failed.length > 5 ? ", ..." : ""}` : "";
+      return `${result.copied} documents copied${result.missing ? `, ${result.missing} gone from production since the database's copy` : ""}${result.wiped ? `, ${result.wiped} old ones emptied` : ""}${failed}`;
     },
 
     // The copies the new version doesn't use: the one it took the place of, and any a stopped deploy left. Only now,

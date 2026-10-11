@@ -43,7 +43,7 @@ import { VIA } from "../attribution";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "../src/room/doc";
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../versions";
 import * as Y from "yjs";
-import { decodeValue, encodeValue, type DocSnapshot } from "../deploy/snapshot";
+import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
 import { agentSettings } from "./agent-settings";
 import { platform } from "./platform";
@@ -380,26 +380,30 @@ export class DocHost extends DurableObject<Env> {
   }
 
   /**
-   * Everything in its storage, and its alarm: the snapshot staging copies
-   * (deploy/snapshot.ts). Only reads: the room isn't opened, nothing is
-   * written, the directory isn't touched. Null if there's no document.
+   * A part of its storage, and its alarm: the snapshot staging copies
+   * (deploy/snapshot.ts), a part at a time, since the whole can be more than
+   * one RPC carries. Only reads: the room isn't opened, nothing is written,
+   * the directory isn't touched. Null if there's no document.
    */
-  async exportStorage(id: string): Promise<DocSnapshot | null> {
-    const all = await this.ctx.storage.list();
-    if (!all.has(META)) return null;
-    return { id, entries: [...all].map(([k, v]) => [k, encodeValue(v)]), alarm: await this.ctx.storage.getAlarm() };
+  async exportStorage(id: string, page: Page): Promise<DocSnapshot | null> {
+    if (page.after == null && (await this.ctx.storage.get(META)) == null) return null;
+    const storage = this.ctx.storage;
+    return exportPage(id, page, await storage.getAlarm(), (after, limit) => storage.list(after == null ? { limit } : { startAfter: after, limit }));
   }
 
   /**
    * Becomes `snap` (staging only: the front door allows it only with
    * SNAPSHOT_IMPORT, never on production): whoever has it open is
    * disconnected and the room closed first (it writes what it holds as it
-   * closes), then its storage is emptied and the snapshot written in.
+   * closes), then its storage is emptied and the snapshot written in. A
+   * later part (`append`) is only written in.
    */
   async importStorage(snap: DocSnapshot): Promise<void> {
     await this.closeForSnapshot();
-    await this.ctx.storage.deleteAlarm();
-    await this.ctx.storage.deleteAll();
+    if (!snap.append) {
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+    }
     const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
     const keys = Object.keys(entries);
     for (let i = 0; i < keys.length; i += 100) await this.ctx.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));

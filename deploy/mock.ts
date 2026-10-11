@@ -71,6 +71,8 @@ export interface MockState {
   secrets: Record<string, Record<string, string>>;
   /** Each Worker's documents' Durable Objects (the snapshot endpoints read and write these). */
   docs: Record<string, ReturnType<typeof memoryStore>>;
+  /** The snapshot endpoint's characters in one answer (SNAPSHOT_BUDGET unless a test makes it small, with the stores' rpcLimit). */
+  snapshotBudget?: number;
   /** How many versions of each Worker were uploaded. */
   versions: Record<string, number>;
   /** Deleted D1 databases, by name. */
@@ -593,6 +595,7 @@ export function mockCloudflare(opts: {
       token: state.secrets[name]?.SNAPSHOT_TOKEN,
       importAllowed: text("SNAPSHOT_IMPORT") == "1" && text("DEPLOY_TARGET") != "production",
       store: (state.docs[name] ??= memoryStore()) as DocStore,
+      budget: state.snapshotBudget,
     });
     if (snap) return snap;
     return new Response("Not found", { status: 404 });
