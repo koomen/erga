@@ -1,5 +1,5 @@
 // The document room: one per document, holding the shared Yjs doc (see
-// shared/doc.ts) that every participant edits. Editor tabs join over a
+// document/content.ts) that every participant edits. Editor tabs join over a
 // WebSocket, agent sessions in process (`joinLocal`), and both speak the
 // same Yjs sync and awareness protocol, so the room can't tell them apart.
 //
@@ -42,8 +42,8 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import * as sync from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
-import { rebase } from "../client/merge";
-import { applyChanges, assets, files, folders, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "../shared/doc";
+import { rebase } from "./merge";
+import { applyChanges, assets, files, folders, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "./content";
 
 /** Storage failed: a file couldn't be listed, read or written. */
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { message: Schema.String }) {}
@@ -415,7 +415,7 @@ export class Room {
 
   // ------------------------------------------------------------ the tree
   //
-  // Files and folders made, moved and deleted as such (shared/tree.ts checks what's
+  // Files and folders made, moved and deleted as such (document/pages.ts checks what's
   // asked first): storage and the shared doc change together, in one turn
   // of the queue, so every participant sees the new tree at once.
 

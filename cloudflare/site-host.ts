@@ -2,7 +2,7 @@
 // deploys, in one Durable Object for each document that has a site, named by
 // the document's id.
 //
-// When the document's published version changes (cloudflare/doc-host.ts tells
+// When the document's published version changes (cloudflare/document-object.ts tells
 // it), the next deploy runs a short time later (ERGA_SITE_DELAY_MS, 30
 // seconds by default), each change pushing it back, on the object's alarm.
 // In "latest" mode a version is cut after each burst of edits, so a site
@@ -78,7 +78,7 @@ export function siteOps(env: Env, origin: string): SiteOps {
   };
 }
 
-/** A document's published version changed: if it has a site, its next deploy is scheduled (cloudflare/doc-host.ts calls this). */
+/** A document's published version changed: if it has a site, its next deploy is scheduled (cloudflare/document-object.ts calls this). */
 export async function siteChanged(env: Env, docId: string): Promise<void> {
   if (await directoryOf(env).sites.get(docId)) await env.SITES.getByName(docId).changed(docId);
 }

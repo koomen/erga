@@ -10,7 +10,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
-import { beyondPrompt, documentToolSpecs } from "../agents/document";
+import { beyondPrompt, documentToolSpecs } from "../editor-agent/session";
 import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../agents/admin";
 import { SERVER_TOOLS, type ToolWho } from "../agents/tools";
 
@@ -51,9 +51,9 @@ function tableRoutes(file: string): string[] {
 }
 
 /** The document API's endpoints, under a document's address. */
-const apiRoutes = () => [...read("shared/doc-api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map((m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`);
+const apiRoutes = () => [...read("document/api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map((m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`);
 /** The page tree's operations: each a POST to the tree. */
-const treeRoutes = () => [...read("shared/tree.ts").matchAll(/\{ op: "(\w+)"/g)].map((m) => `POST /api/docs/<id>/tree op=${m[1]}`);
+const treeRoutes = () => [...read("document/pages.ts").matchAll(/\{ op: "(\w+)"/g)].map((m) => `POST /api/docs/<id>/tree op=${m[1]}`);
 
 const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRoutes(), ...treeRoutes()])];
 /** The audited routes, and each one with several actions ("do=", "op=") as a whole too. */

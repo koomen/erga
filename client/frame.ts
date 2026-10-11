@@ -11,7 +11,7 @@ import { domToPng } from "modern-screenshot";
 import { PageEditor } from "./editor";
 import { drawCaret } from "./caret";
 import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
-import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "./agent-log";
+import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../shared/agent-log";
 
 declare global {
   interface Window { ergaFrame?: unknown; __ergaTimescale?: number; ergaHost?: { ready(): void; changed?(): void } }

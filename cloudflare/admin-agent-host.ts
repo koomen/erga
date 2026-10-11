@@ -20,17 +20,17 @@
 //   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits
 
 import { DurableObject } from "cloudflare:workers";
-import { isModelChoice, MODELS } from "../agents/document";
+import { isModelChoice, MODELS } from "../editor-agent/session";
 import type { ToolWho } from "../agents/tools";
 import { authOps } from "./auth-settings";
 import type { SourceAnswer, SourceRead } from "../server/source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../agents/admin-chats";
-import { emptyLog, type Log, type LogEvent } from "../client/agent-log";
+import { emptyLog, type Log, type LogEvent } from "../shared/agent-log";
 import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "../agents/admin";
 import { whoOf } from "../server/routes";
 import { sessionOf } from "./auth";
 import { byLine, VIA } from "../shared/attribution";
-import { checkAttachments } from "../client/attach";
+import { checkAttachments } from "../shared/attach";
 import { directoryOf, tokensOf } from "./d1";
 import { agentSettings } from "./agent-settings";
 import { SHARE_ADMIN_HOURS } from "../server/tokens";

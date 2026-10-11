@@ -7,7 +7,7 @@ import * as Redacted from "effect/Redacted";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { CUT, panelPrefs, restoredLog, restoredMessages, STOPPED, storedLog, storedMessages } from "../agents/admin-chats";
 import { startAdminAgent } from "../agents/admin";
-import type { Log } from "../client/agent-log";
+import type { Log } from "../shared/agent-log";
 
 const script = { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" as const };
 

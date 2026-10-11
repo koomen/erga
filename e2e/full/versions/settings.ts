@@ -44,7 +44,7 @@ export async function draftDoc(server: Server, title: string, upTo: number, styl
     },
     /**
      * Holds back the cut of what's pending until `release()`: the room waits for an agent mid-turn (its busy flag on
-     * awareness, cloudflare/doc-host.ts agentWorking), so edits stay "not in a version" however slow the test is.
+     * awareness, cloudflare/document-object.ts agentWorking), so edits stay "not in a version" however slow the test is.
      */
     async hold() {
       const agent = await Participant.join(roomOf(server, id), "tester");

@@ -13,13 +13,13 @@
 //            the client ids it carries.
 //   folders  path -> true, for every folder made as one (a new folder, or one
 //            moved): empty ones too. Folders holding files are there anyway,
-//            from the files' paths (shared/tree.ts puts the two together).
+//            from the files' paths (document/pages.ts puts the two together).
 //   room     the room's epoch: a fresh id whenever a room starts without
 //            its saved history. A tab only ever merges into the epoch its
 //            history came from.
 
 import * as Y from "yjs";
-import { byLine, VIA } from "./attribution";
+import { byLine, VIA } from "../shared/attribution";
 import { ChangeSet, type ChangeSpec } from "@codemirror/state";
 
 export type AuthorKind = "person" | "agent" | "disk";

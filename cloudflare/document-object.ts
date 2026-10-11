@@ -36,12 +36,12 @@ import * as Scope from "effect/Scope";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../server/directory";
 import { afterUnedited, titleOf } from "../server/routes";
 import { cleanRel, docFile, makeHost, relativeUrl } from "../server/doc-host";
-import { resolvePage } from "../shared/tree";
+import { resolvePage } from "../document/pages";
 import { agentToolsFor } from "../agents/tools";
-import { FileStore, Room, StateStore, StoreError } from "../server/room";
+import { FileStore, Room, StateStore, StoreError } from "../document/room";
 import { VIA } from "../shared/attribution";
-import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "../shared/doc";
-import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../server/versions";
+import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "../document/content";
+import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../document/versions";
 import * as Y from "yjs";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
@@ -938,7 +938,7 @@ interface Opened {
   close: () => Promise<void>;
 }
 
-/** Durable Object storage as server/versions.ts's KV. */
+/** Durable Object storage as document/versions.ts's KV. */
 function kvOf(storage: DurableObjectStorage): KV {
   return {
     get: ((k: string | string[]) => storage.get(k as string)) as KV["get"],

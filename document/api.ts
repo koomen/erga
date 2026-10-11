@@ -13,12 +13,12 @@
 //
 // Not here: the WebSockets (/api/room, /api/events), the files (the editor's
 // own, and the document's under /doc/), and /api/stored, which moves raw
-// bytes with ETags. Those stay plain routes in server/doc-host.ts and cloudflare/doc-host.ts.
+// bytes with ETags. Those stay plain routes in server/doc-host.ts and cloudflare/document-object.ts.
 
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/http-api";
-import type { Log } from "../client/agent-log";
+import type { Log } from "../shared/agent-log";
 
 // ------------------------------------------------------------ failures
 
@@ -31,7 +31,7 @@ export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthoriz
 /** The embedded agent is off (no key), or its session didn't start. */
 export class AgentOff extends Schema.TaggedError<AgentOff>()("AgentOff", { ...failed, reason: Schema.String }, { httpApiStatus: 503 }) {}
 export class NoSuchModel extends Schema.TaggedError<NoSuchModel>()("NoSuchModel", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
-/** A message's attachments that can't be sent (client/attach.ts says why). */
+/** A message's attachments that can't be sent (shared/attach.ts says why). */
 export class BadAttachment extends Schema.TaggedError<BadAttachment>()("BadAttachment", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
 /** The scripted test model can't be switched. */
 export class ModelFixed extends Schema.TaggedError<ModelFixed>()("ModelFixed", { ...failed, reason: Schema.String }, { httpApiStatus: 409 }) {}

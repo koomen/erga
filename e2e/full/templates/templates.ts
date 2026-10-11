@@ -1,6 +1,6 @@
 // Helpers for the presentation tests: documents made from a
 // template, opened in the viewer or the editor, and the step controls under
-// them (server/routes.ts, STEPS_BOOT; agents/DOCUMENT_PROMPT.md, "Presentations").
+// them (server/routes.ts, STEPS_BOOT; editor-agent/PROMPT.md, "Presentations").
 //
 // The document's page runs in a frame on its own origin: in the viewer the
 // host page's visible frame (iframe.on, server/routes.ts), in the editor the page

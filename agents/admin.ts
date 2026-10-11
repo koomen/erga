@@ -1,5 +1,5 @@
 // The admin's agent, on every admin page: an agent panel like the editor's
-// (the same transcript, client/agent-log.ts, and the same panel,
+// (the same transcript, shared/agent-log.ts, and the same panel,
 // client/agent-chat.ts, run by client/admin-agent.ts). Its tools: the
 // admin tools of agents/tools.ts (`adminTools`): the settings on /admin,
 // their change log, the API keys (read, clear), sign-in (read, clear:
@@ -33,10 +33,10 @@
 import { Agent as PiAgent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import * as Redacted from "effect/Redacted";
 import { Type } from "typebox";
-import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "./document";
-import { fileRefs, messageContent, type Attachment } from "../client/attach";
-import { emptyLog, reduce, type Log, type LogEvent } from "../client/agent-log";
-import { agentName } from "../shared/doc";
+import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "../editor-agent/session";
+import { fileRefs, messageContent, type Attachment } from "../shared/attach";
+import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
+import { agentName } from "../document/content";
 import { runServerTool, SERVER_TOOLS, type ToolWho } from "./tools";
 import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../server/source/browse";
 

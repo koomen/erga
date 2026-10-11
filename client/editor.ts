@@ -23,7 +23,7 @@ import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode } from "@lezer/common";
 import * as M from "./manuscript";
 import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
-import { changesBetween } from "./merge";
+import { changesBetween } from "../document/merge";
 import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
 
@@ -60,7 +60,7 @@ const PROBLEM_WATCH = `<script data-erga>(function(){var q=window.__ergaProblems
 /**
  * Put in an HTML page's <head> after PROBLEM_WATCH: tells the page it's in the
  * editor and gives it `ergaEditor.apply(edits)` for its custom edits
- * (agents/DOCUMENT_PROMPT.md, "Custom edits"), which hands them to the editor once
+ * (editor-agent/PROMPT.md, "Custom edits"), which hands them to the editor once
  * it's there (`__ergaApply`).
  */
 const CUSTOM_EDITS_API = `<script data-erga>(function(){var q=[];window.__ergaApplyQueue=q;window.ergaEditor=Object.freeze({editing:true,apply:function(ops){return new Promise(function(done){window.__ergaApply?done(window.__ergaApply(ops)):q.push([ops,done])})}});document.documentElement.setAttribute("data-erga-editing","")})()</script>`;
@@ -371,7 +371,7 @@ function textIn(units: M.Unit[], from: number, to: number): string {
 
 type RawProblem = { kind: "resource"; tag: string; url: string } | { kind: "script"; message: string; file: string; line: number };
 
-/** A page that lets the editor pause it (agents/DOCUMENT_PROMPT.md, rule 10). */
+/** A page that lets the editor pause it (editor-agent/PROMPT.md, rule 10). */
 type PausableWindow = Window & { ergaPause?: unknown };
 
 /** A problem the page reported, in words, with a prompt for the agent to fix it. */

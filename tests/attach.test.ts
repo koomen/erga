@@ -1,6 +1,6 @@
 // The rules for files attached to an agent message.
 import { expect, test } from "bun:test";
-import { checkAttachments, classify, fileRefs, MAX_FILES, MAX_IMAGE_DATA, MAX_TEXT_BYTES, messageContent, refusal } from "../client/attach";
+import { checkAttachments, classify, fileRefs, MAX_FILES, MAX_IMAGE_DATA, MAX_TEXT_BYTES, messageContent, refusal } from "../shared/attach";
 
 test("images and text-like files can be attached; others can't", () => {
   expect(classify("shot.png", "image/png")).toEqual({ kind: "image", mimeType: "image/png" });

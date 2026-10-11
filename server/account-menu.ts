@@ -12,7 +12,7 @@
 // pages origin never gets it: nothing of the person belongs there.
 
 import { esc, link, safeNext, type Session } from "./routes.ts";
-import { colorFor } from "../shared/doc.ts";
+import { colorFor } from "../document/content.ts";
 
 /** A response header: this page shows the account itself (the editor), so leave it be. */
 export const OWN_ACCOUNT = "x-erga-own-account";

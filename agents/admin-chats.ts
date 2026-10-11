@@ -8,7 +8,7 @@
 // API would refuse.
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { emptyLog, type Log, type LogItem } from "../client/agent-log";
+import { emptyLog, type Log, type LogItem } from "../shared/agent-log";
 
 /** The most a stored transcript, or the model's messages, takes (a SQLite value in a Durable Object is at most 2 MB). */
 export const CHAT_BUDGET = 900_000;

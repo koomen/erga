@@ -13,7 +13,7 @@ import * as Redacted from "effect/Redacted";
 import { startAdminAgent } from "../agents/admin.ts";
 import { Directory, type Param, type Sql } from "../server/directory.ts";
 import { makeHost } from "../server/doc-host.ts";
-import { FileStore, Room, StateStore } from "../server/room.ts";
+import { FileStore, Room, StateStore } from "../document/room.ts";
 import { agentSettingsFrom, UNREADABLE_KEY } from "../cloudflare/agent-settings.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

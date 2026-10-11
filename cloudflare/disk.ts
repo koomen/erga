@@ -11,7 +11,7 @@
 
 import * as Effect from "effect/Effect";
 import type { FromDisk, ToDisk } from "../dev/mirror";
-import { FileStore, StoreError } from "../server/room";
+import { FileStore, StoreError } from "../document/room";
 
 type Ask = { t: "list" } | { t: "read"; path: string } | { t: "write"; path: string; text?: string; b64?: string }
   | { t: "remove"; path: string } | { t: "folders" } | { t: "mkdir"; path: string } | { t: "rmdir"; path: string };

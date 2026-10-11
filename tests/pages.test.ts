@@ -8,10 +8,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
-import { FileStore, Room, StateStore, joinLocal } from "../server/room";
+import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import { relativeUrl, runTreeOp } from "../server/doc-host";
-import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, TreeError, treeEntries } from "../shared/tree";
-import { files, folders } from "../shared/doc";
+import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, TreeError, treeEntries } from "../document/pages";
+import { files, folders } from "../document/content";
 
 test("an address is <path>.html, then <path>/index.html; never with a slash added", () => {
   const all = new Set(["index.html", "about.html", "blog/index.html", "blog/post.html", "notes/index.md", "style.css", "deep/a/b.html"]);

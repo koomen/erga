@@ -14,8 +14,8 @@
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import type { ChangeSet } from "@codemirror/state";
-import { applyChanges, assets, authorOf, deltaToChanges, files, hasSeen, introduce, roomInfo, stamp, stateVector, type Author } from "../shared/doc";
-import { changesBetween } from "./merge";
+import { applyChanges, assets, authorOf, deltaToChanges, files, hasSeen, introduce, roomInfo, stamp, stateVector, type Author } from "../document/content";
+import { changesBetween } from "../document/merge";
 import { BASE } from "./base";
 
 /** Someone in the room, from awareness. */

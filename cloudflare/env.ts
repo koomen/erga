@@ -1,7 +1,7 @@
 import type { ArtifactsBinding } from "./artifacts";
 import type { AdminAgentHost } from "./admin-agent-host";
 import type { Deployer } from "./deploy-session";
-import type { DocHost } from "./doc-host";
+import type { DocHost } from "./document-object";
 import type { SourceHost } from "./source-host";
 import type { Pipeline } from "./pipeline";
 import type { Home } from "./home";
@@ -121,7 +121,7 @@ export interface Env {
   ERGA_HOME_RECHECK_MS?: string;
   /** Local development only: how long after an edit the room writes it (tests shorten it). */
   ERGA_WRITE_DELAY_MS?: string;
-  /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; server/versions.ts). */
+  /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; document/versions.ts). */
   ERGA_VERSION_IDLE_MS?: string;
   ERGA_VERSION_MAX_MS?: string;
 }

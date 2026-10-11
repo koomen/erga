@@ -38,7 +38,7 @@ const PAGE = /\.(html|md)$/i;
 /** Whether a file is a page: .html or .md. */
 export const isPage = (path: string) => PAGE.test(path);
 
-/** Paths a document never holds or serves: dotfiles and node_modules (shared/doc.ts says the same). */
+/** Paths a document never holds or serves: dotfiles and node_modules (document/content.ts says the same). */
 const ignoredSeg = (seg: string) => seg.startsWith(".") || seg == "node_modules";
 
 /**

@@ -22,7 +22,7 @@
 //     current and the published one marked. Edit, on hover or focus, makes a
 //     copy of a version the current one (POST .../versions/<id>/restore).
 //
-// It talks to the server's API as the shared contract says (server/versions.ts
+// It talks to the server's API as the shared contract says (document/versions.ts
 // server/home.ts and server/site-publish.ts), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "site" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only, with a line saying why: what

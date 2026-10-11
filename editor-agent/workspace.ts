@@ -17,8 +17,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Y from "yjs";
-import { changesBetween, rebase } from "../client/merge";
-import { applyChanges, assets, files, folders, stamp, type Author } from "../shared/doc";
+import { changesBetween, rebase } from "../document/merge";
+import { applyChanges, assets, files, folders, stamp, type Author } from "../document/content";
 
 export interface Workspace {
   read(path: string): Effect.Effect<string, WorkspaceError>;
@@ -62,7 +62,7 @@ export class YjsWorkspace implements Workspace {
 
   constructor(
     private doc: Y.Doc,
-    /** Who its edits are by (a function: an outside agent's calls are by it, via its token: agents/document.ts). */
+    /** Who its edits are by (a function: an outside agent's calls are by it, via its token: editor-agent/session.ts). */
     private me: Author | (() => Author),
     /** The agent acts with its user's permissions, checked as it acts. */
     private canEdit: () => boolean,

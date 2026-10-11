@@ -16,17 +16,17 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
-import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "../agents/document";
-import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "../shared/doc-api";
+import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "../editor-agent/session";
+import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "../document/api";
 import type { DocName, Naming } from "./directory";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { digest, StoreError, type FileStore, type Room } from "./room";
+import { digest, StoreError, type FileStore, type Room } from "../document/room";
 import { titleOf } from "./routes";
-import { checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "../shared/tree";
-import { ignored, isTextPath as isTextFile } from "../shared/doc";
-import { viewWait, type ViewRequest, type ViewResult } from "../client/agent-log";
-import { checkAttachments } from "../client/attach";
-import type { VersionsAccess } from "../agents/document";
+import { checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "../document/pages";
+import { ignored, isTextPath as isTextFile } from "../document/content";
+import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
+import { checkAttachments } from "../shared/attach";
+import type { VersionsAccess } from "../editor-agent/session";
 
 export interface HostOptions {
   readonly room: Room;
@@ -56,7 +56,7 @@ export interface HostOptions {
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
   readonly avatarOf?: (person: { id: string; name: string }) => string | undefined;
-  /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/doc-host.ts). */
+  /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/document-object.ts). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
   /** Whether a request may publish a file (PUT /api/stored): everyone, if not given. */
   readonly mayPublish?: (request: HttpServerRequest.HttpServerRequest) => boolean;
@@ -105,7 +105,7 @@ export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase()
  * before it's used (no-cache), so a page always loads the latest version, but
  * by its digest (ETag), so a file that hasn't changed since the browser last
  * had it comes back as a 304 with no body. Shared by the host's route and the
- * Durable Object's own (cloudflare/doc-host.ts, which serves stored files before
+ * Durable Object's own (cloudflare/document-object.ts, which serves stored files before
  * the room is open).
  */
 export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | null): { status: number; type: string; headers: Record<string, string>; body: Uint8Array | null } {

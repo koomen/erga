@@ -18,5 +18,5 @@
 
 - **Let a document extend the editor.** Widen the contract between a document
   and the editor (today mostly `data-erga-noedit` and the rules in
-  `agents/DOCUMENT_PROMPT.md`) so a document can add to the editor itself, not just
+  `editor-agent/PROMPT.md`) so a document can add to the editor itself, not just
   mark what it can't touch.

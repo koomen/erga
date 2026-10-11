@@ -4,7 +4,7 @@
 //   the admin agent     (agents/admin.ts: on every /admin page) everything on /admin: the settings, the API keys,
 //                       sign-in (Authentication), the change log, the users, the dashboard of source and deploys (Source), the
 //                       homepage's deploy, and the admin's own agent tokens (/settings)
-//   the document agent  (agents/document.ts, with agents/tools.ts: in the editor) everything a person does with a document in
+//   the document agent  (editor-agent/session.ts, with agents/tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
 //
 // The one exception is a secret: an API key, a GitHub app's secret, a new agent token is pasted

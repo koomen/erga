@@ -5,7 +5,7 @@
 
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import { agentConfigFrom, type AgentConfig } from "../agents/document";
+import { agentConfigFrom, type AgentConfig } from "../editor-agent/session";
 import { CREDENTIALS, type Credentials } from "../server/api-keys";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";

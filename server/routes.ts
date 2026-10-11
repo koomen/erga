@@ -15,7 +15,7 @@
 //                              Clone, and Edit for those who may edit it
 //   /<owner>/<slug>#edit       the editor on it, under Documents (its breadcrumbs): the same page, which
 //                              goes into the editor for #edit (the server never sees it)
-//   /<owner>/<slug>/<page>     another of its pages (shared/tree.ts: blog is blog.html, else blog/index.html), #edit
+//   /<owner>/<slug>/<page>     another of its pages (document/pages.ts: blog is blog.html, else blog/index.html), #edit
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
 //                              redirect there
@@ -47,8 +47,8 @@ import { type Directory, type DocRow, type Grant, type Permission, type Role, ty
 import type { AgentToken, Tokens } from "./tokens.ts";
 import type { AuthOps } from "./auth.ts";
 
-import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "./versions.ts";
-import { pageAddress, resolvePage } from "../shared/tree.ts";
+import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "../document/versions.ts";
+import { pageAddress, resolvePage } from "../document/pages.ts";
 import { FAVICON_LINK, WORDMARK } from "../assets/logo/logo.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
 
@@ -464,7 +464,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
     const view = url.searchParams.get("view");
     const files = `/t/${token}/doc/`;
-    // The page as it renders is what viewers see (pub/: the published version, or the files as they are now; server/versions.ts).
+    // The page as it renders is what viewers see (pub/: the published version, or the files as they are now; document/versions.ts).
     const shown = `/t/${token}/${VIEW_FILES}/`;
     const src = view == "" ? shown : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${shown}${view.split("/").map(encodeURIComponent).join("/")}` : "";
     // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
@@ -705,7 +705,7 @@ const HOST_SCRIPT = `(function () {
     if (from.id == "view") from.remove();
   }
   window.ergaHost = { ready: function () { if (want == "edit") show(page()); } };
-  // A presentation (agents/DOCUMENT_PROMPT.md, "Presentations"): the page shown says it has steps (window.ergaSteps). This tells
+  // A presentation (editor-agent/PROMPT.md, "Presentations"): the page shown says it has steps (window.ergaSteps). This tells
   // the shell how many, their labels and the current one (STEPS_BOOT shows them) whenever that changes, goes to a step or
   // draws one when the shell asks, and steps with the arrow keys pressed in the page. "rev" changes whenever a step's
   // picture may have changed: another page shown, the document edited (ergaHost.changed, frame.ts), different steps.
@@ -1333,7 +1333,7 @@ const EDIT_BOOT = `(() => {
 /**
  * A presentation's steps, on a document's page (viewDocument), viewing and
  * editing alike: the frame's host page says when the page shown has steps
- * (HOST_SCRIPT: erga-steps; agents/DOCUMENT_PROMPT.md, "Presentations"), and this
+ * (HOST_SCRIPT: erga-steps; editor-agent/PROMPT.md, "Presentations"), and this
  * shows back and forward under the page, the step it's at, and a list of the
  * steps that opens over its right side. The arrow keys step too, pressed here
  * or in the page (the host page's), except in text. The list shows each step's

@@ -5,7 +5,7 @@ import { mkdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ViewResult } from "../../../client/agent-log";
+import type { ViewResult } from "../../../shared/agent-log";
 import { ROOT } from "../../env";
 import { expect, servers, type Tab } from "../../fixtures";
 import { editor, type Editor } from "../../editor";

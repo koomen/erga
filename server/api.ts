@@ -28,16 +28,16 @@
 // Tools are a registry (`TOOLS`): a name, a description, arguments as JSON
 // Schema and a `run`, given who's asking and the platform. Adding one is
 // adding an entry; REST, MCP and the guide all list it. The document tools
-// (read, edit, write, ... from agents/document.ts) are added with a `document`
+// (read, edit, write, ... from editor-agent/session.ts) are added with a `document`
 // argument and run in that document's host, as the person's agent. The
 // tools the editor's own agent has too (agents/tools.ts: sharing, and the
 // server's settings and users for an admin) are added as they are; the admin
 // ones are listed only for an admin's token.
 
 import { validateToolArguments } from "@mariozechner/pi-ai";
-import { documentToolSpecs, type ToolContent, type ToolSpec } from "../agents/document";
+import { documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
 import { type Action, type DocRow, type Route, nameOf, roleMay } from "./directory";
-import type { PublishRequest } from "./versions";
+import type { PublishRequest } from "../document/versions";
 import { accessOf, appPage, crumbs, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./routes";
 import { byLine, VIA } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";

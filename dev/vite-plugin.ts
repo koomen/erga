@@ -32,7 +32,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { ALPHABET } from "../server/routes.ts";
-import { ignored } from "../shared/doc.ts";
+import { ignored } from "../document/content.ts";
 import { gitServers } from "./git-server.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
@@ -67,7 +67,7 @@ export function ergaDev(opts: DevOptions): Plugin {
     // The Worker's code changed (any environment but the browser's): Vite reloads it, then the tabs reload.
     hotUpdate({ file }) {
       // The editor's own sources reload the tabs once client/build.sh has rebuilt them (watchEditor), not before.
-      const editor = ["client/"].some((p) => file.startsWith(join(ROOT, p)));
+      const editor = ["client/", "shared/", "document/"].some((p) => file.startsWith(join(ROOT, p)));
       if (live && !editor && this.environment.name != "client") live.reload(`${file.startsWith(ROOT + sep) ? file.slice(ROOT.length + 1) : file} changed`);
     },
     configureServer(server) {
@@ -413,7 +413,7 @@ class Mirror {
  * watchers also report files merely touched. Returns the way to stop.
  */
 function watchEditor(log: (line: string) => void, built: () => void): () => void {
-  const SOURCES = [["client", true]] as const;
+  const SOURCES = [["client", true], ["shared", true], ["document", true]] as const;
   /** The newest modification among the sources. */
   const newest = async () => {
     let t = 0;

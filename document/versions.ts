@@ -2,7 +2,7 @@
 // script and image), cut now and then as it's edited, and which of them its
 // viewers see (publishing).
 //
-// Storage is the document's own (its Durable Object, cloudflare/doc-host.ts),
+// Storage is the document's own (its Durable Object, cloudflare/document-object.ts),
 // behind the small `KV` interface so the unit tests run it on a Map. Files are
 // content-addressed blobs (`b:<sha-256>`), shared by every version that has
 // them, so a version that changes one file stores that one file; a version
@@ -260,7 +260,7 @@ export function fallbackDescription(c: Pick<Changes, "added" | "removed" | "chan
   return verbs.length ? verbs.slice(0, 2).join(", ") : "No changes";
 }
 
-/** The model that writes descriptions: the latest Sonnet (agents/document.ts's MODELS.sonnet). */
+/** The model that writes descriptions: the latest Sonnet (editor-agent/session.ts's MODELS.sonnet). */
 export const DESCRIBE_MODEL = "claude-sonnet-5-5";
 
 /**

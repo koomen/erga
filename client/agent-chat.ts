@@ -6,8 +6,8 @@
 // "Not sent" and a way to try again). The styles are style.css's (.agent-log,
 // .msg-*), so both panels look the same.
 
-import { emptyLog, reduce, type Log, type LogEvent, type LogItem } from "./agent-log";
-import type { FileRef } from "./attach";
+import { emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../shared/agent-log";
+import type { FileRef } from "../shared/attach";
 import { fileChip } from "./attach-ui";
 
 export const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);

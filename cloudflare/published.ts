@@ -7,7 +7,7 @@
 // someone leaving). The document's host calls `publishedChanged` whenever it
 // fires `firePublished`.
 
-import { publishedFiles as versionsFiles } from "../server/versions";
+import { publishedFiles as versionsFiles } from "../document/versions";
 import type { Env } from "./env";
 
 /** A document's published version: its page, its files and the version's number. */

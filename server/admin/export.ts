@@ -16,7 +16,7 @@
 
 import { NotAllowed, type Permission, type DocRow } from "../directory.ts";
 import type { Platform } from "../routes.ts";
-import type { PublishMode, Version } from "../versions.ts";
+import type { PublishMode, Version } from "../../document/versions.ts";
 
 export interface ExportedFile { text?: string; base64?: string }
 export interface ExportedDocument {

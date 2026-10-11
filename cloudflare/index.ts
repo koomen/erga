@@ -72,7 +72,7 @@ import { adminsOnlyGate } from "./admins-only";
 import { releaseApi, withLive } from "./live";
 
 export { Deployer } from "./deploy-session";
-export { DocHost } from "./doc-host";
+export { DocHost } from "./document-object";
 export { AdminAgentHost } from "./admin-agent-host";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";

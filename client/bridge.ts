@@ -22,7 +22,7 @@ import { history } from "@codemirror/commands";
 import { markdownLanguage } from "@codemirror/lang-markdown";
 import { LanguageSupport } from "@codemirror/language";
 import type { InlineStyle, Kind, MarkAuthor, Peer } from "./editor";
-import type { ViewRequest, ViewResult } from "./agent-log";
+import type { ViewRequest, ViewResult } from "../shared/agent-log";
 
 /**
  * What the frame's editor state needs: the history (undo, shared with the

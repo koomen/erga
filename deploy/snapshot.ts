@@ -12,7 +12,7 @@
 //   POST /api/snapshot/docs/import   {docs, wipe}   → {imported, wiped}   only with SNAPSHOT_IMPORT=1 and never on production
 //
 // A document's snapshot is every key in its storage (its files, folders,
-// meta, its versions and the room's Yjs state: cloudflare/doc-host.ts) and its
+// meta, its versions and the room's Yjs state: cloudflare/document-object.ts) and its
 // alarm (when an unedited one expires). Values go as JSON, bytes as base64.
 // The export only reads (DocHost.exportStorage: storage.list and getAlarm,
 // nothing opened); the import empties the document's storage and writes the

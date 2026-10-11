@@ -7,7 +7,7 @@
 // hint that says why (attach.ts has the rules). The styles are style.css's
 // (.agent-attachments, .agent-attach, .agent-drop).
 
-import { classify, fileRefs, kb, MAX_FILES, MAX_IMAGE_DATA, refusal, type Attachment, type FileRef } from "./attach";
+import { classify, fileRefs, kb, MAX_FILES, MAX_IMAGE_DATA, refusal, type Attachment, type FileRef } from "../shared/attach";
 
 export interface AttachOptions {
   /** The whole panel: drops anywhere on it attach. */

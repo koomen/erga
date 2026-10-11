@@ -1,5 +1,5 @@
 // The page editor's shell: joins the document's room (its Durable Object,
-// cloudflare/doc-host.ts) as one participant among others, renders the document in the
+// cloudflare/document-object.ts) as one participant among others, renders the document in the
 // page editor, sends every edit to the room as you type and applies everyone
 // else's (people and their agents) as they land, shows who's here and where
 // their carets are, and offers the same quiet chrome as the Markdown editor:
@@ -18,19 +18,19 @@ import { tags as t } from "@lezer/highlight";
 import { ms, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
 import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "./bridge";
-import { changesBetween } from "./merge";
+import { changesBetween } from "../document/merge";
 import { Collab, type Presence } from "./collab";
-import { colorFor, files, type Author } from "../shared/doc";
+import { colorFor, files, type Author } from "../document/content";
 import type { mountTree, TreeHandle } from "./pages-tree";
-import { type Log, type LogEvent, type ViewRequest, type ViewResult } from "./agent-log";
+import { type Log, type LogEvent, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { chat, escapeHtml } from "./agent-chat";
-import { fileRefs, type Attachment } from "./attach";
+import { fileRefs, type Attachment } from "../shared/attach";
 import { attachments } from "./attach-ui";
-import type { AgentState, DocInfo, DocName, ModelState } from "../shared/doc-api";
+import type { AgentState, DocInfo, DocName, ModelState } from "../document/api";
 import { BASE } from "./base";
 import { shareWithAgent } from "./share-agent";
 import type { Settings } from "./settings";
-import { dirOf, isPage, pageUrl } from "../shared/tree";
+import { dirOf, isPage, pageUrl } from "../document/pages";
 import { mountLayout } from "./layout";
 import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
@@ -455,7 +455,7 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // ---------------------------------------------------------------- pages
 
-  // The document's pages: the title opens them, as a tree (shared/tree.ts, built on
+  // The document's pages: the title opens them, as a tree (document/pages.ts, built on
   // its own as pages-tree.js, so viewing never pays for it). Its first row is
   // the document itself, whose pencil renames it (the naming card above); the
   // rest are its other pages, folders and files. Pages open in the editor; the
@@ -676,9 +676,9 @@ type TreeModule = { mountTree: typeof mountTree };
   let opened = false;
   listen();
 
-  // The document's file tree changed (anyone's doing: shared/tree.ts). Whatever shows the tree hears it as an
+  // The document's file tree changed (anyone's doing: document/pages.ts). Whatever shows the tree hears it as an
   // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
-  // fetches it again (the tree, shared/tree.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
+  // fetches it again (the tree, document/pages.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
   function treeChanged(msg: { moved?: { from: string; to: string }; deleted?: string }) {
     window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree", ...msg } }));
     const under = (p: string) => pagePath == p || pagePath.startsWith(`${p}/`);
@@ -1714,7 +1714,7 @@ Once you've read the guide, await further instructions.`;
 
   // Pausing the page: a page that reacts to clicks and keys (slides that
   // advance on click, a game) gets in the way of editing its text. If it
-  // defines window.ergaPause (agents/DOCUMENT_PROMPT.md, rule 10), the pause button
+  // defines window.ergaPause (editor-agent/PROMPT.md, rule 10), the pause button
   // tells it to stop, and only the editor answers clicks until it resumes.
   // A page that can't be paused gets the button disabled, with a card that
   // offers to have the agent make it pausable.

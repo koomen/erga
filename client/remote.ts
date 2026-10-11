@@ -9,8 +9,8 @@ import { EditorState, Transaction, type ChangeSet, type Extension } from "@codem
 import { historyField } from "@codemirror/commands";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
 import type { InlineStyle, Kind, MarkAuthor, PageProblem, Peer } from "./editor";
-import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "./agent-log";
-import { changesBetween } from "./merge";
+import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
+import { changesBetween } from "../document/merge";
 
 export interface RemotePageConfig {
   frame: HTMLIFrameElement;

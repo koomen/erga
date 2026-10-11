@@ -18,9 +18,9 @@
 // by client/build.sh to admin-agent.js.
 
 import { chat } from "./agent-chat";
-import { fileRefs, type Attachment } from "./attach";
+import { fileRefs, type Attachment } from "../shared/attach";
 import { attachments } from "./attach-ui";
-import type { Log, LogEvent } from "./agent-log";
+import type { Log, LogEvent } from "../shared/agent-log";
 import { mountPaneLayout, type PaneLayout } from "./layout";
 import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
