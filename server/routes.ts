@@ -40,7 +40,7 @@
 // here; the document's alarm applies it.
 
 import type { SiteOps } from "./site-publish.ts";
-import { OWN_ACCOUNT } from "./account-menu.ts";
+import { avatarsOf, OWN_ACCOUNT } from "./account-menu.ts";
 import { adminDoor } from "./admin/pages.ts";
 import { VIA } from "../shared/attribution.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
@@ -1829,7 +1829,8 @@ async function deleteDoc(platform: Platform, request: Request): Promise<Response
  * documents ("editor" or "viewer"; login "*" is anyone signed in who has the
  * link), or takes it away (role "none" or empty). Only its owner may. Answers
  * JSON: everyone's permissions now, and which of them can't sign in yet
- * (`notUsers`: not users of this server), or the error. GET /docs/share?id=
+ * (`notUsers`: not users of this server), each one's picture (`avatars`, by
+ * login: their GitHub picture), or the error. GET /docs/share?id=
  * answers the same without changing anything (the list's share dialog).
  */
 async function shareDoc(platform: Platform, request: Request): Promise<Response> {
@@ -1838,7 +1839,7 @@ async function shareDoc(platform: Platform, request: Request): Promise<Response>
   const url = new URL(request.url);
   const answer = async (permissions: Permission[]) => {
     const notUsers = (await Promise.all(permissions.map(async (p) => (p.login == "*" || (await platform.directory.users.allowed(p.login)) ? null : p.login)))).filter((l) => l != null);
-    return Response.json({ permissions, notUsers });
+    return Response.json({ permissions, notUsers, avatars: avatarsOf(permissions.map((p) => p.login)) });
   };
   if (request.method == "GET") {
     const id = url.searchParams.get("id") ?? "";
@@ -2100,7 +2101,8 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   .people { list-style: none; margin: 0 0 14px; padding: 0; max-height: 40vh; overflow: auto; }
   .people li { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--rule); }
   .people li:last-child { border-bottom: 1px solid var(--rule); }
-  .people .face { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 12px; font-weight: 600; color: var(--soft); background: color-mix(in srgb, var(--chrome) 16%, transparent); text-transform: uppercase; }
+  .people .face { position: relative; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; font-size: 12px; font-weight: 600; color: var(--soft); background: color-mix(in srgb, var(--chrome) 16%, transparent); text-transform: uppercase; }
+  .people .face img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .people .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong); }
   .people .who small { margin-left: 6px; font-size: 12px; color: var(--soft); }
   .people .pending { color: #c2410c; }
@@ -2157,7 +2159,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     for (const [v, t] of ROLES) s.append(el("option", { value: v, textContent: t, selected: v == role }));
     return s;
   };
-  function render({ permissions, notUsers }) {
+  function render({ permissions, notUsers, avatars }) {
     people.replaceChildren();
     const pending = new Set(notUsers || []);
     let all = "none";
@@ -2166,7 +2168,10 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
       const who = el("span", { className: "who", textContent: p.login });
       if (p.login == me) who.append(el("small", { textContent: "you" }));
       if (pending.has(p.login)) who.append(el("small", { className: "pending", textContent: "can't sign in yet", title: "Not a user of this server: an admin can add them" }));
-      const li = el("li", {}, el("span", { className: "face", ariaHidden: "true", textContent: p.login[0] }), who);
+      const face = el("span", { className: "face", ariaHidden: "true", textContent: p.login[0] });
+      const pic = avatars?.[p.login];
+      if (pic) { const img = el("img", { src: pic, alt: "", draggable: false }); img.addEventListener("error", () => img.remove()); face.append(img); }
+      const li = el("li", {}, face, who);
       if (p.role == "owner") li.append(el("span", { className: "fixed", textContent: "Owner" }));
       else {
         const s = roleSelect(p.role, "Role for " + p.login);

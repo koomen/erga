@@ -937,7 +937,7 @@ Once you've read the guide, await further instructions.`;
   const shareAt = document.querySelector<HTMLMetaElement>('meta[name="erga-share"]')?.content ?? "";
   const docId = BASE.replace(/^\/d\//, "");
   $("sharing-people").hidden = !shareAt;
-  type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[] };
+  type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string> };
   const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
   async function shareCall(change?: { login: string; role: string }): Promise<Shared> {
     const r = await fetch(change ? shareAt : `${shareAt}${shareAt.includes("?") ? "&" : "?"}id=${docId}`,
@@ -946,7 +946,7 @@ Once you've read the guide, await further instructions.`;
     if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
     return body as Shared;
   }
-  function renderSharing({ permissions, notUsers }: Shared) {
+  function renderSharing({ permissions, notUsers, avatars }: Shared) {
     sharingList.textContent = "";
     const pending = new Set(notUsers ?? []);
     let anyone = "none";
@@ -956,6 +956,13 @@ Once you've read the guide, await further instructions.`;
       const face = Object.assign(document.createElement("span"), { className: "face", textContent: p.login.slice(0, 1).toUpperCase() });
       face.setAttribute("aria-hidden", "true");
       face.style.setProperty("--c", colorFor(p.login));
+      // Their picture, as the header's avatars show it; the initial stays under it, and shows if it doesn't load.
+      const picture = avatars?.[p.login] && pictureOf({ avatar: avatars[p.login] } as Author);
+      if (picture) {
+        const img = Object.assign(document.createElement("img"), { src: picture, alt: "", draggable: false });
+        img.addEventListener("error", () => img.remove());
+        face.append(img);
+      }
       li.append(face);
       const who = Object.assign(document.createElement("span"), { className: "who", textContent: p.login });
       if (p.login == me.user) who.append(Object.assign(document.createElement("small"), { textContent: "you" }));

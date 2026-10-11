@@ -304,8 +304,8 @@
     .sharing-list .fixed { padding-left: 9px; font-size: 12.5px; color: var(--soft); }
     .sharing-list .remove { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--chrome); cursor: pointer; font-size: 16px; line-height: 1; }
     .sharing-list .remove:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-    .sharing .face { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; font: 600 11px/1 var(--font-text); color: #fff; background: var(--c, var(--chrome)); }
-    .sharing .face img { width: 100%; height: 100%; object-fit: cover; }
+    .sharing .face { position: relative; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; font: 600 11px/1 var(--font-text); color: #fff; background: var(--c, var(--chrome)); }
+    .sharing .face img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .sharing .face.anyone { color: var(--soft); background: color-mix(in srgb, var(--chrome) 16%, transparent); }
     .sharing .face.anyone svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
     .sharing-anyone { align-items: start; padding-top: 4px; }

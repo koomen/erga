@@ -33,13 +33,17 @@ test("your avatar, far right of the editor's controls with your GitHub picture, 
   expect(await page.evaluate(() => { const e = document.getElementById("btn-edit")!; return { pressed: e.getAttribute("aria-pressed"), hidden: e.hidden, href: e.getAttribute("href") }; })).toEqual({ pressed: "true", hidden: false, href: at.replace(/#edit$/, "") });
 });
 
-test("its owner adds someone, sees them listed with their role, and takes them off; the controls, left to right up to your avatar", async ({ tab }) => {
+test("its owner adds someone, sees them listed with their role and picture, and takes them off; the controls, left to right up to your avatar", async ({ tab }) => {
   const page = tab.page;
+  // GitHub's pictures, served here (a 1×1 PNG), so a picture that fails offline doesn't take itself off.
+  await page.route(/^https:\/\/avatars\.githubusercontent\.com\//, (r) => r.fulfill({ contentType: "image/png", body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64") }));
   await editing(page);
   await clickOn(page, "#btn-share");
   await until(() => page.evaluate(() => !document.getElementById("sharing")!.hidden && !!document.querySelector("#sharing-list li")), 5000, "the Share button opens who has the document");
   await page.evaluate(() => { const f = document.getElementById("sharing-add") as HTMLFormElement; (f.elements.namedItem("login") as HTMLInputElement).value = "ada"; (f.elements.namedItem("role") as HTMLSelectElement).value = "viewer"; f.requestSubmit(); });
   await until(() => page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada") && li.querySelector("select")?.value == "viewer")), 5000, "adding someone lists them, with their role");
+  // Each person shows their own GitHub picture (the owner, and whom it's shared with), as the header's avatar does.
+  expect(await page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].map((li) => li.querySelector(".face img")?.getAttribute("src")))).toEqual(["https://avatars.githubusercontent.com/tester?s=64", "https://avatars.githubusercontent.com/ada?s=64"]);
   await page.evaluate(() => ([...document.querySelectorAll("#sharing-list li")].find((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))!.querySelector(".remove") as HTMLElement).click());
   await until(() => page.evaluate(() => ![...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))), 5000, "taking them off unlists them");
   const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden])")].map((e) => e.id).join(" "));
