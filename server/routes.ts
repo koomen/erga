@@ -544,6 +544,8 @@ const HOST_SCRIPT = `(function () {
   // pointer is over it (in this page's coordinates; the shell places them), at most once a frame.
   // (Exactly too, sx and sy, for the canvas the shell paints around the frame: see canvasOf.)
   var scrolled = null, pointer = null;
+  // The scale the editor draws the page at (client/zoom.ts: the page zoomed, not the controls): its points, in this page's terms.
+  function scale(f) { var w = f.offsetWidth; return w ? f.getBoundingClientRect().width / w || 1 : 1; }
   function report(f) {
     try {
       if (!f.classList.contains("on")) return;
@@ -560,10 +562,11 @@ const HOST_SCRIPT = `(function () {
       d.addEventListener("pointermove", function (e) {
         if (e.pointerType != "mouse" || !f.classList.contains("on")) return;
         if (!pointer) requestAnimationFrame(function () { parent.postMessage({ type: "erga-pointer", x: pointer.x, y: pointer.y }, SHELL); pointer = null; });
-        pointer = { x: e.clientX, y: e.clientY };
+        var k = scale(f);
+        pointer = { x: e.clientX * k, y: e.clientY * k };
       }, { capture: true, passive: true });
       d.addEventListener("pointerdown", function (e) {
-        if (e.pointerType != "mouse" && f.classList.contains("on")) parent.postMessage({ type: "erga-pointer", x: e.clientX, y: e.clientY, tap: true }, SHELL);
+        if (e.pointerType != "mouse" && f.classList.contains("on")) parent.postMessage({ type: "erga-pointer", x: e.clientX * scale(f), y: e.clientY * scale(f), tap: true }, SHELL);
       }, { capture: true, passive: true });
       report(f);
     } catch (e) {}
@@ -656,9 +659,11 @@ const HOST_SCRIPT = `(function () {
       if ((!whole || /^repeating-/.test(images[i])) && repeats[i % repeats.length] != "no-repeat") tile = true;
     }
     if (images.every(function (v) { return v == "none"; })) return c;
-    var fr = f.getBoundingClientRect(), r = root.getBoundingClientRect(), fixed = /fixed/.test(cs.backgroundAttachment);
+    // (In the page's own terms, the frame's box too; the shell draws them at the page's scale, c.zoom.)
+    var b = f.getBoundingClientRect(), k = scale(f), fr = { left: b.left / k, top: b.top / k, width: b.width / k, height: b.height / k };
+    var r = root.getBoundingClientRect(), fixed = /fixed/.test(cs.backgroundAttachment);
     c.image = images.join(", "); c.size = cs.backgroundSize; c.position = cs.backgroundPosition; c.repeat = cs.backgroundRepeat;
-    c.tile = tile; c.fixed = fixed;
+    c.tile = tile; c.fixed = fixed; c.zoom = k;
     c.x = fixed ? fr.left : fr.left + r.left + w.scrollX; c.y = fixed ? fr.top : fr.top + r.top + w.scrollY;
     c.w = fixed ? fr.width : r.width; c.h = fixed ? fr.height : r.height;
     return c;
@@ -1130,7 +1135,12 @@ const BAND_BOOT = `(() => {
   const room = document.querySelector(".erga-canvas"), sheet = room.firstElementChild, KEY = "erga:canvas:v1:" + id, FAR = 4000;
   let canvas = null, urls = [], sx = 0, sy = 0;
   const px = (n) => (Number.isFinite(n) ? n : 0) + "px";
-  function scrolled() { sheet.style.transform = canvas && !canvas.fixed ? \`translate(\${px(-sx)}, \${px(-sy)})\` : ""; }
+  // (At the page's scale, when the editor zooms it: client/zoom.ts.)
+  function scrolled() {
+    const k = canvas ? canvas.zoom : 1, at = canvas && !canvas.fixed ? \`translate(\${px(-sx * k)}, \${px(-sy * k)})\` : "";
+    sheet.style.transformOrigin = "0 0";
+    sheet.style.transform = k == 1 ? at : \`\${at} scale(\${k})\`;
+  }
   function paintCanvas(c, files) {
     for (const u of urls) URL.revokeObjectURL(u);
     urls = [];
@@ -1175,7 +1185,8 @@ const BAND_BOOT = `(() => {
         sheet.append(b);
       }
     }
-    canvas = { fixed: !!c.fixed };
+    const zoom = Number(c.zoom);
+    canvas = { fixed: !!c.fixed, zoom: zoom >= 0.25 && zoom <= 5 ? zoom : 1 };
     scrolled();
   }
   try { const kept = JSON.parse(localStorage.getItem(KEY) || "null"); if (kept) paintCanvas(kept, []); } catch (e) {}

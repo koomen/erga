@@ -11,6 +11,7 @@ import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type F
 import type { InlineStyle, Kind, MarkAuthor, PageProblem, Peer } from "./editor";
 import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { changesBetween } from "../document/merge";
+import { clampZoom, type ZoomBy } from "./zoom";
 
 export interface RemotePageConfig {
   frame: HTMLIFrameElement;
@@ -40,6 +41,8 @@ export interface RemotePageConfig {
   onBackdrop: (b: Backdrop) => void;
   /** The page needs rendering again to show the latest change. */
   onStale: () => void;
+  /** A zoom gesture on the page (zoom.ts): the shell sets the level (setZoom). */
+  onZoom?: (zoom: ZoomBy) => void;
   /** Where the caret starts, and where the page is scrolled to once it renders (a reload for a new release kept them: live.ts). */
   selection?: { anchor: number; head: number };
   scroll?: number;
@@ -57,6 +60,8 @@ export class RemotePage {
   private readonly authority = new Authority();
   private snapshot: Snapshot = EMPTY;
   private tracking: boolean;
+  /** The level the page is drawn at (zoom.ts). */
+  private zoom = 1;
   /** While the source view holds the text: the frame is set aside until `attach`. */
   private detached = false;
   private ready = false;
@@ -131,7 +136,7 @@ export class RemotePage {
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
-        this.post({ type: "init", kind: this.kind, dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}) });
+        this.post({ type: "init", kind: this.kind, dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}), ...(this.zoom != 1 ? { zoom: this.zoom } : {}) });
         // Only the first frame: one that loads again later starts where it renders.
         c.scroll = undefined;
         // A focus asked for before the frame was up only if the frame still has it: focus moved on since (the pages
@@ -174,6 +179,12 @@ export class RemotePage {
         if (!Number.isFinite(m.x) || !Number.isFinite(m.y) || !["move", "down", "up"].includes(m.kind)) return;
         const r = this.frame.getBoundingClientRect();
         c.onPointer(m.kind, m.x + r.left, m.y + r.top);
+        return;
+      }
+      case "zoom": {
+        const z = m.zoom as { step?: unknown; by?: unknown } | undefined;
+        if (z?.step === 1 || z?.step === -1) c.onZoom?.({ step: z.step });
+        else if (typeof z?.by == "number" && z.by > 0.5 && z.by < 2) c.onZoom?.({ by: z.by });
         return;
       }
       case "activity": if (m.kind == "focus" || m.kind == "key") c.onActivity(m.kind); return;
@@ -260,6 +271,14 @@ export class RemotePage {
   /** Where the page is scrolled to, as it last said. */
   get scrollY(): number { const y = Number(this.snapshot.scrollY); return Number.isFinite(y) && y > 0 ? y : 0; }
   render(): void { this.post({ type: "render" }); }
+  get zoomLevel(): number { return this.zoom; }
+  /** Draws the page at `level` (1 is 100%); a frame not up yet starts at it (its init). */
+  setZoom(level: number): void {
+    const z = clampZoom(level);
+    if (z == this.zoom) return;
+    this.zoom = z;
+    if (this.ready) this.post({ type: "zoom", level: z });
+  }
   focus(): void { this.frame.focus(); this.post({ type: "focus" }); }
   reveal(pos: number): void { this.post({ type: "reveal", pos }); }
   setPeers(peers: Peer[]): void { this.post({ type: "peers", peers }); }

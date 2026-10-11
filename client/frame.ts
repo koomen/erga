@@ -11,6 +11,7 @@ import { domToPng } from "modern-screenshot";
 import { PageEditor } from "./editor";
 import { drawCaret } from "./caret";
 import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
+import { catchZoomGestures, clampZoom } from "./zoom";
 import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../shared/agent-log";
 
 declare global {
@@ -45,6 +46,29 @@ let relay: Relay | null = null;
 let detached = false;
 let restoreScroll: number | null = null;
 
+// The page's zoom, as the shell sets it (zoom.ts): its frame (and the next one, as a render takes its place) is drawn
+// `zoom` times larger and given a viewport that much smaller, as the browser's own zoom would, so the page lays itself
+// out again to fit. Clicks and the caret stay right, as the browser maps them through the scale; what this frame tells
+// the shell in its own coordinates (the pointer, the selection's rectangle) is scaled to match (`z`).
+let zoom = 1;
+const zoomStyle = document.createElement("style");
+document.head.append(zoomStyle);
+const z = (n: number) => n * zoom;
+function setZoom(level: number) {
+  const next = clampZoom(level);
+  if (next == zoom) return;
+  const win = cur().contentWindow, el = cur().contentDocument?.documentElement;
+  // The same place in the page stays at the top, as near as the page's new layout allows.
+  const at = win && el && el.scrollHeight > 0 ? win.scrollY / el.scrollHeight : 0;
+  zoom = next;
+  zoomStyle.textContent = zoom == 1 ? "" : `#page, #view { width: ${100 / zoom}%; height: ${100 / zoom}%; transform: scale(${zoom}); transform-origin: 0 0; }`;
+  if (win && el && at) win.scrollTo(win.scrollX, at * el.scrollHeight);
+  remeasure = true;
+  queueSnapshot();
+}
+// The zoom gestures in this frame's own document (while the page renders afresh); the page's are caught in watchPage.
+catchZoomGestures(window, (by) => post({ type: "zoom", zoom: by }));
+
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
   const m = e.data as ToFrame | { type: "erga-edit" };
@@ -67,6 +91,7 @@ window.addEventListener("message", (e: MessageEvent) => {
     case "paused": page.setPaused(m.on); queueSnapshot(); return;
     // (The editor keeps the reader's place across it.)
     case "render": page.render(); return;
+    case "zoom": setZoom(m.level); return;
     // The shell focuses this frame as it asks (Remote.focus): if this frame lost the focus since, something that opened
     // after the ask has it (the pages card, the agent's box), and keeps it.
     case "focus": if (document.hasFocus()) page.focus(); return;
@@ -117,6 +142,7 @@ function setBase(dir: string | undefined): string {
 function start(m: Extract<ToFrame, { type: "init" }>) {
   if (page) return;
   if (m.timescale) window.__ergaTimescale = m.timescale;
+  if (typeof m.zoom == "number") setZoom(m.zoom);
   // Where the page was scrolled to before a reload for a new release: there once it renders.
   // (Its images may still be loading, so the page may not be that long yet: tried again for a moment, until it gets
   // there or someone else scrolls it.)
@@ -167,7 +193,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     },
     onNotice: (message, fix) => post({ type: "notice", message, fix }),
     onProblem: (p) => post({ type: "problem", key: p.key, message: p.message, fix: p.fix }),
-    onPointer: (e) => post({ type: "pointer", kind: "move", x: e.clientX, y: e.clientY }),
+    onPointer: (e) => post({ type: "pointer", kind: "move", x: z(e.clientX), y: z(e.clientY) }),
   });
   if (m.tracking) page.setTracking(true);
   window.ergaFrame = { page, get relay() { return relay; } };
@@ -198,7 +224,7 @@ function queueSnapshot(rendered = false) {
       canPause: page.canPause,
       paused: page.isPaused,
       fmt: {
-        rect: rect && { left: rect.left, top: rect.top, width: rect.width, bottom: rect.bottom },
+        rect: rect && { left: z(rect.left), top: z(rect.top), width: z(rect.width), bottom: z(rect.bottom) },
         blocker: page.styleBlocker(),
         has: { strong: page.hasStyle("strong"), em: page.hasStyle("em"), code: page.hasStyle("code") },
         link: page.linkAt(),
@@ -235,8 +261,9 @@ function watchPage() {
   const d = cur().contentDocument, win = cur().contentWindow;
   if (!d || !win || (d as Document & { ergaWatched?: boolean }).ergaWatched) return;
   (d as Document & { ergaWatched?: boolean }).ergaWatched = true;
-  d.addEventListener("pointerdown", (e) => post({ type: "pointer", kind: "down", x: e.clientX, y: e.clientY }), true);
-  d.addEventListener("mouseup", (e) => post({ type: "pointer", kind: "up", x: e.clientX, y: e.clientY }), true);
+  d.addEventListener("pointerdown", (e) => post({ type: "pointer", kind: "down", x: z(e.clientX), y: z(e.clientY) }), true);
+  d.addEventListener("mouseup", (e) => post({ type: "pointer", kind: "up", x: z(e.clientX), y: z(e.clientY) }), true);
+  catchZoomGestures(win, (by) => post({ type: "zoom", zoom: by }));
   d.addEventListener("keydown", () => post({ type: "activity", kind: "key" }), true);
   win.addEventListener("focus", () => post({ type: "activity", kind: "focus" }), true);
   d.addEventListener("scroll", () => queueSnapshot(), { passive: true });

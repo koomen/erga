@@ -23,6 +23,7 @@ import { markdownLanguage } from "@codemirror/lang-markdown";
 import { LanguageSupport } from "@codemirror/language";
 import type { InlineStyle, Kind, MarkAuthor, Peer } from "./editor";
 import type { ViewRequest, ViewResult } from "../shared/agent-log";
+import { zoomKey, type ZoomBy } from "./zoom";
 
 /**
  * What the frame's editor state needs: the history (undo, shared with the
@@ -46,6 +47,8 @@ export function isAppShortcut(e: Keys, isMac: boolean): boolean {
   const mod = isMac ? e.metaKey : e.ctrlKey, key = e.key.toLowerCase();
   if (e.key == "Escape") return true;
   if (!mod) return false;
+  // The page's zoom (zoom.ts): the shell sets it.
+  if (zoomKey(e, isMac)) return true;
   if (e.shiftKey) return key == "p";
   return key == "j" || key == "k" || key == "/" || key == "?" || key == "s";
 }
@@ -78,7 +81,7 @@ export interface Backdrop { color: string; image: string }
 /** Shell → frame. */
 export type ToFrame =
   /** `scroll`: where to scroll the page once it first renders (the page reloaded for a new release kept it: live.ts). */
-  | { type: "init"; kind: Kind; dir?: string; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number }
+  | { type: "init"; kind: Kind; dir?: string; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number; zoom?: number }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }
@@ -86,6 +89,8 @@ export type ToFrame =
   | { type: "tracking"; on: boolean }
   | { type: "paused"; on: boolean }
   | { type: "render" }
+  /** The level to draw the page at (zoom.ts). */
+  | { type: "zoom"; level: number }
   | { type: "focus" }
   | { type: "reveal"; pos: number }
   | { type: "peers"; peers: Peer[] }
@@ -115,6 +120,8 @@ export type FromFrame =
   | { type: "notice"; message: string; fix?: string }
   | { type: "problem"; key: string; message: string; fix: string }
   | { type: "key"; keys: Keys }
+  /** A zoom gesture on the page (a pinch, ctrl with the wheel): the shell sets the level. */
+  | { type: "zoom"; zoom: ZoomBy }
   | { type: "pointer"; kind: "move" | "down" | "up"; x: number; y: number }
   | { type: "activity"; kind: "focus" | "key" }
   | { type: "detached"; id: number; state: unknown; version: number }
