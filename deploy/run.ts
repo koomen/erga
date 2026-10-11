@@ -5,9 +5,11 @@
 // deploy of a target (deploy/setup.ts runs it, with the target's secrets),
 // and as a way round a server that can't deploy itself.
 //
-//   bun deploy/run.ts staging [--commit <sha>] [--yes] [--no-snapshot]
-//                                                        (--no-snapshot: keep staging's own data, copy nothing
-//                                                        from production; then SNAPSHOT_TOKEN isn't needed)
+//   bun deploy/run.ts staging [--commit <sha>] [--yes] [--fresh | --no-snapshot]
+//                                                        (staging keeps its frozen copy of production's data;
+//                                                        --fresh: copy production's data afresh; --no-snapshot:
+//                                                        copy nothing even with no copy yet, and SNAPSHOT_TOKEN
+//                                                        isn't needed)
 //   bun deploy/run.ts production --commit <sha>          (asks you to type "production")
 //
 // It needs CLOUDFLARE_ACCOUNT_ID in the environment, your own credential for
@@ -48,6 +50,8 @@ export interface MachineDeploy {
   yes?: boolean;
   /** Keep the target's own data: no copy of production's (staging only). */
   noSnapshot?: boolean;
+  /** Copy production's data afresh, in place of staging's frozen copy (staging only). */
+  fresh?: boolean;
   /** The Cloudflare API and the servers (the mock's, under ERGA_DEPLOY_MOCK). */
   net?: Fetch;
   token?: string;
@@ -97,14 +101,14 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   const commit = o.commit ?? git("rev-parse", "HEAD");
   if (!o.commit && !mock && git("status", "--porcelain")) throw new Error("The checkout has changes that aren't committed: commit them, or name a commit (--commit).");
   const spec = TARGETS[o.name];
-  const target: Target = { ...targetOf(spec, { CLOUDFLARE_ACCOUNT_ID: accountId, SNAPSHOT_TOKEN: snapshotToken }), secrets: o.secrets ?? {} };
+  const target: Target = { ...targetOf(spec, { CLOUDFLARE_ACCOUNT_ID: accountId, SNAPSHOT_TOKEN: snapshotToken }, o.fresh ? { force: true } : undefined), secrets: o.secrets ?? {} };
   if (o.noSnapshot) delete target.snapshot;
   const wrong = guardTarget(target);
   if (wrong) throw new Error(wrong);
   if (target.snapshot && target.snapshot.token.length < 32) throw new Error("Staging copies production's documents: set SNAPSHOT_TOKEN (production's).");
 
   log(`Deploy ${commit.slice(0, 12)} to ${o.name}${mock ? " (the mock Cloudflare: nothing real)" : ""}:`);
-  log(`  account ${accountId}, Worker ${spec.worker}, database ${spec.database}${target.snapshot ? " (a new copy of production's, beside the one the Worker is on, which goes once the new version answers)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`);
+  log(`  account ${accountId}, Worker ${spec.worker}, database ${spec.database}${target.snapshot?.fresh ? " (a new copy of production's, beside the one the Worker is on, which goes once the new version answers)" : target.snapshot ? " (its frozen copy of production's data kept; a new copy only if it has none)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`);
   log(`  https://${targetHost(target)}, documents' pages on *.${spec.pages.domain}`);
   log(`  steps: build, ${stepsFor(target).map((s) => s.id).join(", ")}`);
   if (Object.keys(target.secrets).length) log(`  secrets set: ${Object.keys(target.secrets).join(", ")}`);
@@ -131,9 +135,9 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const name = args[0] ?? "";
   const at = args.indexOf("--commit");
-  if (!isTargetName(name)) { console.error("usage: bun deploy/run.ts <staging|production> [--commit <sha>] [--yes] [--no-snapshot]"); process.exit(2); }
+  if (!isTargetName(name)) { console.error("usage: bun deploy/run.ts <staging|production> [--commit <sha>] [--yes] [--fresh | --no-snapshot]"); process.exit(2); }
   try {
-    const done = await deployFromMachine({ name, commit: at >= 0 ? git("rev-parse", args[at + 1]) : undefined, yes: args.includes("--yes") && name != "production", noSnapshot: args.includes("--no-snapshot") });
+    const done = await deployFromMachine({ name, commit: at >= 0 ? git("rev-parse", args[at + 1]) : undefined, yes: args.includes("--yes") && name != "production", noSnapshot: args.includes("--no-snapshot"), fresh: args.includes("--fresh") });
     process.exit(done ? 0 : 1);
   } catch (e) {
     console.error((e as Error).message);

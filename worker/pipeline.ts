@@ -57,12 +57,6 @@ export class Pipeline extends DurableObject<Env> {
       const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "");
       return view.branches.find((b: { name: string }) => b.name == branch)?.commit ?? null;
     };
-    // A commit's migrations (their file names), from the repository's listing of migrations/ at that commit; null if unread.
-    const migrationsOf = async (commit: string) => {
-      const r = await env.SOURCE.getByName("erga").read(env.ERGA_DEV_ORIGIN ?? "", { op: "list", ref: commit, path: "migrations" });
-      if ("error" in r || r.commit != commit) return null;
-      return [...r.text.matchAll(/^(\S+\.sql) {2}\(/gm)].map((m) => m[1]);
-    };
     // The mock builder fails a commit whose subject says "[mock-fail]" (a real commit's id can't be chosen to start 0bad).
     const mockFails = async (commit: string) => {
       if (!hasSource(env)) return false;
@@ -95,8 +89,6 @@ export class Pipeline extends DurableObject<Env> {
         return { cloneUrl: s.remote, token: s.token.split("?")[0] };
       },
       headOf: hasSource(env) ? headOf : undefined,
-      // A commit's migrations/ files, read from the repository (task #39's): staging copies production's data afresh for a new one.
-      migrationsOf: hasSource(env) ? migrationsOf : undefined,
       ...(mock ? { waitMs: 5000, sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50))) } : {}),
     });
     this.deploys = make(env.DEPLOY_TARGET, "");
@@ -127,7 +119,7 @@ export class Pipeline extends DurableObject<Env> {
   async alarm(): Promise<void> { await Promise.all([this.deploys.alarm(), this.peer?.alarm()]); }
 
   // ---- sign-in's values set on /admin/auth (auth-apps.ts, worker/auth-settings.ts): this server's own, here and not
-  // in D1, which staging replaces with a copy of production's. Keys "auth:<provider>"; the secret in them is encrypted.
+  // in D1, which a fresh copy of production's replaces on staging. Keys "auth:<provider>"; the secret in them is encrypted.
 
   authGet(key: string): Promise<unknown> { return this.ctx.storage.get(key); }
   authPut(key: string, value: unknown): Promise<void> { return this.ctx.storage.put(key, value); }

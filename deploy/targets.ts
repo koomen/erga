@@ -10,11 +10,12 @@
 // CLOUDFLARE_ACCOUNT_ID, or the environment's for deploy/run.ts). Staging
 // shares nothing writable with production: its own Worker, so its own
 // Durable Object namespaces, its own database, its own secrets
-// (SESSION_SECRET, its own GitHub OAuth app) and its own pages origin. On each
-// deploy it gets a fresh copy of production's data (`snapshotFrom`): the
-// database through D1's export (read-only on production) and every document's
-// Durable Object through production's read-only snapshot endpoint
-// (deploy/snapshot.ts).
+// (SESSION_SECRET, its own GitHub OAuth app) and its own pages origin. It
+// runs on a copy of production's data (`snapshotFrom`), frozen: a deploy
+// keeps it, and only a Redeploy with a fresh copy (or a first deploy, with no
+// copy yet) copies again: the database through D1's export (read-only on
+// production) and every document's Durable Object through production's
+// read-only snapshot endpoint (deploy/snapshot.ts).
 //
 // Everything here is public (names, hostnames, OAuth client ids). Secrets are
 // set on each Worker once (deploy/setup.ts) and kept by every deploy after.
@@ -47,7 +48,7 @@ export interface TargetSpec {
   pages: { zone: string; domain: string };
   /** Text bindings this target sets over the build's (cloudflare.config.ts). */
   vars: Record<string, string>;
-  /** Copy another target's data in on each deploy (staging: production's). */
+  /** Copy another target's data in (staging: production's): on a first deploy, and on a Redeploy with a fresh copy. */
   snapshotFrom?: TargetName;
   /**
    * Only Erga's admins may use this target's server (staging, which runs on a copy of production's data): every request

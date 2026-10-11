@@ -37,10 +37,10 @@
 // data, made while the commit builds, goes beside it, and is deleted:
 // discardCopy). Stopped after, the newer deploy replaces what went up.
 //
-// Staging copies production's data afresh only when it's worth it: a commit
-// with a migration staging's copy hasn't had (read from the repository before
-// the build: Deps.migrationsOf), a copy older than 6 hours, or a Redeploy
-// that asks for a fresh copy (deploy/cloudflare.ts, copyReason).
+// Staging's copy of production's data is frozen: a deploy keeps it, however
+// old, and runs a new migration on it in place. Only a Redeploy that asks
+// for a fresh copy copies production's data afresh (deploy/cloudflare.ts,
+// copyReason).
 //
 // Production builds the same commits staging built (main moves only to a
 // staging commit): the builder keeps each release it builds, by commit and
@@ -56,7 +56,7 @@
 // HISTORY_KEEP of each target, in the same storage (the Pipeline Durable
 // Object's).
 
-import { ALL_STEPS, BEFORE_BUILD, COPY_MAX_AGE_MS, Cloudflare, dropCopies, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
+import { ALL_STEPS, BEFORE_BUILD, Cloudflare, dropCopies, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
 import { sourceFor, type Source } from "./source";
 import { BUILDER, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 
@@ -149,12 +149,6 @@ export interface Deps {
    * server named. Without it, production takes no move from another server.
    */
   headOf?(branch: string): Promise<string | null>;
-  /**
-   * The migrations/ files a commit has (task #39's repository), or null if they can't be read. Staging copies
-   * production's data afresh only for a commit with a migration its copy hasn't had (or an old copy, or when asked):
-   * deploy/cloudflare.ts, copyReason. Without it (null), every deploy copies.
-   */
-  migrationsOf?(commit: string): Promise<string[] | null>;
   /** New lines of a deploy's log ({type: "deploy-log"} on /api/events). */
   logged?(event: { type: "deploy-log"; target: TargetName; deployId: string; lines: LogLine[] }): void;
   now?: () => number;
@@ -164,8 +158,8 @@ export interface Deps {
 
 /** `attempt`: 1 for a deploy as asked for; 2 and on when it runs again by itself after a restart stopped it before the upload. */
 interface Run { deployId: string; commit: string; started: number; cursor: StepId | null; carry: Carry; attempt?: number; fresh?: Fresh }
-/** When staging copies production's data afresh (deploy/cloudflare.ts, Target.snapshot.fresh): asked for (`force`), or the commit's migrations. */
-interface Fresh { force?: boolean; migrations?: string[] | null }
+/** Staging copies production's data afresh (deploy/cloudflare.ts, Target.snapshot.fresh) only when asked for (`force`). */
+interface Fresh { force?: boolean }
 
 /** One line of a deploy's log: when (ms since the epoch), what, and which step it belongs to. */
 export interface LogLine { at: number; text: string; step?: StepId | "build" }
@@ -580,10 +574,8 @@ export class BranchDeploys {
     if (q.pending == commit) await this.setQueue(name, { pending: null, trigger: null, attempt: null, fresh: null });
     const deployId = `${this.now().toString(36)}-${commit.slice(0, 7)}`;
     s.status = { ...s.status, state: "building", commit, deployId, at: this.now(), error: null, pending: (await this.queue(name)).pending, steps };
-    // Staging: whether it copies production's data afresh depends on the commit's migrations (read before the build).
-    const fresh: Fresh | undefined = spec.snapshotFrom
-      ? { ...(force ? { force } : {}), migrations: this.deps.migrationsOf ? await within(15_000, this.deps.migrationsOf(commit)) : null }
-      : undefined;
+    // Staging: a fresh copy of production's data only when asked for.
+    const fresh: Fresh | undefined = spec.snapshotFrom && force ? { force } : undefined;
     s.run = { deployId, commit, started: this.now(), cursor: null, carry: { oldDocs: s.oldDocs }, ...(attempt > 1 ? { attempt } : {}), ...(fresh ? { fresh } : {}) };
     const abort = new AbortController();
     this.current = { name, deployId, commit, abort, s };
@@ -785,13 +777,6 @@ export class BranchDeploys {
   }
 }
 
-/** `p`'s answer, or null if it fails or takes longer than `ms`. */
-async function within<T>(ms: number, p: Promise<T>): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try { return await Promise.race([p.catch(() => null), new Promise<null>((ok) => { timer = setTimeout(() => ok(null), ms); })]); }
-  finally { clearTimeout(timer); }
-}
-
 function step(s: Stored, id: StepStatus["id"], status: StepStatus["status"], detail?: string) {
   const x = s.status.steps.find((t) => t.id == id);
   if (!x) return;
@@ -821,7 +806,7 @@ export function targetOf(spec: TargetSpec, env: DeployEnv, fresh?: Fresh): Targe
     checkVersion: true,
     production: spec.name == "production",
     guard: { ...PRODUCTION, accountId },
-    // `fresh` (a branch deploy's): copy afresh only when the commit has a new migration, the copy is older than COPY_MAX_AGE_MS, or when asked. Without it (a machine's deploy, deploy/run.ts): always.
-    ...(from ? { snapshot: { databaseName: from.database, origin: `https://${from.host}`, token: env.SNAPSHOT_TOKEN?.trim() ?? "", ...(fresh ? { fresh: { ...fresh, maxAgeMs: COPY_MAX_AGE_MS } } : {}) } } : {}),
+    // A copy afresh only with `fresh.force` (asked for), or when staging has no copy yet: its copy is frozen.
+    ...(from ? { snapshot: { databaseName: from.database, origin: `https://${from.host}`, token: env.SNAPSHOT_TOKEN?.trim() ?? "", ...(fresh?.force ? { fresh: true } : {}) } } : {}),
   };
 }

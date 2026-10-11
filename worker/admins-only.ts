@@ -1,5 +1,6 @@
-// Staging is for Erga's admins only. staging.erga.dev runs on a fresh copy of
-// production's data, so a server whose deploy target says `adminsOnly`
+// Staging is for Erga's admins only. staging.erga.dev runs on a copy of
+// production's data (frozen: only a Redeploy with a fresh copy replaces it),
+// so a server whose deploy target says `adminsOnly`
 // (deploy/targets.json; the pipeline sets DEPLOY_TARGET on each deploy, so no
 // setting turns this off) lets a request in only with admin power: an
 // admin's signed-in session, or an admin-scope token (tokens.ts;

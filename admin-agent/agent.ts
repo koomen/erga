@@ -91,8 +91,8 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
         const n = Math.max(1, Math.min(1000, Number(a.lines) || 200)), lines = log.lines ?? [];
         return { ...log, lines: lines.slice(-n), ...(lines.length > n ? { cut: `the last ${n} of ${lines.length} lines` } : {}) };
       }),
-    tool("redeploy", "Redeploy a target", "Deploys a target's branch head again now (staging: staging; production: main), as the dashboard's Redeploy does. The deploy says who asked for it. Staging copies production's data afresh by itself only for a commit with a new migration, or when its copy is over 6 hours old; fresh_data: true makes this redeploy of staging copy it afresh now.",
-      Type.Object({ target: TARGET, fresh_data: Type.Optional(Type.Boolean({ description: "Staging only: copy production's database and documents afresh, however new staging's copy is" })) }),
+    tool("redeploy", "Redeploy a target", "Deploys a target's branch head again now (staging: staging; production: main), as the dashboard's Redeploy does. The deploy says who asked for it. Staging's copy of production's data is frozen: a deploy keeps it (new migrations run on it in place); fresh_data: true makes this redeploy of staging copy production's data afresh, the only way to refresh it.",
+      Type.Object({ target: TARGET, fresh_data: Type.Optional(Type.Boolean({ description: "Staging only: copy production's database and documents afresh, in place of staging's frozen copy" })) }),
       (a) => ops.redeploy(String(a.target ?? ""), a.fresh_data === true)),
     tool("deploy_homepage", "Redeploy the homepage", "Deploys the homepage (the document the landing_document setting names, which set_setting changes) again now, as Redeploy in that document's settings does in the editor.",
       Type.Object({}), () => ops.deployHome()),

@@ -11,9 +11,10 @@
 // Where the page's values are kept, and how:
 //
 //   - In the server's own Pipeline Durable Object (worker/pipeline.ts), not in
-//     D1: staging's D1 is replaced by a copy of production's every few hours
-//     (deploy/cloudflare.ts, copyReason), which would drop staging's values and
-//     bring in production's. The Durable Object is each server's own.
+//     D1: staging's D1 is replaced by a copy of production's when an admin asks
+//     for a fresh copy (deploy/cloudflare.ts, copyReason), which would drop
+//     staging's values and bring in production's. The Durable Object is each
+//     server's own.
 //   - The secret is encrypted with AES-GCM, a fresh IV each time, under a key
 //     derived from FACTORY_KEY (as credentials.ts does, with its own
 //     derivation), with the provider, the target and the client ID as the

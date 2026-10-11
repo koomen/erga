@@ -114,7 +114,8 @@ describe("deploying with them", () => {
     const { value } = await mint(mock, "staging");
     const calls = mock.state.calls.length;
     const steps: string[] = [];
-    await runPipeline(new Cloudflare(value, mock.fetch), { ...release, version: SHA2.slice(0, 12) }, targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN }), { ...quick, site: mock.fetch, report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`) });
+    // With a fresh copy asked for: the token can copy production's data too.
+    await runPipeline(new Cloudflare(value, mock.fetch), { ...release, version: SHA2.slice(0, 12) }, targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN }, { force: true }), { ...quick, site: mock.fetch, report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`) });
     expect(steps).toContain("address:done https://staging.erga.dev (already its address)");
     expect(steps.at(-3)).toMatch(/^documents:done/);
     expect(steps.at(-1)).toMatch(/^cleanup:done deleted erga-staging-/);

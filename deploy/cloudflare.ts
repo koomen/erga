@@ -14,8 +14,10 @@
 //   - production and staging (deploy/targets.ts): erga.dev and
 //     staging.erga.dev, deployed by the server itself when their branch moves
 //     (deploy/branches.ts, worker/pipeline.ts), or from a machine (deploy/run.ts);
-//   - staging takes a fresh copy of production's data on every deploy
-//     (Target.snapshot: the "data" and "documents" steps).
+//   - staging runs on a copy of production's data, frozen: a deploy keeps
+//     it, and copies afresh only when asked (a Redeploy with a fresh copy)
+//     or when staging has no copy yet (Target.snapshot: the "data" and
+//     "documents" steps).
 //
 // The steps (ALL_STEPS): check the account, find or make the D1 database
 // (for a snapshot, a new copy beside the one the Worker is on, or that one
@@ -301,13 +303,12 @@ export interface Target {
    * endpoint (deploy/snapshot.ts), authorized with `token`. Nothing is ever
    * written to the source.
    *
-   * `fresh` says when to copy (copyReason): with no `fresh`, every deploy
-   * copies; with it, only when forced, when the commit has a migration the
-   * target's database hasn't had (`migrations`, the commit's migrations/
-   * files; null, unknown, copies), or when the target's copy is older than
-   * `maxAgeMs`. Otherwise the target keeps its database and documents.
+   * A deploy copies only when the target has no copy yet, or with `fresh`
+   * (asked for: a Redeploy with a fresh copy): copyReason. Otherwise the
+   * target keeps its database and documents as they are (staging's copy is
+   * frozen), and new migrations run on that database in place.
    */
-  snapshot?: { databaseName: string; origin: string; token: string; fresh?: { force?: boolean; maxAgeMs?: number; migrations?: string[] | null } };
+  snapshot?: { databaseName: string; origin: string; token: string; fresh?: boolean };
   /** This is production (erga.dev): only then may the target use production's names. */
   production?: boolean;
   /** Production's names (deploy/targets.ts PRODUCTION): a target that isn't production and uses one stops before it starts. */
@@ -330,22 +331,13 @@ export function copyMade(base: string, name: string): number | null | undefined 
   const at = parseInt(m[0], 36);
   return at > 1.5e12 && at < 1e13 ? at : undefined;
 }
-/** How old a copy may be before a deploy copies afresh (staging: 6 hours). */
-export const COPY_MAX_AGE_MS = 6 * 3600_000;
-
-/** Why a deploy copies the source's data afresh, or null (the target keeps its copy). */
-export function copyReason(o: { fresh?: { force?: boolean; maxAgeMs?: number; migrations?: string[] | null }; live: { made: number | null; migrations: string[] } | null; now: number }): string | null {
-  const f = o.fresh;
-  if (!f) return "every deploy copies";
-  if (f.force) return "a fresh copy was asked for";
+/**
+ * Why a deploy copies the source's data afresh, or null: the target keeps its
+ * copy, however old, and a new migration runs on it in place.
+ */
+export function copyReason(o: { fresh?: boolean; live: unknown | null }): string | null {
+  if (o.fresh) return "a fresh copy was asked for";
   if (!o.live) return "there's no copy yet";
-  if (f.migrations == null) return "the commit's migrations aren't known";
-  const had = new Set(o.live.migrations);
-  const fresh = f.migrations.filter((n) => !had.has(n));
-  if (fresh.length) return `the commit has ${fresh.length == 1 ? "a migration" : "migrations"} the copy hasn't had (${fresh.join(", ")})`;
-  if (o.live.made == null) return "the copy's age isn't known";
-  const age = o.now - o.live.made;
-  if (age > (f.maxAgeMs ?? COPY_MAX_AGE_MS)) return `the copy is ${Math.round(age / 3600_000 * 10) / 10} hours old`;
   return null;
 }
 
@@ -384,8 +376,8 @@ export async function dropCopies(cf: Cloudflare, target: Target, keep: string | 
 
 /**
  * The steps a target with a snapshot (staging) runs while its commit builds (deploy/branches.ts): they need no
- * release (the snapshot's database step decides from the commit's migrations, named in Target.snapshot.fresh, not
- * from the release's). They change nothing the target runs on: a new copy goes beside the database its Worker is on.
+ * release (the snapshot's database step decides by copyReason, not from the release). They change nothing the
+ * target runs on: a new copy goes beside the database its Worker is on.
  */
 export const BEFORE_BUILD: readonly StepId[] = ["account", "database", "data"];
 
@@ -523,15 +515,12 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         const left = live ? copies.filter((c) => c != live) : [];
         for (const c of left) await cf.call("DELETE", `${acc}/d1/database/${c.uuid}`, `delete ${c.name}, a copy an earlier deploy left`);
         const leftNote = left.length ? `; ${left.length} left by an earlier deploy deleted (${left.map((c) => c.name).join(", ")})` : "";
-        const liveMigrations = live && target.snapshot.fresh
-          ? ((await d1(cf, acc, live.uuid, "SELECT name FROM d1_migrations", [], `read ${live.name}'s migrations`).catch(() => [])) ?? []).map((r) => String(r.name))
-          : [];
-        const why = copyReason({ fresh: target.snapshot.fresh, live: live ? { made: live.made, migrations: liveMigrations } : null, now: Date.now() });
+        const why = copyReason({ fresh: target.snapshot.fresh, live });
         if (!why && live) {
           carry.dbId = live.uuid;
           carry.copied = false;
-          const age = live.made ? `${Math.round((Date.now() - live.made) / 60_000)} min old` : "";
-          return `kept "${live.name}" (${live.uuid}${age ? `, ${age}` : ""}): no migration it hasn't had, and it's newer than ${Math.round((target.snapshot.fresh?.maxAgeMs ?? COPY_MAX_AGE_MS) / 3600_000)} hours${leftNote}`;
+          const age = live.made ? `, made ${new Date(live.made).toISOString().slice(0, 16).replace("T", " ")} UTC` : "";
+          return `kept "${live.name}" (${live.uuid}${age}): its copy of the data is frozen; only a Redeploy with a fresh copy replaces it${leftNote}`;
         }
         if (live) {
           // Which documents it has, so their Durable Objects are emptied too (the documents step).
@@ -582,7 +571,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       return `${snap.databaseName} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
     },
 
-    // migrations/, each once, recorded in d1_migrations as the cf CLI does (on a copy, the ones production hasn't had yet).
+    // migrations/, each once, recorded in d1_migrations as the cf CLI does (on a new copy, the ones production hasn't had yet; on a kept one, the ones it hasn't).
     async migrations() {
       const rel = needRelease();
       const db = carry.dbId!;

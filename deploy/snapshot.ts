@@ -1,5 +1,5 @@
 // Copying documents' Durable Objects from one server to another: how staging
-// gets production's documents on each deploy (the pipeline's "documents"
+// gets production's documents when it copies its data (the pipeline's "documents"
 // step, deploy/cloudflare.ts). The database is copied by D1 itself (export
 // and import); a Durable Object's storage can only be read from inside the
 // Worker that owns it, so production serves a read-only snapshot endpoint and

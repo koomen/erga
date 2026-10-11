@@ -5,7 +5,7 @@
 //   GET  /api/deploys[?history=N]       admins: every target's status {targets: [...]}, with each one's last N deploys
 //                                       (`history`, newest first) if asked
 //   POST /api/deploys/<name>            admins: redeploy that target's branch head now; {fresh: true}: staging with a
-//                                       fresh copy of production's data, however new its copy is
+//                                       fresh copy of production's data, in place of its frozen copy
 //   GET  /api/deploys/<name>/history[?limit=N]
 //                                       admins (or another of Erga's servers): the last N deploys (default 20, at most
 //                                       100) {target, deploys: [{id, commit, state, started, ended, trigger, error, live, ...}]}
