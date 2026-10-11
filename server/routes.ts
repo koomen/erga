@@ -1973,7 +1973,7 @@ export function crumbs(session: Session | null, trail: Crumb[], here = "span"): 
   const steps = trail.map((c) => c.href
     ? `<a class="crumb" href="${esc(link(c.href, session))}">${esc(c.label)}</a>`
     : `<${here} class="here" aria-current="page"><span>${esc(c.label)}</span></${here}>`).join("");
-  return `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", session))}"><span>${WORDMARK}</span></a>${steps}</nav>`;
+  return `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
 }
 
 /**

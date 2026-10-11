@@ -778,6 +778,7 @@ type TreeModule = { mountTree: typeof mountTree };
         const img = document.createElement("img");
         img.src = picture;
         img.alt = "";
+        img.draggable = false; // a click, not the browser's drag of the picture
         img.addEventListener("error", () => img.remove()); // the initial shows through
         b.append(img);
       }

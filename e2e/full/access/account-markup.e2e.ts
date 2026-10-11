@@ -11,6 +11,7 @@ test("every page of the site's own has your avatar in its corner", async () => {
     const html = await (await get(path)).text();
     expect(html, path).toContain('data-erga-account="in"');
     expect(html, path).toContain("https://avatars.githubusercontent.com/tester?s=64");
+    expect(html, path).toMatch(/<img src="https:\/\/avatars\.githubusercontent\.com\/tester\?s=64" alt="" draggable="false"/);
   }
 });
 

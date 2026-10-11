@@ -65,7 +65,7 @@ export function accountMarkup(account: Account | null, here: string): string {
   const s = account.session;
   return `<div class="erga-account" data-erga-account="in">
 <button type="button" class="erga-account-btn" style="--c: ${colorFor(account.login.toLowerCase())}" aria-label="${esc(`You (${account.name})`)}" data-tip="${esc(account.name)}" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">
-<span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" onerror="this.remove()">` : ""}
+<span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" draggable="false" onerror="this.remove()">` : ""}
 </button>
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
@@ -110,7 +110,7 @@ export const ACCOUNT_STYLE = `<style>
   }
   .erga-account-btn { position: relative; display: grid; place-items: center; width: 30px; height: 30px; margin: 0; padding: 0; border: 0; border-radius: 50%;
     cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1; color: #fff; background: var(--c, #8e8e96); box-shadow: 0 0 0 2px var(--acc-bg); }
-  .erga-account-btn img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+  .erga-account-btn img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; -webkit-user-drag: none; }
   .erga-account-btn.erga-account-out { color: var(--acc-soft); background: var(--acc-bg); box-shadow: inset 0 0 0 1.5px var(--acc-chrome); }
   .erga-account-btn.erga-account-out:hover { color: var(--acc-fg); box-shadow: inset 0 0 0 1.5px var(--acc-soft); }
   .erga-account-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

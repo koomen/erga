@@ -285,6 +285,8 @@ button { font: inherit; color: inherit; }
   opacity: 1;
   transition: opacity var(--show-ms) var(--ease);
 }
+/* Its pictures and links are buttons: a press clicks them, the browser doesn't drag them away. */
+.chrome :is(img, a, svg) { -webkit-user-drag: none; }
 .chrome-top { top: max(12px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); gap: 2px; }
 .chrome-bottom {
   left: 0; right: 0; bottom: max(12px, env(safe-area-inset-bottom));

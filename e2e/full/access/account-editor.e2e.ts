@@ -20,6 +20,8 @@ test("your avatar, far right of the editor's controls with your GitHub picture, 
   const at = await editing(page);
   // Its controls fade in: wait for where they end.
   await expect.poll(() => page.evaluate(() => { const b = document.querySelector("#me .avatar")!, r = b.getBoundingClientRect(); return r.right > 1100 - 30 && r.top < 30 && !!b.querySelector("img")?.getAttribute("src")?.startsWith("https://avatars.githubusercontent.com/tester"); })).toBe(true);
+  // A press on the picture or the logo is a click: the browser doesn't drag either away.
+  expect(await page.evaluate(() => { const img = document.querySelector<HTMLImageElement>("#me .avatar img")!, brand = document.getElementById("nav-brand")!; return { img: img.draggable, imgDrag: getComputedStyle(img).getPropertyValue("-webkit-user-drag"), brand: brand.draggable }; })).toEqual({ img: false, imgDrag: "none", brand: false });
   await clickOn(page, "#me .avatar");
   const menu = () => page.evaluate(() => ({ hidden: document.getElementById("account")!.hidden, expanded: document.querySelector("#me .avatar")!.getAttribute("aria-expanded"), links: [...document.querySelectorAll<HTMLAnchorElement>("#account a:not([hidden])")].map((a) => a.textContent + " " + a.getAttribute("href")) }));
   expect(await menu()).toEqual({ hidden: false, expanded: "true", links: ["Documents /docs", "Settings /settings", "Deploy your own /deploy", "Admin settings /admin", "Sign out /auth/logout"] });
