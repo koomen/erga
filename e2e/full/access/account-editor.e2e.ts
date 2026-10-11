@@ -1,5 +1,5 @@
 // The editor's own controls (the editor): your avatar's menu, sharing with people, the order of the
-// controls, the view switcher, and the pencil between viewing and editing without a reload.
+// controls, and the pencil between viewing and editing without a reload.
 import { expect, servers, test, until, type Page } from "../../fixtures";
 import { clickOn, inFrames, inPage, newDoc } from "./access";
 
@@ -42,24 +42,10 @@ test("its owner adds someone, sees them listed with their role, and takes them o
   await until(() => page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada") && li.querySelector("select")?.value == "viewer")), 5000, "adding someone lists them, with their role");
   await page.evaluate(() => ([...document.querySelectorAll("#sharing-list li")].find((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))!.querySelector(".remove") as HTMLElement).click());
   await until(() => page.evaluate(() => ![...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))), 5000, "taking them off unlists them");
-  const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden]), .chrome-top .mode")].map((e) => e.id).join(" "));
-  // New document (+), clone, then the editor's own (pause, track changes, share, document settings, view), then edit.
-  expect(order).toBe("btn-new btn-clone btn-pause btn-track btn-share btn-settings mode btn-edit");
+  const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden])")].map((e) => e.id).join(" "));
+  // New document (+), clone, then the editor's own (pause, track changes, share, document settings), then edit.
+  expect(order).toBe("btn-new btn-clone btn-pause btn-track btn-share btn-settings btn-edit");
   await page.keyboard.press("Escape");
-});
-
-test("the view switcher: each view has the controls' own tooltip; a click on the document closes it, the view still the page", async ({ tab }) => {
-  const page = tab.page;
-  await editing(page);
-  await clickOn(page, '#mode button[aria-checked="true"]');
-  await expect.poll(() => page.evaluate(() => document.getElementById("mode")!.classList.contains("open"))).toBe(true);
-  const tips = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("#mode button")].map((b) => b.dataset.tip + "|" + (b.title || "")));
-  expect(tips.length).toBe(3);
-  for (const t of tips) expect(t).toMatch(/^(Page|Markdown|HTML).*\|$/);
-  await page.mouse.click(550, 500);
-  await expect.poll(() => page.evaluate(() => document.getElementById("mode")!.classList.contains("open"))).toBe(false);
-  expect(await page.evaluate(() => document.body.classList.contains("source"))).toBe(false);
-  expect(await page.evaluate(() => (document.querySelector('#mode button[aria-checked="true"]') as HTMLElement).dataset.mode)).toBe("text");
 });
 
 test("the pencil switches between viewing and editing without a reload, the document where it was, nothing bouncing past its ends; Back goes to the viewer", async ({ tab }) => {
