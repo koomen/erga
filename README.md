@@ -39,7 +39,8 @@ AGENTS.md has the rules for working on it.
       models.ts       the models, their prices, the agent's configuration and the scripted test model
       admin.ts        the admin agent, with admin-chats.ts
     shared/       code the server and the browser bundles both use: agent-log.ts (the transcript), attach.ts (attached
-                  files), attribution.ts (who did something, and how)
+                  files), attribution.ts (who did something, and how). The browser's bundles may have shared/, and of
+                  document/ only content.ts, pages.ts, merge.ts and api.ts's types: tests/browser-imports.test.ts keeps it so
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.sh bundles into .build/
                   (main.ts the editor's shell, frame.ts the editor, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
     cloudflare/   the Cloudflare adapter: the Worker's entry (index.ts), the Durable Objects (document-object.ts, home.ts,
@@ -47,7 +48,8 @@ AGENTS.md has the rules for working on it.
     deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
                   release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a
                   deploy locks (locked-settings.ts), the mock Cloudflare the tests use, and cutover/ (the storage cutover's scripts)
-    dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, a Git server for tests
+    dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, a Git server for tests, and a
+                  document's files on disk as its Storage (disk-storage.ts, over the mirror the plugin serves)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full)
 
