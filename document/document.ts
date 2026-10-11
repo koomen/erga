@@ -59,8 +59,6 @@ export interface Person { id: string; name: string }
 
 export type AgentSettings = AgentConfig | { readonly missing: string };
 
-/** The files of a document on disk, as the adapter reaches them: a FileStore but for `write`, which the document wraps. */
-export type DiskFiles = FileStore["Service"];
 
 /** What the server around a document gives it. */
 export interface DocumentDeps {
@@ -78,8 +76,8 @@ export interface DocumentDeps {
   home: { forget: (docId: string) => Promise<void>; publishedChanged: (docId: string) => Promise<void> };
   /** The document's site, if it has one, deploys again a short time from now. */
   siteChanged: (docId: string) => Promise<void>;
-  /** Local development: the files of a document on disk (null when it isn't one). */
-  disk?: { store: (only: string | null) => DiskFiles };
+  /** Local development: this document's storage with its files on disk (dev/disk-storage.ts), for a document that is one. */
+  disk?: { storage: (only: string | null) => Storage };
   /** When versions are cut: how long edits pause first, and the longest burst one version holds; the room's write delay. */
   timing: { idleMs: number; maxMs: number; writeDelay?: number };
   /** Work that outlives the request (a version's description, telling the homepage). */
@@ -390,8 +388,8 @@ export class Document {
    * people merely looking never do), so a write that changes what storage
    * holds is an edit: by a person, an agent or a publish.
    */
-  private async edited(path: string, text: string): Promise<void> {
-    if ((await writeText(this.storage, path, text)).changed) await this.touch();
+  private async edited(storage: Storage, path: string, text: string): Promise<void> {
+    if ((await writeText(storage, path, text)).changed) await this.touch();
   }
 
   /** A file changed: the document has been edited, so it stays (and its row says when). */
@@ -826,12 +824,9 @@ export class Document {
   private async load(): Promise<Opened | null> {
     const info = await this.storage.get<DocumentInfo>(INFO);
     if (!info) return null;
-    const onDisk = info.disk && this.deps.disk ? this.deps.disk.store(info.disk.only ? info.index : null) : null;
-    const files = onDisk ? FileStore.of({
-      ...onDisk,
-      // A write to disk is an edit too (the room writes only files whose text changed).
-      write: (path, text) => onDisk.write(path, text).pipe(Effect.andThen(Effect.promise(() => this.touch()))),
-    }) : fileStoreOf(this.storage, { edited: (path, text) => this.edited(path, text), touch: () => this.touch() });
+    // A document on disk has its files there, and the rest of its storage here.
+    const storage = info.disk && this.deps.disk ? this.deps.disk.storage(info.disk.only ? info.index : null) : this.storage;
+    const files = fileStoreOf(storage, { edited: (path, text) => this.edited(storage, path, text), touch: () => this.touch() });
     const state = stateStoreOf(this.storage);
 
     // The room's scope lasts as long as the document: a Durable Object is evicted only when

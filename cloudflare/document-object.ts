@@ -6,7 +6,7 @@
 // the calls the rest of the Worker makes (RPC).
 //
 // The dev server's link to a document on disk (/api/mirror) is here too:
-// the files then stay on disk, reached over that WebSocket (disk.ts).
+// the files then stay on disk, reached over that WebSocket (dev/disk-storage.ts).
 
 import { DurableObject } from "cloudflare:workers";
 import { Document, personOf, type DocumentDeps, type OnDisk } from "../document/document";
@@ -19,7 +19,7 @@ import type { ImportedDocument } from "../server/admin/cutover";
 import { directoryOf } from "./d1";
 import { agentSettings } from "./agent-settings";
 import { platform } from "./platform";
-import { DiskLink } from "./disk";
+import { DiskLink } from "../dev/disk-storage";
 import { publishedChanged } from "./published";
 import { siteChanged, siteOps } from "./site-host";
 import type { Env } from "./env";
@@ -58,7 +58,7 @@ export class DocumentObject extends DurableObject<Env> {
         publishedChanged: (docId) => publishedChanged(env, docId),
       },
       siteChanged: (docId) => siteChanged(env, docId),
-      disk: { store: (only) => this.disk.store(only) },
+      disk: { storage: (only) => this.disk.storage(this.ctx.storage, only) },
       timing: { idleMs: Number(env.ERGA_VERSION_IDLE_MS) || 30_000, maxMs: Number(env.ERGA_VERSION_MAX_MS) || 5 * 60_000, writeDelay: Number(env.ERGA_WRITE_DELAY_MS) || undefined },
       background: (work) => this.ctx.waitUntil(work),
       log: (line) => console.log(line),
