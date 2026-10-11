@@ -1,7 +1,7 @@
 // One document (document/document.ts) on MemoryStorage, with the real
 // directory on bun:sqlite: made, read while its room is closed, edited by a
 // publish (a version cut once edits pause), published at a version, restored,
-// deleted when unedited, and brought back from the cutover's export.
+// deleted when unedited.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
@@ -120,32 +120,4 @@ test("an unedited document goes when its alarm comes; an edited one stays", asyn
   await sleep(120);
   expect(await kept.exists()).toBe(true);
   expect(await dir.get("kept12345")).not.toBeNull();
-});
-
-test("the cutover's import brings an exported document back: its files as the latest version, the published files as the first, still published", async () => {
-  const { dir, make } = setup();
-  const row = (await dir.add({ id: "back12345", owner: "ada", title: "Back", created: 1700000000000, modified: 1700000001000 })).doc;
-  const doc = make();
-  const bytes = (s: string) => new TextEncoder().encode(s);
-  const r = await doc.importExported({
-    record: row, index: "index.html",
-    files: { "index.html": bytes("<h1>Now</h1>"), "img/a.png": new Uint8Array([1, 2, 3]) },
-    publishedFiles: { "index.html": bytes("<h1>Then</h1>") },
-  });
-  expect(r).toEqual({ ok: true, versions: 2 });
-  expect(await doc.importExported({ record: row, index: "index.html", files: {} })).toMatchObject({ ok: false });
-  expect(await (await get(doc, "/pub/index.html")).text()).toBe("<h1>Then</h1>");
-  expect(await (await get(doc, "/doc/index.html")).text()).toBe("<h1>Now</h1>");
-  expect(new Uint8Array(await (await get(doc, "/doc/img/a.png")).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
-  const state = (await doc.versionsState())!;
-  expect(state.total).toBe(2);
-  expect(state.published).toMatchObject({ mode: "manual", version: { n: 1 } });
-  expect(state.current.n).toBe(2);
-  expect(await doc.paths()).toEqual(["img/a.png", "index.html"]);
-
-  // Without published files: one version, published as it is typed.
-  const plain = (await dir.add({ id: "plain2345", owner: "ada", title: "Plain", created: 1700000000000 })).doc;
-  const p = make();
-  expect(await p.importExported({ record: plain, index: "index.md", files: { "index.md": bytes("# Plain") } })).toEqual({ ok: true, versions: 1 });
-  expect((await p.versionsState())!.published.mode).toBe("latest");
 });

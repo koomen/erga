@@ -496,7 +496,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       const scripts = await listScripts(cf, acc, target);
       const found = scripts.find((s) => s.id == target.workerName);
       // Ours: tagged by an earlier run (or, failing that, Erga's own Durable Object among its exports).
-      const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocumentObject" || h.name == "DocHost");
+      const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocumentObject");
       if (found && !ours(found)) {
         throw new DeployError(`Your account already has a Worker called ${target.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`);
       }

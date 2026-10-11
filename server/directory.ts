@@ -37,7 +37,7 @@
 
 import { ConfigError, ServerConfig } from "./settings.ts";
 
-import { NotAllowed, Users, type Actor } from "./users.ts";
+import { NotAllowed, Users } from "./users.ts";
 import { Credentials } from "./api-keys.ts";
 import { CloudflareConnections, Sites } from "./sites.ts";
 
@@ -491,12 +491,6 @@ export class Directory {
        FROM permissions p JOIN documents d ON d.id = p.doc_id
        WHERE p.login = ?1 AND d.test = 0 ORDER BY COALESCE(d.modified, d.created) DESC`, login.toLowerCase());
     return rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
-  }
-
-  /** Every document on the server, test documents left out, oldest first: admins only (the cutover's export). */
-  async all(by: Actor): Promise<DocRow[]> {
-    await this.users.mustAdmin(by);
-    return (await this.sql.all<Row>("SELECT * FROM documents WHERE test = 0 ORDER BY created ASC")).map(fromRow);
   }
 
   /** The role someone's own permission gives them ("*" for anyone's), not counting anyone's. */

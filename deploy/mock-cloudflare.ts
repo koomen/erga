@@ -690,7 +690,7 @@ function seedFleet(state: MockState) {
     { type: "plain_text", name: "DEPLOY_TARGET", text: "production" },
     { type: "plain_text", name: "ERGA_VERSION", text: "prod00000000" },
   ];
-  state.scripts.erga = { metadata: { main_module: "index.js", bindings: prodBindings }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["DocHost", "Deployer", "DocList"] };
+  state.scripts.erga = { metadata: { main_module: "index.js", bindings: prodBindings }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["DocumentObject", "DocHost", "Deployer", "DocList"] };
   state.secrets.erga = { SESSION_SECRET: "production-session-secret", GITHUB_CLIENT_SECRET: "production-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET };
   state.scripts["erga-builder"] = { metadata: { main_module: "worker.js", bindings: [] }, modules: ["worker.js"], workersDev: false, tags: [], namespaces: ["Builder"] };
   state.versions = { erga: 1, "erga-builder": 1 };

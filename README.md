@@ -30,7 +30,7 @@ AGENTS.md has the rules for working on it.
       directory.ts    documents, owners and permissions, in SQL; users.ts, settings.ts, api-keys.ts, tokens.ts, auth.ts beside it
       sites.ts, site-publish.ts   a document on its own domain
       home.ts         the homepage; account-menu.ts, who you are on every page; templates.ts, what a new document starts from
-      admin/          the admin pages (pages.ts), the layout they share (layout.ts), the storage cutover's routes (cutover.ts)
+      admin/          the admin pages (pages.ts), the layout they share (layout.ts)
       source/         Erga's own Git repository: the Git endpoint, the mirror, and the Source admin page
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     editor-agent/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
@@ -47,7 +47,7 @@ AGENTS.md has the rules for working on it.
                   site-host.ts, source-host.ts, pipeline.ts, deploy-session.ts, admin-agent-host.ts), D1 (d1.ts) and sign-in
     deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
                   release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a
-                  deploy locks (locked-settings.ts), the mock Cloudflare the tests use, and cutover/ (the storage cutover's scripts)
+                  deploy locks (locked-settings.ts), and the mock Cloudflare the tests use
     dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, a Git server for tests, and a
                   document's files on disk as its Storage (disk-storage.ts, over the mirror the plugin serves)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)

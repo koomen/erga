@@ -43,8 +43,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /admin/settings", domain: "admin", action: "Change a setting (Settings)", tool: "set_setting" },
   { route: "POST /admin/settings", domain: "admin", action: "Reset a setting to its default (Settings)", tool: "reset_setting" },
   { route: "GET /admin/settings", domain: "none", action: "An old address of Settings", exempt: "a redirect" },
-  { route: "GET /api/admin/documents/export", domain: "none", action: "Export every document for the storage cutover", exempt: "a one-time route for the cutover script: it sends every document's files, megabytes an agent has no use for" },
-  { route: "POST /api/admin/documents/import", domain: "none", action: "Import an exported document for the storage cutover", exempt: "a one-time route for the cutover script: it takes a document's files whole, which no conversation carries" },
   { route: "GET /admin/credentials", domain: "none", action: "An old address of API keys", exempt: "a redirect" },
   { route: "GET /admin/changes", domain: "admin", action: "Read the change log (Change log)", tool: "list_setting_changes" },
   { route: "GET /admin/users", domain: "admin", action: "Read the users (Users)", tool: "list_users" },

@@ -40,8 +40,6 @@ export default defineConfig(({ mode }) => ({
     exports: {
       // Each document (cloudflare/document-object.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
-      // The documents' namespace from before the storage cutover: kept, unbound, until the cutover is checked; deleted in its own deploy after.
-      DocHost: exports.durableObject({ storage: "sqlite" }),
       // The deploy page's sessions (/deploy, cloudflare/deploy-session.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),
       // Erga's own repository: one object, "erga", where pushes and merges happen one at a time.
@@ -60,6 +58,8 @@ export default defineConfig(({ mode }) => ({
       FactoryVm: exports.durableObject({ state: "deleted" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
+      // The documents' namespace from before the storage cutover of 2026-10-11: gone, with what it held.
+      DocHost: exports.durableObject({ state: "deleted" }),
     },
     env: {
       DOCUMENTS: bindings.durableObject({ worker: PROD.worker, exportName: "DocumentObject" }),

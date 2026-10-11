@@ -28,8 +28,6 @@
 
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
 //   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; cloudflare/admin-agent-host.ts)
-//   GET /api/admin/documents/export   every document's record, sharing and files, one JSON line each: the cutover's export script (admins)
-//   POST /api/admin/documents/import  one exported document back, under its id, whose row the directory has: the cutover's import script (admins)
 //   /admin/source, /api/source/...  the Source page (the dashboard of source and deploys; /source and /admin/factory
 //                              redirect there) and its API
 //                              Every /admin page has the same layout, and every /admin route is
@@ -56,7 +54,6 @@ import { serverApi, tokensDoor } from "../server/api";
 import { finishSignIn, isDev, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf } from "./d1";
 import { adminGate, isAdminPath } from "../server/admin/layout";
-import { exportDocuments, importDocument } from "../server/admin/cutover";
 import { deployDoor } from "./deploy-routes";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent-host";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
@@ -66,7 +63,6 @@ import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../server/home";
 import { siteApi } from "../server/site-publish";
 import { mockSiteFile, siteOps } from "./site-host";
-import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
 import { pagesSite, platform } from "./platform";
@@ -75,8 +71,6 @@ import { releaseApi, withLive } from "./live";
 
 export { Deployer } from "./deploy-session";
 export { DocumentObject } from "./document-object";
-/** The documents' namespace from before the storage cutover: unbound and without code, kept until the cutover is checked (then deleted, in its own deploy). */
-export class DocHost extends DurableObject<Env> {}
 export { AdminAgentHost } from "./admin-agent-host";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
@@ -182,10 +176,6 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (path == "/api/release" && read) return releaseApi(env, url);
   // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
   if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
-  // Every document, for the cutover's export script (admins).
-  if (path == "/api/admin/documents/export") return exportDocuments(withTokens(platform(env), url), request);
-  // The storage cutover's import: one exported document back, under its id (admins).
-  if (path == "/api/admin/documents/import") return importDocument(withTokens(platform(env), url), request);
   // The server's API for agents, and people's agent tokens.
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));

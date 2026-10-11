@@ -43,7 +43,6 @@ import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type A
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot.ts";
 import type { AgentConfig } from "../agents/models.ts";
-import type { ImportedDocument } from "../server/admin/cutover.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -148,32 +147,6 @@ export class Document {
     const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
     await this.versions.cut(first, index, [info.owner], "First version");
     return true;
-  }
-
-  /**
-   * The storage cutover: becomes an exported document (server/admin/cutover.ts,
-   * which decoded its files) under its own id, whose row the directory still has. Its current files
-   * are the latest version; when it was published at another version, that
-   * version's files are the first version, and stay published. An unedited
-   * document expires when its row says. Refused if the document exists.
-   */
-  async importExported(doc: ImportedDocument): Promise<{ ok: true; versions: number } | { ok: false; error: string }> {
-    if (await this.storage.get<DocumentInfo>(INFO)) return { ok: false, error: "The document exists already." };
-    const files = new Map(Object.entries(doc.files));
-    for (const [path, bytes] of files) await this.storage.put(FILE + path, bytes);
-    const info: DocumentInfo = { id: doc.record.id, owner: doc.record.owner.toLowerCase(), index: doc.index, created: doc.record.created, ...(doc.record.modified ? { modified: doc.record.modified } : {}) };
-    const by = [doc.record.owner.toLowerCase()];
-    let versions = 0;
-    if (doc.publishedFiles) {
-      const published = new Map(Object.entries(doc.publishedFiles));
-      await this.versions.cut(published, doc.index, by, "The published version, before the storage cutover");
-      info.published = { n: 1 };
-      versions++;
-    }
-    if (await this.versions.cut(files, doc.index, by, versions ? "The document as it was at the storage cutover" : "First version")) versions++;
-    await this.storage.put(INFO, info);
-    if (doc.record.modified == null && doc.record.expires != null) await this.storage.setAlarm(doc.record.expires);
-    return { ok: true, versions };
   }
 
   /**
