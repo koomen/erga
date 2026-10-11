@@ -82,7 +82,7 @@ export const platform = (env: Env): Platform => {
       paths: (doc) => counted("doc", () => host(doc).paths()),
       index: (doc) => counted("doc", () => host(doc).index()),
       snapshot: (doc, opts) => counted("doc", () => host(doc).snapshot(opts)),
-      importExported: (doc, exported, decode) => host(doc).importExported(exported, decode),
+      importExported: (doc, imported) => host(doc).importExported(imported),
       versions: (doc, opts) => host(doc).versionsState(opts),
       setPublished: (doc, req) => host(doc).setPublished(req),
       restore: (doc, ref, by, path) => host(doc).restore(ref, by, path),

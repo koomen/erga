@@ -15,7 +15,7 @@ import { agentToolsFor } from "../agents/tools";
 import { VIA } from "../shared/attribution";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions";
 import type { DocSnapshot, Page } from "../deploy/snapshot";
-import type { ExportedDocument } from "../server/admin/cutover";
+import type { ImportedDocument } from "../server/admin/cutover";
 import { directoryOf } from "./d1";
 import { agentSettings } from "./agent-settings";
 import { platform } from "./platform";
@@ -91,7 +91,7 @@ export class DocumentObject extends DurableObject<Env> {
   restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.restore(ref, by, path); }
   publishedFiles() { return this.document.publishedFiles(); }
   /** The storage cutover: becomes an exported document (server/admin/cutover.ts). */
-  importExported(doc: ExportedDocument, decode: (file: { text?: string; base64?: string }) => Uint8Array) { return this.document.importExported(doc, decode); }
+  importExported(doc: ImportedDocument) { return this.document.importExported(doc); }
 
   /** Its unedited time is up (document.wake says what then). */
   async alarm(): Promise<void> {

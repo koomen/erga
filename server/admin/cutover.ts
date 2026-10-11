@@ -29,6 +29,13 @@ export interface ExportedDocument {
   publishedFiles?: Record<string, ExportedFile>;
 }
 export type ExportLine = ExportedDocument | { record: DocRow; missing: true };
+/** An exported document on its way into a document's storage: the directory's row for it, its files as bytes. */
+export interface ImportedDocument {
+  record: DocRow;
+  index: string;
+  files: Record<string, Uint8Array>;
+  publishedFiles?: Record<string, Uint8Array>;
+}
 
 /**
  * POST /api/admin/documents/import: one exported document back, under its
@@ -50,7 +57,10 @@ export async function importDocument(platform: Platform, request: Request): Prom
   const row = await platform.directory.get(doc.record.id);
   if (!row) return json({ error: `The directory has no document ${doc.record.id}.` }, 404);
   if (row.owner != doc.record.owner.toLowerCase()) return json({ error: `The directory's ${doc.record.id} belongs to ${row.owner}, the export's to ${doc.record.owner}.` }, 409);
-  const r = await platform.docs.importExported({ id: row.id, owner: row.owner, test: row.test }, { ...doc, record: row }, decodeFile);
+  // Decoded here: the document runs in its own object, and bytes travel to it where a function would not.
+  const imported: ImportedDocument = { record: row, index: doc.index, files: decodeFiles(doc.files) };
+  if (doc.publishedFiles) imported.publishedFiles = decodeFiles(doc.publishedFiles);
+  const r = await platform.docs.importExported({ id: row.id, owner: row.owner, test: row.test }, imported);
   return r.ok ? json(r) : json({ error: r.error }, 409);
 }
 
@@ -104,6 +114,7 @@ export function encodeFiles(files: Record<string, string | Uint8Array>): Record<
 export function decodeFile(file: ExportedFile): Uint8Array {
   return file.text != null ? new TextEncoder().encode(file.text) : fromBase64(file.base64 ?? "");
 }
+const decodeFiles = (files: Record<string, ExportedFile>): Record<string, Uint8Array> => Object.fromEntries(Object.entries(files).map(([path, f]) => [path, decodeFile(f)]));
 
 function sameFiles(a: Record<string, string | Uint8Array>, b: Record<string, string | Uint8Array>): boolean {
   const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
