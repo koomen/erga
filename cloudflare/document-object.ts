@@ -38,10 +38,11 @@ import { afterUnedited, titleOf } from "../server/routes";
 import { cleanRel, docFile, makeHost, relativeUrl } from "../server/doc-host";
 import { resolvePage } from "../document/pages";
 import { agentToolsFor } from "../agents/tools";
-import { FileStore, Room, StateStore, StoreError } from "../document/room";
+import { FileStore, Room, StateStore } from "../document/room";
+import { fileStoreOf, KEYS, kvOf, stateStoreOf, writeText, type Storage } from "../document/storage";
 import { VIA } from "../shared/attribution";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "../document/content";
-import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../document/versions";
+import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../document/versions";
 import * as Y from "yjs";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
@@ -64,7 +65,7 @@ interface OnDisk { path: string; slug: string; only?: boolean }
 interface Person { id: string; name: string }
 
 /** Storage keys: a file's bytes, a folder made as one (empty ones too), what the document is, the room's Yjs state. */
-const FILE = "file:", DIR = "dir:", META = "meta", STATE = "state";
+const { file: FILE, dir: DIR, meta: META, state: STATE } = KEYS;
 
 /** The new-document template's page, which a new page starts from. */
 const TEMPLATE = Object.values(import.meta.glob("../assets/templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>)[0] ?? "";
@@ -86,8 +87,10 @@ export class DocHost extends DurableObject<Env> {
 
   private sync: (() => void) | null = null;
 
+  /** What it keeps between runs: the Durable Object's storage, as the document's Storage. */
+  private readonly storage: Storage = this.ctx.storage;
   /** Its versions, in its own storage. */
-  private versions = new Versions(kvOf(this.ctx.storage));
+  private versions = new Versions(kvOf(this.storage));
   /**
    * Edits not yet in a version: since when, by whom, and the timers that cut
    * one (see `noteEdit` for the rule).
@@ -115,12 +118,12 @@ export class DocHost extends DurableObject<Env> {
    * after it's made, or sooner when local development asks, to test it).
    */
   async create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
-    if (await this.ctx.storage.get<Meta>(META)) return false;
+    if (await this.storage.get<Meta>(META)) return false;
     const encoder = new TextEncoder();
-    for (const [path, data] of Object.entries(files)) await this.ctx.storage.put(FILE + path, typeof data == "string" ? encoder.encode(data) : data);
+    for (const [path, data] of Object.entries(files)) await this.storage.put(FILE + path, typeof data == "string" ? encoder.encode(data) : data);
     const meta: Meta = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
-    await this.ctx.storage.put(META, meta);
-    if (!meta.test && opts.expires != null) await this.ctx.storage.setAlarm(opts.expires);
+    await this.storage.put(META, meta);
+    if (!meta.test && opts.expires != null) await this.storage.setAlarm(opts.expires);
     // Its first version: the files it starts from.
     const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
     await this.versions.cut(first, index, [meta.owner], "First version");
@@ -135,9 +138,9 @@ export class DocHost extends DurableObject<Env> {
    * deleting it leaves them as they are.
    */
   async link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> {
-    const meta = await this.ctx.storage.get<Meta>(META);
-    await this.ctx.storage.put(META, meta ? { ...meta, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
-    await this.ctx.storage.deleteAlarm();
+    const meta = await this.storage.get<Meta>(META);
+    await this.storage.put(META, meta ? { ...meta, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
+    await this.storage.deleteAlarm();
     return (await this.addRow())!;
   }
 
@@ -161,7 +164,7 @@ export class DocHost extends DurableObject<Env> {
   private publisher: string | null = null;
 
   private async publishNow(opened: Opened, files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
-    const meta = (await this.ctx.storage.get<Meta>(META))!;
+    const meta = (await this.storage.get<Meta>(META))!;
     const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     // Edits not yet written land first, so a published file replaces what's there now rather than merging with it.
@@ -177,15 +180,15 @@ export class DocHost extends DurableObject<Env> {
         continue;
       }
       if (meta.disk) { out.refused.push({ path, why: "a document on disk takes only text files this way" }); continue; }
-      await this.ctx.storage.put(FILE + path, typeof data == "string" ? new TextEncoder().encode(data) : data);
+      await this.storage.put(FILE + path, typeof data == "string" ? new TextEncoder().encode(data) : data);
       await Effect.runPromise(opened.room.fileChanged(path));
       out.written.push(path);
     }
     for (const path of remove) {
       if (path == meta.index) { out.refused.push({ path, why: "it's the document's page" }); continue; }
       if (meta.disk) { out.refused.push({ path, why: "files on disk aren't deleted this way" }); continue; }
-      if (!(await this.ctx.storage.get(FILE + path))) continue;
-      await this.ctx.storage.delete(FILE + path);
+      if (!(await this.storage.get(FILE + path))) continue;
+      await this.storage.delete(FILE + path);
       await Effect.runPromise(opened.room.fileChanged(path));
       out.removed.push(path);
     }
@@ -202,7 +205,7 @@ export class DocHost extends DurableObject<Env> {
 
   /** The document's page, or null if there's no such document. */
   async index(): Promise<string | null> {
-    return (await this.ctx.storage.get<Meta>(META))?.index ?? null;
+    return (await this.storage.get<Meta>(META))?.index ?? null;
   }
 
   /**
@@ -211,7 +214,7 @@ export class DocHost extends DurableObject<Env> {
    * Null if there's no such document.
    */
   async snapshot(opts: { published?: boolean } = {}): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     // Someone who may only view it, in "manual" mode, copies what they see: the published version.
     const v = opts.published && meta?.published ? await this.versions.get(meta.published.n) : null;
     if (v) return { index: v.index, files: Object.fromEntries(await this.versions.files(v)) };
@@ -220,7 +223,7 @@ export class DocHost extends DurableObject<Env> {
     const files: Record<string, string | Uint8Array> = {};
     for (const path of await this.paths()) {
       const text = opened.room.text(path);
-      const data = text ?? (await this.ctx.storage.get<Uint8Array>(FILE + path));
+      const data = text ?? (await this.storage.get<Uint8Array>(FILE + path));
       if (data != null) files[path] = data;
     }
     return { index: meta.index, files };
@@ -228,7 +231,7 @@ export class DocHost extends DurableObject<Env> {
 
   /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
   async delete(): Promise<boolean> {
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta) return false;
     await this.destroy(meta);
     return true;
@@ -240,7 +243,7 @@ export class DocHost extends DurableObject<Env> {
    * whoever local development lets in). Null if there's no such document.
    */
   private async addRow(): Promise<DocRow | null> {
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta) return null;
     const id = this.idOf(meta);
     const text = await this.pageText(meta);
@@ -250,7 +253,7 @@ export class DocHost extends DurableObject<Env> {
       // A test document's address stays its id (the suite addresses it so); one on disk is its folder's or file's name.
       ...(meta.test ? { slug: id, slugSet: true } : meta.disk ? { slug: meta.disk.slug, slugSet: true } : {}),
       created: meta.created, modified: meta.modified ?? null,
-      expires: meta.modified || meta.test || meta.disk ? null : (await this.ctx.storage.getAlarm()),
+      expires: meta.modified || meta.test || meta.disk ? null : (await this.storage.getAlarm()),
       test: meta.test,
       ...(meta.disk ? { everyone: "editor" as const } : {}),
     });
@@ -263,7 +266,7 @@ export class DocHost extends DurableObject<Env> {
    * someone about to type. If delete_docs_after_hours is now never, it stays.
    */
   async alarm(): Promise<void> {
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta) return;
     const next = afterUnedited(meta, this.sockets.size > 0, Date.now());
     if (next == "keep") return;
@@ -272,7 +275,7 @@ export class DocHost extends DurableObject<Env> {
       return;
     }
     if (next != "delete") {
-      await this.ctx.storage.setAlarm(next);
+      await this.storage.setAlarm(next);
       await directoryOf(this.env).setExpires(this.idOf(meta), next).catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
       return;
     }
@@ -291,9 +294,9 @@ export class DocHost extends DurableObject<Env> {
     this.open = null;
     this.opened = null;
     await opened?.close();
-    await this.ctx.storage.deleteAlarm();
-    await this.ctx.storage.deleteAll();
-    this.versions = new Versions(kvOf(this.ctx.storage));
+    await this.storage.deleteAlarm();
+    await this.storage.deleteAll();
+    this.versions = new Versions(kvOf(this.storage));
     this.pub = undefined;
     // If it had a site on its person's Cloudflare account, the site comes down too.
     const site = await directoryOf(this.env).sites.get(this.idOf(meta)).catch(() => null);
@@ -318,7 +321,7 @@ export class DocHost extends DurableObject<Env> {
    * slug the title). Every open tab hears of a new title or address.
    */
   private async syncDirectory(): Promise<void> {
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta) return;
     const text = await this.pageText(meta);
     const r = await directoryOf(this.env).edited(this.idOf(meta), {
@@ -340,7 +343,7 @@ export class DocHost extends DurableObject<Env> {
    */
   private async pageText(meta: Meta): Promise<string | null> {
     if (meta.disk) return this.opened?.room.text(meta.index) ?? null;
-    const bytes = await this.ctx.storage.get<Uint8Array>(FILE + meta.index);
+    const bytes = await this.storage.get<Uint8Array>(FILE + meta.index);
     return bytes ? new TextDecoder().decode(bytes) : null;
   }
 
@@ -350,20 +353,16 @@ export class DocHost extends DurableObject<Env> {
    * holds is an edit: by a person, an agent or a publish.
    */
   private async edited(path: string, text: string): Promise<void> {
-    const before = await this.ctx.storage.get<Uint8Array>(FILE + path);
-    const bytes = new TextEncoder().encode(text);
-    await this.ctx.storage.put(FILE + path, bytes);
-    if (before && sameBytes(before, bytes)) return;
-    await this.touch();
+    if ((await writeText(this.storage, path, text)).changed) await this.touch();
   }
 
   /** A file changed: the document has been edited, so it stays (and its row says when). */
   private async touch(): Promise<void> {
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta) return;
     meta.modified = Date.now();
-    await this.ctx.storage.put(META, meta);
-    if (!meta.test) await this.ctx.storage.deleteAlarm();
+    await this.storage.put(META, meta);
+    if (!meta.test) await this.storage.deleteAlarm();
     // At most every DIRECTORY_EVERY_MS, however fast the edits come; the last always lands.
     this.sync ??= throttle(() => this.syncDirectory().catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`)), DIRECTORY_EVERY_MS);
     this.sync();
@@ -371,12 +370,12 @@ export class DocHost extends DurableObject<Env> {
 
   /** Where its files are, for a document on disk (local development); null for any other. */
   async diskPath(): Promise<string | null> {
-    return (await this.ctx.storage.get<Meta>(META))?.disk?.path ?? null;
+    return (await this.storage.get<Meta>(META))?.disk?.path ?? null;
   }
 
   /** Whether the document exists. */
   async exists(): Promise<boolean> {
-    return (await this.ctx.storage.get<Meta>(META)) != null;
+    return (await this.storage.get<Meta>(META)) != null;
   }
 
   /**
@@ -386,8 +385,8 @@ export class DocHost extends DurableObject<Env> {
    * the directory isn't touched. Null if there's no document.
    */
   async exportStorage(id: string, page: Page): Promise<DocSnapshot | null> {
-    if (page.after == null && (await this.ctx.storage.get(META)) == null) return null;
-    const storage = this.ctx.storage;
+    if (page.after == null && (await this.storage.get(META)) == null) return null;
+    const storage = this.storage;
     return exportPage(id, page, await storage.getAlarm(), (after, limit) => storage.list(after == null ? { limit } : { startAfter: after, limit }));
   }
 
@@ -401,20 +400,20 @@ export class DocHost extends DurableObject<Env> {
   async importStorage(snap: DocSnapshot): Promise<void> {
     await this.closeForSnapshot();
     if (!snap.append) {
-      await this.ctx.storage.deleteAlarm();
-      await this.ctx.storage.deleteAll();
+      await this.storage.deleteAlarm();
+      await this.storage.deleteAll();
     }
     const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
     const keys = Object.keys(entries);
-    for (let i = 0; i < keys.length; i += 100) await this.ctx.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
-    if (snap.alarm != null) await this.ctx.storage.setAlarm(snap.alarm);
+    for (let i = 0; i < keys.length; i += 100) await this.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
+    if (snap.alarm != null) await this.storage.setAlarm(snap.alarm);
   }
 
   /** Empties it (staging only: a document production no longer has). The directory row is already gone with the old database. */
   async wipeStorage(): Promise<void> {
     await this.closeForSnapshot();
-    await this.ctx.storage.deleteAlarm();
-    await this.ctx.storage.deleteAll();
+    await this.storage.deleteAlarm();
+    await this.storage.deleteAll();
   }
 
   private async closeForSnapshot(): Promise<void> {
@@ -465,12 +464,12 @@ export class DocHost extends DurableObject<Env> {
   private async storedFile(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
     if ((request.method != "GET" && request.method != "HEAD") || !url.pathname.startsWith("/doc/") || request.headers.get("upgrade")) return null;
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta || meta.disk) return null;
     // doc/ itself is its page (server/routes.ts's frame asks for it so, not knowing its name).
     const rel = url.pathname == "/doc/" ? meta.index : cleanRel(url.pathname.slice("/doc/".length));
     if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    const bytes = await this.ctx.storage.get<Uint8Array>(FILE + rel);
+    const bytes = await this.storage.get<Uint8Array>(FILE + rel);
     if (!bytes) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const r = docFile(rel, bytes, request.headers.get("if-none-match"));
     return new Response(request.method == "HEAD" ? null : r.body, { status: r.status, headers: { "Content-Type": r.type, ...r.headers, "Server-Timing": 'doc;desc="stored"' } });
@@ -505,7 +504,7 @@ export class DocHost extends DurableObject<Env> {
 
   /** The published version's number in "manual" mode; null in "latest". */
   private async publishedNumber(): Promise<number | null> {
-    if (this.pub === undefined) this.pub = (await this.ctx.storage.get<Meta>(META))?.published?.n ?? null;
+    if (this.pub === undefined) this.pub = (await this.storage.get<Meta>(META))?.published?.n ?? null;
     return this.pub;
   }
 
@@ -572,7 +571,7 @@ export class DocHost extends DurableObject<Env> {
     // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
     await new Promise((r) => setTimeout(r, 0));
     const opened = this.opened;
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!opened || !meta) return null;
     const { authors } = this.clearPending();
     const r = await this.versions.cut(await opened.current(), meta.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null), opened.room.folderPaths());
@@ -617,7 +616,7 @@ export class DocHost extends DurableObject<Env> {
     if (!opened) { this.open = null; return null; }
     await this.cutting;
     if ((await this.versions.head()) == 0) await this.cutSoon("first");
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     return meta ? { opened, meta } : null;
   }
 
@@ -660,7 +659,7 @@ export class DocHost extends DurableObject<Env> {
     // Edits not yet in a version become one: publishing the current version means up to the keystroke.
     const before = await this.versions.head();
     await this.cutSoon("publish");
-    const meta = (await this.ctx.storage.get<Meta>(META))!;
+    const meta = (await this.storage.get<Meta>(META))!;
     if (req.mode == "latest") delete meta.published;
     else {
       const head = await this.versions.head();
@@ -670,7 +669,7 @@ export class DocHost extends DurableObject<Env> {
       if (n == null || n > head || !(await this.versions.get(n))) return { ok: false, status: 404, error: `There's no version ${req.versionId} of this document: its versions are v1 to v${head}.` };
       meta.published = { n };
     }
-    await this.ctx.storage.put(META, meta);
+    await this.storage.put(META, meta);
     this.pub = meta.published?.n ?? null;
     r.opened.broadcast({ type: "versions" });
     this.firePublished(meta);
@@ -733,7 +732,7 @@ export class DocHost extends DurableObject<Env> {
   /** The dev server's socket to the files of a document on disk (the front door checked its secret; so does this). */
   private async mirror(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta?.disk || !this.env.ERGA_LINK_SECRET || url.searchParams.get("link") != this.env.ERGA_LINK_SECRET || request.headers.get("upgrade")?.toLowerCase() != "websocket") {
       return new Response("Not found", { status: 404 });
     }
@@ -746,45 +745,15 @@ export class DocHost extends DurableObject<Env> {
 
   /** Opens the room on this document's storage, for as long as the object lives. */
   private async load(): Promise<Opened | null> {
-    const meta = await this.ctx.storage.get<Meta>(META);
+    const meta = await this.storage.get<Meta>(META);
     if (!meta) return null;
-    const storage = this.ctx.storage;
-    const storeError = (e: unknown) => new StoreError({ message: e instanceof Error ? e.message : String(e) });
     const onDisk = meta.disk && this.disk.store(meta.disk.only ? meta.index : null);
     const files = onDisk ? FileStore.of({
       ...onDisk,
       // A write to disk is an edit too (the room writes only files whose text changed).
       write: (path, text) => onDisk.write(path, text).pipe(Effect.andThen(Effect.promise(() => this.touch()))),
-    }) : FileStore.of({
-      list: Effect.tryPromise({ try: async () => [...(await storage.list({ prefix: FILE })).keys()].map((k) => k.slice(FILE.length)), catch: storeError }),
-      read: (path) => Effect.tryPromise({ try: async () => (await storage.get<Uint8Array>(FILE + path)) ?? null, catch: storeError }),
-      write: (path, text) => Effect.tryPromise({ try: () => this.edited(path, text), catch: storeError }),
-      // Moving, deleting and folders are edits too: the document stays, and its row says when.
-      writeBytes: (path, bytes) => Effect.tryPromise({ try: async () => { await storage.put(FILE + path, bytes); await this.touch(); }, catch: storeError }),
-      remove: (path) => Effect.tryPromise({ try: async () => { if (await storage.delete(FILE + path)) await this.touch(); }, catch: storeError }),
-      folders: Effect.tryPromise({ try: async () => [...(await storage.list({ prefix: DIR })).keys()].map((k) => k.slice(DIR.length)), catch: storeError }),
-      mkdir: (path) => Effect.tryPromise({
-        try: async () => {
-          const all = path.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
-          for (const d of all) await storage.put(DIR + d, true);
-          await this.touch();
-        },
-        catch: storeError,
-      }),
-      rmdir: (path) => Effect.tryPromise({
-        try: async () => {
-          const keys = [...(await storage.list({ prefix: FILE + path + "/" })).keys(), ...(await storage.list({ prefix: DIR + path + "/" })).keys(), DIR + path];
-          await storage.delete(keys.slice(0, 128));
-          for (let i = 128; i < keys.length; i += 128) await storage.delete(keys.slice(i, i + 128));
-          await this.touch();
-        },
-        catch: storeError,
-      }),
-    });
-    const state = StateStore.of({
-      load: Effect.tryPromise({ try: async () => (await storage.get<Uint8Array>(STATE)) ?? null, catch: storeError }),
-      save: (bytes) => Effect.tryPromise({ try: () => storage.put(STATE, bytes), catch: storeError }),
-    });
+    }) : fileStoreOf(this.storage, { edited: (path, text) => this.edited(path, text), touch: () => this.touch() });
+    const state = stateStoreOf(this.storage);
 
     // The room's scope lasts as long as this object: it's evicted only when
     // idle, by which time the room's writes (400ms behind the last edit) are in.
@@ -938,14 +907,6 @@ interface Opened {
   close: () => Promise<void>;
 }
 
-/** Durable Object storage as document/versions.ts's KV. */
-function kvOf(storage: DurableObjectStorage): KV {
-  return {
-    get: ((k: string | string[]) => storage.get(k as string)) as KV["get"],
-    put: (entries) => storage.put(entries),
-  };
-}
-
 /** Whether a transaction changed a file: a text's content, or the list of files or other files (images). */
 function touchesFiles(doc: Y.Doc, tr: Y.Transaction): boolean {
   const fileMap = texts(doc) as Y.AbstractType<any>, assetMap = assets(doc) as Y.AbstractType<any>, folderMap = folders(doc) as Y.AbstractType<any>;
@@ -958,12 +919,6 @@ function touchesFiles(doc: Y.Doc, tr: Y.Transaction): boolean {
 
 /** A new Markdown page (a document whose page is index.md). */
 const plainMarkdown = "# Untitled\n\nStart writing here.\n";
-
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length != b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] != b[i]) return false;
-  return true;
-}
 
 /** A frame's bytes, whether it came as text, an ArrayBuffer or a view on one. */
 function bytesOf(data: string | ArrayBuffer | ArrayBufferView): Uint8Array {
