@@ -7,23 +7,12 @@
 // it: its script runs on this
 // site's own origin, where it could act as whoever views it.
 //
-// This file is the platform-neutral half: rendering a deploy's page
-// (`renderHome`), the controls (`homeHeader`), and the homepage's API
-// (`homeApi`). The Worker's half keeps the deployed
-// snapshot, deploys it again after changes, and serves it.
-//
-//   GET  /api/docs/<id>/home          { isHome, canSet, blocked, deploy }
-//   POST /api/docs/<id>/home          { isHome: boolean }: admins; sets or clears landing_document
-//   POST /api/docs/<id>/home/deploy   admins: deploys the homepage again, now
+// This file renders: a deploy's page (`renderHome`) and the controls
+// (`homeHeader`). deploys.ts keeps the deployed snapshot and deploys it again
+// after changes; serve.ts serves it at /; api.ts is the homepage's API.
 
-import { ACCOUNT_STYLE, accountMarkup, type Account } from "./pages/index.ts";
-import { ConfigError } from "./settings.ts";
-import { LOCKED } from "./identity/users.ts";
-import { byLine } from "../shared/attribution.ts";
-import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
-import { cloneButton, crumbsFont, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, viewCrumbs } from "./pages/index.ts";
-import { whoOf, type Platform } from "./platform.ts";
-import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./pages/templates.ts";
+import type { DocRow } from "../directory.ts";
+import { ACCOUNT_STYLE, accountMarkup, cloneButton, crumbsFont, editButton, esc, FADE, link, NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, VIEW_STYLE, viewCrumbs, type Account } from "../pages/index.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home/";
@@ -44,14 +33,6 @@ export interface DeployStatus {
 }
 
 export const IDLE: DeployStatus = { state: "idle", at: null, scheduledFor: null, version: null, error: null };
-
-/** What the homepage's API needs of its deploys (cloudflare/home.ts's Home). */
-export interface HomeDeploys {
-  status(): Promise<DeployStatus>;
-  /** Deploys now; answers the status (deploying). */
-  /** `by`: who asks (byLine). */
-  deploy(by?: string): Promise<DeployStatus>;
-}
 
 /** The page as deployed, split where the controls go (they differ for each person). */
 export interface RenderedHome { before: string; after: string }
@@ -108,7 +89,7 @@ function rewriteSrcset(srcset: string, to: (v: string) => string | null): string
  * where this deploy serves them (/_home/<gen>/<path>): every relative URL in
  * an attribute that loads something, in srcset, and in CSS, that names one of
  * the document's files. Links to its other pages stay relative (they're
- * served at the root too: cloudflare/home.ts). Throws if the page isn't HTML.
+ * served at the root too: serve.ts). Throws if the page isn't HTML.
  */
 export async function renderHome(opts: { index: string; files: Record<string, string | Uint8Array>; gen: string; title: string }): Promise<RenderedHome> {
   const { index, gen } = opts;
@@ -120,8 +101,8 @@ export async function renderHome(opts: { index: string; files: Record<string, st
   const prefix = `${HOME_FILES}${gen}/`;
   let base = new URL(`https://home.invalid/${index.includes("/") ? index.slice(0, index.lastIndexOf("/") + 1) : ""}`);
   const to = (v: string) => fileUrl(v, base, files, prefix);
-  const attr = (name: string) => ({
-    element(e: Element) {
+  const attr = (name: string): Parameters<HTMLRewriter["on"]>[1] => ({
+    element(e) {
       const v = e.getAttribute(name);
       const t = v == null ? null : name == "srcset" ? rewriteSrcset(v, to) : name == "style" ? rewriteCss(v, to) : to(v);
       if (t != null && t != v) e.setAttribute(name, t);
@@ -219,7 +200,7 @@ const HEADER_SCRIPT = `(() => {
   new MutationObserver(band).observe(document.documentElement, { attributes: true, subtree: false });
   if (document.body) new MutationObserver(band).observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", band);
-  // Who you are (server/account-menu.ts's corner): its menu opens and closes as everywhere else on the site.
+  // Who you are (server/pages/account-menu.ts's corner): its menu opens and closes as everywhere else on the site.
   const acc = root.querySelector(".erga-account"), btn = acc && acc.querySelector("button"), menu = acc && acc.querySelector(".erga-account-menu");
   if (btn && menu) {
     const show = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
@@ -250,60 +231,6 @@ const HEADER_SCRIPT = `(() => {
     el.style.setProperty("--tip-y", e.clientY - r.top + 30 + "px");
   }, { passive: true });
 })();`;
-
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
-
-/**
- * The homepage's API for a document (`id`): whether it's the homepage, who
- * may change that, and its deploys. `action` is "" (/home) or "deploy"
- * (/home/deploy). `platform` already takes agent tokens (withTokens).
- */
-export async function homeApi(request: Request, platform: Platform, deploys: HomeDeploys, id: string, action: "" | "deploy", after?: () => void): Promise<Response> {
-  const url = new URL(request.url);
-  const session = await platform.sessionOf(request);
-  if (!session) return json({ error: "Sign in first." }, 401);
-  const dir = platform.directory;
-  const doc = await dir.get(id);
-  const who = whoOf(session);
-  const [role, admin, unlocked] = await Promise.all([doc ? dir.access(who, doc) : null, session.test ? false : dir.users.isAdmin(who), session.test ? false : dir.users.actsAsAdmin(who)]);
-  if (!doc || doc.test || (!role && !admin)) return json({ error: "There's no such document." }, 404);
-  const state = async () => {
-    const isHome = (await dir.homeId()) == doc.id;
-    // An admin acting through a token without the admin scope is told so (locked), and can't set it with that token.
-    const canSet = unlocked && !dir.config.isLocked("landing_document") && roleMay(await dir.access(who, doc), "edit");
-    return { isHome, canSet, locked: admin && !unlocked, blocked: isHome ? null : await dir.homeBlocked(doc.id), deploy: isHome ? await deploys.status() : IDLE };
-  };
-  if (request.method == "GET" || request.method == "HEAD") {
-    if (action) return json({ error: "Not found" }, 404);
-    return json(await state());
-  }
-  if (request.method != "POST") return json({ error: "GET or POST" }, 405);
-  // Another site may not do this on someone's behalf (an agent's token is its own proof).
-  if (!session.agent && (fromElsewhere(request) || (request.headers.has("origin") && request.headers.get("origin") != url.origin))) return json({ error: "Not from this site." }, 403);
-  if (!admin) return json({ error: "Only an admin can choose the homepage or deploy it." }, 403);
-  if (!unlocked) return json({ error: LOCKED, locked: true }, 403);
-  if (action == "deploy") {
-    if ((await dir.homeId()) != doc.id) return json({ error: "This document isn't the homepage." }, 409);
-    await deploys.deploy(byLine(who.login, who.via));
-    after?.();
-    return json(await state());
-  }
-  let body: { isHome?: unknown };
-  try { body = await request.json() as { isHome?: unknown }; } catch { return json({ error: 'Send JSON: {"isHome": true} or {"isHome": false}.' }, 400); }
-  if (typeof body?.isHome != "boolean") return json({ error: 'Send JSON: {"isHome": true} or {"isHome": false}.' }, 400);
-  if (dir.config.isLocked("landing_document")) return json({ error: "The homepage is fixed by the deploy (deploy/locked-settings.ts), so it can't be changed here." }, 409);
-  const isHome = (await dir.homeId()) == doc.id;
-  try {
-    if (body.isHome && !isHome) await dir.config.set(who, "landing_document", doc.id);
-    else if (!body.isHome && isHome) await dir.config.reset(who, "landing_document");
-  } catch (e) {
-    if (e instanceof NotAllowed) return json({ error: e.message }, 403);
-    if (e instanceof ConfigError) return json({ error: e.message }, 400);
-    throw e;
-  }
-  after?.();
-  return json(await state());
-}
 
 /** The document's address, for its Edit link. */
 export const addressOf = (doc: Pick<DocRow, "owner" | "slug">) => `/${doc.owner}/${doc.slug}`;

@@ -4,7 +4,7 @@ import type { Deployer } from "./deploy-session";
 import type { DocumentObject } from "./document-object";
 import type { SourceHost } from "./source-host";
 import type { Pipeline } from "./pipeline";
-import type { Home } from "./home";
+import type { Home } from "./objects/home";
 import type { SiteHost } from "./site-host";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */

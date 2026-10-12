@@ -6,6 +6,7 @@
 
 import type { AppValues, AuthStorage } from "./identity/apps.ts";
 import type { TargetName } from "../deploy/targets.ts";
+import type { HomeObject } from "./home/deploys.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory.ts";
 import type { SiteOps } from "./site-publish.ts";
 import type { AgentToken, Tokens } from "./identity/tokens.ts";
@@ -120,6 +121,17 @@ export interface Platform {
     devLogin: string | null;
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */
     encryptionKey: string | null;
+  };
+  /** The homepage's deploys and its snapshot (server/home/deploys.ts), one object per server. */
+  home: HomeObject;
+  /** What runs at the edge, around a request. */
+  edge: {
+    /** The edge's cache, shared by the isolates of one place; null where there's none (workers.dev). */
+    cache: { match(key: string): Promise<Response | undefined>; put(key: string, response: Response): Promise<void>; delete(key: string): Promise<boolean> } | null;
+    /** Work that goes on after the response is sent. */
+    background(work: Promise<unknown>): void;
+    /** How often / asks the home object whether its snapshot is still current (0: every time; the tests). */
+    homeRecheckMs: number;
   };
   /**
    * This server's own small storage, which a copy of production's data never

@@ -51,7 +51,7 @@ import { accountOf, OWN_ACCOUNT, withAccount } from "../server/pages/index.ts";
 import { idShaped, slugify, OWNER } from "../server/directory";
 import { frontDoor } from "../server/documents/index.ts";
 import { mayDeploy } from "../server/deploys/access";
-import { whoOf } from "../server/platform";
+import { whoOf, type Platform } from "../server/platform";
 import { serverApi, tokensDoor } from "../server/api";
 import { finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "../server/identity/index.ts";
 import { directoryOf } from "./d1";
@@ -60,8 +60,7 @@ import { deployDoor } from "./deploy-routes";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent-host";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
-import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
-import { homeApi } from "../server/home";
+import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "../server/home/index.ts";
 import { siteApi } from "../server/site-publish";
 import { mockSiteFile, siteOps } from "./site-host";
 import type { Env } from "./env";
@@ -75,7 +74,7 @@ export { DocumentObject } from "./document-object";
 export { AdminAgentHost } from "./admin-agent-host";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
-export { Home } from "./home";
+export { Home } from "./objects/home";
 export { SiteHost } from "./site-host";
 
 export default {
@@ -84,13 +83,14 @@ export default {
     const started = Date.now();
     if (env.ERGA_REMOTE_LATENCY_MS) simulateLatency(Number(env.ERGA_REMOTE_LATENCY_MS));
     const { value: answer, timing } = await tallied(async () => {
-      const response = await route(request, env, url, ctx);
+      const p = platform(env, ctx);
+      const response = await route(request, env, url, p);
       // Every page of the site's own has who you are in its upper right; a document's pages origin never does.
       if (response.status == 101 || pagesSite(env, url)) return response;
       // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
       const own = response.headers.has(OWN_ACCOUNT);
       const page = await withAccount(response, async () => {
-        const session = await platform(env).sessionOf(request);
+        const session = await p.sessionOf(request);
         const dir = directoryOf(env);
         return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
       }, url.pathname + url.search);
@@ -119,10 +119,9 @@ function timed(response: Response, entries: string[]): Response {
   }
 }
 
-async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
+async function route(request: Request, env: Env, url: URL, p: Platform): Promise<Response> {
   const path = url.pathname;
   const assets = isAsset(path);
-  const p = platform(env);
   // Staging is for Erga's admins only (deploy/targets.json `adminsOnly`): every route after this, and the pages origin,
   // needs an admin's session or admin-scope token, but for the exemptions cloudflare/admins-only.ts lists and explains.
   const refused = await adminsOnlyGate(request, env, url);
@@ -153,23 +152,20 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const read = request.method == "GET" || request.method == "HEAD";
   // The homepage, served directly from its last deploy; the viewer on it until there's one.
   if (path == "/" && read) {
-    const home = await serveHome(request, env, ctx, p);
+    const home = await serveHome(request, p);
     if (home) return home;
   }
-  if (path.startsWith("/_home/")) return serveHomeFile(request, env, ctx);
+  if (path.startsWith("/_home/")) return serveHomeFile(request, p);
   // Whether a document is the homepage, setting it, and its deploys.
   const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
-  if (homeId) {
-    const home = env.HOME.getByName("home");
-    return homeApi(request, p, { status: () => home.status(), deploy: (by) => home.deploy(by) }, homeId, (homeAction ?? "") as "" | "deploy", () => { ctx.waitUntil(forgetHome(url)); });
-  }
+  if (homeId) return homeApi(request, p, homeId, (homeAction ?? "") as "" | "deploy");
   // A document's site on its person's Cloudflare account, and its deploys.
   const [, siteId, siteAction] = /^\/api\/docs\/([a-z0-9]{8})\/site(?:\/(deploy))?\/?$/.exec(path) ?? [];
   if (siteId) return siteApi(request, p, siteOps(env, url.origin), siteId, (siteAction ?? "") as "" | "deploy");
   // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
   // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
   if (read && isHomeFilePath(path)) {
-    const file = await serveHomeRoot(request, env, ctx);
+    const file = await serveHomeRoot(request, p);
     if (file) return file;
   }
   // Each admin's agent, its conversation and panel, in the AdminAgent object: before the server's API, which has the rest of /api/.

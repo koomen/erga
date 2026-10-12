@@ -1,5 +1,4 @@
-// Helpers for the front page tests (server/documents/landing.ts seedLanding, server/home.ts,
-// cloudflare/home.ts): / as served, the landing document, the homepage's state
+// Helpers for the front page tests (server/documents/landing.ts seedLanding, server/home/): / as served, the landing document, the homepage's state
 // and deploys, and documents published through the server's API.
 //
 // On servers.short(), tests share the server's one front page one after

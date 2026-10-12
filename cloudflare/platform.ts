@@ -58,7 +58,15 @@ export const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pages
  * named by its id.
  */
 const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1";
-export const platform = (env: Env): Platform => {
+/** The edge's cache (the Cache API), where the runtime has one. */
+const edgeCache = (): Platform["edge"]["cache"] => {
+  const caches = (globalThis as unknown as { caches?: { default?: Cache } }).caches?.default;
+  if (!caches) return null;
+  return { match: (key) => caches.match(key), put: (key, response) => caches.put(key, response), delete: (key) => caches.delete(key) };
+};
+
+/** The Platform for one request (`ctx`: its execution context, for work after the response), or for work outside one. */
+export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const directory = directoryOf(env);
   const host = (doc: Route) => env.DOCUMENTS.getByName(doc.id);
   const target = env.DEPLOY_TARGET?.trim() ?? "";
@@ -91,6 +99,12 @@ export const platform = (env: Env): Platform => {
       encryptionKey: factoryKey(env),
     },
     own: { get: (k) => own().authGet(k), put: (k, v) => own().authPut(k, v), delete: (k) => own().authDelete(k) },
+    home: env.HOME.getByName("home"),
+    edge: {
+      cache: edgeCache(),
+      background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },
+      homeRecheckMs: env.ERGA_HOME_RECHECK_MS ? Number(env.ERGA_HOME_RECHECK_MS) || 0 : 5000,
+    },
     sites: (origin) => siteOps(env, origin),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),

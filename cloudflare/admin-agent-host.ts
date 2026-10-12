@@ -33,7 +33,7 @@ import { directoryOf, tokensOf } from "./d1";
 import { agentSettings } from "./agent-settings";
 import { authOps, LOCKED, SHARE_ADMIN_HOURS } from "../server/identity/index.ts";
 import { platform } from "./platform";
-import { forgetHome } from "./home";
+import { forgetHome } from "../server/home/index.ts";
 import { hasSource } from "./artifacts";
 import type { Env } from "./env";
 
@@ -124,7 +124,7 @@ export class AdminAgentHost extends DurableObject<Env> {
         const dir = directoryOf(this.env);
         if (!(await dir.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");
         const status = await this.env.HOME.getByName("home").deploy(byLine(login, VIA.admin));
-        await forgetHome(new URL(state.origin)).catch(() => {});
+        await forgetHome(platform(this.env), new URL(state.origin)).catch(() => {});
         return { done: "The homepage deploys now", status };
       },
       agentTokens: async () => (await tokensOf(this.env).list(login)).map((t) => ({ id: t.id, label: t.label, kind: t.kind, scope: t.scope, docId: t.docId, created: t.created, expires: t.expires, lastUsed: t.lastUsed })),

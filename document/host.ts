@@ -434,7 +434,7 @@ export function makeHost(opts: HostOptions) {
     broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
     renamed,
-    /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: cloudflare/home.ts). */
+    /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: server/home/deploys.ts). */
     notify: (msg: unknown) => { for (const t of tabs) t.send(msg); },
   };
 }

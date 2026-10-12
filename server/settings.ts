@@ -214,7 +214,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * `checks`: by key, what else a value set by someone must pass, beyond its
    * parser (the directory's: a landing document must be the setter's own).
    * `changed`: told of every change to a key (set, reset or claimed), once
-   * it's written (the Worker tells the homepage's deploys: cloudflare/home.ts).
+   * it's written (the Worker tells the homepage's deploys: server/home/deploys.ts).
    */
   constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; checks?: Checks; changed?: (key: string) => Promise<void> } = {}) {
     this.settings = opts.settings ?? (SETTINGS as unknown as S);

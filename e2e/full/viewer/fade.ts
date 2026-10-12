@@ -1,7 +1,7 @@
 // The viewer's controls fading once the page is scrolled, for
 // their tests: on a document's page (the page in a frame on its
 // own origin) and on the homepage (served directly, its controls in a shadow
-// root: server/home.ts).
+// root: server/home/render.ts).
 
 import { expect, until, type Page, type Server } from "../../fixtures";
 import { docShows, inPage, openViewer } from "./viewer";
