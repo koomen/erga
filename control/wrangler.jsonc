@@ -43,8 +43,8 @@
     "CLOUDFLARE_ACCOUNT_ID": "c24e663b6f522eb02c60b6ce88ec4493",
     "APP_URL": "https://erga.dev",
     "GITHUB_MIRROR_URL": "https://github.com/koomen/erga.git",
-    // This Worker's own GitHub OAuth app (homepage https://ops.erga.dev, callback https://ops.erga.dev/auth/github/callback); its secret is a secret.
-    "GITHUB_CLIENT_ID": ""
+    // This Worker's own GitHub OAuth app, "Erga control" (homepage https://ops.erga.dev, callback https://ops.erga.dev/auth/github/callback); its secret is a secret.
+    "GITHUB_CLIENT_ID": "Ov23liMi8ZUqi8nFGN56"
   },
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": true } }
 }
