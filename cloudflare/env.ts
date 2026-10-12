@@ -2,7 +2,7 @@ import type { ArtifactsBinding } from "./artifacts";
 import type { AdminAgentHost } from "./admin-agent-host";
 import type { Deployer } from "./deploy-session";
 import type { DocumentObject } from "./document-object";
-import type { SourceHost } from "./source-host";
+import type { SourceHost } from "./objects/source";
 import type { Pipeline } from "./pipeline";
 import type { Home } from "./objects/home";
 import type { SiteHost } from "./objects/site";

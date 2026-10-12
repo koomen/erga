@@ -1,5 +1,5 @@
 // Erga's Git endpoint, /git/erga.git (Git smart HTTP), once the caller is
-// known to be allowed (cloudflare/source.ts checks the agent token):
+// known to be allowed (routes.ts checks the agent token):
 //
 //   GET  /git/erga.git/info/refs?service=git-upload-pack     clone, fetch, pull: passed through to Artifacts
 //   POST /git/erga.git/git-upload-pack                       as they are (protocol v0, v1 and v2), streamed; for a

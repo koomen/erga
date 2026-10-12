@@ -19,7 +19,7 @@ const read = (file: string) => readFileSync(ROOT + file, "utf8");
 
 /** The files whose opening comment is a route table ("//   POST /api/...   what it does"). */
 const ROUTE_TABLES = [
-  "cloudflare/index.ts", "cloudflare/admin-agent-host.ts", "cloudflare/source.ts", "cloudflare/branch-deploys.ts", "cloudflare/deploy-routes.ts", "server/home/api.ts", "server/identity/settings.ts",
+  "cloudflare/index.ts", "cloudflare/admin-agent-host.ts", "server/source/routes.ts", "cloudflare/branch-deploys.ts", "cloudflare/deploy-routes.ts", "server/home/api.ts", "server/identity/settings.ts",
   "server/admin/pages.ts", "server/api.ts", "server/documents/front-door.ts", "server/home/render.ts", "document/host.ts", "server/sites/api.ts",
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */

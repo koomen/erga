@@ -1,22 +1,20 @@
 // Erga's repository's Durable Object: one, "erga", where every push and
-// merge happens one at a time, with the commit
-// index and the mirror's status in its SQLite. The Worker
-// checks who's asking and hands it the request.
+// merge happens one at a time, with the commit index and the mirror's status
+// in its SQLite: the Cloudflare side of server/source/repo.ts. The routes
+// (server/source/routes.ts) check who's asking and hand it the request.
 //
 // Calls name the address the request came to (`origin`), which local
 // development's stand-ins for Artifacts and GitHub live at.
 
 import { DurableObject } from "cloudflare:workers";
-import { deployHook, publishEvent } from "../deploy/hook";
-import { ZERO } from "../server/source/git";
-import { byLine } from "../shared/attribution";
-import { SourceError, SourceRepo, type Actor } from "../server/source/repo";
-import type { SourceAnswer, SourceRead } from "../server/source/browse";
-import { artifactsRemote, githubRemote } from "./artifacts";
-import { directoryOf, keptKeys } from "./d1";
-import type { Env } from "./env";
+import { deployHook, publishEvent } from "../../deploy/hook";
+import { byLine } from "../../shared/attribution";
+import { SourceError, SourceRepo, ZERO, type Actor, type SourceAnswer, type SourceObject, type SourceRead } from "../../server/source/index.ts";
+import { artifactsRemote, githubRemote } from "../artifacts";
+import { directoryOf, keptKeys } from "../d1";
+import type { Env } from "../env";
 
-export class SourceHost extends DurableObject<Env> {
+export class SourceHost extends DurableObject<Env> implements SourceObject {
   private origin = "";
   private repo: SourceRepo;
 

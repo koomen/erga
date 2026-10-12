@@ -7,6 +7,7 @@
 import type { AppValues, AuthStorage } from "./identity/apps.ts";
 import type { TargetName } from "../deploy/targets.ts";
 import type { HomeObject } from "./home/deploys.ts";
+import type { SourceService } from "./source/routes.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory.ts";
 import type { SiteOps } from "./sites/index.ts";
 import type { AgentToken, Tokens } from "./identity/tokens.ts";
@@ -122,6 +123,8 @@ export interface Platform {
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */
     encryptionKey: string | null;
   };
+  /** Erga's own repository (server/source), where this server hosts it; null where it doesn't. */
+  source: SourceService | null;
   /** The homepage's deploys and its snapshot (server/home/deploys.ts), one object per server. */
   home: HomeObject;
   /** What runs at the edge, around a request. */

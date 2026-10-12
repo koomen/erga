@@ -66,7 +66,7 @@ export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname.startsWith("/git/erga.git")) {
-        // As cloudflare/source.ts, but anyone with credentials is Ada.
+        // As server/source/routes.ts, but anyone with credentials is Ada.
         const basic = /^Basic\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
         if (!basic) return new Response("who?", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga"' } });
         return gitHttp(request, url.pathname.slice("/git/erga.git".length), {

@@ -22,7 +22,7 @@
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs
 //   /api/docs/<id>/site        a document's site on its person's Cloudflare account
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (cloudflare/source.ts; reads open, pushes need an admin's admin-scope token)
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (server/source/routes.ts; reads open, pushes need an admin's admin-scope token)
 //   /admin, /admin/changes, /admin/users, /admin/auth   the server's settings, their change log, its users, and how
 //                              people sign in
 
@@ -58,7 +58,7 @@ import { directoryOf } from "./d1";
 import { adminGate, isAdminPath } from "../server/admin/layout";
 import { deployDoor } from "./deploy-routes";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent-host";
-import { sourceApi, sourceDoor, sourceGit } from "./source";
+import { sourceApi, sourceDoor, sourceGit } from "../server/source/index.ts";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "../server/home/index.ts";
 import { siteApi } from "../server/sites/index.ts";
@@ -73,7 +73,7 @@ export { Deployer } from "./deploy-session";
 export { DocumentObject } from "./document-object";
 export { AdminAgentHost } from "./admin-agent-host";
 export { Pipeline } from "./pipeline";
-export { SourceHost } from "./source-host";
+export { SourceHost } from "./objects/source";
 export { Home } from "./objects/home";
 export { SiteHost } from "./objects/site";
 
@@ -135,7 +135,7 @@ async function route(request: Request, env: Env, url: URL, p: Platform): Promise
   // The editor's controls and styles, which a document's page adds to itself to go into the editor.
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
   // Erga's own source: the Git endpoint, its page (the dashboard of source and deploys) and API.
-  if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, env, url);
+  if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
   // Its old address, from when admin settings linked to it: it's a page of its own now, not an admin one, so before the admins' gate.
   if (path == "/admin/deploy" || path == "/admin/deploy/") return new Response(null, { status: 301, headers: { Location: "/deploy" } });
   // Every /admin route: the server's admins only, checked on the server before any of them answers.
@@ -143,8 +143,8 @@ async function route(request: Request, env: Env, url: URL, p: Platform): Promise
     const refused = await adminGate(p, request);
     if (refused) return refused;
   }
-  if (path == "/source" || path == "/admin/source" || path == "/admin/factory") return sourceDoor(request, env, p, url);
-  if (path.startsWith("/api/source/")) return sourceApi(request, env, p, url);
+  if (path == "/source" || path == "/admin/source" || path == "/admin/factory") return sourceDoor(request, p, url);
+  if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   // Sign-in's status and GitHub app, server to server.
   if (isSignInPath(path)) return signInDoor(request, p);
   // Branch deploys and their status, the event stream, and staging's snapshot endpoints.

@@ -54,7 +54,7 @@ AGENTS.md has the rules for working on it.
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.sh bundles into .build/
                   (main.ts the editor's shell, frame.ts the editor, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
     cloudflare/   the Cloudflare adapter: the Worker's entry (index.ts), the Platform from its bindings (platform.ts), the
-                  Durable Objects (document-object.ts, objects/home.ts, objects/site.ts, source-host.ts, pipeline.ts,
+                  Durable Objects (document-object.ts, objects/home.ts, objects/site.ts, objects/source.ts, pipeline.ts,
                   deploy-session.ts, admin-agent-host.ts) and D1 (d1.ts)
     deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
                   release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a

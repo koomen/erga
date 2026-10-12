@@ -19,7 +19,7 @@
 // an expiry), signed with the dev server's secret. The GitHub mirror is a
 // pretend GitHub there too: local development never reaches the real ones.
 
-import type { Remote } from "../server/source/remote";
+import type { Remote } from "../server/source/index.ts";
 import type { Env } from "./env";
 
 /** The repository's name in the namespace. */

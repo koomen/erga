@@ -22,7 +22,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { isModelChoice, MODELS } from "../editor-agent/session";
 import type { ToolWho } from "../agents/tools";
-import type { SourceAnswer, SourceRead } from "../server/source/browse";
+import type { SourceAnswer, SourceRead } from "../server/source/index.ts";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../agents/admin-chats";
 import { emptyLog, type Log, type LogEvent } from "../shared/agent-log";
 import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "../agents/admin";
@@ -34,7 +34,6 @@ import { agentSettings } from "./agent-settings";
 import { authOps, LOCKED, SHARE_ADMIN_HOURS } from "../server/identity/index.ts";
 import { platform } from "./platform";
 import { forgetHome } from "../server/home/index.ts";
-import { hasSource } from "./artifacts";
 import type { Env } from "./env";
 
 const enc = new TextEncoder();
@@ -54,6 +53,13 @@ export class AdminAgentHost extends DurableObject<Env> {
     this.sql = ctx.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_chats (login TEXT PRIMARY KEY, log TEXT NOT NULL, messages TEXT NOT NULL, updated INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
+  }
+
+  /** Erga's repository, where this server has one. */
+  private source() {
+    const source = platform(this.env).source;
+    if (!source) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and server/source/import.ts fills it.");
+    return source.object;
   }
 
   /** Why the admin may not act now, or null: they must still be an admin. Every tool call asks. */
@@ -80,8 +86,7 @@ export class AdminAgentHost extends DurableObject<Env> {
     const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin, auth: authOps(platform(this.env), state.origin) });
     // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
-      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and server/source/import.ts fills it.");
-      const r = await this.env.SOURCE.getByName("erga").read(state.origin, q);
+      const r = await this.source().read(state.origin, q);
       if ("error" in r) throw new Error(r.error);
       return r;
     };
@@ -99,10 +104,7 @@ export class AdminAgentHost extends DurableObject<Env> {
    * so the change log and a deploy's trigger name the admin, as when they click.
    */
   private dashboard(login: string, state: { origin: string }): DashboardOps {
-    const source = () => {
-      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and server/source/import.ts fills it.");
-      return this.env.SOURCE.getByName("erga");
-    };
+    const source = () => this.source();
     const pipeline = () => this.env.PIPELINE.getByName("deploys");
     const actor = async () => ({ login, name: (await directoryOf(this.env).users.get(login))?.name || login, via: VIA.admin });
     return {

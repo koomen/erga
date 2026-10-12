@@ -38,7 +38,7 @@ import { fileRefs, messageContent, type Attachment } from "../shared/attach";
 import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
 import { agentName } from "../document/content";
 import { runServerTool, SERVER_TOOLS, type ToolWho } from "./tools";
-import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../server/source/browse";
+import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../server/source/index.ts";
 
 /** What the dashboard tools do, as the admin: the source and deploys dashboard on /admin/source, and agent tokens. */
 export interface DashboardOps {
