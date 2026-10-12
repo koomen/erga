@@ -20,8 +20,9 @@
 // DNS, Zone read and Artifacts (the cf CLI's login has them).
 //
 // The deploy token, two ways. Made on the dashboard (Manage Account › Account
-// API Tokens: Workers Scripts Edit, D1 Edit, Workers Containers Edit on the
-// account; Zone Read, Workers Routes Read, DNS Read on the three zones) and
+// API Tokens, a custom token with two policies: on the account, Developer
+// Platform › Workers › Editor, D1 › Edit and Workers Containers › Edit; on
+// the three zones, Zone › Read, DNS › Read and Workers Routes › Read) and
 // given as CLOUDFLARE_DEPLOY_TOKEN: the setup checks each permission with a
 // harmless read (or a refused write), prints every answer, and stores it.
 // Or made here, as narrow as Cloudflare allows (deploy/server-tokens.ts),
@@ -170,7 +171,7 @@ async function makeToken(plan: TokenPlan): Promise<boolean> {
  * stored on the control Worker. A failed check stops it before the store.
  */
 async function storeGivenToken(value: string): Promise<void> {
-  console.log("   CLOUDFLARE_DEPLOY_TOKEN is set: checking it, then storing it (not made here).");
+  console.log("   CLOUDFLARE_DEPLOY_TOKEN is set: checking it, then storing it (not made here). It needs, on this account, Developer Platform › Workers › Editor, D1 › Edit and Workers Containers › Edit, and a second policy on the three zones with Zone › Read, DNS › Read and Workers Routes › Read.");
   if (/\s/.test(value) || value.length < 30 || value.length > 200) throw new DeployError(`CLOUDFLARE_DEPLOY_TOKEN doesn't look like an API token (${value.length} characters${/\s/.test(value) ? ", with spaces or line breaks" : ""}).`);
   const api = mock ? "https://api.cloudflare.com/client/v4" : "https://api.cloudflare.com/client/v4";
   const probe = async (method: string, path: string, body?: BodyInit) => {
@@ -206,7 +207,7 @@ async function storeGivenToken(value: string): Promise<void> {
     const routes = await probe("GET", `/zones/${id}/workers/routes`); line(routes.ok, `Workers Routes, read ${z}'s routes`, routes.said);
     const dns = await probe("GET", `/zones/${id}/dns_records?per_page=1`); line(dns.ok, `DNS, read ${z}'s records`, dns.said);
   }
-  if (wrong.length) throw new DeployError(`The token fails ${wrong.length} check${wrong.length > 1 ? "s" : ""} (NO above): fix its permissions on the dashboard (Manage Account › Account API Tokens), and run this again. Not stored.`);
+  if (wrong.length) throw new DeployError(`The token fails ${wrong.length} check${wrong.length > 1 ? "s" : ""} (NO above): fix its permissions on the dashboard (Manage Account › Account API Tokens › the token › Edit) and run this again. Not stored. It needs two policies: on this account, Developer Platform › Workers › Editor, D1 › Edit and Workers Containers › Edit; and on the zones ${tokenPlan().zones.join(", ")}, Zone › Read, DNS › Read and Workers Routes › Read.`);
   if (!ask(`   Every check passed. Store it on ${CONTROL.worker} as CLOUDFLARE_DEPLOY_TOKEN?`, yes)) { console.log("   Skipped."); return; }
   await putSecret(CONTROL.worker, "CLOUDFLARE_DEPLOY_TOKEN", value);
   console.log(`   Stored on ${CONTROL.worker} as CLOUDFLARE_DEPLOY_TOKEN (not printed). The control Worker deploys from now on.`);
