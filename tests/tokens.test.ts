@@ -71,13 +71,13 @@ describe("the deploy token's plan", () => {
     expect(tokenPlan()).toEqual({ name: "erga-control-deploy", storedOn: "erga-control", workers: ["erga", "erga-staging", "erga-control"], zones: ["erga.dev", "erga-pages.dev", "erga-pages-staging.dev"], notWorkers: [] });
   });
 
-  test("the policies: Editor on the Workers by tag, D1 on the account, read on the zones; nothing else", async () => {
+  test("the policies: Editor on the Workers by tag, D1 and containers on the account, read on the zones; nothing else", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const { policies, wrong } = await mint(mock);
     expect(wrong).toEqual([]);
     const groups = policies.map((p) => p.permission_groups.map((g) => g.id).sort().join(","));
-    expect(groups).toEqual(["7e79ec33834341f28dd431ab73884400", "09b2857d1c31407795e75e3fed8617a1", ["2072033d694d415a936eaeb94e6405b8", "82e64a83756745bbbb1c9c2701bf816b", "c8fed203ed3043cba015a93ad1616f1f"].sort().join(",")]);
+    expect(groups).toEqual(["7e79ec33834341f28dd431ab73884400", "09b2857d1c31407795e75e3fed8617a1,bdbcd690c763475a985e8641dddc09f7", ["2072033d694d415a936eaeb94e6405b8", "82e64a83756745bbbb1c9c2701bf816b", "c8fed203ed3043cba015a93ad1616f1f"].sort().join(",")]);
     // The Worker's key sits under the account's (on its own, Cloudflare refuses the token: code 1004).
     expect(Object.keys(policies[0].resources)).toEqual([`com.cloudflare.api.account.${FLEET_ACCOUNT}`]);
     expect(Object.keys(policies[0].resources[`com.cloudflare.api.account.${FLEET_ACCOUNT}`])).toEqual([1, 2, 3].map(() => expect.stringMatching(/^com\.cloudflare\.edge\.worker\.script\.[0-9a-f]{32}$/)));

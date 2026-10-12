@@ -51,7 +51,8 @@ export default {
       deploys: env.PIPELINE.getByName("deploys"),
       app: env.APP_URL.replace(/\/+$/, ""),
       layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
-      version: env.CF_VERSION_METADATA?.id ?? null,
+      version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,
+      build: env.CF_VERSION_METADATA?.id ?? null,
     });
   },
 } satisfies ExportedHandler<ControlEnv>;

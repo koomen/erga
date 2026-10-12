@@ -32,6 +32,7 @@
 // it, owned by its first admin.
 
 
+import { runControlPipeline } from "./control";
 import { createHash } from "node:crypto";
 import { copyDocuments } from "./snapshot";
 
@@ -104,6 +105,30 @@ export interface BuiltWorker {
   manifest?: { mainModule?: string };
 }
 
+/**
+ * The control Worker's part of a release (control/, bundled by
+ * deploy/release.ts from control/wrangler.jsonc): what its upload needs, with
+ * no wrangler. Its bindings by kind; a Durable Object class is matched to the
+ * namespace the Worker has for it, and a class with a container keeps the
+ * container application the Worker has (its image: deploy/setup.ts --control).
+ */
+export interface ControlConfig {
+  name: string;
+  compatibilityDate: string;
+  compatibilityFlags: string[];
+  /** The Durable Object classes that have a container (wrangler.jsonc `containers`), each with its application's name (wrangler's default: <worker>-<class>, lower case). */
+  containers: { className: string; name: string }[];
+  durableObjects: { name: string; className: string }[];
+  /** Each D1 binding's database, by name: found in the account at deploy time (another account has its own ids). */
+  d1: { name: string; databaseName: string }[];
+  artifacts: { name: string; namespace: string }[];
+  /** The version_metadata binding's name, if any. */
+  versionMetadata: string | null;
+  vars: Record<string, string>;
+  observability: { enabled: boolean; logs: { enabled: boolean; invocationLogs: boolean } };
+}
+export interface ControlPart { config: ControlConfig; mainModule: string; modules: Record<string, Uint8Array> }
+
 /** What's deployed: erga.dev's own build (deploy/release.ts makes it, into the server's static assets under /release/). */
 export interface Release {
   /** Which build: the commit, and when it was made. */
@@ -117,6 +142,8 @@ export interface Release {
   assets: Record<string, Uint8Array>;
   /** server/migrations/, by file name, in order. */
   migrations: Record<string, string>;
+  /** The control Worker (control/), when the release has it: a release from before it doesn't. */
+  control?: ControlPart;
 }
 
 /** The release's table of contents. */
@@ -128,6 +155,8 @@ export interface ReleaseIndex {
   modules: string[];
   assets: string[];
   migrations: string[];
+  /** The control Worker's modules (under control/), its main module and its config. */
+  control?: { config: ControlConfig; mainModule: string; modules: string[] };
 }
 
 /** A release, read file by file (`get` answers a path under release/, or null). */
@@ -144,11 +173,12 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     }));
     return out;
   };
-  const [modules, assets, migrations] = await Promise.all([read("bundle", toc.modules), read("assets", toc.assets), read("migrations", toc.migrations)]);
+  const [modules, assets, migrations, control] = await Promise.all([read("bundle", toc.modules), read("assets", toc.assets), read("migrations", toc.migrations), toc.control ? read("control", toc.control.modules) : null]);
   return {
     version: toc.version, built: toc.built, worker: toc.worker, mainModule: toc.mainModule, modules,
     assets: Object.fromEntries(Object.entries(assets).map(([p, b]) => [`/${p}`, b])),
     migrations: Object.fromEntries(Object.entries(migrations).map(([n, b]) => [n, new TextDecoder().decode(b)])),
+    ...(toc.control && control ? { control: { config: toc.control.config, mainModule: toc.control.mainModule, modules: control } } : {}),
   };
 }
 
@@ -237,8 +267,11 @@ export const ALL_STEPS = [
 ] as const;
 export type StepId = (typeof ALL_STEPS)[number]["id"];
 
-/** A target's steps: the deploy page's, and the copying steps (and the old copies' cleanup) for one with a snapshot. */
-export const stepsFor = (t: Pick<Target, "snapshot">) => ALL_STEPS.filter((s) =>
+/** The control Worker's own steps (deploy/control.ts): the account (and what it runs now), its upload, its health. */
+export const CONTROL_STEPS = [STEPS[0], STEPS[4], STEPS[7]] as const;
+
+/** A target's steps: the deploy page's, and the copying steps (and the old copies' cleanup) for one with a snapshot; the control Worker's own. */
+export const stepsFor = (t: Pick<Target, "snapshot" | "control">): readonly { id: StepId; title: string }[] => t.control ? CONTROL_STEPS : ALL_STEPS.filter((s) =>
   t.snapshot || (s.id != "data" && s.id != "documents" && s.id != "cleanup"));
 
 export type Report = (step: StepId, status: "running" | "done" | "skipped", detail?: string) => void;
@@ -317,6 +350,8 @@ export interface Target {
   production?: boolean;
   /** Production's names (deploy/targets.ts PRODUCTION): a target that isn't production and uses one stops before it starts. */
   guard?: { worker: string; database: string; host: string; pages: string; accountId?: string };
+  /** The control Worker itself (deploy/control.ts): its own steps, from the release's control part; no database, no pages. */
+  control?: boolean;
 }
 
 /**
@@ -329,6 +364,8 @@ export interface Carry {
   ownDb?: string | null;
   /** What the target ran before this deploy changed anything (the migrations step records it): a rollback goes back to it. */
   restore?: RestorePoint;
+  /** The control Worker's D1 databases, by binding name (its account step finds them by name). */
+  d1?: Record<string, string>;
 }
 
 /**
@@ -468,6 +505,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   /** Stops the run between steps, throwing the signal's reason: a step that has begun always ends first. */
   signal?: AbortSignal;
 }): Promise<Deployed> {
+  if (target.control) return runControlPipeline(cf, release, target, opts);
   const { report, signal } = opts;
   const site = opts.site ?? globalThis.fetch;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -897,7 +935,7 @@ export async function workerVersion(cf: Cloudflare, accountId: string, worker: s
 }
 
 /** A D1 database's id by name, or null. */
-async function findDatabase(cf: Cloudflare, acc: string, name: string): Promise<string | null> {
+export async function findDatabase(cf: Cloudflare, acc: string, name: string): Promise<string | null> {
   return ((await cf.call<{ uuid: string; name: string }[]>("GET", `${acc}/d1/database?name=${encodeURIComponent(name)}`, "list your D1 databases")) ?? []).find((d) => d.name == name)?.uuid ?? null;
 }
 

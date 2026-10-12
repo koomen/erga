@@ -1,9 +1,15 @@
 // The control Worker's own config (control/index.ts): erga-control, at
-// ops.erga.dev. Deployed with `bunx wrangler deploy` from this folder, by
-// deploy/setup.ts --control: wrangler builds the container image
-// (builder/Dockerfile) with Docker, pushes it, and uploads the Worker. Its
-// secrets (SESSION_SECRET, GITHUB_CLIENT_SECRET, CLOUDFLARE_DEPLOY_TOKEN,
-// SNAPSHOT_TOKEN, GITHUB_MIRROR_TOKEN) are set by the setup after, and kept.
+// ops.erga.dev. Deployed the first time with `bunx wrangler deploy` from
+// this folder, by deploy/setup.ts --control: wrangler builds the container
+// image (builder/Dockerfile) with Docker, pushes it, and uploads the Worker.
+// After that it deploys itself, from main after production (deploy/control.ts):
+// deploy/release.ts reads this file into each release, and the pipeline
+// uploads the Worker with these bindings (a Durable Object class matched to
+// its namespace, the container's class named so the container stays). So a
+// change here that adds a Durable Object class, or a change to the image,
+// needs --control again; anything else goes with main. Its secrets
+// (SESSION_SECRET, GITHUB_CLIENT_SECRET, CLOUDFLARE_DEPLOY_TOKEN,
+// SNAPSHOT_TOKEN, GITHUB_MIRROR_TOKEN) are set by the setup, and kept.
 //
 // The build containers: one per build, up to 4 at once, each standard-4
 // (4 vCPU, 12 GiB, 20 GB disk), the largest Cloudflare Containers offers.

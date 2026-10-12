@@ -32,8 +32,10 @@ export interface ControlEnv {
   PIPELINE: DurableObjectNamespace<Pipeline>;
   SOURCE: DurableObjectNamespace<SourceHost>;
   BUILDS: DurableObjectNamespace<Builder>;
-  /** This Worker's version id: the release cache's key, and what /api/health answers. */
+  /** This Worker's version id: the release cache's key. */
   CF_VERSION_METADATA?: { id?: string };
+  /** The release this Worker is (the commit): set by its own deploy (deploy/control.ts), what /api/health answers; none after a wrangler deploy. */
+  ERGA_VERSION?: string;
   /** The bootstrap admins (deploy/targets.json), the account, where the app is. */
   ADMINS: string;
   CLOUDFLARE_ACCOUNT_ID: string;

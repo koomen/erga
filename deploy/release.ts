@@ -14,12 +14,15 @@
 //
 // release/ holds release.json (what's in it: the build's worker.config.json,
 // the module and file names), bundle/ (the Worker's modules), assets/ (the
-// editor's files, as .build has them) and migrations/ (server/migrations/). (The landing project
+// editor's files, as .build has them), migrations/ (server/migrations/) and
+// control/ (the control Worker's modules, bundled here from control/index.ts
+// with its config from control/wrangler.jsonc in release.json: the control
+// Worker deploys itself from it, deploy/control.ts). (The landing project
 // is built into the Worker itself.)
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { ReleaseIndex } from "./pipeline.ts";
+import type { ControlConfig, ReleaseIndex } from "./pipeline.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SITE = join(ROOT, ".build"), OUT = join(SITE, "release");
@@ -59,8 +62,10 @@ export async function makeRelease(): Promise<ReleaseIndex> {
   const migrations = files(join(ROOT, "server/migrations")).filter((n) => n.endsWith(".sql"));
   cpSync(join(ROOT, "server/migrations"), join(staging, "migrations"), { recursive: true });
 
+  const control = await bundleControl(join(staging, "control"));
+
   const sha = process.env.WORKERS_CI_COMMIT_SHA || Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: ROOT }).stdout.toString().trim() || "dev";
-  const index: ReleaseIndex = { version: sha.slice(0, 12), built: new Date().toISOString(), worker, mainModule: worker.manifest?.mainModule ?? "index.js", modules, assets, migrations };
+  const index: ReleaseIndex = { version: sha.slice(0, 12), built: new Date().toISOString(), worker, mainModule: worker.manifest?.mainModule ?? "index.js", modules, assets, migrations, control };
   writeFileSync(join(staging, "release.json"), JSON.stringify(index, null, 2));
   rmSync(OUT, { recursive: true, force: true });
   cpSync(staging, OUT, { recursive: true });
@@ -68,7 +73,60 @@ export async function makeRelease(): Promise<ReleaseIndex> {
   return index;
 }
 
+/**
+ * The control Worker's modules, bundled into `out` (one module, index.js:
+ * control/index.ts and everything it imports, the runtime's own modules left
+ * out), and its config from control/wrangler.jsonc.
+ */
+export async function bundleControl(out: string): Promise<NonNullable<ReleaseIndex["control"]>> {
+  const config = controlConfig(readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8"));
+  const built = await Bun.build({
+    entrypoints: [join(ROOT, "control/index.ts")], outdir: out, naming: "index.js",
+    format: "esm", target: "browser", external: ["cloudflare:*", "node:*"], minify: false, sourcemap: "none",
+  });
+  if (!built.success) throw new Error(`bundling control/index.ts failed:\n${built.logs.map((l) => String(l)).join("\n")}`);
+  return { config, mainModule: "index.js", modules: files(out) };
+}
+
+/** control/wrangler.jsonc as the pipeline's ControlConfig (the comments stripped). */
+export function controlConfig(jsonc: string): ControlConfig {
+  const w = JSON.parse(stripComments(jsonc)) as {
+    name: string; compatibility_date: string; compatibility_flags?: string[];
+    containers?: { class_name: string; name?: string }[]; durable_objects?: { bindings?: { name: string; class_name: string }[] };
+    d1_databases?: { binding: string; database_name: string }[]; artifacts?: { binding: string; namespace: string }[];
+    version_metadata?: { binding: string }; vars?: Record<string, string>;
+    observability?: { enabled?: boolean; logs?: { enabled?: boolean; invocation_logs?: boolean } };
+  };
+  return {
+    name: w.name, compatibilityDate: w.compatibility_date, compatibilityFlags: w.compatibility_flags ?? [],
+    // The application's name as wrangler gives it when the config doesn't: <worker>-<class>, lower case.
+    containers: (w.containers ?? []).map((c) => ({ className: c.class_name, name: c.name ?? `${w.name}-${c.class_name}`.toLowerCase().replace(/ /g, "-") })),
+    durableObjects: (w.durable_objects?.bindings ?? []).map((b) => ({ name: b.name, className: b.class_name })),
+    d1: (w.d1_databases ?? []).map((d) => ({ name: d.binding, databaseName: d.database_name })),
+    artifacts: (w.artifacts ?? []).map((a) => ({ name: a.binding, namespace: a.namespace })),
+    versionMetadata: w.version_metadata?.binding ?? null,
+    vars: Object.fromEntries(Object.entries(w.vars ?? {}).map(([k, v]) => [k, String(v)])),
+    observability: { enabled: !!w.observability?.enabled, logs: { enabled: !!w.observability?.logs?.enabled, invocationLogs: !!w.observability?.logs?.invocation_logs } },
+  };
+}
+
+/** JSONC's comments (line comments, and block comments) taken out, strings left alone. */
+function stripComments(text: string): string {
+  let out = "", i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c == '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] != '"') j += text[j] == "\\" ? 2 : 1;
+      out += text.slice(i, j + 1); i = j + 1;
+    } else if (c == "/" && text[i + 1] == "/") { while (i < text.length && text[i] != "\n") i++; }
+    else if (c == "/" && text[i + 1] == "*") { const j = text.indexOf("*/", i + 2); i = j < 0 ? text.length : j + 2; }
+    else { out += c; i++; }
+  }
+  return out;
+}
+
 if (import.meta.main) {
   const r = await makeRelease();
-  console.log(`release ${r.version}: ${r.modules.length} modules, ${r.assets.length} files, ${r.migrations.length} migrations, in .build/release/`);
+  console.log(`release ${r.version}: ${r.modules.length} modules, ${r.assets.length} files, ${r.migrations.length} migrations, the control Worker (${r.control?.modules.length ?? 0} modules), in .build/release/`);
 }

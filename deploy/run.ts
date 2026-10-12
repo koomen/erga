@@ -11,6 +11,9 @@
 //                                                        copy nothing even with no copy yet, and SNAPSHOT_TOKEN
 //                                                        isn't needed)
 //   bun deploy/run.ts production --commit <sha>          (asks you to type "production")
+//   bun deploy/run.ts control [--commit <sha>] [--yes]    (the control Worker itself, when it can't deploy itself:
+//                                                        its Worker only; a new container image needs
+//                                                        bun deploy/setup.ts --control)
 //
 // It needs CLOUDFLARE_ACCOUNT_ID in the environment, your own credential for
 // the account (CLOUDFLARE_API_TOKEN, else the cf CLI's login:
@@ -29,19 +32,19 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { targetOf } from "./branches";
+import { targetFor } from "./branches";
 import { buildIn } from "../control/builder/build";
 import { unpackRelease } from "./bundle";
-import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, type Fetch, type Release, type Target } from "./pipeline";
+import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, targetPagesShown, type Fetch, type Release, type Target } from "./pipeline";
 import { machineCredential } from "./local-credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock-cloudflare";
-import { isTargetName, TARGETS, type TargetName } from "./targets";
+import { isDeployName, specOf, type DeployName } from "./targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: ROOT }).stdout.toString().trim();
 
 export interface MachineDeploy {
-  name: TargetName;
+  name: DeployName;
   /** The commit to build (default HEAD). */
   commit?: string;
   /** Secrets to set with this upload (the first deploy's: deploy/setup.ts). */
@@ -100,16 +103,17 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   if (!token) throw new Error("Set CLOUDFLARE_API_TOKEN, or log in with `bunx cf auth login` (see deploy/local-credential.ts).");
   const commit = o.commit ?? git("rev-parse", "HEAD");
   if (!o.commit && !mock && git("status", "--porcelain")) throw new Error("The checkout has changes that aren't committed: commit them, or name a commit (--commit).");
-  const spec = TARGETS[o.name];
-  const target: Target = { ...targetOf(spec, { CLOUDFLARE_ACCOUNT_ID: accountId, SNAPSHOT_TOKEN: snapshotToken }, o.fresh ? { force: true } : undefined), secrets: o.secrets ?? {} };
+  const spec = specOf(o.name);
+  const target: Target = { ...targetFor(o.name, { CLOUDFLARE_ACCOUNT_ID: accountId, SNAPSHOT_TOKEN: snapshotToken }, o.fresh ? { force: true } : undefined), secrets: o.secrets ?? {} };
   if (o.noSnapshot) delete target.snapshot;
   const wrong = guardTarget(target);
   if (wrong) throw new Error(wrong);
   if (target.snapshot && target.snapshot.token.length < 32) throw new Error("Staging copies production's documents: set SNAPSHOT_TOKEN (production's).");
 
   log(`Deploy ${commit.slice(0, 12)} to ${o.name}${mock ? " (the mock Cloudflare: nothing real)" : ""}:`);
-  log(`  account ${accountId}, Worker ${spec.worker}, database ${spec.database}${target.snapshot?.fresh ? " (a new copy of production's, beside the one the Worker is on, which goes once the new version answers)" : target.snapshot ? " (its frozen copy of production's data kept; a new copy only if it has none)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`);
-  log(`  https://${targetHost(target)}, documents' pages on *.${spec.pages.domain}`);
+  if (spec.control) log(`  account ${accountId}, Worker ${spec.worker} (the control Worker: its Worker only; its container image and namespaces stay)`);
+  else log(`  account ${accountId}, Worker ${spec.worker}, database ${target.databaseName}${target.snapshot?.fresh ? " (a new copy of production's, beside the one the Worker is on, which goes once the new version answers)" : target.snapshot ? " (its frozen copy of production's data kept; a new copy only if it has none)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`);
+  log(`  https://${targetHost(target)}${spec.control ? "" : `, documents' pages on ${targetPagesShown(target)}`}`);
   log(`  steps: build, ${stepsFor(target).map((s) => s.id).join(", ")}`);
   if (Object.keys(target.secrets).length) log(`  secrets set: ${Object.keys(target.secrets).join(", ")}`);
   if (o.name == "production") {
@@ -135,7 +139,7 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const name = args[0] ?? "";
   const at = args.indexOf("--commit");
-  if (!isTargetName(name)) { console.error("usage: bun deploy/run.ts <staging|production> [--commit <sha>] [--yes] [--fresh | --no-snapshot]"); process.exit(2); }
+  if (!isDeployName(name)) { console.error("usage: bun deploy/run.ts <staging|production|control> [--commit <sha>] [--yes] [--fresh | --no-snapshot]"); process.exit(2); }
   try {
     const done = await deployFromMachine({ name, commit: at >= 0 ? git("rev-parse", args[at + 1]) : undefined, yes: args.includes("--yes") && name != "production", noSnapshot: args.includes("--no-snapshot"), fresh: args.includes("--fresh") });
     process.exit(done ? 0 : 1);

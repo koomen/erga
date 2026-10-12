@@ -7,6 +7,8 @@
 // and the same few account and zone permissions:
 //
 //   D1 Write                        the account's databases (Cloudflare has no per-database scope)
+//   Workers Containers Write        the account's containers: the control Worker's own upload names its build
+//                                   container's class (deploy/control.ts)
 //   Zone Read, Workers Routes Read,
 //   DNS Read                        the targets' zones only (erga.dev, erga-pages.dev, erga-pages-staging.dev): read, never write
 //
@@ -21,6 +23,12 @@
 //     production's export, and deletes its old one; both apply server/migrations/.
 //     With no narrower scope, staging's token can also write production's D1: a known risk, as code that reaches
 //     staging can read it (production pushing its copy, or staging on its own account, would close it).
+//   - Workers Containers Write: a version of the control Worker names the
+//     class that has its build container (metadata.containers), so the
+//     container stays attached. Whether Cloudflare asks this permission for
+//     that upload isn't known for sure (it does for wrangler's container
+//     calls); the token has it so the control Worker's own deploy never
+//     stops on it. The account's containers are Erga's own.
 //   - Read on the zones: find the zones by name, and check that the app's
 //     custom domain, the pages' route and their DNS record are there and
 //     point at this Worker. The setup's first deploy makes them; a deploy
@@ -44,6 +52,7 @@ import { CONTROL, SOURCE, TARGETS } from "./targets";
 /** Cloudflare's names for the permission groups (GET /accounts/{id}/tokens/permission_groups). */
 export const PERMISSION = {
   workerEditor: "Individual Workers Editor",
+  containersWrite: "Workers Containers Write",
   d1Write: "D1 Write",
   zoneRead: "Zone Read",
   routesRead: "Workers Routes Read",
@@ -53,6 +62,7 @@ export const PERMISSION = {
 /** The permission groups' ids (Cloudflare's, the same in every account), for when the list can't be read. */
 export const KNOWN_IDS: Record<string, string> = {
   "Individual Workers Editor": "7e79ec33834341f28dd431ab73884400",
+  "Workers Containers Write": "bdbcd690c763475a985e8641dddc09f7",
   "D1 Write": "09b2857d1c31407795e75e3fed8617a1",
   "Zone Read": "c8fed203ed3043cba015a93ad1616f1f",
   "Workers Routes Read": "2072033d694d415a936eaeb94e6405b8",
@@ -90,6 +100,7 @@ export function describePlan(p: TokenPlan): string[] {
   return [
     `${PERMISSION.workerEditor}: ${p.workers.join(", ")} (nothing else)`,
     `${PERMISSION.d1Write}: the account's D1 databases (Cloudflare has no narrower scope for D1)`,
+    `${PERMISSION.containersWrite}: the account's containers (the control Worker's own upload names its build container's class)`,
     `${PERMISSION.zoneRead}, ${PERMISSION.routesRead}, ${PERMISSION.dnsRead}: ${p.zones.join(", ")} (read only)`,
     `Artifacts: none in the token. ${p.storedOn}'s own Artifacts binding (namespace ${SOURCE.namespace} only) reads and writes Erga's source; pushes write through its Git endpoint (/git/erga.git)`,
   ];
@@ -128,7 +139,7 @@ export async function policiesFor(cf: Cloudflare, accountId: string, p: TokenPla
   return [
     // Nested under the account: a Worker's key on its own is refused (code 1004, "server error when creating the token").
     { effect: "allow", permission_groups: [group(PERMISSION.workerEditor)], resources: { [accountResource(accountId)]: Object.fromEntries(tags.map((t) => [workerResource(t), "*"])) } },
-    { effect: "allow", permission_groups: [group(PERMISSION.d1Write)], resources: { [accountResource(accountId)]: "*" } },
+    { effect: "allow", permission_groups: [group(PERMISSION.d1Write), group(PERMISSION.containersWrite)], resources: { [accountResource(accountId)]: "*" } },
     { effect: "allow", permission_groups: [group(PERMISSION.zoneRead), group(PERMISSION.routesRead), group(PERMISSION.dnsRead)], resources: Object.fromEntries(zones.map((z) => [zoneResource(z), "*"])) },
   ];
 }

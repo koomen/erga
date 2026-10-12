@@ -70,7 +70,7 @@ const SOURCE_STYLE = `
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; flex: none; }
   .dot.staging-only { background: var(--bg); border: 2px solid var(--only-staging); }
   .dot.on-main { background: var(--on-main); border: 2px solid var(--on-main); }
-  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 100px 132px 132px; align-items: center; }
+  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 100px 132px 132px 132px; align-items: center; }
   .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 44px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
     font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
   .grid > .head.deploy { justify-content: flex-start; padding-left: 2px; }
@@ -133,7 +133,7 @@ const SOURCE_STYLE = `
   .gap .rail::before { content: ""; position: absolute; left: calc(50% - 1px); top: 0; bottom: 0; width: 0; height: auto; display: block; border-left: 2px dashed var(--only-staging); background: none; opacity: .5; }
   .gap .gap-text { grid-column: 2 / -1; padding: 0 6px; font: 12.5px var(--font-text); color: var(--soft); border-block: 1px dashed var(--rule); box-sizing: border-box; }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
-  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
   .boxes { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
@@ -182,7 +182,7 @@ function sourceMarkup(c: SourcePageConfig): string {
     <div class="grid" id="grid">
       <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
-      ${target("staging", "staging")}${target("production", "production")}
+      ${target("staging", "staging")}${target("production", "production")}${target("control", "control")}
       <div class="none" id="loading">Loading…</div>
     </div>
   </section>
@@ -218,7 +218,7 @@ const SOURCE_SCRIPT = `
     if (s > -30 * 86400) return rtf.format(Math.round(s / 86400), "day");
     return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
-  const TARGETS = ["staging", "production"];
+  const TARGETS = ["staging", "production", "control"];
   /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
   const GAP_TOP = 11, GAP_MAIN = 6;
   let view = null, deploys = null, busy = false, drawn = false;

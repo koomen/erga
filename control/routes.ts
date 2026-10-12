@@ -10,7 +10,7 @@
 //   /api/deploys..., /api/events    the deploys' API and the event stream (server/deploys/api.ts)
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
 //   /auth/github[/callback], /auth/logout   signing in (this Worker's own GitHub app) and out
-//   GET /api/health             {ok, worker: "control", version}: anyone
+//   GET /api/health             {ok, worker: "control", version (the release), build (the version id)}: anyone
 //   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
 //
 // Everything but sign-in, the health check, Git reads and the stylesheet
@@ -33,8 +33,9 @@ export interface Control {
   app: string;
   /** The Source page's shell. */
   layout: (o: AdminLayout) => Response;
-  /** This Worker's version, for /api/health. */
+  /** This Worker's release (the commit its own deploy set, else its version id), and its version id, for /api/health. */
   version: string | null;
+  build?: string | null;
 }
 
 /** The paths these routes own (the app answers them with a redirect to the control Worker when it is apart). */
@@ -55,8 +56,8 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/api/health" && read) {
     const started = Date.now();
-    try { await c.deploys.status(0); } catch (e) { return json({ ok: false, worker: "control", version: c.version, checks: { deploys: { ok: false, ms: Date.now() - started, error: (e as Error).message } } }, 503); }
-    return json({ ok: true, worker: "control", version: c.version, checks: { deploys: { ok: true, ms: Date.now() - started } } });
+    try { await c.deploys.status(0); } catch (e) { return json({ ok: false, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: false, ms: Date.now() - started, error: (e as Error).message } } }, 503); }
+    return json({ ok: true, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: true, ms: Date.now() - started } } });
   }
   // The app's own files, for the page: fetched from the app (it serves them as static assets).
   if (read && (path == "/style.css" || path.startsWith("/fonts/") || path.startsWith("/favicon"))) {

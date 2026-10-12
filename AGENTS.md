@@ -12,8 +12,13 @@ Push to `staging` (`git push origin HEAD:staging`): the control Worker
 (ops.erga.dev, `control/`) builds it and deploys staging.erga.dev at once.
 Production (erga.dev) deploys when `main` moves to a staging commit: Merge
 on https://ops.erga.dev/, the admin agent's `deploy_production`, the API, or
-a push to `main`. Each deploy checks the app's health and rolls back by
-itself when it fails; Roll back on a deploy's log does it by hand.
+a push to `main`. After production, the control Worker deploys itself from
+the same commit (`deploy/control.ts`): a change under `control/` reaches
+ops.erga.dev when it reaches `main`. Each deploy checks the target's health
+and rolls back by itself when it fails; Roll back on a deploy's log does it
+by hand. Two things still need wrangler from a machine (`bun deploy/setup.ts
+--control`): a change to the build container's image (`control/builder/`),
+and a new Durable Object class in `control/wrangler.jsonc`.
 
 The smoke run (`e2e/smoke/`) checks the editor's core in a real browser.
 Keep it small: it has a time limit (90 s), and a new test there should

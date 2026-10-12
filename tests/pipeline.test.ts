@@ -32,7 +32,8 @@ let release: Release;
 
 beforeAll(async () => {
   const dir = join(ROOT, ".build/release");
-  if (!existsSync(join(dir, "release.json"))) {
+  // Built here if missing, or from before the release carried the control Worker (deploy/release.ts).
+  if (!existsSync(join(dir, "release.json")) || !JSON.parse(readFileSync(join(dir, "release.json"), "utf8")).control) {
     if (!existsSync(join(ROOT, ".build/page.js"))) expect(Bun.spawnSync([join(ROOT, "client/build.sh")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
@@ -558,6 +559,100 @@ describe("branches deploy themselves", () => {
     expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA1 });
   });
 
+  test("the control Worker deploys itself from main, after production: its Worker only, secrets and containers kept, with a restore point", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-control", env());
+    const before = JSON.stringify(mock.state.containers);
+    await server.instance.hook("main", SHA2, "merge by ada");
+    await server.settle();
+    // Production first, then the control Worker: both built (the second from the builder's cache in the real one), both deployed.
+    expect(builder.built).toEqual([SHA2, SHA2]);
+    expect(await server.status("production")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    const t = await server.status("control");
+    expect(t).toMatchObject({ name: "control", host: "ops.erga.dev", branch: "main", state: "deployed", deployed: SHA2, commit: SHA2, error: null });
+    expect(t.steps.map((x) => `${x.id}:${x.status}`)).toEqual(["build:done", "account:done", "worker:done", "live:done"]);
+    expect(t.steps.find((x) => x.id == "account")!.detail).toMatch(/^erga-control is there, running a release before this pipeline \(deployed with wrangler\); restore point: version [0-9a-f]{8}$/);
+    expect(t.steps.find((x) => x.id == "live")!.detail).toBe(`https://ops.erga.dev, release ${SHA2.slice(0, 12)}, healthy (db ok 1 ms, documents ok 2 ms)`);
+    // Its upload: control/wrangler.jsonc's bindings, matched to what the Worker has; the release's version; its secrets kept; its container's class.
+    const meta = mock.state.scripts["erga-control"].metadata;
+    expect(meta.main_module).toBe("index.js");
+    expect(meta.compatibility_flags).toEqual(["nodejs_compat"]);
+    expect(meta.containers).toEqual([{ name: "erga-control-builder", class_name: "Builder" }]);
+    expect(meta.keep_bindings).toEqual(["secret_text", "secret_key"]);
+    expect(meta.exports).toBeUndefined();
+    expect(meta.migrations).toBeUndefined();
+    const b = bindingsOf(mock.state, "erga-control");
+    expect(b.BUILDS).toEqual({ type: "durable_object_namespace", name: "BUILDS", class_name: "Builder" });
+    expect(b.PIPELINE.class_name).toBe("Pipeline");
+    expect(b.SOURCE.class_name).toBe("SourceHost");
+    expect(b.DB).toEqual({ type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB });
+    expect(b.ARTIFACTS).toEqual({ type: "artifacts", name: "ARTIFACTS", namespace: "erga" });
+    expect(b.CF_VERSION_METADATA).toEqual({ type: "version_metadata", name: "CF_VERSION_METADATA" });
+    expect(b.ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
+    expect(b.CLOUDFLARE_ACCOUNT_ID.text).toBe(FLEET_ACCOUNT);
+    expect(b.APP_URL.text).toBe("https://erga.dev");
+    expect(b.ADMINS.text).toBe(TARGETS.production.vars.ADMINS);
+    expect(mock.state.scripts["erga-control"].modules).toEqual(["index.js"]);
+    // No container application made or changed, no image: the Worker upload only.
+    expect(JSON.stringify(mock.state.containers)).toBe(before);
+    expect(mock.state.calls.filter((c) => c.includes("/containers/"))).toEqual([]);
+    // Its record has the restore point (the wrangler version, no release), so Roll back works on it too.
+    const [rec] = (await server.instance.historyOf("control"))!;
+    expect(rec).toMatchObject({ target: "control", commit: SHA2, state: "deployed", live: true, trigger: "merge by ada" });
+    expect(rec.restore).toMatchObject({ versionId: expect.stringMatching(/^[0-9a-f-]{36}$/), version: null, bookmark: null });
+    // The next main commit: a restore point with the release it ran.
+    await server.instance.hook("main", SHA3);
+    await server.settle();
+    expect(await server.status("control")).toMatchObject({ state: "deployed", deployed: SHA3 });
+    const [next] = (await server.instance.historyOf("control"))!;
+    expect(next.restore).toMatchObject({ version: SHA2.slice(0, 12) });
+    expect(bindingsOf(mock.state, "erga-control").ERGA_VERSION.text).toBe(SHA3.slice(0, 12));
+    // Staging moving deploys staging only: not the control Worker.
+    const uploads = () => mock.state.calls.filter((c) => c == `PUT /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-control`).length;
+    const n = uploads();
+    await bootstrap(mock);
+    await server.instance.hook("staging", SHA1);
+    await server.settle();
+    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA1 });
+    expect(uploads()).toBe(n);
+  });
+
+  test("an unhealthy control Worker is rolled back by itself, to the version that ran before", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-control", env());
+    await server.instance.hook("main", SHA2);
+    await server.settle();
+    const [good] = (await server.instance.historyOf("control"))!;
+    mock.state.unhealthy = [SHA3.slice(0, 12)];
+    await server.instance.hook("main", SHA3);
+    await server.settle();
+    // Production (healthy: the same release, but the app's health check is the mock's per release... both unhealthy) and the control Worker both rolled back.
+    const t = await server.status("control");
+    expect(t).toMatchObject({ state: "failed", commit: SHA3, deployed: SHA2, liveDeploy: good.id });
+    expect(t.error).toContain(`Rolled back to release ${SHA2.slice(0, 12)} by itself.`);
+    expect(t.steps.at(-1)).toMatchObject({ id: "rollback", status: "done" });
+    expect(bindingsOf(mock.state, "erga-control").ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
+    expect(mock.state.calls.filter((c) => c == `POST /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-control/deployments?force=true`)).toHaveLength(1);
+    const log = (await server.instance.logOf("control"))!;
+    expect(log.lines.filter((l) => l.step == "rollback").map((l) => l.text)).toEqual([`unhealthy: rolling ops.erga.dev back to release ${SHA2.slice(0, 12)} (what it ran before this deploy)`]);
+  });
+
+  test("a release from before the control Worker deployed itself: its deploy stops, and says so", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const { control: _, ...old } = release;
+    const builder = mockBuilder(async () => old as Release);
+    const server = new Server(mock, builder, "erga-control", env());
+    await server.instance.hook("main", SHA2);
+    await server.settle();
+    expect(await server.status("production")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    const t = await server.status("control");
+    expect(t).toMatchObject({ state: "failed", commit: SHA2 });
+    expect(t.error).toContain("has no control Worker in it");
+    expect(mock.state.calls.filter((c) => c == `PUT /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-control`)).toEqual([]);
+  });
+
   test("interrupted before the upload (the object reset, as on 2026-10-05): it runs again by itself, with nobody to press Redeploy", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
@@ -908,7 +1003,8 @@ describe("staging's data copy (a Redeploy with a fresh copy) runs while the comm
     const mock = mockCloudflare({ fleet: true });
     const inner = mockBuilder(async () => release);
     const seen: string[] = [];
-    const builder = { ...inner, build: async (o: any, log: any, signal: any) => { const r = await inner.build(o, log, signal); seen.push(...mock.state.calls); return r; } };
+    // The calls made while production's build runs (the first build: the control Worker's own deploy builds after production's).
+    const builder = { ...inner, build: async (o: any, log: any, signal: any) => { const r = await inner.build(o, log, signal); if (inner.built.length == 1) seen.push(...mock.state.calls); return r; } };
     const server = new Server(mock, builder as never, "erga", env());
     await server.instance.hook("main", SHA2);
     await server.settle();

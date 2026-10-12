@@ -98,6 +98,7 @@ const keysOf = (p: TokenPolicy) => Object.entries(p.resources ?? {}).flatMap(([k
 /** The permission groups the mock knows, by id (Cloudflare's ids: deploy/server-tokens.ts KNOWN_IDS). */
 const GROUPS: Record<string, string> = {
   "7e79ec33834341f28dd431ab73884400": "Individual Workers Editor",
+  "bdbcd690c763475a985e8641dddc09f7": "Workers Containers Write",
   "09b2857d1c31407795e75e3fed8617a1": "D1 Write",
   "c8fed203ed3043cba015a93ad1616f1f": "Zone Read",
   "2072033d694d415a936eaeb94e6405b8": "Workers Routes Read",
@@ -154,9 +155,9 @@ export function mockCloudflare(opts: {
   /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
   sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
   /**
-   * Whether a token made through the API (mock-scoped-…, Editor on its Workers only, no Containers permission) may
-   * upload a version that names a container image. Cloudflare's answer isn't known yet: "refuse" (the default)
-   * plays the cautious one, and the pipeline then deploys without the factory's VMs.
+   * Whether a token made through the API (mock-scoped-…) without Workers Containers Write may upload a version
+   * that names a container's class. Cloudflare's answer isn't known yet: "refuse" (the default) plays the cautious
+   * one, which is why the deploy token's plan has that permission (deploy/server-tokens.ts).
    */
   scopedContainers?: "refuse" | "accept";
 } = {}): { fetch: Fetch; state: MockState; tokenValues: Map<string, string> } {
@@ -183,6 +184,12 @@ export function mockCloudflare(opts: {
   const tokenOf = (value: string) => state.tokens.find((t) => tokenValues.get(t.id) == value);
 
   /** What a token made through the API may do (its policies), as Cloudflare checks it: a refusal, or null to go on. */
+  /** Whether a token made through the API has Workers Containers Write on the account (a version naming a container's class). */
+  function grantsContainers(value: string): boolean {
+    const t = tokenOf(value);
+    return !!t && t.policies.some((p) => p.permission_groups.some((g) => GROUPS[g.id] == "Workers Containers Write") && keysOf(p).includes(`com.cloudflare.api.account.${ACCOUNT_ID}`));
+  }
+
   function scoped(m: string, path: string, value: string): Response | null {
     const t = tokenOf(value);
     if (!t) return fail(401, 1000, "Invalid API Token");
@@ -378,8 +385,8 @@ export function mockCloudflare(opts: {
         if (meta.migrations && meta.exports) return fail(400, 10021, "migrations and Durable Object exports can't be used together");
         // A version naming container images (the factory's): each prepared first, its class one of the version's Durable Objects.
         for (const c of meta.containers ?? []) {
-          if (token.startsWith("mock-scoped-") && (opts.scopedContainers ?? "refuse") == "refuse") return fail(403, 10000, "Authentication error: containers");
-          if (!c.class_name || !meta.exports?.[c.class_name]) return fail(400, 10021, `container ${c.name}: no Durable Object class ${c.class_name}`);
+          if (token.startsWith("mock-scoped-") && (opts.scopedContainers ?? "refuse") == "refuse" && !grantsContainers(token)) return fail(403, 10000, "Authentication error: containers");
+          if (!c.class_name || !(meta.exports?.[c.class_name] || state.scripts[r[1]]?.namespaces.includes(c.class_name))) return fail(400, 10021, `container ${c.name ?? c.class_name}: no Durable Object class ${c.class_name}`);
           for (const ref of Object.values(c.images ?? {}) as string[]) if (!state.containers.prepared.includes(ref)) return fail(400, 10021, `container ${c.name}: image ${ref} isn't prepared`);
         }
         const prev = state.scripts[r[1]];
@@ -743,7 +750,12 @@ function seedFleet(state: MockState) {
   state.scripts.erga = { metadata: { main_module: "index.js", bindings: prodBindings }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["DocumentObject", "DocHost", "Deployer", "DocList"] };
   state.secrets.erga = { SESSION_SECRET: "production-session-secret", GITHUB_CLIENT_SECRET: "production-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET };
   // The control Worker (control/): the repository, the pipeline, the build container; deployed by deploy/setup.ts.
-  state.scripts["erga-control"] = { metadata: { main_module: "index.js", bindings: [{ type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB }, { type: "artifacts", name: "ARTIFACTS", namespace: "erga" }] }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["Builder", "Pipeline", "SourceHost"] };
+  // As wrangler deployed it (control/wrangler.jsonc): no ERGA_VERSION until it deploys itself.
+  state.scripts["erga-control"] = { metadata: { main_module: "index.js", compatibility_date: "2026-09-30", bindings: [
+    { type: "durable_object_namespace", name: "BUILDS", class_name: "Builder" }, { type: "durable_object_namespace", name: "PIPELINE", class_name: "Pipeline" }, { type: "durable_object_namespace", name: "SOURCE", class_name: "SourceHost" },
+    { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB }, { type: "artifacts", name: "ARTIFACTS", namespace: "erga" }, { type: "version_metadata", name: "CF_VERSION_METADATA" },
+    { type: "plain_text", name: "CLOUDFLARE_ACCOUNT_ID", text: FLEET_ACCOUNT }, { type: "plain_text", name: "APP_URL", text: "https://erga.dev" },
+  ] }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["Builder", "Pipeline", "SourceHost"] };
   state.versions = { erga: 1, "erga-control": 1 };
   deployVersion(state, "erga", state.scripts.erga);
   deployVersion(state, "erga-control", state.scripts["erga-control"]);

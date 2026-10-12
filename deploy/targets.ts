@@ -64,8 +64,17 @@ export interface TargetSpec {
   adminsOnly?: boolean;
 }
 
-/** The control Worker: Erga's repository, the pipeline, the Source page and the build container, on its own hostname. */
+/**
+ * The control Worker: Erga's repository, the pipeline, the Source page and
+ * the build container, on its own hostname. It deploys itself too, from
+ * `branch` (main), after production: the release carries its bundle
+ * (deploy/release.ts), and the pipeline uploads it with the same health
+ * check and rollback as the app's targets (deploy/control.ts). Its
+ * container image, and a new Durable Object class, still need wrangler
+ * (deploy/setup.ts --control).
+ */
 export interface ControlSpec {
+  branch: "main";
   worker: string;
   /** Its hostname (a Workers custom domain), and the zone it's on. */
   host: string;
@@ -81,7 +90,7 @@ export const ADMINS: string = data.admins;
 export const SOURCE: { namespace: string; repo: string } = data.source;
 
 /** The control Worker (control/): it deploys every target, and holds the build container. */
-export const CONTROL: ControlSpec = data.control;
+export const CONTROL: ControlSpec = data.control as ControlSpec;
 /** The entrypoint of the control Worker that the app's CONTROL service binding reaches (control/index.ts, class App). */
 export const CONTROL_ENTRYPOINT = "App";
 
@@ -102,6 +111,14 @@ export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([nam
 
 export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
+
+/** Everything the pipeline deploys: the app's targets, and the control Worker itself (last: after production, on main). */
+export type DeployName = TargetName | "control";
+export const deployNames: DeployName[] = [...targetNames, "control"];
+export const isDeployName = (s: string): s is DeployName => isTargetName(s) || s == "control";
+/** What a deploy of `name` is: its branch, its Worker, its hostname, and (an app target) whose data it copies. */
+export const specOf = (name: DeployName): { name: DeployName; branch: "main" | "staging"; worker: string; host: string; snapshotFrom?: TargetName; control: boolean } =>
+  name == "control" ? { name, branch: CONTROL.branch, worker: CONTROL.worker, host: CONTROL.host, control: true } : { ...TARGETS[name], control: false };
 
 /** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; server/identity/admins-only.ts). */
 export const isAdminsOnly = (deployTarget: string | undefined): boolean => {

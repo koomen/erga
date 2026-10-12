@@ -5,6 +5,7 @@
     "repo": "erga"
   },
   "control": {
+    "branch": "main",
     "worker": "erga-control",
     "host": "ops.erga.dev",
     "zone": "erga.dev"

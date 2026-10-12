@@ -65,8 +65,10 @@ AGENTS.md has the rules for working on it.
     control/      the control Worker (erga-control, ops.erga.dev): Erga's repository and Git endpoint, the deploy
                   pipeline, the Source page and its sign-in, and the build container (builder/), apart from the app, so a
                   broken app never takes the way to fix it down (index.ts the entry, routes.ts, wrangler.jsonc;
-                  deploy/setup.ts deploys it). The app reaches it over a service binding; locally the app hosts its routes.
-    deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the release build (release.ts), the
+                  deploy/setup.ts deploys it the first time, then it deploys itself from main: deploy/control.ts). The
+                  app reaches it over a service binding; locally the app hosts its routes.
+    deploy/       the deploy pipeline (pipeline.ts, and control.ts for the control Worker's own deploy), branch deploys
+                  (branches.ts), the release build (release.ts), the
                   targets (targets.json), the setup runbook (setup.ts), the settings a deploy locks (locked-settings.ts),
                   and the mock Cloudflare the tests use
     dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, a Git server for tests, and a

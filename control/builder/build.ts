@@ -89,7 +89,11 @@ export function artifactsNamespace(dir: string): string | null {
   } catch { return null; }
 }
 
-/** The release in `dir` (release.json and what it names) as a bundle's bytes: {index, files: {path: base64}}. */
+/**
+ * The release in `dir` (release.json and every folder beside it: bundle/,
+ * assets/, migrations/, control/, and whatever a newer commit adds) as a
+ * bundle's bytes: {index, files: {path: base64}}.
+ */
 export function packRelease(dir: string): Uint8Array {
   const index = JSON.parse(readFileSync(join(dir, "release.json"), "utf8"));
   const files: Record<string, string> = {};
@@ -101,7 +105,7 @@ export function packRelease(dir: string): Uint8Array {
       else if (e.isFile()) files[relative(dir, full).split("\\").join("/")] = Buffer.from(readFileSync(full)).toString("base64");
     }
   };
-  for (const sub of ["bundle", "assets", "migrations"]) walk(join(dir, sub));
+  for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) walk(join(dir, e.name));
   return new TextEncoder().encode(JSON.stringify({ index, files }));
 }
 
