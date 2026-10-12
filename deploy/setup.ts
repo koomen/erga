@@ -218,13 +218,23 @@ try {
       if (github) secrets.GITHUB_CLIENT_SECRET = github;
       const mirror = read("GITHUB_MIRROR_TOKEN");
       if (mirror) secrets.GITHUB_MIRROR_TOKEN = mirror;
-      snapshot = secret();
-      console.log(`   Ready: ${[...Object.keys(secrets), "SNAPSHOT_TOKEN"].join(", ")}${had.includes("SESSION_SECRET") ? " (SESSION_SECRET kept as it is)" : ""} (new ones made here; none are printed).`);
-      if (ask(`   Set them on ${CONTROL.worker}, and SNAPSHOT_TOKEN on ${APP_WORKERS.filter((w) => scripts.includes(w)).join(" and ")} too?`, yes)) {
-        for (const [name, text] of Object.entries({ ...secrets, SNAPSHOT_TOKEN: snapshot })) await putSecret(CONTROL.worker, name, text);
-        for (const w of APP_WORKERS) if (scripts.includes(w)) await putSecret(w, "SNAPSHOT_TOKEN", snapshot);
-        console.log(`   Set: ${CONTROL.worker}: ${[...Object.keys(secrets), "SNAPSHOT_TOKEN"].join(", ")}; ${APP_WORKERS.filter((w) => scripts.includes(w)).join(", ")}: SNAPSHOT_TOKEN.`);
-      } else console.log("   Skipped.");
+      // One SNAPSHOT_TOKEN on the control Worker and every app Worker that's there: kept when all of them have one (a run
+      // of this after the setup, for a new client secret or --control, rotates nothing), new otherwise.
+      const apps = APP_WORKERS.filter((w) => scripts.includes(w));
+      // (Staging's first deploy, step 6, needs the value: with no erga-staging yet, a new one.)
+      const snapshotKept = had.includes("SNAPSHOT_TOKEN") && scripts.includes(STAGING.worker) && (await Promise.all(apps.map((w) => secretsOf(w)))).every((l) => l.includes("SNAPSHOT_TOKEN"));
+      snapshot = snapshotKept ? null : secret();
+      const setting = [...Object.keys(secrets), ...(snapshot ? ["SNAPSHOT_TOKEN"] : [])];
+      const kept = [...(had.includes("SESSION_SECRET") ? ["SESSION_SECRET"] : []), ...(snapshotKept ? ["SNAPSHOT_TOKEN"] : [])];
+      if (!setting.length) console.log(`   Nothing to set (${kept.join(" and ")} kept as they are${read("GITHUB_CLIENT_SECRET") ? "" : "; GITHUB_CLIENT_SECRET in the environment sets the GitHub app's secret"}).`);
+      else {
+        console.log(`   Ready: ${setting.join(", ")}${kept.length ? ` (${kept.join(" and ")} kept as ${kept.length > 1 ? "they are" : "it is"})` : ""} (new ones made here; none are printed).`);
+        if (ask(`   Set them on ${CONTROL.worker}${snapshot && apps.length ? `, and SNAPSHOT_TOKEN on ${apps.join(" and ")} too` : ""}?`, yes)) {
+          for (const [name, text] of Object.entries({ ...secrets, ...(snapshot ? { SNAPSHOT_TOKEN: snapshot } : {}) })) await putSecret(CONTROL.worker, name, text);
+          if (snapshot) for (const w of apps) await putSecret(w, "SNAPSHOT_TOKEN", snapshot);
+          console.log(`   Set: ${CONTROL.worker}: ${setting.join(", ")}${snapshot && apps.length ? `; ${apps.join(", ")}: SNAPSHOT_TOKEN` : ""}.`);
+        } else console.log("   Skipped.");
+      }
     }
 
     step(6);
