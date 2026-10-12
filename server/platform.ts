@@ -72,8 +72,8 @@ export interface Platform {
    * (no ADMINS, no DEV_LOGIN): nobody to make it for, and / is a plain start page.
    */
   landing?: { files: Record<string, string | Uint8Array>; owner: string | null; editors: string[] };
-  /** The editor's page, served at each document's address. */
-  editor(request: Request): Promise<Response>;
+  /** The app's own static files (the editor's page and scripts, their builds, the release): the answer for this request. */
+  assets(request: Request): Promise<Response>;
   /**
    * Local development: /new may name the document (?id=) and shorten its
    * unedited time (?unedited=<ms>). Files open from disk through the
@@ -95,7 +95,7 @@ export interface Platform {
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
   /**
-   * A server for Erga's admins alone (staging: deploy/targets.json `adminsOnly`; cloudflare/admins-only.ts guards every
+   * A server for Erga's admins alone (staging: deploy/targets.json `adminsOnly`; server/identity/admins-only.ts guards every
    * request). Its pages tokens name the admin they were made for, so its pages origin can check them again.
    */
   adminsOnly?: boolean;

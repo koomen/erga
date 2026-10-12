@@ -37,7 +37,7 @@
 //                             and every page of the site's own gets live.js
 //
 // On staging (deploy/targets.json `adminsOnly`) every route above, and the documents' pages origin, is for Erga's admins
-// only: one guard before them all (cloudflare/admins-only.ts lists what's exempt, and why).
+// only: one guard before them all (server/identity/admins-only.ts lists what's exempt, and why).
 //
 // In local development only, the dev server links files on
 // disk to documents, proving itself with ERGA_LINK_SECRET:
@@ -49,11 +49,11 @@
 
 import { accountOf, OWN_ACCOUNT, withAccount } from "../server/pages/index.ts";
 import { idShaped, slugify, OWNER } from "../server/directory";
-import { frontDoor } from "../server/documents/index.ts";
+import { frontDoor, isPagesSite } from "../server/documents/index.ts";
 import { mayDeploy } from "../server/deploys/access";
 import { whoOf, type Platform } from "../server/platform";
 import { serverApi, tokensDoor } from "../server/api";
-import { finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "../server/identity/index.ts";
+import { adminsOnlyGate, finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "../server/identity/index.ts";
 import { directoryOf } from "./d1";
 import { adminAgentApi, adminGate, adminGuideApi, isAdminAgentPath, isAdminPath } from "../server/admin/index.ts";
 import { deployDoor } from "./deploy-routes";
@@ -64,9 +64,8 @@ import { siteApi } from "../server/sites/index.ts";
 import { mockSiteFile } from "./sites";
 import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
-import { isDev, pagesSite, platform } from "./platform";
-import { adminsOnlyGate } from "./admins-only";
-import { releaseApi, withLive } from "./live";
+import { isDev, platform } from "./platform";
+import { releaseApi, withLive } from "../server/live.ts";
 
 export { Deployer } from "./deploy-session";
 export { DocumentObject } from "./document-object";
@@ -85,7 +84,7 @@ export default {
       const p = platform(env, ctx);
       const response = await route(request, env, url, p);
       // Every page of the site's own has who you are in its upper right; a document's pages origin never does.
-      if (response.status == 101 || pagesSite(env, url)) return response;
+      if (response.status == 101 || isPagesSite(url, p)) return response;
       // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
       const own = response.headers.has(OWN_ACCOUNT);
       const page = await withAccount(response, async () => {
@@ -122,17 +121,17 @@ async function route(request: Request, env: Env, url: URL, p: Platform): Promise
   const path = url.pathname;
   const assets = isAsset(path);
   // Staging is for Erga's admins only (deploy/targets.json `adminsOnly`): every route after this, and the pages origin,
-  // needs an admin's session or admin-scope token, but for the exemptions cloudflare/admins-only.ts lists and explains.
-  const refused = await adminsOnlyGate(request, env, url);
+  // needs an admin's session or admin-scope token, but for the exemptions server/identity/admins-only.ts lists and explains.
+  const refused = await adminsOnlyGate(request, p, url);
   if (refused) return refused;
   // A document's pages origin serves its frame and files, and nothing of this site's.
-  if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, p);
+  if (isPagesSite(url, p)) return assets ? p.assets(request) : frontDoor(request, p);
   if (path == "/auth/github") return startSignIn(p, request);
   if (path == "/auth/github/callback") return finishSignIn(p, request);
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/auth/test") return testSignIn(p, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor.
-  if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
+  if (assets || path == "/editor.html") return p.assets(request);
   // Erga's own source: the Git endpoint, its page (the dashboard of source and deploys) and API.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
   // Its old address, from when admin settings linked to it: it's a page of its own now, not an admin one, so before the admins' gate.
@@ -170,7 +169,7 @@ async function route(request: Request, env: Env, url: URL, p: Platform): Promise
   // Each admin's agent, its conversation and panel, in the AdminAgent object: before the server's API, which has the rest of /api/.
   if (isAdminAgentPath(path)) return adminAgentApi(request, p, url);
   // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
-  if (path == "/api/release" && read) return releaseApi(env, url);
+  if (path == "/api/release" && read) return releaseApi(p, url);
   // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
   if (path == "/api/admin/guide") return adminGuideApi(request, p, url);
   // The server's API for agents, and people's agent tokens.

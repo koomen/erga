@@ -1,4 +1,4 @@
-// Open pages across a redeploy, the Worker's side (the page's side is
+// Open pages across a redeploy, the server's side (the page's side is
 // client/live.ts):
 //
 //   - GET /api/release: the build of each of the editor's files, as client/build.sh
@@ -12,7 +12,7 @@
 //
 // A document's pages origin never gets any of it.
 
-import type { Env } from "./env";
+import type { Platform } from "./platform.ts";
 
 export const CHECK_HEADER = "x-erga-check";
 export const BUILD_HEADER = "x-erga-build";
@@ -21,10 +21,10 @@ export const BUILD_HEADER = "x-erga-build";
 let boot = "";
 
 /** GET /api/release: the files' builds, and the release (the deploy's version, ERGA_VERSION). */
-export async function releaseApi(env: Env, url: URL): Promise<Response> {
-  const r = await env.ASSETS.fetch(new Request(new URL("/build.json", url))).catch(() => null);
+export async function releaseApi(platform: Platform, url: URL): Promise<Response> {
+  const r = await platform.assets(new Request(new URL("/build.json", url))).catch(() => null);
   const files = r?.ok ? await r.json().catch(() => null) as Record<string, string> | null : null;
-  return Response.json({ files: files ?? {}, version: env.ERGA_VERSION || `boot-${boot ||= crypto.randomUUID().slice(0, 8)}` }, { headers: { "Cache-Control": "no-store" } });
+  return Response.json({ files: files ?? {}, version: platform.deploy.version ?? `boot-${boot ||= crypto.randomUUID().slice(0, 8)}` }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /** The digest of a page's code: its inline scripts and the scripts it loads, in order (not its text or data). */

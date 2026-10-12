@@ -12,6 +12,9 @@ const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
 const DAY = 24 * 60 * 60, WEEK = 7 * DAY;
 
+/** Whether a request came to a document's pages origin (any of them), rather than the app's own. */
+export const isPagesSite = (url: URL, platform: Platform) => url.hostname.endsWith(`.${platform.pagesDomain(url)}`) || (!!platform.pagesShared?.(url) && url.hostname == platform.pagesShared(url));
+
 /** The origin a document's page runs on. */
 export function pagesOrigin(owner: string, id: string, url: URL, platform: Platform): string {
   const shared = platform.pagesShared?.(url);

@@ -6,4 +6,4 @@
 export { forwarded, frontDoor } from "./front-door.ts";
 export { landingDocument } from "./landing.ts";
 export { makeDoc, startingFiles } from "./make.ts";
-export { pagesHost, pagesOrigin, pagesToken, readPagesClaims, readPagesToken } from "./pages-origin.ts";
+export { isPagesSite, pagesHost, pagesOrigin, pagesToken, readPagesClaims, readPagesToken } from "./pages-origin.ts";

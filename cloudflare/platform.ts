@@ -51,7 +51,6 @@ const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
 
 /** Where documents' pages run: an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
-export const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainOf(env)}`) || (!!env.PAGES_HOST && url.hostname == env.PAGES_HOST.trim()) || url.hostname.endsWith(".localhost");
 
 
 /**
@@ -80,7 +79,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     sessionOf: (request) => sessionOf(p, request),
     templates: TEMPLATES,
     landing: landingOf(env),
-    editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
+    assets: (request) => env.ASSETS.fetch(request),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
     pagesDomain: (url) => (local(url) ? "localhost" : pagesDomainOf(env)),

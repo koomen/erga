@@ -74,7 +74,7 @@ For example:
 1. **Staging is for admins only.** staging.erga.dev runs on a copy of
    production's data. The copy is frozen: a deploy keeps it, and only a
    Redeploy with a fresh copy replaces it. Every request there needs an
-   admin: an admin's session or an admin-scope token (`cloudflare/admins-only.ts`, from
+   admin: an admin's session or an admin-scope token (`server/identity/admins-only.ts`, from
    `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or origin
    goes behind that guard, and any exemption (server to server, sign-in) is
    listed there with its reason.

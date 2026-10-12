@@ -1,13 +1,12 @@
 // Staging is for Erga's admins only. staging.erga.dev runs on a copy of
 // production's data (frozen: only a Redeploy with a fresh copy replaces it),
 // so a server whose deploy target says `adminsOnly`
-// (deploy/targets.json; the pipeline sets DEPLOY_TARGET on each deploy, so no
+// (deploy/targets.json, Platform.adminsOnly; the pipeline sets DEPLOY_TARGET on each deploy, so no
 // setting turns this off) lets a request in only with admin power: an
-// admin's signed-in session, or an admin-scope token (server/tokens.ts;
+// admin's signed-in session, or an admin-scope token (tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
 // admins only, with a link to production) or a JSON 403, and Git a 401 that
-// asks for a token. This is the one guard, at the front door (cloudflare/index.ts,
-// before every route); production and servers made
+// asks for a token. This is the one guard, at the front door, before every route; production and servers made
 // by /deploy never run it.
 //
 // What gets in without an admin, and why (each one checks its own credential):
@@ -42,20 +41,16 @@
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
 // (made before this guard, or by another server) is refused.
 
-import { isAdminsOnly, TARGETS } from "../deploy/targets";
-import { esc, page, safeNext } from "../server/pages/index.ts";
-import { pagesHost, readPagesClaims } from "../server/documents/index.ts";
-import { whoOf, type Platform } from "../server/platform";
-import { directoryOf } from "./d1";
-import { isPeer, isSignInPath } from "../server/identity/index.ts";
-import type { Env } from "./env";
-import { pagesSite, platform } from "./platform";
-import { tokenPath } from "./token-paths";
 
-/** Whether this server is for Erga's admins only: its deploy target says so (staging). */
-export const adminsOnly = (env: Pick<Env, "DEPLOY_TARGET">): boolean => isAdminsOnly(env.DEPLOY_TARGET);
+import { TARGETS } from "../../deploy/targets.ts";
+import { isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
+import { esc, page, safeNext } from "../pages/index.ts";
+import { whoOf, type Platform } from "../platform.ts";
+import { isPeer } from "./peer.ts";
+import { isSignInPath } from "./settings.ts";
+import { tokenPath } from "./token-paths.ts";
 
-/** The editor's own files (cloudflare/index.ts serves them from ASSETS). */
+/** The editor's own files (the Worker serves them as static assets). */
 const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/style.css", "/editor.html"]);
 
 /** The request needs no admin: one of the exemptions above. */
@@ -84,17 +79,16 @@ function gitSecret(auth: string): string | null {
  * The guard: null lets the request through (this server isn't for admins only, it's an exemption, or an admin with
  * admin power asks); otherwise the refusal.
  */
-export async function adminsOnlyGate(request: Request, env: Env, url: URL): Promise<Response | null> {
-  if (!adminsOnly(env)) return null;
-  const base = platform(env);
+export async function adminsOnlyGate(request: Request, base: Platform, url: URL): Promise<Response | null> {
+  if (!base.adminsOnly) return null;
   if (exempt(request, base, url)) return null;
-  const users = directoryOf(env).users;
+  const users = base.directory.users;
 
   // A document's pages origin: no cookies, only its token, which names the admin it was made for.
-  if (pagesSite(env, url)) {
+  if (isPagesSite(url, base)) {
     const doc = pagesHost(url, base);
     const token = /^\/t\/([^/]+)\//.exec(url.pathname)?.[1];
-    const claims = doc && token ? await readPagesClaims(env.SESSION_SECRET, token, doc.owner, doc.id) : null;
+    const claims = doc && token ? await readPagesClaims(base.secret, token, doc.owner, doc.id) : null;
     if (claims?.by && (await users.isAdmin({ login: claims.by }))) return null;
     return new Response("Staging is for Erga's admins only.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
   }

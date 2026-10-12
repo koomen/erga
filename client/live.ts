@@ -11,7 +11,7 @@
 // Then, the page's code. The server knows its release: build.json
 // lists the build of each of the editor's files, at GET /api/release; and each
 // page the Worker makes says which inline code it carries (its meta
-// erga-build, a digest of its inline scripts: cloudflare/live.ts), which a GET of
+// erga-build, a digest of its inline scripts: server/live.ts), which a GET of
 // the page with X-Erga-Check: build answers in a header, without the page.
 // This page asks after a connection comes back, after a request fails as a
 // server going away fails, when the tab is shown again, and every

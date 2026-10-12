@@ -52,7 +52,7 @@ export interface TargetSpec {
   snapshotFrom?: TargetName;
   /**
    * Only Erga's admins may use this target's server (staging, which runs on a copy of production's data): every request
-   * needs an admin's session or admin-scope token, with the few exemptions cloudflare/admins-only.ts lists. The server
+   * needs an admin's session or admin-scope token, with the few exemptions server/identity/admins-only.ts lists. The server
    * knows from DEPLOY_TARGET, which the pipeline sets on each deploy, so no setting turns it off.
    */
   adminsOnly?: boolean;
@@ -102,7 +102,7 @@ export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([nam
 export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
 
-/** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; cloudflare/admins-only.ts). */
+/** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; server/identity/admins-only.ts). */
 export const isAdminsOnly = (deployTarget: string | undefined): boolean => {
   const name = deployTarget?.trim() ?? "";
   return Object.prototype.hasOwnProperty.call(TARGETS, name) && TARGETS[name as TargetName].adminsOnly == true;
