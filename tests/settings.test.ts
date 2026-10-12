@@ -5,7 +5,7 @@
 // taking out users, Save): e2e/config/picker.e2e.ts.
 
 import { afterAll, expect, test } from "bun:test";
-import { adminDoor } from "../server/admin/pages.ts";
+import { adminDoor } from "../server/admin/index.ts";
 import { ConfigError, logins, type ConfigEntry } from "../server/settings.ts";
 import type { Platform } from "../server/platform.ts";
 

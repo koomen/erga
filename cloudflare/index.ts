@@ -27,7 +27,7 @@
 //                              people sign in
 
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
-//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; cloudflare/admin-agent-host.ts)
+//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; server/admin/agent.ts)
 //   /admin/source, /api/source/...  the Source page (the dashboard of source and deploys; /source and /admin/factory
 //                              redirect there) and its API
 //                              Every /admin page has the same layout, and every /admin route is
@@ -55,9 +55,8 @@ import { whoOf, type Platform } from "../server/platform";
 import { serverApi, tokensDoor } from "../server/api";
 import { finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "../server/identity/index.ts";
 import { directoryOf } from "./d1";
-import { adminGate, isAdminPath } from "../server/admin/layout";
+import { adminAgentApi, adminGate, adminGuideApi, isAdminAgentPath, isAdminPath } from "../server/admin/index.ts";
 import { deployDoor } from "./deploy-routes";
-import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent-host";
 import { sourceApi, sourceDoor, sourceGit } from "../server/source/index.ts";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "../server/home/index.ts";
@@ -71,7 +70,7 @@ import { releaseApi, withLive } from "./live";
 
 export { Deployer } from "./deploy-session";
 export { DocumentObject } from "./document-object";
-export { AdminAgentHost } from "./admin-agent-host";
+export { AdminAgentHost } from "./objects/admin-agent";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./objects/source";
 export { Home } from "./objects/home";
@@ -169,11 +168,11 @@ async function route(request: Request, env: Env, url: URL, p: Platform): Promise
     if (file) return file;
   }
   // Each admin's agent, its conversation and panel, in the AdminAgent object: before the server's API, which has the rest of /api/.
-  if (isAdminAgentPath(path)) return adminAgentApi(request, env, url);
+  if (isAdminAgentPath(path)) return adminAgentApi(request, p, url);
   // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
   if (path == "/api/release" && read) return releaseApi(env, url);
   // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
-  if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
+  if (path == "/api/admin/guide") return adminGuideApi(request, p, url);
   // The server's API for agents, and people's agent tokens.
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, p);
   if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, p);

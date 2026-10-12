@@ -8,6 +8,8 @@ import type { AppValues, AuthStorage } from "./identity/apps.ts";
 import type { TargetName } from "../deploy/targets.ts";
 import type { HomeObject } from "./home/deploys.ts";
 import type { SourceService } from "./source/routes.ts";
+import type { AdminAgentObject, DashboardDeploys } from "./admin/agent.ts";
+import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory.ts";
 import type { SiteOps } from "./sites/index.ts";
 import type { AgentToken, Tokens } from "./identity/tokens.ts";
@@ -125,6 +127,12 @@ export interface Platform {
   };
   /** Erga's own repository (server/source), where this server hosts it; null where it doesn't. */
   source: SourceService | null;
+  /** This server's branch deploys, as the admin agent's dashboard asks them (the pipeline's object). */
+  deploys: DashboardDeploys;
+  /** The admins' agents (server/admin/agent.ts), one object per server. */
+  adminAgent: AdminAgentObject;
+  /** The agents' settings as they are now: the Anthropic key an admin stored, else the deploy's; or why there's none. Read at each turn. */
+  agentSettings(): Promise<AgentConfig | { missing: string }>;
   /** The homepage's deploys and its snapshot (server/home/deploys.ts), one object per server. */
   home: HomeObject;
   /** What runs at the edge, around a request. */

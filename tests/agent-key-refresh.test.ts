@@ -127,7 +127,7 @@ test("the admin agent: a key replaced after its session started reaches its next
   const agent = startAdminAgent({ cfg: { apiKey: Redacted.make(KEY1), model: "sonnet", effort: "medium" }, owner: "ada", tools: [] });
   agent.prompt("hello", null);
   expect(await requests(1)).toEqual([KEY1]);
-  // cloudflare/admin-agent-host.ts reads the settings at each turn and gives them to the session it keeps.
+  // server/admin/agent.ts reads the settings at each turn and gives them to the session it keeps.
   agent.configure({ apiKey: Redacted.make(KEY2), model: "sonnet", effort: "medium" });
   await new Promise((r) => setTimeout(r, 50));
   agent.prompt("again", null);

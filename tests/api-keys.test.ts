@@ -8,7 +8,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, expect, test } from "bun:test";
-import { adminDoor } from "../server/admin/pages.ts";
+import { adminDoor } from "../server/admin/index.ts";
 import { checkKey, CredentialError, Credentials, withCredentials } from "../server/api-keys.ts";
 import { Directory, type Param, type Sql } from "../server/directory.ts";
 import type { Platform, Session } from "../server/platform.ts";

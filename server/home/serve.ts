@@ -136,7 +136,7 @@ export async function serveHomeFile(request: Request, platform: Platform): Promi
   if (hit) return request.method == "HEAD" ? new Response(null, hit) : hit;
   const file = await platform.home.file(gen, path);
   if (!file) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
-  const response = new Response(file.bytes, { headers: { "Content-Type": file.type, "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" } });
+  const response = new Response(file.bytes as BodyInit, { headers: { "Content-Type": file.type, "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" } });
   if (cache) platform.edge.background(cache.put(key, response.clone()).catch(() => {}));
   return request.method == "HEAD" ? new Response(null, response) : response;
 }
@@ -154,5 +154,5 @@ export async function serveHomeRoot(request: Request, platform: Platform): Promi
   if (!live || !live.page.files.includes(rel)) return null;
   const file = await platform.home.file(live.page.gen, rel);
   if (!file) return null;
-  return new Response(request.method == "HEAD" ? null : file.bytes, { headers: { "Content-Type": file.type, "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" } });
+  return new Response(request.method == "HEAD" ? null : (file.bytes as BodyInit), { headers: { "Content-Type": file.type, "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" } });
 }

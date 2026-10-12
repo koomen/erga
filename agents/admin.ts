@@ -266,7 +266,7 @@ export interface AdminAgent {
   /** The settings now (a key an admin stored, replaced or cleared since it started): the next model call uses them. */
   configure(cfg: AgentConfig): void;
   log(): Log;
-  /** The model's messages so far (what cloudflare/admin-agent-host.ts stores, agents/admin-chats.ts). */
+  /** The model's messages so far (what server/admin/agent.ts stores, agents/admin-chats.ts). */
   messages(): AgentMessage[];
   /** A message, with any files attached. */
   prompt(text: string, context: string | null, files?: Attachment[]): void;

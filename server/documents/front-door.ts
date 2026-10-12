@@ -40,7 +40,7 @@
 
 import { resolvePage } from "../../document/pages.ts";
 import { VIA } from "../../shared/attribution.ts";
-import { adminDoor } from "../admin/pages.ts";
+import { adminDoor } from "../admin/index.ts";
 import { ID, OWNER, type Route } from "../directory.ts";
 import { accessOf, type Platform, type Session, whoOf } from "../platform.ts";
 import { viewLanding } from "./landing.ts";

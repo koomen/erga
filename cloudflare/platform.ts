@@ -15,6 +15,7 @@ import { isAdminsOnly, isTargetName, TARGETS, type TargetName } from "../deploy/
 import { MOCK_HOOK_SECRET } from "../deploy/mock-cloudflare";
 import { siteOps } from "./sites";
 import { sourceService } from "./source";
+import { agentSettings } from "./agent-settings";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -102,6 +103,9 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     own: { get: (k) => own().authGet(k), put: (k, v) => own().authPut(k, v), delete: (k) => own().authDelete(k) },
     source: sourceService(env),
     home: env.HOME.getByName("home"),
+    adminAgent: env.ADMIN_AGENT.getByName("admin"),
+    deploys: env.PIPELINE.getByName("deploys"),
+    agentSettings: () => agentSettings(env),
     edge: {
       cache: edgeCache(),
       background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },

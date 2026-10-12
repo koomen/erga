@@ -16,7 +16,6 @@ import { VIA } from "../shared/attribution";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions";
 import type { DocSnapshot, Page } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
-import { agentSettings } from "./agent-settings";
 import { platform } from "./platform";
 import { DiskLink } from "../dev/disk-storage";
 import { publishedChanged } from "./published";
@@ -48,7 +47,7 @@ export class DocumentObject extends DurableObject<Env> {
         count: () => this.sockets.size,
         closeAll: (code, reason) => { for (const socket of this.sockets) { try { socket.close(code, reason); } catch { /* already closed */ } } this.sockets.clear(); },
       },
-      agentSettings: () => agentSettings(env),
+      agentSettings: () => platform(env).agentSettings(),
       // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
       serverTools: (person, here) => agentToolsFor({ dir: directoryOf(env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here, platform: platform(env), sites: siteOps(env, "") }),
       takeDownSite: (site) => env.SITES.getByName(site.docId).remove(site.docId, site),

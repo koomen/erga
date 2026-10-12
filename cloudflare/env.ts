@@ -1,5 +1,5 @@
 import type { ArtifactsBinding } from "./artifacts";
-import type { AdminAgentHost } from "./admin-agent-host";
+import type { AdminAgentHost } from "./objects/admin-agent";
 import type { Deployer } from "./deploy-session";
 import type { DocumentObject } from "./document-object";
 import type { SourceHost } from "./objects/source";

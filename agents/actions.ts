@@ -14,7 +14,7 @@
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
 // is none. tests/agent-actions.test.ts reads the routes from each file's own route table (the comments at the
-// top of cloudflare/admin-agent-host.ts, server/admin/pages.ts, server/api.ts, ...), the document API and the file tree's
+// top of server/admin/agent.ts, server/admin/pages.ts, server/api.ts, ...), the document API and the file tree's
 // operations, and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 

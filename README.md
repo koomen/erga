@@ -55,7 +55,7 @@ AGENTS.md has the rules for working on it.
                   (main.ts the editor's shell, frame.ts the editor, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
     cloudflare/   the Cloudflare adapter: the Worker's entry (index.ts), the Platform from its bindings (platform.ts), the
                   Durable Objects (document-object.ts, objects/home.ts, objects/site.ts, objects/source.ts, pipeline.ts,
-                  deploy-session.ts, admin-agent-host.ts) and D1 (d1.ts)
+                  deploy-session.ts, objects/admin-agent.ts) and D1 (d1.ts)
     deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
                   release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a
                   deploy locks (locked-settings.ts), and the mock Cloudflare the tests use

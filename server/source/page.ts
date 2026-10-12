@@ -35,7 +35,7 @@
 
 import { esc, page as plainPage } from "../pages/index.ts";
 import type { Session } from "../platform";
-import { adminResponse } from "../admin/layout";
+import { adminResponse } from "../admin/index.ts";
 
 export interface SourcePageConfig {
   session: Session;
