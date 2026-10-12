@@ -4,5 +4,5 @@
 
 export { siteApi } from "./api.ts";
 export { SiteDeploys, type PublishedSite, type SiteDeps, type SiteObject } from "./deploys.ts";
-export { IDLE_SITE, listZones, publishTo, SITE_PERMISSIONS, siteView, tokenTemplateUrl, verifyToken, zonesOf, type SiteDeploy, type SiteOps } from "./publish.ts";
+export { deploySite, IDLE_SITE, listZones, publishTo, removeSite, SITE_PERMISSIONS, siteFiles, siteView, tokenTemplateUrl, verifyToken, zonesOf, type SiteDeploy, type SiteOps } from "./publish.ts";
 export { checkHostname, CloudflareConnections, scriptName, SiteError, Sites, type CfAccount, type CfZone, type ConnectionInfo, type SiteRow } from "./rows.ts";
