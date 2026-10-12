@@ -53,7 +53,7 @@ export class DocumentObject extends DurableObject<Env> {
       serverTools: (person, here) => agentToolsFor({ dir: directoryOf(env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here, platform: platform(env), sites: siteOps(env, "") }),
       takeDownSite: (site) => env.SITES.getByName(site.docId).remove(site.docId, site),
       home: {
-        forget: (docId) => env.HOME?.getByName("home").forget(docId) ?? Promise.resolve(),
+        forget: (docId) => env.HOME.getByName("home").forget(docId),
         publishedChanged: (docId) => publishedChanged(env, docId),
       },
       siteChanged: (docId) => siteChanged(env, docId),
@@ -84,8 +84,6 @@ export class DocumentObject extends DurableObject<Env> {
   importStorage(snap: DocSnapshot): Promise<void> { return this.document.importStorage(snap); }
   wipeStorage(): Promise<void> { return this.document.wipeStorage(); }
   versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> { return this.document.versionsState(opts); }
-  version(ref: string | number) { return this.document.version(ref); }
-  versionFile(ref: string | number, path: string): Promise<Uint8Array | null> { return this.document.versionFile(ref, path); }
   setPublished(req: PublishRequest): Promise<PublishResult> { return this.document.setPublished(req); }
   restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.restore(ref, by, path); }
   publishedFiles() { return this.document.publishedFiles(); }

@@ -32,10 +32,9 @@ import * as Scope from "effect/Scope";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow } from "../server/directory.ts";
-import { afterUnedited, titleOf } from "../server/routes.ts";
 import type { SiteRow } from "../server/sites.ts";
 import { cleanRel, docFile, makeHost, relativeUrl } from "./host.ts";
-import { resolvePage } from "./pages.ts";
+import { resolvePage, titleOf } from "./pages.ts";
 import { FileStore, Room, StateStore, type Connection } from "./room.ts";
 import { fileStoreOf, KEYS, kvOf, stateStoreOf, writeText, type Storage } from "./storage.ts";
 import { VIA } from "../shared/attribution.ts";
@@ -92,6 +91,18 @@ const { file: FILE, dir: DIR, meta: INFO, state: STATE } = KEYS;
 
 /** A new Markdown page (a document whose page is index.md). */
 const plainMarkdown = "# Untitled\n\nStart writing here.\n";
+
+const HOUR = 60 * 60 * 1000;
+
+/**
+ * When a document's unedited time is up: one that's been edited (or is a
+ * test document) stays, one open somewhere waits an hour more, so it isn't
+ * pulled from under someone about to type, and any other goes.
+ */
+function afterUnedited(doc: { modified?: number; test?: boolean }, open: boolean, now: number): "keep" | "delete" | number {
+  if (doc.modified || doc.test) return "keep";
+  return open ? now + HOUR : "delete";
+}
 
 export class Document {
   private open: Promise<Opened | null> | null = null;

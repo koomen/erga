@@ -21,8 +21,7 @@ import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixe
 import type { DocName, Naming } from "../server/directory";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
-import { titleOf } from "../server/routes";
-import { checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./pages";
+import { TreeError, checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, titleOf, treeEntries, type TreeOp } from "./pages";
 import { ignored, isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";

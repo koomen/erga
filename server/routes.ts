@@ -36,8 +36,7 @@
 // that person's permissions.
 //
 // Signing in, the editor's own files and the WebSockets stay with the
-// Worker. The rule for when an unedited document goes (`afterUnedited`) is
-// here; the document's alarm applies it.
+// Worker.
 
 import type { SiteOps } from "./site-publish.ts";
 import { avatarsOf, OWN_ACCOUNT } from "./account-menu.ts";
@@ -48,7 +47,7 @@ import type { AgentToken, Tokens } from "./tokens.ts";
 import type { AuthOps } from "./auth.ts";
 
 import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "../document/versions.ts";
-import { pageAddress, resolvePage } from "../document/pages.ts";
+import { pageAddress, resolvePage, titleOf } from "../document/pages.ts";
 import { FAVICON_LINK, WORDMARK } from "../assets/logo/logo.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
 
@@ -178,18 +177,6 @@ export interface Platform {
     /** Hands a request to the document's host, its path already the one inside the document. */
     fetch(doc: Route, request: Request): Promise<Response>;
   };
-}
-
-export const HOUR = 60 * 60 * 1000;
-
-/**
- * When a document's unedited time is up: one that's been edited (or is a
- * test document) stays, one open somewhere waits an hour more, so it isn't
- * pulled from under someone about to type, and any other goes.
- */
-export function afterUnedited(doc: { modified?: number; test?: boolean }, open: boolean, now: number): "keep" | "delete" | number {
-  if (doc.modified || doc.test) return "keep";
-  return open ? now + HOUR : "delete";
 }
 
 export const OWNER = /^[A-Za-z0-9-]{1,39}$/, ID = /^[a-z0-9]{8}$/;
@@ -1760,6 +1747,8 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
  * by the template's heading, its slug following that), then its host. Null
  * if the id is taken.
  */
+const HOUR = 60 * 60 * 1000;
+
 export async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, string | Uint8Array>, opts: MakeOptions): Promise<DocRow | null> {
   const created = Date.now();
   // A published one has been edited already (its files are someone's work): it never expires.
@@ -2357,24 +2346,6 @@ export function forwarded(request: Request, url: URL, rest: string, base: string
   if (session?.agent) headers.set("x-erga-via", JSON.stringify(VIA.token(session.agent.label)).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
   return new Request(inner, { method: request.method, headers, body: request.body, redirect: "manual" });
 }
-
-/**
- * A page's title, as the list shows it: its first top-level heading (what
- * people edit on the page), else an HTML page's <title>. Null if it has neither.
- */
-export function titleOf(text: string, path: string): string | null {
-  const clean = (s: string) => decodeEntities(s.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim().slice(0, 120) || null;
-  if (path.endsWith(".md")) {
-    const heading = /^#{1,6}[ \t]+(.+?)[ \t#]*$/m.exec(text);
-    return heading ? clean(heading[1].replace(/[*_`]/g, "")) : null;
-  }
-  const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text), title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
-  return (h1 && clean(h1[1])) || (title && clean(title[1])) || null;
-}
-
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) =>
-  e[0] == "#" ? String.fromCodePoint(parseInt(e[1] == "x" || e[1] == "X" ? e.slice(2) : e.slice(1), e[1] == "x" || e[1] == "X" ? 16 : 10)) : ENTITIES[e.toLowerCase()] ?? m);
 
 /** A small page for when there's nothing to show, or something about signing in goes wrong. */
 export function page(title: string, html: string, status: number): Response {

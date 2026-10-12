@@ -11,7 +11,7 @@
 // version is cut, listed and served in the same object that holds the
 // document, and deleting the document deletes them.
 //
-// When a version is cut (doc-host.ts decides, in `noteEdit`), and what's
+// When a version is cut (document.ts decides, in `noteEdit`), and what's
 // in it, is the caller's: this file stores and reads them, says what changed (`changes`, a compact diff), and writes the
 // fallback description used when no model writes one.
 
@@ -324,13 +324,4 @@ export function firePublished(e: PublishedEvent): void {
   for (const id of [e.docId, "*"]) for (const cb of listeners.get(id) ?? []) {
     try { cb(e); } catch (err) { console.log(`a published-version listener failed: ${err}`); }
   }
-}
-
-/**
- * The files viewers of a document see, from anywhere with the Worker's
- * environment: the published version's, in "manual" mode, or the latest
- * state (up to the keystroke) in "latest" mode. Null if there's no such document.
- */
-export async function publishedFiles(env: { DOCUMENTS: { getByName(id: string): { publishedFiles(): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> } } }, docId: string): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> {
-  return env.DOCUMENTS.getByName(docId).publishedFiles();
 }

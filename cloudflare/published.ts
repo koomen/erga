@@ -7,7 +7,6 @@
 // someone leaving). The document's host calls `publishedChanged` whenever it
 // fires `firePublished`.
 
-import { publishedFiles as versionsFiles } from "../document/versions";
 import type { Env } from "./env";
 
 /** A document's published version: its page, its files and the version's number. */
@@ -15,7 +14,7 @@ export interface Published { index: string; files: Record<string, string | Uint8
 
 /** The published version of a document; null if there's no such document. */
 export async function publishedFiles(env: Env, docId: string): Promise<Published | null> {
-  const r = await versionsFiles(env, docId);
+  const r = await env.DOCUMENTS.getByName(docId).publishedFiles();
   return r && { index: r.index, files: Object.fromEntries(r.files), version: r.published.version.n };
 }
 

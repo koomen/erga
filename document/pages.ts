@@ -169,3 +169,21 @@ export function resolvePage(has: (path: string) => boolean, address: string, ind
   const own = pageAddress(file);
   return { file, canonical: byRule(own) == file ? own : rest };
 }
+
+/**
+ * A page's title, as the list shows it: its first top-level heading (what
+ * people edit on the page), else an HTML page's <title>. Null if it has neither.
+ */
+export function titleOf(text: string, path: string): string | null {
+  const clean = (s: string) => decodeEntities(s.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim().slice(0, 120) || null;
+  if (path.endsWith(".md")) {
+    const heading = /^#{1,6}[ \t]+(.+?)[ \t#]*$/m.exec(text);
+    return heading ? clean(heading[1].replace(/[*_`]/g, "")) : null;
+  }
+  const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text), title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+  return (h1 && clean(h1[1])) || (title && clean(title[1])) || null;
+}
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) =>
+  e[0] == "#" ? String.fromCodePoint(parseInt(e[1] == "x" || e[1] == "X" ? e.slice(2) : e.slice(1), e[1] == "x" || e[1] == "X" ? 16 : 10)) : ENTITIES[e.toLowerCase()] ?? m);
