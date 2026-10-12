@@ -28,8 +28,6 @@ export async function health(p: Platform): Promise<HealthReport> {
       if (!(await p.docs.exists(route))) throw new Error(`the homepage document ${id} has no host`);
     }),
   };
-  // A test of the automatic rollback, this commit only: staging reports itself unhealthy.
-  if (p.deploy.target == "staging") checks.canary = { ok: false, ms: 0, error: "a test of the automatic rollback: this release says it is unhealthy on purpose" };
   return { ok: Object.values(checks).every((c) => c.ok), version: p.deploy.version, target: p.deploy.target, checks };
 }
 
