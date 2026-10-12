@@ -43,11 +43,15 @@ export default {
       const path = url.pathname;
       if (isDeploysPath(path)) return deploysDoor(request, env, p);
       if (isControlPath(path) && path != "/") {
-        // Apart: there. A page goes by redirect; the API and Git say where (a Git client doesn't follow a redirect's intent).
+        // Apart: there. A page goes by a redirect, and so does Git: a Git client follows the redirect of its first request
+        // (info/refs) and carries on at the new address, so a checkout whose origin is this host keeps pushing (it says
+        // "redirecting to https://ops.erga.dev/git/erga.git/" once). The API says where (its callers send a token, which
+        // a redirect to another host would drop).
         if (env.CONTROL_URL) {
           const there = `${env.CONTROL_URL.replace(/\/+$/, "")}${path}${url.search}`;
           const read = request.method == "GET" || request.method == "HEAD";
-          if (read && !path.startsWith("/api/") && !path.startsWith("/git/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
+          if (path.startsWith("/git/")) return new Response(null, { status: 301, headers: { Location: there, "Cache-Control": "no-store" } });
+          if (read && !path.startsWith("/api/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
           return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
         }
         // Local development (and a server /deploy made, which has no control Worker): this Worker hosts them.

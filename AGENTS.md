@@ -10,6 +10,9 @@ Before you push, run the tests:
 
 Push to `staging` (`git push origin HEAD:staging`): the control Worker
 (ops.erga.dev, `control/`) builds it and deploys staging.erga.dev at once.
+Erga's repository is at https://ops.erga.dev/git/erga.git; a checkout whose
+origin is https://erga.dev/git/erga.git still works (erga.dev redirects Git
+there, and Git says so once).
 Production (erga.dev) deploys when `main` moves to a staging commit: Merge
 on https://ops.erga.dev/, the admin agent's `deploy_production`, the API, or
 a push to `main`. After production, the control Worker deploys itself from
