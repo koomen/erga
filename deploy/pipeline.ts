@@ -845,6 +845,8 @@ export async function restorePoint(cf: Cloudflare, target: Pick<Target, "account
     point.bookmark = b?.bookmark ?? null;
     if (!point.bookmark) why.push("D1 gave no bookmark");
   } catch (e) { why.push(`the database's bookmark couldn't be read: ${(e as Error).message}`); }
+  // In the Worker's logs too (the deploy log is admins' only): what a rollback can go back to.
+  console.log(`restore point of ${target.workerName}: version ${point.versionId ?? "none"}, release ${point.version ?? "unknown"}, bookmark ${point.bookmark ?? "none"}${why.length ? ` (${why.join("; ")})` : ""}`);
   return { point, why: why.join("; ") };
 }
 

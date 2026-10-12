@@ -837,6 +837,7 @@ export class BranchDeploys {
     s.status = { ...s.status, state: "failed", at: this.now(), error: `${running ? `Stopped at “${running.title}”. ` : ""}${message}` };
     s.oldDocs = s.run?.carry.oldDocs ?? s.oldDocs;
     this.line(s, `failed: ${message}`, running?.id);
+    console.log(`deploy ${s.run?.deployId ?? "?"} of ${s.status.name} failed at ${running?.id ?? "?"}: ${message}${e instanceof Unhealthy ? " (unhealthy)" : ""}`);
     // The release is up but unhealthy: the version before it serves again, by itself, where there's one to go back to.
     if (e instanceof Unhealthy && s.run) { await this.undo(s, s.run); return; }
     s.run = null;
@@ -852,6 +853,7 @@ export class BranchDeploys {
     const name = s.status.name;
     const restore = run.carry.restore;
     const to = restore?.version ? `release ${restore.version}` : restore?.versionId ? `version ${restore.versionId.slice(0, 8)}` : null;
+    console.log(`deploy ${run.deployId} of ${name} is unhealthy: ${restore?.versionId ? `rolling back to ${to}` : "no restore point to roll back to"}`);
     if (!restore?.versionId || !to) {
       this.line(s, "not rolled back by itself: this deploy has no restore point (a new Worker, or one whose deployments couldn't be read)", "rollback");
       s.run = null;
@@ -871,6 +873,7 @@ export class BranchDeploys {
       await rollbackTo(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), targetOf(TARGETS[name], this.deps.env), restore.versionId, `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`);
     } catch (e) {
       const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
+      console.log(`the rollback of ${name} failed: ${message}`);
       const undone = `${note} That failed too: ${message} Roll back by hand (Cloudflare's dashboard, or deployments create).`;
       if (rec) { rec.error = rec.error!.replace(note, undone); await this.putRecords(name, list); }
       s.status = { ...s.status, error: s.status.error!.replace(note, undone) };
