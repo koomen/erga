@@ -879,7 +879,8 @@ export async function checkHealth(site: Fetch, host: string, want: string | null
  */
 export async function rollbackTo(cf: Cloudflare, target: Pick<Target, "accountId" | "workerName">, versionId: string, message: string): Promise<void> {
   await cf.call("POST", `/accounts/${target.accountId}/workers/scripts/${target.workerName}/deployments?force=true`, `roll ${target.workerName} back to version ${versionId.slice(0, 8)}`, {
-    strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }], annotations: { "workers/message": message.slice(0, 900), "workers/triggered_by": "erga" },
+    // Only the message: Cloudflare refuses any other annotation ("workers/triggered_by" is its own; it refused it on 2026-10-12).
+    strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }], annotations: { "workers/message": message.slice(0, 900) },
   });
 }
 

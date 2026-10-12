@@ -413,6 +413,9 @@ export function mockCloudflare(opts: {
           const want = b?.versions?.[0]?.version_id;
           const kept = (state.kept[r[1]] ?? []).find((v) => v.id == want);
           if (b?.strategy != "percentage" || !kept || b.versions.length != 1 || b.versions[0].percentage != 100) return fail(400, 10215, "a deployment names one version of this Worker, at 100%");
+          // As Cloudflare does: the message is the one annotation a request may set.
+          const other = Object.keys(b.annotations ?? {}).find((k) => k != "workers/message");
+          if (other) return fail(400, 10210, `Invalid deployment: Invalid annotations: "${other}" is not supported - check the request details and try again.`);
           // The named version serves again: its bindings as they were, with the secrets the Worker has now (as a rollback does).
           state.scripts[r[1]] = structuredClone(kept.script);
           const id = uuid();
