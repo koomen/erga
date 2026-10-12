@@ -1,7 +1,7 @@
 // erga.dev on Cloudflare: the front door Worker, also
 // serving documents' pages on erga-pages.dev, one Durable Object per
 // document, the directory of documents in D1
-// (server/directory.ts, its tables in server/migrations/), and the editor's own files as
+// (server/directory/, its tables in server/migrations/), and the editor's own files as
 // static assets (built into .build/ by client/build.sh). In local development (`bun
 // start`, dev/start.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";

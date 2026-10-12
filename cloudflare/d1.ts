@@ -1,11 +1,9 @@
 // The directory, with the server's users and
 // settings, on D1, through D1's API. A batch is one transaction.
 
-import { parseDeployed } from "../server/settings";
-import { Directory, type Param, type Sql } from "../server/directory";
-import { Tokens } from "../server/identity/tokens";
+import { Directory, type Param, parseDeployed, type Sql, withCredentials } from "../server/directory/index.ts";
+import { Tokens } from "../server/identity/index.ts";
 
-import { withCredentials } from "../server/api-keys";
 import type { Env } from "./env";
 import { counted } from "./timing";
 

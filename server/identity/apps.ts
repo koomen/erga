@@ -16,7 +16,7 @@
 //     staging's values and bring in production's. The Durable Object is each
 //     server's own.
 //   - The secret is encrypted with AES-GCM, a fresh IV each time, under a key
-//     derived from FACTORY_KEY (as server/api-keys.ts does, with its own
+//     derived from FACTORY_KEY (as server/directory/api-keys.ts does, with its own
 //     derivation), with the provider, the target and the client ID as the
 //     additional data, so it opens only for that app on that server.
 //   - Nothing answers the secret to a page or an agent: only whether one is set.

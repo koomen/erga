@@ -1,6 +1,6 @@
 // Who may use the deploy page (/deploy): the deploy_page setting, and the deploy role.
 
-import type { Directory } from "../directory.ts";
+import type { Directory } from "../directory/index.ts";
 import { type Session, whoOf } from "../platform.ts";
 
 /**

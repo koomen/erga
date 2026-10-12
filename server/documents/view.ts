@@ -5,7 +5,7 @@
 
 import { pageAddress } from "../../document/pages.ts";
 import { mayDeploy } from "../deploys/access.ts";
-import { type DocRow, type Role, roleMay } from "../directory.ts";
+import { type DocRow, type Role, roleMay } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
 import { cloneButton, editButton, esc, link, viewerPage } from "../pages/index.ts";

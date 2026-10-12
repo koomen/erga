@@ -5,7 +5,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Directory, type Param, type Sql, type Who } from "../server/directory";
+import { Directory, type Param, type Sql, type Who } from "../server/directory/index.ts";
 import { agentToolsFor, runServerTool, SERVER_TOOLS, ToolError, toolsFor, type ToolWho } from "../agents/tools";
 import type { Platform } from "../server/platform";
 

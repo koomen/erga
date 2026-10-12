@@ -18,7 +18,7 @@
 // Take a key out and deploy to hand it back to the admins: what they set
 // before it was locked counts again.
 //
-import type { SETTINGS } from "../server/settings.ts";
+import type { SETTINGS } from "../server/directory/index.ts";
 
 type Values = { [K in keyof typeof SETTINGS]?: ReturnType<(typeof SETTINGS)[K]["parse"]> };
 
@@ -28,7 +28,7 @@ const settings: Values = {
 export default settings;
 
 // (This file is loaded by cloudflare.config.ts under Node's type stripping,
-// and must not import server/settings.ts itself: the dev server can't then load it
+// and must not import server/directory/settings.ts itself: the dev server can't then load it
 // into the Worker. Hence the check below imports it only when run.)
 
 /** What the deploy fixes: the settings above, with ERGA_SERVER_CONFIG (JSON) over them. Unchecked. */
@@ -43,7 +43,7 @@ export function deployed(env: Record<string, string | undefined> = process.env):
 }
 
 if (import.meta.main) {
-  const { deployedSettings } = await import("../server/settings.ts");
+  const { deployedSettings } = await import("../server/directory/settings.ts");
   try {
     const values = deployedSettings(deployed());
     console.log(Object.keys(values).length ? `The deploy locks: ${JSON.stringify(values)}` : "The deploy locks no settings.");

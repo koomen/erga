@@ -8,7 +8,7 @@
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 //   /__erga/site/<host>/<path>     a site on the pretend Cloudflare (ERGA_DEPLOY_MOCK=1), as a reader would see it
 
-import { idShaped, OWNER, slugify } from "../server/directory";
+import { idShaped, OWNER, slugify } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";

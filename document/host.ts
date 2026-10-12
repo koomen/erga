@@ -18,7 +18,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "../editor-agent/session";
 import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
-import type { DocName, Naming } from "../server/directory";
+import type { DocName, Naming } from "../server/directory/index.ts";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
 import { TreeError, checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, titleOf, treeEntries, type TreeOp } from "./pages";

@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Cloudflare } from "../deploy/pipeline.ts";
 import { mockCloudflare, mockSite } from "../deploy/mock-cloudflare.ts";
-import { Directory, type Param, type Sql } from "../server/directory.ts";
+import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { type CfZone, checkHostname, deploySite, listZones, removeSite, scriptName, SiteError, siteFiles, type SiteRow, verifyToken } from "../server/sites/index.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

@@ -16,7 +16,7 @@
 // the homepage document open ({ type: "home" } on its /api/events).
 
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
-import type { Directory, DocRow } from "../directory.ts";
+import type { Directory, DocRow } from "../directory/index.ts";
 import { IDLE, renderHome, type DeployStatus } from "./render.ts";
 
 /** A deployed snapshot, as serve.ts serves it. */

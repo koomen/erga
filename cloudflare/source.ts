@@ -3,8 +3,7 @@
 // are the Artifacts binding's (artifacts.ts). The routes are
 // server/source/routes.ts.
 
-import { tar } from "../server/source/git";
-import type { SourceService } from "../server/source/index.ts";
+import { tar, type SourceService } from "../server/source/index.ts";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import type { Env } from "./env";
 

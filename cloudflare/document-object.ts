@@ -10,7 +10,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { Document, personOf, type DocumentDeps, type OnDisk } from "../document/document";
-import type { DocRow } from "../server/directory";
+import type { DocRow } from "../server/directory/index.ts";
 import { agentToolsFor } from "../agents/tools";
 import { VIA } from "../shared/attribution";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions";

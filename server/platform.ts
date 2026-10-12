@@ -4,15 +4,14 @@
 // memory. The app's code takes a Platform and web Requests, and never a
 // Cloudflare binding.
 
-import type { AppValues, AuthStorage } from "./identity/apps.ts";
+import type { AgentToken, AppValues, AuthStorage, Tokens } from "./identity/index.ts";
 import type { TargetName } from "../deploy/targets.ts";
-import type { HomeObject } from "./home/deploys.ts";
-import type { SourceService } from "./source/routes.ts";
-import type { AdminAgentObject, DashboardDeploys } from "./admin/agent.ts";
+import type { HomeObject } from "./home/index.ts";
+import type { SourceService } from "./source/index.ts";
+import type { AdminAgentObject, DashboardDeploys } from "./admin/index.ts";
 import type { AgentConfig } from "../agents/models.ts";
-import { type Directory, type Role, type Route, type Who } from "./directory.ts";
+import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
 import type { SiteOps } from "./sites/index.ts";
-import type { AgentToken, Tokens } from "./identity/tokens.ts";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions.ts";
 import { VIA } from "../shared/attribution.ts";
 

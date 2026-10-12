@@ -17,7 +17,7 @@
 // Configuration comes from the Worker's bindings (in local development,
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
 //   ANTHROPIC_API_KEY          required: the key an admin stored on /admin
-//                              (server/api-keys.ts, through cloudflare/d1.ts's withKeys),
+//                              (server/directory/api-keys.ts, through cloudflare/d1.ts's withKeys),
 //                              else the Worker secret (locally a real one in
 //                              .dev.vars, else the dev server's environment: dev/agent-key.ts)
 //   ERGA_AGENT_MODEL    the model a session starts on: opus-fast
@@ -46,7 +46,7 @@ import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, typ
 import { byLine, VIA } from "../shared/attribution";
 import { pageAddress, type TreeEntry, type TreeOp } from "../document/pages";
 import { joinLocal, type Room } from "../document/room";
-import type { Naming } from "../server/directory";
+import type { Naming } from "../server/directory/index.ts";
 import { unifiedDiff, type PublishRequest, type PublishResult, type Published, type RestoreResult, type Version, type VersionsState } from "../document/versions";
 import { SERVER_TOOL_ACTIVITY } from "../agents/tools";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";

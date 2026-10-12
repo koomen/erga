@@ -34,7 +34,7 @@
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { join, resolve } from "node:path";
-import { deployedSettings } from "../server/settings";
+import { deployedSettings } from "../server/directory/index.ts";
 import { resolveTarget } from "./vite-plugin";
 import { deployed } from "../deploy/locked-settings";
 

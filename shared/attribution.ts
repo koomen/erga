@@ -42,7 +42,7 @@ export function parseByLine(line: string): { by: string; via: string | null } {
   return at < 0 ? { by: line, via: null } : { by: line.slice(0, at), via: line.slice(at + 6) };
 }
 
-/** The statement that adds an entry to the change log (server_config_versions, server/settings.ts): `changes` (SettingChange[]), by `by`, via `via`. */
+/** The statement that adds an entry to the change log (server_config_versions, server/directory/settings.ts): `changes` (SettingChange[]), by `by`, via `via`. */
 export function changeLogEntry(at: number, by: string, via: string | null | undefined, changes: object[]): [string, number, string, string, string | null] {
   return ["INSERT INTO server_config_versions (at, by, changes, via) VALUES (?1, ?2, ?3, ?4)", at, by.toLowerCase(), JSON.stringify(changes), via ?? null];
 }

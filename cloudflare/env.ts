@@ -43,7 +43,7 @@ export interface Env {
   GITHUB_CLIENT_SECRET: string;
   /** Signs session cookies. */
   SESSION_SECRET: string;
-  /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (server/api-keys.ts; read through withKeys). */
+  /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (server/directory/api-keys.ts; read through withKeys). */
   ANTHROPIC_API_KEY: string;
   /** The OpenAI key, a Worker secret: the same fallback, for OpenAI's models. */
   OPENAI_API_KEY?: string;

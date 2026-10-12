@@ -27,8 +27,11 @@ AGENTS.md has the rules for working on it.
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
       app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
+      directory/      the database: documents, owners and permissions (directory.ts), users, settings and their change
+                      log, the API keys admins store; migrations/ has the tables
       identity/       who is asking: sessions and agent tokens (session.ts), sign-in with GitHub (sign-in.ts) and its
-                      settings (settings.ts, apps.ts), users, cookies, the other of Erga's servers (peer.ts)
+                      settings (settings.ts, apps.ts), cookies, the staging gate (admins-only.ts), the other of Erga's
+                      servers (peer.ts)
       documents/      the front door for documents: a document's address and access (front-door.ts), the pages origin
                       and its tokens (pages-origin.ts), the viewer (view.ts), new/list/delete/share (make.ts), the
                       front page's document (landing.ts)
@@ -36,7 +39,6 @@ AGENTS.md has the rules for working on it.
                       host page (frame-host.ts), the documents list (docs.ts), the start page, the account corner,
                       the templates, and what every page shares (chrome.ts)
       api.ts          the server's HTTP API for outside agents: tokens, /api, /mcp, the guide, /tokens, /settings
-      directory.ts    documents, owners and permissions, in SQL; settings.ts and api-keys.ts beside it
       sites/          a document on its own domain: the tables (rows.ts), the calls to Cloudflare (publish.ts), the deploys
                       (deploys.ts), the API (api.ts)
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
@@ -67,8 +69,8 @@ AGENTS.md has the rules for working on it.
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full)
 
-Each area of `server/` (identity, documents, pages, home, sites, admin,
-source) is imported through its `index.ts`, its interface. Only `cloudflare/`
+Each area of `server/` (directory, identity, documents, pages, home, sites,
+admin, source) is imported through its `index.ts`, its interface. Only `cloudflare/`
 reads the Worker's bindings; `server/` and `document/` never import it. The configs at the root are the ones their tools look for
 there: `cloudflare.config.ts` (the Worker and its bindings),
 `vite.config.ts`, `e2e.config.ts`, `tsconfig.json`.

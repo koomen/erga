@@ -26,7 +26,7 @@
 // for a deep link or a reload.
 //
 // Only the page: who may see it is checked on the server, before any admin
-// page is made (adminGate, below, in cloudflare/index.ts; and each page's own door).
+// page is made (adminGate, below, in server/app.ts; and each page's own door).
 
 import { appPage, crumbs as trail, esc, ICON, link, page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";

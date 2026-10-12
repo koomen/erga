@@ -11,7 +11,7 @@
 // (`homeHeader`). deploys.ts keeps the deployed snapshot and deploys it again
 // after changes; serve.ts serves it at /; api.ts is the homepage's API.
 
-import type { DocRow } from "../directory.ts";
+import type { DocRow } from "../directory/index.ts";
 import { ACCOUNT_STYLE, accountMarkup, cloneButton, crumbsFont, editButton, esc, FADE, link, NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, VIEW_STYLE, viewCrumbs, type Account } from "../pages/index.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */

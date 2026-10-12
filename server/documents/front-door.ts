@@ -1,7 +1,7 @@
-// The front door: the app around the documents (cloudflare/index.ts serves it,
+// The front door for documents (server/app.ts hands it every document address,
 // on erga.dev and in local development alike). It's written against web
 // Requests and Responses, and the Worker supplies the rest (`Platform`):
-// who's signed in, the templates, the directory of documents (server/directory.ts,
+// who's signed in, the templates, the directory of documents (server/directory/,
 // in D1) and the documents themselves (Durable Objects).
 //
 //   /                          the front page: the viewer on the landing document (a setting), for anyone
@@ -41,7 +41,7 @@
 import { resolvePage } from "../../document/pages.ts";
 import { VIA } from "../../shared/attribution.ts";
 import { adminDoor } from "../admin/index.ts";
-import { ID, OWNER, type Route } from "../directory.ts";
+import { ID, OWNER, type Route } from "../directory/index.ts";
 import { accessOf, type Platform, type Session, whoOf } from "../platform.ts";
 import { viewLanding } from "./landing.ts";
 import { deleteDoc, listDocs, newDoc, shareDoc, shareToken } from "./make.ts";
@@ -134,7 +134,7 @@ const refused = (session: Session) => session.test
 /**
  * How to reach the document at /<first>/<second>, for the requests under
  * it. By id it's remembered (an id is never another of the owner's slugs,
- * server/directory.ts), so a document's many subrequests rarely ask the database.
+ * server/directory/), so a document's many subrequests rarely ask the database.
  */
 export async function documentRoute(platform: Pick<Platform, "directory">, first: string, second: string): Promise<Route | null> {
   if (first == "d") return ID.test(second) ? platform.directory.route(second) : null;

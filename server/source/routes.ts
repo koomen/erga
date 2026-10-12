@@ -22,7 +22,7 @@
 
 import { TARGETS } from "../../deploy/targets.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
-import { LOCKED } from "../identity/index.ts";
+import { LOCKED } from "../directory/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import type { SourceAnswer, SourceRead } from "./browse.ts";
 import { gitHttp } from "./http.ts";

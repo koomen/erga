@@ -31,7 +31,7 @@ import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
-import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow } from "../server/directory.ts";
+import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow } from "../server/directory/index.ts";
 import type { SiteRow } from "../server/sites/index.ts";
 import { cleanRel, docFile, makeHost, relativeUrl } from "./host.ts";
 import { resolvePage, titleOf } from "./pages.ts";

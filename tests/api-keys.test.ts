@@ -9,10 +9,8 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, expect, test } from "bun:test";
 import { adminDoor } from "../server/admin/index.ts";
-import { checkKey, CredentialError, Credentials, withCredentials } from "../server/api-keys.ts";
-import { Directory, type Param, type Sql } from "../server/directory.ts";
+import { checkKey, CredentialError, Credentials, Directory, NotAllowed, type Param, type Sql, withCredentials } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
-import { NotAllowed } from "../server/identity/users.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const ANTHROPIC = "sk-ant-api03-" + "x".repeat(80) + "Ab12";

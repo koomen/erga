@@ -8,7 +8,7 @@
 
 import { DeployError } from "../../deploy/pipeline.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { roleMay } from "../directory.ts";
+import { roleMay } from "../directory/index.ts";
 import { fromElsewhere } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { IDLE_SITE, publishTo, SITE_PERMISSIONS, siteView, tokenTemplateUrl, zonesOf } from "./publish.ts";

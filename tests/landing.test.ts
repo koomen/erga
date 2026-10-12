@@ -7,7 +7,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Directory, type Param, type Route, type Sql } from "../server/directory";
+import { Directory, type Param, type Route, type Sql } from "../server/directory/index.ts";
 import { landingDocument } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
 

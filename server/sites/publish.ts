@@ -23,7 +23,7 @@
 // index.html, so the site's root shows it.
 
 import { Cloudflare, DeployError, uploadAssets, type Fetch } from "../../deploy/pipeline.ts";
-import type { Directory } from "../directory.ts";
+import type { Directory } from "../directory/index.ts";
 import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteRow } from "./rows.ts";
 
 /** A site's deploys, as the API gives them. */

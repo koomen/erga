@@ -36,7 +36,7 @@
 
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
-import { type Action, type DocRow, type Route, nameOf, roleMay, ID, newDocId } from "./directory";
+import { type Action, type DocRow, ID, LOCKED, nameOf, newDocId, roleMay, type Route } from "./directory/index.ts";
 import type { PublishRequest } from "../document/versions";
 import { appPage, crumbs, esc, fromElsewhere, ICON, page, safeNext, TIMES_SCRIPT } from "./pages/index.ts";
 import { forwarded, makeDoc, startingFiles } from "./documents/index.ts";
@@ -44,7 +44,7 @@ import { accessOf, type Platform, type Session, whoOf } from "./platform";
 import { byLine, VIA } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";
 import { cleanRel } from "../document/host";
-import { authOps, LABEL_MAX, LOCKED, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
+import { authOps, LABEL_MAX, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { TEMPLATES, templateById } from "./pages/index.ts";
 import { SITE_PERMISSIONS, SiteError, tokenTemplateUrl, verifyToken } from "./sites/index.ts";
 import { DeployError } from "../deploy/pipeline";

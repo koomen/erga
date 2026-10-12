@@ -1,7 +1,7 @@
 // What a token without the admin scope reaches on staging, past the admins-only guard (admins-only.ts lists
 // the exemption and why). Apart from the guard, so the unit tests can load it.
 
-import { RESERVED, ID, OWNER } from "../directory";
+import { RESERVED, ID, OWNER } from "../directory/index.ts";
 
 /** The app's own first path segments that RESERVED doesn't list: never a document's owner here. */
 const APP_SEGMENTS = new Set(["deploy", "git", "source"]);

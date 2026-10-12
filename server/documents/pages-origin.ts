@@ -3,7 +3,7 @@
 // opens the document's files with a signed token the viewer gives it (pagesToken), which
 // says what it may read: the latest state, or the published version only.
 
-import { ID, OWNER } from "../directory.ts";
+import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./front-door.ts";
 import { esc, HOST_SCRIPT, HOST_STYLE, HOST_VERSION, PAGE_SANDBOX, VIEW_FILES } from "../pages/index.ts";

@@ -28,7 +28,7 @@
 // It also means a token works only on the server that made it: staging's
 // database copies the rows, but staging's secret is its own.
 
-import type { Directory, Sql } from "../directory";
+import type { Directory, Sql } from "../directory/index.ts";
 import { changeLogEntry } from "../../shared/attribution";
 
 

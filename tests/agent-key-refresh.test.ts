@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
 import { startAdminAgent } from "../agents/admin.ts";
-import { Directory, type Param, type Sql } from "../server/directory.ts";
+import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
 import { agentSettingsFrom, UNREADABLE_KEY } from "../cloudflare/agent-settings.ts";

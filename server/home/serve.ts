@@ -6,7 +6,7 @@
 // good. Where there's no edge cache (workers.dev has none) the isolate's
 // memory serves alone.
 
-import { roleMay } from "../directory.ts";
+import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT } from "../pages/index.ts";
 import { mayDeploy } from "../deploys/access.ts";
 import { whoOf, type Platform } from "../platform.ts";

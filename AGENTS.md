@@ -95,5 +95,5 @@ For example:
    tables (D1: users, settings, documents and their permissions) with a new
    file in `server/migrations/`, never by editing one that's there: erga.dev has
    applied those, and other branches may be adding their own at the same time.
-   Reach the data through `Directory` (`server/directory.ts`, with `dir.users` and
+   Reach the data through `Directory` (`server/directory/`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.

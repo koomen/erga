@@ -28,7 +28,8 @@ import { emptyLog, type Log, type LogEvent } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { forgetHome } from "../home/index.ts";
-import { authOps, LOCKED, SHARE_ADMIN_HOURS } from "../identity/index.ts";
+import { authOps, SHARE_ADMIN_HOURS } from "../identity/index.ts";
+import { LOCKED } from "../directory/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import type { SourceAnswer, SourceRead } from "../source/index.ts";
 

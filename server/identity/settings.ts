@@ -113,7 +113,7 @@ async function askPeer<T>(platform: SignInPlatform, t: TargetName, path: string,
 
 /**
  * What the page and the admin agent do, as `origin`'s server. Admins only: each call checks
- * who's asking (Users.mustAdmin), as server/api-keys.ts does.
+ * who's asking (Users.mustAdmin), as server/directory/api-keys.ts does.
  */
 export function authOps(platform: SignInPlatform, origin: string): AuthOps {
   const mustAdmin = (by: Act & { admin?: boolean }) => platform.directory.users.mustAdmin({ login: by.login, admin: by.admin, via: by.via ?? undefined });

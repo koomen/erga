@@ -53,7 +53,7 @@ export const deployed = (server: Server, ms = 5_000) => until(async () => (await
 export const home = async (server: Server, id: string, user?: string) => (await (await get(server, `/api/docs/${id}/home${user ? `?user=${user}` : ""}`)).json()) as HomeState;
 
 /**
- * An admin-scope agent token of DEV_LOGIN's (only an admin's token with it may edit the homepage: server/directory.ts,
+ * An admin-scope agent token of DEV_LOGIN's (only an admin's token with it may edit the homepage: server/directory/,
  * homeLimit; a documents token only views it). Asked again for a while: a server just started may still be setting up.
  */
 export async function adminToken(server: Server) {

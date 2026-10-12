@@ -36,13 +36,12 @@
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all.
 
-import { ConfigError, type ConfigEntry, type SettingChange, type Settings, type SettingsVersion } from "../settings.ts";
+import { type ConfigEntry, ConfigError, type CredentialEntry, CredentialError, type DeploySecretEntry, NotAllowed, type ServerRole, type SettingChange, type Settings, type SettingsVersion, type User } from "../directory/index.ts";
 import { esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { adminResponse } from "./layout.ts";
-import { authOps, AuthError, NotAllowed, ScopeError, type AuthStatus, type CheckState, type OtherStatus, type ServerRole, type User } from "../identity/index.ts";
-import { CredentialError, type CredentialEntry, type DeploySecretEntry } from "../api-keys.ts";
+import { authOps, AuthError, ScopeError, type AuthStatus, type CheckState, type OtherStatus } from "../identity/index.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {

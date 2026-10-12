@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Document, type DocumentDeps } from "../document/document";
 import { KEYS, MemoryStorage } from "../document/storage";
-import { Directory, type Param, type Sql } from "../server/directory";
+import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {

@@ -23,9 +23,9 @@
 // key that still doesn't open is shown as such (`unreadable`), and the agents
 // say so. The last four characters are kept in plain text, for the page.
 
-import { changeLogEntry } from "../shared/attribution.ts";
+import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
-import type { Actor, Users } from "./identity/users.ts";
+import type { Actor, Users } from "./index.ts";
 
 /**
  * The keys there are, by name: the Worker secret each stands in for, the
@@ -204,7 +204,7 @@ export class Credentials {
     return name;
   }
 
-  /** The change log's line for it (server/settings.ts's server_config_versions): what happened to which key, never the key. */
+  /** The change log's line for it (server/directory/settings.ts's server_config_versions): what happened to which key, never the key. */
   private logged(name: CredentialName, what: "set" | "replaced" | "cleared", at: number, by: string, via?: string): Statement {
     return changeLogEntry(at, by, via, [{ key: CREDENTIALS[name].env, from: null, to: null, credential: what }]);
   }

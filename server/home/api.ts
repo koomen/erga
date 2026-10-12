@@ -6,11 +6,9 @@
 //   POST /api/docs/<id>/home/deploy   admins: deploys the homepage again, now
 
 import { byLine } from "../../shared/attribution.ts";
-import { NotAllowed, roleMay } from "../directory.ts";
-import { LOCKED } from "../identity/index.ts";
+import { ConfigError, LOCKED, NotAllowed, roleMay } from "../directory/index.ts";
 import { fromElsewhere } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
-import { ConfigError } from "../settings.ts";
 import { IDLE } from "./render.ts";
 import { forgetHome } from "./serve.ts";
 

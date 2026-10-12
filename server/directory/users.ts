@@ -20,7 +20,7 @@
 // is seen at once.
 
 import { changeLogEntry } from "../../shared/attribution.ts";
-import type { Sql, Statement } from "../directory.ts";
+import type { Sql, Statement } from "./directory.ts";
 
 export type ServerRole = "user" | "admin";
 

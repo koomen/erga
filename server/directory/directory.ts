@@ -37,11 +37,10 @@
 
 import { ConfigError, ServerConfig } from "./settings.ts";
 
-import { NotAllowed, Users } from "./identity/users.ts";
+import { NotAllowed, Users } from "./users.ts";
 import { Credentials } from "./api-keys.ts";
-import { CloudflareConnections, Sites } from "./sites/index.ts";
+import { CloudflareConnections, Sites } from "../sites/index.ts";
 
-export { NotAllowed };
 
 /** What SQL a platform gives the directory (D1, bun:sqlite). Parameters are `?1`, `?2`... */
 export interface Sql {
@@ -126,7 +125,7 @@ const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
  * Words that can't be slugs: the app's own first path segments (server/documents/front-door.ts,
- * cloudflare/index.ts) and the document host's, so an
+ * server/app.ts) and the document host's, so an
  * address never reads as one of those, and a few kept for later.
  */
 export const RESERVED = new Set([

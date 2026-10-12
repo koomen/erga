@@ -4,8 +4,7 @@
 // use it, and so does a document's host, for its agent's tools on the person's documents (agents/tools.ts: list,
 // make and delete them).
 
-import type { Route } from "../server/directory";
-import { OWNER } from "../server/directory";
+import { OWNER, type Route } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
 import { directoryOf, factoryKey, tokensOf } from "./d1";

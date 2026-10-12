@@ -2,7 +2,7 @@
 // /docs/share and the share token do. The list's page is pages/docs.ts.
 
 import { titleOf } from "../../document/pages.ts";
-import { type DocRow, type Grant, ID, newDocId, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory.ts";
+import { type DocRow, type Grant, ID, newDocId, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
 import { avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES } from "../pages/index.ts";

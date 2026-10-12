@@ -4,7 +4,7 @@ import { isAdminsOnly, TARGETS } from "../deploy/targets";
 import { pagesToken, readPagesClaims } from "../server/documents/index.ts";
 import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
-import type { Directory } from "../server/directory";
+import type { Directory } from "../server/directory/index.ts";
 
 /** A server with this GitHub client ID, and nothing else sign-in needs for these requests. */
 const serverWith = (clientId: string): Platform => ({

@@ -4,7 +4,7 @@
 // imports source through this file.
 
 export { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "./browse.ts";
-export { ZERO } from "./git.ts";
+export { tar, ZERO } from "./git.ts";
 export type { Remote } from "./remote.ts";
 export { SourceError, SourceRepo, type Actor } from "./repo.ts";
 export { isGitRead, sourceApi, sourceDoor, sourceGit, type RepoAccess, type SourceObject, type SourceService } from "./routes.ts";

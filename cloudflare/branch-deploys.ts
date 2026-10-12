@@ -33,7 +33,8 @@ import { health } from "../server/health";
 import { PRODUCTION } from "../deploy/targets";
 import { whoOf, type Platform } from "../server/platform";
 import type { Env } from "./env";
-import { isPeer, LOCKED } from "../server/identity/index.ts";
+import { isPeer } from "../server/identity/index.ts";
+import { LOCKED } from "../server/directory/index.ts";
 import { byLine } from "../shared/attribution";
 
 /** Whether this path is one of these routes. */

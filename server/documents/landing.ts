@@ -1,7 +1,7 @@
 // The front page's document (the landing_document setting): the viewer on it at /, and
 // making it from the repo's assets/landing/ when there's none (seedLanding).
 
-import { type DocRow, newDocId } from "../directory.ts";
+import { type DocRow, newDocId } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { makeDoc } from "./make.ts";
 import { viewDocument } from "./view.ts";
@@ -92,7 +92,7 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     }
     made = (await settle(made)) ?? made;
     // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin power
-    // (editing the front page needs that: server/directory.ts, homeLimit).
+    // (editing the front page needs that: server/directory/, homeLimit).
     const server = { login: owner, test: false, admin: true };
     for (const login of project.editors) {
       if (login.toLowerCase() == owner) continue;

@@ -12,7 +12,7 @@
 //
 //   - cloudflare_connections: each person's Cloudflare API token, pasted on
 //     /settings, encrypted with AES-GCM under a key from FACTORY_KEY (as the
-//     API keys are, server/api-keys.ts), the login as the additional data, so a
+//     API keys are, server/directory/api-keys.ts), the login as the additional data, so a
 //     row can't be moved to another person. Nothing answers a token to a
 //     page: only its last four characters, and the accounts it reaches.
 //   - sites: each document's hostname, the zone and account it is on, the
@@ -21,7 +21,7 @@
 //
 // Reached through the directory (dir.cloudflare, dir.sites).
 
-import type { Sql } from "../directory.ts";
+import type { Sql } from "../directory/index.ts";
 
 /** A Cloudflare account, as a token reaches it. */
 export interface CfAccount { id: string; name: string }

@@ -15,7 +15,7 @@
 
 import { Cloudflare, type Fetch } from "../../deploy/pipeline.ts";
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
-import type { Directory } from "../directory.ts";
+import type { Directory } from "../directory/index.ts";
 import { deploySite, IDLE_SITE, removeSite, siteFiles, type SiteDeploy } from "./publish.ts";
 import type { SiteRow } from "./rows.ts";
 

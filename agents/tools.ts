@@ -1,7 +1,7 @@
 // Tools both kinds of agent have, defined once: the editor's own agent
 // (editor-agent/session.ts, given them by its document's host, cloudflare/document-object.ts) and an
 // external agent holding one of the person's agent tokens (server/api.ts,
-// over HTTP, /mcp and the guide). They need only the directory (server/directory.ts:
+// over HTTP, /mcp and the guide). They need only the directory (server/directory/:
 // documents' permissions, the server's users and settings) and who's asking,
 // so they run the same in a document's host and in the Worker.
 //
@@ -11,7 +11,7 @@
 //                                       REST API has its own, server/api.ts, which also publish files)
 //   list_settings, set_setting,         the server's settings, admins only;
 //   reset_setting                       a setting the deploy locks can be seen, not changed
-//   list_setting_changes                the settings' change log (server/settings.ts history), admins only
+//   list_setting_changes                the settings' change log (server/directory/settings.ts history), admins only
 //   list_api_keys, clear_api_key        which API keys are set, never a key, and clearing one,
 //                                       admins only; a key is set only on /admin/api-keys, never in a conversation
 //   get_sign_in_status,                 how people sign in: this server's GitHub app and the other deploy
@@ -38,14 +38,11 @@
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type TObject } from "typebox";
-import { ConfigError, type ConfigEntry } from "../server/settings.ts";
-import { CredentialError } from "../server/api-keys.ts";
-import { AuthError, type AuthOps, type AuthStatus, type OtherStatus } from "../server/identity/apps.ts";
-import { type Action, type Directory, type DocRow, type Grant, type Route, type Who, ANYONE, NotAllowed, nameOf, ID, newDocId, OWNER } from "../server/directory.ts";
+import { type Action, ANYONE, type ConfigEntry, ConfigError, CredentialError, type Directory, type DocRow, type Grant, ID, LOCKED, nameOf, newDocId, NotAllowed, OWNER, type Route, type User, type Who } from "../server/directory/index.ts";
+import { AuthError, type AuthOps, type AuthStatus, type OtherStatus } from "../server/identity/index.ts";
 import { makeDoc, startingFiles } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform.ts";
 import { TEMPLATES, templateById } from "../server/pages/index.ts";
-import { LOCKED, type User } from "../server/identity/users.ts";
 import { publishTo, SiteError, type SiteOps, siteView, zonesOf } from "../server/sites/index.ts";
 import { byLine } from "../shared/attribution.ts";
 
