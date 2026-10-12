@@ -8,7 +8,8 @@
 //   CLOUDFLARE_ACCOUNT_ID=… bun deploy/setup.ts
 //   bun deploy/setup.ts --dry-run          (says what it would do, asks nothing, changes nothing)
 //   bun deploy/setup.ts --control          (deploy the control Worker again: after control/ or its image changed)
-//   bun deploy/setup.ts --tokens           (only the deploy token: make it again, check it, store it)
+//   bun deploy/setup.ts --tokens           (only the deploy token: make it again, check it, store it; or, with
+//                                          CLOUDFLARE_DEPLOY_TOKEN set to one made on the dashboard, check and store that)
 //   --no-deploy                            (skip staging's first deploy from this machine, if erga-staging is missing)
 //   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on the two app Workers, for their sign-in settings)
 //   bun deploy/setup.ts --cleanup          (delete what the control Worker replaced: the erga-builder Worker, and the app
@@ -16,16 +17,18 @@
 //
 // The credential is yours, never a server's: CLOUDFLARE_API_TOKEN if set,
 // else the cf CLI's login. It needs Workers, D1, Containers, Workers Routes,
-// DNS, Zone read and Artifacts (the cf CLI's login has them). Making the
-// deploy token needs a credential that may make account API tokens: set
-// CLOUDFLARE_TOKEN_MAKER to an account-owned API token with only Account ›
-// Account API Tokens › Edit (Manage Account › Account API Tokens; a short
-// TTL; delete it after). The setup checks it first and says what's wrong
-// with it, if anything.
+// DNS, Zone read and Artifacts (the cf CLI's login has them).
 //
-// The token: Editor on erga, erga-staging and erga-control, D1 Write
-// (account-wide: Cloudflare has no per-database scope) and read on the three
-// zones. It is checked with itself before it's stored, and never printed.
+// The deploy token, two ways. Made on the dashboard (Manage Account › Account
+// API Tokens: Workers Scripts Edit, D1 Edit, Workers Containers Edit on the
+// account; Zone Read, Workers Routes Read, DNS Read on the three zones) and
+// given as CLOUDFLARE_DEPLOY_TOKEN: the setup checks each permission with a
+// harmless read (or a refused write), prints every answer, and stores it.
+// Or made here, as narrow as Cloudflare allows (deploy/server-tokens.ts),
+// which needs a credential that may make account API tokens
+// (CLOUDFLARE_TOKEN_MAKER: Account API Tokens Edit; on 2026-10-12 such a
+// token was refused with 403 9109, so the dashboard way is the one that
+// works). Either way it is checked before it's stored, and never printed.
 //
 // ERGA_DEPLOY_MOCK=1: all of it against the mock Cloudflare's copy of Erga's
 // account, with --yes taking the defaults: the tests run it so.
@@ -160,6 +163,55 @@ async function makeToken(plan: TokenPlan): Promise<boolean> {
   return true;
 }
 
+/**
+ * A deploy token made on the dashboard (CLOUDFLARE_DEPLOY_TOKEN in the
+ * environment): checked with itself, one harmless read or refused write for
+ * each permission it needs, every answer printed (never the token), then
+ * stored on the control Worker. A failed check stops it before the store.
+ */
+async function storeGivenToken(value: string): Promise<void> {
+  console.log("   CLOUDFLARE_DEPLOY_TOKEN is set: checking it, then storing it (not made here).");
+  if (/\s/.test(value) || value.length < 30 || value.length > 200) throw new DeployError(`CLOUDFLARE_DEPLOY_TOKEN doesn't look like an API token (${value.length} characters${/\s/.test(value) ? ", with spaces or line breaks" : ""}).`);
+  const api = mock ? "https://api.cloudflare.com/client/v4" : "https://api.cloudflare.com/client/v4";
+  const probe = async (method: string, path: string, body?: BodyInit) => {
+    const r = await net(`${api}${path}`, { method, headers: { Authorization: `Bearer ${value}` }, body }).catch(() => null);
+    const j = (await r?.json().catch(() => null)) as { success?: boolean; result?: any; errors?: { code: number; message: string }[] } | null;
+    const e = j?.errors?.[0];
+    return { ok: !!r?.ok && j?.success !== false, status: r?.status ?? 0, result: j?.result, said: `${r?.status ?? "no answer"}${e ? `, code ${e.code}: ${e.message}` : ""}` };
+  };
+  const wrong: string[] = [];
+  const line = (ok: boolean, what: string, said: string) => { console.log(`   ${ok ? "ok " : "NO "} ${what}: ${said}`); if (!ok) wrong.push(what); };
+  // Who it is.
+  const v = await probe("GET", `${acc}/tokens/verify`);
+  if (v.ok) console.log(`   ok  an account-owned token, ${v.result?.status ?? "no status"}${v.result?.expires_on ? `, expires ${v.result.expires_on}` : ""}${v.result?.id ? ` (id ${v.result.id})` : ""}.`);
+  else {
+    const u = await probe("GET", "/user/tokens/verify");
+    if (u.ok) console.log(`   ok  a user API token (My Profile), ${u.result?.status ?? "no status"}${u.result?.expires_on ? `, expires ${u.result.expires_on}` : ""}: it works, but it goes when the user does; an account-owned one is better.`);
+    else console.log(`   ?   not verified as an account token (${v.said}) nor as a user token (${u.said}): the reads below decide.`);
+  }
+  // Workers Scripts: each Worker's settings read, and an upload refused for its content, not its authorization (400, not 403).
+  for (const w of [PROD.worker, STAGING.worker, CONTROL.worker]) { const r = await probe("GET", `${acc}/workers/scripts/${w}/settings`); line(r.ok || r.status == 404, `Workers Scripts, read ${w}'s settings`, r.status == 404 ? `${r.said} (not there yet: nothing to read)` : r.said); }
+  { const f = new FormData(); f.set("metadata", "{}"); const r = await probe("PUT", `${acc}/workers/scripts/${CONTROL.worker}`, f); line(r.status != 403 && r.status != 401 && r.status != 0, `Workers Scripts, an upload to ${CONTROL.worker} with empty metadata (refused for its content, not its authorization)`, r.said); }
+  { const r = await probe("GET", `${acc}/workers/scripts/${CONTROL.worker}/secrets`); line(r.ok, `Workers Scripts, read ${CONTROL.worker}'s secret names`, r.said); }
+  // D1: the list, and production's database read.
+  { const r = await probe("GET", `${acc}/d1/database?name=${PROD.database}`); line(r.ok && Array.isArray(r.result) && r.result.some((d: any) => d.name == PROD.database), `D1, find ${PROD.database}`, r.said); }
+  // Containers: the applications' list (the control Worker's upload names its container's class).
+  { const r = await probe("GET", `${acc}/containers/applications`); line(r.ok, "Workers Containers, list the applications", r.said); }
+  // The zones: found by name, their routes and DNS records read.
+  for (const z of tokenPlan().zones) {
+    const r = await probe("GET", `/zones?name=${encodeURIComponent(z)}&account.id=${accountId}`);
+    const id = Array.isArray(r.result) ? r.result.find((x: any) => x.name == z)?.id : null;
+    line(r.ok && !!id, `Zone, find ${z}`, r.said);
+    if (!id) continue;
+    const routes = await probe("GET", `/zones/${id}/workers/routes`); line(routes.ok, `Workers Routes, read ${z}'s routes`, routes.said);
+    const dns = await probe("GET", `/zones/${id}/dns_records?per_page=1`); line(dns.ok, `DNS, read ${z}'s records`, dns.said);
+  }
+  if (wrong.length) throw new DeployError(`The token fails ${wrong.length} check${wrong.length > 1 ? "s" : ""} (NO above): fix its permissions on the dashboard (Manage Account › Account API Tokens), and run this again. Not stored.`);
+  if (!ask(`   Every check passed. Store it on ${CONTROL.worker} as CLOUDFLARE_DEPLOY_TOKEN?`, yes)) { console.log("   Skipped."); return; }
+  await putSecret(CONTROL.worker, "CLOUDFLARE_DEPLOY_TOKEN", value);
+  console.log(`   Stored on ${CONTROL.worker} as CLOUDFLARE_DEPLOY_TOKEN (not printed). The control Worker deploys from now on.`);
+}
+
 /** `bunx wrangler deploy` in control/: the image (Docker), the Worker, its address. The image caches the checkout's dependencies (deps/, for the build only). */
 function deployControl() {
   const deps = join(CONTROL_DIR, "builder/deps");
@@ -253,9 +305,13 @@ try {
 
   step(7);
   scripts = await scriptsNow();
-  const missing = tokenPlan().workers.filter((w) => !scripts.includes(w));
-  if (missing.length) throw new DeployError(`There's no ${missing.join(" or ")} yet: a token can only name a Worker that's there. Run this without --tokens first.`);
-  await makeToken(tokenPlan(scripts.filter((s) => !tokenPlan().workers.includes(s) && /^erga/.test(s))));
+  const given = process.env.CLOUDFLARE_DEPLOY_TOKEN?.trim() ?? "";
+  if (given) await storeGivenToken(given);
+  else {
+    const missing = tokenPlan().workers.filter((w) => !scripts.includes(w));
+    if (missing.length) throw new DeployError(`There's no ${missing.join(" or ")} yet: a token can only name a Worker that's there. Run this without --tokens first.`);
+    await makeToken(tokenPlan(scripts.filter((s) => !tokenPlan().workers.includes(s) && /^erga/.test(s))));
+  }
 
   step(8);
   const health = await (await net(`https://${CONTROL.host}/api/health`)).json().catch(() => null) as { ok?: boolean; version?: string } | null;

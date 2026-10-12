@@ -916,6 +916,20 @@ describe("the builder", () => {
 });
 
 describe("the one-time setup", () => {
+  test("deploy/setup.ts with CLOUDFLARE_DEPLOY_TOKEN (a token made on the dashboard): each permission checked, every answer printed, then stored", () => {
+    const run = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--tokens", "--yes"], { cwd: ROOT, env: { ...process.env, ERGA_DEPLOY_MOCK: "1", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "", CLOUDFLARE_DEPLOY_TOKEN: "mock-given-token-0123456789abcdef" } });
+    const out = run.stdout.toString();
+    expect(run.exitCode).toBe(0);
+    expect(out).toContain("CLOUDFLARE_DEPLOY_TOKEN is set: checking it, then storing it (not made here).");
+    expect(out).toContain("ok  Workers Scripts, read erga's settings: 200");
+    expect(out).toContain("ok  Workers Scripts, an upload to erga-control with empty metadata (refused for its content, not its authorization): 400");
+    expect(out).toContain("ok  D1, find erga: 200");
+    expect(out).toContain("ok  Workers Containers, list the applications: 200");
+    expect(out).toContain("ok  DNS, read erga-pages-staging.dev's records: 200");
+    expect(out).toContain("Stored on erga-control as CLOUDFLARE_DEPLOY_TOKEN (not printed).");
+    expect(out).not.toContain("mock-given-token");
+  });
+
   test("deploy/setup.ts says what it will do, and (against the mock) does it: the control Worker's secrets, staging's first deploy, the deploy token", () => {
     const dry = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--dry-run"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
     const said = dry.stdout.toString();

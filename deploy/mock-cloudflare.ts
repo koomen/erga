@@ -467,6 +467,7 @@ export function mockCloudflare(opts: {
         if (!state.containers.prepared.includes(b.image)) state.containers.prepared.push(b.image);
         return ok({ status: "ready" });
       }
+      if (m == "GET" && rest == "/containers/applications") return ok(Object.entries(state.containers.apps).map(([id, a]) => ({ id, ...a })));
       if (m == "GET" && (r = /^\/containers\/applications\/([0-9a-f]+)$/.exec(rest))) {
         const app = state.containers.apps[r[1]];
         return app ? ok({ id: r[1], ...app }) : fail(404, 1404, "application not found");
