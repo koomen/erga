@@ -16,7 +16,8 @@
 //   the editor's static files       /page.js, /style.css, /fonts/... and /editor.html: the app's own code, public in its
 //                                   repository, holding no data; the sign-in page's corner and an admin's frame on the
 //                                   pages origin load them without a session
-//   GET /api/deploys/version        the health check the deploy pipeline waits on (just the release and target)
+//   GET /api/deploys/version        the release and target, which the deploy pipeline waits on
+//   GET /api/health                 the health check the pipeline runs after (ok, the release, the checks: no data)
 //   /api/deploys/<name>/hook, /api/deploys/status, and /api/deploys/... with DEPLOY_HOOK_SECRET
 //                                   server to server: production passes branch moves on and reads staging's status,
 //                                   logs and history, and each passes its live events to the other (/api/deploys/events),
@@ -59,7 +60,7 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   const method = request.method;
   if (path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/logout") return true;
   if (ASSET_FILES.has(path) || path.startsWith("/fonts/")) return method == "GET" || method == "HEAD";
-  if (path == "/api/deploys/version") return method == "GET" || method == "HEAD";
+  if (path == "/api/deploys/version" || path == "/api/health") return method == "GET" || method == "HEAD";
   if (/^\/api\/deploys\/[a-z]+\/hook\/?$/.test(path) || path == "/api/deploys/status") return true;
   if (path.startsWith("/api/deploys/") && isPeer(request, base)) return true;
   if (isSignInPath(path) && isPeer(request, base)) return true;

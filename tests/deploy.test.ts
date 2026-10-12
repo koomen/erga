@@ -121,7 +121,7 @@ describe("deploying", () => {
     const uploaded = mock.state.assets.uploaded.length;
     const { steps, state } = await run("mock-token", plan(), mock);
     expect(state.databases.length).toBe(1);
-    expect(steps).toContain("migrations:done already up to date");
+    expect(steps.find((s) => s.startsWith("migrations:done"))).toMatch(/^migrations:done already up to date; restore point: version [0-9a-f]{8} \(release \w+\), database bookmark \S+$/);
     expect(steps.find((s) => s.startsWith("database:done"))).toContain("from before");
     expect(state.scripts.erga.metadata.exports.DocumentObject).toEqual({ type: "durable-object", storage: "sqlite" });
     expect(state.assets.uploaded.length).toBe(uploaded);

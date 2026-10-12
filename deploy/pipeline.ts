@@ -319,7 +319,23 @@ export interface Target {
  * What runs on from one step to the next (and across a restart, deploy/branches.ts keeps it): the database, the version,
  * and the documents staging had before.
  */
-export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; existing?: boolean; copied?: boolean; /** The copy the target was on before a new one (its own API keys come from it). */ ownDb?: string | null }
+export interface Carry {
+  dbId?: string; version?: string; oldDocs?: string[]; existing?: boolean; copied?: boolean;
+  /** The copy the target was on before a new one (its own API keys come from it). */
+  ownDb?: string | null;
+  /** What the target ran before this deploy changed anything (the migrations step records it): a rollback goes back to it. */
+  restore?: RestorePoint;
+}
+
+/**
+ * Where a target was before a deploy: the Worker version that served (a
+ * deployment of it again is a rollback, in seconds, with no build), the release it
+ * ran, and the database's D1 Time Travel bookmark from before the deploy's
+ * migrations (a restore to it loses everything written since: for a person
+ * to decide, never automatic). Null where there was none to record (a new
+ * Worker, a token that may not read it).
+ */
+export interface RestorePoint { versionId: string | null; version: string | null; bookmark: string | null; at: number }
 
 /** A copy of another server's data, by when it was made: `<base>-<ms since the epoch, base 36>` (Target.snapshot). */
 export const copyName = (base: string, at: number) => `${base}-${at.toString(36)}`;
@@ -572,9 +588,13 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     },
 
     // server/migrations/, each once, recorded in d1_migrations as the cf CLI does (on a new copy, the ones production hasn't had yet; on a kept one, the ones it hasn't).
+    // First, the restore point: the last thing before the deploy changes what the target runs on.
     async migrations() {
       const rel = needRelease();
       const db = carry.dbId!;
+      const restore = await restorePoint(cf, target, { dbId: db, existing: !!carry.existing });
+      carry.restore = restore.point;
+      const noted = restore.point.versionId || restore.point.bookmark ? `restore point: ${restore.point.versionId ? `version ${restore.point.versionId.slice(0, 8)}${restore.point.version ? ` (release ${restore.point.version})` : ""}` : "no version"}, ${restore.point.bookmark ? `database bookmark ${restore.point.bookmark}` : "no database bookmark"}` : `no restore point (${restore.why})`;
       await d1(cf, acc, db, "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)", [], "set up the database");
       const done = new Set(((await d1(cf, acc, db, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name)));
       const pending = Object.keys(rel.migrations).sort().filter((n) => !done.has(n));
@@ -583,7 +603,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         const sql = rel.migrations[name].trim();
         await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
       }
-      const did = pending.length ? `applied ${pending.join(", ")}` : "already up to date";
+      const did = `${pending.length ? `applied ${pending.join(", ")}` : "already up to date"}; ${noted}`;
       // A new copy has production's API keys, which don't open on the target (its FACTORY_KEY is its own): its own come back.
       return target.snapshot && carry.copied ? `${did}; ${await ownCredentials(cf, acc, carry.ownDb ?? null, db)}` : did;
     },
@@ -655,7 +675,8 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       return `https://${pagesHost} (shared by every document)`;
     },
 
-    // Up: a new workers.dev address or certificate can take a minute or two. With checkVersion, until this release is the one answering.
+    // Up: a new workers.dev address or certificate can take a minute or two. With checkVersion, until this release is the
+    // one answering, and then its health check says it works (GET /api/health: the database, a document).
     async live() {
       const until = Date.now() + (opts.waitMs ?? 180_000);
       const want = carry.version;
@@ -664,7 +685,11 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         if (target.checkVersion && want) {
           const r = await site(`https://${host}/api/deploys/version`).catch(() => null);
           const v = r?.ok ? ((await r.json().catch(() => null)) as { version?: string } | null)?.version ?? "" : "";
-          if (v == want) break;
+          if (v == want) {
+            const h = await checkHealth(site, host, want);
+            if (!h.ok) throw new DeployError(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`);
+            return `https://${host}, release ${want}, healthy (${h.summary})`;
+          }
           if (v) seen = v;
         } else {
           const r = await site(`https://${host}/style.css`).catch(() => null);
@@ -793,6 +818,63 @@ async function listScripts(cf: Cloudflare, acc: string, target: Target): Promise
   if (!settings) return [];
   const docHost = settings.bindings?.some((b) => b.type == "durable_object_namespace" && b.class_name == "DocumentObject");
   return [{ id: target.workerName, tags: settings.tags ?? [], named_handlers: docHost ? [{ name: "DocumentObject" }] : [] }];
+}
+
+/**
+ * The restore point of a target, read before a deploy changes anything: the
+ * Worker version serving now (its latest deployment's), the release it runs,
+ * and the database's Time Travel bookmark. Nothing here fails a deploy: what
+ * can't be read is null, and `why` says so.
+ */
+export async function restorePoint(cf: Cloudflare, target: Pick<Target, "accountId" | "workerName">, o: { dbId: string; existing: boolean }): Promise<{ point: RestorePoint; why: string }> {
+  const acc = `/accounts/${target.accountId}`;
+  const point: RestorePoint = { versionId: null, version: null, bookmark: null, at: Date.now() };
+  const why: string[] = [];
+  if (o.existing) {
+    try { point.versionId = await liveVersion(cf, target.accountId, target.workerName); if (!point.versionId) why.push("the Worker has no deployment yet"); } catch (e) { why.push(`the Worker's deployments couldn't be read: ${(e as Error).message}`); }
+    try { point.version = await workerVersion(cf, target.accountId, target.workerName); } catch { /* the version id is what a rollback needs */ }
+  } else why.push("a new Worker");
+  try {
+    const b = await cf.call<{ bookmark?: string }>("GET", `${acc}/d1/database/${o.dbId}/time_travel/bookmark`, "read the database's Time Travel bookmark");
+    point.bookmark = b?.bookmark ?? null;
+    if (!point.bookmark) why.push("D1 gave no bookmark");
+  } catch (e) { why.push(`the database's bookmark couldn't be read: ${(e as Error).message}`); }
+  return { point, why: why.join("; ") };
+}
+
+/** The Worker version serving now: the one its latest deployment names (null: no deployment). */
+export async function liveVersion(cf: Cloudflare, accountId: string, worker: string): Promise<string | null> {
+  const r = await cf.call<{ deployments?: { versions?: { version_id: string; percentage: number }[] }[] }>("GET", `/accounts/${accountId}/workers/scripts/${worker}/deployments?per_page=1`, `read ${worker}'s deployments`);
+  const latest = r?.deployments?.[0]?.versions ?? [];
+  return [...latest].sort((a, b) => b.percentage - a.percentage)[0]?.version_id ?? null;
+}
+
+/** What the health check answers (GET /api/health: the app's own checks), as the pipeline reads it. */
+export interface Health { ok: boolean; version?: string | null; checks?: Record<string, { ok: boolean; ms?: number; error?: string }> }
+
+/**
+ * The app's health, at `host`: GET /api/health must answer 200 with ok true
+ * and the release `want` (when given). `why` says what failed, in words.
+ */
+export async function checkHealth(site: Fetch, host: string, want: string | null): Promise<{ ok: boolean; why: string; summary: string }> {
+  const r = await site(`https://${host}/api/health`).catch((e) => ({ ok: false, status: 0, json: async () => null, text: async () => (e as Error).message }) as unknown as Response);
+  const body = (await r.json().catch(() => null)) as Health | null;
+  if (!body) return { ok: false, why: `GET /api/health answered ${r.status || "nothing"} and no JSON`, summary: "" };
+  const failed = Object.entries(body.checks ?? {}).filter(([, c]) => !c.ok).map(([n, c]) => `${n}: ${c.error ?? "failed"}`);
+  if (!r.ok || !body.ok) return { ok: false, why: failed.length ? failed.join("; ") : `GET /api/health answered ${r.status}`, summary: "" };
+  if (want && body.version && body.version != want) return { ok: false, why: `GET /api/health says release ${body.version}, not ${want}`, summary: "" };
+  return { ok: true, why: "", summary: Object.entries(body.checks ?? {}).map(([n, c]) => `${n} ok${c.ms != null ? ` ${c.ms} ms` : ""}`).join(", ") || "no checks" };
+}
+
+/**
+ * Rolls a Worker back: a deployment of `versionId` at 100% (seconds; no
+ * build, no upload). Its bound resources stay as they are: the database keeps
+ * the schema it has (server/migrations/ only add, so the older Worker runs on it).
+ */
+export async function rollbackTo(cf: Cloudflare, target: Pick<Target, "accountId" | "workerName">, versionId: string, message: string): Promise<void> {
+  await cf.call("POST", `/accounts/${target.accountId}/workers/scripts/${target.workerName}/deployments?force=true`, `roll ${target.workerName} back to version ${versionId.slice(0, 8)}`, {
+    strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }], annotations: { "workers/message": message.slice(0, 900), "workers/triggered_by": "erga" },
+  });
 }
 
 /** The release a Worker runs, by its ERGA_VERSION setting (the pipeline sets it), or null. */

@@ -49,6 +49,8 @@ export interface DashboardOps {
   deploys(history: number): Promise<object>;
   deployLog(target: string, deploy?: string): Promise<object | null>;
   redeploy(target: string, fresh?: boolean): Promise<object>;
+  /** Back to the Worker version before the target's live deploy (its restore point). */
+  rollback(target: string): Promise<object>;
   /** The homepage (the landing_document setting) deployed again, as Redeploy in the editor's settings does. */
   deployHome(): Promise<object>;
   agentTokens(): Promise<object[]>;
@@ -94,6 +96,9 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
     tool("redeploy", "Redeploy a target", "Deploys a target's branch head again now (staging: staging; production: main), as the dashboard's Redeploy does. The deploy says who asked for it. Staging's copy of production's data is frozen: a deploy keeps it (new migrations run on it in place); fresh_data: true makes this redeploy of staging copy production's data afresh, the only way to refresh it.",
       Type.Object({ target: TARGET, fresh_data: Type.Optional(Type.Boolean({ description: "Staging only: copy production's database and documents afresh, in place of staging's frozen copy" })) }),
       (a) => ops.redeploy(String(a.target ?? ""), a.fresh_data === true)),
+    tool("rollback", "Roll a target back", "Puts back the version a target ran before its live deploy, as the dashboard's Roll back does: one deployment of that Worker version, in seconds, with no build. The database keeps its schema (migrations only add). Only when the admin asks in this conversation to roll back; list_deploys shows which deploy is live and what it would go back to (restore).",
+      Type.Object({ target: TARGET }),
+      (a) => ops.rollback(String(a.target ?? ""))),
     tool("deploy_homepage", "Redeploy the homepage", "Deploys the homepage (the document the landing_document setting names, which set_setting changes) again now, as Redeploy in that document's settings does in the editor.",
       Type.Object({}), () => ops.deployHome()),
     tool("list_agent_tokens", "Read your agent tokens", "Your own agent tokens (/settings): id, label, kind (share: a share button's: the editor's, scope documents, or Share with agent's on the admin pages, scope admin), scope (document, documents or admin), when made, when it ends and when last used. Never a token itself: a token is made, or an agent's request for one approved, only on /settings.",
@@ -184,6 +189,7 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   list_deploys: ["Reading the deploys", "Read the deploys"],
   deploy_log: ["Reading the deploy log of", "Read the deploy log of"],
   redeploy: ["Redeploying", "Redeployed"],
+  rollback: ["Rolling back", "Rolled back"],
   deploy_homepage: ["Redeploying the homepage", "Redeployed the homepage"],
   list_agent_tokens: ["Reading your agent tokens", "Read your agent tokens"],
   revoke_agent_token: ["Revoking the agent token", "Revoked the agent token"],
@@ -231,7 +237,7 @@ For staging, production and access (the Source page, /admin/source, and /setting
   to an earlier staging commit): production deploys it, and the change log names
   ${owner}. sync_mirror updates the GitHub mirror now.
 - list_deploys reads each target's deploys (staging, production); deploy_log reads a
-  deploy's log; redeploy deploys a target's branch again. deploy_homepage deploys the
+  deploy's log; redeploy deploys a target's branch again; rollback puts the version before its live deploy back. deploy_homepage deploys the
   homepage again.
 - list_agent_tokens and revoke_agent_token: ${owner}'s own agent tokens, the one Share with
   agent made for an outside agent too (kind share, scope admin). A token is made, or an

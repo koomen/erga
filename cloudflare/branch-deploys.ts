@@ -6,6 +6,8 @@
 //                                       (`history`, newest first) if asked
 //   POST /api/deploys/<name>            admins: redeploy that target's branch head now; {fresh: true}: staging with a
 //                                       fresh copy of production's data, in place of its frozen copy
+//   POST /api/deploys/<name>/rollback   admins: put back the Worker version from before the target's live deploy (its restore
+//                                       point: seconds, no build; the database keeps its schema)
 //   GET  /api/deploys/<name>/history[?limit=N]
 //                                       admins (or another of Erga's servers): the last N deploys (default 20, at most
 //                                       100) {target, deploys: [{id, commit, state, started, ended, trigger, error, live, ...}]}
@@ -15,6 +17,7 @@
 //   GET  /api/events                    admins: server-sent events, {type: "deploys"} on each change, {type: "deploy-log",
 //                                       target, deployId, lines} as a deploy's lines arrive ({type: "source"} from #39)
 //   GET  /api/deploys/version           anyone: {version}, the release this server runs (the pipeline waits for it)
+//   GET  /api/health                    anyone: {ok, version, target, checks}: the app works (server/health.ts); 503 when it doesn't
 //   GET  /api/deploys/status[?history=N] another of Erga's servers (DEPLOY_HOOK_SECRET): this server's own target
 //   POST /api/deploys/<name>/hook       another of Erga's servers (DEPLOY_HOOK_SECRET): {branch, commit} or {redeploy}
 //   POST /api/deploys/events            another of Erga's servers (DEPLOY_HOOK_SECRET): {from, events}, its own events,
@@ -26,6 +29,7 @@
 // token; a test person never.
 
 import { snapshotDoor } from "../deploy/snapshot";
+import { health } from "../server/health";
 import { PRODUCTION } from "../deploy/targets";
 import { whoOf, type Platform } from "../server/platform";
 import type { Env } from "./env";
@@ -34,7 +38,7 @@ import { byLine } from "../shared/attribution";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) =>
-  path == "/api/deploys" || path.startsWith("/api/deploys/") || path == "/api/events" || path.startsWith("/api/snapshot/") || path == "/admin/deploys";
+  path == "/api/deploys" || path.startsWith("/api/deploys/") || path == "/api/health" || path == "/api/events" || path.startsWith("/api/snapshot/") || path == "/admin/deploys";
 
 export async function deploysDoor(request: Request, env: Env, base: Platform): Promise<Response> {
   const url = new URL(request.url);
@@ -43,6 +47,10 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   const stub = () => env.PIPELINE.getByName("deploys");
 
   if (path == "/api/deploys/version" && (method == "GET" || method == "HEAD")) return Response.json({ version: env.ERGA_VERSION ?? null, target: env.DEPLOY_TARGET || null }, { headers: { "Cache-Control": "no-store" } });
+  if (path == "/api/health" && (method == "GET" || method == "HEAD")) {
+    const h = await health(base);
+    return Response.json(h, { status: h.ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
+  }
 
   if (path.startsWith("/api/snapshot/")) {
     // Never into production, whatever its settings say.
@@ -107,6 +115,12 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   if (path == "/api/deploys" && method == "GET") return Response.json(await stub().status(Number(url.searchParams.get("history") ?? 0) || 0), noStore);
   if (logOf && method == "GET") return logAnswer(logOf);
   if (historyOf && method == "GET") return historyAnswer(historyOf);
+  const [, rollbackOf] = /^\/api\/deploys\/([a-z]+)\/rollback$/.exec(path) ?? [];
+  if (rollbackOf && method == "POST") {
+    if (!session!.agent && request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
+    const r = await stub().rollback(rollbackOf, `rollback by ${byLine(session!.login.toLowerCase(), whoOf(session!).via)}`);
+    return r.ok ? Response.json({ ok: true, target: r.status }) : Response.json({ ok: false, error: r.error }, { status: r.status ?? 400 });
+  }
   const [, name] = /^\/api\/deploys\/([a-z]+)$/.exec(path) ?? [];
   if (name && method == "POST") {
     // From this site's pages, or an agent's token: never another site's form.

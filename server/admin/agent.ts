@@ -40,6 +40,8 @@ export interface DashboardDeploys {
   logOf(target: string, deploy?: string): Promise<object | null>;
   redeploy(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
   redeployWith(name: string, trigger: string, o: { fresh?: boolean }): Promise<{ ok: boolean; status?: unknown; error?: string }>;
+  /** Back to the Worker version before the target's live deploy (its restore point). */
+  rollback(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
 }
 
 /** What the agents need from where they run: their SQLite, and the Platform (the directory, tokens, the repository, the deploys, the homepage). */
@@ -129,6 +131,11 @@ export class AdminAgents {
         const r = fresh ? await pipeline().redeployWith(target, `redeploy by ${byLine(login, VIA.admin)}`, { fresh: true }) : await pipeline().redeploy(target, `redeploy by ${byLine(login, VIA.admin)}`);
         if (!r.ok) throw new Error(r.error ?? "refused");
         return { done: `${target} redeploys now${fresh ? ", with a fresh copy of production's data" : ""}`, target: r.status };
+      },
+      rollback: async (target) => {
+        const r = await pipeline().rollback(target, `rollback by ${byLine(login, VIA.admin)}`);
+        if (!r.ok) throw new Error(r.error ?? "refused");
+        return { done: `${target} is rolled back`, target: r.status };
       },
       deployHome: async () => {
         if (!(await this.platform.directory.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");

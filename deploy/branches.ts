@@ -56,12 +56,13 @@
 // HISTORY_KEEP of each target, in the same storage (the Pipeline Durable
 // Object's).
 
-import { ALL_STEPS, BEFORE_BUILD, Cloudflare, dropCopies, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./pipeline";
+import { ALL_STEPS, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { sourceFor, type Source } from "./source";
 import { BUILDER, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 
-export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled";
-export interface StepStatus { id: StepId | "build"; title: string; status: "pending" | "running" | "done" | "skipped" | "failed" | "cancelled"; detail?: string }
+/** "rolled-back": a deploy that was live until a rollback put the version before it back. */
+export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
+export interface StepStatus { id: StepId | "build" | "rollback"; title: string; status: "pending" | "running" | "done" | "skipped" | "failed" | "cancelled"; detail?: string }
 
 /** One deploy, as the history keeps it (GET /api/deploys/<name>/history, newest first). */
 export interface DeployRecord {
@@ -79,6 +80,14 @@ export interface DeployRecord {
   /** A cancelled deploy: the commit that took its place, and that deploy's id once it started. */
   supersededBy?: string;
   replacedBy?: string;
+  /**
+   * What the target ran before this deploy (recorded before its migrations): the Worker version a rollback goes back to,
+   * the release and commit it ran, the database's bookmark. A rollback's own restore point is what it rolled back from.
+   */
+  restore?: RestorePoint & { commit: string | null };
+  /** A rollback: the deploy it undid. A deploy undone: the rollback that undid it. */
+  rollbackOf?: string;
+  rolledBackBy?: string;
   /** In answers only: the deploy the target runs now. */
   live?: boolean;
 }
@@ -162,9 +171,9 @@ interface Run { deployId: string; commit: string; started: number; cursor: StepI
 interface Fresh { force?: boolean }
 
 /** One line of a deploy's log: when (ms since the epoch), what, and which step it belongs to. */
-export interface LogLine { at: number; text: string; step?: StepId | "build" }
+export interface LogLine { at: number; text: string; step?: StepId | "build" | "rollback" }
 /** A deploy's whole log, as GET /api/deploys/<name>/log answers it (the latest deploy's, or ?deploy=<id>'s), with its record. */
-export interface DeployLog { deployId: string | null; commit: string | null; state: DeployState; lines: LogLine[]; trigger?: string; started?: number; ended?: number | null; error?: string | null; live?: boolean }
+export interface DeployLog { deployId: string | null; commit: string | null; state: DeployState; lines: LogLine[]; trigger?: string; started?: number; ended?: number | null; error?: string | null; live?: boolean; restore?: DeployRecord["restore"]; rollbackOf?: string; rolledBackBy?: string }
 interface StoredLog { deployId: string; commit: string; lines: LogLine[] }
 /** At most this many lines are kept of one deploy's log (the first and the latest, with a line saying how many went between). */
 const LOG_KEEP = 5000;
@@ -200,7 +209,7 @@ const logKey = (name: TargetName, id: string) => `log:${name}:${id}`;
 /** Before the history, each target kept its latest deploy's log here (read when a deploy started then is resumed). */
 const oldLogKey = (name: TargetName) => `log:${name}`;
 const historyKey = (name: TargetName) => `history:${name}`;
-const TERMINAL = new Set<DeployState>(["deployed", "failed", "cancelled"]);
+const TERMINAL = new Set<DeployState>(["deployed", "failed", "cancelled", "rolled-back"]);
 
 export class BranchDeploys {
   private running: TargetName | null = null;
@@ -290,6 +299,15 @@ export class BranchDeploys {
     await this.putRecords(s.status.name, list);
   }
 
+  /** A deploy's restore point, onto its record (the migrations step read it). */
+  private async setRestore(name: TargetName, id: string, restore: DeployRecord["restore"]): Promise<void> {
+    const list = await this.records(name);
+    const rec = list.find((r) => r.id == id);
+    if (!rec || !restore) return;
+    rec.restore = restore;
+    await this.putRecords(name, list);
+  }
+
   /** A line added to a past deploy's kept log (and sent, for whoever has it open). */
   private async appendTo(name: TargetName, id: string, text: string): Promise<void> {
     const kept = await this.deps.storage.get<StoredLog>(logKey(name, id));
@@ -367,7 +385,7 @@ export class BranchDeploys {
       : (await this.deps.storage.get<StoredLog>(logKey(name, id))) ?? await this.deps.storage.get<StoredLog>(oldLogKey(name)).then((l) => (l?.deployId == id ? l : null));
     return {
       deployId: id, commit: rec?.commit ?? kept?.commit ?? null, state: rec?.state ?? status.state, lines: kept?.lines ?? [],
-      ...(rec ? { trigger: rec.trigger, started: rec.started, ended: rec.ended, error: rec.error, live: rec.id == status.liveDeploy } : {}),
+      ...(rec ? { trigger: rec.trigger, started: rec.started, ended: rec.ended, error: rec.error, live: rec.id == status.liveDeploy, ...(rec.restore ? { restore: rec.restore } : {}), ...(rec.rollbackOf ? { rollbackOf: rec.rollbackOf } : {}), ...(rec.rolledBackBy ? { rolledBackBy: rec.rolledBackBy } : {}) } : {}),
     };
   }
 
@@ -455,6 +473,77 @@ export class BranchDeploys {
     const commit = (await this.queue(name)).head ?? s.status.commit;
     if (!commit) return { ok: false, error: `No commit of ${TARGETS[name].branch} has reached this server yet: push to it first.`, status: 409 };
     await this.enqueue(name, commit, why(commit), trigger, o);
+    return { ok: true, status: (await this.load(name)).status };
+  }
+
+  /**
+   * Rolls a target back to the Worker version it ran before its live deploy
+   * (POST /api/deploys/<name>/rollback): one deployment of that version, in
+   * seconds, with no build. The database stays as it is (migrations only add).
+   * Recorded as a deploy of its own, live, whose restore point is the version
+   * it rolled back from (so a second rollback rolls forward again). On this
+   * server's own target the deployment restarts this very object: the record
+   * is written before the call, complete, and nothing runs after it.
+   */
+  async rollback(name: string, trigger = "rollback"): Promise<{ ok: true; status: TargetStatus } | { ok: false; error: string; status?: number }> {
+    if (!isTargetName(name)) return { ok: false, error: `There's no deploy target called ${name}.`, status: 404 };
+    if (!this.deploysTo.includes(name)) return { ok: false, error: `${name} deploys itself: roll it back from https://${TARGETS[name].host}.`, status: 409 };
+    const wrong = this.notReady(name);
+    if (wrong) return { ok: false, error: wrong, status: 409 };
+    const s = await this.load(name);
+    if (s.run || this.running == name) return { ok: false, error: `A deploy of ${name} is running: wait for it to end (or push again to replace it), then roll back.`, status: 409 };
+    const list = await this.records(name);
+    const live = list.find((r) => r.id == s.status.liveDeploy) ?? null;
+    const restore = live?.restore;
+    if (!live || !restore?.versionId) return { ok: false, error: live ? `The live deploy (${live.commit.slice(0, 12)}) has no restore point: it was made before restore points were recorded, or its Worker was new. Deploy an earlier commit instead.` : `${name} has no live deploy to roll back from.`, status: 409 };
+    const cf = new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net);
+    const target = targetOf(TARGETS[name], this.deps.env);
+    // What serves now, so the rollback can itself be undone.
+    const from = await liveVersion(cf, target.accountId, target.workerName).catch(() => null);
+    const deployId = `${this.now().toString(36)}-rollback`;
+    const rec: DeployRecord = {
+      id: deployId, target: name, commit: restore.commit ?? live.commit, state: "deployed", started: this.now(), ended: null,
+      trigger: `${trigger}: back to ${restore.version ?? `version ${restore.versionId.slice(0, 8)}`}, undoing deploy ${live.id} (${live.commit.slice(0, 12)})`, error: null,
+      rollbackOf: live.id, restore: { versionId: from, version: s.status.deployed ? s.status.deployed.slice(0, 12) : null, bookmark: null, at: this.now(), commit: live.commit },
+    };
+    live.state = "rolled-back";
+    live.rolledBackBy = deployId;
+    live.ended ??= this.now();
+    list.unshift(rec);
+    await this.putRecords(name, list);
+    const steps: StepStatus[] = [{ id: "rollback", title: `Roll back to ${restore.version ? `release ${restore.version}` : `version ${restore.versionId.slice(0, 8)}`}`, status: "running" }];
+    s.status = { ...s.status, state: "deploying", commit: rec.commit, deployId, at: this.now(), error: null, steps };
+    s.run = { deployId, commit: rec.commit, started: this.now(), cursor: null, carry: {} };
+    await this.openLog(name, s.run, true);
+    this.line(s, `rolling ${TARGETS[name].host} back to ${restore.version ? `release ${restore.version}` : `version ${restore.versionId.slice(0, 8)}`} (${rec.trigger})`, "rollback");
+    this.line(s, `the version before deploy ${live.id} (${live.commit.slice(0, 12)}) serves again; the database keeps its schema${restore.bookmark ? ` (its bookmark from before that deploy: ${restore.bookmark})` : ""}`, "rollback");
+    // Complete before the call: on this server's own target the deployment restarts this object, into the older version.
+    steps[0].status = "done";
+    s.status = { ...s.status, state: "deployed", at: this.now(), deployed: rec.commit, liveDeploy: deployId };
+    this.line(s, `rolled back: https://${TARGETS[name].host} serves ${rec.commit.slice(0, 12)}`, "rollback");
+    s.run = null;
+    await this.save(s);
+    try {
+      await rollbackTo(cf, target, restore.versionId, `Erga rollback: ${rec.trigger}`);
+    } catch (e) {
+      const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
+      live.state = "deployed"; delete live.rolledBackBy;
+      rec.state = "failed"; rec.error = message; rec.ended = this.now();
+      await this.putRecords(name, list);
+      steps[0].status = "failed";
+      s.status = { ...s.status, state: "failed", at: this.now(), error: `Stopped at “${steps[0].title}”. ${message}`, deployed: live.commit, liveDeploy: live.id };
+      s.run = { deployId, commit: rec.commit, started: rec.started, cursor: null, carry: {} };
+      this.line(s, `failed: ${message}`, "rollback");
+      s.run = null;
+      await this.save(s);
+      return { ok: false, error: message, status: 502 };
+    }
+    // Another target's (production rolling staging back): wait for it to answer, so the log says it did.
+    if (name != this.self) {
+      const h = await (async () => { for (let i = 0; i < 30; i++) { const r = await checkHealth(this.deps.net, targetHost(target), restore.version).catch(() => null); if (r?.ok) return r; await (this.deps.sleep ?? ((ms: number) => new Promise((ok) => setTimeout(ok, ms))))(2000); } return null; })();
+      this.line(s, h ? `https://${TARGETS[name].host} answers ${restore.version ?? "the older version"}, healthy (${h.summary})` : `https://${TARGETS[name].host} hasn't answered the older version yet: check it`, "rollback");
+      await this.save(s);
+    }
     return { ok: true, status: (await this.load(name)).status };
   }
 
@@ -712,6 +801,7 @@ export class BranchDeploys {
         run.carry = carry;
         s.oldDocs = carry.oldDocs ?? [];
         run.cursor = steps[steps.indexOf(done) + 1] ?? null;
+        if (done == "migrations" && carry.restore) await this.setRestore(s.status.name, run.deployId, { ...carry.restore, commit: s.status.deployed });
         // About to upload the Worker, which restarts this very object when it's this server's own: wake the new version up to finish (unless it's cancelled, and won't upload).
         if (run.cursor == "worker" && !signal?.aborted) await this.deps.schedule(RESUME_MS);
         await this.save(s);

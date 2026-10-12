@@ -117,7 +117,7 @@ const SOURCE_STYLE = `
   .dep.live:hover { background: color-mix(in srgb, var(--on-main) 16%, transparent); }
   .dep.live .at { color: color-mix(in srgb, var(--on-main) 70%, var(--soft)); }
   .dep.failed .w { color: var(--bad); }
-  .dep.cancelled .w { color: var(--chrome); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .dep.cancelled .w, .dep.rolled-back .w { color: var(--chrome); text-decoration: line-through; text-decoration-thickness: 1px; }
   .dep.building .w, .dep.deploying .w { color: var(--only-staging); }
   .dep.building .w::before, .dep.deploying .w::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
@@ -153,6 +153,8 @@ const SOURCE_STYLE = `
   #deploy-log .meta .live-on { color: var(--on-main); }
   #deploy-log .meta .bad { color: var(--bad); }
   #deploy-log .close { margin-left: auto; height: 30px; }
+  #deploy-log .rollback { height: 30px; white-space: nowrap; }
+  #deploy-log .rollback[data-armed="1"] { color: var(--bad); border-color: var(--bad); }
   #deploy-log pre { margin: 0; border-radius: 0 0 12px 12px; height: min(60vh, 520px); overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
   #deploy-log pre .t { color: var(--chrome); }
   #deploy-log pre .s { color: var(--soft); }
@@ -192,7 +194,7 @@ git push erga HEAD:staging</code></pre>
     </div>
   </section>
   <dialog id="deploy-log" aria-labelledby="log-title">
-    <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill close" type="button" id="log-close">Close</button></div>
+    <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill rollback" type="button" id="log-rollback" hidden>Roll back</button><button class="pill close" type="button" id="log-close">Close</button></div>
     <pre id="log-lines"></pre>
   </dialog>
 `;
@@ -243,7 +245,7 @@ const SOURCE_SCRIPT = `
     if (running(list[0].state)) return list[0];
     return list.find((r) => r.live) ?? list[0];
   }
-  const WORD = { building: "building", deploying: "deploying", deployed: "deployed", failed: "failed", cancelled: "cancelled" };
+  const WORD = { building: "building", deploying: "deploying", deployed: "deployed", failed: "failed", cancelled: "cancelled", "rolled-back": "rolled back" };
   function badge(name, r) {
     const t = targetOf(name);
     const tip = (r.live ? "Live on " + (t?.host ?? name) + ". " : "") + r.state[0].toUpperCase() + r.state.slice(1) + " · " + r.commit.slice(0, 7) + " · " + r.trigger + "\\n" +
@@ -423,9 +425,40 @@ const SOURCE_SCRIPT = `
       log.live ? '<span class="live-on">live</span>' : '<span class="' + (log.state == "failed" ? "bad" : "") + '">' + esc(log.state) + "</span>",
       log.trigger ? esc(log.trigger) : "", log.started ? esc(new Date(log.started).toLocaleString()) + (log.ended ? " · took " + took(log) : "") : ""].filter(Boolean).join(" · ");
     meta.title = log.error || "";
+    // Roll back: on the live deploy's log, when it has a restore point and nothing runs. Two clicks: the first arms it.
+    const rb = document.getElementById("log-rollback"), restore = log.restore || null;
+    const can = !!(log.live && restore && restore.versionId && !running(log.state) && !running(t?.state));
+    if (can && rb.dataset.deploy != log.deployId) { rb.dataset.armed = ""; rb.textContent = "Roll back"; rb.disabled = false; }
+    rb.hidden = !can;
+    rb.dataset.target = name; rb.dataset.deploy = log.deployId || "";
+    rb.dataset.to = can ? (restore.version ? "release " + restore.version : "version " + restore.versionId.slice(0, 8)) : "";
+    rb.title = can ? "Puts back what " + (t?.host ?? name) + " ran before this deploy (" + rb.dataset.to + "), in seconds, with no build. The database keeps its schema." : "";
     if (lines.length > open.shown) { append(lines.slice(open.shown)); open.shown = lines.length; }
     if (first) pre.scrollTop = pre.scrollHeight;
   }
+  document.getElementById("log-rollback").addEventListener("click", async (e) => {
+    const rb = e.currentTarget;
+    if (rb.dataset.armed != "1") {
+      rb.dataset.armed = "1"; rb.textContent = "Click again to roll back to " + rb.dataset.to;
+      setTimeout(() => { if (rb.dataset.armed == "1") { rb.dataset.armed = ""; rb.textContent = "Roll back"; } }, 8000);
+      return;
+    }
+    rb.disabled = true; rb.textContent = "Rolling back…";
+    const meta = document.getElementById("log-meta");
+    try {
+      const r = await fetch("/api/deploys/" + rb.dataset.target + "/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "The rollback failed (HTTP " + r.status + ").");
+      // The log follows the target's latest deploy now: the rollback's.
+      if (open) open.pinned = false;
+      rb.hidden = true; rb.dataset.armed = ""; rb.textContent = "Roll back"; rb.disabled = false;
+      loadDeploys();
+      refreshLog(false);
+    } catch (err) {
+      meta.innerHTML = '<span class="bad">' + esc(err.message) + "</span>";
+      rb.dataset.armed = ""; rb.textContent = "Roll back"; rb.disabled = false;
+    }
+  });
   // Live lines come as events from the server running the deploy, passed on by the other server only while someone
   // listens there: while the deploy shown runs and no events arrive, ask for the log every two seconds.
   setInterval(() => {

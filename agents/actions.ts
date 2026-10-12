@@ -81,6 +81,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Source)", tool: "deploy_log" },
   { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Source)", tool: "redeploy" },
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
+  { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Source)", tool: "rollback" },
+  { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
   { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
   { route: "GET /admin/deploys", domain: "none", action: "An old address of the dashboard", exempt: "a redirect" },
   { route: "GET /api/release", domain: "none", action: "An open page asks whether its code is still the server's (after a redeploy)", exempt: "the page's own check, not a person's action" },

@@ -75,8 +75,14 @@ export interface MockState {
   snapshotBudget?: number;
   /** How many versions of each Worker were uploaded. */
   versions: Record<string, number>;
+  /** Each Worker's versions as uploaded (newest last), by id: what a deployment can point back to (a rollback). */
+  kept: Record<string, { id: string; script: MockState["scripts"][string] }[]>;
+  /** Each Worker's deployments, newest first: the first is the one serving. */
+  deployments: Record<string, { id: string; created_on: string; strategy: string; versions: { version_id: string; percentage: number }[] }[]>;
   /** Deleted D1 databases, by name. */
   deletedDatabases: string[];
+  /** Releases (ERGA_VERSION values) whose /api/health answers ok false: a test's broken deploy. */
+  unhealthy?: string[];
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
   failNext: string | null;
   /** Account API tokens made through the API (their values aren't here: only the tests read them, from `tokenValues`). */
@@ -159,7 +165,7 @@ export function mockCloudflare(opts: {
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
     databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
-    secrets: {}, docs: {}, versions: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} },
+    secrets: {}, docs: {}, versions: {}, kept: {}, deployments: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} },
   };
   /** Tokens' values, by token id (never in `state`). */
   const tokenValues = new Map<string, string>();
@@ -280,6 +286,12 @@ export function mockCloudflare(opts: {
           state.databases.splice(i, 1);
           return ok(null);
         }
+        const tt = /^\/d1\/database\/([^/]+)\/time_travel\/bookmark(?:\?.*)?$/.exec(rest);
+        if (m == "GET" && tt) {
+          const ttDb = state.databases.find((d) => d.uuid == tt[1]);
+          if (!ttDb) return fail(404, 7404, "The database could not be found");
+          return ok({ bookmark: `${hex(8)}-00000000-00000000-${hex(8)}` });
+        }
         const ex = /^\/d1\/database\/([^/]+)\/export$/.exec(rest);
         const exDb = ex && state.databases.find((d) => d.uuid == ex[1]);
         if (m == "POST" && ex) {
@@ -389,8 +401,24 @@ export function mockCloudflare(opts: {
         state.scripts[r[1]] = { metadata: redact({ ...meta, bindings: [...(meta.bindings ?? []), ...keptBindings] }), modules, workersDev: prev?.workersDev ?? false, tags: meta.tags ?? [], namespaces };
         state.versions[r[1]] = (state.versions[r[1]] ?? 0) + 1;
         if (meta.assets) state.served[r[1]] = Object.fromEntries(Object.entries(state.assets.manifest).map(([p, f]) => [p, f.hash]));
+        const versionId = deployVersion(state, r[1], state.scripts[r[1]]);
         opts.onUpload?.(r[1], state.scripts[r[1]].metadata);
-        return ok({ id: r[1], tags: meta.tags ?? [] });
+        return ok({ id: r[1], tags: meta.tags ?? [], deployment_id: state.deployments[r[1]][0].id, startup_time_ms: 1, version_id: versionId } as unknown);
+      }
+      if ((r = /^\/workers\/scripts\/([^/]+)\/deployments(?:\?.*)?$/.exec(rest))) {
+        if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
+        if (m == "GET") return ok({ deployments: state.deployments[r[1]] ?? [] });
+        if (m == "POST") {
+          const b = await body();
+          const want = b?.versions?.[0]?.version_id;
+          const kept = (state.kept[r[1]] ?? []).find((v) => v.id == want);
+          if (b?.strategy != "percentage" || !kept || b.versions.length != 1 || b.versions[0].percentage != 100) return fail(400, 10215, "a deployment names one version of this Worker, at 100%");
+          // The named version serves again: its bindings as they were, with the secrets the Worker has now (as a rollback does).
+          state.scripts[r[1]] = structuredClone(kept.script);
+          const id = uuid();
+          (state.deployments[r[1]] ??= []).unshift({ id, created_on: new Date().toISOString(), strategy: "percentage", versions: [{ version_id: kept.id, percentage: 100 }] });
+          return ok({ id, strategy: "percentage", versions: [{ version_id: kept.id, percentage: 100 }] });
+        }
       }
       if (m == "DELETE" && (r = /^\/workers\/scripts\/([^/?]+)(?:\?.*)?$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
@@ -591,6 +619,12 @@ export function mockCloudflare(opts: {
     const text = (n: string) => (s.metadata.bindings ?? []).find((b: any) => b.name == n && b.type == "plain_text")?.text as string | undefined;
     if (url.pathname == "/style.css") return new Response("/* mock */", { headers: { "Content-Type": "text/css" } });
     if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null, target: text("DEPLOY_TARGET") || null });
+    // The app's health check: healthy, unless a test says this release isn't (state.unhealthy).
+    if (url.pathname == "/api/health") {
+      const version = text("ERGA_VERSION") ?? null;
+      const bad = !!version && (state.unhealthy ?? []).includes(version);
+      return Response.json({ ok: !bad, version, target: text("DEPLOY_TARGET") || null, checks: { db: { ok: true, ms: 1 }, documents: bad ? { ok: false, error: "a document didn't open (the mock says this release is unhealthy)" } : { ok: true, ms: 2 } } }, { status: bad ? 503 : 200 });
+    }
     const snap = await snapshotDoor(req, {
       token: state.secrets[name]?.SNAPSHOT_TOKEN,
       importAllowed: text("SNAPSHOT_IMPORT") == "1" && text("DEPLOY_TARGET") != "production",
@@ -626,6 +660,19 @@ export function mockCloudflare(opts: {
 }
 
 class D1Error extends Error {}
+
+/** A Worker's upload as a version of it, and a deployment of that version: `kept` and `deployments` in the state. */
+function deployVersion(state: MockState, name: string, script: MockState["scripts"][string]): string {
+  const id = uuid();
+  (state.kept[name] ??= []).push({ id, script: structuredClone(script) });
+  (state.deployments[name] ??= []).unshift({ id: uuid(), created_on: new Date().toISOString(), strategy: "percentage", versions: [{ version_id: id, percentage: 100 }] });
+  return id;
+}
+/** A made-up id in Cloudflare's shape. */
+function uuid(): string {
+  const h = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h(4)}-${h(2)}-${h(2)}-${h(2)}-${h(6)}`;
+}
 
 /** Which deploy step a call belongs to (for mock-fail-<step>). */
 function stepOf(method: string, path: string): string {
@@ -694,6 +741,8 @@ function seedFleet(state: MockState) {
   state.secrets.erga = { SESSION_SECRET: "production-session-secret", GITHUB_CLIENT_SECRET: "production-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET };
   state.scripts["erga-builder"] = { metadata: { main_module: "worker.js", bindings: [] }, modules: ["worker.js"], workersDev: false, tags: [], namespaces: ["Builder"] };
   state.versions = { erga: 1, "erga-builder": 1 };
+  deployVersion(state, "erga", state.scripts.erga);
+  deployVersion(state, "erga-builder", state.scripts["erga-builder"]);
   state.domains.push({ hostname: "erga.dev", service: "erga", zone_id: state.zones[0].id });
   state.routes[state.zones[1].id] = [{ pattern: "*.erga-pages.dev/*", script: "erga" }];
   state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.erga-pages.dev", content: "100::", proxied: true }];

@@ -127,6 +127,8 @@ export class Pipeline extends DurableObject<Env> {
   historyOf(name: string, limit?: number): Promise<DeployRecord[] | null> { return this.deploys.historyOf(name, limit); }
   hook(branch: string, commit: string, trigger?: string): Promise<void> { return this.deploys.hook(branch, commit, trigger); }
   redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
+  /** Back to the Worker version before the live deploy (POST /api/deploys/<name>/rollback). */
+  rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }) { return this.deploys.remoteHook(name, body); }
   async alarm(): Promise<void> { await Promise.all([this.deploys.alarm(), this.peer?.alarm()]); }
 

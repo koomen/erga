@@ -89,7 +89,8 @@ describe("staging", () => {
     const all = Object.keys(release.migrations).sort(), newer = all.filter((n) => !prod.migrations.includes(n));
     expect(db.migrations).toEqual([...prod.migrations, ...newer]);
     expect(db.migrations).toEqual(all);
-    expect(steps).toContain(`${newer.length ? `migrations:done applied ${newer.join(", ")}` : "migrations:done already up to date"}; no API keys of its own to keep`);
+    // The restore point is recorded first (staging's Worker is new here: no version to go back to; the copy's bookmark).
+    expect(steps.find((s) => s.startsWith("migrations:done"))).toMatch(new RegExp(`^${newer.length ? `migrations:done applied ${newer.join(", ")}` : "migrations:done already up to date"}; restore point: no version, database bookmark \\S+; no API keys of its own to keep$`));
 
     // Its own Worker: bound to its database, its settings, its secrets, the builder; Durable Objects of its own (a new Worker: no tombstone).
     const b = bindingsOf(mock.state, "erga-staging");
@@ -454,6 +455,77 @@ describe("branches deploy themselves", () => {
     expect(await server.instance.redeploy("nope")).toMatchObject({ ok: false, status: 404 });
     expect(writesToProduction(mock.state)).toEqual([]);
     expect(productionOf(mock.state)).toBe(before);
+  });
+
+  test("a rollback: the version before the live deploy serves again, in one call; recorded as a live deploy of its own, which a second rollback undoes", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    // Nothing live yet (the first deploy came from a machine): nothing to roll back from.
+    expect(await server.instance.rollback("staging")).toMatchObject({ ok: false, status: 409, error: expect.stringContaining("no live deploy") });
+    await server.instance.hook("staging", SHA2, "push by ada");
+    await server.settle();
+    await server.instance.hook("staging", SHA3, "push by bo");
+    await server.settle();
+    expect(server.version()).toBe(SHA3.slice(0, 12));
+    const [third, second] = (await server.instance.historyOf("staging"))!;
+    // Each deploy's restore point: the Worker version and release before it, and the database's bookmark.
+    expect(second.restore).toMatchObject({ versionId: expect.stringMatching(/^[0-9a-f-]{36}$/), version: SHA1.slice(0, 12), bookmark: expect.stringMatching(/\S+/), commit: null });
+    expect(third.restore).toMatchObject({ versionId: expect.stringMatching(/^[0-9a-f-]{36}$/), version: SHA2.slice(0, 12), commit: SHA2 });
+    const calls = mock.state.calls.length;
+
+    const back = await server.instance.rollback("staging", "rollback by cy");
+    expect(back.ok).toBe(true);
+    // One call to Cloudflare (a deployment of the older version), no build: the older release answers.
+    expect(mock.state.calls.slice(calls).filter((c) => c.startsWith("POST"))).toEqual([`POST /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-staging/deployments?force=true`]);
+    expect(builder.built).toEqual([SHA2, SHA3]);
+    expect(server.version()).toBe(SHA2.slice(0, 12));
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA2, commit: SHA2, error: null });
+    expect(t.steps.map((x) => `${x.id}:${x.status}`)).toEqual(["rollback:done"]);
+    const [rollback, undone] = (await server.instance.historyOf("staging"))!;
+    expect(rollback).toMatchObject({ id: expect.stringContaining("-rollback"), commit: SHA2, state: "deployed", live: true, rollbackOf: third.id, trigger: expect.stringContaining("rollback by cy: back to " + SHA2.slice(0, 12)) });
+    expect(undone).toMatchObject({ id: third.id, state: "rolled-back", rolledBackBy: rollback.id, live: false });
+    expect(rollback.restore).toMatchObject({ versionId: expect.stringMatching(/^[0-9a-f-]{36}$/), version: SHA3.slice(0, 12), commit: SHA3 });
+    const log = (await server.instance.logOf("staging"))!;
+    expect(log).toMatchObject({ deployId: rollback.id, state: "deployed", live: true, rollbackOf: third.id });
+    expect(log.lines.map((l) => l.step)).toEqual(log.lines.map(() => "rollback"));
+    expect(log.lines.at(-1)!.text).toContain(`rolled back: https://staging.erga.dev serves ${SHA2.slice(0, 12)}`);
+
+    // The rollback's own restore point is the version it undid: a second rollback rolls forward.
+    expect((await server.instance.rollback("staging", "rollback by cy")).ok).toBe(true);
+    expect(server.version()).toBe(SHA3.slice(0, 12));
+    expect((await server.status("staging")).deployed).toBe(SHA3);
+    // Refused: a target this server doesn't deploy, no such target, and while a deploy runs.
+    expect(await server.instance.rollback("production")).toMatchObject({ ok: false, status: 409 });
+    expect(await server.instance.rollback("nope")).toMatchObject({ ok: false, status: 404 });
+    const slow = mockBuilder(async () => release, { delayMs: 30 });
+    const busy = new Server(mock, slow, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    await busy.instance.hook("staging", SHA1, "push by ada");
+    const running = busy.instance.alarm();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(await busy.instance.rollback("staging")).toMatchObject({ ok: false, status: 409, error: expect.stringContaining("is running") });
+    await running;
+    await busy.settle();
+  });
+
+  test("a release that answers its version but fails its health check: the deploy fails at the live step, and says what failed", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    expect((await server.status("staging")).steps.find((x) => x.id == "live")!.detail).toMatch(/healthy \(db ok 1 ms, documents ok 2 ms\)$/);
+    mock.state.unhealthy = [SHA3.slice(0, 12)];
+    await server.instance.hook("staging", SHA3);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "failed", commit: SHA3, deployed: SHA2 });
+    expect(t.error).toContain("Stopped at “Wait for it to answer”.");
+    expect(t.error).toContain(`Release ${SHA3.slice(0, 12)} is up at https://staging.erga.dev, but its health check fails: documents: a document didn't open`);
+    expect(t.steps.find((x) => x.id == "live")!.status).toBe("failed");
   });
 
   test("staging deploys itself: its own pipeline, restarted by its own upload, finished by the new version", async () => {
@@ -1179,7 +1251,7 @@ describe("staging's copy of production's data: frozen, a database of its own eac
     expect(stepOf(t, "database").detail).toMatch(new RegExp(`^kept "${old.name}" .*frozen`));
     expect(stepOf(t, "data")).toMatchObject({ status: "skipped" });
     expect(stepOf(t, "documents")).toMatchObject({ status: "skipped" });
-    expect(stepOf(t, "migrations")).toMatchObject({ status: "done", detail: "applied 0999_new_table.sql" });
+    expect(stepOf(t, "migrations")).toMatchObject({ status: "done", detail: expect.stringMatching(/^applied 0999_new_table.sql; restore point: version [0-9a-f]{8} \(release \w+\), database bookmark \S+$/) });
     expect(exports(mock)).toBe(seen);
     // The same database, its rows kept, the migration applied and recorded; staging's own edit kept.
     const db = stagingDbOf(mock.state);
