@@ -49,6 +49,7 @@ import { ALL_STEPS, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployErr
 import { sourceFor, type Source } from "./source";
 import { CONTROL, CONTROL_ENTRYPOINT, deployNames, isDeployName, PRODUCTION, specOf, TARGETS, type DeployName, type TargetSpec } from "./targets";
 import { controlTarget } from "./control";
+import type { Credential, CredentialStatus } from "./credential";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
@@ -117,8 +118,6 @@ export interface Builder {
 /** The control Worker's settings and secrets the branch deploys use. */
 export interface DeployEnv {
   CLOUDFLARE_ACCOUNT_ID?: string;
-  /** The deploy token (deploy/server-tokens.ts: Editor on the Workers it may deploy, D1, read on their zones). Its presence turns branch deploys on. */
-  CLOUDFLARE_DEPLOY_TOKEN?: string;
   /** Shared with production and staging: reads production's documents, writes staging's. */
   SNAPSHOT_TOKEN?: string;
 }
@@ -126,6 +125,8 @@ export interface DeployEnv {
 export interface Deps {
   storage: { get<T>(key: string): Promise<T | undefined>; put(key: string, value: unknown): Promise<void>; delete?(key: string): Promise<unknown> };
   env: DeployEnv;
+  /** Cloudflare's credential: the OAuth grant an admin connected (deploy/credential.ts), or a token given outright. */
+  credential: Credential;
   /** Cloudflare's API, and the other servers (the deployed one, production's snapshot, another target's hook). */
   net: Fetch;
   builder: Builder | null;
@@ -198,10 +199,17 @@ export class BranchDeploys {
 
   constructor(private deps: Deps) { this.now = deps.now ?? Date.now; }
 
+  /** Cloudflare's API with the credential's token, fresh (refreshed when it's about to expire; a DeployError says why not). */
+  private async cf(): Promise<Cloudflare> { return new Cloudflare(await this.deps.credential.token(), this.deps.net); }
+
+  /** The credential, as GET /api/deploys and /install show it. */
+  credential(): Promise<CredentialStatus> { return this.deps.credential.status(); }
+
   /** Why `name` can't be deployed from here, or null if it can. */
-  notReady(name: DeployName): string | null {
+  async notReady(name: DeployName): Promise<string | null> {
     const e = this.deps.env;
-    if (!e.CLOUDFLARE_DEPLOY_TOKEN?.trim()) return `Deploys aren't set up on this server (no CLOUDFLARE_DEPLOY_TOKEN): nothing is deployed. bun deploy/setup.ts sets up ${CONTROL.worker}.`;
+    const credential = await this.deps.credential.status();
+    if (credential.problem) return `Nothing is deployed: ${credential.problem}`;
     if (!/^[0-9a-f]{32}$/.test(e.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "")) return "This server doesn't know its Cloudflare account (CLOUDFLARE_ACCOUNT_ID).";
     if (!this.deps.builder) return "This server has no build container (control/builder/).";
     if (specOf(name).snapshotFrom && !(e.SNAPSHOT_TOKEN?.trim().length! >= 32)) return "Staging copies production's data, which needs SNAPSHOT_TOKEN here and on both servers (deploy/setup.ts).";
@@ -346,7 +354,7 @@ export class BranchDeploys {
    * Every target, as GET /api/deploys answers it. With `history`, each
    * target's last that many deploys too (`history`, newest first).
    */
-  async status(o: { history?: number } = {}): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[] }> {
+  async status(o: { history?: number } = {}): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[]; credential: CredentialStatus }> {
     const targets: (TargetStatus & { history?: DeployRecord[] })[] = [];
     const limit = o.history ? Math.max(1, Math.min(HISTORY_KEEP, Math.floor(o.history))) : 0;
     for (const name of deployNames) {
@@ -354,7 +362,7 @@ export class BranchDeploys {
       if (limit) local.history = await this.localHistory(name, limit);
       targets.push(local);
     }
-    return { targets };
+    return { targets, credential: await this.deps.credential.status() };
   }
 
   /**
@@ -394,7 +402,7 @@ export class BranchDeploys {
    */
   async rollback(name: string, trigger = "rollback"): Promise<{ ok: true; status: TargetStatus } | { ok: false; error: string; status?: number }> {
     if (!isDeployName(name)) return { ok: false, error: `There's no deploy target called ${name}.`, status: 404 };
-    const wrong = this.notReady(name);
+    const wrong = await this.notReady(name);
     if (wrong) return { ok: false, error: wrong, status: 409 };
     const s = await this.load(name);
     if (s.run || this.running == name) return { ok: false, error: `A deploy of ${name} is running: wait for it to end (or push again to replace it), then roll back.`, status: 409 };
@@ -402,7 +410,7 @@ export class BranchDeploys {
     const live = list.find((r) => r.id == s.status.liveDeploy) ?? null;
     const restore = live?.restore;
     if (!live || !restore?.versionId) return { ok: false, error: live ? `The live deploy (${live.commit.slice(0, 12)}) has no restore point: it was made before restore points were recorded, or its Worker was new. Deploy an earlier commit instead.` : `${name} has no live deploy to roll back from.`, status: 409 };
-    const cf = new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net);
+    const cf = await this.cf();
     const target = targetFor(name, this.deps.env);
     // What serves now, so the rollback can itself be undone.
     const from = await liveVersion(cf, target.accountId, target.workerName).catch(() => null);
@@ -452,7 +460,7 @@ export class BranchDeploys {
   }
 
   private async enqueue(name: DeployName, commit: string, why: string, trigger: string, o: { fresh?: boolean } = {}): Promise<void> {
-    const wrong = this.notReady(name);
+    const wrong = await this.notReady(name);
     // A fresh copy asked for stays asked for when a newer commit takes the waiting one's place.
     const was = await this.queue(name);
     const fresh = !wrong && (!!o.fresh || (!!was.pending && !!was.fresh));
@@ -487,7 +495,7 @@ export class BranchDeploys {
       const s = await this.load(name);
       if (s.run) await this.resume(s);
       const next = await this.load(name);
-      if (next.status.pending && !this.notReady(name)) await this.deploy(next, next.status.pending);
+      if (next.status.pending && !(await this.notReady(name))) await this.deploy(next, next.status.pending);
     }
   }
 
@@ -520,7 +528,7 @@ export class BranchDeploys {
     this.line(s, `deploying ${commit.slice(0, 12)} (${spec.branch}) to ${spec.host}: ${trigger}${replaced ? `, in place of the cancelled deploy ${replaced.id}` : ""}${attempt > 1 ? ` (attempt ${attempt} of ${ATTEMPTS})` : ""}`);
     await this.save(s);
     try {
-      const cf = new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net);
+      const cf = await this.cf();
       const accountId = this.deps.env.CLOUDFLARE_ACCOUNT_ID!.trim();
       // Staging's copy of production's data (the account, a new database beside the one staging runs on, production's
       // database copied in) runs while the commit builds: those steps need no release, and change nothing staging
@@ -591,7 +599,7 @@ export class BranchDeploys {
     // Stopped at the upload itself: done if the Worker there is this run's release (the restart came before its end was kept).
     if (run.cursor == "worker" && run.carry.version) {
       const target = targetFor(name, this.deps.env);
-      const there = await workerVersion(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), target.accountId, target.workerName).catch(() => null);
+      const there = await this.cf().then((cf) => workerVersion(cf, target.accountId, target.workerName)).catch(() => null);
       if (there == run.carry.version) { step(s, "worker", "done", `${target.workerName}, release ${there}`); this.line(s, `Upload the Worker, with its settings and secrets: done (release ${there} is up)`, "worker"); const ids = stepsFor(target).map((x) => x.id); run.cursor = ids[ids.indexOf("worker") + 1] ?? null; }
     }
     const past = run.cursor != null && order.indexOf(run.cursor) > order.indexOf("worker");
@@ -630,7 +638,7 @@ export class BranchDeploys {
     const run = s.run!;
     const target = targetFor(s.status.name, this.deps.env, run.fresh);
     const steps = stepsFor(target).map((x) => x.id);
-    await runPipeline(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), release, target, {
+    await runPipeline(await this.cf(), release, target, {
       site: this.deps.net, sleep: this.deps.sleep, waitMs: this.deps.waitMs, signal,
       from: from ?? undefined, until, carry: run.carry,
       report: (id, status, detail) => {
@@ -665,7 +673,7 @@ export class BranchDeploys {
     const order = ALL_STEPS.map((x) => x.id) as StepId[];
     if (run.cursor && order.indexOf(run.cursor) > order.indexOf("worker")) return;
     const target = targetFor(s.status.name, this.deps.env);
-    const gone = await dropCopies(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), target, null).catch(() => null);
+    const gone = await this.cf().then((cf) => dropCopies(cf, target, null)).catch(() => null);
     if (gone?.length) this.line(s, `deleted the copy this deploy made, which nothing uses: ${gone.join(", ")}`);
   }
 
@@ -709,7 +717,7 @@ export class BranchDeploys {
     const rec = list.find((r) => r.id == run.deployId);
     if (rec) { rec.error = s.status.error; await this.putRecords(name, list); }
     try {
-      await rollbackTo(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), targetFor(name, this.deps.env), restore.versionId, `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`);
+      await rollbackTo(await this.cf(), targetFor(name, this.deps.env), restore.versionId, `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`);
     } catch (e) {
       const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
       console.log(`the rollback of ${name} failed: ${message}`);

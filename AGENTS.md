@@ -15,7 +15,10 @@ origin is https://erga.dev/git/erga.git still works (erga.dev redirects Git
 there, and Git says so once).
 Production (erga.dev) deploys when `main` moves to a staging commit: Merge
 on https://ops.erga.dev/, the admin agent's `deploy_production`, the API, or
-a push to `main`. After production, the control Worker deploys itself from
+a push to `main`. The control Worker deploys with an OAuth grant an admin
+gave once at https://ops.erga.dev/install (no API token anywhere); if that
+page says "Not connected", nothing deploys until an admin consents again.
+After production, the control Worker deploys itself from
 the same commit (`deploy/control.ts`): a change under `control/` reaches
 ops.erga.dev when it reaches `main`. Each deploy checks the target's health
 and rolls back by itself when it fails; Roll back on a deploy's log does it

@@ -59,6 +59,8 @@ export interface Env {
    */
   CLOUDFLARE_OAUTH_CLIENT_ID?: string;
   CLOUDFLARE_OAUTH_SCOPES?: string;
+  /** The same client's secret, if it was made confidential (a public PKCE client has none). */
+  CLOUDFLARE_OAUTH_CLIENT_SECRET?: string;
   /**
    * Where documents' pages run: one origin each under this domain
    * (<id>-<owner>.<PAGES_DOMAIN>, a wildcard route), erga-pages.dev when
@@ -80,7 +82,6 @@ export interface Env {
   /** The Cloudflare account the server is in (the pipeline sets it): where it deploys itself. */
   CLOUDFLARE_ACCOUNT_ID?: string;
   /** A secret: the API token the server deploys itself with. Branch deploys run only when it's set. */
-  CLOUDFLARE_DEPLOY_TOKEN?: string;
   /** A secret, the same on production and staging: production's read-only snapshot endpoint takes it, and staging's import. */
   SNAPSHOT_TOKEN?: string;
   /** "1" on staging: the server takes snapshots in (never on production). */

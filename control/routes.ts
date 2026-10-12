@@ -11,6 +11,11 @@
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
 //   /auth/github[/callback], /auth/logout   signing in (this Worker's own GitHub app) and out
 //   GET /api/health             {ok, worker: "control", version (the release), build (the version id)}: anyone
+//   /install                    the Cloudflare credential: its status, and Connect (a consent in the browser: deploy/credential.ts)
+//   POST /install/start         to Cloudflare's consent page (PKCE; the state and verifier in a short cookie)
+//   GET  /install/callback      back from it: the code exchanged, the grant kept, checked with one read
+//   POST /install/disconnect    the grant revoked and forgotten
+//   GET  /api/install           the credential's status, as JSON
 //   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
 //
 // Everything but sign-in, the health check, Git reads and the stylesheet
@@ -18,6 +23,9 @@
 // admin-scope token made on the app. A broken app changes nothing here: the
 // admins and their tokens are read from production's database directly.
 
+import { authorizeUrl, CONTROL_OAUTH_SCOPES, exchangeCode, pkce, randomToken, type CredentialStatus } from "../deploy/credential.ts";
+import { mockConsentPage } from "../deploy/page.ts";
+import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
 import type { AdminLayout } from "../server/admin/layout.ts";
@@ -36,11 +44,14 @@ export interface Control {
   /** This Worker's release (the commit its own deploy set, else its version id), and its version id, for /api/health. */
   version: string | null;
   build?: string | null;
+  /** The Cloudflare credential's consent (/install): Erga's OAuth client, the account, Cloudflare (or the mock) and this Worker's name. */
+  oauth: { clientId: string; secret?: string; accountId: string; worker: string; net: Fetch; mock?: boolean };
 }
 
 /** The paths these routes own (the app answers them with a redirect to the control Worker when it is apart). */
 export const isControlPath = (path: string) =>
-  path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/");
+  path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
+  || path == "/install" || path.startsWith("/install/") || path == "/api/install";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
@@ -87,7 +98,88 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   }
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
+  if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
   return wantsPage ? page("Not found", `There's nothing here. <a href="/">The Source page</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
+}
+
+// ---------------------------------------------------------------- /install: the Cloudflare credential
+
+const INSTALL_COOKIE = "erga_install";
+const installCookie = (value: string, maxAge: number) => `${INSTALL_COOKIE}=${value}; Max-Age=${maxAge}; Path=/install; HttpOnly; Secure; SameSite=Lax`;
+const cookieOf = (request: Request, name: string) => request.headers.get("cookie")?.split(/;\s*/).map((c) => c.split("=")).find(([k]) => k == name)?.slice(1).join("=") ?? "";
+
+async function installRoutes(request: Request, url: URL, c: Control, session: AdminLayout["session"]): Promise<Response> {
+  const login = session.login;
+  const path = url.pathname.replace(/\/+$/, "");
+  const method = request.method;
+  const redirect = `${url.origin}/install/callback`;
+  const back = (q: Record<string, string>, ...setCookies: string[]) => {
+    const headers = new Headers({ Location: `/install?${new URLSearchParams(q)}`, "Cache-Control": "no-store" });
+    for (const x of setCookies) headers.append("Set-Cookie", x);
+    return new Response(null, { status: 302, headers });
+  };
+  if (path == "/api/install" && (method == "GET" || method == "HEAD")) return json(await c.deploys.credentialStatus());
+  if (path == "/install" && (method == "GET" || method == "HEAD")) {
+    return c.layout({ title: "Install", session, style: INSTALL_STYLE, body: installBody(await c.deploys.credentialStatus(), c, url) });
+  }
+  if (method == "POST" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  if (path == "/install/start" && method == "POST") {
+    if (!c.oauth.clientId && !c.oauth.mock) return back({ error: "This control Worker has no OAuth client yet: put its client id in control/wrangler.jsonc (CLOUDFLARE_OAUTH_CLIENT_ID) and deploy it." });
+    const state = randomToken(16), { verifier, challenge } = await pkce();
+    const to = authorizeUrl({ ...(c.oauth.mock ? { authorize: `${url.origin}/install/mock/consent` } : {}), clientId: c.oauth.clientId || "mock", redirect, state, challenge });
+    return new Response(null, { status: 302, headers: { Location: to, "Set-Cookie": installCookie(`${state}.${verifier}`, 600), "Cache-Control": "no-store" } });
+  }
+  if (path == "/install/mock/consent" && c.oauth.mock) return mockConsentPage(url);
+  if (path == "/install/callback" && method == "GET") {
+    const [state, verifier] = cookieOf(request, INSTALL_COOKIE).split(".");
+    const clear = installCookie("", 0);
+    if (url.searchParams.get("error")) return back({ error: `Cloudflare didn't authorize Erga (${url.searchParams.get("error_description") || url.searchParams.get("error")}).` }, clear);
+    if (!state || !verifier || url.searchParams.get("state") != state) return back({ error: "That consent didn't start from this page, or took more than ten minutes: try again." }, clear);
+    try {
+      const answer = await exchangeCode(c.oauth.net, { code: url.searchParams.get("code") ?? "", redirect, verifier, client: { id: c.oauth.clientId || "mock", ...(c.oauth.secret ? { secret: c.oauth.secret } : {}) } });
+      if (!answer.access_token) return back({ error: `Cloudflare gave no token (${answer.error ?? "no answer"}${answer.error_description ? `: ${answer.error_description}` : ""}).` }, clear);
+      const token = await c.deploys.connectCredential(answer, login);
+      // One read with it, so the page says at once whether the grant reaches this Worker.
+      const check = await new Cloudflare(token, c.oauth.net).call<{ compatibility_date?: string }>("GET", `/accounts/${c.oauth.accountId}/workers/scripts/${c.oauth.worker}/settings`, `read ${c.oauth.worker}'s settings`)
+        .then(() => "", (e: Error) => e.message);
+      const missing = CONTROL_OAUTH_SCOPES.split(" ").filter((s) => s != "offline_access" && answer.scope && !answer.scope.split(/\s+/).includes(s));
+      return back({ ok: "1", ...(check ? { check } : {}), ...(missing.length ? { missing: missing.join(" ") } : {}), ...(answer.refresh_token ? {} : { norefresh: "1" }) }, clear);
+    } catch (e) { return back({ error: (e as Error).message }, clear); }
+  }
+  if (path == "/install/disconnect" && method == "POST") { await c.deploys.disconnectCredential(); return back({ disconnected: "1" }); }
+  return json({ error: "Not found" }, 404);
+}
+
+const INSTALL_STYLE = `
+  .install { max-width: 640px; padding: 8px 8px 24px; }
+  .install h1 { font-size: 20px; margin: 8px 0 12px; }
+  .install p { line-height: 1.5; }
+  .install .state { padding: 12px 14px; border-radius: 8px; background: var(--panel, #f4f4f4); }
+  .install .ok { color: var(--ok, #1a7f37); } .install .bad { color: var(--danger, #b42318); }
+  .install form { display: inline; } .install button { margin-right: 8px; }
+  .install code { font-size: 12px; overflow-wrap: anywhere; }`;
+
+const when = (ms: number | null) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "");
+
+/** The page: the grant's state, what a consent gives, the buttons. */
+function installBody(s: CredentialStatus, c: Control, url: URL): string {
+  const q = url.searchParams;
+  const notes: string[] = [];
+  if (q.get("ok")) notes.push(`<p class="ok">Connected. ${q.get("check") ? `<span class="bad">But the first read with it failed: ${esc(q.get("check")!)}</span>` : `The grant reads ${esc(c.oauth.worker)}'s settings: it works.`}${q.get("missing") ? ` <span class="bad">Cloudflare granted fewer scopes than asked: missing ${esc(q.get("missing")!)}. Deploys that need them will fail; add them to the OAuth client and connect again.</span>` : ""}${q.get("norefresh") ? ` <span class="bad">No refresh token came: the grant ends in an hour. The client needs the Refresh Token grant and the offline_access scope.</span>` : ""}</p>`);
+  if (q.get("error")) notes.push(`<p class="bad">${esc(q.get("error")!)}</p>`);
+  if (q.get("disconnected")) notes.push(`<p>Disconnected: the grant is revoked and forgotten. Nothing deploys until an admin connects again.</p>`);
+  const state = s.connected
+    ? `<p class="ok"><b>Connected</b> by ${esc(s.by ?? "?")} on ${when(s.at)}.</p><p>Access token good until ${when(s.expiresAt)}${s.refreshedAt ? `; last refreshed ${when(s.refreshedAt)}` : ""}. Scopes: <code>${esc(s.scopes.join(" ") || "(not listed)")}</code></p>`
+    : `<p class="bad"><b>Not connected.</b> ${esc(s.problem ?? "")}</p>${s.by ? `<p>Last connected by ${esc(s.by)} on ${when(s.at)}.</p>` : ""}`;
+  return `<div class="install">
+  <h1>Cloudflare credential</h1>
+  ${notes.join("\n")}
+  <div class="state">${state}</div>
+  <p>The control Worker deploys with an OAuth grant: an admin signs in to Cloudflare in the browser and consents once to Erga's scopes. The grant refreshes itself before each deploy. Revoke it any time on Cloudflare (My Profile › Manage OAuth authorizations), or here.</p>
+  <p>Scopes asked for: <code>${esc(CONTROL_OAUTH_SCOPES)}</code></p>
+  <p>Client: ${c.oauth.clientId ? `<code>${esc(c.oauth.clientId)}</code>` : c.oauth.mock ? "the mock's" : `<span class="bad">none yet (CLOUDFLARE_OAUTH_CLIENT_ID in control/wrangler.jsonc)</span>`}; account <code>${esc(c.oauth.accountId)}</code>.</p>
+  <p><form method="post" action="/install/start"><button type="submit" class="primary">${s.connected ? "Connect again" : "Connect Cloudflare"}</button></form>${s.connected || s.by ? `<form method="post" action="/install/disconnect"><button type="submit">Disconnect</button></form>` : ""} <a href="/">Source page</a></p>
+</div>`;
 }
 
 /** The control Worker's own page shell: the app's look (its stylesheet, fetched through this Worker), a small header, the page. */

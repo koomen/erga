@@ -23,6 +23,7 @@
 // admin-scope token; a test person never. The caller (the control Worker's
 // gate, or the app's in local development) has checked that already.
 
+import type { CredentialStatus, TokenAnswer } from "../../deploy/credential.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../platform.ts";
 import { whoOf } from "../platform.ts";
@@ -31,6 +32,10 @@ import type { DashboardDeploys } from "../admin/index.ts";
 /** The pipeline's object, as these routes need it: the dashboard's calls, a target's history, and the event stream. */
 export interface DeploysObject extends DashboardDeploys {
   historyOf(name: string, limit?: number): Promise<object[] | null>;
+  /** The Cloudflare credential (deploy/credential.ts): its status; a consent's grant kept; forgotten (the control Worker's /install). */
+  credentialStatus(): Promise<CredentialStatus>;
+  connectCredential(answer: TokenAnswer, by: string): Promise<string>;
+  disconnectCredential(): Promise<void>;
   /** GET /api/events: the stream. */
   fetch(request: Request): Promise<Response>;
 }

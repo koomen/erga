@@ -10,7 +10,7 @@
 // ops.erga.dev, control/), which holds Erga's repository, the pipeline, the
 // Source page and the build container, apart from the app, so a broken app
 // never takes the way to fix it down with it. It is the one Worker in the
-// account that deploys, with the one deploy token (deploy/server-tokens.ts).
+// account that deploys, with the one credential: an admin's OAuth grant (deploy/credential.ts).
 //
 // Both targets are in the same Cloudflare account (its id is the Worker's
 // CLOUDFLARE_ACCOUNT_ID, or the environment's for deploy/run.ts). Staging

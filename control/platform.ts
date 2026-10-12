@@ -46,9 +46,13 @@ export interface ControlEnv {
   GITHUB_CLIENT_SECRET?: string;
   /** Signs this Worker's own session cookies (not production's secret). */
   SESSION_SECRET: string;
-  /** The deploy token (deploy/server-tokens.ts), and the token staging's data copy goes through. */
-  CLOUDFLARE_DEPLOY_TOKEN?: string;
+  /** Erga's OAuth client on Cloudflare ("Erga", public, PKCE: deploy/credential.ts): its id, and a secret only if it was made confidential. */
+  CLOUDFLARE_OAUTH_CLIENT_ID?: string;
+  CLOUDFLARE_OAUTH_CLIENT_SECRET?: string;
+  /** The token staging's data copy goes through. */
   SNAPSHOT_TOKEN?: string;
+  /** Local development only: the mock Cloudflare, consent included. */
+  ERGA_DEPLOY_MOCK?: string;
   /** The GitHub mirror: where, and a token that may push there. */
   GITHUB_MIRROR_URL?: string;
   GITHUB_MIRROR_TOKEN?: string;

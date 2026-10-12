@@ -18,6 +18,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type TargetStatus } from "../deploy/branches";
+import { fixedCredential, OAuthCredential, sealKeyFrom, type CredentialStatus, type TokenAnswer } from "../deploy/credential";
 import { loadRelease, type Release } from "../deploy/pipeline";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import { containerBuilder } from "../control/builder/client";
@@ -30,6 +31,7 @@ export type RelayEvent = { type: string } & Record<string, unknown>;
 
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
+  private credential: ReturnType<typeof fixedCredential> | OAuthCredential;
   private listeners = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private beat: ReturnType<typeof setInterval> | null = null;
 
@@ -37,8 +39,8 @@ export class Pipeline extends DurableObject<Env> {
     super(ctx, env);
     const mock = env.ERGA_DEPLOY_MOCK == "1";
     const deployEnv: DeployEnv = mock
-      ? { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, CLOUDFLARE_DEPLOY_TOKEN: "mock-dev-deploys", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN }
-      : { CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_DEPLOY_TOKEN: env.CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN: env.SNAPSHOT_TOKEN };
+      ? { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN }
+      : { CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID, SNAPSHOT_TOKEN: env.SNAPSHOT_TOKEN };
     const release = async (): Promise<Release> => {
       const r = await loadRelease(async (path) => {
         const res = await env.ASSETS.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
@@ -54,6 +56,15 @@ export class Pipeline extends DurableObject<Env> {
       return !!view?.branches.some((b: { commits: { sha: string; subject: string }[] }) => b.commits.some((c) => c.sha == commit && c.subject.includes("[mock-fail]")));
     };
     const fleet = mock ? mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25 }) : null;
+    const net = fleet ? fleet.fetch : globalThis.fetch.bind(globalThis);
+    // The Cloudflare credential: the OAuth grant an admin connected at /install (kept in this object's storage, sealed).
+    // Under the mock with no client, a token the mock takes, so the dev server deploys with no consent.
+    const clientId = env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "";
+    this.credential = mock && !clientId ? fixedCredential("mock-dev-deploys", "the mock") : new OAuthCredential({
+      storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v), delete: (k) => ctx.storage.delete(k) },
+      net, client: { id: clientId || "mock", ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}) },
+      sealKey: sealKeyFrom(env.SESSION_SECRET ?? ""), log: (l) => console.log(l),
+    });
     const schedule = async (ms: number) => {
       const at = Date.now() + ms;
       const now = await ctx.storage.getAlarm();
@@ -62,7 +73,8 @@ export class Pipeline extends DurableObject<Env> {
     this.deploys = new BranchDeploys({
       storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v), delete: (k) => ctx.storage.delete(k) },
       env: deployEnv,
-      net: fleet ? fleet.fetch : globalThis.fetch.bind(globalThis),
+      credential: this.credential,
+      net,
       // The build container, in this Worker (the control Worker's BUILDS objects), or the mock.
       builder: mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDS ? containerBuilder({ fetch: (input, init) => builderFetch(new Request(input, init), env as never, (p) => ctx.waitUntil(p)) }) : null,
       schedule,
@@ -78,7 +90,14 @@ export class Pipeline extends DurableObject<Env> {
     });
   }
 
-  status(history = 0): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[] }> { return this.deploys.status({ history }); }
+  status(history = 0): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[]; credential: CredentialStatus }> { return this.deploys.status({ history }); }
+  // The Cloudflare credential (deploy/credential.ts): its status, a consent's grant kept, and forgotten (control/routes.ts, /install).
+  credentialStatus(): Promise<CredentialStatus> { return this.deploys.credential(); }
+  connectCredential(answer: TokenAnswer, by: string): Promise<string> {
+    if (!(this.credential instanceof OAuthCredential)) throw new Error("This server deploys with a fixed token: there's nothing to connect.");
+    return this.credential.connect(answer, by);
+  }
+  async disconnectCredential(): Promise<void> { if (this.credential instanceof OAuthCredential) await this.credential.disconnect(); }
   logOf(name: string, deployId?: string): Promise<DeployLog | null> { return this.deploys.logOf(name, deployId); }
   historyOf(name: string, limit?: number): Promise<DeployRecord[] | null> { return this.deploys.historyOf(name, limit); }
   hook(branch: string, commit: string, trigger?: string): Promise<void> { return this.deploys.hook(branch, commit, trigger); }

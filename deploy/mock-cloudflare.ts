@@ -83,6 +83,10 @@ export interface MockState {
   deletedDatabases: string[];
   /** Releases (ERGA_VERSION values) whose /api/health answers ok false: a test's broken deploy. */
   unhealthy?: string[];
+  /** OAuth: the refresh tokens still good (each refresh rotates), how many grants were given, and how long an access token lasts. */
+  refreshTokens: string[];
+  oauthGrants: number;
+  oauthExpiresIn?: number;
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
   failNext: string | null;
   /** Account API tokens made through the API (their values aren't here: only the tests read them, from `tokenValues`). */
@@ -95,7 +99,7 @@ interface TokenPolicy { effect: string; permission_groups: { id: string; name?: 
 /** A policy's resource keys, a Worker's nested under its account. */
 const keysOf = (p: TokenPolicy) => Object.entries(p.resources ?? {}).flatMap(([k, v]) => (typeof v == "string" ? [k] : Object.keys(v)));
 
-/** The permission groups the mock knows, by id (Cloudflare's ids: deploy/server-tokens.ts KNOWN_IDS). */
+/** The permission groups the mock knows, by id (Cloudflare's ids). */
 const GROUPS: Record<string, string> = {
   "7e79ec33834341f28dd431ab73884400": "Individual Workers Editor",
   "bdbcd690c763475a985e8641dddc09f7": "Workers Containers Write",
@@ -140,6 +144,8 @@ const COMPLETE = jwt({ kind: "complete" });
 
 /** Erga's own account in the fleet mock (deploy/branches.ts's tests and the dev server's ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
+/** What the mock's consent grants (deploy/credential.ts CONTROL_OAUTH_SCOPES, as Cloudflare echoes them in the token's `scope`). */
+export const MOCK_OAUTH_SCOPES = "workers-scripts.edit containers.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
 export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 /** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
 export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef0123456789";
@@ -157,7 +163,7 @@ export function mockCloudflare(opts: {
   /**
    * Whether a token made through the API (mock-scoped-…) without Workers Containers Write may upload a version
    * that names a container's class. Cloudflare's answer isn't known yet: "refuse" (the default) plays the cautious
-   * one, which is why the deploy token's plan has that permission (deploy/server-tokens.ts).
+   * one. (Erga deploys with an OAuth grant now, deploy/credential.ts; the mock's tokens stay for the API's shape.)
    */
   scopedContainers?: "refuse" | "accept";
 } = {}): { fetch: Fetch; state: MockState; tokenValues: Map<string, string> } {
@@ -166,7 +172,7 @@ export function mockCloudflare(opts: {
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
     databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
-    secrets: {}, docs: {}, versions: {}, kept: {}, deployments: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} },
+    secrets: {}, docs: {}, versions: {}, kept: {}, deployments: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} }, refreshTokens: [], oauthGrants: 0,
   };
   /** Tokens' values, by token id (never in `state`). */
   const tokenValues = new Map<string, string>();
@@ -650,12 +656,26 @@ export function mockCloudflare(opts: {
     const req = new Request(input, init);
     const url = new URL(req.url);
     if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
+    // Cloudflare's OAuth: a code (always mock-code) for a grant, a refresh token for a new access token (the refresh token
+    // rotated, as Cloudflare's are), and revoke. The access tokens it gives are the mock's full-access ones.
     if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/token" && req.method == "POST") {
       const form = new URLSearchParams(await req.text());
+      const grant = (scope: string) => { const refresh = `mock-refresh-${hex(8)}`; state.refreshTokens.push(refresh); state.oauthGrants++; return Response.json({ access_token: `mock-oauth-${hex(8)}`, token_type: "bearer", expires_in: state.oauthExpiresIn ?? 3600, refresh_token: refresh, scope }); };
+      if (form.get("grant_type") == "refresh_token") {
+        const old = form.get("refresh_token") ?? "";
+        if (!state.refreshTokens.includes(old)) return Response.json({ error: "invalid_grant", error_description: "refresh token revoked or unknown" }, { status: 400 });
+        state.refreshTokens = state.refreshTokens.filter((t) => t != old);
+        return grant(form.get("scope") || MOCK_OAUTH_SCOPES);
+      }
       if (form.get("code") != "mock-code" || !form.get("code_verifier")) return Response.json({ error: "invalid_grant" }, { status: 400 });
-      return Response.json({ access_token: `mock-oauth-${hex(8)}`, token_type: "bearer", expires_in: 3600, scope: form.get("scope") ?? "" });
+      return grant(form.get("scope") || MOCK_OAUTH_SCOPES);
     }
-    if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/revoke" && req.method == "POST") { state.revoked++; return new Response(null, { status: 200 }); }
+    if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/revoke" && req.method == "POST") {
+      const form = new URLSearchParams(await req.text());
+      state.refreshTokens = state.refreshTokens.filter((t) => t != form.get("token"));
+      state.revoked++;
+      return new Response(null, { status: 200 });
+    }
     if (url.origin == "https://api.cloudflare.com") {
       const path = url.pathname.replace(/^\/client\/v4/, "") + url.search;
       const token = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";

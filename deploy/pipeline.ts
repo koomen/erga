@@ -539,7 +539,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   const run: Record<StepId, () => Promise<string | undefined>> = {
     // The account, its workers.dev subdomain (made if it has none and the target names one), and whether the Worker is Erga's.
     async account() {
-      // A narrow token (Erga's own deploy tokens: deploy/server-tokens.ts) may not read the account itself: its id is enough.
+      // A narrow credential (the control Worker's OAuth grant, deploy/credential.ts) may not read the account itself: its id is enough.
       const account = await cf.call<{ id: string; name: string }>("GET", acc, "read your account").catch((e) => {
         if (target.keepSecrets && e instanceof DeployError && e.status == 403) return null;
         throw e;
@@ -851,7 +851,7 @@ const serviceBinding = (name: string, to: string | { service: string; entrypoint
 /**
  * The account's Workers, as the account step needs them (is the target's
  * there, and is it Erga's). A token scoped to some Workers only (Erga's own
- * deploy tokens: deploy/server-tokens.ts) may not list the account's: then the
+ * credential, deploy/credential.ts) may not list the account's: then the
  * target's own settings answer whether it's there and Erga's.
  */
 async function listScripts(cf: Cloudflare, acc: string, target: Target): Promise<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]> {

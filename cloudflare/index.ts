@@ -18,6 +18,8 @@
 import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
 import { controlRoutes, isControlPath } from "../control/routes";
+import { mockCloudflare } from "../deploy/mock-cloudflare";
+import { CONTROL } from "../deploy/targets";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { deployDoor } from "./deploy-routes";
 import { devRoutes } from "./dev";
@@ -55,7 +57,11 @@ export default {
           return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
         }
         // Local development (and a server /deploy made, which has no control Worker): this Worker hosts them.
-        return controlRoutes(request, { platform: p, deploys: env.PIPELINE.getByName("deploys"), app: url.origin, layout: adminResponse, version: env.ERGA_VERSION ?? null });
+        const mock = env.ERGA_DEPLOY_MOCK == "1";
+        return controlRoutes(request, {
+          platform: p, deploys: env.PIPELINE.getByName("deploys"), app: url.origin, layout: adminResponse, version: env.ERGA_VERSION ?? null,
+          oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
+        });
       }
       if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, p);
       return devRoutes(request, env, p, url);

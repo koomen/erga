@@ -177,6 +177,7 @@ function sourceMarkup(c: SourcePageConfig): string {
     <div class="head-actions"><button class="pill" id="mirror-pill" type="button" hidden>GitHub</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
+  <p class="hint" id="credential-hint" role="status" hidden></p>
   <section class="card" aria-label="Commits">
     <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
@@ -350,6 +351,12 @@ const SOURCE_SCRIPT = `
   }
 
   function renderTargets() {
+    // The control Worker's Cloudflare credential (an admin's OAuth grant): a line only when deploys can't run on it.
+    const cred = deploys && deploys.credential, ch = document.getElementById("credential-hint");
+    if (ch) {
+      ch.hidden = !(cred && !cred.connected);
+      if (cred && !cred.connected) { ch.textContent = ""; ch.append("Nothing deploys: " + (cred.problem || "the Cloudflare credential isn't connected.") + " "); const a = document.createElement("a"); a.href = "/install"; a.textContent = "Connect Cloudflare"; ch.append(a); }
+    }
     for (const n of TARGETS) {
       const b = document.getElementById("target-" + n), t = targetOf(n);
       b.className = "target " + (t ? t.state : "");

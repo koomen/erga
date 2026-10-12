@@ -67,7 +67,8 @@ AGENTS.md has the rules for working on it.
                   broken app never takes the way to fix it down (index.ts the entry, routes.ts, wrangler.jsonc;
                   deploy/setup.ts deploys it the first time, then it deploys itself from main: deploy/control.ts). The
                   app reaches it over a service binding; locally the app hosts its routes.
-    deploy/       the deploy pipeline (pipeline.ts, and control.ts for the control Worker's own deploy), branch deploys
+    deploy/       the deploy pipeline (pipeline.ts, and control.ts for the control Worker's own deploy), its Cloudflare
+                  credential (credential.ts: an admin's OAuth grant, consented to at ops.erga.dev/install), branch deploys
                   (branches.ts), the release build (release.ts), the
                   targets (targets.json), the setup runbook (setup.ts), the settings a deploy locks (locked-settings.ts),
                   and the mock Cloudflare the tests use

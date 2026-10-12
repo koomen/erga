@@ -8,8 +8,9 @@
 // its namespace, the container's class named so the container stays). So a
 // change here that adds a Durable Object class, or a change to the image,
 // needs --control again; anything else goes with main. Its secrets
-// (SESSION_SECRET, GITHUB_CLIENT_SECRET, CLOUDFLARE_DEPLOY_TOKEN,
-// SNAPSHOT_TOKEN, GITHUB_MIRROR_TOKEN) are set by the setup, and kept.
+// (SESSION_SECRET, GITHUB_CLIENT_SECRET, SNAPSHOT_TOKEN, GITHUB_MIRROR_TOKEN)
+// are set by the setup, and kept; its Cloudflare credential is an OAuth grant
+// (/install), kept in its pipeline object.
 //
 // The build containers: one per build, up to 4 at once, each standard-4
 // (4 vCPU, 12 GiB, 20 GB disk), the largest Cloudflare Containers offers.
@@ -44,7 +45,10 @@
     "APP_URL": "https://erga.dev",
     "GITHUB_MIRROR_URL": "https://github.com/koomen/erga.git",
     // This Worker's own GitHub OAuth app, "Erga control" (homepage https://ops.erga.dev, callback https://ops.erga.dev/auth/github/callback); its secret is a secret.
-    "GITHUB_CLIENT_ID": "Ov23liMi8ZUqi8nFGN56"
+    "GITHUB_CLIENT_ID": "Ov23liMi8ZUqi8nFGN56",
+    // Erga's OAuth client on Cloudflare ("Erga": Manage account › OAuth clients; redirect https://ops.erga.dev/install/callback). An
+    // admin's consent at /install gives this Worker its deploy credential (deploy/credential.ts). Empty until the client is made.
+    "CLOUDFLARE_OAUTH_CLIENT_ID": ""
   },
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": true } }
 }

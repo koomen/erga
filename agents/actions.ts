@@ -82,6 +82,11 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Source)", tool: "redeploy" },
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
   { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Source)", tool: "rollback" },
+  // The control Worker's Cloudflare credential (control/routes.ts, /install on ops.erga.dev): a consent in the browser.
+  { route: "GET /api/install", domain: "admin", action: "Read whether the control Worker's Cloudflare credential is connected (GET /api/deploys says it too)", tool: "list_deploys" },
+  { route: "POST /install/start", domain: "none", action: "Connect Cloudflare: consent on Cloudflare's own page, in the browser (/install)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },
+  { route: "GET /install/callback", domain: "none", action: "Back from Cloudflare's consent page", exempt: "the consent's own return" },
+  { route: "POST /install/disconnect", domain: "none", action: "Disconnect: revoke and forget the control Worker's Cloudflare credential (/install)", exempt: "a credential's revocation, on the page that holds it; an admin's deliberate act" },
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
   { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
   { route: "GET /admin/deploys", domain: "none", action: "An old address of the dashboard", exempt: "a redirect" },

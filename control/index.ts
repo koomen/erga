@@ -15,6 +15,7 @@
 
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Actor, SourceRead } from "../server/source/index.ts";
+import { CONTROL } from "../deploy/targets";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
 
@@ -53,6 +54,7 @@ export default {
       layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
       version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,
       build: env.CF_VERSION_METADATA?.id ?? null,
+      oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}), accountId: env.CLOUDFLARE_ACCOUNT_ID, worker: CONTROL.worker, net: globalThis.fetch.bind(globalThis), mock: env.ERGA_DEPLOY_MOCK == "1" },
     });
   },
 } satisfies ExportedHandler<ControlEnv>;
