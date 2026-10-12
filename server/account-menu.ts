@@ -11,7 +11,8 @@
 // the avatar at the far right), and says so with `OWN_ACCOUNT`. A document's
 // pages origin never gets it: nothing of the person belongs there.
 
-import { esc, link, safeNext, type Session } from "./routes.ts";
+import { esc, link, safeNext } from "./routes.ts";
+import type { Session } from "./platform.ts";
 import { colorFor } from "../document/content.ts";
 
 /** A response header: this page shows the account itself (the editor), so leave it be. */

@@ -14,7 +14,8 @@ import {
 } from "../deploy/pipeline";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { open, seal } from "../deploy/seal";
-import { pagesHost, pagesOrigin, pagesToken, type Platform } from "../server/routes";
+import { pagesHost, pagesOrigin, pagesToken } from "../server/routes";
+import type { Platform } from "../server/platform";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const ACC = "0123456789abcdef0123456789abcdef";

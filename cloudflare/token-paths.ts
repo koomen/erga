@@ -1,8 +1,7 @@
 // What a token without the admin scope reaches on staging, past the admins-only guard (cloudflare/admins-only.ts lists
 // the exemption and why). Apart from the guard, so the unit tests can load it.
 
-import { RESERVED } from "../server/directory";
-import { ID, OWNER } from "../server/routes";
+import { RESERVED, ID, OWNER } from "../server/directory";
 
 /** The app's own first path segments that RESERVED doesn't list: never a document's owner here. */
 const APP_SEGMENTS = new Set(["deploy", "git", "source"]);

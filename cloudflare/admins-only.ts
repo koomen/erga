@@ -43,7 +43,8 @@
 // (made before this guard, or by another server) is refused.
 
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
-import { esc, page, pagesHost, readPagesClaims, safeNext, whoOf, withTokens } from "../server/routes";
+import { esc, page, pagesHost, readPagesClaims, safeNext } from "../server/routes";
+import { whoOf, withTokens } from "../server/platform";
 import { directoryOf } from "./d1";
 import { isSignInPath } from "./auth-settings";
 import { peer } from "./branch-deploys";

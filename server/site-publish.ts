@@ -30,7 +30,8 @@
 import { Cloudflare, DeployError, uploadAssets, type Fetch } from "../deploy/pipeline.ts";
 import { byLine } from "../shared/attribution.ts";
 import { roleMay, type Directory } from "./directory.ts";
-import { fromElsewhere, whoOf, type Platform } from "./routes.ts";
+import { fromElsewhere } from "./routes.ts";
+import { whoOf, type Platform } from "./platform.ts";
 import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteRow } from "./sites.ts";
 
 /** A site's deploys, as the API gives them. */

@@ -36,9 +36,10 @@
 
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
-import { type Action, type DocRow, type Route, nameOf, roleMay } from "./directory";
+import { type Action, type DocRow, type Route, nameOf, roleMay, ID, newDocId } from "./directory";
 import type { PublishRequest } from "../document/versions";
-import { accessOf, appPage, crumbs, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./routes";
+import { appPage, crumbs, esc, forwarded, fromElsewhere, ICON, makeDoc, page, safeNext, startingFiles, TIMES_SCRIPT } from "./routes";
+import { accessOf, type Platform, type Session, whoOf } from "./platform";
 import { byLine, VIA } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";
 import { cleanRel } from "../document/host";

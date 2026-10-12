@@ -21,7 +21,8 @@ import { ConfigError } from "./settings.ts";
 import { LOCKED } from "./users.ts";
 import { byLine } from "../shared/attribution.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
-import { cloneButton, crumbsFont, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, viewCrumbs, whoOf, type Platform } from "./routes.ts";
+import { cloneButton, crumbsFont, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, viewCrumbs } from "./routes.ts";
+import { whoOf, type Platform } from "./platform.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */

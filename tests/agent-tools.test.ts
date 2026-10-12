@@ -7,7 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql, type Who } from "../server/directory";
 import { agentToolsFor, runServerTool, SERVER_TOOLS, ToolError, toolsFor, type ToolWho } from "../agents/tools";
-import type { Platform } from "../server/routes";
+import type { Platform } from "../server/platform";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 

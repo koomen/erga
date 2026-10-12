@@ -37,7 +37,8 @@
 // and the last admin, who can't be demoted or removed at all.
 
 import { ConfigError, type ConfigEntry, type SettingChange, type Settings, type SettingsVersion } from "../settings.ts";
-import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "../routes.ts";
+import { esc, ICON, link, page, TIMES_SCRIPT } from "../routes.ts";
+import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { adminResponse } from "./layout.ts";
 import { NotAllowed, type ServerRole, type User } from "../users.ts";

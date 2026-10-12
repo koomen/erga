@@ -33,7 +33,8 @@
 // server's events to the other). Only rows that changed are drawn again, so
 // the scroll, an open log or dialog, and the focus stay.
 
-import { esc, page as plainPage, type Session } from "../routes";
+import { esc, page as plainPage } from "../routes";
+import type { Session } from "../platform";
 import { adminResponse } from "../admin/layout";
 
 export interface SourcePageConfig {

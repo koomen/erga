@@ -5,7 +5,8 @@
 // make and delete them).
 
 import type { Route } from "../server/directory";
-import { OWNER, type Platform } from "../server/routes";
+import type { Platform } from "../server/platform";
+import { OWNER } from "../server/directory";
 import { isDev, mintTestToken, sessionOf } from "./auth";
 import { authOps } from "./auth-settings";
 import { directoryOf, tokensOf } from "./d1";

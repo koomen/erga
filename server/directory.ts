@@ -123,7 +123,6 @@ export class NameError extends Error {}
 export const SLUG_MAX = 60, TITLE_MAX = 200;
 export const UNTITLED = "Untitled";
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const ID_SHAPE = /^[a-z0-9]{8}$/;
 
 /**
  * Words that can't be slugs: the app's own first path segments (server/routes.ts,
@@ -599,6 +598,13 @@ export function namingFor(dir: Directory, id: string, pageTitle: () => string | 
   });
 }
 
-/** Whether a segment could be an id (ids are 8 lowercase letters and digits). */
-export const idShaped = (s: string) => ID_SHAPE.test(s);
+/** The shape of an owner (a GitHub login) and of a document's id (8 lowercase letters and digits). */
+export const OWNER = /^[A-Za-z0-9-]{1,39}$/, ID = /^[a-z0-9]{8}$/;
+/** Whether a segment could be an id. */
+export const idShaped = (s: string) => ID.test(s);
 export const isSlug = (s: string) => SLUG.test(s) && s.length <= SLUG_MAX;
+/** Test documents: what test people may open, and where the scripted agent stands in for the model. */
+export const TEST_ID = /^test[a-z0-9]{4}$/;
+export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+/** A new document's id: 8 characters of ALPHABET. */
+export const newDocId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => ALPHABET[b % ALPHABET.length]).join("");

@@ -17,7 +17,8 @@
 // throwaway test people (Ada, Bo...) who can open only test documents
 // (ids starting "test"), so the test suite can run against erga.dev.
 
-import { confirmAction, fromElsewhere, page, safeNext, type Session } from "../server/routes";
+import { confirmAction, fromElsewhere, page, safeNext } from "../server/routes";
+import type { Session } from "../server/platform";
 import { signInApp, testedSignIn } from "./auth-settings";
 import { cookieName, cookies } from "./cookies";
 import { directoryOf } from "./d1";

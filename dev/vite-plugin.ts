@@ -31,7 +31,7 @@ import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
-import { ALPHABET } from "../server/routes.ts";
+import { ALPHABET } from "../server/directory.ts";
 import { ignored } from "../document/content.ts";
 import { gitServers } from "./git-server.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";

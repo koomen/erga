@@ -7,7 +7,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { adminDoor } from "../server/admin/pages.ts";
 import { ConfigError, logins, type ConfigEntry } from "../server/settings.ts";
-import type { Platform } from "../server/routes.ts";
+import type { Platform } from "../server/platform.ts";
 
 test("logins: a list of GitHub logins, tidied; a bad one is refused, saying which", () => {
   expect(logins(["Alice", "@bob", "alice", " "])).toEqual(["alice", "bob"]);

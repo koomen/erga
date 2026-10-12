@@ -20,8 +20,7 @@
 // (staging's secret is its own, so they don't work there), and a bad staging
 // deploy can't break the way pushes reach staging. Both proxy one repository.
 
-import type { Platform } from "../server/routes";
-import { whoOf, withTokens } from "../server/routes";
+import { whoOf, withTokens, type Platform } from "../server/platform";
 import { tar } from "../server/source/git";
 import { gitHttp } from "../server/source/http";
 import type { Actor } from "../server/source/repo";

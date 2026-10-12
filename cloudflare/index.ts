@@ -48,8 +48,9 @@
 //   /__erga/site/<host>/<path>     a site on the pretend Cloudflare (ERGA_DEPLOY_MOCK=1), as a reader would see it
 
 import { accountOf, OWN_ACCOUNT, withAccount } from "../server/account-menu";
-import { idShaped, slugify } from "../server/directory";
-import { frontDoor, mayDeploy, OWNER, whoOf, withTokens } from "../server/routes";
+import { idShaped, slugify, OWNER } from "../server/directory";
+import { frontDoor, mayDeploy } from "../server/routes";
+import { whoOf, withTokens } from "../server/platform";
 import { serverApi, tokensDoor } from "../server/api";
 import { finishSignIn, isDev, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf } from "./d1";

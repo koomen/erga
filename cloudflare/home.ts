@@ -35,7 +35,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { accountOf, OWN_ACCOUNT } from "../server/account-menu";
 import { roleMay, type DocRow } from "../server/directory";
-import { link, mayDeploy, whoOf, type Platform } from "../server/routes";
+import { link, mayDeploy } from "../server/routes";
+import { whoOf, type Platform } from "../server/platform";
 import { HOME_FILES, homeHeader, IDLE, renderHome, type DeployStatus } from "../server/home";
 import { mimeOf } from "../document/host";
 import { directoryOf } from "./d1";

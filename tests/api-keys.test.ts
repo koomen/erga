@@ -11,7 +11,7 @@ import { afterAll, expect, test } from "bun:test";
 import { adminDoor } from "../server/admin/pages.ts";
 import { checkKey, CredentialError, Credentials, withCredentials } from "../server/api-keys.ts";
 import { Directory, type Param, type Sql } from "../server/directory.ts";
-import type { Platform, Session } from "../server/routes.ts";
+import type { Platform, Session } from "../server/platform.ts";
 import { NotAllowed } from "../server/users.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

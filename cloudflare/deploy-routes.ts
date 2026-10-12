@@ -23,7 +23,8 @@
 import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploy/pipeline";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { deployPage, mockConsentPage } from "../deploy/page";
-import { mayDeploy, page, whoOf, type Platform } from "../server/routes";
+import { mayDeploy, page } from "../server/routes";
+import { whoOf, type Platform } from "../server/platform";
 import { isDev } from "./auth";
 import { cookieName, cookies } from "./cookies";
 import type { Env } from "./env";

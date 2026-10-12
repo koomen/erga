@@ -27,7 +27,7 @@ import type { SourceAnswer, SourceRead } from "../server/source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../agents/admin-chats";
 import { emptyLog, type Log, type LogEvent } from "../shared/agent-log";
 import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "../agents/admin";
-import { whoOf } from "../server/routes";
+import { whoOf } from "../server/platform";
 import { sessionOf } from "./auth";
 import { byLine, VIA } from "../shared/attribution";
 import { checkAttachments } from "../shared/attach";

@@ -42,148 +42,13 @@ import type { SiteOps } from "./site-publish.ts";
 import { avatarsOf, OWN_ACCOUNT } from "./account-menu.ts";
 import { adminDoor } from "./admin/pages.ts";
 import { VIA } from "../shared/attribution.ts";
-import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
-import type { AgentToken, Tokens } from "./tokens.ts";
-import type { AuthOps } from "./auth.ts";
+import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, ID, newDocId, NotAllowed, OWNER, roleMay, TEST_ID, UNTITLED } from "./directory.ts";
+import { accessOf, whoOf, withTokens, type Listed, type Platform, type Session } from "./platform.ts";
 
 import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "../document/versions.ts";
 import { pageAddress, resolvePage, titleOf } from "../document/pages.ts";
 import { FAVICON_LINK, WORDMARK } from "../assets/logo/logo.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
-
-/** Who's signed in. */
-export interface Session {
-  login: string;
-  name: string;
-  /** A test person, signed in with a test token minted by `by` (hosted only). */
-  test?: { by: string };
-  /** In local development, the name a tab gave in ?user=, carried along in the links it follows. */
-  as?: string;
-  /** Signed in with an agent token: an agent acting as this person. */
-  agent?: AgentToken;
-  /**
-   * Comes with admin power: a signed-in browser session does,
-   * a token only with the admin scope (withTokens). Every admin-only call
-   * needs it, and Users.isAdmin must say yes too (Users.mustAdmin).
-   */
-  admin?: boolean;
-  /** Signed in with a document token: this one document (its id), and no other. */
-  onlyDoc?: string;
-}
-
-/** A document as its owner's list shows it. */
-export interface Listed {
-  id: string;
-  owner: string;
-  slug: string;
-  title: string;
-  titleSet: boolean;
-  slugSet: boolean;
-  created: number;
-  /** When a file last changed (when it was made, if never). */
-  modified: number;
-  /** When it goes away if nobody edits it (only while it's never been edited). */
-  expires?: number;
-  /** In local development, a document that's a file or folder on disk: where it is. Deleting it leaves the files be. */
-  path?: string;
-  /** What the person whose list it is may do with it: their own document, or one shared with them. */
-  role: Role;
-  /** How many it's shared with besides its owner (anyone with the link counts as one). */
-  shared?: number;
-}
-
-/** What the front door needs from the platform it runs on. */
-export interface Platform {
-  /** Who's asking, if anyone is signed in (in local development, someone always is). */
-  sessionOf(request: Request): Promise<Session | null>;
-  /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): assets/templates/doc is a blank document. */
-  templates: Record<string, Record<string, string>>;
-  /**
-   * The repo's landing project (assets/landing/, built into the Worker), which the
-   * server makes the front page by itself when landing_document is unset or
-   * names a document that's gone (seedLanding): its text files by path, whose
-   * document it becomes (locally DEV_LOGIN, else the deploy's first bootstrap
-   * admin), and who else may edit it (the other bootstrap admins). No owner
-   * (no ADMINS, no DEV_LOGIN): nobody to make it for, and / is a plain start page.
-   */
-  landing?: { files: Record<string, string | Uint8Array>; owner: string | null; editors: string[] };
-  /** The editor's page, served at each document's address. */
-  editor(request: Request): Promise<Response>;
-  /**
-   * Local development: /new may name the document (?id=) and shorten its
-   * unedited time (?unedited=<ms>). Files open from disk through the
-   * dev server's /__erga/open.
-   */
-  dev(url: URL): boolean;
-  /**
-   * Where documents' pages run (see pagesOrigin): "erga-pages.dev", or
-   * "localhost" for a request that came to this machine.
-   */
-  pagesDomain(url: URL): string;
-  /**
-   * One host every document's pages share, instead of an origin each under
-   * pagesDomain: for a server with no wildcard domain (on workers.dev, which
-   * has none; PAGES_HOST). Pages stay off the app's origin, but not off each
-   * other's. Null or absent: an origin each.
-   */
-  pagesShared?(url: URL): string | null;
-  /** Signs the tokens that open a document's files on its pages origin. */
-  secret: string;
-  /**
-   * A server for Erga's admins alone (staging: deploy/targets.json `adminsOnly`; cloudflare/admins-only.ts guards every
-   * request). Its pages tokens name the admin they were made for, so its pages origin can check them again.
-   */
-  adminsOnly?: boolean;
-  /** Every document's address, title and permissions; the server's users and settings. */
-  directory: Directory;
-  /** Agent tokens. */
-  tokens: Tokens;
-  /** How people sign in: this server's and the other deploy target's GitHub app, as `origin`'s server. */
-  auth?(origin: string): AuthOps;
-  /** Documents' sites on their person's Cloudflare account, as `origin`'s server, where the platform has them. */
-  sites?(origin: string): SiteOps;
-
-  /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
-  testToken?(login: string): Promise<{ token: string; expires: Date }>;
-  docs: {
-    /**
-     * Makes the host of a document already in the directory, from a
-     * template's files; false if it already has one. Unless someone edits
-     * it, it goes at `expires`.
-     */
-    create(doc: Route, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean>;
-    /**
-     * Files arriving whole into an existing document (a publish): written,
-     * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).
-     */
-    publish(doc: Route, files: Record<string, string | Uint8Array>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
-    /** Every file a document holds. */
-    paths(doc: Route): Promise<string[]>;
-    /** A document's page, or null if it has no host. */
-    index(doc: Route): Promise<string | null>;
-    /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
-    snapshot(doc: Route, opts?: { published?: boolean }): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
-    /** A document's versions, the current one and the published one; null if it has no host. */
-    versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
-    /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
-    setPublished(doc: Route, req: PublishRequest): Promise<PublishResult>;
-    /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */
-    restore(doc: Route, ref: string, by: string, path?: string | null): Promise<RestoreResult>;
-    exists(doc: Route): Promise<boolean>;
-    /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
-    delete(doc: Route): Promise<boolean>;
-    /** `owner`'s documents, most recently changed first. */
-    list(owner: string): Promise<Listed[]>;
-    /** Hands a request to the document's host, its path already the one inside the document. */
-    fetch(doc: Route, request: Request): Promise<Response>;
-  };
-}
-
-export const OWNER = /^[A-Za-z0-9-]{1,39}$/, ID = /^[a-z0-9]{8}$/;
-/** Test documents: what test people may open, and where the scripted agent stands in for the model. */
-export const TEST_ID = /^test[a-z0-9]{4}$/;
-export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
-const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => ALPHABET[b % ALPHABET.length]).join("");
 
 /** The front door's answer to a request, for any path (a page saying so when there's nothing there). */
 export async function frontDoor(request: Request, base: Platform): Promise<Response> {
@@ -282,47 +147,6 @@ async function accountMeta(platform: Platform, session: Session): Promise<string
   const links = { docs: link("/docs", session), settings: link("/settings", session), ...(deploy ? { deploy: link("/deploy", session) } : {}), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
 }
-
-/**
- * The platform with agent tokens: a request carrying one ("Authorization:
- * Bearer erga_...") is signed in as the person it stands for, within its
- * scope, as long as they may still sign in, whatever cookie it
- * has: admin power only with the admin scope, one document only with the
- * document scope. A bearer token that isn't a good one (revoked, expired)
- * signs in nobody.
- */
-export function withTokens(platform: Platform, url: URL): Platform {
-  return {
-    ...platform,
-    async sessionOf(request) {
-      const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1];
-      if (!bearer) return platform.sessionOf(request);
-      const users = platform.directory.users;
-      const token = await platform.tokens.verify(bearer).catch(() => null);
-      if (!token) return null;
-      // A test person's token opens only test documents, while whoever minted their test token may sign in.
-      const session: Session = {
-        login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}),
-        // Admin power only with the admin scope (Users.isAdmin still decides); a document token, its one document.
-        ...(token.scope == "admin" && !token.testBy ? { admin: true } : {}), ...(token.scope == "document" ? { onlyDoc: token.docId ?? "-" } : {}),
-      };
-      if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
-      return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
-    },
-  };
-}
-
-/** What a role lets someone do inside a document, as its host is told (x-erga-access). */
-export const accessOf = (role: Role | null): "edit" | "view" | null =>
-  role == "owner" || role == "editor" ? "edit" : role == "viewer" ? "view" : null;
-
-/** Who a session is, to the directory's `may`. */
-export const whoOf = (session: Session): Who => ({
-  login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}),
-  ...(session.admin && !session.test ? { admin: true } : {}), ...(session.onlyDoc != null ? { onlyDoc: session.onlyDoc } : {}),
-  // An agent with their token acts for them: what it does is theirs, via it.
-  ...(session.agent ? { via: VIA.token(session.agent.label) } : {}),
-});
 
 const refused = (session: Session) => session.test
   ? page("Test documents only", "Test people can open only test documents.", 403)
@@ -881,7 +705,7 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     if (there) return there;
     const owner = project.owner.toLowerCase();
     let made: DocRow | null = null;
-    for (let tries = 0; !made && tries < 5; tries++) { const id = newId(); made = await makeDoc(platform, owner, id, { ...project.files }, { index, slug: id, published: true }); }
+    for (let tries = 0; !made && tries < 5; tries++) { const id = newDocId(); made = await makeDoc(platform, owner, id, { ...project.files }, { index, slug: id, published: true }); }
     if (!made) return null;
     if (!(await config.claim("landing_document", stored, made.id, owner))) {
       // Another seed won: theirs is the front page, and this one goes.
@@ -1735,7 +1559,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const dev = platform.dev(url);
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {
-    const id = wanted && dev && ID.test(wanted) ? wanted : newId();
+    const id = wanted && dev && ID.test(wanted) ? wanted : newDocId();
     const made = await makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index });
     if (made) return new Response(null, { status: 302, headers: { Location: `${link(`/${made.owner}/${made.slug}`, session)}#edit` } });
   }
@@ -1786,7 +1610,6 @@ export interface MakeOptions {
 }
 
 /** A new document's id: 8 letters and digits, none easily mistaken for another. */
-export const newDocId = newId;
 
 /** /docs: the signed-in person's documents, most recently edited first. */
 async function listDocs(platform: Platform, request: Request): Promise<Response> {
