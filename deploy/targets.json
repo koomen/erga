@@ -4,7 +4,11 @@
     "namespace": "erga",
     "repo": "erga"
   },
-  "builder": "erga-builder",
+  "control": {
+    "worker": "erga-control",
+    "host": "ops.erga.dev",
+    "zone": "erga.dev"
+  },
   "targets": {
     "production": {
       "name": "production",
@@ -19,14 +23,7 @@
       },
       "vars": {
         "GITHUB_CLIENT_ID": "Ov23ctkY7oLarHcPA97b"
-      },
-      "notifies": [
-        "staging"
-      ],
-      "deploys": [
-        "production",
-        "staging"
-      ]
+      }
     },
     "staging": {
       "name": "staging",
@@ -44,13 +41,7 @@
         "CLOUDFLARE_OAUTH_CLIENT_ID": ""
       },
       "snapshotFrom": "production",
-      "adminsOnly": true,
-      "notifies": [
-        "production"
-      ],
-      "deploys": [
-        "staging"
-      ]
+      "adminsOnly": true
     }
   }
 }

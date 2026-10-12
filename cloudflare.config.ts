@@ -67,15 +67,9 @@ export default defineConfig(({ mode }) => ({
       DOCUMENTS: bindings.durableObject({ worker: PROD.worker, exportName: "DocumentObject" }),
       DEPLOYS: bindings.durableObject({ worker: PROD.worker, exportName: "Deployer" }),
       PIPELINE: bindings.durableObject({ worker: PROD.worker, exportName: "Pipeline" }),
+      // Erga's own repository (Cloudflare Artifacts) and its GitHub mirror are the control Worker's (control/wrangler.jsonc),
+      // not the app's. Locally the dev server stands in for Artifacts and GitHub, and the app hosts the repository's object.
       SOURCE: bindings.durableObject({ worker: PROD.worker, exportName: "SourceHost" }),
-      // Erga's own repository is in Cloudflare Artifacts, bound only when the deploy names the
-      // namespace (ERGA_ARTIFACTS_NAMESPACE=erga), with the GitHub mirror's token (a secret, GITHUB_MIRROR_TOKEN) then too.
-      // Locally there's no binding: the dev server stands in for Artifacts and GitHub.
-      ...(mode != "development" && process.env.ERGA_ARTIFACTS_NAMESPACE ? {
-        ARTIFACTS: bindings.artifacts({ namespace: process.env.ERGA_ARTIFACTS_NAMESPACE }),
-        GITHUB_MIRROR_URL: bindings.text(process.env.GITHUB_MIRROR_URL ?? "https://github.com/koomen/erga.git"),
-        GITHUB_MIRROR_TOKEN: bindings.secret(),
-      } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       OWN: bindings.durableObject({ worker: PROD.worker, exportName: "OwnStorage" }),
       SITES: bindings.durableObject({ worker: PROD.worker, exportName: "SiteHost" }),

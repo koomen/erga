@@ -6,7 +6,13 @@
 //   production   branch main      erga.dev           Worker erga          D1 erga           pages *.erga-pages.dev
 //   staging      branch staging   staging.erga.dev   Worker erga-staging  D1 erga-staging   pages *.erga-pages-staging.dev
 //
-// Both are in the same Cloudflare account (its id is the Worker's
+// Both are deployed by the control Worker (`control`: erga-control, at
+// ops.erga.dev, control/), which holds Erga's repository, the pipeline, the
+// Source page and the build container, apart from the app, so a broken app
+// never takes the way to fix it down with it. It is the one Worker in the
+// account that deploys, with the one deploy token (deploy/server-tokens.ts).
+//
+// Both targets are in the same Cloudflare account (its id is the Worker's
 // CLOUDFLARE_ACCOUNT_ID, or the environment's for deploy/run.ts). Staging
 // shares nothing writable with production: its own Worker, so its own
 // Durable Object namespaces, its own database, its own secrets
@@ -56,21 +62,14 @@ export interface TargetSpec {
    * knows from DEPLOY_TARGET, which the pipeline sets on each deploy, so no setting turns it off.
    */
   adminsOnly?: boolean;
-  /**
-   * Branch moves this target's server hears of for other targets go on to
-   * them (production tells staging of staging's, staging tells production of
-   * main's). Production deploys main's head as its own repository has it,
-   * never the commit another server names.
-   */
-  notifies?: TargetName[];
-  /**
-   * The targets this server's own Cloudflare token may deploy (deploy/server-tokens.ts
-   * makes the token so: Editor on these Workers only). Production's may deploy
-   * staging and production; staging's, staging only. Production deploys staging
-   * itself only when staging's server doesn't take a move passed on to it (it's
-   * down, or can't deploy itself): deploy/branches.ts.
-   */
-  deploys: TargetName[];
+}
+
+/** The control Worker: Erga's repository, the pipeline, the Source page and the build container, on its own hostname. */
+export interface ControlSpec {
+  worker: string;
+  /** Its hostname (a Workers custom domain), and the zone it's on. */
+  host: string;
+  zone: string;
 }
 
 import data from "./targets.json";
@@ -81,8 +80,10 @@ export const ADMINS: string = data.admins;
 /** The source: one Artifacts repo (task #39 hosts it, with branches main and staging). */
 export const SOURCE: { namespace: string; repo: string } = data.source;
 
-/** The Worker that builds a commit: a container with bun and git, reached over a service binding. */
-export const BUILDER: string = data.builder;
+/** The control Worker (control/): it deploys every target, and holds the build container. */
+export const CONTROL: ControlSpec = data.control;
+/** The entrypoint of the control Worker that the app's CONTROL service binding reaches (control/index.ts, class App). */
+export const CONTROL_ENTRYPOINT = "App";
 
 /**
  * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is

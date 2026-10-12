@@ -1,23 +1,22 @@
-// The builder Worker (erga-builder): Cloudflare Containers running the build
-// of a commit (build.ts, in the image Dockerfile makes, served by server.ts).
-// Erga's servers reach it over a service binding (BUILDER; the pipeline adds
-// it to the Workers it deploys), and it has no public address
-// (workers_dev off, no routes), so only they can ask it to build.
+// The build container, in the control Worker (control/index.ts): Cloudflare
+// Containers running the build of a commit (build.ts, in the image Dockerfile
+// makes, served by server.ts). Only the control Worker's own pipeline asks it
+// to build (builderFetch, in-process: no public route).
 //
 // Why a container: a Worker can't run `bun install` or Vite, and Workers Builds
 // connects only GitHub and GitLab repos, not Erga's Artifacts repository.
 //
 // Each build has a container of its own: the pipeline names the build (?id=,
-// deploy/builder/client.ts) and the Durable Object of that name starts a
-// container for it, forwards the request and streams the answer back. When
-// the build ends, or is cancelled, the container is destroyed at once, so it
-// frees its place (max_instances in wrangler.jsonc) for the next build. Two
-// deploys at once (staging and production) build side by side; past
-// max_instances, a container doesn't start (503) and the pipeline waits.
+// client.ts) and the Durable Object of that name starts a container for it,
+// forwards the request and streams the answer back. When the build ends, or
+// is cancelled, the container is destroyed at once, so it frees its place
+// (max_instances in control/wrangler.jsonc) for the next build. Two deploys
+// at once (staging and production) build side by side; past max_instances,
+// a container doesn't start (503) and the pipeline waits.
 //
-// Deployed once, by deploy/setup.ts (`bunx wrangler deploy` here: it builds
-// the image with Docker and pushes it to Cloudflare's registry).
-
+// The image is pushed by deploy/setup.ts --control (`bunx wrangler deploy` in
+// control/: it builds the image with Docker and pushes it to Cloudflare's
+// registry).
 //
 // The release cache: a commit built once is answered from the
 // cache after, with no container (production's deploy of a commit staging
@@ -27,14 +26,15 @@
 import { DurableObject } from "cloudflare:workers";
 import { cachedBuild, storageStore, toolchainKey } from "./cache";
 
-interface Env { BUILDS: DurableObjectNamespace<Builder>; CF_VERSION_METADATA?: { id?: string } }
+/** What the build container needs of the Worker's bindings. */
+export interface BuilderEnv { BUILDS: DurableObjectNamespace<Builder>; CF_VERSION_METADATA?: { id?: string } }
 
 /** The image's Bun (Dockerfile's FROM; tests/pipeline.test.ts keeps them equal): part of the release cache's key. */
 export const BUILDER_BUN = "1.4.2";
 /** The release cache's object. */
 const CACHE = "cache:releases";
 
-export class Builder extends DurableObject<Env> {
+export class Builder extends DurableObject<BuilderEnv> {
   /** The release cache's object only: a kept release (its stream line), or null. */
   async cachedRelease(key: string): Promise<{ line: string; at: number; branch?: string } | null> {
     return storageStore(this.ctx.storage as never).get(key);
@@ -86,8 +86,12 @@ interface ContainerApi {
   getTcpPort(port: number): { fetch(input: RequestInfo, init?: RequestInit): Promise<Response> };
 }
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+/**
+ * POST /build {source, commit, branch} and POST /cancel, as client.ts sends
+ * them: a build in a container of its own (or from the release cache), its
+ * output streamed back. `keep` holds work that outlives the answer (ctx.waitUntil).
+ */
+export async function builderFetch(request: Request, env: BuilderEnv, keep: (p: Promise<unknown>) => void): Promise<Response> {
     const url = new URL(request.url), path = url.pathname;
     if ((path != "/build" && path != "/cancel") || request.method != "POST") return new Response("Not found", { status: 404 });
     // A container for each build (its id; an older pipeline sends none and shares one: 409 while busy, and it tries again).
@@ -100,7 +104,6 @@ export default {
       toolchain: await toolchainKey({ bun: BUILDER_BUN, builderVersion: env.CF_VERSION_METADATA?.id }),
       store: { get: (k) => cache.cachedRelease(k), put: (k, line, meta) => cache.keepRelease(k, line, meta) },
       build: (b) => env.BUILDS.getByName(id).fetch(new Request(request.url, { method: "POST", headers: request.headers, body: b, signal: request.signal })),
-      keep: (p) => ctx.waitUntil(p),
+      keep,
     });
-  },
-} satisfies ExportedHandler<Env>;
+}

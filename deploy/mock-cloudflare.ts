@@ -35,7 +35,7 @@
 // see it: the zones erga.dev and erga-pages.dev, the
 // production Worker "erga" already there (deployed by cf deploy, on erga.dev
 // and *.erga-pages.dev) with its database "erga" (tables, rows and
-// migrations) and three documents in its Durable Objects, the builder
+// migrations) and three documents in its Durable Objects, the control
 // Worker, and the source repo in Artifacts. D1's export and import work on
 // it (the SQL as text), secrets are kept per Worker (keep_bindings, the
 // secrets API), and each Worker answers as the real one would where the
@@ -742,11 +742,13 @@ function seedFleet(state: MockState) {
   ];
   state.scripts.erga = { metadata: { main_module: "index.js", bindings: prodBindings }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["DocumentObject", "DocHost", "Deployer", "DocList"] };
   state.secrets.erga = { SESSION_SECRET: "production-session-secret", GITHUB_CLIENT_SECRET: "production-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET };
-  state.scripts["erga-builder"] = { metadata: { main_module: "worker.js", bindings: [] }, modules: ["worker.js"], workersDev: false, tags: [], namespaces: ["Builder"] };
-  state.versions = { erga: 1, "erga-builder": 1 };
+  // The control Worker (control/): the repository, the pipeline, the build container; deployed by deploy/setup.ts.
+  state.scripts["erga-control"] = { metadata: { main_module: "index.js", bindings: [{ type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB }, { type: "artifacts", name: "ARTIFACTS", namespace: "erga" }] }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["Builder", "Pipeline", "SourceHost"] };
+  state.versions = { erga: 1, "erga-control": 1 };
   deployVersion(state, "erga", state.scripts.erga);
-  deployVersion(state, "erga-builder", state.scripts["erga-builder"]);
+  deployVersion(state, "erga-control", state.scripts["erga-control"]);
   state.domains.push({ hostname: "erga.dev", service: "erga", zone_id: state.zones[0].id });
+  state.domains.push({ hostname: "ops.erga.dev", service: "erga-control", zone_id: state.zones[0].id });
   state.routes[state.zones[1].id] = [{ pattern: "*.erga-pages.dev/*", script: "erga" }];
   state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.erga-pages.dev", content: "100::", proxied: true }];
   const docs = memoryStore();
@@ -763,7 +765,7 @@ function seedFleet(state: MockState) {
 }
 
 /**
- * A pretend builder (deploy/builder/ is the real one): it "builds" a commit
+ * A pretend builder (control/builder/ is the real one): it "builds" a commit
  * by handing back `release` stamped with the commit, saying what the real
  * one would run. `failNext` fails the next build once, and so does any commit
  * starting 0bad, or that `fails` says should; `built` lists what it built.

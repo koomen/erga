@@ -1,20 +1,18 @@
-// Erga's own deploy tokens, against the mock Cloudflare's
-// copy of Erga's account, which enforces a token's
-// policies as Cloudflare does: staging's token deploys staging and nothing
-// else; production's deploys production and staging; neither can write DNS,
-// routes or custom domains. And production deploying staging itself when
-// staging's server doesn't take a move, and the Artifacts binding going only
-// to Erga's own targets. Nothing real is touched.
+// Erga's deploy token (the control Worker's), against the mock Cloudflare's
+// copy of Erga's account, which enforces a token's policies as Cloudflare
+// does: it deploys staging, production and the control Worker, and nothing
+// else; it can't write DNS, routes or custom domains. And the Artifacts
+// binding going to no app Worker. Nothing real is touched.
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { BranchDeploys, targetOf, type DeployEnv } from "../deploy/branches";
-import { artifactsNamespace } from "../deploy/builder/build";
+import { artifactsNamespace } from "../control/builder/build";
 import { Cloudflare, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release } from "../deploy/pipeline";
-import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
+import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import { TARGETS } from "../deploy/targets";
-import { checkToken, createToken, diagnoseMaker, permissionIds, policiesFor, tokenPlan } from "../deploy/server-tokens";
+import { checkToken, createToken, diagnoseMaker, permissionIds, policiesFor, tokenPlan, type TokenPlan } from "../deploy/server-tokens";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;
@@ -31,16 +29,15 @@ const SHA1 = "1111111111111111111111111111111111111111", SHA2 = "222222222222222
 const quick = { sleep: async () => {}, waitMs: 2000 };
 type Mock = ReturnType<typeof mockCloudflare>;
 const admin = (mock: Mock) => new Cloudflare("mock-setup-token", mock.fetch);
-const stagingSecrets = { SESSION_SECRET: "staging-session-secret-0123456789", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET };
+const stagingSecrets = { SESSION_SECRET: "staging-session-secret-0123456789", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN };
 
 /** Staging's first deploy, from a machine with the setup's own credential (it makes erga-staging, its address, its pages' route). */
 async function bootstrap(mock: Mock) {
   await runPipeline(admin(mock), { ...release, version: SHA1.slice(0, 12) }, { ...targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN }), secrets: stagingSecrets }, { ...quick, site: mock.fetch, report: () => {} });
 }
 
-/** A deploy token for `name`, made and checked as deploy/setup.ts does: its value and what the check found. */
-async function mint(mock: Mock, name: "staging" | "production") {
-  const plan = tokenPlan(name);
+/** The deploy token, made and checked as deploy/setup.ts does: its value and what the check found. */
+async function mint(mock: Mock, plan: TokenPlan = tokenPlan()) {
   const policies = await policiesFor(admin(mock), FLEET_ACCOUNT, plan, await permissionIds(admin(mock), FLEET_ACCOUNT));
   const made = await createToken(admin(mock), FLEET_ACCOUNT, plan, policies);
   const wrong = await checkToken({ net: mock.fetch, admin: admin(mock), accountId: FLEET_ACCOUNT, plan, id: made.id, value: made.value, policies });
@@ -61,7 +58,7 @@ function server(mock: Mock, script: string, builder: ReturnType<typeof mockBuild
   const s = mock.state.secrets[script] ?? {};
   const instance = new BranchDeploys({
     storage: { get: async (k) => structuredClone(storage.get(k)) as any, put: async (k, v) => { storage.set(k, structuredClone(v)); }, delete: async (k) => { storage.delete(k); } },
-    env: { DEPLOY_TARGET: b.DEPLOY_TARGET?.text, CLOUDFLARE_ACCOUNT_ID: b.CLOUDFLARE_ACCOUNT_ID?.text ?? FLEET_ACCOUNT, CLOUDFLARE_DEPLOY_TOKEN: s.CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN: s.SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: s.DEPLOY_HOOK_SECRET, ...over },
+    env: { CLOUDFLARE_ACCOUNT_ID: b.CLOUDFLARE_ACCOUNT_ID?.text ?? FLEET_ACCOUNT, CLOUDFLARE_DEPLOY_TOKEN: s.CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN: s.SNAPSHOT_TOKEN, ...over },
     net: mock.fetch, builder, schedule: (ms) => { scheduled.push(ms); }, changed: () => {}, ...quick,
     // The source, through the server's own Artifacts binding, as on Cloudflare: the deploy token has no Artifacts permission.
     source: async () => ({ cloneUrl: "https://artifacts.mock/git/erga/erga.git", token: "art-read-binding" }),
@@ -69,49 +66,49 @@ function server(mock: Mock, script: string, builder: ReturnType<typeof mockBuild
   return { instance, scheduled, async settle() { for (let i = 0; i < 10 && scheduled.length; i++) { scheduled.length = 0; await instance.alarm(); } } };
 }
 
-describe("the deploy tokens' plans", () => {
-  test("staging's may deploy erga-staging only; production's erga and erga-staging; each reads its targets' zones", () => {
-    expect(tokenPlan("staging")).toEqual({ name: "erga-deploy-staging", target: "staging", storedOn: "erga-staging", workers: ["erga-staging"], zones: ["erga.dev", "erga-pages-staging.dev"], notWorkers: ["erga"] });
-    expect(tokenPlan("production")).toEqual({ name: "erga-deploy-production", target: "production", storedOn: "erga", workers: ["erga", "erga-staging"], zones: ["erga.dev", "erga-pages.dev", "erga-pages-staging.dev"], notWorkers: [] });
+describe("the deploy token's plan", () => {
+  test("the control Worker's: Editor on erga, erga-staging and itself; read on the three zones", () => {
+    expect(tokenPlan()).toEqual({ name: "erga-control-deploy", storedOn: "erga-control", workers: ["erga", "erga-staging", "erga-control"], zones: ["erga.dev", "erga-pages.dev", "erga-pages-staging.dev"], notWorkers: [] });
   });
 
   test("the policies: Editor on the Workers by tag, D1 on the account, read on the zones; nothing else", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
-    const { policies, wrong } = await mint(mock, "staging");
+    const { policies, wrong } = await mint(mock);
     expect(wrong).toEqual([]);
     const groups = policies.map((p) => p.permission_groups.map((g) => g.id).sort().join(","));
     expect(groups).toEqual(["7e79ec33834341f28dd431ab73884400", "09b2857d1c31407795e75e3fed8617a1", ["2072033d694d415a936eaeb94e6405b8", "82e64a83756745bbbb1c9c2701bf816b", "c8fed203ed3043cba015a93ad1616f1f"].sort().join(",")]);
     // The Worker's key sits under the account's (on its own, Cloudflare refuses the token: code 1004).
     expect(Object.keys(policies[0].resources)).toEqual([`com.cloudflare.api.account.${FLEET_ACCOUNT}`]);
-    expect(Object.keys(policies[0].resources[`com.cloudflare.api.account.${FLEET_ACCOUNT}`])).toEqual([expect.stringMatching(/^com\.cloudflare\.edge\.worker\.script\.[0-9a-f]{32}$/)]);
+    expect(Object.keys(policies[0].resources[`com.cloudflare.api.account.${FLEET_ACCOUNT}`])).toEqual([1, 2, 3].map(() => expect.stringMatching(/^com\.cloudflare\.edge\.worker\.script\.[0-9a-f]{32}$/)));
     expect(Object.keys(policies[1].resources)).toEqual([`com.cloudflare.api.account.${FLEET_ACCOUNT}`]);
-    expect(Object.keys(policies[2].resources)).toHaveLength(2);
+    expect(Object.keys(policies[2].resources)).toHaveLength(3);
   });
 
   test("a token can't name a Worker that isn't there yet (so staging's first deploy comes first)", async () => {
     const mock = mockCloudflare({ fleet: true });
-    await expect(mint(mock, "staging")).rejects.toThrow("no Worker called erga-staging");
+    await expect(mint(mock)).rejects.toThrow("no Worker called erga-staging");
   });
 
   test("the check catches a token broader than its plan", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
-    // Production's policies, checked as if they were staging's token: it reaches erga, which staging's mustn't.
-    const prodPolicies = await policiesFor(admin(mock), FLEET_ACCOUNT, tokenPlan("production"), await permissionIds(admin(mock), FLEET_ACCOUNT));
-    const made = await createToken(admin(mock), FLEET_ACCOUNT, tokenPlan("staging"), prodPolicies);
-    const wrong = await checkToken({ net: mock.fetch, admin: admin(mock), accountId: FLEET_ACCOUNT, plan: tokenPlan("staging"), id: made.id, value: made.value, policies: (await policiesFor(admin(mock), FLEET_ACCOUNT, tokenPlan("staging"), await permissionIds(admin(mock), FLEET_ACCOUNT))) });
+    // The full plan's policies, checked as if they were a narrower token's (staging only): it reaches erga, which that one mustn't.
+    const narrow: TokenPlan = { ...tokenPlan(), workers: ["erga-staging"], notWorkers: ["erga", "erga-control"] };
+    const fullPolicies = await policiesFor(admin(mock), FLEET_ACCOUNT, tokenPlan(), await permissionIds(admin(mock), FLEET_ACCOUNT));
+    const made = await createToken(admin(mock), FLEET_ACCOUNT, narrow, fullPolicies);
+    const wrong = await checkToken({ net: mock.fetch, admin: admin(mock), accountId: FLEET_ACCOUNT, plan: narrow, id: made.id, value: made.value, policies: (await policiesFor(admin(mock), FLEET_ACCOUNT, narrow, await permissionIds(admin(mock), FLEET_ACCOUNT))) });
     expect(wrong.join("; ")).toContain("read erga's settings");
     expect(wrong.join("; ")).toContain("policies aren't the plan's");
   });
 });
 
-describe("deploying with them", () => {
-  test("staging's token deploys staging (address, route and DNS only read), and is refused production", async () => {
+describe("deploying with it", () => {
+  test("it deploys staging (address, route and DNS only read); a token without production is refused production", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const before = productionOf(mock);
-    const { value } = await mint(mock, "staging");
+    const { value } = await mint(mock, { ...tokenPlan(), workers: ["erga-staging", "erga-control"], notWorkers: ["erga"] });
     const calls = mock.state.calls.length;
     const steps: string[] = [];
     // With a fresh copy asked for: the token can copy production's data too.
@@ -122,81 +119,41 @@ describe("deploying with them", () => {
     // No write to a custom domain, a route or a DNS record: the token can only read them.
     expect(mock.state.calls.slice(calls).filter((c) => /^(PUT|POST|DELETE) .*(workers\/domains|dns_records|workers\/routes)/.test(c))).toEqual([]);
     expect(productionOf(mock)).toBe(before);
-    // Production with staging's token: refused, before anything changes.
+    // Production with a token that doesn't reach it: refused, before anything changes.
     await expect(runPipeline(new Cloudflare(value, mock.fetch), release, targetOf(TARGETS.production, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), { ...quick, site: mock.fetch, report: () => {} })).rejects.toThrow("isn't allowed");
     expect(productionOf(mock)).toBe(before);
   });
 
-  test("staging deploys itself with its own token: a push, built, deployed, production untouched", async () => {
+  test("the control Worker deploys staging with it: a push, built, deployed, production untouched; then main, and production", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
-    const { value } = await mint(mock, "staging");
-    mock.state.secrets["erga-staging"].CLOUDFLARE_DEPLOY_TOKEN = value;
+    const { value } = await mint(mock);
+    mock.state.secrets["erga-control"] = { CLOUDFLARE_DEPLOY_TOKEN: value, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN };
     const before = productionOf(mock);
     const builder = mockBuilder(async () => release);
-    const staging = server(mock, "erga-staging", builder);
-    await staging.instance.hook("staging", SHA2, "push by ada");
-    await staging.settle();
-    expect((await staging.instance.status({ remote: false })).targets.find((t) => t.name == "staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    const control = server(mock, "erga-control", builder);
+    await control.instance.hook("staging", SHA2, "push by ada");
+    await control.settle();
+    expect((await control.instance.status()).targets.find((t) => t.name == "staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
     expect(productionOf(mock)).toBe(before);
-    // Its Worker kept the source's binding (the Git endpoint), and only Erga's own targets get one.
-    expect((mock.state.scripts["erga-staging"].metadata.bindings as any[]).find((b) => b.name == "BUILDER")).toMatchObject({ service: "erga-builder" });
-  });
-
-  test("production's token deploys staging too; production deploys staging itself when staging's server doesn't take a move", async () => {
-    let stagingUp = false;
-    const mock = mockCloudflare({
-      fleet: true,
-      sites: async (req, script) => {
-        const url = new URL(req.url);
-        if (script != "erga-staging" || !url.pathname.startsWith("/api/deploys/") || url.pathname == "/api/deploys/version") return null;
-        return stagingUp ? Response.json({ ok: true }) : Response.json({ error: "Branch deploys aren't set up on this server" }, { status: 400 });
-      },
-    });
-    await bootstrap(mock);
-    const { value, wrong } = await mint(mock, "production");
-    expect(wrong).toEqual([]);
-    const before = productionOf(mock);
-    const builder = mockBuilder(async () => release);
-    const production = server(mock, "erga", builder, { DEPLOY_TARGET: "production", CLOUDFLARE_DEPLOY_TOKEN: value, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET });
-    expect(production.instance.deploysTo).toEqual(["production", "staging"]);
-    await production.instance.hook("staging", SHA2, "merge by ada");
-    expect(production.scheduled).toEqual([0]);
-    await production.settle();
-    const t = (await production.instance.status({ remote: false })).targets.find((x) => x.name == "staging")!;
-    expect(t).toMatchObject({ state: "deployed", deployed: SHA2 });
-    expect(t.log.some((l) => l.includes("didn't take it (400: Branch deploys aren't set up"))).toBe(true);
-    const [rec] = (await production.instance.historyOf("staging"))!;
-    expect(rec.trigger).toBe("merge by ada, deployed by erga.dev");
-    expect(builder.built).toEqual([SHA2]);
-    expect(bindingsVersion(mock, "erga-staging")).toBe(SHA2.slice(0, 12));
-    expect(productionOf(mock)).toBe(before);
-    // Staging up again: production passes the next move on and deploys nothing itself.
-    stagingUp = true;
-    production.scheduled.length = 0;
-    await production.instance.hook("staging", SHA1, "push by ada");
-    expect(production.scheduled).toEqual([]);
-  });
-
-  test("staging's server never deploys production, whatever it hears", async () => {
-    const mock = mockCloudflare({ fleet: true });
-    await bootstrap(mock);
-    const { value } = await mint(mock, "staging");
-    const staging = server(mock, "erga-staging", mockBuilder(async () => release), { DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: value, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET });
-    expect(staging.instance.deploysTo).toEqual(["staging"]);
-    expect(staging.instance.notReady("production")).toContain("doesn't deploy production");
-    await staging.instance.hook("main", SHA2, "merge by ada"); // production's server isn't there: nothing is deployed here
-    expect(staging.scheduled).toEqual([]);
+    // The app Worker reaches the control Worker (its admin agent's dashboard tools), and holds no repository binding.
+    expect((mock.state.scripts["erga-staging"].metadata.bindings as any[]).find((b) => b.name == "CONTROL")).toMatchObject({ service: "erga-control", entrypoint: "App" });
+    expect((mock.state.scripts["erga-staging"].metadata.bindings as any[]).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
+    await control.instance.hook("main", SHA2, "merge by ada");
+    await control.settle();
+    expect((await control.instance.status()).targets.find((t) => t.name == "production")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(bindingsVersion(mock, "erga")).toBe(SHA2.slice(0, 12));
   });
 });
 
 const bindingsVersion = (mock: Mock, script: string) => (mock.state.scripts[script].metadata.bindings as any[]).find((b) => b.name == "ERGA_VERSION")?.text;
 
 describe("Erga's source on its own servers", () => {
-  test("a release's Artifacts binding goes to Erga's own targets only; /deploy's copies leave it out", () => {
+  test("a release's Artifacts binding goes to no app Worker (the control Worker holds the repository); a target that names the namespace gets it", () => {
     const rel: Release = { ...release, worker: { ...release.worker, env: { ...release.worker.env, ARTIFACTS: { type: "artifacts", namespace: "erga" } } } };
     const meta = (t: Parameters<typeof workerMetadata>[1]) => workerMetadata(rel, t, { dbId: "db", assetsJwt: "jwt", pagesHost: null }).bindings as any[];
-    expect(meta(targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT })).find((b) => b.name == "ARTIFACTS")).toEqual({ type: "artifacts", name: "ARTIFACTS", namespace: "erga" });
+    expect(meta(targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT })).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
+    expect(meta({ ...targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), artifacts: "erga" }).find((b) => b.name == "ARTIFACTS")).toEqual({ type: "artifacts", name: "ARTIFACTS", namespace: "erga" });
     const plan = { accountId: FLEET_ACCOUNT, workerName: "erga", subdomain: "ada", createSubdomain: false, app: { kind: "workers.dev" as const }, pages: { kind: "shared" as const }, admin: "ada", githubClientId: "x", githubClientSecret: "y" } as any;
     expect(meta(targetOfPlan(plan, "s".repeat(32))).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
   });

@@ -35,7 +35,7 @@
 
 import { esc, page as plainPage } from "../pages/index.ts";
 import type { Session } from "../platform";
-import { adminResponse } from "../admin/index.ts";
+import { adminResponse, type AdminLayout } from "../admin/index.ts";
 
 export interface SourcePageConfig {
   session: Session;
@@ -46,6 +46,8 @@ export interface SourcePageConfig {
   mirrorUrl: string;
   /** This server's Worker, for the GitHub mirror's setup steps; null when it isn't one of Erga's targets. */
   worker: string | null;
+  /** The page's shell: the admin layout (the app, in local development), or the control Worker's own (control/routes.ts). */
+  layout?: (o: AdminLayout) => Response;
 }
 
 const SOURCE_STYLE = `
@@ -644,7 +646,7 @@ function mirrorDialog(c: SourcePageConfig): string {
 /** /admin/source: the source and deploy dashboard (admins). */
 export function adminSourcePage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
-  return adminResponse({ session: c.session, title: "Source", here: "source", wide: true, style: PAGE_STYLE + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
+  return (c.layout ?? adminResponse)({ session: c.session, title: "Source", here: "source", wide: true, style: PAGE_STYLE + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
   <div class="panes">
     <section class="pane" id="source-pane" aria-label="git log">${sourceMarkup(c)}</section>
   </div>

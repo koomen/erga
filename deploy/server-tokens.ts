@@ -1,16 +1,14 @@
-// The Cloudflare API tokens Erga's own servers deploy with (each Worker's
-// CLOUDFLARE_DEPLOY_TOKEN secret): made by deploy/setup.ts through the API,
+// The one Cloudflare API token Erga deploys with: the control Worker's
+// CLOUDFLARE_DEPLOY_TOKEN secret, made by deploy/setup.ts through the API,
 // as narrow as Cloudflare allows, checked, then stored on the Worker.
 //
-//   staging's     Editor on erga-staging only
-//   production's  Editor on erga and erga-staging (it may deploy both)
+//   Editor on erga, erga-staging and erga-control (the control Worker deploys the two targets, and itself)
 //
-// and, for both, the same few account and zone permissions:
+// and the same few account and zone permissions:
 //
 //   D1 Write                        the account's databases (Cloudflare has no per-database scope)
 //   Zone Read, Workers Routes Read,
-//   DNS Read                        its targets' zones only (staging's: erga.dev and erga-pages-staging.dev;
-//                                   production's: those and erga-pages.dev): read, never write
+//   DNS Read                        the targets' zones only (erga.dev, erga-pages.dev, erga-pages-staging.dev): read, never write
 //
 // What each permission is for:
 //
@@ -34,16 +32,14 @@
 //   - No account read, no Workers Scripts on the account, nothing on the
 //     builder (a service binding needs no permission on the Worker it binds).
 //
-// The rules are in deploy/targets.json (`deploys`): production's server may
-// deploy staging and production, staging's may deploy staging only.
-//
-// The risk left: D1 Write is account-wide, and code on a Worker can read its
-// token. So code merged to staging could read or wipe every D1 database in the
-// account, other projects' too: the merge is the review. An account of Erga's
-// own would limit that to Erga's databases.
+// The risk left: D1 Write is account-wide, and code on the control Worker can
+// read its token. So code merged to main (which deploys the control Worker)
+// could read or wipe every D1 database in the account, other projects' too:
+// the merge is the review. An account of Erga's own would limit that to
+// Erga's databases. The app Workers hold no deploy token at all.
 
 import { DeployError, zoneIdOf, type Cloudflare, type Fetch } from "./pipeline";
-import { SOURCE, TARGETS, type TargetName } from "./targets";
+import { CONTROL, SOURCE, TARGETS } from "./targets";
 
 /** Cloudflare's names for the permission groups (GET /accounts/{id}/tokens/permission_groups). */
 export const PERMISSION = {
@@ -63,33 +59,29 @@ export const KNOWN_IDS: Record<string, string> = {
   "DNS Read": "82e64a83756745bbbb1c9c2701bf816b",
 };
 
-/** One deploy token, as planned: its name, the Workers it may deploy, and the zones it may read. */
+/** The deploy token, as planned: its name, the Workers it may deploy, and the zones it may read. */
 export interface TokenPlan {
   /** The token's name on Cloudflare (Manage Account › Account API Tokens). */
   name: string;
-  /** The server it's for: the Worker that keeps it as CLOUDFLARE_DEPLOY_TOKEN. */
-  target: TargetName;
+  /** The Worker that keeps it as CLOUDFLARE_DEPLOY_TOKEN: the control Worker. */
   storedOn: string;
   /** Editor on these Workers only. */
   workers: string[];
   /** Read on these zones only. */
   zones: string[];
-  /** Workers it must not reach (the check makes sure it can't). */
+  /** Workers it must not reach (the check makes sure it can't): a Worker in the account that isn't Erga's, named by the caller. */
   notWorkers: string[];
 }
 
-/** The token for one of Erga's servers, from deploy/targets.json (`deploys`). */
-export function tokenPlan(name: TargetName): TokenPlan {
-  const spec = TARGETS[name];
-  const deploys = spec.deploys.map((t) => TARGETS[t]);
+/** The control Worker's deploy token, from deploy/targets.json: every target's Worker, and its own. */
+export function tokenPlan(notWorkers: string[] = []): TokenPlan {
   const all = Object.values(TARGETS);
   return {
-    name: `erga-deploy-${name}`,
-    target: name,
-    storedOn: spec.worker,
-    workers: deploys.map((t) => t.worker),
-    zones: [...new Set(deploys.flatMap((t) => [t.zone, t.pages.zone]))],
-    notWorkers: all.map((t) => t.worker).filter((w) => !deploys.some((t) => t.worker == w)),
+    name: "erga-control-deploy",
+    storedOn: CONTROL.worker,
+    workers: [...all.map((t) => t.worker), CONTROL.worker],
+    zones: [...new Set([...all.flatMap((t) => [t.zone, t.pages.zone]), CONTROL.zone])],
+    notWorkers,
   };
 }
 
@@ -201,7 +193,7 @@ export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: 
   // An upload's form with empty metadata: refused before anything is made (a 403 without the permission, a 400 with it).
   const form = new FormData();
   form.set("metadata", "{}");
-  await mustNot("make a Worker", "PUT", `${acc}/workers/scripts/erga-token-check-${o.plan.target}`, form);
+  await mustNot("make a Worker", "PUT", `${acc}/workers/scripts/erga-token-check`, form);
 
   // Its policies, read back: exactly the plan's permission groups on exactly its resources.
   const back = await (o.tokens ?? o.admin).call<{ policies?: Policy[] }>("GET", `${acc}/tokens/${o.id}`, `read the token ${o.plan.name} back`).catch(() => null);

@@ -30,7 +30,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { targetOf } from "./branches";
-import { buildIn } from "./builder/build";
+import { buildIn } from "../control/builder/build";
 import { unpackRelease } from "./bundle";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, type Fetch, type Release, type Target } from "./pipeline";
 import { machineCredential } from "./local-credential";

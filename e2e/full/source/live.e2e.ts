@@ -1,7 +1,6 @@
 // The Source page (/admin/source) updates live, with no reload: a push to staging adds its row, and the staging
 // column follows its deploy (the mock builder, ERGA_DEPLOY_MOCK); a merge turns the dots green and starts production's
-// deploy; another server's events (POST /api/deploys/events, server to server) reach an open deploy log. The scroll
-// and the open log stay as they were.
+// deploy. The scroll and the open log stay as they were.
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -9,10 +8,7 @@ import { expect, servers, test } from "../../fixtures";
 
 const own = () => servers.of("source-live", { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging" } });
 await own();
-/** The mock's shared secret between Erga's servers (cloudflare/branch-deploys.ts, peer). */
-const MOCK_HOOK_SECRET = "mock-hook-secret-0123456789abcdef";
-
-test("a push, its deploy, a merge and the other server's log lines show on the open Source page without a reload", { timeout: 60_000 }, async ({ tab }) => {
+test("a push, its deploy and a merge show on the open Source page without a reload", { timeout: 60_000 }, async ({ tab }) => {
   const server = await own(), { page } = tab;
   const text = (sel: string) => page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
   const classOf = (sel: string) => page.evaluate((s) => document.querySelector(s)?.className ?? "", sel);
@@ -47,16 +43,9 @@ test("a push, its deploy, a merge and the other server's log lines show on the o
   await expect.poll(() => classOf(stagingDep), { timeout: 15_000 }).toContain("failed");
   expect(await page.evaluate(() => document.scrollingElement!.scrollTop)).toBe(scroller);
 
-  // The other server's log lines, passed on to this one, reach the open log of that deploy.
+  // The deploy's log opens, live.
   await page.click(stagingDep);
   await expect.poll(() => text("#log-lines"), { timeout: 10_000 }).toContain("build");
-  const deployId = await page.getAttribute(stagingDep, "data-deploy");
-  const relayed = await fetch(`${server.root}/api/deploys/events`, { method: "POST", headers: { Authorization: `Bearer ${MOCK_HOOK_SECRET}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: "production", events: [{ type: "deploy-log", target: "staging", deployId, lines: [{ at: Date.now(), text: "a line from the other server" }] }] }) });
-  expect(relayed.status).toBe(200);
-  await expect.poll(() => text("#log-lines")).toContain("a line from the other server");
-  // Without the secret, nothing.
-  expect((await fetch(`${server.root}/api/deploys/events`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(404);
   await page.click("#log-close");
 
   // A merge (as another tab, or an agent, makes it): the dots turn green, and production's column shows its deploy.

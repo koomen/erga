@@ -20,13 +20,12 @@
 //   /api/docs/<id>/home        whether a document is the homepage, setting it, and its deploys
 //   /api/docs/<id>/site        a document's site on its person's Cloudflare account
 //   /_home/<gen>/<path>        the homepage's files, as deployed
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (server/source/routes.ts; reads open, pushes need an admin's admin-scope token)
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP: the control Worker's (control/routes.ts), as are /admin/source
+//                              and /api/source/...; `outside` answers them (a redirect to the control Worker, or itself in local development)
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
 //   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; server/admin/agent.ts)
-//   /admin/source, /api/source/...  the Source page (the dashboard of source and deploys; /source and /admin/factory
-//                              redirect there) and its API
 //                              Every /admin page has the same layout, and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own door.
 //   /page.js, /style.css, ...  the editor's own files (static assets)
@@ -49,7 +48,6 @@ import { releaseApi, withLive } from "./live.ts";
 import { accountOf, OWN_ACCOUNT, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
 import { siteApi } from "./sites/index.ts";
-import { sourceApi, sourceDoor, sourceGit } from "./source/index.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (request: Request, url: URL) => Promise<Response | null>;
@@ -86,8 +84,9 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (path == "/auth/test") return testSignIn(p, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor.
   if (assets || path == "/editor.html") return p.assets(request);
-  // Erga's own source: the Git endpoint, its page (the dashboard of source and deploys) and API.
-  if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
+  // Erga's own source and deploys (the Git endpoint, the Source page, their APIs) are the control Worker's: `outside`
+  // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
+  if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return (await outside(request, url)) ?? frontDoor(request, p);
   // Its old address, from when admin settings linked to it: it's a page of its own now, not an admin one, so before the admins' gate.
   if (path == "/admin/deploy" || path == "/admin/deploy/") return new Response(null, { status: 301, headers: { Location: "/deploy" } });
   // Every /admin route: the server's admins only, checked on the server before any of them answers.
@@ -95,8 +94,6 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
     const refused = await adminGate(p, request);
     if (refused) return refused;
   }
-  if (path == "/source" || path == "/admin/source" || path == "/admin/factory") return sourceDoor(request, p, url);
-  if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   // Sign-in's status and GitHub app, server to server.
   if (isSignInPath(path)) return signInDoor(request, p);
   // Branch deploys and their status, /deploy, the dev server's routes: outside the app.

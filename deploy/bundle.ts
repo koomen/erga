@@ -2,7 +2,7 @@
 // builder hands a built commit back to the pipeline: JSON,
 // {index: release.json, files: {"bundle/index.js": base64, ...}}. The
 // pipeline reads it with loadRelease, as /deploy reads the server's own.
-// (deploy/builder/build.ts packs one: packRelease.)
+// (control/builder/build.ts packs one: packRelease.)
 
 import { DeployError, loadRelease, type Release, type ReleaseIndex } from "./pipeline";
 

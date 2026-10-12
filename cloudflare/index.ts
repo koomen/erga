@@ -6,13 +6,18 @@
 //
 // The routes that are this Worker's own, at their place in the app's table:
 //
-//   /api/deploys, /api/events, /api/snapshot/...   branch deploys' status, events and logs; staging's snapshot endpoints
-//                                                  (branch-deploys.ts)
+//   /api/deploys/version, /api/health, /api/snapshot/...   what the deploy pipeline asks of this server, and staging's
+//                                                          snapshot endpoints (branch-deploys.ts)
+//   the control Worker's        the repository, the Source page and the deploys' API (control/routes.ts): a redirect to the
+//                               control Worker where it is apart (CONTROL_URL: erga.dev, staging.erga.dev); served here in
+//                               local development, over the mock Cloudflare
 //   /deploy                    deploy Erga to your own Cloudflare account (deploy-routes.ts; the deploy_page setting,
 //                              not an admin right); /admin/deploy redirects there
 //   /__erga/...                the dev server's (dev.ts)
 
 import { handle } from "../server/app.ts";
+import { adminResponse } from "../server/admin/index.ts";
+import { controlRoutes, isControlPath } from "../control/routes";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { deployDoor } from "./deploy-routes";
 import { devRoutes } from "./dev";
@@ -37,6 +42,17 @@ export default {
     const { value: answer, timing } = await tallied(() => handle(request, p, async (request, url) => {
       const path = url.pathname;
       if (isDeploysPath(path)) return deploysDoor(request, env, p);
+      if (isControlPath(path) && path != "/") {
+        // Apart: there. A page goes by redirect; the API and Git say where (a Git client doesn't follow a redirect's intent).
+        if (env.CONTROL_URL) {
+          const there = `${env.CONTROL_URL.replace(/\/+$/, "")}${path}${url.search}`;
+          const read = request.method == "GET" || request.method == "HEAD";
+          if (read && !path.startsWith("/api/") && !path.startsWith("/git/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
+          return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
+        }
+        // Local development (and a server /deploy made, which has no control Worker): this Worker hosts them.
+        return controlRoutes(request, { platform: p, deploys: env.PIPELINE.getByName("deploys"), app: url.origin, layout: adminResponse, version: env.ERGA_VERSION ?? null });
+      }
       if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, p);
       return devRoutes(request, env, p, url);
     }));

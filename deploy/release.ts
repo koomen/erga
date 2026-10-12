@@ -8,7 +8,7 @@
 //   bun deploy/release.ts
 //
 // .build/ must be built already (bun run build). The builder runs this after
-// the build (deploy/builder/build.ts), and `bun run deploy` does too, so erga.dev's
+// the build (control/builder/build.ts), and `bun run deploy` does too, so erga.dev's
 // deploy page always deploys the version erga.dev runs. Locally, run it once to try /deploy
 // (the deploy page's test does it if there's none).
 //

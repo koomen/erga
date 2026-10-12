@@ -1,0 +1,44 @@
+// The control Worker's own config (control/index.ts): erga-control, at
+// ops.erga.dev. Deployed with `bunx wrangler deploy` from this folder, by
+// deploy/setup.ts --control: wrangler builds the container image
+// (builder/Dockerfile) with Docker, pushes it, and uploads the Worker. Its
+// secrets (SESSION_SECRET, GITHUB_CLIENT_SECRET, CLOUDFLARE_DEPLOY_TOKEN,
+// SNAPSHOT_TOKEN, GITHUB_MIRROR_TOKEN) are set by the setup after, and kept.
+//
+// The build containers: one per build, up to 4 at once, each standard-4
+// (4 vCPU, 12 GiB, 20 GB disk), the largest Cloudflare Containers offers.
+{
+  "name": "erga-control",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat"],
+  // The Worker's version id, which every deploy (and so every new image) changes: the release cache's key, and what /api/health answers.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "ops.erga.dev", "custom_domain": true }],
+  "containers": [
+    { "class_name": "Builder", "image": "./builder/Dockerfile", "instance_type": "standard-4", "max_instances": 4 }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "BUILDS", "class_name": "Builder" },
+      { "name": "PIPELINE", "class_name": "Pipeline" },
+      { "name": "SOURCE", "class_name": "SourceHost" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Builder", "Pipeline", "SourceHost"] }],
+  // Production's database: who is an admin, and the admin-scope tokens (deploy/targets.json: production's `database`).
+  "d1_databases": [{ "binding": "DB", "database_name": "erga", "database_id": "fec322a4-7c6f-4e92-a250-871780e9abe8" }],
+  // Erga's repository (deploy/targets.json: source.namespace).
+  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "erga" }],
+  "vars": {
+    "ADMINS": "koomen,dsiroker",
+    "CLOUDFLARE_ACCOUNT_ID": "c24e663b6f522eb02c60b6ce88ec4493",
+    "APP_URL": "https://erga.dev",
+    "GITHUB_MIRROR_URL": "https://github.com/koomen/erga.git",
+    // This Worker's own GitHub OAuth app (homepage https://ops.erga.dev, callback https://ops.erga.dev/auth/github/callback); its secret is a secret.
+    "GITHUB_CLIENT_ID": ""
+  },
+  "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": true } }
+}

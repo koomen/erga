@@ -14,6 +14,8 @@ import { isAdminsOnly, isTargetName, TARGETS, type TargetName } from "../deploy/
 import { MOCK_HOOK_SECRET } from "../deploy/mock-cloudflare";
 import { siteOps } from "./sites";
 import { sourceService } from "./source";
+import type { App } from "../control/index";
+import type { SourceService } from "../server/source/index.ts";
 import { agentSettings } from "./agent-settings";
 
 
@@ -48,6 +50,23 @@ const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
   return { files: LANDING, owner, editors: admins.filter((l) => l != owner) };
 };
 
+/** The repository as the app reaches it through the control Worker: its object's calls over the binding; no remote of its own (the Git endpoint is the control Worker's). */
+function controlSource(control: Service<App>): SourceService {
+  return {
+    object: {
+      advertise: (origin) => control.advertise(origin),
+      branches: (origin) => control.branches(origin),
+      mirrorNow: (origin, by) => control.mirrorNow(origin, by),
+      files: (origin, commit) => control.files(origin, commit),
+      read: (origin, q) => control.read(origin, q),
+      merge: (origin, who, commit) => control.merge(origin, who, commit),
+      fetch: async () => new Response("Pushes go to the control Worker's Git endpoint.", { status: 404 }),
+    },
+    remote: async () => null,
+    mirrorUrl: "",
+  };
+}
+
 /** Where documents' pages run: an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
 
@@ -75,6 +94,8 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   // The server's own storage: its object; a value not there yet is read from where it was kept before (the Pipeline
   // object, until 2026-10-11) and moved over, once.
   const own = () => env.OWN.getByName("own");
+  // The control Worker, over its binding (erga.dev, staging.erga.dev): the repository and the deploys are there.
+  const control = env.CONTROL ? (env.CONTROL as unknown as Service<App>) : null;
   const ownGet = async (k: string) => {
     const v = await own().get(k);
     if (v !== undefined) return v;
@@ -109,10 +130,11 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       encryptionKey: factoryKey(env),
     },
     own: { get: ownGet, put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
-    source: sourceService(env),
+    source: control ? controlSource(control) : sourceService(env),
     home: env.HOME.getByName("home"),
     adminAgent: env.ADMIN_AGENT.getByName("admin"),
-    deploys: env.PIPELINE.getByName("deploys"),
+    deploys: control ?? env.PIPELINE.getByName("deploys"),
+    ...(env.CONTROL_URL?.trim() ? { control: { url: env.CONTROL_URL.trim().replace(/\/+$/, "") } } : {}),
     agentSettings: () => agentSettings(env),
     edge: {
       cache: edgeCache(),

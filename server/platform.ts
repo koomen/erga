@@ -126,8 +126,14 @@ export interface Platform {
   };
   /** Erga's own repository (server/source), where this server hosts it; null where it doesn't. */
   source: SourceService | null;
-  /** This server's branch deploys, as the admin agent's dashboard asks them (the pipeline's object). */
+  /** The deploys, as the admin agent's dashboard asks them: the pipeline's object (the control Worker's, over its binding, on erga.dev). */
   deploys: DashboardDeploys;
+  /**
+   * The control Worker (control/), where the repository, the Source page and the deploys live, when it's apart from
+   * this server: its address. The app sends admins there for those pages, and answers their routes with a redirect.
+   * Absent in local development and on a server /deploy made, where this server hosts them itself.
+   */
+  control?: { url: string };
   /** The admins' agents (server/admin/agent.ts), one object per server. */
   adminAgent: AdminAgentObject;
   /** The agents' settings as they are now: the Anthropic key an admin stored, else the deploy's; or why there's none. Read at each turn. */

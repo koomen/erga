@@ -10,9 +10,7 @@
 // copied again only when asked), and nothing written to production. Production: its Worker
 // replaced in place, its secrets kept. The guards. Failure and retry.
 // Branch pushes: the hook, the queue, passing a push on to staging, the
-// status and its events. And staging deploying itself: its own pipeline,
-// in the server the previous deploy made, restarted by its own upload half
-// way, the new version finishing the deploy.
+// status and its events. Rollbacks, by hand and by itself.
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -20,10 +18,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { ATTEMPTS, BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
 import { fromBase64, unpackRelease } from "../deploy/bundle";
-import { packRelease } from "../deploy/builder/build";
-import { handle as builderServer } from "../deploy/builder/server";
-import { containerBuilder, ndjsonLines } from "../deploy/builder/client";
-import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../deploy/builder/cache";
+import { packRelease } from "../control/builder/build";
+import { handle as builderServer } from "../control/builder/server";
+import { containerBuilder, ndjsonLines } from "../control/builder/client";
+import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../control/builder/cache";
 import { ALL_STEPS, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/pipeline";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock-cloudflare";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
@@ -43,7 +41,7 @@ beforeAll(async () => {
 
 const SHA1 = "1111111111111111111111111111111111111111", SHA2 = "2222222222222222222222222222222222222222", SHA3 = "3333333333333333333333333333333333333333";
 const quick = { sleep: async () => {}, waitMs: 2000 };
-const env = (over: DeployEnv = {}): DeployEnv => ({ CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, CLOUDFLARE_DEPLOY_TOKEN: "mock-deploy-token", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET, ...over });
+const env = (over: DeployEnv = {}): DeployEnv => ({ CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, CLOUDFLARE_DEPLOY_TOKEN: "mock-deploy-token", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, ...over });
 /** Staging's secrets, as deploy/setup.ts gives them to its first deploy. */
 const stagingSecrets = { SESSION_SECRET: "staging-session-secret-0123456789", GITHUB_CLIENT_SECRET: "staging-github-secret-0123456789", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET, CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" };
 const staging = (over: Partial<Target> = {}): Target => ({ ...targetOf(TARGETS.staging, env()), ...over });
@@ -102,7 +100,9 @@ describe("staging", () => {
     expect(b.PAGES_DOMAIN.text).toBe("erga-pages-staging.dev");
     expect(b.ERGA_VERSION.text).toBe(release.version);
     expect(b.CLOUDFLARE_ACCOUNT_ID.text).toBe(FLEET_ACCOUNT);
-    expect(b.BUILDER).toEqual({ type: "service", name: "BUILDER", service: "erga-builder" });
+    expect(b.CONTROL).toEqual({ type: "service", name: "CONTROL", service: "erga-control", entrypoint: "App" });
+    expect(b.CONTROL_URL).toEqual({ type: "plain_text", name: "CONTROL_URL", text: "https://ops.erga.dev" });
+    expect(b.ARTIFACTS).toBeUndefined();
     expect(b.ADMINS.text).toBe("koomen,dsiroker");
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).toBe(stagingSecrets.SESSION_SECRET);
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).not.toBe(mock.state.secrets.erga.SESSION_SECRET);
@@ -329,7 +329,7 @@ class Server {
     if (this.fixedEnv) return this.fixedEnv;
     const b = bindingsOf(this.mock.state, this.script);
     const s = this.mock.state.secrets[this.script] ?? {};
-    return { DEPLOY_TARGET: b.DEPLOY_TARGET?.text, CLOUDFLARE_ACCOUNT_ID: b.CLOUDFLARE_ACCOUNT_ID?.text, CLOUDFLARE_DEPLOY_TOKEN: s.CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN: s.SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: s.DEPLOY_HOOK_SECRET };
+    return { CLOUDFLARE_ACCOUNT_ID: b.CLOUDFLARE_ACCOUNT_ID?.text, CLOUDFLARE_DEPLOY_TOKEN: s.CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN: s.SNAPSHOT_TOKEN };
   }
   /** A new version starts: a new object over the same storage. The old one, if running, can't reach anything any more. */
   start() {
@@ -349,7 +349,7 @@ class Server {
     });
   }
   version() { return bindingsOf(this.mock.state, this.script).ERGA_VERSION?.text; }
-  async status(name: string): Promise<TargetStatus> { return (await this.instance.status({ remote: false })).targets.find((t) => t.name == name)!; }
+  async status(name: string): Promise<TargetStatus> { return (await this.instance.status()).targets.find((t) => t.name == name)!; }
   /** Wake it, as its alarm would, until nothing's scheduled. */
   async settle() { for (let i = 0; i < 10 && this.scheduled.length; i++) { this.scheduled = []; await this.instance.alarm(); } }
 }
@@ -363,7 +363,7 @@ describe("branches deploy themselves", () => {
   test("not set up (no deploy token): a push is noted, nothing deployed", async () => {
     const mock = mockCloudflare({ fleet: true });
     const builder = mockBuilder(async () => release);
-    const server = new Server(mock, builder, "erga", { DEPLOY_TARGET: "production", CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT });
+    const server = new Server(mock, builder, "erga", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT });
     await server.instance.hook("main", SHA1);
     await server.settle();
     const t = await server.status("production");
@@ -377,17 +377,15 @@ describe("branches deploy themselves", () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const builder = mockBuilder(async () => release);
-    const server = new Server(mock, builder, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    const server = new Server(mock, builder, "erga-staging", env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
     const before = productionOf(mock.state);
 
-    await server.instance.hook("main", SHA2); // main isn't staging's: nothing
-    expect(server.scheduled).toEqual([]);
     await server.instance.hook("staging", SHA2);
     expect(server.scheduled).toEqual([0]);
     expect((await server.status("staging")).pending).toBe(SHA2);
     await server.settle();
     const t = await server.status("staging");
-    expect(t).toMatchObject({ name: "staging", host: "staging.erga.dev", branch: "staging", state: "deployed", commit: SHA2, deployed: SHA2, error: null, pending: null, self: true });
+    expect(t).toMatchObject({ name: "staging", host: "staging.erga.dev", branch: "staging", state: "deployed", commit: SHA2, deployed: SHA2, error: null, pending: null });
     expect(Object.keys(t).sort()).toEqual(expect.arrayContaining(["name", "host", "branch", "state", "commit", "at", "error", "log"]));
     expect(t.steps.map((s) => `${s.id}:${s.status}`)).toEqual(["build:done", ...ALL_STEPS.map((s) => `${s.id}:${s.id == "data" || s.id == "documents" ? "skipped" : "done"}`)]);
     expect(t.log.some((l) => l.includes("build: $ bun install --frozen-lockfile"))).toBe(true);
@@ -405,8 +403,6 @@ describe("branches deploy themselves", () => {
     expect(server.logs.map((e) => e.deployId)).toEqual(server.logs.map(() => log.deployId as string));
     expect(server.logs.length).toBeGreaterThan(5);
     expect(server.logs.flatMap((e) => e.lines)).toEqual(log.lines);
-    // Production, as the status says it: another server's.
-    expect((await server.instance.status({ remote: false })).targets.map((x) => [x.name, x.self])).toEqual([["production", false], ["staging", true]]);
 
     // The build fails: the status says where and why; Redeploy runs it again.
     builder.failNext = "bun install: lockfile changed";
@@ -426,7 +422,7 @@ describe("branches deploy themselves", () => {
 
     // Two pushes while a deploy builds: the running one is cancelled (its build stopped), and only the newest is deployed after it.
     const slow = mockBuilder(async () => release, { delayMs: 30 });
-    const busy = new Server(mock, slow, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    const busy = new Server(mock, slow, "erga-staging", env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
     await busy.instance.hook("staging", SHA1, "push by ada");
     busy.scheduled = [];
     const running = busy.instance.alarm();
@@ -451,7 +447,8 @@ describe("branches deploy themselves", () => {
     expect(cancelledLog.lines.at(-1)!.text).toBe(`replaced by deploy ${last.id} (${SHA3.slice(0, 12)}, push by cy)`);
 
     // Redeploying a target this server doesn't deploy, or one that isn't: refused.
-    expect(await server.instance.redeploy("production")).toMatchObject({ ok: false, error: expect.stringContaining("deploys itself") });
+    // Production too, from the same place; nothing of main has come yet.
+    expect(await server.instance.redeploy("production")).toMatchObject({ ok: false, status: 409, error: expect.stringContaining("No commit of main") });
     expect(await server.instance.redeploy("nope")).toMatchObject({ ok: false, status: 404 });
     expect(writesToProduction(mock.state)).toEqual([]);
     expect(productionOf(mock.state)).toBe(before);
@@ -461,7 +458,7 @@ describe("branches deploy themselves", () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const builder = mockBuilder(async () => release);
-    const server = new Server(mock, builder, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    const server = new Server(mock, builder, "erga-staging", env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
     // Nothing live yet (the first deploy came from a machine): nothing to roll back from.
     expect(await server.instance.rollback("staging")).toMatchObject({ ok: false, status: 409, error: expect.stringContaining("no live deploy") });
     await server.instance.hook("staging", SHA2, "push by ada");
@@ -501,7 +498,7 @@ describe("branches deploy themselves", () => {
     expect(await server.instance.rollback("production")).toMatchObject({ ok: false, status: 409 });
     expect(await server.instance.rollback("nope")).toMatchObject({ ok: false, status: 404 });
     const slow = mockBuilder(async () => release, { delayMs: 30 });
-    const busy = new Server(mock, slow, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    const busy = new Server(mock, slow, "erga-staging", env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
     await busy.instance.hook("staging", SHA1, "push by ada");
     const running = busy.instance.alarm();
     await new Promise((r) => setTimeout(r, 10));
@@ -514,7 +511,7 @@ describe("branches deploy themselves", () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const builder = mockBuilder(async () => release);
-    const server = new Server(mock, builder, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    const server = new Server(mock, builder, "erga-staging", env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
     await server.instance.hook("staging", SHA2);
     await server.settle();
     expect((await server.status("staging")).steps.find((x) => x.id == "live")!.detail).toMatch(/healthy \(db ok 1 ms, documents ok 2 ms\)$/);
@@ -532,7 +529,7 @@ describe("branches deploy themselves", () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const builder = mockBuilder(async () => release);
-    const server = new Server(mock, builder, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    const server = new Server(mock, builder, "erga-staging", env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
     await server.instance.hook("staging", SHA2);
     await server.settle();
     const [good] = (await server.instance.historyOf("staging"))!;
@@ -559,63 +556,6 @@ describe("branches deploy themselves", () => {
     await server.instance.hook("staging", SHA1);
     await server.settle();
     expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA1 });
-  });
-
-  test("staging deploys itself: its own pipeline, restarted by its own upload, finished by the new version", async () => {
-    let server: Server | null = null;
-    // Uploading staging's Worker restarts staging's server: Cloudflare resets its Durable Objects, and the old one reaches nothing more.
-    const mock = mockCloudflare({ fleet: true, onUpload: (script) => { if (script == "erga-staging" && server) server.alive.on = false; } });
-    await bootstrap(mock);
-    const builder = mockBuilder(async () => release);
-    server = new Server(mock, builder, "erga-staging");
-    expect(server.envOf()).toMatchObject({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token", CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT });
-    expect(server.version()).toBe(SHA1.slice(0, 12));
-    const before = productionOf(mock.state);
-
-    for (const [i, sha] of [SHA2, SHA3].entries()) {
-      // Staging's own server hears its branch moved and runs the deploy, until its own upload restarts it.
-      await server.instance.hook("staging", sha);
-      server.scheduled = [];
-      await server.instance.alarm();
-      expect(server.alive.on).toBe(false);
-      // An alarm was set for the new version before the upload; the old one's record stops there.
-      expect(server.scheduled).toContain(RESUME_MS);
-      const mid = server.storage.get("target:staging") as any;
-      expect(mid.status.state).toBe("deploying");
-      expect(mid.run.cursor).toBe("worker");
-      expect(server.version()).toBe(sha.slice(0, 12));
-      // Its log so far is kept, up to the upload.
-      const kept = server.storage.get(`log:staging:${mid.run.deployId}`) as any;
-      expect(kept.deployId).toBe(mid.run.deployId);
-      expect(["assets", "worker"]).toContain(kept.lines.at(-1).step);
-      const before = kept.lines.length;
-
-      // The new version (its settings from the Worker the old one uploaded) wakes up, sees its upload went up, and finishes the deploy.
-      server.start();
-      server.scheduled = [];
-      server.logs = [];
-      await server.instance.alarm();
-      const t = await server.status("staging");
-      expect(t).toMatchObject({ state: "deployed", commit: sha, deployed: sha, error: null });
-      expect(t.log.some((l) => l.includes("the new version is up and running this"))).toBe(true);
-      // Staging's frozen data kept: no copy.
-      expect(t.steps.map((x) => `${x.id}:${x.status}`)).toEqual(["build:done", ...ALL_STEPS.map((x) => `${x.id}:${x.id == "data" || x.id == "documents" ? "skipped" : "done"}`)]);
-      // One log across the restart: the old version's lines, then the new one's, under the same deploy; the new one's go out as events too.
-      const log = (await server.instance.logOf("staging"))!;
-      expect(log).toMatchObject({ deployId: mid.run.deployId, commit: sha, state: "deployed" });
-      expect(log.lines.slice(0, before)).toEqual(kept.lines);
-      const after: string[] = log.lines.slice(before).map((l) => l.step ?? "-");
-      expect(after.slice(0, 2)).toEqual(["worker", "-"]);
-      expect(["address", "pages", "live", "documents"].every((id) => after.includes(id))).toBe(true);
-      expect(server.logs.length).toBeGreaterThan(0);
-      expect(server.logs.every((e) => e.deployId == mid.run.deployId)).toBe(true);
-      expect(server.logs.flatMap((e) => e.lines)).toEqual(log.lines.slice(before));
-      expect([...mock.state.docs["erga-staging"].docs.keys()].sort()).toEqual([...PROD_DOCS].sort());
-      expect(mock.state.versions["erga-staging"]).toBe(2 + i);
-    }
-    expect(builder.built).toEqual([SHA2, SHA3]);
-    expect(writesToProduction(mock.state)).toEqual([]);
-    expect(productionOf(mock.state)).toBe(before);
   });
 
   test("interrupted before the upload (the object reset, as on 2026-10-05): it runs again by itself, with nobody to press Redeploy", async () => {
@@ -670,91 +610,10 @@ describe("branches deploy themselves", () => {
     expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
   });
 
-  test("production hears a push to staging and passes it on; staging deploys itself", async () => {
-    const mock = mockCloudflare({
-      fleet: true,
-      sites: async (req, script) => {
-        const url = new URL(req.url);
-        if (script != "erga-staging" || !url.pathname.startsWith("/api/deploys/") || url.pathname == "/api/deploys/version") return null;
-        if (req.headers.get("authorization") != `Bearer ${MOCK_HOOK_SECRET}`) return new Response("no", { status: 404 });
-        if (url.pathname == "/api/deploys/status") return Response.json({ target: await staging.instance.own() });
-        if (url.pathname == "/api/deploys/staging/log") return Response.json(await staging.instance.logOf("staging"));
-        const r = await staging.instance.remoteHook("staging", await req.json() as any);
-        return Response.json(r, { status: r.ok ? 200 : 400 });
-      },
-    });
-    await bootstrap(mock);
-    const builder = mockBuilder(async () => release);
-    const staging = new Server(mock, builder, "erga-staging");
-    // Production's server, set up for branch deploys: it deploys main itself, and tells staging of staging's.
-    const production = new Server(mock, builder, "erga", env({ DEPLOY_TARGET: "production" }));
-    const before = productionOf(mock.state);
-    await production.instance.hook("staging", SHA2);
-    expect(production.scheduled).toEqual([]);
-    expect(staging.scheduled).toEqual([0]);
-    await staging.settle();
-    expect(await staging.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
-    // Production's status shows staging's, from staging itself.
-    const seen = (await production.instance.status()).targets.find((t) => t.name == "staging")!;
-    expect(seen).toMatchObject({ state: "deployed", deployed: SHA2, remote: true, self: false });
-    expect((await production.status("staging")).log.at(-1)).toContain("passed on to staging.erga.dev");
-    // And staging's log, from staging.
-    expect(await production.instance.logOf("staging")).toEqual(await staging.instance.logOf("staging"));
-    expect((await production.instance.logOf("staging"))!.lines.length).toBeGreaterThan(10);
-    // A redeploy of staging asked on production goes to staging too.
-    expect((await production.instance.redeploy("staging")).ok).toBe(true);
-    expect(staging.scheduled).toEqual([0]);
-    expect(builder.built).toEqual([SHA2]);
-    expect(productionOf(mock.state)).toBe(before);
-    // A move of main heard on staging: production isn't told what to deploy without reading its own repository.
-    await staging.instance.hook("main", SHA3, "merge by ada");
-    expect(production.scheduled).toEqual([]);
-  });
-
-  test("a merge to main heard on staging deploys production: production reads main's head itself", async () => {
-    let main = SHA2;
-    const mock = mockCloudflare({
-      fleet: true,
-      sites: async (req, script) => {
-        const url = new URL(req.url);
-        if (script != "erga" || !url.pathname.startsWith("/api/deploys/") || url.pathname == "/api/deploys/version") return null;
-        if (req.headers.get("authorization") != `Bearer ${MOCK_HOOK_SECRET}`) return new Response("no", { status: 404 });
-        if (url.pathname == "/api/deploys/status") return Response.json({ target: await production.instance.own(Number(url.searchParams.get("history") ?? 0)) });
-        if (url.pathname == "/api/deploys/production/history") return Response.json({ target: "production", deploys: await production.instance.historyOf("production", 5) });
-        if (url.pathname == "/api/deploys/production/log") return Response.json(await production.instance.logOf("production", url.searchParams.get("deploy") ?? undefined));
-        const r = await production.instance.remoteHook("production", await req.json() as any);
-        return Response.json(r, { status: r.ok ? 200 : 400 });
-      },
-    });
-    await bootstrap(mock);
-    const builder = mockBuilder(async () => release);
-    const staging = new Server(mock, builder, "erga-staging");
-    const production = new Server(mock, builder, "erga", env({ DEPLOY_TARGET: "production" }), { headOf: async (b) => (b == "main" ? main : null) });
-    // Staging names SHA3, but main's head (as production's own repository has it) is SHA2: SHA2 is deployed.
-    await staging.instance.hook("main", SHA3, "merge by ada");
-    expect(production.scheduled).toEqual([0]);
-    await production.settle();
-    expect(await production.status("production")).toMatchObject({ state: "deployed", deployed: SHA2 });
-    expect(builder.built).toEqual([SHA2]);
-    const [rec] = (await production.instance.historyOf("production"))!;
-    expect(rec).toMatchObject({ commit: SHA2, state: "deployed", trigger: "merge by ada, passed on", live: true });
-    expect((await production.status("production")).log.some((l) => l.includes(`another server said ${SHA3.slice(0, 12)}`))).toBe(true);
-    // Staging's dashboard has production's history and logs, from production.
-    const seen = (await staging.instance.status({ history: 5 })).targets.find((t) => t.name == "production")!;
-    expect(seen).toMatchObject({ remote: true, deployed: SHA2 });
-    expect(seen.history!.map((r) => r.id)).toEqual([rec.id]);
-    expect(await staging.instance.historyOf("production")).toEqual([{ ...rec }]);
-    expect((await staging.instance.logOf("production", rec.id))!.deployId).toBe(rec.id);
-    // Without its repository, production refuses a move another server names; staging can't redeploy production.
-    const blind = new Server(mock, builder, "erga", env({ DEPLOY_TARGET: "production" }));
-    expect(await blind.instance.remoteHook("production", { branch: "main", commit: SHA3 })).toMatchObject({ ok: false, error: expect.stringContaining("own repository") });
-    expect(await staging.instance.redeploy("production")).toMatchObject({ ok: false, status: 409 });
-    main = SHA3;
-  });
 });
 
 describe("a newer deploy cancels the running one", () => {
-  const stagingEnv = () => env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
+  const stagingEnv = () => env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
 
   test("before the upload: it stops before its next step, nothing goes up, and the newer one deploys", async () => {
     const mock = mockCloudflare({ fleet: true });
@@ -804,38 +663,6 @@ describe("a newer deploy cancels the running one", () => {
     await server.settle();
     expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA3 });
     expect(server.version()).toBe(SHA3.slice(0, 12));
-  });
-
-  test("across a restart: a deploy its own upload interrupted isn't carried on when a newer one waits", async () => {
-    let server: Server | null = null;
-    const mock = mockCloudflare({ fleet: true, onUpload: (script) => { if (script == "erga-staging" && server) server.alive.on = false; } });
-    await bootstrap(mock);
-    const builder = mockBuilder(async () => release);
-    server = new Server(mock, builder, "erga-staging");
-    await server.instance.hook("staging", SHA2, "push by ada");
-    server.scheduled = [];
-    await server.instance.alarm();
-    expect(server.alive.on).toBe(false);
-    const mid = server.storage.get("target:staging") as any;
-    expect([mid.status.state, mid.run.cursor]).toEqual(["deploying", "worker"]);
-    // The new version starts; before its alarm, a newer push comes.
-    server.start();
-    await server.instance.hook("staging", SHA3, "push by bo");
-    server.scheduled = [];
-    await server.instance.alarm();
-    // SHA2's run was not carried on: cancelled. SHA3's own upload restarts the server again; the next version finishes SHA3.
-    const old = (await server.instance.historyOf("staging"))!.find((r) => r.commit == SHA2)!;
-    expect(old).toMatchObject({ state: "cancelled", supersededBy: SHA3 });
-    const oldLog = (await server.instance.logOf("staging", old.id))!;
-    expect(oldLog.lines.some((l) => l.text.includes("not carried on"))).toBe(true);
-    expect(oldLog.lines.some((l) => l.text.includes("the new version is up and running this"))).toBe(false);
-    server.start();
-    await server.instance.alarm();
-    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA3, pending: null });
-    expect(builder.built).toEqual([SHA2, SHA3]);
-    const [now] = (await server.instance.historyOf("staging"))!;
-    expect(now).toMatchObject({ commit: SHA3, state: "deployed", live: true });
-    expect((await server.instance.historyOf("staging"))!.find((r) => r.commit == SHA2)!.replacedBy).toBe(now.id);
   });
 
   test("interrupted before the upload with a newer one waiting: cancelled (not failed), and the newer one deploys", async () => {
@@ -940,7 +767,7 @@ describe("the builder", () => {
     // The container is free again; a cancel with nothing running stops nothing.
     expect(await (await builderServer(new Request("http://builder/cancel", { method: "POST", body: "{}" }))).json()).toEqual({ stopped: false });
     // The real runner kills the command it's running.
-    const { spawnRunner } = await import("../deploy/builder/build");
+    const { spawnRunner } = await import("../control/builder/build");
     const kill = new AbortController();
     const started = Date.now();
     setTimeout(() => kill.abort(new Error("cancelled")), 50);
@@ -994,24 +821,23 @@ describe("the builder", () => {
 });
 
 describe("the one-time setup", () => {
-  test("deploy/setup.ts says what it will do, and (against the mock) does it: production's two secrets, staging's first deploy, staging's deploy token", () => {
+  test("deploy/setup.ts says what it will do, and (against the mock) does it: the control Worker's secrets, staging's first deploy, the deploy token", () => {
     const dry = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--dry-run"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
     const said = dry.stdout.toString();
     expect(dry.exitCode).toBe(0);
-    expect(said).toContain("11. Check it");
-    expect(said).toContain("Individual Workers Editor: erga-staging (nothing else)");
+    expect(said).toContain("8. Check it");
+    expect(said).toContain("Individual Workers Editor: erga, erga-staging, erga-control (nothing else)");
     expect(said).toContain("--dry-run: nothing done.");
     const run = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--yes"], { cwd: ROOT, env: { ...process.env, ERGA_DEPLOY_MOCK: "1", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
     const out = run.stdout.toString();
     expect(run.exitCode).toBe(0);
     expect(out).toContain("(the mock Cloudflare: nothing real)");
-    expect(out).toContain("secrets set: SESSION_SECRET, FACTORY_KEY, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
-    expect(out).toContain("the zone's free Universal SSL certificate covers it (it covers *.erga-pages-staging.dev).");
-    expect(out).toContain("There's one already (Universal SSL).");
-    expect(out).toContain("Made and checked: it deploys erga-staging, reads erga.dev and erga-pages-staging.dev, and can't reach erga or write DNS and routes.");
-    expect(out).toContain("Stored on erga-staging as CLOUDFLARE_DEPLOY_TOKEN (not printed).");
-    expect(out).not.toContain("mock-scoped-");
+    expect(out).toContain("Set: erga-control: SESSION_SECRET, GITHUB_CLIENT_SECRET, SNAPSHOT_TOKEN; erga: SNAPSHOT_TOKEN.");
     expect(out).toContain("Copy production's documents into it: done, 3 documents copied");
+    expect(out).toContain("Made and checked: it deploys erga, erga-staging, erga-control, reads erga.dev, erga-pages.dev, erga-pages-staging.dev, and can't write DNS and routes.");
+    expect(out).toContain("Stored on erga-control as CLOUDFLARE_DEPLOY_TOKEN (not printed).");
+    expect(out).not.toContain("mock-scoped-");
+    expect(out).toContain("https://ops.erga.dev/api/health: ok true");
     expect(out).toMatch(/runs [0-9a-f]{12}; it says it's staging/);
   }, 60_000);
 
@@ -1025,7 +851,7 @@ describe("the one-time setup", () => {
 });
 
 describe("staging's data copy (a Redeploy with a fresh copy) runs while the commit builds", () => {
-  const stagingEnv = () => env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
+  const stagingEnv = () => env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
   /** A push of `commit` to staging, and a fresh copy asked for before its deploy starts. */
   const pushFresh = async (server: Server, commit: string, trigger?: string) => {
     await server.instance.hook("staging", commit, trigger);
@@ -1083,7 +909,7 @@ describe("staging's data copy (a Redeploy with a fresh copy) runs while the comm
     const inner = mockBuilder(async () => release);
     const seen: string[] = [];
     const builder = { ...inner, build: async (o: any, log: any, signal: any) => { const r = await inner.build(o, log, signal); seen.push(...mock.state.calls); return r; } };
-    const server = new Server(mock, builder as never, "erga", env({ DEPLOY_TARGET: "production" }));
+    const server = new Server(mock, builder as never, "erga", env());
     await server.instance.hook("main", SHA2);
     await server.settle();
     expect(await server.status("production")).toMatchObject({ state: "deployed", deployed: SHA2 });
@@ -1182,7 +1008,7 @@ describe("staging's data copy (a Redeploy with a fresh copy) runs while the comm
 });
 
 describe("staging's copy of production's data: frozen, a database of its own each time it's copied, only when asked", () => {
-  const stagingEnv = () => env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
+  const stagingEnv = () => env({ CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
   /** Deploys `commit` (kept data), then redeploys it with a fresh copy of production's data. */
   const freshly = async (server: Server, commit: string) => {
     await server.instance.hook("staging", commit);
@@ -1324,7 +1150,7 @@ describe("staging's copy of production's data: frozen, a database of its own eac
     await server.settle();
     expect(stepOf(await server.status("staging"), "database").detail).toContain("a fresh copy was asked for");
     // Production takes no copy: refused.
-    const prod = new Server(mock, mockBuilder(async () => release), "erga", env({ DEPLOY_TARGET: "production" }));
+    const prod = new Server(mock, mockBuilder(async () => release), "erga", env());
     expect(await prod.instance.redeploy("production", "redeploy by ada", { fresh: true })).toMatchObject({ ok: false, status: 400 });
     // The rule itself.
     const live = { made: Date.now() - 30 * 24 * 3600_000 };
@@ -1454,10 +1280,10 @@ describe("the release cache", () => {
   });
 
   test("the Bun in the cache's key is the image's, and the builder knows its own version", () => {
-    const docker = readFileSync(join(ROOT, "deploy/builder/Dockerfile"), "utf8").match(/^FROM oven\/bun:([\d.]+)/m)?.[1];
-    const worker = readFileSync(join(ROOT, "deploy/builder/worker.ts"), "utf8").match(/BUILDER_BUN = "([\d.]+)"/)?.[1];
+    const docker = readFileSync(join(ROOT, "control/builder/Dockerfile"), "utf8").match(/^FROM oven\/bun:([\d.]+)/m)?.[1];
+    const worker = readFileSync(join(ROOT, "control/builder/worker.ts"), "utf8").match(/BUILDER_BUN = "([\d.]+)"/)?.[1];
     expect(worker).toBe(docker!);
-    expect(readFileSync(join(ROOT, "deploy/builder/wrangler.jsonc"), "utf8")).toContain('"version_metadata": { "binding": "CF_VERSION_METADATA" }');
+    expect(readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8")).toContain('"version_metadata": { "binding": "CF_VERSION_METADATA" }');
   });
 });
 
@@ -1469,7 +1295,7 @@ describe("the builder fetches only the commit", () => {
   };
 
   test("depth 1: by its id, else the branch's head; the branch's history only when the commit is further back", async () => {
-    const { buildCommit, spawnRunner } = await import("../deploy/builder/build");
+    const { buildCommit, spawnRunner } = await import("../control/builder/build");
     const tmp = mkdtempSync(join(tmpdir(), "erga-fetch-"));
     try {
       const repo = join(tmp, "repo");

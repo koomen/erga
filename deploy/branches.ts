@@ -1,33 +1,19 @@
-// Branches that deploy themselves. Each of Erga's own servers knows which
-// target it is (DEPLOY_TARGET: production on erga.dev, staging on
-// staging.erga.dev; deploy/targets.ts) and deploys itself when its branch
-// moves: the source repo (task #39, Cloudflare Artifacts) calls deployHook
-// after a push or merge, and this builds the new head
-// (the builder: deploy/builder/) and runs the deploy pipeline
-// on the server's own Worker, from inside
-// that Worker. So staging's pipeline builds and deploys staging's own commit,
-// and a deploy that works there is the same code that will deploy erga.dev.
+// Branches that deploy: Erga's own targets (deploy/targets.ts: production
+// from main, staging from staging), each deployed when its branch moves. The
+// repository (server/source) calls deployHook after a push or merge, and this
+// builds the new head (the build container: control/builder/) and runs the
+// deploy pipeline on the target's Worker. It runs in the control Worker
+// (control/), apart from the app, in one Durable Object ("deploys",
+// cloudflare/pipeline.ts) that gives it storage and an alarm; everything
+// else is here, so the tests run it as it is, against the mock Cloudflare.
+// In local development the app's own Worker hosts it, over the mock.
 //
-// It runs in one Durable Object per server (cloudflare/pipeline.ts, "deploys"),
-// which gives it storage and an alarm; everything else is here, so the tests
-// run it as it is, against the mock Cloudflare.
-//
-// The hard part is that a server deploying itself is restarted by its own
-// new version, half way through the deploy: Cloudflare resets a Worker's
-// Durable Objects when a new version goes up. So each step's end is kept
-// (the run's cursor and carry), an alarm is set before the Worker is
-// uploaded, and the new version picks the deploy up where the old one
-// stopped: the address, the pages, waiting for the new release to answer,
-// and copying production's documents in. Anything stopped before the upload
-// is marked failed ("interrupted"), and Redeploy runs it again from the top.
-//
-// A branch move for a target this server isn't (staging's, heard on
-// erga.dev) goes on to that target's server, if this one `notifies` it
-// (POST /api/deploys/<name>/hook, with DEPLOY_HOOK_SECRET); production never
-// deploys because of anything another server says. If that server doesn't
-// take it (it's down, or can't deploy itself) and this server's token may
-// deploy that target too (`deploys` in deploy/targets.json: production's may
-// deploy staging), this server deploys it itself, the same way.
+// Because the control Worker deploys the app and not itself, a deploy no
+// longer restarts the thing that runs it. Each step's end is still kept (the
+// run's cursor and carry): a Durable Object is reset now and then (its
+// memory limit, a new version of the control Worker), and the next alarm
+// picks the deploy up where it stopped: after the upload, at the next step;
+// before it, from the top, up to ATTEMPTS times.
 //
 // A deploy that's running when a newer one for its target comes is
 // cancelled: it stops before its next step (its build is stopped too), never
@@ -37,6 +23,12 @@
 // data, made while the commit builds, goes beside it, and is deleted:
 // discardCopy). Stopped after, the newer deploy replaces what went up.
 //
+// Each deploy records a restore point first (the Worker version and release
+// before it, the database's bookmark), and checks the app's health after the
+// upload. A release that is up but unhealthy is rolled back by itself (undo);
+// an admin can roll any target back to the version before its live deploy
+// (rollback), in seconds, with no build.
+//
 // Staging's copy of production's data is frozen: a deploy keeps it, however
 // old, and runs a new migration on it in place. Only a Redeploy that asks
 // for a fresh copy copies production's data afresh (deploy/pipeline.ts,
@@ -45,20 +37,17 @@
 // Production builds the same commits staging built (main moves only to a
 // staging commit): the builder keeps each release it builds, by commit and
 // toolchain, and answers production's build of it from there
-// (deploy/builder/cache.ts, which says why that's safe).
-// A deploy the server's restart interrupted is not carried on if a newer one
-// waits: it's cancelled too, and the newer one runs.
+// (control/builder/cache.ts, which says why that's safe).
 //
-// Status: one entry per target, as GET /api/deploys answers it (task #39's
-// Source page shows it next to each branch), and an event on each change
+// Status: one entry per target, as GET /api/deploys answers it (the Source
+// page shows it next to each branch), and an event on each change
 // ({type: "deploys"} on /api/events). History: a record of each deploy (its
 // id, commit, times, state, what started it) and its whole log, the last
-// HISTORY_KEEP of each target, in the same storage (the Pipeline Durable
-// Object's).
+// HISTORY_KEEP of each target, in the same storage.
 
 import { ALL_STEPS, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, Unhealthy, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { sourceFor, type Source } from "./source";
-import { BUILDER, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
+import { CONTROL, CONTROL_ENTRYPOINT, isTargetName, PRODUCTION, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
@@ -73,7 +62,7 @@ export interface DeployRecord {
   /** When it started, and when it ended (ms since the epoch; null while it runs). */
   started: number;
   ended: number | null;
-  /** What started it: "push by ada", "merge by ada", "redeploy by ada", "… (passed on by erga.dev)". */
+  /** What started it: "push by ada", "merge by ada", "redeploy by ada". */
   trigger: string;
   /** Why it failed, or why it was cancelled. */
   error: string | null;
@@ -116,27 +105,21 @@ export interface TargetStatus {
   pending: string | null;
   /** The running or last deploy's steps. */
   steps: StepStatus[];
-  /** Whether this server deploys this target itself (else it's another server's; `remote` if that server answered). */
-  self: boolean;
-  remote?: boolean;
 }
 
-/** Builds a commit into a release (deploy/builder/client.ts in production; deploy/mock-cloudflare.ts's in tests). */
+/** Builds a commit into a release (control/builder/client.ts in production; deploy/mock-cloudflare.ts's in tests). */
 export interface Builder {
   /** `signal` stops the build (and its container's work) when the deploy is cancelled. */
   build(o: { commit: string; branch: string; source: Source }, log: (line: string) => void, signal?: AbortSignal): Promise<Release>;
 }
 
-/** The server's settings and secrets the branch deploys use. */
+/** The control Worker's settings and secrets the branch deploys use. */
 export interface DeployEnv {
-  DEPLOY_TARGET?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
-  /** This server's Cloudflare API token (deploy/server-tokens.ts: Editor on the Workers it may deploy, D1, read on its zones). Its presence turns branch deploys on. */
+  /** The deploy token (deploy/server-tokens.ts: Editor on the Workers it may deploy, D1, read on their zones). Its presence turns branch deploys on. */
   CLOUDFLARE_DEPLOY_TOKEN?: string;
-  /** Shared by production and staging: reads production's documents. */
+  /** Shared with production and staging: reads production's documents, writes staging's. */
   SNAPSHOT_TOKEN?: string;
-  /** Shared by the servers that tell each other of branch moves. */
-  DEPLOY_HOOK_SECRET?: string;
 }
 
 export interface Deps {
@@ -149,15 +132,8 @@ export interface Deps {
   schedule(ms: number): Promise<void> | void;
   /** Something in the status changed (an event to whoever listens). */
   changed(): void;
-  /** Where to clone the commit from (the source repo's own reader, task #39's sourceForBuild); else the REST API's. */
+  /** Where to clone the commit from (the repository's own reader, sourceForBuild); else the REST API's. */
   source?(commit: string): Promise<Source | null>;
-  /**
-   * A branch's head as this server's own repository has it (task #39's).
-   * Production checks a move of main that another server passes on against
-   * it: what's deployed is the head read here, never the commit the other
-   * server named. Without it, production takes no move from another server.
-   */
-  headOf?(branch: string): Promise<string | null>;
   /** New lines of a deploy's log ({type: "deploy-log"} on /api/events). */
   logged?(event: { type: "deploy-log"; target: TargetName; deployId: string; lines: LogLine[] }): void;
   now?: () => number;
@@ -221,27 +197,13 @@ export class BranchDeploys {
 
   constructor(private deps: Deps) { this.now = deps.now ?? Date.now; }
 
-  /** Which target this server is, if it's one. */
-  get self(): TargetName | null {
-    const t = this.deps.env.DEPLOY_TARGET?.trim() ?? "";
-    return isTargetName(t) ? t : null;
-  }
-
-  /** The targets this server deploys: itself first, then any other its token may deploy (deploy/targets.json, `deploys`). */
-  get deploysTo(): TargetName[] {
-    const self = this.self;
-    return self ? [self, ...TARGETS[self].deploys.filter((n) => n != self)] : [];
-  }
-
-  /** Why this server can't deploy `name` (default: itself), or null if it can. */
-  notReady(name: TargetName | null = this.self): string | null {
+  /** Why `name` can't be deployed from here, or null if it can. */
+  notReady(name: TargetName): string | null {
     const e = this.deps.env;
-    if (!this.self || !name) return "This server isn't one of Erga's deploy targets (DEPLOY_TARGET).";
-    if (!this.deploysTo.includes(name)) return `This server doesn't deploy ${name}.`;
-    if (!e.CLOUDFLARE_DEPLOY_TOKEN?.trim()) return "Branch deploys aren't set up on this server (no CLOUDFLARE_DEPLOY_TOKEN): nothing is deployed. bun deploy/setup.ts sets it up.";
+    if (!e.CLOUDFLARE_DEPLOY_TOKEN?.trim()) return `Deploys aren't set up on this server (no CLOUDFLARE_DEPLOY_TOKEN): nothing is deployed. bun deploy/setup.ts sets up ${CONTROL.worker}.`;
     if (!/^[0-9a-f]{32}$/.test(e.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "")) return "This server doesn't know its Cloudflare account (CLOUDFLARE_ACCOUNT_ID).";
-    if (!this.deps.builder) return `This server has no builder (the BUILDER service binding to ${BUILDER}).`;
-    if (TARGETS[name].snapshotFrom && !(e.SNAPSHOT_TOKEN?.trim().length! >= 32)) return "Staging copies production's data, which needs SNAPSHOT_TOKEN on both servers (deploy/setup.ts).";
+    if (!this.deps.builder) return "This server has no build container (control/builder/).";
+    if (TARGETS[name].snapshotFrom && !(e.SNAPSHOT_TOKEN?.trim().length! >= 32)) return "Staging copies production's data, which needs SNAPSHOT_TOKEN here and on both servers (deploy/setup.ts).";
     return null;
   }
 
@@ -249,7 +211,7 @@ export class BranchDeploys {
     const spec = TARGETS[name];
     const s = await this.deps.storage.get<Stored>(key(name));
     const out = s ?? {
-      status: { name, host: spec.host, branch: spec.branch, state: "idle", commit: null, deployId: null, liveDeploy: null, at: null, error: null, log: [], deployed: null, pending: null, steps: [], self: name == this.self },
+      status: { name, host: spec.host, branch: spec.branch, state: "idle", commit: null, deployId: null, liveDeploy: null, at: null, error: null, log: [], deployed: null, pending: null, steps: [] },
       run: null, oldDocs: [],
     };
     out.status.pending = (await this.queue(name)).pending;
@@ -265,7 +227,6 @@ export class BranchDeploys {
   }
 
   private async save(s: Stored): Promise<void> {
-    s.status.self = s.status.name == this.self;
     s.status.pending = (await this.queue(s.status.name)).pending;
     if (s.status.log.length > LOG_LINES) s.status.log = s.status.log.slice(-LOG_LINES);
     await this.deps.storage.put(key(s.status.name), s);
@@ -318,33 +279,15 @@ export class BranchDeploys {
     this.deps.logged?.({ type: "deploy-log", target: name, deployId: id, lines: [line] });
   }
 
-  /** A target's history (GET /api/deploys/<name>/history): this server's own, or another's from that server. */
+  /** A target's history (GET /api/deploys/<name>/history). */
   async historyOf(name: string, limit = 20): Promise<DeployRecord[] | null> {
     if (!isTargetName(name)) return null;
-    limit = Math.max(1, Math.min(HISTORY_KEEP, Math.floor(limit) || 20));
-    if (name != this.self) {
-      const theirs = await this.remote<{ deploys?: DeployRecord[] }>(name, `/api/deploys/${name}/history?limit=${limit}`);
-      if (Array.isArray(theirs?.deploys)) return theirs.deploys;
-    }
-    return this.localHistory(name, limit);
+    return this.localHistory(name, Math.max(1, Math.min(HISTORY_KEEP, Math.floor(limit) || 20)));
   }
 
   private async localHistory(name: TargetName, limit: number): Promise<DeployRecord[]> {
     const live = (await this.load(name)).status.liveDeploy;
     return (await this.records(name)).slice(0, limit).map((r) => ({ ...r, live: r.id == live }));
-  }
-
-  /** Another of Erga's servers, asked with the shared secret: its JSON answer, or null. */
-  private async remote<T>(name: TargetName, path: string): Promise<T | null> {
-    const secret = this.deps.env.DEPLOY_HOOK_SECRET?.trim();
-    if (!secret) return null;
-    try {
-      const r = await Promise.race([
-        this.deps.net(`https://${TARGETS[name].host}${path}`, { headers: { Authorization: `Bearer ${secret}` } }),
-        new Promise<null>((ok) => setTimeout(() => ok(null), 3000)),
-      ]);
-      return r?.ok ? ((await r.json()) as T) : null;
-    } catch { return null; }
   }
 
   /** The deploy's log so far into storage, and its new lines out as an event. */
@@ -368,14 +311,9 @@ export class BranchDeploys {
   /**
    * A deploy's whole log, with its record (GET /api/deploys/<name>/log): the
    * latest deploy's, or `deployId`'s (null if the history has no such deploy).
-   * This server's own, or another's from that server.
    */
   async logOf(name: string, deployId?: string): Promise<DeployLog | null> {
     if (!isTargetName(name)) return null;
-    if (name != this.self) {
-      const theirs = await this.remote<DeployLog>(name, `/api/deploys/${name}/log${deployId ? `?deploy=${encodeURIComponent(deployId)}` : ""}`);
-      if (theirs) return theirs;
-    }
     const { status } = await this.load(name);
     const list = await this.records(name);
     const id = deployId ?? status.deployId ?? list[0]?.id ?? null;
@@ -404,71 +342,39 @@ export class BranchDeploys {
   }
 
   /**
-   * Every target, as GET /api/deploys answers it: this server's own from
-   * here, another's from that server if it answers. With `history`, each
+   * Every target, as GET /api/deploys answers it. With `history`, each
    * target's last that many deploys too (`history`, newest first).
    */
-  async status(o: { remote?: boolean; history?: number } = {}): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[] }> {
+  async status(o: { history?: number } = {}): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[] }> {
     const targets: (TargetStatus & { history?: DeployRecord[] })[] = [];
     const limit = o.history ? Math.max(1, Math.min(HISTORY_KEEP, Math.floor(o.history))) : 0;
     for (const name of targetNames) {
       const local: TargetStatus & { history?: DeployRecord[] } = (await this.load(name)).status;
-      local.self = name == this.self;
-      if (!local.self && o.remote !== false) {
-        const theirs = await this.remote<{ target?: TargetStatus & { history?: DeployRecord[] } }>(name, `/api/deploys/status${limit ? `?history=${limit}` : ""}`);
-        if (theirs?.target?.name == name) {
-          targets.push({ ...theirs.target, self: false, remote: true, ...(limit ? { history: theirs.target.history ?? [] } : {}) });
-          continue;
-        }
-      }
       if (limit) local.history = await this.localHistory(name, limit);
       targets.push(local);
     }
     return { targets };
   }
 
-  /** This server's own target only (another server asks for it: GET /api/deploys/status), with its last `history` deploys if asked. */
-  async own(history = 0): Promise<(TargetStatus & { history?: DeployRecord[] }) | null> {
-    if (!this.self) return null;
-    const status: TargetStatus & { history?: DeployRecord[] } = (await this.load(this.self)).status;
-    if (history > 0) status.history = await this.localHistory(this.self, Math.min(HISTORY_KEEP, history));
-    return status;
-  }
-
   /**
-   * A branch moved to `commit` (task #39, after a push or merge): every
-   * target on that branch deploys it, here if it's this server, else on its
-   * own server if this one tells it. `trigger` says what moved it ("merge by
-   * ada"), for the history.
+   * A branch moved to `commit` (after a push or merge): every target on that
+   * branch deploys it. `trigger` says what moved it ("merge by ada"), for the history.
    */
   async hook(branch: string, commit: string, trigger?: string): Promise<void> {
     if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new DeployError(`Not a commit: ${commit}`);
     for (const name of targetNames.filter((n) => TARGETS[n].branch == branch)) {
-      const why = `${branch} moved to ${commit.slice(0, 12)}${trigger ? ` (${trigger})` : ""}`;
-      if (name == this.self) await this.enqueue(name, commit, why, trigger ?? `${branch} moved`);
-      else if (this.self && TARGETS[this.self].notifies?.includes(name)) {
-        if (!(await this.forward(name, { branch, commit, ...(trigger ? { trigger } : {}) }))) await this.rescue(name, commit, why, trigger ?? `${branch} moved`);
-      }
+      await this.enqueue(name, commit, `${branch} moved to ${commit.slice(0, 12)}${trigger ? ` (${trigger})` : ""}`, trigger ?? `${branch} moved`);
     }
   }
 
   /**
-   * Redeploy a target's branch head now (POST /api/deploys/<name>): here, or by asking its server. `fresh`: with a
-   * fresh copy of production's data, whatever the copy's age (staging only: a target that takes no copy refuses it).
+   * Redeploy a target's branch head now (POST /api/deploys/<name>). `fresh`: with a fresh copy of production's data,
+   * whatever the copy's age (staging only: a target that takes no copy refuses it).
    */
   async redeploy(name: string, trigger = "redeploy", o: { fresh?: boolean } = {}): Promise<{ ok: true; status: TargetStatus } | { ok: false; error: string; status?: number }> {
     if (!isTargetName(name)) return { ok: false, error: `There's no deploy target called ${name}.`, status: 404 };
     if (o.fresh && !TARGETS[name].snapshotFrom) return { ok: false, error: `${name} takes no copy of another server's data: only staging redeploys with a fresh copy.`, status: 400 };
     const why = (commit: string) => `redeploy of ${commit.slice(0, 12)} asked for (${trigger})${o.fresh ? ", with a fresh copy of production's data" : ""}`;
-    if (name != this.self) {
-      // Production redeploys only when asked on its own server.
-      if (!this.self || name == "production" || !TARGETS[this.self].notifies?.includes(name)) return { ok: false, error: `${name} deploys itself: redeploy it from https://${TARGETS[name].host}.`, status: 409 };
-      if (!(await this.forward(name, { redeploy: true, trigger, ...(o.fresh ? { fresh: true } : {}) }))) {
-        const commit = (await this.queue(name)).head ?? (await this.load(name)).status.commit;
-        if (commit) await this.rescue(name, commit, why(commit), trigger, o);
-      }
-      return { ok: true, status: (await this.load(name)).status };
-    }
     const s = await this.load(name);
     const commit = (await this.queue(name)).head ?? s.status.commit;
     if (!commit) return { ok: false, error: `No commit of ${TARGETS[name].branch} has reached this server yet: push to it first.`, status: 409 };
@@ -481,13 +387,12 @@ export class BranchDeploys {
    * (POST /api/deploys/<name>/rollback): one deployment of that version, in
    * seconds, with no build. The database stays as it is (migrations only add).
    * Recorded as a deploy of its own, live, whose restore point is the version
-   * it rolled back from (so a second rollback rolls forward again). On this
-   * server's own target the deployment restarts this very object: the record
-   * is written before the call, complete, and nothing runs after it.
+   * it rolled back from (so a second rollback rolls forward again). The record
+   * is written before the call, complete; then the target is asked until it
+   * answers the older release, healthy.
    */
   async rollback(name: string, trigger = "rollback"): Promise<{ ok: true; status: TargetStatus } | { ok: false; error: string; status?: number }> {
     if (!isTargetName(name)) return { ok: false, error: `There's no deploy target called ${name}.`, status: 404 };
-    if (!this.deploysTo.includes(name)) return { ok: false, error: `${name} deploys itself: roll it back from https://${TARGETS[name].host}.`, status: 409 };
     const wrong = this.notReady(name);
     if (wrong) return { ok: false, error: wrong, status: 409 };
     const s = await this.load(name);
@@ -517,7 +422,7 @@ export class BranchDeploys {
     await this.openLog(name, s.run, true);
     this.line(s, `rolling ${TARGETS[name].host} back to ${restore.version ? `release ${restore.version}` : `version ${restore.versionId.slice(0, 8)}`} (${rec.trigger})`, "rollback");
     this.line(s, `the version before deploy ${live.id} (${live.commit.slice(0, 12)}) serves again; the database keeps its schema${restore.bookmark ? ` (its bookmark from before that deploy: ${restore.bookmark})` : ""}`, "rollback");
-    // Complete before the call: on this server's own target the deployment restarts this object, into the older version.
+    // Complete before the call.
     steps[0].status = "done";
     s.status = { ...s.status, state: "deployed", at: this.now(), deployed: rec.commit, liveDeploy: deployId };
     this.line(s, `rolled back: https://${TARGETS[name].host} serves ${rec.commit.slice(0, 12)}`, "rollback");
@@ -538,74 +443,11 @@ export class BranchDeploys {
       await this.save(s);
       return { ok: false, error: message, status: 502 };
     }
-    // Another target's (production rolling staging back): wait for it to answer, so the log says it did.
-    if (name != this.self) {
-      const h = await (async () => { for (let i = 0; i < 30; i++) { const r = await checkHealth(this.deps.net, targetHost(target), restore.version).catch(() => null); if (r?.ok) return r; await (this.deps.sleep ?? ((ms: number) => new Promise((ok) => setTimeout(ok, ms))))(2000); } return null; })();
-      this.line(s, h ? `https://${TARGETS[name].host} answers ${restore.version ?? "the older version"}, healthy (${h.summary})` : `https://${TARGETS[name].host} hasn't answered the older version yet: check it`, "rollback");
-      await this.save(s);
-    }
-    return { ok: true, status: (await this.load(name)).status };
-  }
-
-  /**
-   * Another server says this one's branch moved, or asks for a redeploy
-   * (POST /api/deploys/<name>/hook). Production checks a move against its
-   * own repository (headOf) and deploys main's head as it reads it there,
-   * never the commit another server names; staging takes the commit named.
-   */
-  async remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string; fresh?: boolean }): Promise<{ ok: boolean; error?: string }> {
-    if (name != this.self) return { ok: false, error: `This server is ${this.self ?? "no deploy target"}, not ${name}.` };
-    const by = `${typeof body.trigger == "string" && body.trigger ? body.trigger.slice(0, 160) : "a move"}, passed on`;
-    if (body.redeploy) {
-      const r = await this.redeploy(name, by, { fresh: body.fresh === true });
-      const wrong = this.notReady();
-      return !r.ok ? { ok: false, error: r.error } : wrong ? { ok: false, error: wrong } : { ok: true };
-    }
-    const branch = TARGETS[name].branch;
-    if (body.branch != branch || !body.commit) return { ok: false, error: "Which branch and commit?" };
-    let commit = body.commit;
-    if (name == "production") {
-      if (!this.deps.headOf) return { ok: false, error: "Production deploys only main's head as its own repository has it, and this server can't read its repository." };
-      const head = await this.deps.headOf(branch).catch(() => null);
-      if (!head) return { ok: false, error: `This server couldn't read ${branch}'s head in its repository.` };
-      commit = head;
-    }
-    if (!/^[0-9a-f]{7,40}$/.test(commit)) return { ok: false, error: `Not a commit: ${commit}` };
-    const said = commit == body.commit ? "" : `; another server said ${body.commit.slice(0, 12)}`;
-    await this.enqueue(name, commit, `${branch} moved to ${commit.slice(0, 12)} (${by}${said})`, by);
-    // Noted, but not deployed here: the server that passed it on hears so (and may deploy this target itself).
-    const wrong = this.notReady();
-    return wrong ? { ok: false, error: wrong } : { ok: true };
-  }
-
-  /**
-   * Another target's server didn't take a move passed on to it: this server
-   * deploys that target itself, if its token may (production's may deploy
-   * staging: deploy/targets.json, `deploys`). Otherwise it's only noted.
-   */
-  private async rescue(name: TargetName, commit: string, why: string, trigger: string, o: { fresh?: boolean } = {}): Promise<void> {
-    if (!this.deploysTo.includes(name)) return;
-    await this.enqueue(name, commit, `${why}: ${TARGETS[name].host} didn't take it, so this server deploys it`, `${trigger}, deployed by ${this.self ? TARGETS[this.self].host : "another server"}`, o);
-  }
-
-  /** Passes a move (or a redeploy) on to `name`'s server: whether it took it, to deploy itself. */
-  private async forward(name: TargetName, body: Record<string, unknown>): Promise<boolean> {
-    const s = await this.load(name);
-    const secret = this.deps.env.DEPLOY_HOOK_SECRET?.trim();
-    const what = body.redeploy ? "a redeploy" : `${body.branch} at ${String(body.commit).slice(0, 12)}`;
-    if (typeof body.commit == "string") await this.setQueue(name, { head: body.commit });
-    if (!secret) { this.line(s, `${what}: not passed on to ${TARGETS[name].host} (no DEPLOY_HOOK_SECRET here)`); await this.save(s); return false; }
-    let took = false;
-    try {
-      const r = await this.deps.net(`https://${TARGETS[name].host}/api/deploys/${name}/hook`, { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      took = r.ok;
-      const said = r.ok ? "" : ((await r.json().catch(() => null)) as { error?: string } | null)?.error;
-      this.line(s, r.ok ? `${what}: passed on to ${TARGETS[name].host}, which deploys itself` : `${what}: ${TARGETS[name].host} didn't take it (${r.status}${said ? `: ${said}` : ""})`);
-    } catch (e) {
-      this.line(s, `${what}: couldn't reach ${TARGETS[name].host} (${(e as Error).message})`);
-    }
+    // Then wait for it to answer, so the log says it did.
+    const h = await (async () => { for (let i = 0; i < 30; i++) { const r = await checkHealth(this.deps.net, targetHost(target), restore.version).catch(() => null); if (r?.ok) return r; await (this.deps.sleep ?? ((ms: number) => new Promise((ok) => setTimeout(ok, ms))))(2000); } return null; })();
+    this.line(s, h ? `https://${TARGETS[name].host} answers ${restore.version ?? "the older version"}, healthy (${h.summary})` : `https://${TARGETS[name].host} hasn't answered the older version yet: check it`, "rollback");
     await this.save(s);
-    return took;
+    return { ok: true, status: (await this.load(name)).status };
   }
 
   private async enqueue(name: TargetName, commit: string, why: string, trigger: string, o: { fresh?: boolean } = {}): Promise<void> {
@@ -639,10 +481,8 @@ export class BranchDeploys {
    * pending head.
    */
   async alarm(): Promise<void> {
-    if (!this.self) return;
     if (this.running) { await this.deps.schedule(RESUME_MS); return; }
-    // Itself first, then another target it deploys (production: staging, when staging's server didn't take a move).
-    for (const name of this.deploysTo) {
+    for (const name of targetNames) {
       const s = await this.load(name);
       if (s.run) await this.resume(s);
       const next = await this.load(name);
@@ -650,7 +490,7 @@ export class BranchDeploys {
     }
   }
 
-  /** Builds `commit` and deploys it on this server's own target, from the top. */
+  /** Builds `commit` and deploys it on `s`'s target, from the top. */
   private async deploy(s: Stored, commit: string): Promise<void> {
     const name = s.status.name;
     const spec = TARGETS[name];
@@ -802,8 +642,6 @@ export class BranchDeploys {
         s.oldDocs = carry.oldDocs ?? [];
         run.cursor = steps[steps.indexOf(done) + 1] ?? null;
         if (done == "migrations" && carry.restore) await this.setRestore(s.status.name, run.deployId, { ...carry.restore, commit: s.status.deployed });
-        // About to upload the Worker, which restarts this very object when it's this server's own: wake the new version up to finish (unless it's cancelled, and won't upload).
-        if (run.cursor == "worker" && !signal?.aborted) await this.deps.schedule(RESUME_MS);
         await this.save(s);
       },
     });
@@ -917,10 +755,11 @@ function step(s: Stored, id: StepStatus["id"], status: StepStatus["status"], det
 }
 
 /**
- * One of Erga's own targets as the pipeline's Target: in
- * this server's account, its secrets kept from version to version (set once:
- * deploy/setup.ts), the builder bound, and, for staging, production's data
- * copied in.
+ * One of Erga's own targets as the pipeline's Target: in the control
+ * Worker's account, its secrets kept from version to version (set once:
+ * deploy/setup.ts), the control Worker bound (CONTROL, the app's way to the
+ * Source page's API for its admin agent), and, for staging, production's data
+ * copied in. No repository, no deploy token: those are the control Worker's.
  */
 export function targetOf(spec: TargetSpec, env: DeployEnv, fresh?: Fresh): Target {
   const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
@@ -929,12 +768,10 @@ export function targetOf(spec: TargetSpec, env: DeployEnv, fresh?: Fresh): Targe
     label: spec.name, accountId, workerName: spec.worker, databaseName: spec.database,
     app: { kind: "domain", zoneName: spec.zone, hostname: spec.host },
     pages: { kind: "zone", zoneName: spec.pages.zone, domain: spec.pages.domain },
-    vars: { ...spec.vars, DEPLOY_TARGET: spec.name, SNAPSHOT_IMPORT: from ? "1" : "" },
+    vars: { ...spec.vars, DEPLOY_TARGET: spec.name, SNAPSHOT_IMPORT: from ? "1" : "", CONTROL_URL: `https://${CONTROL.host}` },
     secrets: {},
     keepSecrets: true,
-    services: { BUILDER },
-    // Erga's own source: the Git endpoint pushes go through.
-    artifacts: SOURCE.namespace,
+    services: { CONTROL: { service: CONTROL.worker, entrypoint: CONTROL_ENTRYPOINT } },
     checkVersion: true,
     production: spec.name == "production",
     guard: { ...PRODUCTION, accountId },

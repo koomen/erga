@@ -49,7 +49,7 @@ test("the Share buttons on a copy of production's database (staging's) give a to
 });
 
 test("a build's failed fetch never puts the source token in its error, or the deploy log", async () => {
-  const { buildCommit } = await import("../deploy/builder/build");
+  const { buildCommit } = await import("../control/builder/build");
   const token = "art_" + "s3cr3t".repeat(6), lines: string[] = [];
   const dir = `${process.env.TMPDIR ?? "/tmp"}/erga-secrets-${process.pid}`;
   // Nothing listens on port 9: git fails at once.

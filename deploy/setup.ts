@@ -1,97 +1,96 @@
 #!/usr/bin/env bun
-// One-time setup for staging.erga.dev, its first deploy, and the narrow
-// Cloudflare tokens Erga's servers deploy themselves with: the runbook, as a
-// script. It says what it will do first, then does each step
-// only after you say yes. It never deploys erga.dev. On production it sets
-// two secrets (step 7) and, only with --production, production's own deploy
-// token (step 10).
+// One-time setup of the control Worker (erga-control, control/), its secrets
+// and the one deploy token Erga deploys with: the runbook, as a script. It
+// says what it will do first, then does each step only after you say yes.
+// It never deploys erga.dev's app. On the app Workers it sets one secret
+// (SNAPSHOT_TOKEN, shared with the control Worker).
 //
 //   CLOUDFLARE_ACCOUNT_ID=… bun deploy/setup.ts
 //   bun deploy/setup.ts --dry-run          (says what it would do, asks nothing, changes nothing)
-//   bun deploy/setup.ts --tokens           (only the deploy tokens: make them again, check them, store them)
-//   bun deploy/setup.ts --production       (also production's deploy token, stored on erga: task #3's switch)
-//   --certificate                          (order an advanced certificate for staging's pages, if Universal SSL can't cover them: paid)
-//   --builder                              (deploy the builder again, e.g. after deploy/builder/ changed)
-//   --no-deploy                            (skip staging's deploy from this machine)
-//   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on both Workers; not kept anywhere else)
+//   bun deploy/setup.ts --control          (deploy the control Worker again: after control/ or its image changed)
+//   bun deploy/setup.ts --tokens           (only the deploy token: make it again, check it, store it)
+//   --no-deploy                            (skip staging's first deploy from this machine, if erga-staging is missing)
+//   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on the two app Workers, for their sign-in settings)
+//   bun deploy/setup.ts --cleanup          (delete what the control Worker replaced: the erga-builder Worker, and the app
+//                                           Workers' own deploy tokens)
 //
 // The credential is yours, never a server's: CLOUDFLARE_API_TOKEN if set,
-// else the cf CLI's login. It needs Workers, D1,
-// Workers Routes, DNS, Zone read and Artifacts (the cf CLI's login has
-// them). Making the deploy tokens needs a credential that may make account
-// API tokens, which the cf CLI's OAuth login can't (Cloudflare doesn't grant
-// that scope to it): set CLOUDFLARE_TOKEN_MAKER to an account-owned API
-// token with only Account › Account API Tokens › Edit (Manage Account ›
-// Account API Tokens; a short TTL; delete it after). The setup checks it
-// first and says what's wrong with it, if anything.
+// else the cf CLI's login. It needs Workers, D1, Containers, Workers Routes,
+// DNS, Zone read and Artifacts (the cf CLI's login has them). Making the
+// deploy token needs a credential that may make account API tokens: set
+// CLOUDFLARE_TOKEN_MAKER to an account-owned API token with only Account ›
+// Account API Tokens › Edit (Manage Account › Account API Tokens; a short
+// TTL; delete it after). The setup checks it first and says what's wrong
+// with it, if anything.
 //
-// The tokens: staging's may deploy erga-staging only;
-// production's may deploy erga and erga-staging. Each also has D1 Write
-// (account-wide: Cloudflare has no per-database scope) and read on the two
-// zones. Each is checked with itself before it's stored, and never printed.
+// The token: Editor on erga, erga-staging and erga-control, D1 Write
+// (account-wide: Cloudflare has no per-database scope) and read on the three
+// zones. It is checked with itself before it's stored, and never printed.
 //
 // ERGA_DEPLOY_MOCK=1: all of it against the mock Cloudflare's copy of Erga's
 // account, with --yes taking the defaults: the tests run it so.
 
 import { randomBytes } from "node:crypto";
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cloudflare, DeployError, zoneIdOf, type Fetch } from "./pipeline";
 import { machineCredential } from "./local-credential";
 import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock-cloudflare";
 import { ask, deployFromMachine } from "./run";
-import { BUILDER, SOURCE, TARGETS } from "./targets";
+import { CONTROL, SOURCE, TARGETS } from "./targets";
 import { checkToken, createToken, describePlan, diagnoseMaker, olderTokens, permissionIds, policiesFor, tokenPlan, type TokenPlan } from "./server-tokens";
 
 const args = process.argv.slice(2);
 const flag = (f: string) => args.includes(f);
-const dry = flag("--dry-run"), yes = flag("--yes"), tokensOnly = flag("--tokens"), withProduction = flag("--production");
+const dry = flag("--dry-run"), yes = flag("--yes"), tokensOnly = flag("--tokens");
 const mock = process.env.ERGA_DEPLOY_MOCK == "1";
 const STAGING = TARGETS.staging, PROD = TARGETS.production;
+const APP_WORKERS = [PROD.worker, STAGING.worker];
 const secret = () => randomBytes(32).toString("hex");
-/**
- * Staging's pages are the zone's own wildcard (*.erga-pages-staging.dev), which the zone's free Universal SSL certificate covers.
- * Universal SSL covers only one level below a zone, so *.staging.erga-pages.dev would need a paid advanced certificate.
- */
-const UNIVERSAL = STAGING.pages.domain == STAGING.pages.zone;
-/** The wrangler that deploys the builder (its containers need a recent one). */
+/** The wrangler that deploys the control Worker (its containers need a recent one). */
 export const WRANGLER = "wrangler@4.147.0";
+const CONTROL_DIR = new URL("../control/", import.meta.url).pathname;
+
+/** The control Worker's GitHub OAuth app's Client ID, as control/wrangler.jsonc has it (JSONC: comments stripped). */
+function controlClientId(): string {
+  try {
+    const text = readFileSync(join(CONTROL_DIR, "wrangler.jsonc"), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    return String((JSON.parse(text) as { vars?: { GITHUB_CLIENT_ID?: string } }).vars?.GITHUB_CLIENT_ID ?? "").trim();
+  } catch { return ""; }
+}
 
 const PLAN = [
-  `Check the credential, the account, and its zones ${STAGING.zone} and ${STAGING.pages.zone} (reads only).`,
-  `Erga's source: the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (made if it isn't there). Servers reach it through their Artifacts binding, not a token.`,
-  `Staging's GitHub OAuth app: its Client ID in deploy/targets.json (homepage https://${STAGING.host}, callback https://${STAGING.host}/auth/github/callback).`,
-  `A certificate for *.${STAGING.pages.domain} (documents' pages on staging): ${UNIVERSAL ? `the zone's free Universal SSL certificate covers it (it covers *.${STAGING.pages.zone}).` : `Universal SSL covers only *.${STAGING.pages.zone}. An advanced certificate is paid: ordered only with --certificate.`}`,
-  `The builder Worker (${BUILDER}, deploy/builder/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its image) if it isn't there, or with --builder.`,
-  `Staging's secrets: a SESSION_SECRET and a FACTORY_KEY, which encrypts the API keys admins store (each kept if it has one), its GitHub app's client secret, an Anthropic key if you want the agent, and two shared with production: SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET.`,
-  `Production's Worker (${PROD.worker}): set SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on it (a new version of the same code; nothing else changes), so staging can read its documents and production can pass staging's pushes on.`,
-  `The staging deploy, from this machine: build HEAD, make ${STAGING.worker} and its database ${STAGING.database} with a copy of production's data, ${STAGING.host}, *.${STAGING.pages.domain}.`,
-  `Staging's deploy token (${tokenPlan("staging").name}): Editor on ${tokenPlan("staging").workers.join(", ")} only, D1, read on its zones. Made, checked with itself, stored on ${STAGING.worker} as CLOUDFLARE_DEPLOY_TOKEN.`,
-  `Production's deploy token (${tokenPlan("production").name}): Editor on ${tokenPlan("production").workers.join(" and ")}, D1, read on its zones; stored on ${PROD.worker}. Only with --production.`,
-  `Check it: https://${STAGING.host}/api/deploys/version answers this release, and staging says it can deploy itself.`,
+  `Check the credential, the account, and its zones ${[...new Set([CONTROL.zone, STAGING.zone, PROD.pages.zone, STAGING.pages.zone])].join(", ")} (reads only).`,
+  `Erga's source: the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (made if it isn't there). The control Worker reaches it through its Artifacts binding, not a token.`,
+  `The control Worker's GitHub OAuth app: its Client ID in control/wrangler.jsonc (homepage https://${CONTROL.host}, callback https://${CONTROL.host}/auth/github/callback).`,
+  `The control Worker (${CONTROL.worker}, control/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its container image) if it isn't there, or with --control. It gets ${CONTROL.host}.`,
+  `The control Worker's secrets: a SESSION_SECRET (kept if it has one), its GitHub app's client secret, a GitHub mirror token if you want the mirror, and SNAPSHOT_TOKEN, which it shares with ${APP_WORKERS.join(" and ")} (set on all three: staging's data copy goes through it).`,
+  `Staging's first deploy, from this machine, only if ${STAGING.worker} isn't there: build HEAD, make it and its database with a copy of production's data.`,
+  `The deploy token (${tokenPlan().name}): Editor on ${tokenPlan().workers.join(", ")}, D1, read on the zones. Made, checked with itself, stored on ${CONTROL.worker} as CLOUDFLARE_DEPLOY_TOKEN.`,
+  `Check it: https://${CONTROL.host}/api/health answers, and each target answers its version.`,
 ];
-const TOKEN_STEPS = [1, 9, 10, 11];
+const TOKEN_STEPS = [1, 7];
 
-// --hook-secret: a new DEPLOY_HOOK_SECRET, set on both Workers, for the servers to tell each other of a push. Not kept
-// on this machine: nothing here needs it (pushes go through Erga's Git endpoint, which tells the servers itself). Each
-// Worker gets a new version of the same code, which resets its Pipeline object: do it when no deploy runs.
+// --hook-secret: a new DEPLOY_HOOK_SECRET, set on both app Workers, for the sign-in settings they share server to server.
 if (flag("--hook-secret")) {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "", cred = mock ? null : machineCredential();
   if (mock || !/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("--hook-secret: set CLOUDFLARE_ACCOUNT_ID and log in with `bunx cf auth login` (not under the mock)."); process.exit(1); }
-  console.log(`A new DEPLOY_HOOK_SECRET for ${STAGING.worker} and ${PROD.worker} (not printed, not kept here).`);
+  console.log(`A new DEPLOY_HOOK_SECRET for ${APP_WORKERS.join(" and ")} (not printed, not kept here).`);
   if (!ask("Go on?", yes)) process.exit(1);
   const value = secret(), cf = new Cloudflare(cred.token);
-  for (const worker of [STAGING.worker, PROD.worker]) {
+  for (const worker of APP_WORKERS) {
     await cf.call("PUT", `/accounts/${accountId}/workers/scripts/${worker}/secrets`, `set DEPLOY_HOOK_SECRET on ${worker}`, { name: "DEPLOY_HOOK_SECRET", text: value, type: "secret_text" });
     console.log(`Set on ${worker}.`);
   }
   process.exit(0);
 }
 
-console.log(`Setting up ${STAGING.host}${mock ? " (the mock Cloudflare: nothing real)" : ""}${tokensOnly ? ", the deploy tokens only" : ""}. The steps:\n`);
+console.log(`Setting up ${CONTROL.worker} at ${CONTROL.host}${mock ? " (the mock Cloudflare: nothing real)" : ""}${tokensOnly ? ", the deploy token only" : ""}. The steps:\n`);
 PLAN.forEach((p, i) => { if (!tokensOnly || TOKEN_STEPS.includes(i + 1)) console.log(`  ${i + 1}. ${p}`); });
-console.log("\nThe deploy tokens grant exactly this:");
-for (const p of [tokenPlan("staging"), tokenPlan("production")]) {
+console.log("\nThe deploy token grants exactly this:");
+{
+  const p = tokenPlan();
   console.log(`  ${p.name} (on ${p.storedOn}):`);
   for (const l of describePlan(p)) console.log(`    - ${l}`);
 }
@@ -107,13 +106,34 @@ const net: Fetch = mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fet
 const cf = new Cloudflare(token, net);
 const acc = `/accounts/${accountId}`;
 const step = (n: number) => console.log(`\n${n}. ${PLAN[n - 1]}`);
-// Who makes the tokens: CLOUDFLARE_TOKEN_MAKER if set (an account-owned API token with Account API Tokens Edit,
+// Who makes the token: CLOUDFLARE_TOKEN_MAKER if set (an account-owned API token with Account API Tokens Edit,
 // for when your own credential can't make tokens: the cf CLI's OAuth login can't, today), else the same credential.
 const makerValue = mock ? "" : process.env.CLOUDFLARE_TOKEN_MAKER?.trim() ?? "";
 const maker = makerValue ? new Cloudflare(makerValue, net) : cf;
 const putSecret = (worker: string, name: string, text: string) => cf.call("PUT", `${acc}/workers/scripts/${worker}/secrets`, `set ${name} on ${worker}`, { name, text, type: "secret_text" });
+const scriptsNow = async () => ((await cf.call<{ id: string }[]>("GET", `${acc}/workers/scripts`, "list the Workers")) ?? []).map((s) => s.id);
+const secretsOf = async (worker: string) => ((await cf.call<{ name: string }[]>("GET", `${acc}/workers/scripts/${worker}/secrets`, `list ${worker}'s secrets`).catch(() => [])) ?? []).map((s) => s.name);
+/** What you type, or what you exported with --yes; the mock takes nothing from this machine. */
+const read = (what: string, fallback = "") => {
+  if (mock) return fallback;
+  if (yes) return process.env[what]?.trim() ?? "";
+  return prompt(`   ${what} (Enter to leave it out)`)?.trim() ?? "";
+};
 
-/** Makes a deploy token, checks it with itself, stores it on its Worker, and deletes older ones by the same name. */
+// --cleanup: what the control Worker replaced.
+if (flag("--cleanup")) {
+  const scripts = await scriptsNow();
+  console.log(`Clean up what ${CONTROL.worker} replaced:`);
+  if (scripts.includes("erga-builder")) console.log("  - the erga-builder Worker (its container application goes with it)");
+  for (const w of APP_WORKERS) if ((await secretsOf(w)).includes("CLOUDFLARE_DEPLOY_TOKEN")) console.log(`  - ${w}'s own deploy token (CLOUDFLARE_DEPLOY_TOKEN): the control Worker deploys it now`);
+  if (!ask("Go on?", yes)) process.exit(1);
+  if (scripts.includes("erga-builder")) { await cf.call("DELETE", `${acc}/workers/scripts/erga-builder?force=true`, "delete erga-builder"); console.log("  Deleted erga-builder."); }
+  for (const w of APP_WORKERS) if ((await secretsOf(w)).includes("CLOUDFLARE_DEPLOY_TOKEN")) { await cf.call("DELETE", `${acc}/workers/scripts/${w}/secrets/CLOUDFLARE_DEPLOY_TOKEN`, `delete ${w}'s CLOUDFLARE_DEPLOY_TOKEN`); console.log(`  Deleted ${w}'s CLOUDFLARE_DEPLOY_TOKEN.`); }
+  console.log("Done. The account's older deploy tokens (erga-deploy-staging, erga-deploy-production) can go on the dashboard: Manage Account › Account API Tokens.");
+  process.exit(0);
+}
+
+/** Makes the deploy token, checks it with itself, stores it on the control Worker, and deletes older ones by the same name. */
 async function makeToken(plan: TokenPlan): Promise<boolean> {
   for (const l of describePlan(plan)) console.log(`   - ${l}`);
   if (!ask(`   Make ${plan.name} and store it on ${plan.storedOn}?`, yes)) { console.log("   Skipped."); return false; }
@@ -121,7 +141,7 @@ async function makeToken(plan: TokenPlan): Promise<boolean> {
   if (!mock) {
     const d = await diagnoseMaker({ net, accountId, value: makerValue || token });
     for (const l of d.said) console.log(`   The token maker (${makerValue ? "CLOUDFLARE_TOKEN_MAKER" : cred!.from}): ${l}`);
-    if (!d.ok) throw new DeployError(makerValue ? "CLOUDFLARE_TOKEN_MAKER can't make the tokens (above)." : `${cred!.from} can't make account API tokens. Make an account-owned API token with Account › Account API Tokens › Edit (Manage Account › Account API Tokens), and run this again with CLOUDFLARE_TOKEN_MAKER set to it.`);
+    if (!d.ok) throw new DeployError(makerValue ? "CLOUDFLARE_TOKEN_MAKER can't make the token (above)." : `${cred!.from} can't make account API tokens. Make an account-owned API token with Account › Account API Tokens › Edit (Manage Account › Account API Tokens), and run this again with CLOUDFLARE_TOKEN_MAKER set to it.`);
   }
   const ids = await permissionIds(maker, accountId);
   const policies = await policiesFor(cf, accountId, plan, ids);
@@ -131,7 +151,7 @@ async function makeToken(plan: TokenPlan): Promise<boolean> {
     await maker.call("DELETE", `${acc}/tokens/${made.id}`, `delete the token ${plan.name}`).catch(() => {});
     throw new DeployError(`The new token ${plan.name} isn't right, so it was deleted and not stored: ${wrong.join("; ")}.`);
   }
-  console.log(`   Made and checked: it deploys ${plan.workers.join(" and ")}, reads ${plan.zones.join(" and ")}, and can't reach ${plan.notWorkers.join(", ") || "any other Worker"} or write DNS and routes.`);
+  console.log(`   Made and checked: it deploys ${plan.workers.join(", ")}, reads ${plan.zones.join(", ")}, and can't write DNS and routes.`);
   await putSecret(plan.storedOn, "CLOUDFLARE_DEPLOY_TOKEN", made.value);
   console.log(`   Stored on ${plan.storedOn} as CLOUDFLARE_DEPLOY_TOKEN (not printed).`);
   for (const old of await olderTokens(maker, accountId, plan, made.id)) {
@@ -140,16 +160,27 @@ async function makeToken(plan: TokenPlan): Promise<boolean> {
   return true;
 }
 
+/** `bunx wrangler deploy` in control/: the image (Docker), the Worker, its address. The image caches the checkout's dependencies (deps/, for the build only). */
+function deployControl() {
+  const deps = join(CONTROL_DIR, "builder/deps");
+  mkdirSync(deps, { recursive: true });
+  for (const f of ["package.json", "bun.lock"]) copyFileSync(new URL(`../${f}`, import.meta.url).pathname, join(deps, f));
+  // An empty config dir: wrangler must use this token, not its own older login (which can't write containers).
+  const xdg = mkdtempSync(join(tmpdir(), "erga-wrangler-"));
+  let p;
+  try { p = Bun.spawnSync(["bunx", WRANGLER, "deploy"], { cwd: CONTROL_DIR, stdout: "inherit", stderr: "inherit", env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId, XDG_CONFIG_HOME: xdg, WRANGLER_SEND_METRICS: "false" } }); }
+  finally { rmSync(deps, { recursive: true, force: true }); rmSync(xdg, { recursive: true, force: true }); }
+  if (p.exitCode != 0) throw new DeployError(`${CONTROL.worker} didn't deploy (see above). Is OrbStack (Docker) running?`);
+}
+
 try {
   console.log(`(Using ${cred.from}.)`);
   step(1);
   const account = await cf.call<{ name: string }>("GET", acc, "read the account");
-  const appZone = await zoneIdOf(cf, accountId, STAGING.zone), pagesZone = await zoneIdOf(cf, accountId, STAGING.pages.zone);
-  const scriptsNow = async () => ((await cf.call<{ id: string }[]>("GET", `${acc}/workers/scripts`, "list the Workers")) ?? []).map((s) => s.id);
-  const scripts = await scriptsNow();
+  for (const z of new Set([CONTROL.zone, PROD.pages.zone, STAGING.pages.zone])) await zoneIdOf(cf, accountId, z);
+  let scripts = await scriptsNow();
   if (!scripts.includes(PROD.worker)) throw new DeployError(`There's no Worker called ${PROD.worker} in this account: is it erga.dev's?`);
-  console.log(`   ${account?.name}: zones ${STAGING.zone} (${appZone}) and ${STAGING.pages.zone} (${pagesZone}); production's Worker is there${scripts.includes(STAGING.worker) ? `; so is ${STAGING.worker}` : ""}.`);
-  const shared = { SNAPSHOT_TOKEN: secret(), DEPLOY_HOOK_SECRET: mock ? MOCK_HOOK_SECRET : secret() };
+  console.log(`   ${account?.name}: the zones are there; so is production's Worker${scripts.includes(STAGING.worker) ? `, and ${STAGING.worker}` : ""}${scripts.includes(CONTROL.worker) ? `, and ${CONTROL.worker}` : ""}.`);
 
   if (!tokensOnly) {
     step(2);
@@ -158,95 +189,72 @@ try {
     if (repo) console.log(`   It's there (${repo.remote ?? "no remote said"}).`);
     else if (ask(`   Make the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (default branch main)?`, yes)) {
       await cf.call("POST", base, "make the source repo", { name: SOURCE.repo, default_branch: "main", description: "Erga's source: staging and main" });
-      console.log("   Made. Push the history to it through a server's Git endpoint (bun server/source/import.ts), or straight to Artifacts.");
-    } else console.log("   Skipped: servers have no Git endpoint until it's there.");
+      console.log("   Made. Push the history to it through the control Worker's Git endpoint (bun server/source/import.ts), or straight to Artifacts.");
+    } else console.log("   Skipped: the control Worker has no repository until it's there.");
 
     step(3);
-    const clientId = STAGING.vars.GITHUB_CLIENT_ID || (mock ? "Ov23liMockStaging" : "");
+    const clientId = controlClientId() || (mock ? "Ov23liMockControl" : "");
     if (clientId) console.log(`   Client ID ${clientId}.`);
     else {
-      console.log(`   None yet: signing in to staging won't work until there is one. Make a GitHub OAuth app (github.com/settings/applications/new):`);
-      console.log(`   homepage https://${STAGING.host}, callback https://${STAGING.host}/auth/github/callback. Put its Client ID in deploy/targets.json`);
-      console.log("   (targets.staging.vars.GITHUB_CLIENT_ID) and push it to staging; set its client secret on erga-staging (GITHUB_CLIENT_SECRET).");
+      console.log(`   None yet: signing in to ${CONTROL.host} won't work until there is one (admin-scope tokens work). Make a GitHub OAuth app (github.com/settings/applications/new):`);
+      console.log(`   homepage https://${CONTROL.host}, callback https://${CONTROL.host}/auth/github/callback. Put its Client ID in control/wrangler.jsonc (vars.GITHUB_CLIENT_ID),`);
+      console.log(`   run this again with --control, and give its client secret at step 5.`);
     }
 
     step(4);
-    const packs = (await cf.call<{ hosts?: string[]; status?: string }[]>("GET", `/zones/${pagesZone}/ssl/certificate_packs?status=all`, "list the certificates").catch(() => [])) ?? [];
-    const covered = packs.some((p) => p.hosts?.includes(`*.${STAGING.pages.domain}`));
-    if (covered) console.log(`   There's one already${UNIVERSAL ? " (Universal SSL)" : ""}.`);
-    else if (UNIVERSAL) console.log(`   None active yet: Cloudflare issues the zone's Universal SSL certificate itself, a few minutes after the zone is active. Nothing to order.`);
-    else if (!flag("--certificate")) console.log(`   None, and none ordered (it costs money: --certificate orders it). Documents' pages on staging won't load over HTTPS until there's one.`);
-    else if (ask(`   Order an advanced certificate for ${STAGING.pages.domain} and *.${STAGING.pages.domain}? (It needs Advanced Certificate Manager, which costs money.)`, yes)) {
-      await cf.call("POST", `/zones/${pagesZone}/ssl/certificate_packs/order`, "order the certificate", {
-        type: "advanced", hosts: [STAGING.pages.domain, `*.${STAGING.pages.domain}`], validation_method: "txt", validity_days: 90, certificate_authority: "google", cloudflare_branding: false,
-      }).then(() => console.log("   Ordered: it's active in a few minutes (Cloudflare validates it itself, the zone being on Cloudflare).")).catch((e) => console.log(`   Not ordered: ${(e as Error).message}`));
-    }
+    if (scripts.includes(CONTROL.worker) && !flag("--control")) console.log("   It's there (--control deploys it again).");
+    else if (mock) console.log("   (mock) It's there.");
+    else if (ask(`   Deploy it now (\`bunx ${WRANGLER} deploy\` in control/; needs Docker running)?`, yes)) { deployControl(); scripts = await scriptsNow(); }
+    else console.log("   Skipped: nothing deploys until it's there.");
 
     step(5);
-    if (scripts.includes(BUILDER) && !flag("--builder")) console.log("   It's there.");
-    else if (mock) console.log("   (mock) It's there.");
-    else if (ask(`   Deploy it now (\`bunx ${WRANGLER} deploy\` in deploy/builder; needs Docker running)?`, yes)) {
-      // The image caches the checkout's dependencies: package.json and bun.lock go in its
-      // build context, deps/, for the build only.
-      const dir = new URL("./builder/", import.meta.url).pathname, deps = join(dir, "deps");
-      mkdirSync(deps, { recursive: true });
-      for (const f of ["package.json", "bun.lock"]) copyFileSync(new URL(`../${f}`, import.meta.url).pathname, join(deps, f));
-      let p;
-      try { p = Bun.spawnSync(["bunx", WRANGLER, "deploy"], { cwd: dir, stdout: "inherit", stderr: "inherit", env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId } }); }
-      finally { rmSync(deps, { recursive: true, force: true }); }
-      if (p.exitCode != 0) throw new DeployError("The builder didn't deploy (see above). Staging can still be deployed from a machine (bun deploy/run.ts staging), but can't deploy itself until it's there.");
-    } else console.log("   Skipped: staging can't deploy itself until it's there.");
+    // The one SNAPSHOT_TOKEN, for the control Worker and both app Workers: set in step 5, and given to staging's first deploy in step 6.
+    let snapshot: string | null = null;
+    if (!scripts.includes(CONTROL.worker)) console.log(`   Skipped: there's no ${CONTROL.worker} to set them on yet.`);
+    else {
+      const had = await secretsOf(CONTROL.worker);
+      const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }) };
+      const github = read("GITHUB_CLIENT_SECRET", "mock-control-github-client-secret");
+      if (github) secrets.GITHUB_CLIENT_SECRET = github;
+      const mirror = read("GITHUB_MIRROR_TOKEN");
+      if (mirror) secrets.GITHUB_MIRROR_TOKEN = mirror;
+      snapshot = secret();
+      console.log(`   Ready: ${[...Object.keys(secrets), "SNAPSHOT_TOKEN"].join(", ")}${had.includes("SESSION_SECRET") ? " (SESSION_SECRET kept as it is)" : ""} (new ones made here; none are printed).`);
+      if (ask(`   Set them on ${CONTROL.worker}, and SNAPSHOT_TOKEN on ${APP_WORKERS.filter((w) => scripts.includes(w)).join(" and ")} too?`, yes)) {
+        for (const [name, text] of Object.entries({ ...secrets, SNAPSHOT_TOKEN: snapshot })) await putSecret(CONTROL.worker, name, text);
+        for (const w of APP_WORKERS) if (scripts.includes(w)) await putSecret(w, "SNAPSHOT_TOKEN", snapshot);
+        console.log(`   Set: ${CONTROL.worker}: ${[...Object.keys(secrets), "SNAPSHOT_TOKEN"].join(", ")}; ${APP_WORKERS.filter((w) => scripts.includes(w)).join(", ")}: SNAPSHOT_TOKEN.`);
+      } else console.log("   Skipped.");
+    }
 
     step(6);
-    const read = (what: string, fallback = "") => {
-      // The mock never takes anything from this machine's environment; --yes for real takes what you exported.
-      if (mock) return fallback;
-      if (yes) return process.env[what]?.trim() ?? "";
-      return prompt(`   ${what} (Enter to leave it out)`)?.trim() ?? "";
-    };
-    const had = scripts.includes(STAGING.worker)
-      ? ((await cf.call<{ name: string }[]>("GET", `${acc}/workers/scripts/${STAGING.worker}/secrets`, `list ${STAGING.worker}'s secrets`).catch(() => [])) ?? []).map((s) => s.name)
-      : [];
-    // FACTORY_KEY: staging's own (not production's), so the API keys it stores are its own; without one, /admin/api-keys can't store any.
-    const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }), ...(had.includes("FACTORY_KEY") ? {} : { FACTORY_KEY: randomBytes(32).toString("base64") }), ...shared };
-    const github = read("GITHUB_CLIENT_SECRET", "mock-staging-github-client-secret");
-    if (github) secrets.GITHUB_CLIENT_SECRET = github;
-    const anthropic = read("ANTHROPIC_API_KEY");
-    if (anthropic) secrets.ANTHROPIC_API_KEY = anthropic;
-    const keptAsIs = ["SESSION_SECRET", "FACTORY_KEY"].filter((n) => had.includes(n));
-    console.log(`   Ready: ${Object.keys(secrets).join(", ")}${keptAsIs.length ? ` (${keptAsIs.join(" and ")} kept as ${keptAsIs.length > 1 ? "they are" : "it is"})` : ""} (new ones made here; none are printed).`);
-
-    step(7);
-    if (ask(`   Set SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on ${PROD.worker} (production)?`, yes)) {
-      for (const [name, text] of Object.entries(shared)) await putSecret(PROD.worker, name, text);
-      console.log("   Set.");
-    } else console.log("   Skipped: staging's documents step will say production doesn't serve snapshots, and pushes heard on erga.dev won't reach staging.");
-
-    step(8);
-    if (flag("--no-deploy")) {
-      if (!(await scriptsNow()).includes(STAGING.worker)) throw new DeployError(`--no-deploy, but there's no ${STAGING.worker} yet: deploy it once first.`);
-      for (const [name, text] of Object.entries(secrets)) await putSecret(STAGING.worker, name, text);
-      console.log(`   Not deployed (--no-deploy); its secrets set on ${STAGING.worker}.`);
-    } else {
-      const deployed = await deployFromMachine({ name: "staging", secrets, yes, net, token, accountId, snapshotToken: shared.SNAPSHOT_TOKEN, log: (l) => console.log(`   ${l}`) });
+    if (scripts.includes(STAGING.worker)) console.log("   It's there: nothing to do (the control Worker deploys it from now on).");
+    else if (flag("--no-deploy")) console.log("   Skipped (--no-deploy).");
+    else {
+      // The copy goes through production's snapshot endpoint: production must have the same token first.
+      if (!snapshot) { snapshot = secret(); await putSecret(PROD.worker, "SNAPSHOT_TOKEN", snapshot); if (scripts.includes(CONTROL.worker)) await putSecret(CONTROL.worker, "SNAPSHOT_TOKEN", snapshot); }
+      const stagingSecrets = { SESSION_SECRET: secret(), FACTORY_KEY: randomBytes(32).toString("base64"), SNAPSHOT_TOKEN: snapshot, DEPLOY_HOOK_SECRET: mock ? MOCK_HOOK_SECRET : secret() };
+      const github = read("STAGING_GITHUB_CLIENT_SECRET", "mock-staging-github-client-secret");
+      const deployed = await deployFromMachine({ name: "staging", secrets: { ...stagingSecrets, ...(github ? { GITHUB_CLIENT_SECRET: github } : {}) }, yes, net, token, accountId, snapshotToken: snapshot, log: (l) => console.log(`   ${l}`) });
       if (!deployed) process.exit(1);
+      scripts = await scriptsNow();
     }
   }
 
-  step(9);
-  if (!(await scriptsNow()).includes(STAGING.worker)) throw new DeployError(`There's no ${STAGING.worker} yet: a token can only name a Worker that's there. Run this without --tokens first.`);
-  await makeToken(tokenPlan("staging"));
+  step(7);
+  scripts = await scriptsNow();
+  const missing = tokenPlan().workers.filter((w) => !scripts.includes(w));
+  if (missing.length) throw new DeployError(`There's no ${missing.join(" or ")} yet: a token can only name a Worker that's there. Run this without --tokens first.`);
+  await makeToken(tokenPlan(scripts.filter((s) => !tokenPlan().workers.includes(s) && /^erga/.test(s))));
 
-  step(10);
-  if (withProduction) await makeToken(tokenPlan("production"));
-  else console.log("   Not now (--production makes it: production's switch to deploying itself).");
-
-  step(11);
-  const version = await (await net(`https://${STAGING.host}/api/deploys/version`)).json().catch(() => null) as { version?: string; target?: string } | null;
-  console.log(`   https://${STAGING.host} runs ${version?.version ?? "(no answer)"}; it says it's ${version?.target ?? "?"}.`);
-  const bound = ((await cf.call<{ bindings?: { name: string; type: string; namespace?: string }[] }>("GET", `${acc}/workers/scripts/${STAGING.worker}/settings`, `read ${STAGING.worker}'s settings`).catch(() => null))?.bindings ?? []).find((b) => b.type == "artifacts");
-  console.log(bound ? `   ${STAGING.worker} has the Artifacts binding (${bound.name}, namespace ${bound.namespace}): its Git endpoint can write Erga's source.` : `   ${STAGING.worker} has no Artifacts binding: it has no Git endpoint. Deploy it again from a build that binds it.`);
-  console.log(`\nDone. Next: push the staging branch (git push https://${STAGING.host}/git/erga.git staging) and watch https://${STAGING.host}/source (or /api/deploys/staging/log).`);
+  step(8);
+  const health = await (await net(`https://${CONTROL.host}/api/health`)).json().catch(() => null) as { ok?: boolean; version?: string } | null;
+  console.log(`   https://${CONTROL.host}/api/health: ${health ? `ok ${health.ok}${health.version ? `, version ${health.version}` : ""}` : "(no answer)"}.`);
+  for (const t of [STAGING, PROD]) {
+    const version = await (await net(`https://${t.host}/api/deploys/version`)).json().catch(() => null) as { version?: string; target?: string } | null;
+    console.log(`   https://${t.host} runs ${version?.version ?? "(no answer)"}; it says it's ${version?.target ?? "?"}.`);
+  }
+  console.log(`\nDone. Next: push the staging branch (git push https://${CONTROL.host}/git/erga.git staging) and watch https://${CONTROL.host}/. Then bun deploy/setup.ts --cleanup, once the control Worker has deployed both targets.`);
 } catch (e) {
   console.error(`\nStopped: ${(e as Error).message}`);
   process.exit(1);

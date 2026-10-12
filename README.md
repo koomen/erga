@@ -60,10 +60,15 @@ AGENTS.md has the rules for working on it.
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
                   (platform.ts), D1 (d1.ts), the Durable Objects (document-object.ts and objects/: each gives its logic
                   in server/ or document/ storage, alarms and sockets, and decides nothing), the dev server's routes
-                  (dev.ts), and the branch deploys' and /deploy's routes (branch-deploys.ts, deploy-routes.ts)
-    deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
-                  release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a
-                  deploy locks (locked-settings.ts), and the mock Cloudflare the tests use
+                  (dev.ts), the app's own deploy routes (branch-deploys.ts: its version, its health check, staging's
+                  data copy) and /deploy's (deploy-routes.ts)
+    control/      the control Worker (erga-control, ops.erga.dev): Erga's repository and Git endpoint, the deploy
+                  pipeline, the Source page and its sign-in, and the build container (builder/), apart from the app, so a
+                  broken app never takes the way to fix it down (index.ts the entry, routes.ts, wrangler.jsonc;
+                  deploy/setup.ts deploys it). The app reaches it over a service binding; locally the app hosts its routes.
+    deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the release build (release.ts), the
+                  targets (targets.json), the setup runbook (setup.ts), the settings a deploy locks (locked-settings.ts),
+                  and the mock Cloudflare the tests use
     dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, a Git server for tests, and a
                   document's files on disk as its Storage (disk-storage.ts, over the mirror the plugin serves)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)

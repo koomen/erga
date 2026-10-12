@@ -7,7 +7,7 @@ import { Tokens } from "../server/identity/index.ts";
 import type { Env } from "./env";
 import { counted } from "./timing";
 
-const sqlOn = (db: D1Database): Sql => {
+export const sqlOn = (db: D1Database): Sql => {
   const statement = (q: string, params: Param[]) => db.prepare(q).bind(...params);
   return {
     all: <T>(q: string, ...params: Param[]) => counted("db", async () => (await statement(q, params).all<T>()).results),

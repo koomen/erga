@@ -283,8 +283,8 @@ export interface Target {
   secrets: Record<string, string>;
   /** Keep the Worker's other secrets from its last version (set once, deploy/setup.ts), as `cf deploy` does. */
   keepSecrets?: boolean;
-  /** Service bindings, by binding name (BUILDER → erga-builder). */
-  services?: Record<string, string>;
+  /** Service bindings, by binding name: the Worker, and its entrypoint if not the default (CONTROL → erga-control's App). */
+  services?: Record<string, string | { service: string; entrypoint?: string }>;
   /**
    * The Artifacts namespace Erga's own source is in (deploy/targets.json's
    * source): a release's Artifacts binding goes up only to a target that
@@ -771,7 +771,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "assets") bindings.push({ type: "assets", name });
     else if (b.type == "text") bindings.push({ type: "plain_text", name, text: text[name] ?? b.value ?? "" });
     else if (b.type == "secret") { if (secrets[name] != null) bindings.push({ type: "secret_text", name, text: secrets[name] }); }
-    else if (b.type == "service" && b.name && target.services?.[name]) bindings.push({ type: "service", name, service: target.services[name] });
+    else if (b.type == "service" && b.name && target.services?.[name]) bindings.push(serviceBinding(name, target.services[name]));
     // Erga's own source: only on a target that names the namespace; elsewhere left out.
     else if (b.type == "artifacts") { if (target.artifacts) bindings.push({ type: "artifacts", name, namespace: target.artifacts }); }
     else throw new DeployError(`This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`);
@@ -779,7 +779,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
   // Settings and secrets the build doesn't declare (the version, the account, the branch deploys' own secrets), and services.
   for (const [name, value] of Object.entries(text)) if (!named.has(name)) { bindings.push({ type: "plain_text", name, text: value }); named.add(name); }
   for (const [name, value] of Object.entries(secrets)) if (!named.has(name)) { bindings.push({ type: "secret_text", name, text: value }); named.add(name); }
-  for (const [name, service] of Object.entries(target.services ?? {})) if (!named.has(name)) { bindings.push({ type: "service", name, service }); named.add(name); }
+  for (const [name, service] of Object.entries(target.services ?? {})) if (!named.has(name)) { bindings.push(serviceBinding(name, service)); named.add(name); }
   // Where documents' pages run: a domain of their own, or the shared host.
   if (target.pages.kind == "zone") bindings.push({ type: "plain_text", name: "PAGES_DOMAIN", text: target.pages.domain ?? target.pages.zoneName });
   else bindings.push({ type: "plain_text", name: "PAGES_HOST", text: o.pagesHost });
@@ -805,6 +805,10 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     tags: [WORKER_TAG],
   };
 }
+
+/** A service binding's metadata: the Worker, and its entrypoint when it isn't the default export. */
+const serviceBinding = (name: string, to: string | { service: string; entrypoint?: string }) =>
+  typeof to == "string" ? { type: "service", name, service: to } : { type: "service", name, service: to.service, ...(to.entrypoint ? { entrypoint: to.entrypoint } : {}) };
 
 /**
  * The account's Workers, as the account step needs them (is the target's

@@ -8,10 +8,12 @@ Before you push, run the tests:
     bun run test               # the typecheck, the unit tests and the smoke run: under a minute
 
 
-Push to `staging` (`git push origin HEAD:staging`): staging.erga.dev
-deploys it at once. Production (erga.dev) deploys when `main` moves to a
-staging commit: Merge on /admin/source, the admin agent's
-`deploy_production`, the API, or a push to `main`.
+Push to `staging` (`git push origin HEAD:staging`): the control Worker
+(ops.erga.dev, `control/`) builds it and deploys staging.erga.dev at once.
+Production (erga.dev) deploys when `main` moves to a staging commit: Merge
+on https://ops.erga.dev/, the admin agent's `deploy_production`, the API, or
+a push to `main`. Each deploy checks the app's health and rolls back by
+itself when it fails; Roll back on a deploy's log does it by hand.
 
 The smoke run (`e2e/smoke/`) checks the editor's core in a real browser.
 Keep it small: it has a time limit (90 s), and a new test there should

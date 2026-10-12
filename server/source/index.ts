@@ -8,3 +8,4 @@ export { tar, ZERO } from "./git.ts";
 export type { Remote } from "./remote.ts";
 export { SourceError, SourceRepo, type Actor } from "./repo.ts";
 export { isGitRead, sourceApi, sourceDoor, sourceGit, type RepoAccess, type SourceObject, type SourceService } from "./routes.ts";
+export { adminSourcePage, type SourcePageConfig } from "./page.ts";
