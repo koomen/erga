@@ -25,6 +25,7 @@ AGENTS.md has the rules for working on it.
       merge.ts        an outside edit, as a small change to the open document
       api.ts          the document API's contract (its routes are in document/host.ts for now)
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
+      app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
       identity/       who is asking: sessions and agent tokens (session.ts), sign-in with GitHub (sign-in.ts) and its
                       settings (settings.ts, apps.ts), users, cookies, the other of Erga's servers (peer.ts)
@@ -39,9 +40,10 @@ AGENTS.md has the rules for working on it.
       sites/          a document on its own domain: the tables (rows.ts), the calls to Cloudflare (publish.ts), the deploys
                       (deploys.ts), the API (api.ts)
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
-      admin/          the admin pages (pages.ts), the layout they share (layout.ts)
+      admin/          the admin pages (pages.ts), the layout they share (layout.ts), each admin's agent (agent.ts)
       deploys/        who may use the deploy page (access.ts)
-      source/         Erga's own Git repository: the Git endpoint, the mirror, and the Source admin page
+      source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts), the Source page
+      live.ts         open pages follow a redeploy
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     editor-agent/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
     agents/       what the agents share, and the admin agent
@@ -53,9 +55,10 @@ AGENTS.md has the rules for working on it.
                   document/ only content.ts, pages.ts, merge.ts and api.ts's types: tests/browser-imports.test.ts keeps it so
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.sh bundles into .build/
                   (main.ts the editor's shell, frame.ts the editor, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
-    cloudflare/   the Cloudflare adapter: the Worker's entry (index.ts), the Platform from its bindings (platform.ts), the
-                  Durable Objects (document-object.ts, objects/home.ts, objects/site.ts, objects/source.ts, pipeline.ts,
-                  deploy-session.ts, objects/admin-agent.ts) and D1 (d1.ts)
+    cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
+                  (platform.ts), D1 (d1.ts), the Durable Objects (document-object.ts and objects/: each gives its logic
+                  in server/ or document/ storage, alarms and sockets, and decides nothing), the dev server's routes
+                  (dev.ts), and the branch deploys' and /deploy's routes (branch-deploys.ts, deploy-routes.ts)
     deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
                   release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a
                   deploy locks (locked-settings.ts), and the mock Cloudflare the tests use
@@ -64,9 +67,9 @@ AGENTS.md has the rules for working on it.
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full)
 
-A file in `cloudflare/` with the same name as one in `server/` is its
-Cloudflare side: `cloudflare/document-object.ts` runs `document/host.ts` in a
-Durable Object. The configs at the root are the ones their tools look for
+Each area of `server/` (identity, documents, pages, home, sites, admin,
+source) is imported through its `index.ts`, its interface. Only `cloudflare/`
+reads the Worker's bindings; `server/` and `document/` never import it. The configs at the root are the ones their tools look for
 there: `cloudflare.config.ts` (the Worker and its bindings),
 `vite.config.ts`, `e2e.config.ts`, `tsconfig.json`.
 
