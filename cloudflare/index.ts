@@ -26,6 +26,7 @@ export { AdminAgentHost } from "./objects/admin-agent";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./objects/source";
 export { Home } from "./objects/home";
+export { OwnStorage } from "./objects/own";
 export { SiteHost } from "./objects/site";
 
 export default {

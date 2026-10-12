@@ -72,7 +72,17 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const target = env.DEPLOY_TARGET?.trim() ?? "";
   // Local development only (the tests): stand-ins for GitHub and for the other target's server.
   const standIn = (value: string | undefined) => (env.DEV_LOGIN && value?.trim() ? value.trim().replace(/\/+$/, "") : null);
-  const own = () => env.PIPELINE.getByName("deploys");
+  // The server's own storage: its object; a value not there yet is read from where it was kept before (the Pipeline
+  // object, until 2026-10-11) and moved over, once.
+  const own = () => env.OWN.getByName("own");
+  const ownGet = async (k: string) => {
+    const v = await own().get(k);
+    if (v !== undefined) return v;
+    let old: unknown;
+    try { old = await env.PIPELINE.getByName("deploys").authGet(k); } catch { old = undefined; }
+    if (old !== undefined) await own().put(k, old);
+    return old;
+  };
   const p: Platform = {
     directory,
     sessionOf: (request) => sessionOf(p, request),
@@ -98,7 +108,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       devLogin: env.DEV_LOGIN?.trim() || null,
       encryptionKey: factoryKey(env),
     },
-    own: { get: (k) => own().authGet(k), put: (k, v) => own().authPut(k, v), delete: (k) => own().authDelete(k) },
+    own: { get: ownGet, put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
     source: sourceService(env),
     home: env.HOME.getByName("home"),
     adminAgent: env.ADMIN_AGENT.getByName("admin"),

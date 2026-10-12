@@ -42,6 +42,10 @@ export type Fetch = (input: Request | string | URL, init?: RequestInit) => Promi
 export class DeployError extends Error {
   constructor(message: string, readonly status = 0) { super(message); }
 }
+/** The release went up and answers its version, but its health check fails (the live step): what a rollback undoes by itself. */
+export class Unhealthy extends DeployError {
+  constructor(message: string, readonly why: string) { super(message); }
+}
 
 interface Envelope<T> { success: boolean; result: T; errors?: { code: number; message: string }[]; result_info?: unknown }
 
@@ -686,8 +690,10 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
           const r = await site(`https://${host}/api/deploys/version`).catch(() => null);
           const v = r?.ok ? ((await r.json().catch(() => null)) as { version?: string } | null)?.version ?? "" : "";
           if (v == want) {
-            const h = await checkHealth(site, host, want);
-            if (!h.ok) throw new DeployError(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`);
+            // Healthy, or unhealthy three times over ten seconds (one slow cold start isn't a broken release).
+            let h = await checkHealth(site, host, want);
+            for (let again = 0; !h.ok && again < 2; again++) { await sleep(5000); h = await checkHealth(site, host, want); }
+            if (!h.ok) throw new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why);
             return `https://${host}, release ${want}, healthy (${h.summary})`;
           }
           if (v) seen = v;

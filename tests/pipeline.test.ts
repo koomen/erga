@@ -528,6 +528,39 @@ describe("branches deploy themselves", () => {
     expect(t.steps.find((x) => x.id == "live")!.status).toBe("failed");
   });
 
+  test("an unhealthy release is rolled back by itself: the version before it serves again, the deploy stays failed and says so", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-staging", env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" }));
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    const [good] = (await server.instance.historyOf("staging"))!;
+    mock.state.unhealthy = [SHA3.slice(0, 12)];
+    const calls = mock.state.calls.length;
+    await server.instance.hook("staging", SHA3);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "failed", commit: SHA3, deployed: SHA2, liveDeploy: good.id });
+    expect(t.error).toContain("its health check fails: documents: a document didn't open");
+    expect(t.error).toContain(`Rolled back to release ${SHA2.slice(0, 12)} by itself.`);
+    expect(t.steps.find((x) => x.id == "live")!.status).toBe("failed");
+    expect(t.steps.at(-1)).toMatchObject({ id: "rollback", status: "done", title: `Roll back to release ${SHA2.slice(0, 12)}` });
+    // The older release answers again: one deployment of its version, after the health check's three tries.
+    expect(server.version()).toBe(SHA2.slice(0, 12));
+    expect(mock.state.calls.slice(calls).filter((c) => c.includes("/deployments") && c.startsWith("POST"))).toEqual([`POST /accounts/${FLEET_ACCOUNT}/workers/scripts/erga-staging/deployments?force=true`]);
+    const [failed, live] = (await server.instance.historyOf("staging"))!;
+    expect(failed).toMatchObject({ commit: SHA3, state: "failed", live: false, error: expect.stringContaining("Rolled back to release") });
+    expect(live).toMatchObject({ id: good.id, state: "deployed", live: true });
+    const log = (await server.instance.logOf("staging", failed.id))!;
+    expect(log.lines.filter((l) => l.step == "rollback").map((l) => l.text)).toEqual([`unhealthy: rolling staging.erga.dev back to release ${SHA2.slice(0, 12)} (what it ran before this deploy)`]);
+    // Healthy again at the next push: deployed as usual.
+    mock.state.unhealthy = [];
+    await server.instance.hook("staging", SHA1);
+    await server.settle();
+    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA1 });
+  });
+
   test("staging deploys itself: its own pipeline, restarted by its own upload, finished by the new version", async () => {
     let server: Server | null = null;
     // Uploading staging's Worker restarts staging's server: Cloudflare resets its Durable Objects, and the old one reaches nothing more.

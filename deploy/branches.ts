@@ -56,7 +56,7 @@
 // HISTORY_KEEP of each target, in the same storage (the Pipeline Durable
 // Object's).
 
-import { ALL_STEPS, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
+import { ALL_STEPS, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, Unhealthy, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { sourceFor, type Source } from "./source";
 import { BUILDER, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 
@@ -837,8 +837,47 @@ export class BranchDeploys {
     s.status = { ...s.status, state: "failed", at: this.now(), error: `${running ? `Stopped at “${running.title}”. ` : ""}${message}` };
     s.oldDocs = s.run?.carry.oldDocs ?? s.oldDocs;
     this.line(s, `failed: ${message}`, running?.id);
+    // The release is up but unhealthy: the version before it serves again, by itself, where there's one to go back to.
+    if (e instanceof Unhealthy && s.run) { await this.undo(s, s.run); return; }
     s.run = null;
     await this.save(s);
+  }
+
+  /**
+   * An unhealthy release rolled back by itself: one deployment of the Worker version the deploy's restore point names.
+   * The deploy stays failed, its record says it was undone, and the target's live deploy is the one before, as it was.
+   * On this server's own target the deployment restarts this object into the older version: the record is written first.
+   */
+  private async undo(s: Stored, run: Run): Promise<void> {
+    const name = s.status.name;
+    const restore = run.carry.restore;
+    const to = restore?.version ? `release ${restore.version}` : restore?.versionId ? `version ${restore.versionId.slice(0, 8)}` : null;
+    if (!restore?.versionId || !to) {
+      this.line(s, "not rolled back by itself: this deploy has no restore point (a new Worker, or one whose deployments couldn't be read)", "rollback");
+      s.run = null;
+      await this.save(s);
+      return;
+    }
+    const note = `Rolled back to ${to} by itself.`;
+    s.status = { ...s.status, error: `${s.status.error ?? ""} ${note}`.trim(), steps: [...s.status.steps, { id: "rollback", title: `Roll back to ${to}`, status: "done" }] };
+    this.line(s, `unhealthy: rolling ${TARGETS[name].host} back to ${to} (what it ran before this deploy)`, "rollback");
+    // Written whole before the call: the record (its error says it was undone), the log, no run left to resume.
+    s.run = null;
+    await this.save(s);
+    const list = await this.records(name);
+    const rec = list.find((r) => r.id == run.deployId);
+    if (rec) { rec.error = s.status.error; await this.putRecords(name, list); }
+    try {
+      await rollbackTo(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), targetOf(TARGETS[name], this.deps.env), restore.versionId, `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`);
+    } catch (e) {
+      const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
+      const undone = `${note} That failed too: ${message} Roll back by hand (Cloudflare's dashboard, or deployments create).`;
+      if (rec) { rec.error = rec.error!.replace(note, undone); await this.putRecords(name, list); }
+      s.status = { ...s.status, error: s.status.error!.replace(note, undone) };
+      for (const x of s.status.steps) if (x.id == "rollback") x.status = "failed";
+      await this.appendTo(name, run.deployId, `the rollback failed: ${message}`);
+      await this.save(s);
+    }
   }
 
   /** A deploy a newer one took the place of: stopped before its next step, its record says by what. */

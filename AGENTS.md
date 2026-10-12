@@ -95,5 +95,10 @@ For example:
    tables (D1: users, settings, documents and their permissions) with a new
    file in `server/migrations/`, never by editing one that's there: erga.dev has
    applied those, and other branches may be adding their own at the same time.
+   A migration only adds (tables, columns, indexes, with `IF NOT EXISTS`):
+   never drops, renames or changes a column's meaning, so the Worker before it
+   still runs on the new schema and a rollback is safe. A migration that must
+   drop or rename starts with the line `-- erga: destructive` and says why;
+   `tests/migrations.test.ts` fails without it.
    Reach the data through `Directory` (`server/directory/`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.
