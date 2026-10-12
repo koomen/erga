@@ -20,7 +20,7 @@ import { agentSettings } from "./agent-settings";
 import { platform } from "./platform";
 import { DiskLink } from "../dev/disk-storage";
 import { publishedChanged } from "./published";
-import { siteChanged, siteOps } from "./site-host";
+import { siteChanged, siteOps } from "./sites";
 import type { Env } from "./env";
 
 /** The new-document template's page, which a new page starts from. */

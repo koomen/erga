@@ -61,8 +61,8 @@ import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent-ho
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "../server/home/index.ts";
-import { siteApi } from "../server/site-publish";
-import { mockSiteFile, siteOps } from "./site-host";
+import { siteApi } from "../server/sites/index.ts";
+import { mockSiteFile } from "./sites";
 import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
 import { isDev, pagesSite, platform } from "./platform";
@@ -75,7 +75,7 @@ export { AdminAgentHost } from "./admin-agent-host";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
 export { Home } from "./objects/home";
-export { SiteHost } from "./site-host";
+export { SiteHost } from "./objects/site";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -161,7 +161,7 @@ async function route(request: Request, env: Env, url: URL, p: Platform): Promise
   if (homeId) return homeApi(request, p, homeId, (homeAction ?? "") as "" | "deploy");
   // A document's site on its person's Cloudflare account, and its deploys.
   const [, siteId, siteAction] = /^\/api\/docs\/([a-z0-9]{8})\/site(?:\/(deploy))?\/?$/.exec(path) ?? [];
-  if (siteId) return siteApi(request, p, siteOps(env, url.origin), siteId, (siteAction ?? "") as "" | "deploy");
+  if (siteId) return siteApi(request, p, siteId, (siteAction ?? "") as "" | "deploy");
   // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
   // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
   if (read && isHomeFilePath(path)) {

@@ -1,6 +1,6 @@
 // Publishing a document to a domain in the person's own Cloudflare account:
-// what the server keeps about it. server/site-publish.ts does the rest (the calls
-// to Cloudflare, the files, the API); cloudflare/site-host.ts runs the deploys.
+// what the server keeps about it. publish.ts does the rest (the calls to
+// Cloudflare, the files); deploys.ts runs the deploys; api.ts is the API.
 //
 // The site lives in the person's account, not on Erga: a Worker there with
 // the published version's files as its static assets, on a custom domain of
@@ -21,7 +21,7 @@
 //
 // Reached through the directory (dir.cloudflare, dir.sites).
 
-import type { Sql } from "./directory.ts";
+import type { Sql } from "../directory.ts";
 
 /** A Cloudflare account, as a token reaches it. */
 export interface CfAccount { id: string; name: string }

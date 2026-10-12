@@ -13,7 +13,7 @@ import type { Env } from "./env";
 import { counted } from "./timing";
 import { isAdminsOnly, isTargetName, TARGETS, type TargetName } from "../deploy/targets";
 import { MOCK_HOOK_SECRET } from "../deploy/mock-cloudflare";
-import { siteOps } from "./site-host";
+import { siteOps } from "./sites";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */

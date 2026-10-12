@@ -5,7 +5,7 @@ import type { DocumentObject } from "./document-object";
 import type { SourceHost } from "./source-host";
 import type { Pipeline } from "./pipeline";
 import type { Home } from "./objects/home";
-import type { SiteHost } from "./site-host";
+import type { SiteHost } from "./objects/site";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
@@ -88,7 +88,7 @@ export interface Env {
   BUILDER?: Fetcher;
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
   ERGA_DEPLOY_MOCK?: string;
-  /** Local development only: how long after a publish a document's site deploys (cloudflare/site-host.ts; tests shorten it). */
+  /** Local development only: how long after a publish a document's site deploys (cloudflare/objects/site.ts; tests shorten it). */
   ERGA_SITE_DELAY_MS?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;

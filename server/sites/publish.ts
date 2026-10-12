@@ -1,11 +1,6 @@
 // Publishing a document to a domain in the person's own Cloudflare account:
-// the calls to Cloudflare, the site's files, and the API. server/sites.ts has the
-// tables and the design; cloudflare/site-host.ts runs each document's deploys.
-//
-//   GET    /api/docs/<id>/site          { canEdit, connection, site, deploy, tokenUrl } (?zones=1 adds your domains)
-//   POST   /api/docs/<id>/site          { hostname }: publishes the document there, with your Cloudflare connection
-//   POST   /api/docs/<id>/site/deploy   deploys the published version again, now
-//   DELETE /api/docs/<id>/site          takes the site down: its custom domain and its Worker go from the account
+// the calls to Cloudflare and the site's files. rows.ts has the tables and
+// the design; deploys.ts runs each document's deploys; api.ts is the API.
 //
 // A deploy, in their account, with their token (the Cloudflare API only):
 //
@@ -27,12 +22,9 @@
 // editor's own renderer, in a plain readable page). The page is also
 // index.html, so the site's root shows it.
 
-import { Cloudflare, DeployError, uploadAssets, type Fetch } from "../deploy/pipeline.ts";
-import { byLine } from "../shared/attribution.ts";
-import { roleMay, type Directory } from "./directory.ts";
-import { fromElsewhere } from "./pages/index.ts";
-import { whoOf, type Platform } from "./platform.ts";
-import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteRow } from "./sites.ts";
+import { Cloudflare, DeployError, uploadAssets, type Fetch } from "../../deploy/pipeline.ts";
+import type { Directory } from "../directory.ts";
+import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteRow } from "./rows.ts";
 
 /** A site's deploys, as the API gives them. */
 export interface SiteDeploy {
@@ -120,7 +112,7 @@ const escHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<":
 
 /** A Markdown page as a plain, readable HTML page: the editor's own renderer, loaded only when a site has one. */
 async function markdownPage(): Promise<(src: string, title: string) => string> {
-  const { analyzeMarkdown } = await import("../client/markdown.ts");
+  const { analyzeMarkdown } = await import("../../client/markdown.ts");
   return (src, title) => {
     const body = analyzeMarkdown(src).html.replace(/ data-erga-id="\d+"/g, "").replace(/ class="erga-empty"/g, "");
     return `<!doctype html>
@@ -209,70 +201,6 @@ export async function removeSite(cf: Cloudflare, site: SiteRow): Promise<void> {
 /** The Worker's page in Cloudflare's dashboard, for the person to look at what Erga made. */
 export const dashboardUrl = (site: SiteRow) => `https://dash.cloudflare.com/${site.accountId}/workers/services/view/${site.script}/production`;
 
-// ------------------------------------------------------------------ the API
-
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
-
-/** A site as the API shows it. */
-export const siteView = (site: SiteRow) => ({ hostname: site.hostname, url: `https://${site.hostname}/`, zone: site.zoneName, by: site.login, created: new Date(site.created).toISOString(), dashboard: dashboardUrl(site) });
-
-/**
- * The site's API for a document (`id`): `action` is "" (/site) or "deploy"
- * (/site/deploy). `platform` already takes agent tokens (withTokens).
- */
-export async function siteApi(request: Request, platform: Platform, ops: SiteOps, id: string, action: "" | "deploy"): Promise<Response> {
-  const url = new URL(request.url);
-  const session = await platform.sessionOf(request);
-  if (!session) return json({ error: "Sign in first." }, 401);
-  if (session.test) return json({ error: "Test people can't publish to a domain." }, 403);
-  const dir = platform.directory;
-  const doc = await dir.get(id);
-  const who = whoOf(session);
-  const role = doc ? await dir.access(who, doc) : null;
-  if (!doc || doc.test || !role) return json({ error: "There's no such document." }, 404);
-  const canEdit = roleMay(role, "edit");
-  const state = async (extra: Record<string, unknown> = {}) => {
-    const site = await dir.sites.get(doc.id);
-    const connection = await dir.cloudflare.info(session.login);
-    return { canEdit, connection, site: site && siteView(site), deploy: site ? await ops.status(doc.id) : IDLE_SITE, tokenUrl: tokenTemplateUrl(), permissions: SITE_PERMISSIONS, ...extra };
-  };
-  if (request.method == "GET" || request.method == "HEAD") {
-    if (action) return json({ error: "Not found" }, 404);
-    if (url.searchParams.get("zones") != "1") return json(await state());
-    const r = await zonesOf(dir, ops, session.login);
-    return json(await state("error" in r ? { zonesError: r.error } : { zones: r.zones }));
-  }
-  if (!["POST", "DELETE"].includes(request.method)) return json({ error: "GET, POST or DELETE" }, 405);
-  // Another site may not do this on someone's behalf (an agent's token is its own proof).
-  if (!session.agent && (fromElsewhere(request) || (request.headers.has("origin") && request.headers.get("origin") != url.origin))) return json({ error: "Not from this site." }, 403);
-  if (!canEdit) return json({ error: "Only the document's editors can publish it to a domain." }, 403);
-  const by = byLine(who.login, who.via);
-  try {
-    if (request.method == "DELETE") {
-      if (action) return json({ error: "Not found" }, 404);
-      const site = await dir.sites.get(doc.id);
-      if (!site) return json(await state());
-      const refused = await ops.remove(doc.id, site);
-      await dir.sites.remove(doc.id);
-      return json(await state(refused ? { warning: `Erga no longer publishes to ${site.hostname}, but Cloudflare didn't take the site down: ${refused} Delete the Worker ${site.script} in your Cloudflare dashboard to take it down.` } : {}));
-    }
-    if (action == "deploy") {
-      if (!(await dir.sites.get(doc.id))) return json({ error: "This document isn't published to a domain." }, 409);
-      await ops.deploy(doc.id, by);
-      return json(await state());
-    }
-    const body = (await request.json().catch(() => null)) as { hostname?: unknown } | null;
-    if (typeof body?.hostname != "string") return json({ error: 'Send JSON: {"hostname": "notes.example.com"}.' }, 400);
-    await publishTo(dir, ops, doc, session.login, body.hostname, who.via);
-    await ops.deploy(doc.id, by);
-    return json(await state());
-  } catch (e) {
-    if (e instanceof SiteError) return json({ error: e.message }, e.status);
-    if (e instanceof DeployError) return json({ error: e.message }, 502);
-    throw e;
-  }
-}
-
 /** The domains someone's connection reaches; or why there are none to show. */
 export async function zonesOf(dir: Directory, ops: SiteOps, login: string): Promise<{ zones: CfZone[] } | { error: string }> {
   const info = await dir.cloudflare.info(login);
@@ -290,3 +218,6 @@ export async function publishTo(dir: Directory, ops: SiteOps, doc: { id: string;
   const { hostname, zone } = checkHostname(typed, r.zones);
   return dir.sites.add({ docId: doc.id, hostname, zoneId: zone.id, zoneName: zone.name, accountId: zone.account.id, script: scriptName(doc.id, doc.slug), login }, via);
 }
+
+/** A site as the API shows it. */
+export const siteView = (site: SiteRow) => ({ hostname: site.hostname, url: `https://${site.hostname}/`, zone: site.zoneName, by: site.login, created: new Date(site.created).toISOString(), dashboard: dashboardUrl(site) });

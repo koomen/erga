@@ -39,7 +39,7 @@ import { ConfigError, ServerConfig } from "./settings.ts";
 
 import { NotAllowed, Users } from "./identity/users.ts";
 import { Credentials } from "./api-keys.ts";
-import { CloudflareConnections, Sites } from "./sites.ts";
+import { CloudflareConnections, Sites } from "./sites/index.ts";
 
 export { NotAllowed };
 

@@ -36,8 +36,9 @@ AGENTS.md has the rules for working on it.
                       the templates, and what every page shares (chrome.ts)
       api.ts          the server's HTTP API for outside agents: tokens, /api, /mcp, the guide, /tokens, /settings
       directory.ts    documents, owners and permissions, in SQL; settings.ts and api-keys.ts beside it
-      sites.ts, site-publish.ts   a document on its own domain
-      home.ts         the homepage
+      sites/          a document on its own domain: the tables (rows.ts), the calls to Cloudflare (publish.ts), the deploys
+                      (deploys.ts), the API (api.ts)
+      home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
       admin/          the admin pages (pages.ts), the layout they share (layout.ts)
       deploys/        who may use the deploy page (access.ts)
       source/         Erga's own Git repository: the Git endpoint, the mirror, and the Source admin page
@@ -53,8 +54,8 @@ AGENTS.md has the rules for working on it.
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.sh bundles into .build/
                   (main.ts the editor's shell, frame.ts the editor, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
     cloudflare/   the Cloudflare adapter: the Worker's entry (index.ts), the Platform from its bindings (platform.ts), the
-                  Durable Objects (document-object.ts, home.ts, site-host.ts, source-host.ts, pipeline.ts, deploy-session.ts,
-                  admin-agent-host.ts) and D1 (d1.ts)
+                  Durable Objects (document-object.ts, objects/home.ts, objects/site.ts, source-host.ts, pipeline.ts,
+                  deploy-session.ts, admin-agent-host.ts) and D1 (d1.ts)
     deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
                   release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a
                   deploy locks (locked-settings.ts), and the mock Cloudflare the tests use

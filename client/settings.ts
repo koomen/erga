@@ -23,7 +23,7 @@
 //     copy of a version the current one (POST .../versions/<id>/restore).
 //
 // It talks to the server's API as the shared contract says (document/versions.ts
-// server/home/render.ts and server/site-publish.ts), and refreshes on the event channel's
+// server/home/api.ts and server/sites/api.ts), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "site" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only, with a line saying why: what
 // viewers see is worth knowing even when you can't change it.

@@ -8,7 +8,7 @@ import type { AppValues, AuthStorage } from "./identity/apps.ts";
 import type { TargetName } from "../deploy/targets.ts";
 import type { HomeObject } from "./home/deploys.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory.ts";
-import type { SiteOps } from "./site-publish.ts";
+import type { SiteOps } from "./sites/index.ts";
 import type { AgentToken, Tokens } from "./identity/tokens.ts";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions.ts";
 import { VIA } from "../shared/attribution.ts";

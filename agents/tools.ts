@@ -46,8 +46,7 @@ import { makeDoc, startingFiles } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform.ts";
 import { TEMPLATES, templateById } from "../server/pages/index.ts";
 import { LOCKED, type User } from "../server/identity/users.ts";
-import { publishTo, siteView, zonesOf, type SiteOps } from "../server/site-publish.ts";
-import { SiteError } from "../server/sites.ts";
+import { publishTo, SiteError, type SiteOps, siteView, zonesOf } from "../server/sites/index.ts";
 import { byLine } from "../shared/attribution.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */

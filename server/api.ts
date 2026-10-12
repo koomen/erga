@@ -46,8 +46,7 @@ import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } fr
 import { cleanRel } from "../document/host";
 import { authOps, LABEL_MAX, LOCKED, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { TEMPLATES, templateById } from "./pages/index.ts";
-import { SITE_PERMISSIONS, tokenTemplateUrl, verifyToken } from "./site-publish";
-import { SiteError } from "./sites";
+import { SITE_PERMISSIONS, SiteError, tokenTemplateUrl, verifyToken } from "./sites/index.ts";
 import { DeployError } from "../deploy/pipeline";
 
 // ---------------------------------------------------------------- the registry

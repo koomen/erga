@@ -10,8 +10,7 @@ import { expect, test } from "bun:test";
 import { Cloudflare } from "../deploy/pipeline.ts";
 import { mockCloudflare, mockSite } from "../deploy/mock-cloudflare.ts";
 import { Directory, type Param, type Sql } from "../server/directory.ts";
-import { deploySite, listZones, removeSite, siteFiles, verifyToken } from "../server/site-publish.ts";
-import { checkHostname, scriptName, SiteError, type CfZone, type SiteRow } from "../server/sites.ts";
+import { type CfZone, checkHostname, deploySite, listZones, removeSite, scriptName, SiteError, siteFiles, type SiteRow, verifyToken } from "../server/sites/index.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const TOKEN = "mock-" + "t".repeat(36) + "Cf12";
