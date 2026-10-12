@@ -172,8 +172,9 @@ describe("the token maker (CLOUDFLARE_TOKEN_MAKER), checked before it's used", (
     const ok = (result: unknown) => Response.json({ success: true, result });
     if (path == `/accounts/${A}/tokens/verify`) return o.account ? ok({ id: "maker1", ...o.account }) : Response.json({ success: false, errors: [{ code: 1000, message: "Invalid API Token" }] }, { status: 401 });
     if (path == "/user/tokens/verify") return o.user ? ok({ id: "u1", status: "active" }) : Response.json({ success: false, errors: [] }, { status: 401 });
-    if (path == `/accounts/${A}/tokens/maker1`) return o.perms ? ok({ policies: [{ effect: "allow", resources: {}, permission_groups: o.perms.map((name) => ({ id: name, name })) }] }) : Response.json({ success: false }, { status: 403 });
-    if (path == `/accounts/${A}/tokens/permission_groups`) return o.perms ? ok([]) : Response.json({ success: false }, { status: 403 });
+    const refused = () => Response.json({ success: false, errors: [{ code: 9109, message: "Unauthorized to access requested resource" }] }, { status: 403 });
+    if (path == `/accounts/${A}/tokens/maker1`) return o.perms ? ok({ policies: [{ effect: "allow", resources: {}, permission_groups: o.perms.map((name) => ({ id: name, name })) }] }) : refused();
+    if (path == `/accounts/${A}/tokens/permission_groups`) return o.perms ? ok([]) : refused();
     return new Response("?", { status: 404 });
   }) as typeof fetch;
   const run = (value: string, o: Parameters<typeof cfWith>[0]) => diagnoseMaker({ net: cfWith(o), accountId: A, value });
@@ -191,6 +192,13 @@ describe("the token maker (CLOUDFLARE_TOKEN_MAKER), checked before it's used", (
     expect(no.ok).toBe(false);
     expect(no.said.join(" ")).toContain("Account API Tokens › Edit");
     const yes = await run(T, { account: { status: "active", expires_on: "2026-10-05T00:00:00Z" }, perms: ["Account API Tokens Write"] });
-    expect(yes).toEqual({ ok: true, said: ["An account-owned token, active until 2026-10-05T00:00:00Z.", "Its permissions: Account API Tokens Write."] });
+    expect(yes).toEqual({ ok: true, said: ["An account-owned token, active until 2026-10-05T00:00:00Z (id maker1).", "Its permissions: Account API Tokens Write."] });
+  });
+  test("one Cloudflare refuses both reads to (as on 2026-10-12): the exact answers, and the setup goes on with the known ids", async () => {
+    const r = await run(T, { account: { status: "active" }, perms: undefined });
+    expect(r.ok).toBe(true);
+    expect(r.said[1]).toContain("GET /accounts/…/tokens/<its id>: 403, code 9109: Unauthorized");
+    expect(r.said[1]).toContain("GET /accounts/…/tokens/permission_groups: 403, code 9109: Unauthorized");
+    expect(r.said[1]).toContain("Both take Account API Tokens Write");
   });
 });

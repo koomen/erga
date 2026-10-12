@@ -143,7 +143,7 @@ async function makeToken(plan: TokenPlan): Promise<boolean> {
     for (const l of d.said) console.log(`   The token maker (${makerValue ? "CLOUDFLARE_TOKEN_MAKER" : cred!.from}): ${l}`);
     if (!d.ok) throw new DeployError(makerValue ? "CLOUDFLARE_TOKEN_MAKER can't make the token (above)." : `${cred!.from} can't make account API tokens. Make an account-owned API token with Account › Account API Tokens › Edit (Manage Account › Account API Tokens), and run this again with CLOUDFLARE_TOKEN_MAKER set to it.`);
   }
-  const ids = await permissionIds(maker, accountId);
+  const ids = await permissionIds(maker, accountId, (l) => console.log(`   ${l}`));
   const policies = await policiesFor(cf, accountId, plan, ids);
   const made = await createToken(maker, accountId, plan, policies);
   const wrong = await checkToken({ net, admin: cf, tokens: maker, accountId, plan, id: made.id, value: made.value, policies });

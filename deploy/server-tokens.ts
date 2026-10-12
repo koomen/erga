@@ -118,9 +118,16 @@ export interface Policy { effect: "allow"; permission_groups: { id: string; name
 export const resourceKeys = (p: Pick<Policy, "resources">): string[] =>
   Object.entries(p.resources).flatMap(([k, v]) => (typeof v == "string" ? [k] : Object.keys(v)));
 
-/** The permission groups' ids by name: the account's list, else the known ids. */
-export async function permissionIds(cf: Cloudflare, accountId: string): Promise<Record<string, string>> {
-  const list = await cf.call<{ id: string; name: string }[]>("GET", `/accounts/${accountId}/tokens/permission_groups`, "list the token permission groups").catch(() => null);
+/**
+ * The permission groups' ids by name: the account's list, else the known
+ * ids (the list isn't essential: the ids are the same in every account).
+ * `note` hears why the list couldn't be read (Cloudflare's code and message).
+ */
+export async function permissionIds(cf: Cloudflare, accountId: string, note?: (line: string) => void): Promise<Record<string, string>> {
+  const list = await cf.call<{ id: string; name: string }[]>("GET", `/accounts/${accountId}/tokens/permission_groups`, "list the token permission groups").catch((e: unknown) => {
+    note?.(`Couldn't list the permission groups (${e instanceof DeployError && e.status ? `${e.status}: ` : ""}${(e as Error).message}); using the known ids.`);
+    return null;
+  });
   const out: Record<string, string> = { ...KNOWN_IDS };
   for (const g of list ?? []) if (Object.values(PERMISSION).includes(g.name as never)) out[g.name] = g.id;
   return out;
@@ -240,15 +247,24 @@ export async function diagnoseMaker(o: { net: Fetch; accountId: string; value: s
   }
   const status = acc.result?.status, expires = acc.result?.expires_on;
   if (status != "active") return { ok: false, said: [`It's an account token, but it isn't active (${status ?? "no status"}${expires ? `, expires ${expires}` : ""}).`] };
-  said.push(`An account-owned token, active${expires ? ` until ${expires}` : ""}.`);
+  said.push(`An account-owned token, active${expires ? ` until ${expires}` : ""}${acc.result?.id ? ` (id ${acc.result.id})` : ""}.`);
+  // What it may do: its own policies (a read of itself), else whether it can list the permission groups (Account API
+  // Tokens Read or Write). Both endpoints take Account API Tokens Write (Cloudflare's API reference), so a refusal
+  // of both says the permission is missing, or the token is another account's. Neither read is essential: when
+  // both fail, the setup goes on and the token's creation says exactly what Cloudflare refuses.
+  const failed = (r: { status: number; errors: { code: number; message: string }[] }) => `${r.status || "no answer"}${r.errors[0] ? `, code ${r.errors[0].code}: ${r.errors[0].message}` : ""}`;
   const groups = await get(`/accounts/${o.accountId}/tokens/permission_groups`);
   const self = acc.result?.id ? await get(`/accounts/${o.accountId}/tokens/${acc.result.id}`) : null;
-  const names = (self?.result?.policies as Policy[] | undefined)?.flatMap((p) => p.permission_groups.map((g) => g.name ?? g.id));
-  if (names?.length) said.push(`Its permissions: ${[...new Set(names)].join(", ")}.`);
-  const canMake = names ? names.some((n) => /^Account API Tokens (Write|Edit)$/i.test(n)) : groups.ok;
-  if (!canMake) {
-    said.push(`It can't make account API tokens${names ? "" : ` (it can't even list the permission groups: ${groups.status})`}: give it the permission Account › Account API Tokens › Edit.`);
-    return { ok: false, said };
+  const names = self?.ok ? (self.result?.policies as Policy[] | undefined)?.flatMap((p) => p.permission_groups.map((g) => g.name ?? g.id)) : undefined;
+  if (names?.length) {
+    said.push(`Its permissions: ${[...new Set(names)].join(", ")}.`);
+    if (!names.some((n) => /^Account API Tokens (Write|Edit)$/i.test(n))) {
+      said.push("It can't make account API tokens: give it the permission Account › Account API Tokens › Edit.");
+      return { ok: false, said };
+    }
+    return { ok: true, said };
   }
+  if (groups.ok) { said.push("It can list the permission groups, so it can read account API tokens; whether it can make one shows when it tries."); return { ok: true, said }; }
+  said.push(`It couldn't read its own permissions (GET /accounts/…/tokens/<its id>: ${self ? failed(self) : "no id"}) nor list the permission groups (GET /accounts/…/tokens/permission_groups: ${failed(groups)}). Both take Account API Tokens Write (Edit in the dashboard): check the token has it, for this account (${o.accountId}). Going on with the known group ids; making the token shows Cloudflare's exact answer.`);
   return { ok: true, said };
 }
