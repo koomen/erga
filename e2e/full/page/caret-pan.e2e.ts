@@ -1,7 +1,8 @@
 // A page that moves its text without a scroll of the window (a board panned by a drag or the wheel, with a
 // transform; a column that scrolls by itself): the caret drawn by the editor (client/caret.ts) and the format bar
 // move with the text, at 100% and with the page zoomed. And a drag that starts on the text selects it: the page's
-// own handlers, which pan the board from any press, don't see it (client/text-guard.ts).
+// own handlers, which pan the board from any press, don't see it (client/text-guard.ts). And a press on the empty
+// board, with the caret in text, pans it and leaves the caret where it is: the browser starts no selection there.
 import { expect, servers, test } from "../../fixtures";
 import { F, openEditor, type Editor } from "../../editor";
 
@@ -106,4 +107,30 @@ test("a drag on the text selects it and doesn't pan the board; a drag on the emp
   const p = await onPage(ed, 40, 380);
   await ed.drag(p.x, p.y, p.x + 50, p.y + 30);
   await expect.poll(board).toBe("translate(50px, 30px)");
+});
+
+test("with the caret in text, a drag on the empty board (a grab cursor) pans it and selects nothing; the caret stays on its text", async ({ tab }) => {
+  await tab.page.setViewportSize({ width: 1200, height: 760 });
+  const ed = await openEditor(tab, await servers.main(), "pan");
+  const board = () => ed.frame<string>(`${F}.querySelector(".board").style.transform`);
+  const sel = () => ed.frame<{ text: string; node: string; offset: number; collapsed: boolean; active: string }>(`(() => {
+    const s = ${F}.getSelection();
+    return { text: s.toString(), node: s.focusNode?.textContent ?? "", offset: s.focusOffset, collapsed: s.isCollapsed, active: ${F}.activeElement.className };
+  })()`);
+  const c = await ed.charAt(".card p.note", 5);
+  await ed.click(c.x, c.y);
+  const placed = await sel();
+  expect(placed.collapsed).toBe(true);
+  expect(placed.active).toBe("note");
+  expect(await ed.frame<string>(`getComputedStyle(${F}.elementFromPoint(40, 380)).cursor`)).toBe("grab");
+  // Pete's steps: away from the text, over the board, then press and drag.
+  const p = await onPage(ed, 40, 380);
+  await ed.page.mouse.move(p.x, p.y, { steps: 4 });
+  await ed.drag(p.x, p.y, p.x + 120, p.y - 70, 10);
+  await expect.poll(board).toBe("translate(120px, -70px)");
+  expect(await sel()).toEqual(placed);
+  await expect.poll(async () => (await ed.frame<Caret>(CARET))?.off ?? 99).toBeLessThan(2);
+  // Typing goes on at the caret.
+  await ed.type("X");
+  await expect.poll(() => ed.textOf(".card p.note")).toBe("Drag Xthe board to move this card around.");
 });
