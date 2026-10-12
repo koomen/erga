@@ -28,8 +28,8 @@
 // It also means a token works only on the server that made it: staging's
 // database copies the rows, but staging's secret is its own.
 
-import type { Directory, Sql } from "./directory";
-import { changeLogEntry } from "../shared/attribution";
+import type { Directory, Sql } from "../directory";
+import { changeLogEntry } from "../../shared/attribution";
 
 
 /** A token as its person's list shows it (never the token itself). */

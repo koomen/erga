@@ -2,8 +2,17 @@
 import { expect, test } from "bun:test";
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
 import { pagesToken, readPagesClaims } from "../server/routes";
-import { finishSignIn, startSignIn } from "../cloudflare/auth";
-import type { Env } from "../cloudflare/env";
+import { finishSignIn, startSignIn } from "../server/identity/sign-in";
+import type { Platform } from "../server/platform";
+import type { Directory } from "../server/directory";
+
+/** A server with this GitHub client ID, and nothing else sign-in needs for these requests. */
+const serverWith = (clientId: string): Platform => ({
+  secret: "x", dev: () => false, directory: {} as Directory,
+  signIn: { app: { clientId, secret: "" }, github: "https://github.com", devLogin: null, encryptionKey: null },
+  deploy: { target: null, version: null, hookSecret: "", originOf: () => "" },
+  own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
+} as unknown as Platform);
 
 test("staging is for admins only; production, a /deploy server and local development aren't", () => {
   expect(TARGETS.staging.adminsOnly).toBe(true);
@@ -23,7 +32,7 @@ test("a pages token names its admin only when asked to (staging), and it can't b
 });
 
 test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than sending people to GitHub's 404", async () => {
-  const env = { GITHUB_CLIENT_ID: "", SESSION_SECRET: "x" } as Env;
+  const env = serverWith("");
   for (const answer of [await startSignIn(env, new Request("https://staging.erga.dev/auth/github?next=/docs")), await finishSignIn(env, new Request("https://staging.erga.dev/auth/github/callback?code=1&state=2"))]) {
     expect(answer.status).toBe(503);
     expect(answer.headers.get("location")).toBeNull();
@@ -31,7 +40,7 @@ test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than
     expect(html).toContain("Sign-in isn't set up on this server: it has no GitHub OAuth app.");
     expect(html).toContain("GITHUB_CLIENT_ID");
   }
-  const set = await startSignIn({ GITHUB_CLIENT_ID: "Ov23abc", SESSION_SECRET: "x" } as Env, new Request("https://erga.dev/auth/github"));
+  const set = await startSignIn(serverWith("Ov23abc"), new Request("https://erga.dev/auth/github"));
   expect(set.status).toBe(302);
   expect(set.headers.get("location")).toStartWith("https://github.com/login/oauth/authorize?client_id=Ov23abc&");
 });

@@ -5,14 +5,14 @@
 // make and delete them).
 
 import type { Route } from "../server/directory";
-import type { Platform } from "../server/platform";
 import { OWNER } from "../server/directory";
-import { isDev, mintTestToken, sessionOf } from "./auth";
-import { authOps } from "./auth-settings";
-import { directoryOf, tokensOf } from "./d1";
+import type { Platform } from "../server/platform";
+import { sessionOf } from "../server/identity";
+import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
-import { isAdminsOnly } from "../deploy/targets";
+import { isAdminsOnly, isTargetName, TARGETS, type TargetName } from "../deploy/targets";
+import { MOCK_HOOK_SECRET } from "../deploy/mock-cloudflare";
 import { siteOps } from "./site-host";
 
 
@@ -61,9 +61,13 @@ const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith
 export const platform = (env: Env): Platform => {
   const directory = directoryOf(env);
   const host = (doc: Route) => env.DOCUMENTS.getByName(doc.id);
-  return {
+  const target = env.DEPLOY_TARGET?.trim() ?? "";
+  // Local development only (the tests): stand-ins for GitHub and for the other target's server.
+  const standIn = (value: string | undefined) => (env.DEV_LOGIN && value?.trim() ? value.trim().replace(/\/+$/, "") : null);
+  const own = () => env.PIPELINE.getByName("deploys");
+  const p: Platform = {
     directory,
-    sessionOf: (request) => sessionOf(env, request),
+    sessionOf: (request) => sessionOf(p, request),
     templates: TEMPLATES,
     landing: landingOf(env),
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
@@ -74,9 +78,20 @@ export const platform = (env: Env): Platform => {
     secret: env.SESSION_SECRET,
     adminsOnly: isAdminsOnly(env.DEPLOY_TARGET),
     tokens: tokensOf(env),
-    auth: (origin) => authOps(env, origin),
+    deploy: {
+      target: isTargetName(target) ? target : null,
+      version: env.ERGA_VERSION || null,
+      hookSecret: env.DEPLOY_HOOK_SECRET?.trim() || (env.ERGA_DEPLOY_MOCK == "1" ? MOCK_HOOK_SECRET : ""),
+      originOf: (t: TargetName) => standIn(env.ERGA_PEER_ORIGIN) ?? `https://${TARGETS[t].host}`,
+    },
+    signIn: {
+      app: { clientId: env.GITHUB_CLIENT_ID?.trim() ?? "", secret: env.GITHUB_CLIENT_SECRET?.trim() ?? "" },
+      github: standIn(env.ERGA_GITHUB_ORIGIN) ?? "https://github.com",
+      devLogin: env.DEV_LOGIN?.trim() || null,
+      encryptionKey: factoryKey(env),
+    },
+    own: { get: (k) => own().authGet(k), put: (k, v) => own().authPut(k, v), delete: (k) => own().authDelete(k) },
     sites: (origin) => siteOps(env, origin),
-    testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
       publish: (doc, files, remove, by) => counted("doc", () => host(doc).publish(files, remove, by)),
@@ -102,4 +117,8 @@ export const platform = (env: Env): Platform => {
       fetch: (doc, request) => counted("doc", () => host(doc).fetch(request)),
     },
   };
+  return p;
 };
+
+/** Local development (DEV_LOGIN set, on localhost): sign-in without GitHub, for trying things and for the test suite. */
+export const isDev = (env: Env, url: URL) => !!env.DEV_LOGIN && (url.hostname == "localhost" || url.hostname == "127.0.0.1");

@@ -25,8 +25,7 @@ import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { deployPage, mockConsentPage } from "../deploy/page";
 import { mayDeploy, page } from "../server/routes";
 import { whoOf, type Platform } from "../server/platform";
-import { isDev } from "./auth";
-import { cookieName, cookies } from "./cookies";
+import { cookieName, cookies } from "../server/identity";
 import type { Env } from "./env";
 
 const COOKIE = "erga_deploy", OAUTH_COOKIE = "erga_deploy_oauth";
@@ -38,7 +37,7 @@ export async function deployDoor(request: Request, env: Env, platform: Platform)
   if (!session && path == "/deploy" && request.method == "GET") return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/deploy")}` } });
   if (!(await mayDeploy(platform.directory, session))) return path.startsWith("/deploy/api/") ? Response.json({ ok: false, error: "Not found" }, { status: 404 }) : page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const owner = whoOf(session!).login;
-  const mock = env.ERGA_DEPLOY_MOCK == "1" && isDev(env, url);
+  const mock = env.ERGA_DEPLOY_MOCK == "1" && platform.dev(url);
   const oauth = mock || !!env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim();
 
   if (path == "/deploy" && request.method == "GET") {

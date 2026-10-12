@@ -22,19 +22,17 @@
 import { DurableObject } from "cloudflare:workers";
 import { isModelChoice, MODELS } from "../editor-agent/session";
 import type { ToolWho } from "../agents/tools";
-import { authOps } from "./auth-settings";
 import type { SourceAnswer, SourceRead } from "../server/source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../agents/admin-chats";
 import { emptyLog, type Log, type LogEvent } from "../shared/agent-log";
 import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "../agents/admin";
 import { whoOf } from "../server/platform";
-import { sessionOf } from "./auth";
 import { byLine, VIA } from "../shared/attribution";
 import { checkAttachments } from "../shared/attach";
 import { directoryOf, tokensOf } from "./d1";
 import { agentSettings } from "./agent-settings";
-import { SHARE_ADMIN_HOURS } from "../server/tokens";
-import { LOCKED } from "../server/users";
+import { authOps, LOCKED, SHARE_ADMIN_HOURS } from "../server/identity";
+import { platform } from "./platform";
 import { forgetHome } from "./home";
 import { hasSource } from "./artifacts";
 import type { Env } from "./env";
@@ -79,7 +77,7 @@ export class AdminAgentHost extends DurableObject<Env> {
       if (why) throw new Error(why);
     };
     // The admin tools act as the admin, with admin power, via their agent: the change log names them, and how.
-    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin, auth: authOps(this.env, state.origin) });
+    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin, auth: authOps(platform(this.env), state.origin) });
     // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
       if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and server/source/import.ts fills it.");
@@ -247,7 +245,7 @@ const host = (env: Env) => env.ADMIN_AGENT.getByName("admin");
 
 /** An admin, signed in (the person, in a browser: for their own agent panel, which no token reaches). */
 async function adminOf(env: Env, request: Request): Promise<{ login: string; name: string } | null> {
-  const session = await sessionOf(env, request);
+  const session = await platform(env).sessionOf(request);
   if (!session || session.test || (session as { agent?: unknown }).agent) return null;
   if (!(await directoryOf(env).users.actsAsAdmin(whoOf(session)))) return null;
   return { login: session.login.toLowerCase(), name: session.name };
@@ -269,7 +267,7 @@ async function guideReaderOf(env: Env, request: Request, url: URL): Promise<Guid
   }
   const admin = await adminOf(env, request);
   if (admin) return admin;
-  return json({ error: `Only admins can do that: sign in, or send an admin token as "Authorization: Bearer <token>".` }, (await sessionOf(env, request)) ? 403 : 401);
+  return json({ error: `Only admins can do that: sign in, or send an admin token as "Authorization: Bearer <token>".` }, (await platform(env).sessionOf(request)) ? 403 : 401);
 }
 
 /** GET /api/admin/guide: the admin guide, for an admin or their agent with an admin token. */
@@ -287,7 +285,7 @@ export const isAdminAgentPath = (path: string) => path == "/api/admin/agent" || 
 export async function adminAgentApi(request: Request, env: Env, url: URL): Promise<Response> {
   if (/^Bearer\s/i.test(request.headers.get("authorization") ?? "")) return json({ error: `The admin's agent panel is theirs, in a browser: an outside agent calls the same APIs itself (GET ${url.origin}/api/admin/guide).` }, 403);
   const admin = await adminOf(env, request);
-  if (!admin) return json({ error: "Only admins have an admin agent." }, (await sessionOf(env, request)) ? 403 : 401);
+  if (!admin) return json({ error: "Only admins have an admin agent." }, (await platform(env).sessionOf(request)) ? 403 : 401);
   if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   const h = host(env), path = url.pathname.replace(/\/$/, ""), m = request.method;
   if (path == "/api/admin/agent") {

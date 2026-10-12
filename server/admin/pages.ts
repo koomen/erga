@@ -41,10 +41,8 @@ import { esc, ICON, link, page, TIMES_SCRIPT } from "../routes.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { adminResponse } from "./layout.ts";
-import { NotAllowed, type ServerRole, type User } from "../users.ts";
+import { authOps, AuthError, NotAllowed, ScopeError, type AuthStatus, type CheckState, type OtherStatus, type ServerRole, type User } from "../identity";
 import { CredentialError, type CredentialEntry, type DeploySecretEntry } from "../api-keys.ts";
-import { ScopeError } from "../tokens.ts";
-import { AuthError, type AuthStatus, type CheckState, type OtherStatus } from "../auth.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -68,9 +66,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     }
     if (url.pathname == "/admin/api-keys") return apiKeysPage(platform, session!);
     if (url.pathname == "/admin/auth" || url.pathname == "/admin/auth/status") {
-      const auth = platform.auth?.(url.origin);
-      if (!auth) return notFound();
-      const status = await auth.status(who!);
+      const status = await authOps(platform, url.origin).status(who!);
       return url.pathname == "/admin/auth" ? authPage(session!, status) : Response.json(status, { headers: { "Cache-Control": "no-store" } });
     }
     return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
@@ -94,8 +90,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
       return Response.json({ credential: form.get("clear") ? await credentials.clear(who!, name) : await credentials.set(who!, name, field("value")) });
     }
     if (url.pathname == "/admin/auth") {
-      const auth = platform.auth?.(url.origin);
-      if (!auth) return Response.json({ error: "This server has no sign-in settings." }, { status: 404 });
+      const auth = authOps(platform, url.origin);
       const server = field("server") == "other" ? "other" : "here";
       // The answers say what the page shows: never the secret.
       switch (field("do")) {

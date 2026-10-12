@@ -18,7 +18,7 @@
 
 import { ACCOUNT_STYLE, accountMarkup, type Account } from "./account-menu.ts";
 import { ConfigError } from "./settings.ts";
-import { LOCKED } from "./users.ts";
+import { LOCKED } from "./identity/users.ts";
 import { byLine } from "../shared/attribution.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
 import { cloneButton, crumbsFont, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, viewCrumbs } from "./routes.ts";

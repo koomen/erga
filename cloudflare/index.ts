@@ -14,7 +14,7 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out; /auth/github?app=pending, a test sign-in with the
 //                              GitHub app values that wait on /admin/auth
 //   /api/sign-in/...           another of Erga's servers reads this one's sign-in status, or sets its GitHub app
-//                              (cloudflare/auth-settings.ts, with DEPLOY_HOOK_SECRET)
+//                              (server/identity/settings.ts, with DEPLOY_HOOK_SECRET)
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /deploy                    deploy Erga to your own Cloudflare account (cloudflare/deploy-routes.ts; the deploy_page setting,
@@ -50,23 +50,22 @@
 import { accountOf, OWN_ACCOUNT, withAccount } from "../server/account-menu";
 import { idShaped, slugify, OWNER } from "../server/directory";
 import { frontDoor, mayDeploy } from "../server/routes";
-import { whoOf, withTokens } from "../server/platform";
+import { whoOf } from "../server/platform";
 import { serverApi, tokensDoor } from "../server/api";
-import { finishSignIn, isDev, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
+import { finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "../server/identity";
 import { directoryOf } from "./d1";
 import { adminGate, isAdminPath } from "../server/admin/layout";
 import { deployDoor } from "./deploy-routes";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent-host";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
-import { isSignInPath, signInDoor } from "./auth-settings";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../server/home";
 import { siteApi } from "../server/site-publish";
 import { mockSiteFile, siteOps } from "./site-host";
 import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
-import { pagesSite, platform } from "./platform";
+import { isDev, pagesSite, platform } from "./platform";
 import { adminsOnlyGate } from "./admins-only";
 import { releaseApi, withLive } from "./live";
 
@@ -90,7 +89,7 @@ export default {
       // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
       const own = response.headers.has(OWN_ACCOUNT);
       const page = await withAccount(response, async () => {
-        const session = await sessionOf(env, request);
+        const session = await platform(env).sessionOf(request);
         const dir = directoryOf(env);
         return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
       }, url.pathname + url.search);
@@ -122,16 +121,17 @@ function timed(response: Response, entries: string[]): Response {
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
   const assets = isAsset(path);
+  const p = platform(env);
   // Staging is for Erga's admins only (deploy/targets.json `adminsOnly`): every route after this, and the pages origin,
   // needs an admin's session or admin-scope token, but for the exemptions cloudflare/admins-only.ts lists and explains.
   const refused = await adminsOnlyGate(request, env, url);
   if (refused) return refused;
   // A document's pages origin serves its frame and files, and nothing of this site's.
-  if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
-  if (path == "/auth/github") return startSignIn(env, request);
-  if (path == "/auth/github/callback") return finishSignIn(env, request);
-  if (path == "/auth/logout") return signOut(env, request);
-  if (path == "/auth/test") return testSignIn(env, request);
+  if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, p);
+  if (path == "/auth/github") return startSignIn(p, request);
+  if (path == "/auth/github/callback") return finishSignIn(p, request);
+  if (path == "/auth/logout") return signOut(p, request);
+  if (path == "/auth/test") return testSignIn(p, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor.
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
   // Erga's own source: the Git endpoint, its page (the dashboard of source and deploys) and API.
@@ -140,19 +140,19 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (path == "/admin/deploy" || path == "/admin/deploy/") return new Response(null, { status: 301, headers: { Location: "/deploy" } });
   // Every /admin route: the server's admins only, checked on the server before any of them answers.
   if (isAdminPath(path)) {
-    const refused = await adminGate(platform(env), request);
+    const refused = await adminGate(p, request);
     if (refused) return refused;
   }
-  if (path == "/source" || path == "/admin/source" || path == "/admin/factory") return sourceDoor(request, env, platform(env), url);
-  if (path.startsWith("/api/source/")) return sourceApi(request, env, platform(env), url);
+  if (path == "/source" || path == "/admin/source" || path == "/admin/factory") return sourceDoor(request, env, p, url);
+  if (path.startsWith("/api/source/")) return sourceApi(request, env, p, url);
   // Sign-in's status and GitHub app, server to server.
-  if (isSignInPath(path)) return signInDoor(request, env);
+  if (isSignInPath(path)) return signInDoor(request, p);
   // Branch deploys and their status, the event stream, and staging's snapshot endpoints.
-  if (isDeploysPath(path)) return deploysDoor(request, env, platform(env));
+  if (isDeploysPath(path)) return deploysDoor(request, env, p);
   const read = request.method == "GET" || request.method == "HEAD";
   // The homepage, served directly from its last deploy; the viewer on it until there's one.
   if (path == "/" && read) {
-    const home = await serveHome(request, env, ctx, withTokens(platform(env), url));
+    const home = await serveHome(request, env, ctx, p);
     if (home) return home;
   }
   if (path.startsWith("/_home/")) return serveHomeFile(request, env, ctx);
@@ -160,11 +160,11 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
   if (homeId) {
     const home = env.HOME.getByName("home");
-    return homeApi(request, withTokens(platform(env), url), { status: () => home.status(), deploy: (by) => home.deploy(by) }, homeId, (homeAction ?? "") as "" | "deploy", () => { ctx.waitUntil(forgetHome(url)); });
+    return homeApi(request, p, { status: () => home.status(), deploy: (by) => home.deploy(by) }, homeId, (homeAction ?? "") as "" | "deploy", () => { ctx.waitUntil(forgetHome(url)); });
   }
   // A document's site on its person's Cloudflare account, and its deploys.
   const [, siteId, siteAction] = /^\/api\/docs\/([a-z0-9]{8})\/site(?:\/(deploy))?\/?$/.exec(path) ?? [];
-  if (siteId) return siteApi(request, withTokens(platform(env), url), siteOps(env, url.origin), siteId, (siteAction ?? "") as "" | "deploy");
+  if (siteId) return siteApi(request, p, siteOps(env, url.origin), siteId, (siteAction ?? "") as "" | "deploy");
   // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
   // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
   if (read && isHomeFilePath(path)) {
@@ -178,8 +178,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
   if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
   // The server's API for agents, and people's agent tokens.
-  if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
-  if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
+  if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, p);
+  if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, p);
   // Local development: a site on the pretend Cloudflare, as a reader would see it.
   if (path.startsWith("/__erga/site/") && isDev(env, url)) {
     const [, host, rest] = /^\/__erga\/site\/([^/]+)(\/.*)?$/.exec(path) ?? [];
@@ -187,8 +187,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   }
   if (path.startsWith("/__erga/")) return linked(env, request, url);
   // Deploying Erga to your own Cloudflare account.
-  if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, platform(env));
-  return frontDoor(request, platform(env));
+  if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, p);
+  return frontDoor(request, p);
 }
 
 /** The editor's own files (static assets, client/build.sh). */
@@ -211,7 +211,7 @@ async function linked(env: Env, request: Request, url: URL): Promise<Response> {
     return Response.json({ applied });
   }
   if (url.pathname == "/__erga/link" && request.method == "POST") {
-    const session = await sessionOf(env, request);
+    const session = await platform(env).sessionOf(request);
     const body = await request.json() as { id?: string; index?: string; path?: string; slug?: string; only?: boolean; owner?: string };
     // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
     const owner = (body.owner ?? session?.login)?.toLowerCase();

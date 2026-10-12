@@ -1,5 +1,5 @@
 // Scoped tokens on an in-memory SQLite database with the same
-// migrations D1 gets, through the front door's withTokens and the server's
+// migrations D1 gets, through the session's agent tokens and the server's
 // API: who may make each scope, each scope allowed and
 // refused, expiry, and the device flow carrying a scope.
 
@@ -7,9 +7,10 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql } from "../server/directory";
-import { withTokens, type Platform } from "../server/platform";
+import type { Platform } from "../server/platform";
+import { sessionOf } from "../server/identity";
 import { serverApi } from "../server/api";
-import { ScopeError, Tokens } from "../server/tokens";
+import { ScopeError, Tokens } from "../server/identity/tokens";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const ORIGIN = "https://erga.test";
@@ -36,13 +37,13 @@ async function server() {
   for (const [id, owner] of [["oneoneon", "ada"], ["twotwotw", "ada"], ["threethr", "bo"]]) await dir.add({ id, owner, title: id, created: 1, expires: null });
   const tokens = new Tokens(sql, "secret-".repeat(6), dir);
   const platform = {
-    directory: dir, tokens, sessionOf: async () => null, dev: () => false,
+    directory: dir, tokens, sessionOf: (request) => sessionOf(platform, request), dev: () => false,
     docs: { list: async (login: string) => (await dir.list(login)).map((d) => ({ ...d, modified: d.created })) },
   } as unknown as Platform;
   /** Calls one of the server API's tools with a token: its status and body. */
   const call = async (token: string, tool: string, args: Record<string, unknown> = {}) => {
     const url = `${ORIGIN}/api/ext/tools/${tool}`;
-    const r = await serverApi(new Request(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(args) }), withTokens(platform, new URL(url)));
+    const r = await serverApi(new Request(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(args) }), platform);
     return { status: r.status, body: await r.json() as { ok: boolean; error?: string; content?: { text: string }[] } };
   };
   return { sql, dir, tokens, platform, call, root };

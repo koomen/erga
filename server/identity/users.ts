@@ -19,8 +19,8 @@
 // requests don't each ask the database; a change made through this object
 // is seen at once.
 
-import { changeLogEntry } from "../shared/attribution.ts";
-import type { Sql, Statement } from "./directory.ts";
+import { changeLogEntry } from "../../shared/attribution.ts";
+import type { Sql, Statement } from "../directory.ts";
 
 export type ServerRole = "user" | "admin";
 

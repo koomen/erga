@@ -21,7 +21,7 @@
 //   /api/deploys/<name>/hook, /api/deploys/status, and /api/deploys/... with DEPLOY_HOOK_SECRET
 //                                   server to server: production passes branch moves on and reads staging's status,
 //                                   logs and history, and each passes its live events to the other (/api/deploys/events),
-//                                   with the shared secret (cloudflare/branch-deploys.ts checks it)
+//                                   with the shared secret (server/identity/peer.ts checks it)
 //   /api/sign-in/... with DEPLOY_HOOK_SECRET
 //                                   production's Authentication page reads staging's sign-in status, and sets staging's
 //                                   GitHub app: until staging has one, no admin can sign in there
@@ -44,10 +44,9 @@
 
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
 import { esc, page, pagesHost, readPagesClaims, safeNext } from "../server/routes";
-import { whoOf, withTokens } from "../server/platform";
+import { whoOf, type Platform } from "../server/platform";
 import { directoryOf } from "./d1";
-import { isSignInPath } from "./auth-settings";
-import { peer } from "./branch-deploys";
+import { isPeer, isSignInPath } from "../server/identity";
 import type { Env } from "./env";
 import { pagesSite, platform } from "./platform";
 import { tokenPath } from "./token-paths";
@@ -59,15 +58,15 @@ export const adminsOnly = (env: Pick<Env, "DEPLOY_TARGET">): boolean => isAdmins
 const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/style.css", "/editor.html"]);
 
 /** The request needs no admin: one of the exemptions above. */
-function exempt(request: Request, env: Env, url: URL): boolean {
+function exempt(request: Request, base: Platform, url: URL): boolean {
   const path = url.pathname;
   const method = request.method;
   if (path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/logout") return true;
   if (ASSET_FILES.has(path) || path.startsWith("/fonts/")) return method == "GET" || method == "HEAD";
   if (path == "/api/deploys/version") return method == "GET" || method == "HEAD";
   if (/^\/api\/deploys\/[a-z]+\/hook\/?$/.test(path) || path == "/api/deploys/status") return true;
-  if (path.startsWith("/api/deploys/") && peer(request, env)) return true;
-  if (isSignInPath(path) && peer(request, env)) return true;
+  if (path.startsWith("/api/deploys/") && isPeer(request, base)) return true;
+  if (isSignInPath(path) && isPeer(request, base)) return true;
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/__erga/")) return true;
   return false;
@@ -85,8 +84,9 @@ function gitSecret(auth: string): string | null {
  * admin power asks); otherwise the refusal.
  */
 export async function adminsOnlyGate(request: Request, env: Env, url: URL): Promise<Response | null> {
-  if (!adminsOnly(env) || exempt(request, env, url)) return null;
+  if (!adminsOnly(env)) return null;
   const base = platform(env);
+  if (exempt(request, base, url)) return null;
   const users = directoryOf(env).users;
 
   // A document's pages origin: no cookies, only its token, which names the admin it was made for.
@@ -102,7 +102,7 @@ export async function adminsOnlyGate(request: Request, env: Env, url: URL): Prom
   // password: read as a Bearer token, as everywhere else.
   const git = url.pathname == "/git/erga.git" || url.pathname.startsWith("/git/erga.git/");
   const secret = git ? gitSecret(request.headers.get("authorization") ?? "") : null;
-  const session = git && !secret ? null : await withTokens(base, url).sessionOf(git ? new Request(url, { headers: { authorization: `Bearer ${secret}` } }) : request);
+  const session = git && !secret ? null : await base.sessionOf(git ? new Request(url, { headers: { authorization: `Bearer ${secret}` } }) : request);
   if (session && (await users.actsAsAdmin(whoOf(session)))) return null;
   // An admin's token of another scope: the API, MCP and documents' routes only (the exemption above), then its own scope.
   const adminsToken = !!session?.agent && !session.test && (await users.isAdmin(whoOf(session)));

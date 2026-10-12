@@ -1,12 +1,14 @@
 // What the app needs from where it runs (`Platform`), and who is asking
-// (`Session`). cloudflare/platform.ts builds the Platform from the Worker's
-// bindings; the unit tests build one in memory. The app's code takes a
-// Platform and web Requests, and never a Cloudflare binding.
+// (`Session`, which server/identity works out). cloudflare/platform.ts builds
+// the Platform from the Worker's bindings; the unit tests build one in
+// memory. The app's code takes a Platform and web Requests, and never a
+// Cloudflare binding.
 
-import type { AuthOps } from "./auth.ts";
+import type { AppValues, AuthStorage } from "./identity/apps.ts";
+import type { TargetName } from "../deploy/targets.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory.ts";
 import type { SiteOps } from "./site-publish.ts";
-import type { AgentToken, Tokens } from "./tokens.ts";
+import type { AgentToken, Tokens } from "./identity/tokens.ts";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions.ts";
 import { VIA } from "../shared/attribution.ts";
 
@@ -53,7 +55,7 @@ export interface Listed {
 
 /** What the front door needs from the platform it runs on. */
 export interface Platform {
-  /** Who's asking, if anyone is signed in (in local development, someone always is). */
+  /** Who's asking, if anyone: a signed-in person, or an agent with their token (server/identity/session.ts). */
   sessionOf(request: Request): Promise<Session | null>;
   /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): assets/templates/doc is a blank document. */
   templates: Record<string, Record<string, string>>;
@@ -97,13 +99,35 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens. */
   tokens: Tokens;
-  /** How people sign in: this server's and the other deploy target's GitHub app, as `origin`'s server. */
-  auth?(origin: string): AuthOps;
+  /** Which of Erga's own deploy targets this server is, and how it reaches the other one. */
+  deploy: {
+    /** "production", "staging", or null on any other server (one /deploy made, local development). */
+    target: TargetName | null;
+    /** The release this server runs (the commit), or null where no deploy named one. */
+    version: string | null;
+    /** The secret Erga's servers prove themselves to each other with (DEPLOY_HOOK_SECRET); "" when there's none. */
+    hookSecret: string;
+    /** The other target's server: https://<its host>, or local development's stand-in for it. */
+    originOf(target: TargetName): string;
+  };
+  /** Sign-in's fixed values, from the deploy. */
+  signIn: {
+    /** The deploy's GitHub OAuth app (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET); the values an admin sets on /admin/auth win while set. */
+    app: AppValues;
+    /** GitHub's origin (the tests' stand-in for it). */
+    github: string;
+    /** Local development: the login signed in without GitHub; null elsewhere. */
+    devLogin: string | null;
+    /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */
+    encryptionKey: string | null;
+  };
+  /**
+   * This server's own small storage, which a copy of production's data never
+   * replaces (the sign-in values set on /admin/auth live here, not in the database).
+   */
+  own: AuthStorage;
   /** Documents' sites on their person's Cloudflare account, as `origin`'s server, where the platform has them. */
   sites?(origin: string): SiteOps;
-
-  /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
-  testToken?(login: string): Promise<{ token: string; expires: Date }>;
   docs: {
     /**
      * Makes the host of a document already in the directory, from a
@@ -149,32 +173,3 @@ export const whoOf = (session: Session): Who => ({
   // An agent with their token acts for them: what it does is theirs, via it.
   ...(session.agent ? { via: VIA.token(session.agent.label) } : {}),
 });
-
-/**
- * The platform with agent tokens: a request carrying one ("Authorization:
- * Bearer erga_...") is signed in as the person it stands for, within its
- * scope, as long as they may still sign in, whatever cookie it
- * has: admin power only with the admin scope, one document only with the
- * document scope. A bearer token that isn't a good one (revoked, expired)
- * signs in nobody.
- */
-export function withTokens(platform: Platform, url: URL): Platform {
-  return {
-    ...platform,
-    async sessionOf(request) {
-      const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1];
-      if (!bearer) return platform.sessionOf(request);
-      const users = platform.directory.users;
-      const token = await platform.tokens.verify(bearer).catch(() => null);
-      if (!token) return null;
-      // A test person's token opens only test documents, while whoever minted their test token may sign in.
-      const session: Session = {
-        login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}),
-        // Admin power only with the admin scope (Users.isAdmin still decides); a document token, its one document.
-        ...(token.scope == "admin" && !token.testBy ? { admin: true } : {}), ...(token.scope == "document" ? { onlyDoc: token.docId ?? "-" } : {}),
-      };
-      if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
-      return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
-    },
-  };
-}

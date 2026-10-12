@@ -3,7 +3,7 @@
 
 import { parseDeployed } from "../server/settings";
 import { Directory, type Param, type Sql } from "../server/directory";
-import { Tokens } from "../server/tokens";
+import { Tokens } from "../server/identity/tokens";
 
 import { withCredentials } from "../server/api-keys";
 import type { Env } from "./env";

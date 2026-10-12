@@ -5,7 +5,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql } from "../server/directory";
-import { Tokens } from "../server/tokens";
+import { Tokens } from "../server/identity/tokens";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 

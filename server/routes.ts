@@ -29,9 +29,9 @@
 // person may edit or only view (x-erga-access).
 //
 // The server's API for agents (/llms.txt, /api/..., /mcp) and /tokens are
-// server/api.ts's, which the Worker calls with `withTokens(platform)`.
+// server/api.ts's.
 //
-// Anywhere, "Authorization: Bearer erga_..." (an agent token, server/tokens.ts)
+// Anywhere, "Authorization: Bearer erga_..." (an agent token, server/identity)
 // signs in as the person it stands for, as their agent (Session.agent), with
 // that person's permissions.
 //
@@ -43,7 +43,7 @@ import { avatarsOf, OWN_ACCOUNT } from "./account-menu.ts";
 import { adminDoor } from "./admin/pages.ts";
 import { VIA } from "../shared/attribution.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, ID, newDocId, NotAllowed, OWNER, roleMay, TEST_ID, UNTITLED } from "./directory.ts";
-import { accessOf, whoOf, withTokens, type Listed, type Platform, type Session } from "./platform.ts";
+import { accessOf, whoOf, type Listed, type Platform, type Session } from "./platform.ts";
 
 import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "../document/versions.ts";
 import { pageAddress, resolvePage, titleOf } from "../document/pages.ts";
@@ -56,7 +56,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   const path = url.pathname;
   const pages = pagesHost(url, base);
   if (pages) return pagesDoor(request, url, pages, base);
-  const platform = withTokens(base, url);
+  const platform = base;
   if (path == "/") return viewLanding(platform, request, await platform.sessionOf(request));
   if (path == "/new") return newDoc(platform, request);
   if (path == "/docs") return listDocs(platform, request);

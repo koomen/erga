@@ -27,9 +27,9 @@
 
 import { snapshotDoor } from "../deploy/snapshot";
 import { PRODUCTION } from "../deploy/targets";
-import { whoOf, withTokens, type Platform } from "../server/platform";
+import { whoOf, type Platform } from "../server/platform";
 import type { Env } from "./env";
-import { LOCKED } from "../server/users";
+import { isPeer, LOCKED } from "../server/identity";
 import { byLine } from "../shared/attribution";
 
 /** Whether this path is one of these routes. */
@@ -74,11 +74,11 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
     const deploys = await stub().historyOf(name, Number(url.searchParams.get("limit") ?? 20));
     return deploys ? Response.json({ target: name, deploys }, noStore) : Response.json({ error: `There's no deploy target called ${name}.` }, { status: 404 });
   };
-  if ((logOf || historyOf) && method == "GET" && peer(request, env)) return logOf ? logAnswer(logOf) : historyAnswer(historyOf);
+  if ((logOf || historyOf) && method == "GET" && isPeer(request, base)) return logOf ? logAnswer(logOf) : historyAnswer(historyOf);
 
   // Server to server: another of Erga's servers, with the shared secret.
   if (path == "/api/deploys/events") {
-    if (!peer(request, env) || method != "POST") return Response.json({ error: "Not found" }, { status: 404 });
+    if (!isPeer(request, base) || method != "POST") return Response.json({ error: "Not found" }, { status: 404 });
     const body = (await request.json().catch(() => ({}))) as { from?: unknown; events?: unknown };
     const events = Array.isArray(body.events) ? body.events.slice(0, 200).filter((e): e is { type: string } => !!e && typeof (e as { type?: unknown }).type == "string") : [];
     await stub().relayed(typeof body.from == "string" ? body.from.slice(0, 40) : "", events);
@@ -86,7 +86,7 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   }
   const [, hookOf] = /^\/api\/deploys\/([a-z]+)\/hook$/.exec(path) ?? [];
   if (path == "/api/deploys/status" || hookOf) {
-    if (!peer(request, env)) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!isPeer(request, base)) return Response.json({ error: "Not found" }, { status: 404 });
     if (path == "/api/deploys/status" && method == "GET") return Response.json({ target: await stub().own(Number(url.searchParams.get("history") ?? 0) || 0) });
     if (hookOf && method == "POST") {
       const body = (await request.json().catch(() => ({}))) as { branch?: string; commit?: string; redeploy?: boolean; trigger?: string };
@@ -97,7 +97,7 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   }
 
   // Admins only, from here.
-  const platform = withTokens(base, url);
+  const platform = base;
   const session = await platform.sessionOf(request);
   const admin = !!session && !session.test && (await platform.directory.users.isAdmin(whoOf(session)));
   if (!admin) return Response.json({ error: session ? "Only an admin can do that." : "Sign in as an admin, or use an admin-scope token (/tokens)." }, { status: session ? 403 : 401 });
@@ -116,14 +116,4 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
     return r.ok ? Response.json({ ok: true, target: r.status }) : Response.json({ ok: false, error: r.error }, { status: r.status ?? 400 });
   }
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
-}
-
-/** The request carries this server's DEPLOY_HOOK_SECRET (staging's admins-only guard asks too: cloudflare/admins-only.ts). */
-export function peer(request: Request, env: Env): boolean {
-  const secret = env.DEPLOY_HOOK_SECRET?.trim() || (env.ERGA_DEPLOY_MOCK == "1" ? "mock-hook-secret-0123456789abcdef" : "");
-  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
-  if (secret.length < 16 || bearer.length != secret.length) return false;
-  let d = 0;
-  for (let i = 0; i < secret.length; i++) d |= secret.charCodeAt(i) ^ bearer.charCodeAt(i);
-  return d == 0;
 }

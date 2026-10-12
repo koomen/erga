@@ -7,10 +7,11 @@
 //.
 
 import { expect, test } from "bun:test";
-import { type AppCheck, type AppContext, type AppValues, AuthApps, AuthError, cachedCheck, checkGithubApp, checkValues, clearApp, discardApp, inUse, saveApp, type SignInChange, statusOf } from "../server/auth";
-import { startSignIn } from "../cloudflare/auth";
-import { testedSignIn } from "../cloudflare/auth-settings";
-import type { Env } from "../cloudflare/env";
+import { type AppCheck, type AppContext, type AppValues, AuthApps, AuthError, cachedCheck, checkGithubApp, checkValues, clearApp, discardApp, inUse, saveApp, type SignInChange, statusOf } from "../server/identity/apps";
+import { startSignIn } from "../server/identity/sign-in";
+import { testedSignIn } from "../server/identity/settings";
+import type { Platform } from "../server/platform";
+import type { Directory } from "../server/directory";
 
 const GOOD = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
 const OTHER = { clientId: "Ov23liOtherApp0000002", secret: "b".repeat(40) };
@@ -168,16 +169,21 @@ test("checks are remembered for a minute by the values, but not when GitHub coul
   expect(asked).toBe(3);
 });
 
-/** The Worker's bindings, with the Pipeline Durable Object's storage in a Map. */
-function workerEnv(vars: Partial<Env> = {}): Env {
-  const { storage } = store();
-  const stub = { authGet: storage.get, authPut: storage.put, authDelete: storage.delete };
-  return { GITHUB_CLIENT_ID: GOOD.clientId, GITHUB_CLIENT_SECRET: GOOD.secret, SESSION_SECRET: "s", FACTORY_KEY: "factory-key", DEPLOY_TARGET: "production", PIPELINE: { getByName: () => stub } as unknown as Env["PIPELINE"], ...vars } as Env;
+/** A production server's platform, its own storage in a Map. */
+function serverOn(own: Platform["own"]): Platform {
+  return {
+    secret: "s", dev: () => false,
+    signIn: { app: GOOD, github: "https://github.com", devLogin: null, encryptionKey: "factory-key" },
+    deploy: { target: "production", version: null, hookSecret: "", originOf: (t) => `https://${t}.example` },
+    own,
+    directory: { config: { record: async () => {} } } as unknown as Directory,
+  } as Platform;
 }
 
 test("sign-in uses the page's values over the deploy's, and ?app=pending tests the values that wait", async () => {
-  const env = workerEnv();
-  const apps = new AuthApps({ get: (k) => env.PIPELINE.getByName("deploys").authGet(k), put: (k, v) => env.PIPELINE.getByName("deploys").authPut(k, v), delete: (k) => env.PIPELINE.getByName("deploys").authDelete(k) }, "factory-key", "production");
+  const { storage } = store();
+  const env = serverOn(storage);
+  const apps = new AuthApps(storage, "factory-key", "production");
   const go = async (q = "") => new URL((await startSignIn(env, new Request(`https://erga.dev/auth/github${q}`))).headers.get("location") ?? "about:blank");
   expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
   // Nothing waits: a test sign-in says so.
@@ -193,7 +199,7 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
   expect((await apps.read("github")).pending?.test?.error).toContain("only an admin's sign-in");
   expect(await testedSignIn(env, OTHER.clientId, { ok: true, login: "koomen", admin: true })).toBe(true);
   expect((await go()).searchParams.get("client_id")).toBe(OTHER.clientId);
-  // A server whose Durable Object can't be read signs in with the deploy's values.
-  const broken = workerEnv({ PIPELINE: { getByName: () => ({ authGet: async () => { throw new Error("down"); } }) } as unknown as Env["PIPELINE"] });
+  // A server whose own storage can't be read signs in with the deploy's values.
+  const broken = serverOn({ get: async () => { throw new Error("down"); }, put: async () => {}, delete: async () => {} });
   expect(new URL((await startSignIn(broken, new Request("https://erga.dev/auth/github"))).headers.get("location")!).searchParams.get("client_id")).toBe(GOOD.clientId);
 });

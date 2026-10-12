@@ -14,9 +14,9 @@
 // to set. To add a setting, add it to SETTINGS; nothing in the database
 // changes.
 
-import type { SignInChange } from "./auth.ts";
+import type { SignInChange } from "./identity/apps.ts";
 import type { Sql, Statement } from "./directory.ts";
-import { NotAllowed, type Actor, type Users } from "./users.ts";
+import { NotAllowed, type Actor, type Users } from "./identity/users.ts";
 
 /** A value a setting won't take; the message says why. */
 export class ConfigError extends Error {}

@@ -20,7 +20,7 @@
 // (staging's secret is its own, so they don't work there), and a bad staging
 // deploy can't break the way pushes reach staging. Both proxy one repository.
 
-import { whoOf, withTokens, type Platform } from "../server/platform";
+import { whoOf, type Platform } from "../server/platform";
 import { tar } from "../server/source/git";
 import { gitHttp } from "../server/source/http";
 import type { Actor } from "../server/source/repo";
@@ -28,7 +28,7 @@ import { adminSourcePage } from "../server/source/page";
 import { isTargetName, TARGETS, type TargetName } from "../deploy/targets";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
-import { LOCKED } from "../server/users";
+import { LOCKED } from "../server/identity";
 import { byLine, VIA } from "../shared/attribution";
 import type { Env } from "./env";
 
@@ -85,7 +85,7 @@ function git(request: Request, env: Env, url: URL, rest: string, actor: Actor): 
 
 /** Who's asking the API, if an admin (by session or agent token). */
 async function adminOf(request: Request, env: Env, platform: Platform, url: URL): Promise<{ actor: Actor; bearer: boolean } | Response> {
-  const session = await withTokens(platform, url).sessionOf(request);
+  const session = await platform.sessionOf(request);
   if (!session) return json({ error: `Sign in first, or send an admin-scope token (${url.origin}/tokens) as "Authorization: Bearer <token>".` }, 401);
   const users = directoryOf(env).users;
   if (session.test || !(await users.isAdmin(whoOf(session)))) return json({ error: "Only admins can do that." }, 403);

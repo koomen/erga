@@ -25,7 +25,7 @@
 
 import { changeLogEntry } from "../shared/attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
-import type { Actor, Users } from "./users.ts";
+import type { Actor, Users } from "./identity/users.ts";
 
 /**
  * The keys there are, by name: the Worker secret each stands in for, the

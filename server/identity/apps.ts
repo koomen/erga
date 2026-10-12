@@ -49,7 +49,7 @@
 //
 // Built for GitHub only; PROVIDERS keeps room for others.
 
-import type { Act } from "../shared/attribution.ts";
+import type { Act } from "../../shared/attribution.ts";
 
 /** The sign-in providers: GitHub only, for now. */
 export const PROVIDERS = {

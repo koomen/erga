@@ -43,8 +43,7 @@ import { accessOf, type Platform, type Session, whoOf } from "./platform";
 import { byLine, VIA } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";
 import { cleanRel } from "../document/host";
-import { LABEL_MAX, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./tokens";
-import { LOCKED } from "./users";
+import { authOps, LABEL_MAX, LOCKED, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity";
 import { TEMPLATES, templateById } from "./templates";
 import { SITE_PERMISSIONS, tokenTemplateUrl, verifyToken } from "./site-publish";
 import { SiteError } from "./sites";
@@ -237,7 +236,7 @@ function documentTools(): ServerTool[] {
 }
 
 /** What a tool in agents/tools.ts runs with, for an agent token's person. */
-const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin, auth: ctx.platform.auth?.(ctx.origin), sites: ctx.platform.sites?.(ctx.origin) });
+const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin, auth: authOps(ctx.platform, ctx.origin), sites: ctx.platform.sites?.(ctx.origin) });
 
 /** The tools the editor's agent has too: sharing, and the admin ones. The documents list's are in TOOLS above, with files. */
 const sharedTools: ServerTool[] = SERVER_TOOLS.filter((t) => !t.docs).map((t) => ({
@@ -755,7 +754,7 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
 <p>To push to Erga's source with it, once:</p>
 <pre>git remote set-url origin ${esc(origin)}/git/erga.git
 printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\nusername=token\\npassword=${esc(m.token)}\\n\\n' | git credential approve</pre>` : ""}</section>` : "";
-  const test = platform.testToken ? await platform.testToken(session.login) : null;
+  const test = await mintTestToken(platform, session.login);
   const testBlock = test ? `<section class="part">
   <h2>Test token</h2>
   <p class="sub">Runs the test suite here, as test people, on test documents only. Until ${day(test.expires.getTime())}.</p>
