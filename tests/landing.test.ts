@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Route, type Sql } from "../server/directory";
-import { landingDocument } from "../server/routes";
+import { landingDocument } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

@@ -29,7 +29,7 @@ import { snapshotDoor } from "../deploy/snapshot";
 import { PRODUCTION } from "../deploy/targets";
 import { whoOf, type Platform } from "../server/platform";
 import type { Env } from "./env";
-import { isPeer, LOCKED } from "../server/identity";
+import { isPeer, LOCKED } from "../server/identity/index.ts";
 import { byLine } from "../shared/attribution";
 
 /** Whether this path is one of these routes. */

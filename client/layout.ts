@@ -416,7 +416,7 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
     });
   }
   agentHead.addEventListener("pointerdown", (e) => startDrag("agent", agent, agentHead, e));
-  // The steps list's head (server/routes.ts makes it, before the editor loads).
+  // The steps list's head (server/pages/viewer.ts makes it, before the editor loads).
   document.addEventListener("pointerdown", (e) => {
     const head = (e.target as Element).closest?.(".erga-steps-head");
     const p = picker();

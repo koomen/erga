@@ -31,7 +31,7 @@ import { byLine, VIA } from "../shared/attribution";
 import { checkAttachments } from "../shared/attach";
 import { directoryOf, tokensOf } from "./d1";
 import { agentSettings } from "./agent-settings";
-import { authOps, LOCKED, SHARE_ADMIN_HOURS } from "../server/identity";
+import { authOps, LOCKED, SHARE_ADMIN_HOURS } from "../server/identity/index.ts";
 import { platform } from "./platform";
 import { forgetHome } from "./home";
 import { hasSource } from "./artifacts";

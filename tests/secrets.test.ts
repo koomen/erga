@@ -63,7 +63,7 @@ test("a build's failed fetch never puts the source token in its error, or the de
 });
 
 test("a document's pages token is checked whole (its MAC compared in constant time): a changed one opens nothing", async () => {
-  const { pagesToken, readPagesToken } = await import("../server/routes");
+  const { pagesToken, readPagesToken } = await import("../server/documents");
   const token = await pagesToken("pages-secret", "ada", "abcd1234", "https://erga.dev");
   expect(await readPagesToken("pages-secret", token, "ada", "abcd1234")).toBe("https://erga.dev");
   const flip = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");

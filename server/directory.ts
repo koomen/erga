@@ -125,7 +125,7 @@ export const UNTITLED = "Untitled";
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
- * Words that can't be slugs: the app's own first path segments (server/routes.ts,
+ * Words that can't be slugs: the app's own first path segments (server/documents/front-door.ts,
  * cloudflare/index.ts) and the document host's, so an
  * address never reads as one of those, and a few kept for later.
  */
@@ -408,7 +408,7 @@ export class Directory {
   /**
    * Moves a document to the slug `base`, or base-2, base-3... if another of
    * its owner's has that: the server's own naming (the front page it makes,
-   * server/routes.ts seedLanding), not a person's, so it never refuses. The slug
+   * server/documents/landing.ts seedLanding), not a person's, so it never refuses. The slug
    * stays set.
    */
   async reslug(id: string, base: string): Promise<DocRow | null> {

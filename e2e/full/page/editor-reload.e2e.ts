@@ -1,6 +1,6 @@
 // A reload in the editor (by hand) opens as the editor was, from its first frame: its controls up (not the viewer's
 // until the editor's code has come), the agent's pane open as it was, the document in its place beside it, and scrolled
-// where it was, never shown at its top first (server/routes.ts, EDITING_HEAD; main.ts, the "shell" it keeps).
+// where it was, never shown at its top first (server/pages/viewer.ts, EDITING_HEAD; main.ts, the "shell" it keeps).
 import { expect, servers, test } from "../../fixtures";
 import { F, openEditor } from "../../editor";
 

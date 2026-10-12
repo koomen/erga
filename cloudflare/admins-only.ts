@@ -39,14 +39,15 @@
 // Everything else needs an admin: documents and their sockets, /docs, the front page and the homepage, /new, /deploy,
 // /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
 // (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
-// (server/routes.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
+// (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
 // (made before this guard, or by another server) is refused.
 
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
-import { esc, page, pagesHost, readPagesClaims, safeNext } from "../server/routes";
+import { esc, page, safeNext } from "../server/pages/index.ts";
+import { pagesHost, readPagesClaims } from "../server/documents/index.ts";
 import { whoOf, type Platform } from "../server/platform";
 import { directoryOf } from "./d1";
-import { isPeer, isSignInPath } from "../server/identity";
+import { isPeer, isSignInPath } from "../server/identity/index.ts";
 import type { Env } from "./env";
 import { pagesSite, platform } from "./platform";
 import { tokenPath } from "./token-paths";

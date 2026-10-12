@@ -23,7 +23,7 @@
 //
 // The Worker sends those paths here, with the platform
 // that knows agent tokens. The share button's token
-// (<document>/api/share) is server/routes.ts's.
+// (<document>/api/share) is server/documents/make.ts's.
 //
 // Tools are a registry (`TOOLS`): a name, a description, arguments as JSON
 // Schema and a `run`, given who's asking and the platform. Adding one is
@@ -38,13 +38,14 @@ import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
 import { type Action, type DocRow, type Route, nameOf, roleMay, ID, newDocId } from "./directory";
 import type { PublishRequest } from "../document/versions";
-import { appPage, crumbs, esc, forwarded, fromElsewhere, ICON, makeDoc, page, safeNext, startingFiles, TIMES_SCRIPT } from "./routes";
+import { appPage, crumbs, esc, fromElsewhere, ICON, page, safeNext, TIMES_SCRIPT } from "./pages/index.ts";
+import { forwarded, makeDoc, startingFiles } from "./documents/index.ts";
 import { accessOf, type Platform, type Session, whoOf } from "./platform";
 import { byLine, VIA } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";
 import { cleanRel } from "../document/host";
-import { authOps, LABEL_MAX, LOCKED, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity";
-import { TEMPLATES, templateById } from "./templates";
+import { authOps, LABEL_MAX, LOCKED, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
+import { TEMPLATES, templateById } from "./pages/index.ts";
 import { SITE_PERMISSIONS, tokenTemplateUrl, verifyToken } from "./site-publish";
 import { SiteError } from "./sites";
 import { DeployError } from "../deploy/pipeline";

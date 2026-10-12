@@ -20,12 +20,12 @@ const read = (file: string) => readFileSync(ROOT + file, "utf8");
 /** The files whose opening comment is a route table ("//   POST /api/...   what it does"). */
 const ROUTE_TABLES = [
   "cloudflare/index.ts", "cloudflare/admin-agent-host.ts", "cloudflare/source.ts", "cloudflare/branch-deploys.ts", "cloudflare/deploy-routes.ts", "cloudflare/home.ts", "server/identity/settings.ts",
-  "server/admin/pages.ts", "server/api.ts", "server/routes.ts", "server/home.ts", "document/host.ts", "server/site-publish.ts",
+  "server/admin/pages.ts", "server/api.ts", "server/documents/front-door.ts", "server/home.ts", "document/host.ts", "server/site-publish.ts",
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
 const PAGE_SCRIPTS = [
   ...readdirSync(ROOT + "client").filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
-  "server/source/page.ts", "deploy/page.ts", "server/admin/pages.ts", "server/routes.ts", "server/api.ts", "server/home.ts",
+  "server/source/page.ts", "deploy/page.ts", "server/admin/pages.ts", "server/documents/view.ts", "server/documents/make.ts", "server/pages/viewer.ts", "server/pages/frame-host.ts", "server/pages/docs.ts", "server/pages/chrome.ts", "server/api.ts", "server/home.ts",
 ];
 
 const METHOD = "GET|POST|PUT|PATCH|DELETE";

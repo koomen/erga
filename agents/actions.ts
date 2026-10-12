@@ -122,7 +122,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /deploy/api/forget", domain: "admin", action: "Forget the Cloudflare token (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "GET /deploy/api/mock", domain: "none", action: "What pretend Cloudflare was asked (tests only)", exempt: "the tests' pretend Cloudflare" },
 
-  // ------------------------------------------------------------ the documents list (/docs, server/routes.ts)
+  // ------------------------------------------------------------ the documents list (/docs, server/documents/make.ts)
   { route: "GET /docs", domain: "document", action: "Read your documents (Documents)", tool: "list_documents" },
   { route: "GET /new", domain: "document", action: "Make a document: blank, from a template, or a copy (Documents, New; the viewer's Clone)", tool: "create_document" },
   { route: "POST /docs/delete", domain: "document", action: "Delete a document (Documents)", tool: "delete_document" },

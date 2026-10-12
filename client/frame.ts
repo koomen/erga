@@ -30,7 +30,7 @@ const post = (m: FromFrame) => window.parent.postMessage(m, SHELL);
 
 // The page itself: scripts, forms and the rest, as on any web page. It's on
 // this origin, which holds nothing but this document. It starts out of sight,
-// behind the page as it renders (the host page's #view, server/routes.ts), and takes
+// behind the page as it renders (the host page's #view, server/pages/frame-host.ts), and takes
 // its place once it has rendered (ergaHost.ready).
 const frame = document.createElement("iframe");
 frame.id = "page";
@@ -131,7 +131,7 @@ post({ type: "ready" });
 const stateFrom = (json: unknown, kind = page!.kind) => EditorState.fromJSON(json, { extensions: docExtensions(kind) }, { history: historyField });
 /**
  * The page's own folder (`dir`, in the document), so its relative links and assets resolve as they would on disk:
- * the editor's base for it, which is this page's <base> too (server/routes.ts set it to the document's folder): Chrome's preload
+ * the editor's base for it, which is this page's <base> too (server/pages/frame-host.ts set it to the document's folder): Chrome's preload
  * scanner resolves the srcdoc page's files against it, not against the <base> the page itself gets, so a page in a folder
  * asked for each of its relative files at the document's root first (404s), at every render and every capture.
  */
@@ -311,7 +311,7 @@ function syncBackdrop(always = false) {
   let cs = win.getComputedStyle(d.documentElement);
   if (transparent(cs) && d.body) cs = win.getComputedStyle(d.body);
   // (A page that's only a gradient: the gradient's colour at the top, as the header sits there; the gradient itself is
-  // the host page's to tell, server/routes.ts canvasOf.)
+  // the host page's to tell, server/pages/frame-host.ts canvasOf.)
   const clear = /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor), img = cs.backgroundImage;
   const stops = clear && /gradient/.test(img) ? img.match(/rgba?\([^)]*\)/g) : null;
   const top = stops ? (/^linear-gradient\((to top|0deg|360deg)[,)]/.test(img) ? stops[stops.length - 1] : stops[0]) : "";

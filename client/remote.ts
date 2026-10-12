@@ -84,7 +84,7 @@ export class RemotePage {
   }
 
   /**
-   * Asks the frame for the editor (server/routes.ts: its host page shows the page as
+   * Asks the frame for the editor (server/pages/frame-host.ts: its host page shows the page as
    * it renders until then): it answers "ready" once the editor is loaded.
    */
   start(): void {

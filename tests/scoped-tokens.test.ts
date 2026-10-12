@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql } from "../server/directory";
 import type { Platform } from "../server/platform";
-import { sessionOf } from "../server/identity";
+import { sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
 import { ScopeError, Tokens } from "../server/identity/tokens";
 

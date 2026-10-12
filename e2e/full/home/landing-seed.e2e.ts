@@ -1,4 +1,4 @@
-// The front page the server makes for itself on a fresh database (server/routes.ts seedLanding).
+// The front page the server makes for itself on a fresh database (server/documents/landing.ts seedLanding).
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "../../fixtures";
@@ -14,7 +14,7 @@ test("on a fresh server, the first / (eight at once) makes one landing document,
   const ids = new Set(fronts.map((f) => frameOf(f)?.[1]));
   expect([...ids]).toHaveLength(1);
   expect(ids.has(undefined)).toBe(false);
-  // Every one of them at /tester/landing: the seed that won the claim never ends up at landing-2 (server/routes.ts seedLanding).
+  // Every one of them at /tester/landing: the seed that won the claim never ends up at landing-2 (server/documents/landing.ts seedLanding).
   for (const f of fronts) expect(f).toContain('href="/tester/landing#edit"');
   const front = fronts[0];
   const id = frameOf(front)![1];

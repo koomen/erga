@@ -1,7 +1,7 @@
 // Which servers are for admins only (deploy/targets.json `adminsOnly`), and sign-in on a server with no GitHub OAuth app.
 import { expect, test } from "bun:test";
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
-import { pagesToken, readPagesClaims } from "../server/routes";
+import { pagesToken, readPagesClaims } from "../server/documents/index.ts";
 import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory";

@@ -7,7 +7,7 @@
 import type { Route } from "../server/directory";
 import { OWNER } from "../server/directory";
 import type { Platform } from "../server/platform";
-import { sessionOf } from "../server/identity";
+import { sessionOf } from "../server/identity/index.ts";
 import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";

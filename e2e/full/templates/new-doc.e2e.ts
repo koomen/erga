@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { expect, servers, settle, test, until } from "../../fixtures";
 import { ROOT } from "../../env";
-import { TEMPLATES } from "../../../server/templates";
+import { TEMPLATES } from "../../../server/pages/index.ts";
 import { editorReady, idOf, newDoc, openTab } from "./templates";
 
 await servers.main();
@@ -83,7 +83,7 @@ test("the editor's + opens the picker under it, in the window, in one typeface; 
   await openTab(tab, `${address}#edit`);
   await editorReady(page);
   // The viewer's controls fade out over the editor's for 200 ms after it is ready, and take clicks meanwhile
-  // (server/routes.ts, `.erga-editor-ready :is(.erga-view-buttons, .erga-account)`): a click on + then hits the viewer's
+  // (server/pages/viewer.ts, `.erga-editor-ready :is(.erga-view-buttons, .erga-account)`): a click on + then hits the viewer's
   // Clone button and makes a copy. Click once + itself is what a click there reaches (the old test paused 500 ms).
   // The editor's own controls open out of the pencil as it comes up, moving the + aside: it's clicked once they're open.
   await expect.poll(() => page.evaluate(() => document.getElementById("edit-group")!.classList.contains("settled"))).toBe(true);

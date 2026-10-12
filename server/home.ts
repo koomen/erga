@@ -2,7 +2,7 @@
 // landing_document setting) rendered on this site itself, with no frame and
 // no pages origin, as close to a static file as it gets, and Erga's controls
 // (Clone, Edit, who you are) on top, in a shadow root of their own. Every
-// other document still renders in a frame on its own origin (server/routes.ts,
+// other document still renders in a frame on its own origin (server/documents/view.ts,
 // pagesDoor); the homepage may skip that only because only admins may edit
 // it: its script runs on this
 // site's own origin, where it could act as whoever views it.
@@ -16,14 +16,14 @@
 //   POST /api/docs/<id>/home          { isHome: boolean }: admins; sets or clears landing_document
 //   POST /api/docs/<id>/home/deploy   admins: deploys the homepage again, now
 
-import { ACCOUNT_STYLE, accountMarkup, type Account } from "./account-menu.ts";
+import { ACCOUNT_STYLE, accountMarkup, type Account } from "./pages/index.ts";
 import { ConfigError } from "./settings.ts";
 import { LOCKED } from "./identity/users.ts";
 import { byLine } from "../shared/attribution.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
-import { cloneButton, crumbsFont, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, viewCrumbs } from "./routes.ts";
+import { cloneButton, crumbsFont, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, viewCrumbs } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
-import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
+import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./pages/templates.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home/";
@@ -67,7 +67,7 @@ export const BAND = "calc(max(12px, env(safe-area-inset-top)) + 46px)";
 /**
  * What the page gets in its head: it starts below the controls' band (the root's padding, which only moves it down, unlike a
  * margin on its body; in a rule the page's own can't outweigh), anchors scroll to below the band too, and it stops dead at
- * its top and bottom, as the viewer's frame makes it (server/routes.ts, HOST_SCRIPT's still).
+ * its top and bottom, as the viewer's frame makes it (server/pages/frame-host.ts, HOST_SCRIPT's still).
  */
 const STILL = `<style>html { overscroll-behavior: none; } html:root:root { padding-top: ${BAND} !important; scroll-padding-top: ${BAND}; }</style>`;
 

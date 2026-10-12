@@ -63,10 +63,10 @@ async function reloads(page: Page, change: () => void, ready: string, ms = 30_00
 }
 
 // Vite restarts the server (seconds; more on a busy machine) before the tab can reload.
-test("the Worker's front door changes (server/routes.ts: Vite restarts the server): the page reloads, showing it", { timeout: 45_000 }, async ({ tab }) => {
+test("the Worker's front door changes (server/pages/chrome.ts: Vite restarts the server): the page reloads, showing it", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
-  await reloads(tab.page, () => edit("server/routes.ts", TITLE, "<title>${esc(title)} · Erga, front</title>"), `document.title == "Documents · Erga, front"`);
+  await reloads(tab.page, () => edit("server/pages/chrome.ts", TITLE, "<title>${esc(title)} · Erga, front</title>"), `document.title == "Documents · Erga, front"`);
   withoutOutage(tab.errors);
 });
 
@@ -90,7 +90,7 @@ test("the front door and the editor's files change together: the page comes back
   tab.strict = true;
   await docs(tab.page);
   const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;
-  await reloads(tab.page, () => { edit("server/routes.ts", TITLE, "<title>${esc(title)} · Erga, together</title>"); edit("client/style.css", "\n", `\n.${rule} { color: red; }\n`); }, `document.title == "Documents · Erga, together"`);
+  await reloads(tab.page, () => { edit("server/pages/chrome.ts", TITLE, "<title>${esc(title)} · Erga, together</title>"); edit("client/style.css", "\n", `\n.${rule} { color: red; }\n`); }, `document.title == "Documents · Erga, together"`);
   // The server has done both (restarted, rebuilt), and whatever reload that set off, the tab is on the good page, with both.
   await until(async () => (await (await fetch(`${root}/style.css`)).text()).includes(`.${rule}`), 30_000, "the rebuilt files are served");
   await until(() => tab.page.evaluate(`document.readyState == "complete" && document.title == "Documents · Erga, together" && ${hasRule(rule)}`).catch(() => false), 30_000, "the tab is on the good page, with both changes");

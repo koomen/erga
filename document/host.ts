@@ -391,7 +391,7 @@ export function makeHost(opts: HostOptions) {
       const raw = asked.startsWith("/doc/") ? asked.slice("/doc/".length) : (yield* HttpRouter.params)["*"] ?? "";
       // A page by its address (blog for blog.html or blog/index.html): sent to its file, relatively, so the
       // frame's address is the file's and the page's own relative links resolve. doc/ itself is the document's
-      // page, served as it is (the frame asks for it so, server/routes.ts; its links resolve from the root either way).
+      // page, served as it is (the frame asks for it so, server/pages/frame-host.ts; its links resolve from the root either way).
       const page = () => {
         const found = resolvePage((p) => room.exists(p) == "file", raw, doc.path);
         if (!found || found.file == cleanRel(raw)) return null;

@@ -2,7 +2,7 @@
 // other files, from GET /api/docs/<id>/tree, changed through POST to the same
 // address (new_page, new_folder, move, delete). One component, in two places:
 // the editor (a card under the document's title, top left: main.ts) and
-// Documents (beneath a document's row: server/routes.ts). It's built on its own
+// Documents (beneath a document's row: server/pages/docs.ts). It's built on its own
 // and loaded only when someone opens it, so it costs the
 // viewer nothing.
 //

@@ -97,7 +97,7 @@ interface EditorKept {
   held?: { epoch: string; update: string };
 }
 /**
- * The editor's look, kept across a reload for the document's page to open with from its first frame (server/routes.ts,
+ * The editor's look, kept across a reload for the document's page to open with from its first frame (server/pages/viewer.ts,
  * EDITING_HEAD): the window's size it was for, the classes on <html> and <body> that place things (of SHELL_HTML,
  * SHELL_BODY), <html>'s style (the layout's variables, layout.ts; the page's colour), and the controls this script fills
  * in as it starts (SHELL_PARTS, by id: the title, the pencil, the avatars), as they were, so none appears late and moves
@@ -138,7 +138,7 @@ type TreeModule = { mountTree: typeof mountTree };
   // page: never a colour of the page's. The header's text and
   // icons turn light on a dark page too.
   // The shell paints its canvas with the page's background colour (and its
-  // gradient or image over that: server/routes.ts, BAND_BOOT), so opening the agent
+  // gradient or image over that: server/pages/viewer.ts, BAND_BOOT), so opening the agent
   // never reveals a strip of a different colour. The page's background is its
   // root's, or its body's when the root has none, as the browser itself would
   // paint it. The page reports its colour: for one that's only a
@@ -238,7 +238,7 @@ type TreeModule = { mountTree: typeof mountTree };
   const syncGroup = () => {
     const open = groupOpen();
     editGroup.inert = !open;
-    // (Open from the first frame, reloaded in the editor (server/routes.ts, erga-restored): settled at once.)
+    // (Open from the first frame, reloaded in the editor (server/pages/viewer.ts, erga-restored): settled at once.)
     if (!open || !editGroup.classList.contains("settled")) editGroup.classList.toggle("settled", open && (matchMedia("(prefers-reduced-motion: reduce)").matches || body.classList.contains("erga-restored")));
   };
   editGroup.addEventListener("transitionend", (e) => { if (e.target == editGroup && e.propertyName == "grid-template-columns" && groupOpen()) editGroup.classList.add("settled"); });
@@ -1835,7 +1835,7 @@ Once you've read the guide, await further instructions.`;
   // were, the pane put back as it was left, unanimated; arriving here from
   // elsewhere is coming into the editor, and the agent grows out as above.
   // Only a page opened with #edit is "loaded in the editor": one opened viewing (by a reload or not) and
-  // switched into it is coming into the editor (server/routes.ts says which, ergaShell.loadedEditing).
+  // switched into it is coming into the editor (server/pages/viewer.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
   else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
     if (settings.agent) {

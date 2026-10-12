@@ -6,7 +6,7 @@
 import { expect, until, type Page, type Server } from "../../fixtures";
 import { docShows, inPage, openViewer } from "./viewer";
 
-/** server/routes.ts: the controls' opacity once faded, and how near the pointer brings them back. */
+/** server/pages/viewer.ts: the controls' opacity once faded, and how near the pointer brings them back. */
 export const FADED = 0.2, FADE_NEAR = 100;
 
 export type Mode = "doc" | "home";

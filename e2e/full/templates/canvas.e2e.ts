@@ -2,7 +2,7 @@
 // next step zooms out to the whole canvas, then in on the next frame, which ends in the middle; viewing and editing.
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../../fixtures";
-import { templateById } from "../../../server/templates";
+import { templateById } from "../../../server/pages/index.ts";
 import { bar, clickOn, editorReady, inPage, newDoc, openTab } from "./templates";
 
 await servers.main();

@@ -1,9 +1,9 @@
 // Helpers for the presentation tests: documents made from a
 // template, opened in the viewer or the editor, and the step controls under
-// them (server/routes.ts, STEPS_BOOT; editor-agent/PROMPT.md, "Presentations").
+// them (server/pages/viewer.ts, STEPS_BOOT; editor-agent/PROMPT.md, "Presentations").
 //
 // The document's page runs in a frame on its own origin: in the viewer the
-// host page's visible frame (iframe.on, server/routes.ts), in the editor the page
+// host page's visible frame (iframe.on, server/pages/frame-host.ts), in the editor the page
 // editor's frame. `inPage` evaluates an expression in that page.
 
 import type { Page } from "playwright-core";

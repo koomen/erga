@@ -1,4 +1,4 @@
-// Helpers for the front page tests (server/routes.ts seedLanding, server/home.ts,
+// Helpers for the front page tests (server/documents/landing.ts seedLanding, server/home.ts,
 // cloudflare/home.ts): / as served, the landing document, the homepage's state
 // and deploys, and documents published through the server's API.
 //

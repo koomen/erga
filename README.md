@@ -25,12 +25,21 @@ AGENTS.md has the rules for working on it.
       merge.ts        an outside edit, as a small change to the open document
       api.ts          the document API's contract (its routes are in document/host.ts for now)
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
-      routes.ts       the front door: every route around the documents
+      platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
+      identity/       who is asking: sessions and agent tokens (session.ts), sign-in with GitHub (sign-in.ts) and its
+                      settings (settings.ts, apps.ts), users, cookies, the other of Erga's servers (peer.ts)
+      documents/      the front door for documents: a document's address and access (front-door.ts), the pages origin
+                      and its tokens (pages-origin.ts), the viewer (view.ts), new/list/delete/share (make.ts), the
+                      front page's document (landing.ts)
+      pages/          the HTML the server renders, no routing: the viewer's scripts and styles (viewer.ts), the frame's
+                      host page (frame-host.ts), the documents list (docs.ts), the start page, the account corner,
+                      the templates, and what every page shares (chrome.ts)
       api.ts          the server's HTTP API for outside agents: tokens, /api, /mcp, the guide, /tokens, /settings
-      directory.ts    documents, owners and permissions, in SQL; users.ts, settings.ts, api-keys.ts, tokens.ts, auth.ts beside it
+      directory.ts    documents, owners and permissions, in SQL; settings.ts and api-keys.ts beside it
       sites.ts, site-publish.ts   a document on its own domain
-      home.ts         the homepage; account-menu.ts, who you are on every page; templates.ts, what a new document starts from
+      home.ts         the homepage
       admin/          the admin pages (pages.ts), the layout they share (layout.ts)
+      deploys/        who may use the deploy page (access.ts)
       source/         Erga's own Git repository: the Git endpoint, the mirror, and the Source admin page
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     editor-agent/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
@@ -43,8 +52,9 @@ AGENTS.md has the rules for working on it.
                   document/ only content.ts, pages.ts, merge.ts and api.ts's types: tests/browser-imports.test.ts keeps it so
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.sh bundles into .build/
                   (main.ts the editor's shell, frame.ts the editor, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
-    cloudflare/   the Cloudflare adapter: the Worker's entry (index.ts), the Durable Objects (document-object.ts, home.ts,
-                  site-host.ts, source-host.ts, pipeline.ts, deploy-session.ts, admin-agent-host.ts), D1 (d1.ts) and sign-in
+    cloudflare/   the Cloudflare adapter: the Worker's entry (index.ts), the Platform from its bindings (platform.ts), the
+                  Durable Objects (document-object.ts, home.ts, site-host.ts, source-host.ts, pipeline.ts, deploy-session.ts,
+                  admin-agent-host.ts) and D1 (d1.ts)
     deploy/       the deploy pipeline (pipeline.ts), branch deploys (branches.ts), the builder container (builder/), the
                   release build (release.ts), the targets (targets.json), the setup runbook (setup.ts), the settings a
                   deploy locks (locked-settings.ts), and the mock Cloudflare the tests use

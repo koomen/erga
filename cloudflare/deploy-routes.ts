@@ -23,9 +23,10 @@
 import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploy/pipeline";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { deployPage, mockConsentPage } from "../deploy/page";
-import { mayDeploy, page } from "../server/routes";
+import { mayDeploy } from "../server/deploys/access";
+import { page } from "../server/pages/index.ts";
 import { whoOf, type Platform } from "../server/platform";
-import { cookieName, cookies } from "../server/identity";
+import { cookieName, cookies } from "../server/identity/index.ts";
 import type { Env } from "./env";
 
 const COOKIE = "erga_deploy", OAUTH_COOKIE = "erga_deploy_oauth";

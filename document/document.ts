@@ -541,7 +541,7 @@ export class Document {
     if ((request.method != "GET" && request.method != "HEAD") || !url.pathname.startsWith("/doc/") || request.headers.get("upgrade")) return null;
     const info = await this.storage.get<DocumentInfo>(INFO);
     if (!info || info.disk) return null;
-    // doc/ itself is its page (server/routes.ts's frame asks for it so, not knowing its name).
+    // doc/ itself is its page (the viewer's frame asks for it so, server/pages/frame-host.ts, not knowing its name).
     const rel = url.pathname == "/doc/" ? info.index : cleanRel(url.pathname.slice("/doc/".length));
     if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const bytes = await this.storage.get<Uint8Array>(FILE + rel);

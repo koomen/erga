@@ -33,9 +33,10 @@
 // homepage document open ({ type: "home" } on its /api/events).
 
 import { DurableObject } from "cloudflare:workers";
-import { accountOf, OWN_ACCOUNT } from "../server/account-menu";
+import { accountOf, OWN_ACCOUNT } from "../server/pages/index.ts";
 import { roleMay, type DocRow } from "../server/directory";
-import { link, mayDeploy } from "../server/routes";
+import { link } from "../server/pages/index.ts";
+import { mayDeploy } from "../server/deploys/access";
 import { whoOf, type Platform } from "../server/platform";
 import { HOME_FILES, homeHeader, IDLE, renderHome, type DeployStatus } from "../server/home";
 import { mimeOf } from "../document/host";

@@ -30,7 +30,7 @@
 import { Cloudflare, DeployError, uploadAssets, type Fetch } from "../deploy/pipeline.ts";
 import { byLine } from "../shared/attribution.ts";
 import { roleMay, type Directory } from "./directory.ts";
-import { fromElsewhere } from "./routes.ts";
+import { fromElsewhere } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
 import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteRow } from "./sites.ts";
 

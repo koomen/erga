@@ -16,7 +16,7 @@
 // sees: an address always means a page, so a page may be called edit too.
 //
 // Shared by the host (document/host.ts: the tree's API and its operations), the front
-// door (server/routes.ts: which page an address is) and the browser (the editor and
+// door (server/documents/front-door.ts: which page an address is) and the browser (the editor and
 // the tree's UI), so it holds only plain functions and the operations' shape.
 
 /** One entry in the tree: a page (.html or .md), any other file, or a folder. */

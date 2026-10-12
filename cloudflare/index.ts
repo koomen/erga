@@ -47,12 +47,13 @@
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 //   /__erga/site/<host>/<path>     a site on the pretend Cloudflare (ERGA_DEPLOY_MOCK=1), as a reader would see it
 
-import { accountOf, OWN_ACCOUNT, withAccount } from "../server/account-menu";
+import { accountOf, OWN_ACCOUNT, withAccount } from "../server/pages/index.ts";
 import { idShaped, slugify, OWNER } from "../server/directory";
-import { frontDoor, mayDeploy } from "../server/routes";
+import { frontDoor } from "../server/documents/index.ts";
+import { mayDeploy } from "../server/deploys/access";
 import { whoOf } from "../server/platform";
 import { serverApi, tokensDoor } from "../server/api";
-import { finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "../server/identity";
+import { finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "../server/identity/index.ts";
 import { directoryOf } from "./d1";
 import { adminGate, isAdminPath } from "../server/admin/layout";
 import { deployDoor } from "./deploy-routes";

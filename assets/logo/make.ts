@@ -11,7 +11,7 @@
 //   assets/logo/erga-light.svg  the wordmark in light ink, for dark backgrounds
 //   assets/logo/favicon.svg     a typed "e" in dark ink on a white rounded square
 //   assets/logo/logo.ts         the wordmark sized for the header and the favicon as a
-//                        data: URL, for the pages (server/routes.ts, client/editor.html, assets/landing/)
+//                        data: URL, for the pages (server/pages/viewer.ts, client/editor.html, assets/landing/)
 // and puts the wordmark and the favicon into client/editor.html and assets/landing/index.html,
 // which can't import logo.ts. No dependencies: the script reads the TrueType
 // tables it needs (cmap, hmtx, loca, glyf) itself.

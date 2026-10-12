@@ -28,7 +28,7 @@
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in cloudflare/index.ts; and each page's own door).
 
-import { appPage, crumbs as trail, esc, ICON, link, page } from "../routes.ts";
+import { appPage, crumbs as trail, esc, ICON, link, page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 
 export type AdminSection = "settings" | "keys" | "auth" | "changes" | "users" | "source";

@@ -28,7 +28,7 @@ import { adminSourcePage } from "../server/source/page";
 import { isTargetName, TARGETS, type TargetName } from "../deploy/targets";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
-import { LOCKED } from "../server/identity";
+import { LOCKED } from "../server/identity/index.ts";
 import { byLine, VIA } from "../shared/attribution";
 import type { Env } from "./env";
 

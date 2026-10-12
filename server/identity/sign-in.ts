@@ -17,7 +17,7 @@
 //   /auth/logout                         signs out (another site's link to it asks first)
 //   /auth/test?token=&as=                a test person, signed in with a test token
 
-import { confirmAction, fromElsewhere, page, safeNext } from "../routes.ts";
+import { confirmAction, fromElsewhere, page, safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
 import { cookieName, cookies } from "./cookies.ts";
 import { signInApp, testedSignIn } from "./settings.ts";
