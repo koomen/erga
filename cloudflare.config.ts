@@ -55,6 +55,8 @@ export default defineConfig(({ mode }) => ({
       SiteHost: exports.durableObject({ storage: "sqlite" }),
       // Each admin's agent, its conversation and panel: one object, "admin".
       AdminAgentHost: exports.durableObject({ storage: "sqlite" }),
+      // Each person's conversations with the document agent, kept step by step: one object per person, named by their login.
+      PersonAgent: exports.durableObject({ storage: "sqlite" }),
       // The factory (its task queue) and its VMs: gone, with what they held.
       Factory: exports.durableObject({ state: "deleted" }),
       FactoryVm: exports.durableObject({ state: "deleted" }),
@@ -74,6 +76,7 @@ export default defineConfig(({ mode }) => ({
       OWN: bindings.durableObject({ worker: PROD.worker, exportName: "OwnStorage" }),
       SITES: bindings.durableObject({ worker: PROD.worker, exportName: "SiteHost" }),
       ADMIN_AGENT: bindings.durableObject({ worker: PROD.worker, exportName: "AdminAgentHost" }),
+      AGENTS: bindings.durableObject({ worker: PROD.worker, exportName: "PersonAgent" }),
       // The server's database: users, settings and the directory. The deploy pipeline finds it by name, or
       // makes it, and applies server/migrations/ before each deploy. Locally (vite dev) it's a database of its own, at a fixed made-up id that
       // `bun run db:local` applies the migrations to.

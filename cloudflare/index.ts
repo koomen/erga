@@ -30,6 +30,7 @@ import { simulateLatency, tallied } from "./timing";
 export { Deployer } from "./deploy-session";
 export { DocumentObject } from "./document-object";
 export { AdminAgentHost } from "./objects/admin-agent";
+export { PersonAgent } from "./objects/person-agent";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./objects/source";
 export { Home } from "./objects/home";

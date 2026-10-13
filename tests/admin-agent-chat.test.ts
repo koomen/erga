@@ -1,13 +1,17 @@
-// What the Factory object keeps of each admin's agent conversation, and the
-// factory's agent going on with it (factory/agent.ts, `restore`): the transcript and the model's
-// messages, a reply cut off in the middle, screenshots, size limits and the panel's prefs.
+// What the admin agents' object keeps of each admin's agent conversation, and
+// the agent going on with it (agents/admin.ts, `stored`): the transcript and the
+// model's messages, kept step by step (agents/checkpoint.ts); and the panel's prefs.
+// A run cut off in the middle and resumed: tests/agent-resume.test.ts.
 
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { CUT, panelPrefs, restoredLog, restoredMessages, STOPPED, storedLog, storedMessages } from "../agents/admin-chats";
+import { panelPrefs } from "../agents/admin-chats";
 import { startAdminAgent } from "../agents/admin";
-import type { Log } from "../shared/agent-log";
+import { ChatTables, tableStore } from "../agents/chat-store";
+import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } from "../agents/checkpoint";
+import { Type } from "typebox";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 const script = { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" as const };
 
@@ -19,69 +23,70 @@ function turn(agent: ReturnType<typeof startAdminAgent>, text: string) {
   });
 }
 
-test("a conversation stored and restored goes on where it was: the transcript and what the model remembers", async () => {
-  const a = startAdminAgent({ cfg: script, owner: "root", tools: [] });
-  await turn(a, `@script [{"text":"Hello, root."}]`);
-  const log = storedLog(a.log()), messages = storedMessages(a.messages());
+function tables() {
+  const db = new Database(":memory:", { strict: true });
+  return new ChatTables({ exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[], transaction: (f) => db.transaction(f)() });
+}
 
-  const b = startAdminAgent({ cfg: script, owner: "root", tools: [], restore: { log: restoredLog(log), messages: restoredMessages(messages) } });
+test("a conversation stored and restored goes on where it was: the transcript and what the model remembers", async () => {
+  const t = tables(), store = tableStore(t, "admin:root");
+  const a = startAdminAgent({ cfg: script, owner: "root", tools: [], store });
+  await turn(a, `@script [{"text":"Hello, root."}]`);
+  await new Promise((r) => setTimeout(r, 10));
+
+  const b = startAdminAgent({ cfg: script, owner: "root", tools: [], store, stored: t.load("admin:root") });
   expect(b.log().items).toEqual([{ kind: "user", text: `@script [{"text":"Hello, root."}]` }, { kind: "assistant", text: "Hello, root." }]);
   expect(b.messages().map((m) => (m as { role: string }).role)).toEqual(["user", "assistant"]);
+  expect(await b.resume()).toBe(false);
   await turn(b, `@script [{"text":"Again."}]`);
   expect(b.log().items.map((i) => i.kind)).toEqual(["user", "assistant", "user", "assistant"]);
   expect(b.messages().length).toBe(4);
+  await new Promise((r) => setTimeout(r, 10));
+  expect(t.load("admin:root")!.messages.length).toBe(4);
+  await b.reset();
+  expect(t.load("admin:root")).toBeNull();
 });
 
-test("a reply cut off while it streamed keeps what arrived, and the history stays valid", () => {
-  const log: Log = { busy: true, undoable: 0, items: [
-    { kind: "user", text: "Read the board" },
-    { kind: "assistant", text: "I'll look at" },
-    { kind: "tool", id: "t1", name: "list_tasks", path: null, status: "running" },
-  ] };
-  const back = restoredLog(storedLog(log));
-  expect(back.busy).toBe(false);
-  expect(back.items[1]).toEqual({ kind: "assistant", text: "I'll look at" });
-  expect(back.items[2]).toMatchObject({ kind: "tool", status: "error", detail: STOPPED });
-  expect(back.items[3]).toEqual({ kind: "error", text: CUT });
-  // Restored again (the object went away once more before anyone spoke): marked once.
-  expect(restoredLog(storedLog(back)).items.length).toBe(4);
+test("the admin agent, killed while a tool call ran, goes on after the restart without running it again", async () => {
+  const t = tables(), runs = { n: 0 };
+  const count: AgentTool = { name: "count", label: "Count", description: "Counts its runs.", parameters: Type.Object({}), execute: async () => { runs.n++; return { content: [{ type: "text", text: `run ${runs.n}` }], details: {} }; } };
+  // The object dies once the tool call began: that save lands, no later one returns.
+  let dead = false;
+  const dying: ChatStore = {
+    load: async () => t.load("admin:root"),
+    save: async (c) => { if (dead) return new Promise<void>(() => {}); t.save("admin:root", c); if (Object.values(c.state.calls).some((x) => !x.result)) dead = true; },
+    clear: async () => t.clear("admin:root"),
+  };
+  const a = startAdminAgent({ cfg: script, owner: "root", tools: [count], store: dying });
+  a.prompt(`@script [{"tool":"count","args":{}},{"text":"Done."}]`, null);
+  for (let i = 0; i < 200 && !(dead && runs.n == 1); i++) await new Promise((r) => setTimeout(r, 10));
+  expect(runs.n).toBe(1);
 
-  const msgs = [
-    { role: "user", content: "one", timestamp: 1 },
-    { role: "assistant", content: [{ type: "toolCall", id: "a", name: "list_tasks", arguments: {} }], timestamp: 2 },
-    { role: "toolResult", toolCallId: "a", toolName: "list_tasks", content: [{ type: "text", text: "No tasks." }], isError: false, timestamp: 3 },
-    { role: "assistant", content: [{ type: "text", text: "None." }], timestamp: 4 },
-    { role: "user", content: "two", timestamp: 5 },
-    // The object went away here: a tool call with no result.
-    { role: "assistant", content: [{ type: "toolCall", id: "b", name: "get_task", arguments: { id: 1 } }], timestamp: 6 },
-  ] as unknown as AgentMessage[];
-  expect(restoredMessages(storedMessages(msgs)).map((m) => (m as { timestamp: number }).timestamp)).toEqual([1, 2, 3, 4, 5]);
-  expect(restoredMessages("not json")).toEqual([]);
-  expect(restoredLog("{broken")).toEqual({ items: [], busy: false, undoable: 0 });
+  const b = startAdminAgent({ cfg: script, owner: "root", tools: [count], store: tableStore(t, "admin:root"), stored: t.load("admin:root") });
+  const done = new Promise<void>((resolve) => b.subscribe((ev) => { if (ev.t == "busy" && !ev.busy) resolve(); }));
+  expect(await b.resume()).toBe(true);
+  await done;
+  expect(runs.n).toBe(1);
+  expect(b.log().items.map((i) => i.kind)).toEqual(["user", "tool", "assistant"]);
+  expect(b.log().items[1]).toMatchObject({ status: "error", detail: STOPPED_SHOWN });
+  const result = b.messages().find((m) => (m as { role: string }).role == "toolResult") as unknown as { content: { text: string }[] };
+  expect(result.content[0].text).toBe(STOPPED);
 });
 
-test("a big conversation fits: screenshots go first, then the oldest turns", () => {
-  const image = "data:image/png;base64," + "A".repeat(5000);
-  const log: Log = { busy: false, undoable: 0, items: [
-    { kind: "user", text: "old ".repeat(500) },
-    { kind: "tool", id: "s", name: "view_screenshot", path: "#1", status: "done", image },
-    { kind: "user", text: "new" },
-  ] };
-  const kept = restoredLog(storedLog(log, 4000));
-  expect(kept.items.length).toBe(3);
-  expect(kept.items[1]).not.toHaveProperty("image");
-  expect(restoredLog(storedLog(log, 60)).items).toEqual([{ kind: "user", text: "new" }]);
-  expect(restoredLog(storedLog(log)).items[1]).toMatchObject({ image });
-
-  const msgs = [
-    { role: "user", content: "x".repeat(3000), timestamp: 1 },
-    { role: "toolResult", toolCallId: "a", toolName: "v", content: [{ type: "image", data: "A".repeat(5000), mimeType: "image/png" }], isError: false, timestamp: 2 },
-    { role: "user", content: "last", timestamp: 3 },
-  ] as unknown as AgentMessage[];
-  const all = JSON.parse(storedMessages(msgs));
-  expect(JSON.stringify(all)).not.toContain("AAAA");
-  expect(all[1].content[0].type).toBe("text");
-  expect(JSON.parse(storedMessages(msgs, 1000)).map((m: { timestamp: number }) => m.timestamp)).toEqual([3]);
+test("a stored transcript shows text that streamed after the last checkpoint as gone, and a running tool as stopped", () => {
+  const stored: StoredChat = {
+    messages: [],
+    log: [
+      { kind: "user", text: "Read the board" },
+      { kind: "tool", id: "t1", name: "list_tasks", path: null, status: "running" },
+      { kind: "assistant", text: "I'll look at" },
+    ],
+    state: { running: true, queued: [], calls: { t1: {} }, model: null, stable: 2, meta: {}, at: 1 },
+  };
+  const back = restoredLog(stored);
+  expect(back.busy).toBe(true);
+  expect(back.items.length).toBe(2);
+  expect(back.items[1]).toMatchObject({ kind: "tool", status: "error", detail: STOPPED_SHOWN });
 });
 
 test("the panel's prefs keep only what's valid", () => {

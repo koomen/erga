@@ -1,5 +1,7 @@
 // The agent editor: one session per person per document, running in the
-// host. A session holds that person's transcript and runs, and joins the
+// host. A session holds that person's transcript and runs (kept step by step
+// in the person's own object, so a restart neither loses nor repeats work:
+// agents/checkpoint.ts), and joins the
 // document room as an ordinary Yjs peer with its own replica of the shared
 // doc. The room never holds a conversation, a long run doesn't load the
 // room, and closing the tab doesn't stop the agent.
@@ -41,6 +43,7 @@ import { fileRefs, messageContent, type Attachment } from "../shared/attach";
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
+import { CUT, Checkpoints, restoredLog, sendLate, type ChatStore } from "../agents/checkpoint";
 import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../document/content";
 import { byLine, VIA } from "../shared/attribution";
@@ -670,6 +673,12 @@ export interface AgentSession {
   /** Takes back the agent's most recent change (one tool call), if any. */
   undo(): boolean;
   subscribe(listener: (ev: LogEvent) => void): () => void;
+  /**
+   * Goes on with a run that a restart cut off, from its last checkpoint (the
+   * first call only; call it once the session's events reach its tabs).
+   * Answers whether a run goes on.
+   */
+  resume(): Promise<boolean>;
   /** The tools, for an external agent. */
   tools(): ToolSpec[];
   /**
@@ -715,6 +724,10 @@ export interface SessionOptions {
   turnEnded?: () => Promise<string | null> | void;
   /** The document's versions and publishing; without it those tools are left out. */
   versions?: VersionsAccess;
+  /** Where the person's conversation here is kept, step by step (the person's own object: agents/checkpoint.ts); without it, only in memory. */
+  store?: ChatStore;
+  /** What the store keeps beside it, for whoever wakes a run after a restart (the document's id). */
+  meta?: Record<string, string>;
 }
 
 const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version", publish_version: "publishing" };
@@ -743,7 +756,10 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const ws = new YjsWorkspace(doc, () => acting, opts.canEdit, origin, opts.only ?? null);
   let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
 
-  const log = emptyLog();
+  // The conversation as it was at its last checkpoint, if there is one (a reload, a restart).
+  const stored = opts.store ? await opts.store.load().catch((e: unknown) => { console.log(`couldn't read ${owner.id}'s conversation: ${e}`); return null; }) : null;
+  const log = stored ? restoredLog(stored) : emptyLog();
+  if (stored && choice != null && isModelChoice(stored.state.model ?? "")) choice = stored.state.model as ModelChoice;
   const listeners = new Set<(ev: LogEvent) => void>();
   // tool_execution_end carries no args; keep each call's path from its start event.
   const paths = new Map<string, string | null>();
@@ -752,7 +768,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       if (ev.status == "running") paths.set(ev.id, ev.path);
       else ev = { ...ev, path: paths.get(ev.id) ?? null };
     }
-    reduce(log, ev);
+    checkpoints.logged(reduce(log, ev));
     for (const l of listeners) l(ev);
   };
   const presence = (patch: Record<string, unknown>) => awareness.setLocalState({ ...awareness.getLocalState(), ...patch });
@@ -811,17 +827,39 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, opts.kind, owner.name, opts.only != null, more.map((t) => t.name));
   /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
   let agent: PiAgent | null = null;
+  /** The model's messages while it has no model side yet (the agent off): the stored ones, until a reset. */
+  let offMessages = stored?.messages ?? [];
+  // Each step of a run, kept in the person's store; a restart goes on from the last (agents/checkpoint.ts).
+  const checkpoints = new Checkpoints(opts.store ?? null, {
+    log, stored, meta: { person: owner.id, name: owner.name, ...opts.meta },
+    messages: () => agent?.state.messages ?? offMessages,
+    busy: () => !!agent?.state.isStreaming,
+    model: () => choice,
+  });
   const makeAgent = async (first: AgentConfig) => {
     const serverTools = await beyond();
-    choice = first.model == "script" ? null : first.model;
+    const kept = stored && isModelChoice(stored.state.model ?? "") ? stored.state.model as ModelChoice : null;
+    choice = first.model == "script" ? null : kept ?? first.model;
     const a = new PiAgent({
-      initialState: { systemPrompt: prompted(serverTools), model: choice == null ? scriptModel() : describeModel(choice), thinkingLevel: "medium", tools: [...tools, ...serverTools] },
+      initialState: { systemPrompt: prompted(serverTools), model: choice == null ? scriptModel() : describeModel(choice), thinkingLevel: "medium", tools: [...tools, ...serverTools], messages: offMessages },
       getApiKey: () => (cfg ? Redacted.value(cfg.apiKey) : "") || "none",
       onPayload: isScript(first) ? undefined : patchPayload(() => cfg ?? first, () => choice ?? DEFAULT_MODEL),
+      beforeToolCall: checkpoints.beforeToolCall,
     });
+    // The session's handler first, so the transcript has each event when its checkpoint is saved.
     a.subscribe(onEvent);
+    a.subscribe(checkpoints.listener);
     return a;
   };
+  /** A run that ended in a failure outside the model's answer (pi threw). */
+  const failed = (err: unknown) => {
+    starting = false;
+    emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
+    busy.agent = false;
+    syncBusy();
+    emit({ t: "busy", busy: false });
+  };
+  let resumed = false;
 
   const onEvent = (e: AgentEvent) => {
     switch (e.type) {
@@ -852,7 +890,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
         });
         break;
       case "agent_start": busy.agent = true; syncBusy("thinking"); emit({ t: "busy", busy: true }); break;
-      case "agent_end": busy.agent = false; syncBusy(); emit({ t: "busy", busy: false }); break;
+      case "agent_end": busy.agent = false; syncBusy(); emit({ t: "busy", busy: false }); if (agent) sendLate(agent, failed); break;
     }
   };
   if (cfg) agent = await makeAgent(cfg);
@@ -880,21 +918,18 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       if (!agent || !cfg) { emit({ t: "error", text: "The agent is off." }); return; }
       const content = messageContent(context ? `<editor>\n${context}\n</editor>\n\n${text}` : text, files);
       if (isScript(cfg)) scriptModel();
+      const message = { role: "user" as const, content, timestamp: Date.now() };
+      // Kept until the model has it: a restart before then doesn't lose it.
+      checkpoints.queue(message);
       // A message sent while the turn is starting (its tools being looked up) steers it too.
-      if (agent.state.isStreaming || starting) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
+      if (agent.state.isStreaming || starting) { agent.steer(message); return; }
       starting = true;
       // The tools beyond the document as the owner may use them now (an admin's, say).
       const refresh = opts.serverTools ? beyond().then((more) => {
         agent.state.tools = [...tools, ...more];
         agent.state.systemPrompt = prompted(more);
       }) : Promise.resolve();
-      refresh.then(() => { starting = false; return agent.prompt({ role: "user", content, timestamp: Date.now() }); }).catch((err: unknown) => {
-        starting = false;
-        emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
-        busy.agent = false;
-        syncBusy();
-        emit({ t: "busy", busy: false });
-      });
+      refresh.then(() => { starting = false; return agent.prompt(message); }).catch(failed);
     },
     abort: () => agent?.abort(),
     async reset() {
@@ -905,6 +940,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       }
       paths.clear();
       undo.clear();
+      offMessages = [];
+      await checkpoints.clear();
       busy.agent = false;
       syncBusy();
       presence({ cursor: null });
@@ -921,6 +958,18 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    async resume() {
+      if (resumed) return false;
+      resumed = true;
+      const was = checkpoints.current.running || checkpoints.current.queued.length > 0;
+      const going = await checkpoints.resume(agent, onEvent, failed);
+      // A run with nothing left to do, or that can't go on (the agent is off now), ends here.
+      if (was && !going) {
+        if (!agent) emit({ t: "error", text: CUT });
+        emit({ t: "busy", busy: false });
+      }
+      return going;
     },
     tools: () => tools.map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) })),
     async runTool(name, args, via) {

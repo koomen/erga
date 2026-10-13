@@ -42,6 +42,7 @@ import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type A
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot.ts";
 import type { AgentConfig } from "../agents/models.ts";
+import type { ChatStore } from "../agents/checkpoint.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -85,6 +86,8 @@ export interface DocumentDeps {
   pageTemplate?: string;
   /** A person's picture, if known (hosted: their GitHub avatar). */
   avatarOf?: (person: Person) => string | undefined;
+  /** Where a person's conversation with this document's agent is kept (their own object, never the document's storage). */
+  chats?: (person: Person, docId: string) => ChatStore;
 }
 
 const { file: FILE, dir: DIR, meta: INFO, state: STATE } = KEYS;
@@ -501,6 +504,23 @@ export class Document {
   }
 
   /**
+   * A person's agent run that a restart cut off goes on (their object's alarm
+   * asks: cloudflare/objects/person-agent.ts). Until the person comes back,
+   * what they may do is what the directory says now.
+   */
+  async resumeAgent(person: Person): Promise<void> {
+    const info = await this.storage.get<DocumentInfo>(INFO);
+    const opened = info && await (this.open ??= this.load());
+    if (!info || !opened) { if (!opened) this.open = null; return; }
+    if (!this.editors.has(person.id)) {
+      const test = person.id.startsWith("test-");
+      const role = await this.directory.access(test ? { login: person.id, test, by: info.owner } : { login: person.id }, { id: info.id, owner: info.owner, test: !!info.test });
+      this.editors.set(person.id, role == "owner" || role == "editor");
+    }
+    await opened.resumeAgent(person);
+  }
+
+  /**
    * A tab joins the room over a socket the adapter holds: `send` carries the
    * room's messages to it. Returns what to do with the tab's messages and
    * its going, or null when the tab holds another epoch's history (it is
@@ -861,6 +881,8 @@ export class Document {
       },
       // A new page in its file tree starts as a new document does.
       newPage: template ? (path) => (path.endsWith(".md") ? plainMarkdown : template) : undefined,
+      chats: this.deps.chats && ((person) => this.deps.chats!(person, info.id)),
+      chatMeta: { doc: info.id },
     });
     // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).
     room.doc.on("afterTransaction", (tr: Y.Transaction) => {
@@ -887,6 +909,7 @@ export class Document {
       renamed: host.renamed,
       notify: host.notify,
       addTab: host.addTab,
+      resumeAgent: host.resumeAgent,
       room,
       // Back in touch with disk: every file there, and every one the room holds, is looked at again.
       catchUp: async () => {
@@ -920,6 +943,8 @@ export interface Opened {
   renamed: (name: DocName) => void;
   /** A message for every open tab. */
   notify: (msg: unknown) => void;
+  /** A person's agent session, started if it isn't (a run a restart cut off goes on). */
+  resumeAgent: (person: Person) => Promise<void>;
   close: () => Promise<void>;
 }
 

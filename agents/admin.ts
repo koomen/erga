@@ -38,6 +38,7 @@ import { fileRefs, messageContent, type Attachment } from "../shared/attach";
 import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
 import { agentName } from "../document/content";
 import { runServerTool, SERVER_TOOLS, type ToolWho } from "./tools";
+import { Checkpoints, restoredLog, sendLate, type ChatStore, type StoredChat } from "./checkpoint";
 import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../server/source/index.ts";
 
 /** What the dashboard tools do, as the admin: the source and deploys dashboard on /admin/source, and agent tokens. */
@@ -272,13 +273,15 @@ export interface AdminAgent {
   /** The settings now (a key an admin stored, replaced or cleared since it started): the next model call uses them. */
   configure(cfg: AgentConfig): void;
   log(): Log;
-  /** The model's messages so far (what server/admin/agent.ts stores, agents/admin-chats.ts). */
+  /** The model's messages so far. */
   messages(): AgentMessage[];
   /** A message, with any files attached. */
   prompt(text: string, context: string | null, files?: Attachment[]): void;
   abort(): void;
   reset(): Promise<void>;
   subscribe(listener: (ev: LogEvent) => void): () => void;
+  /** Goes on with a run that a restart cut off, from its last checkpoint (the first call only). Answers whether a run goes on. */
+  resume(): Promise<boolean>;
 }
 
 /** What a tool call is about, for the panel: a setting's key, a login, a path. */
@@ -300,13 +303,18 @@ function about(name: string, args: unknown): string | null {
   return null;
 }
 
-/** One admin's agent session; `restore`: the conversation stored before, to go on with. */
-export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; restore?: { log: Log; messages: AgentMessage[] } }): AdminAgent {
-  const { owner, tools, restore } = opts;
+/**
+ * One admin's agent session. `store`: where it keeps its conversation, step
+ * by step (agents/checkpoint.ts); `stored`: the conversation as the store
+ * had it, to go on with.
+ */
+export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; store?: ChatStore; stored?: StoredChat | null; meta?: Record<string, string> }): AdminAgent {
+  const { owner, tools, stored } = opts;
   let cfg = opts.cfg;
-  let choice: ModelChoice | null = cfg.model == "script" ? null : cfg.model;
+  const kept = stored && Object.hasOwn(MODELS, stored.state.model ?? "") ? stored.state.model as ModelChoice : null;
+  let choice: ModelChoice | null = cfg.model == "script" ? null : kept ?? cfg.model;
   const model = choice == null ? scriptModel() : describeModel(choice);
-  const log = restore?.log ?? emptyLog();
+  const log = stored ? restoredLog(stored) : emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
   const whats = new Map<string, string | null>();
   const emit = (ev: LogEvent) => {
@@ -314,15 +322,23 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
       if (ev.status == "running") whats.set(ev.id, ev.path);
       else ev = { ...ev, path: whats.get(ev.id) ?? null };
     }
-    reduce(log, ev);
+    checkpoints.logged(reduce(log, ev));
     for (const l of listeners) l(ev);
   };
+  // Each step of a run, kept in the store; a restart goes on from the last.
+  const checkpoints: Checkpoints = new Checkpoints(opts.store ?? null, {
+    log, stored, meta: { login: owner, ...opts.meta },
+    messages: () => agent.state.messages,
+    busy: () => agent.state.isStreaming,
+    model: () => choice,
+  });
   const agent = new PiAgent({
-    initialState: { systemPrompt: systemPrompt(owner), model, thinkingLevel: "medium", tools, messages: restore?.messages ?? [] },
+    initialState: { systemPrompt: systemPrompt(owner), model, thinkingLevel: "medium", tools, messages: stored?.messages ?? [] },
     getApiKey: () => Redacted.value(cfg.apiKey) || "none",
     onPayload: isScript(cfg) ? undefined : patchPayload(() => cfg, () => choice ?? DEFAULT_MODEL),
+    beforeToolCall: checkpoints.beforeToolCall,
   });
-  agent.subscribe((e: AgentEvent) => {
+  const onEvent = (e: AgentEvent) => {
     switch (e.type) {
       case "message_update": {
         const m = e.assistantMessageEvent;
@@ -340,9 +356,17 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
         emit({ t: "tool", id: e.toolCallId, name: e.toolName, path: null, status: e.isError ? "error" : "done", detail: e.isError ? resultText(e.result).slice(0, 400) : undefined, image: e.isError ? undefined : resultImage(e.result) });
         break;
       case "agent_start": emit({ t: "busy", busy: true }); break;
-      case "agent_end": emit({ t: "busy", busy: false }); break;
+      case "agent_end": emit({ t: "busy", busy: false }); sendLate(agent, failed); break;
     }
-  });
+  };
+  // The session's handler first, so the transcript has each event when its checkpoint is saved.
+  agent.subscribe(onEvent);
+  agent.subscribe(checkpoints.listener);
+  const failed = (err: unknown) => {
+    emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
+    emit({ t: "busy", busy: false });
+  };
+  let resumed = false;
   return {
     get model() { return agent.state.model.name ?? null; },
     get modelChoice() { return choice; },
@@ -359,11 +383,11 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
       emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
       const content = messageContent(context ? `<page>\n${context}\n</page>\n\n${text}` : text, files);
       if (isScript(cfg)) scriptModel();
-      if (agent.state.isStreaming) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
-      agent.prompt({ role: "user", content, timestamp: Date.now() }).catch((err: unknown) => {
-        emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
-        emit({ t: "busy", busy: false });
-      });
+      const message = { role: "user" as const, content, timestamp: Date.now() };
+      // Kept until the model has it: a restart before then doesn't lose it.
+      checkpoints.queue(message);
+      if (agent.state.isStreaming) { agent.steer(message); return; }
+      agent.prompt(message).catch(failed);
     },
     abort: () => agent.abort(),
     async reset() {
@@ -371,9 +395,18 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
       await agent.waitForIdle();
       agent.reset();
       whats.clear();
+      await checkpoints.clear();
       emit({ t: "reset" });
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async resume() {
+      if (resumed) return false;
+      resumed = true;
+      const was = checkpoints.current.running || checkpoints.current.queued.length > 0;
+      const going = await checkpoints.resume(agent, onEvent, failed);
+      if (was && !going) emit({ t: "busy", busy: false });
+      return going;
+    },
   };
 }
 

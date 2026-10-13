@@ -26,6 +26,7 @@ import { ignored, isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";
 import type { VersionsAccess } from "../editor-agent/session";
+import type { ChatStore } from "../agents/checkpoint";
 
 export interface HostOptions {
   readonly room: Room;
@@ -71,6 +72,14 @@ export interface HostOptions {
   readonly versions?: VersionsAccess;
   /** A new page's text, by its path; a plain one if not given. */
   readonly newPage?: (path: string) => string;
+  /**
+   * Where a person's conversation with the agent here is kept, step by step
+   * (their own object, never the document: cloudflare/objects/person-agent.ts),
+   * so a restart neither loses nor repeats work. Without it, only in memory.
+   */
+  readonly chats?: (person: { id: string; name: string }) => ChatStore;
+  /** What a person's store keeps beside their conversation, for whoever wakes a run after a restart (the document's id). */
+  readonly chatMeta?: Record<string, string>;
 }
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
@@ -215,8 +224,14 @@ export function makeHost(opts: HostOptions) {
         tree: async (op) => { await tree(op); },
         pages: pagesFor(user),
         open: openFor(user),
+        store: opts.chats?.(user),
+        meta: opts.chatMeta,
       }));
-      s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
+      // Its events reach the person's tabs; then a run a restart cut off goes on (from its last checkpoint).
+      s.then((session) => {
+        session.subscribe((ev) => sendTo(user.id, { type: "agent", ev }));
+        session.resume().catch((e: unknown) => console.log(`couldn't resume ${user.id}'s agent: ${e}`));
+      }, () => sessions.delete(user.id));
       sessions.set(user.id, s);
     }
     return s;
@@ -436,6 +451,8 @@ export function makeHost(opts: HostOptions) {
     renamed,
     /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: server/home/deploys.ts). */
     notify: (msg: unknown) => { for (const t of tabs) t.send(msg); },
+    /** A person's agent session, started if it isn't: a run a restart cut off goes on (the person's object asks, cloudflare/objects/person-agent.ts). */
+    resumeAgent: async (user: { id: string; name: string }) => { await sessionFor(user); },
   };
 }
 

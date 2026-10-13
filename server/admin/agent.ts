@@ -21,10 +21,12 @@
 //   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits
 
 import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "../../agents/admin.ts";
-import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../../agents/admin-chats.ts";
+import { panelPrefs, type PanelPrefs } from "../../agents/admin-chats.ts";
+import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../../agents/chat-store.ts";
+import { restoredLog } from "../../agents/checkpoint.ts";
 import type { ToolWho } from "../../agents/tools.ts";
 import { isModelChoice, MODELS } from "../../editor-agent/session.ts";
-import { emptyLog, type Log, type LogEvent } from "../../shared/agent-log.ts";
+import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { forgetHome } from "../home/index.ts";
@@ -45,10 +47,15 @@ export interface DashboardDeploys {
   rollback(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
 }
 
-/** What the agents need from where they run: their SQLite, and the Platform (the directory, tokens, the repository, the deploys, the homepage). */
+/**
+ * What the agents need from where they run: their SQLite, the Platform (the
+ * directory, tokens, the repository, the deploys, the homepage), and an
+ * alarm, set while a run goes (`wake` when it rings).
+ */
 export interface AdminAgentsDeps {
-  sql: { exec<T = Record<string, unknown>>(query: string, ...params: (string | number | null)[]): T[] };
+  sql: ChatSql;
   platform: Platform;
+  watch?: () => void;
 }
 
 export class AdminAgents {
@@ -56,13 +63,13 @@ export class AdminAgents {
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string>();
   /** Each admin's agent, with where the server is, as their page said last. */
   private agents = new Map<string, { agent: AdminAgent; origin: string }>();
-  /** Conversations with a save waiting (a reply streams in: at most one save a second). */
-  private chatSaves = new Map<string, ReturnType<typeof setTimeout>>();
   private beat: ReturnType<typeof setInterval> | null = null;
+  /** Each admin's conversation, kept step by step (agents/checkpoint.ts), scope "admin:<login>". */
+  private chats: ChatTables;
 
   constructor(private deps: AdminAgentsDeps) {
-    deps.sql.exec(`CREATE TABLE IF NOT EXISTS agent_chats (login TEXT PRIMARY KEY, log TEXT NOT NULL, messages TEXT NOT NULL, updated INTEGER NOT NULL)`);
     deps.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
+    this.chats = new ChatTables(deps.sql);
   }
 
   private get platform() { return this.deps.platform; }
@@ -102,11 +109,14 @@ export class AdminAgents {
       if ("error" in r) throw new Error(r.error);
       return r;
     };
-    const stored = this.storedChat(login);
-    const agent = startAdminAgent({ cfg, owner: login, tools: [...adminTools(as, guard), ...sourceTools(readSource, guard), ...dashboardTools(this.dashboard(login, state), guard)], restore: stored ?? undefined });
-    agent.subscribe((ev) => { this.event({ type: "agent", ev }, login); this.chatChanged(login, ev); });
+    const scope = `admin:${login}`;
+    const store = tableStore(this.chats, scope, (running) => { if (running) this.deps.watch?.(); });
+    const agent = startAdminAgent({ cfg, owner: login, tools: [...adminTools(as, guard), ...sourceTools(readSource, guard), ...dashboardTools(this.dashboard(login, state), guard)], store, stored: this.chats.load(scope), meta: { origin } });
+    agent.subscribe((ev) => this.event({ type: "agent", ev }, login));
     s = Object.assign(state, { agent });
     this.agents.set(login, s);
+    // A run a restart cut off goes on, from its last checkpoint.
+    agent.resume().catch((e: unknown) => console.log(`couldn't resume ${login}'s admin agent: ${e}`));
     return s;
   }
 
@@ -170,31 +180,20 @@ export class AdminAgents {
 
   // -- each admin's conversation, kept
 
-  private storedChat(login: string): { log: Log; messages: ReturnType<typeof restoredMessages> } | null {
-    const r = this.deps.sql.exec<{ log: string; messages: string }>("SELECT log, messages FROM agent_chats WHERE login = ?", login)[0];
-    return r ? { log: restoredLog(r.log), messages: restoredMessages(r.messages) } : null;
-  }
-
-  /** Saves the conversation: at once when a turn ends, a message is sent or a tool finishes; else within a second. */
-  private chatChanged(login: string, ev: LogEvent) {
-    const now = ev.t == "user" || ev.t == "reset" || ev.t == "error" || (ev.t == "busy" && !ev.busy) || (ev.t == "tool" && ev.status != "running");
-    if (now) { this.saveChat(login); return; }
-    if (!this.chatSaves.has(login)) this.chatSaves.set(login, setTimeout(() => this.saveChat(login), 1000));
-  }
-
-  private saveChat(login: string) {
-    clearTimeout(this.chatSaves.get(login));
-    this.chatSaves.delete(login);
-    const s = this.agents.get(login);
-    if (!s) return;
-    const log = s.agent.log();
-    if (!log.items.length) { this.deps.sql.exec("DELETE FROM agent_chats WHERE login = ?", login); return; }
-    this.deps.sql.exec("INSERT OR REPLACE INTO agent_chats (login, log, messages, updated) VALUES (?, ?, ?, ?)", login, storedLog(log), storedMessages(s.agent.messages()), Date.now());
-  }
-
   /** The admin's conversation: the live one, or the one stored (the agent need not be on to read it). */
   async conversation(login: string): Promise<Log> {
-    return this.agents.get(login)?.agent.log() ?? this.storedChat(login)?.log ?? emptyLog();
+    const live = this.agents.get(login)?.agent.log();
+    if (live) return live;
+    const stored = this.chats.load(`admin:${login}`);
+    return stored ? restoredLog(stored) : emptyLog();
+  }
+
+  /** The object's alarm: each run a restart cut off goes on (its session starts, and resumes). Answers whether some still run. */
+  async wake(): Promise<boolean> {
+    return wakeRuns(this.chats, async (scope, state) => {
+      const login = /^admin:(.+)$/.exec(scope)?.[1];
+      if (login && state.meta.origin) await this.session(login, state.meta.origin);
+    });
   }
 
   /** A new conversation: the turn stopped, the transcript and the model's messages gone, every tab told. */
@@ -202,9 +201,7 @@ export class AdminAgents {
     const s = this.agents.get(login);
     if (s) await s.agent.reset();
     else this.event({ type: "agent", ev: { t: "reset" } }, login);
-    clearTimeout(this.chatSaves.get(login));
-    this.chatSaves.delete(login);
-    this.deps.sql.exec("DELETE FROM agent_chats WHERE login = ?", login);
+    this.chats.clear(`admin:${login}`);
     return emptyLog();
   }
 

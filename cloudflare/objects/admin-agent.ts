@@ -1,17 +1,29 @@
 // The admins' agents, as a Durable Object (one, named "admin"): the Cloudflare
 // side of server/admin/agent.ts. It gives the agents their SQLite and the
-// Platform, and forwards the calls the Worker makes (RPC).
+// Platform, forwards the calls the Worker makes (RPC), and wakes a run a
+// restart cut off (its alarm).
 
 import { DurableObject } from "cloudflare:workers";
 import { AdminAgents, type AdminAgentObject } from "../../server/admin/index.ts";
 import type { Env } from "../env";
 import { platform } from "../platform";
+import { STALE_MS } from "../../agents/chat-store";
 
 export class AdminAgentHost extends DurableObject<Env> implements AdminAgentObject {
   private agents = new AdminAgents({
-    sql: { exec: <T>(query: string, ...params: (string | number | null)[]) => this.ctx.storage.sql.exec(query, ...params).toArray() as T[] },
+    sql: {
+      exec: <T>(query: string, ...params: (string | number | null)[]) => this.ctx.storage.sql.exec(query, ...params).toArray() as T[],
+      transaction: (f) => this.ctx.storage.transactionSync(f),
+    },
     platform: platform(this.env),
+    // While a run goes, the alarm looks again a little after its checkpoints should have come.
+    watch: () => { void this.ctx.storage.getAlarm().then((at) => (at == null ? this.ctx.storage.setAlarm(Date.now() + STALE_MS + 5_000) : undefined)); },
   });
+
+  /** A run with no checkpoint for a while: it goes on from its last checkpoint, if it isn't running. */
+  async alarm(): Promise<void> {
+    if (await this.agents.wake()) await this.ctx.storage.setAlarm(Date.now() + STALE_MS);
+  }
 
   agentState(login: string, origin: string) { return this.agents.agentState(login, origin); }
   agentPrompt(login: string, origin: string, text: string, context: string | null, attached?: unknown) { return this.agents.agentPrompt(login, origin, text, context, attached); }

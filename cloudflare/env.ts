@@ -6,6 +6,7 @@ import type { SourceHost } from "./objects/source";
 import type { Pipeline } from "./pipeline";
 import type { Home } from "./objects/home";
 import type { OwnStorage } from "./objects/own";
+import type { PersonAgent } from "./objects/person-agent";
 import type { SiteHost } from "./objects/site";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
@@ -18,6 +19,8 @@ export interface Env {
   OWN: DurableObjectNamespace<OwnStorage>;
   /** Each admin's agent, its conversation and panel: one Durable Object, "admin". */
   ADMIN_AGENT: DurableObjectNamespace<AdminAgentHost>;
+  /** Each person's conversations with the document agent: one Durable Object per person, named by their login. */
+  AGENTS: DurableObjectNamespace<PersonAgent>;
   /** Each document's site on its person's Cloudflare account, its deploys: one Durable Object per document that has one, named by its id. */
   SITES: DurableObjectNamespace<SiteHost>;
   /**

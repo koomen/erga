@@ -63,6 +63,11 @@ export class DocumentObject extends DurableObject<Env> {
       pageTemplate: TEMPLATE || undefined,
       // People's ids are their GitHub logins, so GitHub serves their pictures.
       avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
+      // Each person's conversation here, kept in their own object (cloudflare/objects/person-agent.ts).
+      chats: (person, docId) => {
+        const agents = env.AGENTS.getByName(person.id), scope = `doc:${docId}`;
+        return { load: () => agents.load(scope), save: (change) => agents.save(scope, change), clear: () => agents.clear(scope) };
+      },
     };
   }
 
@@ -86,6 +91,8 @@ export class DocumentObject extends DurableObject<Env> {
   setPublished(req: PublishRequest): Promise<PublishResult> { return this.document.setPublished(req); }
   restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.restore(ref, by, path); }
   publishedFiles() { return this.document.publishedFiles(); }
+  /** A person's agent run that a restart cut off goes on (their object's alarm asks). */
+  resumeAgent(person: { id: string; name: string }): Promise<void> { return this.document.resumeAgent(person); }
 
   /** Its unedited time is up (document.wake says what then). */
   async alarm(): Promise<void> {
