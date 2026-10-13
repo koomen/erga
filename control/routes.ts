@@ -154,12 +154,12 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
 const INSTALL_STYLE = `
   .install { max-width: 620px; }
   .install h2 { margin: 0 0 18px; font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
-  .install .status { display: flex; align-items: baseline; gap: 10px; margin: 0 0 18px; font-size: 15px; color: var(--fg); }
-  .install .status b { color: var(--fg-strong); font-weight: 600; }
+  .install .state-line { display: flex; align-items: baseline; gap: 10px; margin: 0 0 18px; font-size: 15px; color: var(--fg); }
+  .install .state-line b { color: var(--fg-strong); font-weight: 600; }
   .install .dot { flex: none; position: relative; top: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--chrome); }
   .install .ok .dot { background: #1f9d55; } .install .bad .dot { background: #d64545; }
-  .install .note { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 10px; font-size: 14px; line-height: 1.5; color: var(--fg); background: color-mix(in srgb, var(--chrome) 6%, transparent); }
-  .install .note.bad { border-color: color-mix(in srgb, #d64545 45%, var(--rule)); color: var(--fg-strong); }
+  .install .msg { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 10px; font-size: 14px; line-height: 1.5; color: var(--fg); background: color-mix(in srgb, var(--chrome) 6%, transparent); }
+  .install .msg.bad { border-color: color-mix(in srgb, #d64545 45%, var(--rule)); color: var(--fg-strong); }
   .install .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 28px; }
   .install details { font-size: 13.5px; color: var(--soft); }
   .install summary { width: max-content; cursor: pointer; color: var(--soft); border-radius: 6px; }
@@ -175,7 +175,7 @@ const when = (ms: number | null) => (ms ? new Date(ms).toISOString().replace("T"
 /** The page: one status line, what the last consent said, one button (and Disconnect when connected), the details folded. */
 function installBody(s: CredentialStatus, c: Control, url: URL): string {
   const q = url.searchParams;
-  const note = (kind: "ok" | "bad", text: string) => `<p class="note ${kind}">${text}</p>`;
+  const note = (kind: "ok" | "bad", text: string) => `<p class="msg ${kind}">${text}</p>`;
   const notes: string[] = [];
   if (q.get("ok")) {
     notes.push(q.get("check") ? note("bad", `Connected, but the first read with the grant failed: ${esc(q.get("check")!)}`) : note("ok", `Connected. The grant reads ${esc(c.oauth.worker)}'s settings: it works.`));
@@ -186,8 +186,8 @@ function installBody(s: CredentialStatus, c: Control, url: URL): string {
   if (q.get("disconnected")) notes.push(note("ok", "Disconnected. The grant is revoked. Nothing deploys until an admin connects again."));
   const why = s.error ? `The grant stopped working (${esc(s.error)}). Connect again.` : s.by ? "The grant expired. Connect again." : "Nothing deploys until an admin connects.";
   const status = s.connected
-    ? `<p class="status ok"><span class="dot"></span><span><b>Connected</b> by ${esc(s.by ?? "?")} on ${when(s.at)}.</span></p>`
-    : `<p class="status bad"><span class="dot"></span><span><b>Not connected.</b> ${why}</span></p>`;
+    ? `<p class="state-line ok"><span class="dot"></span><span><b>Connected</b> by ${esc(s.by ?? "?")} on ${when(s.at)}.</span></p>`
+    : `<p class="state-line bad"><span class="dot"></span><span><b>Not connected.</b> ${why}</span></p>`;
   const client = c.oauth.clientId ? `<code>${esc(c.oauth.clientId)}</code>` : c.oauth.mock ? "the mock's" : "none yet: CLOUDFLARE_OAUTH_CLIENT_ID in control/wrangler.jsonc";
   const details = `<details>
     <summary>Details</summary>
