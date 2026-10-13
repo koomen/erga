@@ -29,7 +29,7 @@ import { mockConsentPage } from "../deploy/page.ts";
 import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
-import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
+import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
@@ -224,7 +224,7 @@ export function controlLayout(app: string): (o: AdminLayout) => Response {
     const trail = crumbs(o.session, [{ label: "Admin", href: `${app}/admin` }, { label: o.title }], "h1", app);
     const side = adminSidebar(o.here, (path) => (path == "/admin/source" ? "/" : path == "/install" ? "/install" : `${app}${path}`));
     const corner = accountHtml(accountOf(o.session, true), "/");
-    return new Response(appPage(o.title, LAYOUT_STYLE + CONTROL_STYLE + (o.style ?? ""), `${SIDEBAR_EARLY_SCRIPT}
+    return new Response(appPage(o.title, LAYOUT_STYLE + CONTROL_STYLE + (o.style ?? ""), `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}
 ${trail}
 <div class="admin-body">
 ${side}
