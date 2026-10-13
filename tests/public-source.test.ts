@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { controlRoutes, type Control } from "../control/routes";
+import { controlRoutes, isControlPath, type Control } from "../control/routes";
 import { localToken } from "../dev/git-server.ts";
 import { adminsOnlyGate } from "../server/identity/admins-only.ts";
 import type { Platform } from "../server/platform";
@@ -107,6 +107,11 @@ describe("the page, with no sign-in", () => {
     expect(html).toContain(`href="/git/tree/main/src"`);
     expect(html).not.toContain("NEXT.md"); // only on staging
     for (const word of ["Merge", "Deploy", "Roll back", "mirror", "Mirror", "Redeploy", "token", "/api/", "__artifacts", "/install"]) expect(`${word}: ${html.includes(word)}`).toBe(`${word}: false`);
+  });
+
+  test("the app hands every page path to the control Worker, with or without a slash at the end", async () => {
+    for (const p of ["/git", "/git/", "/git/erga.git", "/git/erga.git/", "/git/tree/main", "/git/tree/main/", "/git/tree/main/src/page/main.ts"]) expect(`${p}: ${isControlPath(p)}`).toBe(`${p}: true`);
+    for (const p of ["/git/", "/git/tree/main/"]) expect(`${p}: ${(await page(p)).status}`).toBe(`${p}: 200`);
   });
 
   test("a browser at /git/erga.git sees it too", async () => {
