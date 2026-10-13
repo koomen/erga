@@ -20,7 +20,7 @@
 //   /api/docs/<id>/home        whether a document is the homepage, setting it, and its deploys
 //   /api/docs/<id>/site        a document's site on its person's Cloudflare account
 //   /_home/<gen>/<path>        the homepage's files, as deployed
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP: the control Worker's (control/routes.ts), as are /admin/source
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/source
 //                              and /api/source/...; `outside` answers them (a redirect to the control Worker, or itself in local development)
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
@@ -86,7 +86,7 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (assets || path == "/editor.html") return p.assets(request);
   // Erga's own source and deploys (the Git endpoint, the Source page, their APIs) are the control Worker's: `outside`
   // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
-  if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return (await outside(request, url)) ?? frontDoor(request, p);
+  if (path == "/git" || path.startsWith("/git/")) return (await outside(request, url)) ?? frontDoor(request, p);
   // Its old address, from when admin settings linked to it: it's a page of its own now, not an admin one, so before the admins' gate.
   if (path == "/admin/deploy" || path == "/admin/deploy/") return new Response(null, { status: 301, headers: { Location: "/deploy" } });
   // Every /admin route: the server's admins only, checked on the server before any of them answers.

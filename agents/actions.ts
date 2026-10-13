@@ -73,6 +73,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "PUT /api/admin/agent/prefs", domain: "none", action: "Keep the admin agent's panel layout", exempt: PANEL },
 
   // ------------------------------------------------------------ /admin/source: the dashboard of source and deploys
+  { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "list_source" },
+  { route: "GET /git/tree/<ref>/<path>", domain: "admin", action: "Read a folder or a file of Erga's source (the public page, for anyone)", tool: "read_source" },
   { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Source)", tool: "list_branches" },
   { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Source)", tool: "deploy_production" },
   { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Source)", tool: "sync_mirror" },

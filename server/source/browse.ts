@@ -40,10 +40,16 @@ export type SourceRead =
   | { op: "list"; ref?: string; path?: string; recursive?: boolean }
   | { op: "read"; ref?: string; path: string; from?: number; to?: number }
   | { op: "search"; ref?: string; query: string; regex?: boolean; ignoreCase?: boolean; path?: string; glob?: string; limit?: number }
-  | { op: "log"; ref?: string; limit?: number; skip?: number };
+  | { op: "log"; ref?: string; limit?: number; skip?: number }
+  | { op: "view"; ref?: string; path?: string };
 
-/** A tool's answer: what was read, from where. */
-export interface SourceAnswer { ref: string; commit: string; text: string }
+/** A tool's answer: what was read, from where. A "view" (the public source page's) has `view` too, and no text. */
+export interface SourceAnswer { ref: string; commit: string; text: string; view?: SourceView }
+
+/** A folder's entries, or a file's text (null: binary), as the public source page (public.ts) shows them. */
+export type SourceView =
+  | { kind: "folder"; path: string; entries: { name: string; folder: boolean; size: number }[] }
+  | { kind: "file"; path: string; size: number; text: string | null; link?: string; cut?: boolean };
 
 export class BrowseError extends Error {}
 
@@ -111,6 +117,25 @@ export function read(s: Snapshot, path: string, from?: number, to?: number): str
   const head = start == 1 && end == total ? `${path}: ${total} lines` : `${path}: lines ${start} to ${end} of ${total}`;
   const more = end < total ? `\n… ${total - end} more lines: read again with from ${end + 1}.` : "";
   return `${head}\n${out.join("\n")}${more}`;
+}
+
+/** At most this many bytes of a file in a view. */
+const MAX_VIEW = 512 * 1024;
+
+/** A folder (folders first, then files, each by name) or a file, for the public source page. */
+export function view(s: Snapshot, path: string): SourceView {
+  const f = s.files.get(path);
+  if (f) {
+    if (f.mode == "120000") return { kind: "file", path, size: f.size, text: null, link: text(f.data) };
+    if (isBinary(f.data)) return { kind: "file", path, size: f.size, text: null };
+    return { kind: "file", path, size: f.size, text: text(f.data.subarray(0, MAX_VIEW)), ...(f.size > MAX_VIEW ? { cut: true } : {}) };
+  }
+  if (!s.dirs.has(path)) throw new BrowseError(`There's no file or folder ${path}.`);
+  const prefix = path ? `${path}/` : "";
+  const folders = [...s.dirs].filter((d) => d.startsWith(prefix) && d != path && !d.slice(prefix.length).includes("/")).map((d) => ({ name: d.slice(prefix.length), folder: true, size: 0 }));
+  const files = [...s.files].filter(([p]) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/")).map(([p, f]) => ({ name: p.slice(prefix.length), folder: false, size: f.size }));
+  const byName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? -1 : 1);
+  return { kind: "folder", path, entries: [...folders.sort(byName), ...files.sort(byName)] };
 }
 
 /** A glob ("*.ts", "src/**\/*.css") as a regular expression: on the file's name, or on its whole path if it has a "/". */

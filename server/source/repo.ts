@@ -32,7 +32,7 @@ import {
   toSideBand, utf8, ZERO, type Commit,
 } from "./git.ts";
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
-import { BrowseError, cleanPath, list, read, search, snapshotOf, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
+import { BrowseError, cleanPath, list, read, search, snapshotOf, view, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
@@ -589,6 +589,7 @@ export class SourceRepo {
         return { ref, commit, text: `${ref} (${commit.slice(0, 10)}), commits ${skip + 1} to ${skip + rows.length}, newest first:\n${lines.join("\n")}${more}` };
       }
       const snap = await this.snapshot(remote, commit, head);
+      if (q.op == "view") return { ref, commit, text: "", view: view(snap, cleanPath(q.path)) };
       const text = q.op == "list" ? list(snap, cleanPath(q.path), !!q.recursive)
         : q.op == "read" ? read(snap, cleanPath(q.path), q.from, q.to)
           : search(snap, q);

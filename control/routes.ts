@@ -9,6 +9,7 @@
 //   /api/source/...             its API (server/source/routes.ts)
 //   /api/deploys..., /api/events    the deploys' API and the event stream (server/deploys/api.ts)
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
+//   /git, /git/tree/...         Erga's source for anyone, read-only: branches, commits, files (server/source/public.ts)
 //   /auth/github[/callback], /auth/logout   signing in (this Worker's own GitHub app) and out
 //   GET /api/health             {ok, worker: "control", version (the release), build (the version id)}: anyone
 //   /install                    the Cloudflare credential: its status, and Connect (a consent in the browser: deploy/credential.ts)
@@ -18,7 +19,7 @@
 //   GET  /api/install           the credential's status, as JSON
 //   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
 //
-// Everything but sign-in, the health check, Git reads and the stylesheet
+// Everything but sign-in, the health check, Git reads, the public source page and the stylesheet
 // needs an admin: a signed-in admin (this Worker's session), or an
 // admin-scope token made on the app. A broken app changes nothing here: the
 // admins and their tokens are read from production's database directly.
@@ -32,7 +33,7 @@ import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, type 
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
-import { adminSourcePage, sourceApi, sourceGit } from "../server/source/index.ts";
+import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "../server/source/index.ts";
 
 /** What the routes run on. */
 export interface Control {
@@ -52,7 +53,7 @@ export interface Control {
 /** The paths these routes own (the app answers them with a redirect to the control Worker when it is apart). */
 export const isControlPath = (path: string) =>
   path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
-  || path == "/install" || path.startsWith("/install/") || path == "/api/install";
+  || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
@@ -76,6 +77,8 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
     const r = await fetch(`${c.app}${path}`).catch(() => null);
     return r ?? new Response("The app didn't answer", { status: 502 });
   }
+  // Erga's source, read-only, for anyone (a browser's GET of /git/erga.git too: Git asks only for paths under it).
+  if (read && isPublicSourcePath(path)) return publicSourcePage(p, url, c.app);
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
 

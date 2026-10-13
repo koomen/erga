@@ -5,6 +5,8 @@
 //                               credentials. A push needs HTTP Basic with any username and an admin-scope token
 //                               (server/identity, made at /tokens) as the password, whose person is an admin. main takes
 //                               fast-forwards only.
+//   GET  /git, /git/tree/<ref>/<path>   Erga's source for anyone, read-only, with no sign-in: how to clone, main and staging,
+//                               their recent commits, and the files (public.ts). A browser at /git/erga.git sees it too.
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins). Production deploys it.
