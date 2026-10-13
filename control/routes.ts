@@ -28,8 +28,9 @@ import { mockConsentPage } from "../deploy/page.ts";
 import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
-import type { AdminLayout } from "../server/admin/layout.ts";
-import { appPage, esc, page } from "../server/pages/index.ts";
+import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
+import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
+import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
 import { adminSourcePage, sourceApi, sourceGit } from "../server/source/index.ts";
 
@@ -120,11 +121,11 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   };
   if (path == "/api/install" && (method == "GET" || method == "HEAD")) return json(await c.deploys.credentialStatus());
   if (path == "/install" && (method == "GET" || method == "HEAD")) {
-    return c.layout({ title: "Install", session, style: INSTALL_STYLE, body: installBody(await c.deploys.credentialStatus(), c, url) });
+    return c.layout({ title: "Cloudflare", here: "install", session, style: INSTALL_STYLE, body: installBody(await c.deploys.credentialStatus(), c, url) });
   }
   if (method == "POST" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   if (path == "/install/start" && method == "POST") {
-    if (!c.oauth.clientId && !c.oauth.mock) return back({ error: "This control Worker has no OAuth client yet: put its client id in control/wrangler.jsonc (CLOUDFLARE_OAUTH_CLIENT_ID) and deploy it." });
+    if (!c.oauth.clientId && !c.oauth.mock) return back({ error: "This control Worker has no OAuth client yet. Put its client id in control/wrangler.jsonc (CLOUDFLARE_OAUTH_CLIENT_ID) and deploy it." });
     const state = randomToken(16), { verifier, challenge } = await pkce();
     const to = authorizeUrl({ ...(c.oauth.mock ? { authorize: `${url.origin}/install/mock/consent` } : {}), clientId: c.oauth.clientId || "mock", redirect, state, challenge });
     return new Response(null, { status: 302, headers: { Location: to, "Set-Cookie": installCookie(`${state}.${verifier}`, 600), "Cache-Control": "no-store" } });
@@ -133,11 +134,11 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   if (path == "/install/callback" && method == "GET") {
     const [state, verifier] = cookieOf(request, INSTALL_COOKIE).split(".");
     const clear = installCookie("", 0);
-    if (url.searchParams.get("error")) return back({ error: `Cloudflare didn't authorize Erga (${url.searchParams.get("error_description") || url.searchParams.get("error")}).` }, clear);
-    if (!state || !verifier || url.searchParams.get("state") != state) return back({ error: "That consent didn't start from this page, or took more than ten minutes: try again." }, clear);
+    if (url.searchParams.get("error")) return back({ error: `Cloudflare did not authorize Erga: ${url.searchParams.get("error_description") || url.searchParams.get("error")}` }, clear);
+    if (!state || !verifier || url.searchParams.get("state") != state) return back({ error: "This consent did not start here, or took more than ten minutes. Try again." }, clear);
     try {
       const answer = await exchangeCode(c.oauth.net, { code: url.searchParams.get("code") ?? "", redirect, verifier, client: { id: c.oauth.clientId || "mock", ...(c.oauth.secret ? { secret: c.oauth.secret } : {}) } });
-      if (!answer.access_token) return back({ error: `Cloudflare gave no token (${answer.error ?? "no answer"}${answer.error_description ? `: ${answer.error_description}` : ""}).` }, clear);
+      if (!answer.access_token) return back({ error: `Cloudflare gave no token: ${answer.error ?? "no answer"}${answer.error_description ? ` (${answer.error_description})` : ""}.` }, clear);
       const token = await c.deploys.connectCredential(answer, login);
       // One read with it, so the page says at once whether the grant reaches this Worker.
       const check = await new Cloudflare(token, c.oauth.net).call<{ compatibility_date?: string }>("GET", `/accounts/${c.oauth.accountId}/workers/scripts/${c.oauth.worker}/settings`, `read ${c.oauth.worker}'s settings`)
@@ -151,50 +152,91 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
 }
 
 const INSTALL_STYLE = `
-  .install { max-width: 640px; padding: 8px 8px 24px; }
-  .install h1 { font-size: 20px; margin: 8px 0 12px; }
-  .install p { line-height: 1.5; }
-  .install .state { padding: 12px 14px; border-radius: 8px; background: var(--panel, #f4f4f4); }
-  .install .ok { color: var(--ok, #1a7f37); } .install .bad { color: var(--danger, #b42318); }
-  .install form { display: inline; } .install button { margin-right: 8px; }
-  .install code { font-size: 12px; overflow-wrap: anywhere; }`;
+  .install { max-width: 620px; }
+  .install h2 { margin: 0 0 18px; font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
+  .install .status { display: flex; align-items: baseline; gap: 10px; margin: 0 0 18px; font-size: 15px; color: var(--fg); }
+  .install .status b { color: var(--fg-strong); font-weight: 600; }
+  .install .dot { flex: none; position: relative; top: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--chrome); }
+  .install .ok .dot { background: #1f9d55; } .install .bad .dot { background: #d64545; }
+  .install .note { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 10px; font-size: 14px; line-height: 1.5; color: var(--fg); background: color-mix(in srgb, var(--chrome) 6%, transparent); }
+  .install .note.bad { border-color: color-mix(in srgb, #d64545 45%, var(--rule)); color: var(--fg-strong); }
+  .install .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 28px; }
+  .install details { font-size: 13.5px; color: var(--soft); }
+  .install summary { width: max-content; cursor: pointer; color: var(--soft); border-radius: 6px; }
+  .install summary:hover { color: var(--fg-strong); }
+  .install summary:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
+  .install dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; margin: 14px 0 0; }
+  .install dt { color: var(--soft); } .install dd { margin: 0; min-width: 0; color: var(--fg); }
+  .install code { font-size: 12.5px; overflow-wrap: anywhere; }
+  @media (max-width: 520px) { .install dl { grid-template-columns: 1fr; gap: 2px; } .install dt { margin-top: 8px; } }`;
 
 const when = (ms: number | null) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "");
 
-/** The page: the grant's state, what a consent gives, the buttons. */
+/** The page: one status line, what the last consent said, one button (and Disconnect when connected), the details folded. */
 function installBody(s: CredentialStatus, c: Control, url: URL): string {
   const q = url.searchParams;
+  const note = (kind: "ok" | "bad", text: string) => `<p class="note ${kind}">${text}</p>`;
   const notes: string[] = [];
-  if (q.get("ok")) notes.push(`<p class="ok">Connected. ${q.get("check") ? `<span class="bad">But the first read with it failed: ${esc(q.get("check")!)}</span>` : `The grant reads ${esc(c.oauth.worker)}'s settings: it works.`}${q.get("missing") ? ` <span class="bad">Cloudflare granted fewer scopes than asked: missing ${esc(q.get("missing")!)}. Deploys that need them will fail; add them to the OAuth client and connect again.</span>` : ""}${q.get("norefresh") ? ` <span class="bad">No refresh token came: the grant ends in an hour. The client needs the Refresh Token grant and the offline_access scope.</span>` : ""}</p>`);
-  if (q.get("error")) notes.push(`<p class="bad">${esc(q.get("error")!)}</p>`);
-  if (q.get("disconnected")) notes.push(`<p>Disconnected: the grant is revoked and forgotten. Nothing deploys until an admin connects again.</p>`);
-  const state = s.connected
-    ? `<p class="ok"><b>Connected</b> by ${esc(s.by ?? "?")} on ${when(s.at)}.</p><p>Access token good until ${when(s.expiresAt)}${s.refreshedAt ? `; last refreshed ${when(s.refreshedAt)}` : ""}. Scopes: <code>${esc(s.scopes.join(" ") || "(not listed)")}</code></p>`
-    : `<p class="bad"><b>Not connected.</b> ${esc(s.problem ?? "")}</p>${s.by ? `<p>Last connected by ${esc(s.by)} on ${when(s.at)}.</p>` : ""}`;
+  if (q.get("ok")) {
+    notes.push(q.get("check") ? note("bad", `Connected, but the first read with the grant failed: ${esc(q.get("check")!)}`) : note("ok", `Connected. The grant reads ${esc(c.oauth.worker)}'s settings: it works.`));
+    if (q.get("missing")) notes.push(note("bad", `Cloudflare granted fewer scopes than asked: missing ${esc(q.get("missing")!)}. Deploys that need them will fail. Add them to the OAuth client and connect again.`));
+    if (q.get("norefresh")) notes.push(note("bad", "Cloudflare gave no refresh token, so the grant ends in an hour. Turn on the Refresh Token grant on the OAuth client and connect again."));
+  }
+  if (q.get("error")) notes.push(note("bad", esc(q.get("error")!)));
+  if (q.get("disconnected")) notes.push(note("ok", "Disconnected. The grant is revoked. Nothing deploys until an admin connects again."));
+  const why = s.error ? `The grant stopped working (${esc(s.error)}). Connect again.` : s.by ? "The grant expired. Connect again." : "Nothing deploys until an admin connects.";
+  const status = s.connected
+    ? `<p class="status ok"><span class="dot"></span><span><b>Connected</b> by ${esc(s.by ?? "?")} on ${when(s.at)}.</span></p>`
+    : `<p class="status bad"><span class="dot"></span><span><b>Not connected.</b> ${why}</span></p>`;
+  const client = c.oauth.clientId ? `<code>${esc(c.oauth.clientId)}</code>` : c.oauth.mock ? "the mock's" : "none yet: CLOUDFLARE_OAUTH_CLIENT_ID in control/wrangler.jsonc";
+  const details = `<details>
+    <summary>Details</summary>
+    <dl>
+      <dt>What this is</dt><dd>The control Worker deploys with an OAuth grant. An admin signs in to Cloudflare in the browser and consents once. The grant refreshes itself before each deploy.</dd>
+      <dt>Client</dt><dd>${client}</dd>
+      <dt>Account</dt><dd><code>${esc(c.oauth.accountId)}</code></dd>
+      <dt>Scopes asked</dt><dd><code>${esc(CONTROL_OAUTH_SCOPES)}</code></dd>
+      ${s.connected || s.by ? `<dt>Scopes granted</dt><dd><code>${esc(s.scopes.join(" ") || "(not listed)")}</code></dd>
+      <dt>Access token</dt><dd>good until ${when(s.expiresAt)}${s.refreshedAt ? `, last refreshed ${when(s.refreshedAt)}` : ""}</dd>` : ""}
+      <dt>Revoke</dt><dd>Disconnect here, or on Cloudflare under My Profile › Manage OAuth authorizations.</dd>
+    </dl>
+  </details>`;
   return `<div class="install">
-  <h1>Cloudflare credential</h1>
-  ${notes.join("\n")}
-  <div class="state">${state}</div>
-  <p>The control Worker deploys with an OAuth grant: an admin signs in to Cloudflare in the browser and consents once to Erga's scopes. The grant refreshes itself before each deploy. Revoke it any time on Cloudflare (My Profile › Manage OAuth authorizations), or here.</p>
-  <p>Scopes asked for: <code>${esc(CONTROL_OAUTH_SCOPES)}</code></p>
-  <p>Client: ${c.oauth.clientId ? `<code>${esc(c.oauth.clientId)}</code>` : c.oauth.mock ? "the mock's" : `<span class="bad">none yet (CLOUDFLARE_OAUTH_CLIENT_ID in control/wrangler.jsonc)</span>`}; account <code>${esc(c.oauth.accountId)}</code>.</p>
-  <p><form method="post" action="/install/start"><button type="submit" class="primary">${s.connected ? "Connect again" : "Connect Cloudflare"}</button></form>${s.connected || s.by ? `<form method="post" action="/install/disconnect"><button type="submit">Disconnect</button></form>` : ""} <a href="/">Source page</a></p>
+  <h2 id="install-head">Cloudflare</h2>
+  ${status}
+  ${notes.join("\n  ")}
+  <div class="buttons"><form method="post" action="/install/start"><button type="submit" class="new">${s.connected ? "Connect again" : "Connect Cloudflare"}</button></form>${s.connected ? `<form method="post" action="/install/disconnect"><button type="submit" class="pill">Disconnect</button></form>` : ""}</div>
+  ${details}
 </div>`;
 }
 
-/** The control Worker's own page shell: the app's look (its stylesheet, fetched through this Worker), a small header, the page. */
+/**
+ * The control Worker's own page shell: the admin pages' look (server/admin/layout.ts). The breadcrumbs upper left
+ * (Erga › Admin › the page; the wordmark and Admin go to the app), the account corner upper right, the same sidebar (its
+ * links to the app's admin pages, Source and Cloudflare here), and the page in a column, or the whole width (Source).
+ * No agent: the admin's agent lives in the app.
+ */
 export function controlLayout(app: string): (o: AdminLayout) => Response {
-  const appHost = app.replace(/^https?:\/\//, "");
-  return (o) => new Response(appPage(o.title, `
-  .control-head { display: flex; align-items: center; gap: 14px; padding: 14px max(16px, env(safe-area-inset-right)) 0 16px; font-size: 14px; color: var(--soft); }
-  .control-head a { color: inherit; text-decoration: none; }
-  .control-head a:hover { color: var(--fg-strong); }
-  .control-head .here { color: var(--fg-strong); font-weight: 600; }
-  .control-head .who { margin-left: auto; }
-  main.admin-main { min-width: 0; padding: 8px max(16px, env(safe-area-inset-right)) 24px 8px; }
-  ${o.style ?? ""}`, `
-<header class="control-head"><a href="${esc(app)}">${esc(appHost)}</a><span>›</span><span class="here">${esc(o.title)}</span><span class="who">${esc(o.session.login)} · <a href="/auth/logout">Sign out</a></span></header>
-<main class="admin-main wide" id="admin-panes">
+  return (o) => {
+    const trail = crumbs(o.session, [{ label: "Admin", href: `${app}/admin` }, { label: o.title }], "h1", app);
+    const side = adminSidebar(o.here, (path) => (path == "/admin/source" ? "/" : path == "/install" ? "/install" : `${app}${path}`));
+    const corner = accountHtml(accountOf(o.session, true), "/");
+    return new Response(appPage(o.title, LAYOUT_STYLE + CONTROL_STYLE + (o.style ?? ""), `${SIDEBAR_EARLY_SCRIPT}
+${trail}
+<div class="admin-body">
+${side}
+<main class="admin-main${o.wide ? " wide" : ""}" id="admin-panes">
 ${o.body}
-</main>`, false), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+</main>
+</div>
+${SIDEBAR_SCRIPT}
+${corner}`, false), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  };
 }
+
+/** The page beside the sidebar, without the agent's grid: a centred column, or the whole width. */
+const CONTROL_STYLE = `
+  .admin-body > main.admin-main { flex: 1; }
+  .admin-body > main.admin-main:not(.wide) { margin: 0 auto; }
+  @media (max-width: 720px) { .admin-body > main.admin-main { padding-top: 12px; } }
+`;

@@ -109,7 +109,7 @@ export async function adminsOnlyGate(request: Request, base: Platform, url: URL)
   const production = `https://${TARGETS.production.host}`;
   const refusal = signedIn
     ? page("Staging is for Erga's admins only", `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one. Erga itself is at <a href="${production}">${TARGETS.production.host}</a>. <a href="/auth/logout">Sign out</a>`, 403)
-    : page("Staging is for admins: sign in", `This is staging, a test copy of Erga for its admins. Admins sign in with GitHub (staging's own GitHub app). Erga itself is at <a href="${production}">${TARGETS.production.host}</a>.</p><p><a class="sign-in" href="/auth/github?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}" style="display:inline-block;padding:8px 16px;border-radius:8px;background:#1b2330;color:#fff;text-decoration:none">Sign in with GitHub</a>`, 403);
+    : page("Staging is for admins: sign in", `This is staging, a test copy of Erga for its admins. Admins sign in with GitHub (staging's own GitHub app). Erga itself is at <a href="${production}">${TARGETS.production.host}</a>.</p><p><a class="new sign-in" href="/auth/github?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in with GitHub</a>`, 403);
   refusal.headers.set("Cache-Control", "no-store");
   return refusal;
 }

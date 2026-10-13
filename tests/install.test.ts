@@ -54,7 +54,7 @@ describe("/install", () => {
     expect(back.status).toBe(302);
     const where = new URL(back.headers.get("location")!, ORIGIN);
     expect(where.pathname).toBe("/install");
-    expect(where.searchParams.get("error")).toBe("Cloudflare didn't authorize Erga (The requested scope is invalid, unknown, or malformed. The OAuth 2.0 Client is not allowed to request scope 'cloudchamber.write'.).");
+    expect(where.searchParams.get("error")).toBe("Cloudflare did not authorize Erga: The requested scope is invalid, unknown, or malformed. The OAuth 2.0 Client is not allowed to request scope 'cloudchamber.write'.");
     expect(back.headers.get("set-cookie")).toContain("erga_install=; Max-Age=0");
     expect(calls).toEqual([]); // no token exchange
     expect(await credential.status()).toMatchObject({ connected: false, by: null });
@@ -66,7 +66,7 @@ describe("/install", () => {
   test("a callback that didn't start here, or without Cloudflare's code, is refused", async () => {
     const { go, calls } = control(fetch);
     const r = await go("/install/callback?code=mock-code&state=other");
-    expect(new URL(r.headers.get("location")!, ORIGIN).searchParams.get("error")).toBe("That consent didn't start from this page, or took more than ten minutes: try again.");
+    expect(new URL(r.headers.get("location")!, ORIGIN).searchParams.get("error")).toBe("This consent did not start here, or took more than ten minutes. Try again.");
     expect(calls).toEqual([]);
   });
 

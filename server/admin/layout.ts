@@ -31,7 +31,7 @@
 import { appPage, crumbs as trail, esc, ICON, link, page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 
-export type AdminSection = "settings" | "keys" | "auth" | "changes" | "users" | "source";
+export type AdminSection = "settings" | "keys" | "auth" | "changes" | "users" | "source" | "install";
 
 const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }[] = [
   { key: "settings", label: "Settings", path: "/admin", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>` },
@@ -40,7 +40,16 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
   { key: "changes", label: "Change log", path: "/admin/changes", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4.2l2.8 1.8"/></svg>` },
   { key: "users", label: "Users", path: "/admin/users", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14.4c1.4.8 2.3 2.4 2.5 4.6"/></svg>` },
   { key: "source", label: "Source", path: "/admin/source", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-3 4-9.5 5"/></svg>` },
+  // The control Worker's Cloudflare credential (/install there; the app sends the path on, as it does Source's).
+  { key: "install", label: "Cloudflare", path: "/install", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.6 9.3 4.6 4.6 0 0 0 7 18.5Z"/></svg>` },
 ];
+export const ADMIN_SECTIONS: readonly { key: AdminSection; label: string; path: string }[] = SECTIONS;
+
+/** The sidebar: the toggle and a link for each section, each at the address `hrefOf` gives (another host's, for the control Worker). */
+export function adminSidebar(here: AdminSection | undefined, hrefOf: (path: string) => string): string {
+  const links = SECTIONS.map((s) => `<li><a href="${esc(hrefOf(s.path))}"${s.key == here ? ` aria-current="page"` : ""}>${s.icon}<span class="label">${s.label}</span></a></li>`).join("");
+  return `<nav class="admin-side" id="admin-side" aria-label="Admin"><button type="button" class="side-toggle" id="side-toggle" aria-controls="admin-side" aria-expanded="true" aria-label="Collapse the sidebar">${TOGGLE_ICON}</button><ul>${links}</ul></nav>`;
+}
 
 const TOGGLE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>`;
 
@@ -176,8 +185,9 @@ export const LAYOUT_STYLE = `
 `;
 
 /** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. And the first page's view: what its scripts stop when it goes. */
-const EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}
-try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}
+/** The sidebar's remembered state, before it paints. */
+export const SIDEBAR_EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}</script>`;
+const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}<script>try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}
 window.ergaView = (() => { const c = new AbortController(), fns = []; return { signal: c.signal, onLeave: (fn) => { if (c.signal.aborted) fn(); else fns.push(fn); }, leave: () => { c.abort(); for (const fn of fns.splice(0)) try { fn(); } catch (e) { console.error(e); } } }; })();</script>`;
 
 /** The agent's collapse and expand: its button, the round one, Esc in the panel, ⌘J; remembered on a wide window. */
@@ -206,7 +216,7 @@ const AGENT_SCRIPT = `<script>
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("agent-ready")));
 })();
 </script>`;
-const SIDEBAR_SCRIPT = `<script>
+export const SIDEBAR_SCRIPT = `<script>
 (() => {
   const root = document.documentElement, toggle = document.getElementById("side-toggle");
   const sync = () => {
@@ -231,8 +241,7 @@ export function adminLayout(o: AdminLayout): string {
   const crumbs = trail(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], "h1");
   // Share with agent: the editor's icon button (client/editor.html, .chrome-top), the card from admin-share.js.
   const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
-  const links = SECTIONS.map((s) => `<li><a href="${esc(link(s.path, o.session))}"${s.key == o.here ? ` aria-current="page"` : ""}>${s.icon}<span class="label">${s.label}</span></a></li>`).join("");
-  const side = `<nav class="admin-side" id="admin-side" aria-label="Admin"><button type="button" class="side-toggle" id="side-toggle" aria-controls="admin-side" aria-expanded="true" aria-label="Collapse the sidebar">${TOGGLE_ICON}</button><ul>${links}</ul></nav>`;
+  const side = adminSidebar(o.here, (path) => link(path, o.session));
   return appPage(o.title, LAYOUT_STYLE + (o.style ?? ""), `${EARLY_SCRIPT}
 ${crumbs}${bar}
 <div class="admin-body">

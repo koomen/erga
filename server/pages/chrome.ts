@@ -101,11 +101,11 @@ export interface Crumb { label: string; href?: string }
  * The breadcrumbs in the upper left of every page for someone signed in: the wordmark (back to the front page), then
  * the pages above this one, then this one. `here` is the tag of this page's own crumb (the admin pages' is their <h1>).
  */
-export function crumbs(session: Session | null, trail: Crumb[], here = "span"): string {
+export function crumbs(session: Session | null, trail: Crumb[], here = "span", home = "/"): string {
   const steps = trail.map((c) => c.href
     ? `<a class="crumb" href="${esc(link(c.href, session))}">${esc(c.label)}</a>`
     : `<${here} class="here" aria-current="page"><span>${esc(c.label)}</span></${here}>`).join("");
-  return `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
+  return `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link(home, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
 }
 
 /**
@@ -182,14 +182,25 @@ export const fromElsewhere = (request: Request) => {
  * confirm it with a button, which posts back from this site.
  */
 export const confirmAction = (title: string, button: string, action: string) =>
-  page(title, `<form method="post" action="${esc(action)}"><button style="font:inherit;font-weight:600;padding:8px 16px;border:0;border-radius:10px;background:#1b2330;color:#fff;cursor:pointer">${esc(button)}</button></form>`, 200);
+  page(title, `<form method="post" action="${esc(action)}"><button class="new">${esc(button)}</button></form>`, 200);
 
 export const signInFirst = (next: string) => new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(safeNext(next))}` } });
 
-/** A small page for when there's nothing to show, or something about signing in goes wrong. */
+/**
+ * A small page for when there's nothing to show, or something about signing in goes wrong: the app's look (its type and
+ * colours, light or dark with the system), a title and a few lines, in a column. It needs no session: the stylesheet and
+ * the fonts are the site's own, and the control Worker serves them too.
+ */
 export function page(title: string, html: string, status: number): Response {
-  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Erga</title>${FAVICON_LINK}
-<style>body{font:17px/1.6 system-ui,sans-serif;max-width:32rem;margin:20vh auto;padding:0 16px;color:#1b2330;background:#f7f8fa}h1{font-size:1.4rem}a{color:#1f5f8b}
-.site-foot{position:fixed;left:0;right:0;bottom:24px;text-align:center;font-size:13px;color:#8a93a1}
-@media(prefers-color-scheme:dark){body{color:#e4e8ee;background:#12161d}a{color:#7fb6e0}}</style><h1>${title}</h1><p>${html}</p>${siteFooter()}`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+  return new Response(appPage(title, PLAIN_STYLE, `<main class="plain"><h1>${title}</h1><p>${html}</p></main>`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
+
+const PLAIN_STYLE = `
+  main.plain { max-width: 560px; padding: max(18vh, 96px) 24px 96px; }
+  main.plain h1 { font-size: 24px; margin-bottom: 14px; }
+  main.plain p { margin: 0 0 14px; color: var(--fg); }
+  main.plain a { color: var(--fg-strong); }
+  main.plain b { color: var(--fg-strong); }
+  main.plain .new, main.plain .sign-in { margin-top: 6px; }
+  @media (max-width: 520px) { main.plain { padding: 72px 16px 64px; } main.plain h1 { font-size: 22px; } }
+`;
