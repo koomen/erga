@@ -87,6 +87,8 @@ export interface MockState {
   refreshTokens: string[];
   oauthGrants: number;
   oauthExpiresIn?: number;
+  /** What a consent grants when set (fewer scopes than asked: a client that lost one); else MOCK_OAUTH_SCOPES. */
+  oauthScopes?: string;
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
   failNext: string | null;
   /** Account API tokens made through the API (their values aren't here: only the tests read them, from `tokenValues`). */
@@ -114,7 +116,7 @@ export const scriptTag = (name: string) => createHash("md5").update(`script:${na
 /** A Durable Object namespace's id: fixed by its Worker and class, here. */
 export const namespaceId = (script: string, className: string) => createHash("md5").update(`ns:${script}:${className}`).digest("hex");
 
-const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+export const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
 /** A custom domain's id: fixed by its hostname, here. */
 const domainId = (hostname: string) => createHash("md5").update(`domain:${hostname}`).digest("hex");
 const b64 = (bytes: Uint8Array) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
@@ -145,7 +147,7 @@ const COMPLETE = jwt({ kind: "complete" });
 /** Erga's own account in the fleet mock (deploy/branches.ts's tests and the dev server's ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
 /** What the mock's consent grants (deploy/credential.ts CONTROL_OAUTH_SCOPES, as Cloudflare echoes them in the token's `scope`). */
-export const MOCK_OAUTH_SCOPES = "workers-scripts.edit containers.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
+export const MOCK_OAUTH_SCOPES = "workers-scripts.edit containers.write cloudchamber.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
 export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 /** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
 export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef0123456789";
@@ -668,7 +670,7 @@ export function mockCloudflare(opts: {
         return grant(form.get("scope") || MOCK_OAUTH_SCOPES);
       }
       if (form.get("code") != "mock-code" || !form.get("code_verifier")) return Response.json({ error: "invalid_grant" }, { status: 400 });
-      return grant(form.get("scope") || MOCK_OAUTH_SCOPES);
+      return grant(state.oauthScopes || form.get("scope") || MOCK_OAUTH_SCOPES);
     }
     if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/revoke" && req.method == "POST") {
       const form = new URLSearchParams(await req.text());

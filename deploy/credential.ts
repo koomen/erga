@@ -23,11 +23,16 @@ import { open, seal, type Sealed } from "./seal";
 
 /**
  * What the control Worker asks for: Workers (upload, settings, secrets,
- * deployments), its containers, D1, the repository (Artifacts), routes and
- * DNS (an install makes them; erga.dev's deploys only read them), the zones
- * and the account read; offline_access for the refresh token.
+ * deployments), its containers (containers.write and cloudchamber.write:
+ * wrangler asks for both for a container deploy), D1, the repository
+ * (Artifacts), routes and DNS (an install makes them; erga.dev's deploys only
+ * read them), the zones and the account read; offline_access for the refresh
+ * token (it isn't in Cloudflare's scope catalog: it comes from the client's
+ * Refresh Token grant type). A scope the client doesn't allow makes Cloudflare
+ * send the browser back to /install/callback with error=invalid_scope and a
+ * description that names the scope; the page shows it.
  */
-export const CONTROL_OAUTH_SCOPES = "workers-scripts.edit containers.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
+export const CONTROL_OAUTH_SCOPES = "workers-scripts.edit containers.write cloudchamber.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
 
 /** The grant as stored: the tokens sealed with the Worker's key; the rest in the clear (nothing secret). */
 export interface StoredGrant {
