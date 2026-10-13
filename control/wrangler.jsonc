@@ -48,7 +48,7 @@
     "GITHUB_CLIENT_ID": "Ov23liMi8ZUqi8nFGN56",
     // Erga's OAuth client on Cloudflare ("Erga": Manage account › OAuth clients; redirect https://ops.erga.dev/install/callback). An
     // admin's consent at /install gives this Worker its deploy credential (deploy/credential.ts). Empty until the client is made.
-    "CLOUDFLARE_OAUTH_CLIENT_ID": ""
+    "CLOUDFLARE_OAUTH_CLIENT_ID": "62d43878d5673b62dd0453086a5f4fe9"
   },
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": true } }
 }
