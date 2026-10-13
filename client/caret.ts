@@ -3,7 +3,10 @@
 // to the letters of a large heading it is a hair, hard to find. So the native
 // caret is made transparent and this one is drawn in its place, in the page's
 // document (like the other people's carets, editor.ts), as wide as suits the
-// text at the caret: 2 px for body text, more for large type.
+// text at the caret as it shows on the screen: 2 px for body text, up to 3 px
+// for large type. A page that scales its text (a canvas with a camera: a
+// transform) and the editor's zoom (zoom.ts: the page's frame scaled) change
+// its height with the text's, never its width beyond those bounds.
 //
 // It moves only when something could have moved it (a selection change,
 // typing, a scroll, a change to the page's layout, a pan of the page's own:
@@ -16,9 +19,9 @@
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
 
-/** The caret's width: this fraction of the font size, at least MIN_WIDTH px. */
+/** The caret's width on the screen: this fraction of the text's size there, from MIN_WIDTH to MAX_WIDTH screen px. */
 const WIDTH_EM = 0.085;
-const MIN_WIDTH = 2;
+const MIN_WIDTH = 1.5, MAX_WIDTH = 3;
 /** Set on the page's <html> while this caret is drawn: the native one is transparent then. */
 const DRAWN = "erga-caret-drawn";
 
@@ -36,7 +39,7 @@ const drawn = new WeakSet<HTMLIFrameElement>(), attached = new WeakSet<Document>
 export function drawCaret(frame: HTMLIFrameElement): void {
   const start = () => {
     const doc = frame.contentDocument, win = frame.contentWindow;
-    if (doc && win && doc.URL != "about:blank" && !attached.has(doc)) { attached.add(doc); attach(doc, win as Window & typeof globalThis); }
+    if (doc && win && doc.URL != "about:blank" && !attached.has(doc)) { attached.add(doc); attach(frame, doc, win as Window & typeof globalThis); }
   };
   if (drawn.has(frame)) return;
   drawn.add(frame);
@@ -46,7 +49,7 @@ export function drawCaret(frame: HTMLIFrameElement): void {
 
 interface Spot { x: number; y: number; width: number; height: number; color: string }
 
-function attach(doc: Document, win: Window & typeof globalThis): void {
+function attach(frame: HTMLIFrameElement, doc: Document, win: Window & typeof globalThis): void {
   const html = doc.documentElement;
   const style = doc.createElement("style");
   style.setAttribute("data-erga-caret", "");
@@ -102,12 +105,16 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
     if (!el || !(el as HTMLElement).isContentEditable) return null;
     const active = doc.activeElement as HTMLElement | null;
     if (!active?.isContentEditable) return null;
-    const box = caretBox(sel.getRangeAt(0), el);
+    // The page's scale on the screen (the editor's zoom), and the text's in the page (a transform of the page's own).
+    const zoom = scaleOf(frame), scale = scaleOf(el);
+    const box = caretBox(sel.getRangeAt(0), el, scale);
     if (!box) return "native";
     const cs = win.getComputedStyle(el);
-    const dpr = win.devicePixelRatio || 1;
-    const width = Math.max(MIN_WIDTH, Math.round(parseFloat(cs.fontSize) * WIDTH_EM * dpr) / dpr);
-    const snap = (v: number) => Math.round(v * dpr) / dpr;
+    // On whole device pixels: the width in the screen's, the place in the page's.
+    const dpr = win.devicePixelRatio || 1, px = dpr * zoom;
+    const snap = (v: number) => Math.round(v * px) / px;
+    const screen = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, parseFloat(cs.fontSize) * scale * zoom * WIDTH_EM));
+    const width = Math.max(1, Math.round(screen * dpr)) / dpr / zoom;
     return {
       x: snap(box.left - width / 2 + win.scrollX),
       y: snap(box.top + win.scrollY),
@@ -117,8 +124,20 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
     };
   }
 
-  /** The caret's place on screen: the collapsed range's rectangle, or else one worked out from the empty line or block it's in. */
-  function caretBox(range: Range, el: Element): { left: number; top: number; height: number } | null {
+  /** How much larger than its own size an element shows (1 unless a transform scales it); for a frame, in its document. */
+  function scaleOf(el: Element): number {
+    let e: Element | null = el;
+    while (e && !((e as HTMLElement).offsetWidth > 0)) e = e.parentElement;
+    if (!e) return 1;
+    const k = e.getBoundingClientRect().width / (e as HTMLElement).offsetWidth;
+    return Number.isFinite(k) && k > 0 ? k : 1;
+  }
+
+  /**
+   * The caret's place on screen: the collapsed range's rectangle, or else one worked out from the empty line or
+   * block it's in (whose styles are at its own size: `scale` turns them into the page's pixels).
+   */
+  function caretBox(range: Range, el: Element, scale: number): { left: number; top: number; height: number } | null {
     const rects = range.getClientRects();
     const r = rects[rects.length - 1];
     if (r && r.height > 0) return r;
@@ -134,13 +153,13 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
     const b = block.getBoundingClientRect();
     if (!b.width && !b.height) return null;
     const cs = win.getComputedStyle(block);
-    const size = parseFloat(cs.fontSize), line = cs.lineHeight == "normal" ? size * 1.2 : parseFloat(cs.lineHeight);
+    const size = parseFloat(cs.fontSize) * scale, line = cs.lineHeight == "normal" ? size * 1.2 : parseFloat(cs.lineHeight) * scale;
     const height = Math.min(line, size * 1.2);
-    const padL = parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth), padR = parseFloat(cs.paddingRight) + parseFloat(cs.borderRightWidth);
+    const padL = (parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth)) * scale, padR = (parseFloat(cs.paddingRight) + parseFloat(cs.borderRightWidth)) * scale;
     const rtl = cs.direction == "rtl", align = cs.textAlign;
     const end = align == "right" || (align == "end" && !rtl) || ((align == "start" || align == "") && rtl);
     const left = align == "center" ? b.left + (b.width + padL - padR) / 2 : end ? b.right - padR : b.left + padL;
-    const top = b.top + parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth) + (line - height) / 2;
+    const top = b.top + (parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth)) * scale + (line - height) / 2;
     return { left, top, height };
   }
 
