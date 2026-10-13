@@ -14,7 +14,10 @@ import type { Platform } from "../platform.ts";
 import type { SourceView } from "./browse.ts";
 
 /** The page's paths (a GET of /git/erga.git itself is the page; Git asks only for paths under it). */
-export const isPublicSourcePath = (path: string) => path == "/git" || path == "/git/erga.git" || path == "/git/tree" || path.startsWith("/git/tree/");
+export const isPublicSourcePath = (path: string) => {
+  const p = path.replace(/\/+$/, ""); // with or without a slash at the end ("/git/": the app checks paths as they came)
+  return p == "/git" || p == "/git/erga.git" || p == "/git/tree" || p.startsWith("/git/tree/");
+};
 
 const BRANCHES = [
   { name: "main", about: "what erga.dev runs" },
