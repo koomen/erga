@@ -4,7 +4,8 @@
 // agent too. The editor takes them instead, wherever they happen (the shell,
 // the frame, the page), and the shell sets the level, which the frame draws
 // the page at (frame.ts, setZoom): the page's frame scaled, its viewport
-// smaller in step, as the browser's own zoom does it.
+// smaller in step, as the browser's own zoom does it. A page that zooms itself
+// (window.ergaZoom: a canvas's camera) gets them instead (main.ts, zoomPage).
 
 export const MIN_ZOOM = 0.5, MAX_ZOOM = 3;
 /** The browser's own steps, for the keys and the mouse wheel. */
@@ -40,6 +41,9 @@ export function wheelZoom(e: { deltaY: number; deltaMode: number }): ZoomBy | nu
 /** The level after `z` takes `zoom`. */
 export const applyZoom = (z: number, zoom: ZoomBy) => clampZoom("step" in zoom ? stepZoom(z, zoom.step) : z * zoom.by);
 
+/** A zoom as a factor, for a page that zooms itself (window.ergaZoom): a step is a quarter closer, or back. */
+export const zoomFactor = (zoom: ZoomBy) => ("step" in zoom ? (zoom.step > 0 ? 1.25 : 0.8) : zoom.by);
+
 /**
  * Takes the zoom gestures in window `win` from the browser and hands them to `to`: ctrl with the wheel,
  * and on a Mac's Safari its pinch (gesture events, which on a touch screen are the pinch that zooms the
@@ -54,14 +58,14 @@ export function catchZoomGestures(win: Window, to: (zoom: ZoomBy) => void, when:
   }, { passive: false });
   if (!("GestureEvent" in win) || navigator.maxTouchPoints > 0) return;
   let last = 1;
-  win.addEventListener("gesturestart", (e) => { if (when()) { e.preventDefault(); last = 1; } });
+  win.addEventListener("gesturestart", (e) => { if (!e.defaultPrevented && when()) { e.preventDefault(); last = 1; } });
   win.addEventListener("gesturechange", (e) => {
-    if (!when()) return;
+    if (e.defaultPrevented || !when()) return;
     e.preventDefault();
     const scale = (e as Event & { scale?: number }).scale;
     if (!scale || !Number.isFinite(scale)) return;
     to({ by: scale / last });
     last = scale;
   });
-  win.addEventListener("gestureend", (e) => { if (when()) e.preventDefault(); });
+  win.addEventListener("gestureend", (e) => { if (!e.defaultPrevented && when()) e.preventDefault(); });
 }

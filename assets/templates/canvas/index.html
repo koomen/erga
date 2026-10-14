@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
 <style>
   /* One large canvas with frames on it. Each frame is a step: the camera zooms out to the whole canvas, then in on the next frame.
+     Drag to move around the canvas; scroll to move it, pinch (or ctrl and scroll) to zoom.
      To move a frame, change its left and top; to add one, copy a section with class "frame" (its h2 is the step's name). */
   :root {
     --bg: #eef1f5; --ink: #18202c; --muted: #566273; --frame: #ffffff; --rule: #d6dce5;
@@ -17,7 +18,8 @@
     --body: "Literata", Georgia, "Times New Roman", serif;
   }
   html, body { margin: 0; height: 100%; overflow: clip; background: var(--bg); color: var(--ink); }
-  .stage { position: fixed; inset: 0; overflow: clip; }
+  .stage { position: fixed; inset: 0; overflow: clip; cursor: grab; touch-action: none; }
+  .stage.dragging, .stage.dragging * { cursor: grabbing; user-select: none; }
   .canvas { position: absolute; left: 0; top: 0; width: 3600px; height: 2200px; transform-origin: 0 0;
     background: radial-gradient(circle, #cfd6e0 1.5px, transparent 1.6px) 0 0 / 48px 48px; }
   .path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -59,7 +61,8 @@
   const stage = document.querySelector(".stage"), canvas = document.querySelector(".canvas");
   const frames = () => [...canvas.querySelectorAll(".frame")];
   const OUT = 650, IN = 850; // ms: zoom out to the whole canvas, then in on the frame
-  let at = 0, paused = false, cam = null, run = 0;
+  const LEAST = 0.02, MOST = 20; // the camera's zoom: the whole canvas a few centimetres wide, a word filling the window
+  let at = 0, paused = false, cam = null, run = 0, free = false;
 
   // A camera is the canvas point at the middle of the window (x, y) and its zoom (s).
   const box = (el) => ({ x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
@@ -100,6 +103,7 @@
     frames().forEach((f, k) => f.classList.toggle("current", k == at));
     dispatchEvent(new Event("ergastep"));
     const id = ++run;
+    free = false;
     if (!animate || !cam || matchMedia("(prefers-reduced-motion: reduce)").matches) return place(onFrame(at));
     canvas.style.willChange = "transform";
     if (from != at && (await fly(cam, whole(), OUT, id)) === false) return;
@@ -107,13 +111,67 @@
     canvas.style.willChange = ""; // sharp text again once the camera stops
   }
 
-  // A click on another frame goes to it (not while the editor has the page paused).
+  // Moving the camera by hand. Zoom keeps the canvas point under (px, py) in place.
+  function zoomAt(px, py, k) {
+    const s = Math.min(MOST, Math.max(LEAST, cam.s * k)), dx = px - innerWidth / 2, dy = py - innerHeight / 2;
+    place({ x: cam.x + dx / cam.s - dx / s, y: cam.y + dy / cam.s - dy / s, s });
+  }
+  function handMove() { run++; free = true; canvas.style.willChange = ""; }
+  // Scroll moves the canvas; pinch (or ctrl and scroll) zooms.
+  stage.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    handMove();
+    const unit = e.deltaMode == 1 ? 16 : e.deltaMode == 2 ? innerHeight : 1;
+    if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-Math.max(-40, Math.min(40, e.deltaY * unit)) * 0.006));
+    else place({ ...cam, x: cam.x + (e.deltaX * unit) / cam.s, y: cam.y + (e.deltaY * unit) / cam.s });
+  }, { passive: false });
+  // Safari's pinch on a trackpad.
+  let pinched = 1;
+  stage.addEventListener("gesturestart", (e) => { e.preventDefault(); pinched = 1; });
+  stage.addEventListener("gesturechange", (e) => { e.preventDefault(); handMove(); zoomAt(e.clientX, e.clientY, e.scale / pinched); pinched = e.scale; });
+  stage.addEventListener("gestureend", (e) => e.preventDefault());
+  // Drag moves the canvas: from anywhere when the page runs, from the space between frames while the editor has it paused.
+  // (In the editor, a press on the text places the caret: the page doesn't see it.) Two fingers pinch to zoom.
+  const pointers = new Map();
+  let dragged = false;
+  stage.addEventListener("pointerdown", (e) => {
+    if (e.button != 0 || (paused && e.target.closest(".frame"))) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    dragged = false;
+  });
+  addEventListener("pointermove", (e) => {
+    const was = pointers.get(e.pointerId);
+    if (!was) return;
+    const now = { x: e.clientX, y: e.clientY };
+    if (!dragged && Math.hypot(now.x - was.x, now.y - was.y) < 4) return;
+    if (!dragged) { dragged = true; stage.classList.add("dragging"); stage.setPointerCapture?.(e.pointerId); }
+    handMove();
+    if (pointers.size == 2) {
+      const [other] = [...pointers].filter(([id]) => id != e.pointerId).map(([, p]) => p);
+      const mid = (a) => ({ x: (a.x + other.x) / 2, y: (a.y + other.y) / 2 }), m0 = mid(was), m1 = mid(now);
+      zoomAt(m0.x, m0.y, Math.hypot(now.x - other.x, now.y - other.y) / Math.max(1, Math.hypot(was.x - other.x, was.y - other.y)));
+      place({ ...cam, x: cam.x - (m1.x - m0.x) / cam.s, y: cam.y - (m1.y - m0.y) / cam.s });
+    } else place({ ...cam, x: cam.x - (now.x - was.x) / cam.s, y: cam.y - (now.y - was.y) / cam.s });
+    pointers.set(e.pointerId, now);
+  });
+  const lift = (e) => { pointers.delete(e.pointerId); if (!pointers.size) stage.classList.remove("dragging"); };
+  addEventListener("pointerup", lift);
+  addEventListener("pointercancel", lift);
+  // The editor's zoom (its keys): k times closer around the middle of the window; 0 goes back to the current frame.
+  window.ergaZoom = (k) => {
+    if (!(k > 0)) return show(at);
+    handMove();
+    zoomAt(innerWidth / 2, innerHeight / 2, k);
+  };
+
+  // A click on another frame goes to it (not while the editor has the page paused). A drag is not a click.
   window.ergaPause = (p) => { paused = p; };
   canvas.addEventListener("click", (e) => {
+    if (dragged) return (dragged = false);
     const f = e.target.closest(".frame");
     if (!paused && f && !f.classList.contains("current")) show(frames().indexOf(f));
   });
-  addEventListener("resize", () => { run++; canvas.style.willChange = ""; place(onFrame(at)); });
+  addEventListener("resize", () => { run++; canvas.style.willChange = ""; place(free ? cam : onFrame(at)); });
   // The editor may scroll the stage to show the caret; the camera alone moves the canvas.
   stage.addEventListener("scroll", () => { stage.scrollTop = stage.scrollLeft = 0; });
 

@@ -2,6 +2,7 @@
 // next step zooms out to the whole canvas, then in on the next frame, which ends in the middle; viewing and editing.
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../../fixtures";
+import { editor, F } from "../../editor";
 import { templateById } from "../../../server/pages/index.ts";
 import { bar, clickOn, editorReady, inPage, newDoc, openTab } from "./templates";
 
@@ -66,4 +67,72 @@ test("editing: the controls show, forward flies the same way, and the frames' te
   await expect.poll(async () => (await bar(page)).shown && (await camera(page))?.at == 0).toBe(true);
   await flies(page, 0);
   expect(await inPage<boolean>(page, `(() => { const h = document.querySelector(".frame.current h2"); return h ? h.isContentEditable : null; })()`)).toBe(true);
+});
+
+test("editing: the camera zooms past the editor's limits, by ctrl and the wheel and by the zoom keys, and a drag pans; a press on the text places the caret and doesn't pan", async ({ tab }) => {
+  const made = await newDoc(await servers.main(), "canvas");
+  const page = tab.page;
+  await openTab(tab, `${made.address}#edit`, { width: 1100, height: 720 });
+  await editorReady(page);
+  const ed = editor(page, { address: made.address, dir: "", file: "" });
+  await ed.loaded();
+  await expect.poll(async () => { const c = await camera(page); return !!c && c.at == 0 && Math.abs(c.dx) <= 2 && Math.abs(c.dy) <= 2; }).toBe(true);
+  const fit = (await camera(page))!.s;
+  const zoom = async () => (await camera(page))!.s;
+  /** The editor's own zoom: the page's frame against its size. It stays at 100%, the header and the agent as they were. */
+  const frameScale = () => ed.frame<number>(`(() => { const f = document.getElementById("page"); return f.getBoundingClientRect().width / f.offsetWidth; })()`);
+  const middle = await ed.frame<{ x: number; y: number }>(`(() => { const r = document.getElementById("page").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  const at = await ed.frameAt(), mx = at.x + middle.x, my = at.y + middle.y;
+
+  // Ctrl and the wheel (a pinch on a trackpad): out to below 10%, then in to above 400%.
+  await page.mouse.move(mx, my);
+  await page.keyboard.down("Control");
+  for (let i = 0; i < 40 && (await zoom()) > 0.08; i++) await page.mouse.wheel(0, 100);
+  expect(await zoom()).toBeLessThan(0.08);
+  for (let i = 0; i < 60 && (await zoom()) < 5; i++) await page.mouse.wheel(0, -100);
+  await page.keyboard.up("Control");
+  expect(await zoom()).toBeGreaterThan(5);
+  expect(await frameScale()).toBeCloseTo(1, 3);
+
+  // The zoom keys, with the caret in the page: ⌘0 goes back to the frame, ⌘− and ⌘+ step past 50% and 300% of it.
+  await ed.click(...Object.values(await ed.charAt(".frame.current p", 4)) as [number, number]);
+  await ed.press("ControlOrMeta+0");
+  await expect.poll(async () => { const c = await camera(page); return !!c && Math.abs(c.s - fit) < 0.01 && Math.abs(c.dx) <= 2 && Math.abs(c.dy) <= 2; }).toBe(true);
+  for (let i = 0; i < 8; i++) await ed.press("ControlOrMeta+Minus");
+  await expect.poll(zoom).toBeLessThan(fit * 0.2);
+  await ed.press("ControlOrMeta+0");
+  await expect.poll(async () => Math.abs((await zoom()) - fit)).toBeLessThan(0.01);
+  for (let i = 0; i < 8; i++) await ed.press("ControlOrMeta+Equal");
+  await expect.poll(zoom).toBeGreaterThan(fit * 5);
+  expect(await frameScale()).toBeCloseTo(1, 3);
+
+  // A drag from the space between the frames moves the canvas with the pointer.
+  await ed.press("ControlOrMeta+0");
+  await expect.poll(async () => Math.abs((await zoom()) - fit)).toBeLessThan(0.01);
+  for (let i = 0; i < 4; i++) await ed.press("ControlOrMeta+Minus");
+  await expect.poll(zoom).toBeLessThan(fit * 0.5);
+  /** A point of the canvas, in the tab: the canvas's own (60, 60), a corner no frame covers. */
+  const corner = async () => {
+    const p = await ed.frame<{ x: number; y: number; free: boolean }>(`(() => {
+      const r = document.getElementById("page").getBoundingClientRect(), cv = ${F}.querySelector(".canvas"), c = cv.getBoundingClientRect(), k = c.width / cv.offsetWidth;
+      const x = c.left + 60 * k, y = c.top + 60 * k;
+      return { x: r.left + x, y: r.top + y, free: !${F}.elementFromPoint(x, y)?.closest(".frame") };
+    })()`);
+    const f = await ed.frameAt();
+    return { x: f.x + p.x, y: f.y + p.y, free: p.free };
+  };
+  const from = await corner();
+  expect(from.free).toBe(true);
+  await ed.drag(from.x, from.y, from.x + 150, from.y + 90, 10);
+  const to = await corner();
+  expect(Math.abs(to.x - from.x - 150)).toBeLessThan(3);
+  expect(Math.abs(to.y - from.y - 90)).toBeLessThan(3);
+
+  // A press on the text and a drag: it selects the text; the canvas stays.
+  const before = await corner();
+  const h = await ed.charAt(".frame.current h2", 0);
+  await ed.drag(h.x, h.y, h.x + 120, h.y, 8);
+  const after = await corner();
+  expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(1);
+  expect(await ed.frame<string>(`${F}.getSelection().toString()`)).not.toBe("");
 });

@@ -258,6 +258,10 @@ export class RemotePage {
   setTracking(on: boolean): void { this.tracking = on; this.post({ type: "tracking", on }); }
   get canPause(): boolean { return this.snapshot.canPause; }
   get isPaused(): boolean { return this.snapshot.paused; }
+  /** The page zooms itself (window.ergaZoom), so the editor's zoom goes to it, not to the frame. */
+  get zoomsItself(): boolean { return this.snapshot.zoomsItself === true; }
+  /** Zooms a page that zooms itself: `by` times closer, or 0 for its own first view. */
+  zoomItself(by: number): void { if (this.ready) this.post({ type: "pageZoom", by }); }
   /** Pauses or resumes the page; false if it can't be paused. */
   setPaused(on: boolean): boolean {
     if (on && !this.snapshot.canPause) return false;

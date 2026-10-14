@@ -1,6 +1,7 @@
 // The caret drawn by the editor (client/caret.ts) keeps its shape at every zoom: on a page that scales its text
 // itself (the Canvas template's camera, a transform) and with the page zoomed in the editor (client/zoom.ts). It is
 // a thin bar 1.5 to 3 px wide on the screen (by the text's size there), and as tall as the line on the screen.
+// (The editor's zoom keys go to the canvas's camera, window.ergaZoom: the test takes that away to reach the editor's zoom.)
 // With CARET_SHOTS=<folder>, the test also saves a picture of the caret at each zoom there.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -63,12 +64,16 @@ test("the caret is a thin bar as tall as its line at every zoom: the canvas's ca
     }
   };
 
+  // A page without a zoom of its own, so the keys zoom the page in the editor (the shell hears of it with the page's next news).
+  await ed.frame(`(() => { delete ${W}.ergaZoom; return true; })()`);
+  await expect.poll(async () => { await ed.frame(`${F}.dispatchEvent(new Event("scroll"))`); return page.evaluate("window.ergaPage.page.zoomsItself"); }).toBe(false);
   await placeCaret();
   await expect.poll(async () => (await ed.frame<Caret>(CARET))?.off ?? 99).toBeLessThan(2);
 
-  // The editor's zoom times the camera's: the text at 25%, 50%, 100% and 200% of its size.
-  const cases = [{ zoom: 0.5, camera: 0.5 }, { zoom: 0.5, camera: 1 }, { zoom: 1, camera: 1 }, { zoom: 2, camera: 1 }, { zoom: 1, camera: 0.25 }, { zoom: 1, camera: 2 }];
-  const seen: { name: string; text: number; width: number; ratio: number }[] = [];
+  // The editor's zoom times the camera's: the text at 10% to 400% of its size.
+  const cases = [{ zoom: 0.5, camera: 0.5 }, { zoom: 0.5, camera: 1 }, { zoom: 1, camera: 1 }, { zoom: 2, camera: 1 }, { zoom: 1, camera: 0.25 }, { zoom: 1, camera: 2 },
+    { zoom: 1, camera: 0.1 }, { zoom: 1, camera: 4 }];
+  const seen: { name: string; text: number; width: number; ratio: number; gap: number }[] = [];
   for (const c of cases) {
     await zoomTo(c.zoom);
     // Again while it waits: the page's own fit to its window, on the zoom's resize, may come after the first.
@@ -79,7 +84,7 @@ test("the caret is a thin bar as tall as its line at every zoom: the canvas's ca
       const f = await ed.frameAt();
       await page.screenshot({ path: join(shots, `caret-${Math.round(c.zoom * c.camera * 100)}-z${c.zoom * 100}-c${c.camera * 100}.png`), clip: { x: f.x + k.x - 80, y: f.y + k.y - 30, width: 160, height: k.height + 60 } });
     }
-    seen.push({ name, text: c.zoom * c.camera, width: k.width, ratio: k.height / k.line });
+    seen.push({ name, text: c.zoom * c.camera, width: k.width, ratio: k.height / k.line, gap: Math.abs(k.height - k.line) });
   }
   // All at once, so a failure shows every zoom's caret. The paragraph's text is 32 px: 2.7 px of caret at 100%,
   // 1.5 px at least (2 on a 1x screen) when it shows smaller, 3 px at most when larger.
@@ -87,6 +92,7 @@ test("the caret is a thin bar as tall as its line at every zoom: the canvas's ca
     const all = JSON.stringify(seen);
     expect(k.width, `${k.name}: the width on the screen (${all})`).toBeGreaterThanOrEqual(k.text < 1 ? 1 : 2);
     expect(k.width, `${k.name}: the width on the screen (${all})`).toBeLessThanOrEqual(k.text < 1 ? 2.01 : 3.01);
-    expect(k.ratio, `${k.name}: the height against the line's (${all})`).toBeCloseTo(1, 1);
+    // (On whole pixels: at 10%, a line 4.6 px tall gets a caret of 5.)
+    if (k.gap > 1) expect(k.ratio, `${k.name}: the height against the line's (${all})`).toBeCloseTo(1, 1);
   }
 });
