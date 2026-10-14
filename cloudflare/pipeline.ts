@@ -31,6 +31,9 @@ import { sourceForBuild } from "./source";
 
 export type RelayEvent = { type: string } & Record<string, unknown>;
 
+/** An install made from this control Worker's /deploy: where its control Worker and app are, whose account, who did it, which release. */
+export interface InstallRecord { control: string; app: string; accountId: string; by: string; at: number; version: string }
+
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
   private store: ReleaseStore | null;
@@ -112,6 +115,18 @@ export class Pipeline extends DurableObject<Env> {
   /** Back to the Worker version before the live deploy (POST /api/deploys/<name>/rollback). */
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   async alarm(): Promise<void> { await this.deploys.alarm(); }
+
+  // ---- the installs made from here (/deploy, deploy/install.ts): remembered, so their control Workers may consent
+  // through this Worker's OAuth callback (control/routes.ts, the relay), and the Source page can list them.
+  async installs(): Promise<InstallRecord[]> { return (await this.ctx.storage.get<InstallRecord[]>("installs")) ?? []; }
+  async registerInstall(i: InstallRecord): Promise<void> {
+    const list = (await this.installs()).filter((x) => x.control != i.control);
+    list.unshift(i);
+    await this.ctx.storage.put("installs", list.slice(0, 200));
+    this.publish({ type: "installs" });
+  }
+  /** Whether `origin` (https://ops.example.com) is an install's control Worker made from here. */
+  async isInstall(origin: string): Promise<boolean> { return (await this.installs()).some((x) => x.control == origin); }
 
   // ---- the release store (deploy/releases.ts): both channels; a release promoted to stable, or taken off a channel.
   async releases(): Promise<ReleasesView | null> { return this.store ? this.store.view() : null; }

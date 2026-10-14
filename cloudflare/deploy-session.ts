@@ -1,41 +1,47 @@
-// One person's deploy, from /deploy: a Durable Object per
-// session, named by a random id that only their browser has (with a key, in
-// a cookie). It holds their Cloudflare token, sealed (AES-GCM) with a key
-// made from that cookie's key and the server's SESSION_SECRET, so neither
-// this storage nor the cookie alone can open it, and only for as long as the
-// deploy takes: it's deleted when the deploy succeeds, when they forget it,
-// and two hours after they connected at the latest. It's never logged, and
-// never goes to D1. A token from Cloudflare's OAuth is also revoked at the end.
+// One person's install, from /deploy (on the control Worker): a Durable
+// Object per session, named by a random id that only their browser has (with
+// a key, in a cookie). It holds their Cloudflare token, sealed (AES-GCM) with
+// a key made from that cookie's key and the Worker's SESSION_SECRET, so
+// neither this storage nor the cookie alone can open it, and only for as long
+// as the install takes: it's deleted when the install succeeds, when they
+// forget it, and two hours after they connected at the latest. It's never
+// logged, and never goes to D1. A token from Cloudflare's OAuth is also
+// revoked at the end. The GitHub App the manifest flow made for the install
+// (its client secret) is kept the same way, until the install is done.
 //
 // Every call names who's asking (the front door's signed-in login), and only
-// the person who connected may use the session. The deploy itself runs here
-// and records each step as it goes; the page polls
-// `info` to show them.
+// the person who connected may use the session. The install itself runs here
+// (deploy/install.ts: the app and its control Worker, from a release of the
+// store) and records each step as it goes; the page polls `info` to show them.
 
 import { DurableObject } from "cloudflare:workers";
 import {
-  checkPlan, Cloudflare, deploy, DeployError, loadRelease, OAUTH, pagesShown, appHost, registerDomain, registrationStatus, searchDomains, STEPS,
-  type DeployPlan, type Deployed, type DomainOffer, type Fetch, type StepId,
+  checkPlan, Cloudflare, DeployError, loadRelease, OAUTH, pagesShown, appHost, registerDomain, registrationStatus, searchDomains,
+  type DeployPlan, type DomainOffer, type Fetch, type Release,
 } from "../deploy/pipeline";
+import { controlHostOf, INSTALL_STEPS, runInstall, type Installed } from "../deploy/install";
 import { mockCloudflare, type MockState } from "../deploy/mock-cloudflare";
 import { open, randomSecret, seal, type Sealed } from "../deploy/seal";
 import type { Env } from "./env";
+import { releaseStoreOf } from "./releases";
 
 const SESSION = "session", RUN = "run";
 const LIFETIME_MS = 2 * 60 * 60 * 1000;
 
-interface Session { owner: string; via: "oauth" | "token"; created: number; sealed: Sealed | null; accounts: { id: string; name: string }[] }
+/** The GitHub App the manifest flow made for this install (cloudflare/deploy-routes.ts): its secret sealed as the token is. */
+export interface GithubApp { name: string; clientId: string; url: string; sealed: Sealed }
+interface Session { owner: string; via: "oauth" | "token"; created: number; sealed: Sealed | null; accounts: { id: string; name: string }[]; github?: GithubApp }
 
-export type StepState = { id: StepId; title: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail?: string };
+export type StepState = { id: string; title: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail?: string };
 export interface RunState {
   status: "running" | "done" | "failed";
   started: number;
   ended?: number;
   steps: StepState[];
   error?: string;
-  result?: Deployed;
+  result?: Installed;
   /** What was asked for, as the page shows it again. */
-  summary: { app: string; pages: string; worker: string; account: string };
+  summary: { app: string; pages: string; worker: string; account: string; control: string; release: string };
 }
 export type Answer<T> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -79,13 +85,22 @@ export class Deployer extends DurableObject<Env> {
     } catch (e) { return { ok: false, error: message(e) }; }
   }
 
-  /** What the page needs to pick up where it was: connected or not, and the deploy's progress. */
-  async info(owner: string): Promise<{ connected: boolean; via?: string; accounts?: { id: string; name: string }[]; expires?: number; run: RunState | null }> {
+  /** What the page needs to pick up where it was: connected or not, the GitHub App made, and the install's progress. */
+  async info(owner: string): Promise<{ connected: boolean; via?: string; accounts?: { id: string; name: string }[]; expires?: number; githubApp?: { name: string; clientId: string; url: string }; run: RunState | null }> {
     const session = await this.session(owner);
     const stored = await this.ctx.storage.get<RunState & { owner?: string }>(RUN);
     const run = stored && stored.owner == owner.toLowerCase() ? (({ owner: _, ...r }) => r)(stored) : null;
     if (!session) return { connected: false, run };
-    return { connected: !!session.sealed, via: session.via, accounts: session.accounts, expires: session.created + LIFETIME_MS, run };
+    const githubApp = session.github ? { name: session.github.name, clientId: session.github.clientId, url: session.github.url } : undefined;
+    return { connected: !!session.sealed, via: session.via, accounts: session.accounts, expires: session.created + LIFETIME_MS, ...(githubApp ? { githubApp } : {}), run };
+  }
+
+  /** The GitHub App the manifest flow made: kept with the session, its secret sealed with the browser's key. */
+  async setGithubApp(owner: string, key: string, app: { name: string; clientId: string; secret: string; url: string }): Promise<Answer<{}>> {
+    const session = await this.session(owner);
+    if (!session) return { ok: false, error: "Connect your Cloudflare account first." };
+    await this.ctx.storage.put(SESSION, { ...session, github: { name: app.name, clientId: app.clientId, url: app.url, sealed: await seal(app.secret, key) } } satisfies Session);
+    return { ok: true };
   }
 
   /** An account's workers.dev subdomain and its domains (zones). */
@@ -131,25 +146,53 @@ export class Deployer extends DurableObject<Env> {
     } catch (e) { return { ok: false, error: message(e) }; }
   }
 
-  /** Starts the deploy (it carries on here; the page follows it with `info`). */
-  async start(owner: string, key: string, plan: DeployPlan, mock: boolean): Promise<Answer<{ run: RunState }>> {
-    if (this.running) return { ok: false, error: "A deploy is already running in this session." };
+  /**
+   * The release an install deploys: the store's (deploy/releases.ts; stable's latest, or the version asked for), or in
+   * local development the release in the server's own files.
+   */
+  private async release(version: string | undefined): Promise<{ release: Release; from: string } | { error: string }> {
+    const store = releaseStoreOf(this.env);
+    if (store) {
+      const stable = await store.channel("stable");
+      const want = version ?? stable.latest ?? undefined;
+      if (want) {
+        const r = await store.load(want).catch((e) => { throw new DeployError(`Release ${want} couldn't be read from the store: ${message(e)}`); });
+        if (!r) return { error: `There's no release ${want} in the store.` };
+        return { release: r, from: version ? `release ${want}` : `stable's latest, ${want}` };
+      }
+      if (!this.env.ASSETS) return { error: "No release is on stable yet: an admin promotes one on the Source page (Releases) first." };
+    }
+    if (!this.env.ASSETS) return { error: "This server has no release store." };
+    let unreadable = "";
+    const r = await loadRelease(async (path) => {
+      const res = await this.env.ASSETS.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
+      return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+    }).catch((e) => { unreadable = message(e); return null; });
+    if (!r) return { error: unreadable || "This server has no release to deploy (it's built with the server's deploy: bun deploy/release.ts)." };
+    return { release: r, from: `this server's own release, ${r.version}` };
+  }
+
+  /** Starts the install (it carries on here; the page follows it with `info`). `origin`: this control Worker's address, the install's upstream. */
+  async start(owner: string, key: string, plan: DeployPlan, mock: boolean, origin: string): Promise<Answer<{ run: RunState }>> {
+    if (this.running) return { ok: false, error: "An install is already running in this session." };
     const t = await this.token(owner, key);
     if ("error" in t) return { ok: false, error: t.error };
     if (!t.session.accounts.some((a) => a.id == plan.accountId)) return { ok: false, error: "Choose one of your accounts." };
+    // The GitHub App the manifest flow made, unless the page pasted an OAuth app's values.
+    if (!plan.githubClientId?.trim() && t.session.github) {
+      try { plan = { ...plan, githubClientId: t.session.github.clientId, githubClientSecret: await open(t.session.github.sealed, key) }; } catch { return { ok: false, error: "This browser's install session doesn't match: connect your Cloudflare account again." }; }
+    }
     plan = { ...plan, admin: owner };
     const wrong = checkPlan(plan);
     if (wrong) return { ok: false, error: wrong };
-    let unreadable = "";
-    const release = await loadRelease(async (path) => {
-      const r = await this.env.ASSETS.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
-      return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
-    }).catch((e) => { unreadable = message(e); return null; });
-    if (!release) return { ok: false, error: unreadable || "This server has no release to deploy (it's built with the server's deploy: bun deploy/release.ts)." };
+    let got: Awaited<ReturnType<Deployer["release"]>>;
+    try { got = await this.release(plan.version); } catch (e) { return { ok: false, error: message(e) }; }
+    if ("error" in got) return { ok: false, error: got.error };
+    const { release } = got;
     const run: RunState & { owner: string } = {
       owner: owner.toLowerCase(), status: "running", started: Date.now(),
-      steps: STEPS.map((s) => ({ id: s.id, title: s.title, status: "pending" })),
-      summary: { app: `https://${appHost(plan)}`, pages: pagesShown(plan), worker: plan.workerName, account: t.session.accounts.find((a) => a.id == plan.accountId)?.name ?? plan.accountId },
+      steps: INSTALL_STEPS.map((s) => ({ id: s.id, title: s.title, status: "pending" })),
+      summary: { app: `https://${appHost(plan)}`, pages: pagesShown(plan), worker: plan.workerName, account: t.session.accounts.find((a) => a.id == plan.accountId)?.name ?? plan.accountId, control: `https://${controlHostOf(plan)}`, release: release.version },
     };
     const save = () => this.ctx.storage.put(RUN, run);
     await save();
@@ -157,8 +200,9 @@ export class Deployer extends DurableObject<Env> {
     const net = this.net(mock);
     const work = (async () => {
       try {
-        run.result = await deploy(new Cloudflare(t.token, net), release, plan, {
-          sessionSecret: randomSecret(),
+        run.result = await runInstall(new Cloudflare(t.token, net), release, plan, {
+          sessionSecret: randomSecret(), controlSecret: randomSecret(),
+          upstream: { origin, clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : "") },
           site: net,
           report: (id, status, detail) => {
             const step = run.steps.find((s) => s.id == id)!;
@@ -168,9 +212,11 @@ export class Deployer extends DurableObject<Env> {
           },
         });
         run.status = "done";
-        // Done with the token: forget it, and give back what Cloudflare's OAuth gave.
+        // Done with the token: forget it, and give back what Cloudflare's OAuth gave. The GitHub App's secret goes with it.
         if (t.session.via == "oauth") await net(OAUTH.revoke, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: t.token, client_id: this.env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock" }) }).catch(() => {});
-        await this.ctx.storage.put(SESSION, { ...t.session, sealed: null });
+        await this.ctx.storage.put(SESSION, { ...t.session, sealed: null, github: undefined });
+        // Upstream remembers the install: its control Worker may consent through the relay (control/routes.ts), and the Source page lists it.
+        await this.env.PIPELINE?.getByName("deploys").registerInstall({ control: run.result.control, app: run.result.url, accountId: plan.accountId, by: owner.toLowerCase(), at: Date.now(), version: release.version }).catch((e) => console.log(`the install wasn't registered: ${message(e)}`));
       } catch (e) {
         run.status = "failed";
         const step = run.steps.find((s) => s.status == "running");

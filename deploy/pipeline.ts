@@ -211,6 +211,8 @@ export interface DeployPlan {
   /** The new server's GitHub OAuth app, for signing in. */
   githubClientId: string;
   githubClientSecret: string;
+  /** A release of the store to install (12 hex digits), in place of stable's latest (trying edge, or an older one). */
+  version?: string;
   /** Turns the agent on; optional. */
   anthropicKey?: string;
 }
@@ -239,7 +241,8 @@ export function checkPlan(p: DeployPlan): string | null {
     return `Documents' pages need a different domain from the app's (${p.app.zoneName}): a page's scripts mustn't share the app's site. Pick another domain, or the shared pages address.`;
   }
   if (!/^[A-Za-z0-9-]{1,39}$/.test(p.admin)) return "Sign in to Erga with GitHub first.";
-  if (!/^[A-Za-z0-9._-]{8,64}$/.test(p.githubClientId.trim())) return "Paste your GitHub OAuth app's Client ID.";
+  if (p.version != null && p.version != "" && !/^[0-9a-f]{12}$/.test(p.version)) return "A release's version is 12 hex digits, as the store lists it.";
+  if (!/^[A-Za-z0-9._-]{8,64}$/.test(p.githubClientId.trim())) return "Make the GitHub App with the button, or paste a GitHub OAuth app's Client ID.";
   if (p.githubClientSecret.trim().length < 20) return "Paste your GitHub OAuth app's client secret (generate one on the app's page).";
   if (p.anthropicKey && !p.anthropicKey.trim().startsWith("sk-")) return "An Anthropic API key starts with sk-; leave it empty to deploy without the agent.";
   return null;
@@ -1129,12 +1132,12 @@ export const OAUTH = {
 };
 
 /**
- * The scopes Erga's OAuth client asks for: Cloudflare's OAuth scope ids (GET
- * /oauth/scopes; the cf CLI asks for the same names), one for each
- * permission the token link gives. The client must have been made with these
- * (Registrar's optional); CLOUDFLARE_OAUTH_SCOPES overrides them.
+ * The scopes an install's consent asks for (/deploy, cloudflare/deploy-routes.ts): Cloudflare's OAuth scope ids, one for
+ * each permission the install needs, all among those Erga's OAuth client allows (CONTROL_OAUTH_SCOPES in
+ * deploy/credential.ts: a scope the client doesn't allow fails the consent). Buying a domain (Registrar) isn't among them:
+ * that takes an API token with the Registrar permission. CLOUDFLARE_OAUTH_SCOPES overrides them.
  */
-export const DEFAULT_OAUTH_SCOPES = "account-settings.read workers-scripts.write d1.write workers-routes.write zone.read dns.write registrar-domains.admin";
+export const DEFAULT_OAUTH_SCOPES = "account-settings.read workers-scripts.edit d1.write workers-routes.write zone.read dns.write";
 
 // ------------------------------------------------------------------ domains
 

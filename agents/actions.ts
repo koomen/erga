@@ -123,13 +123,16 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (/settings)", exempt: SECRET },
   { route: "POST /tokens/approve", domain: "admin", action: "Approve an agent's request for a token (/settings)", exempt: `${SECRET} (it hands a new token to an outside agent)` },
 
-  // ------------------------------------------------------------ /deploy: Erga on your own Cloudflare account
+  // ------------------------------------------------------------ /deploy: Erga on your own Cloudflare account (the control Worker's page)
+  { route: "GET /deploy/auth/cloudflare", domain: "none", action: "Authorize with Cloudflare: consent on Cloudflare's own page, in the browser (/deploy)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },
+  { route: "GET /deploy/github/start", domain: "none", action: "Make the GitHub App on GitHub (the manifest flow, /deploy)", exempt: `${SECRET}: GitHub hands the App's secret to the session, through the browser` },
+  { route: "GET /deploy/github/callback", domain: "none", action: "Back from GitHub with the App made (/deploy)", exempt: `${SECRET}: GitHub hands the App's secret to the session, through the browser` },
   { route: "POST /deploy/api/connect", domain: "admin", action: "Connect a Cloudflare account with an API token (/deploy)", exempt: SECRET },
   { route: "GET /deploy/api/session", domain: "admin", action: "Read the deploy's progress (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "POST /deploy/api/account", domain: "admin", action: "Pick a Cloudflare account (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "POST /deploy/api/domains/search", domain: "admin", action: "Search for a domain (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "POST /deploy/api/domains/register", domain: "admin", action: "Buy a domain (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
-  { route: "POST /deploy/api/start", domain: "admin", action: "Deploy Erga to the account (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
+  { route: "POST /deploy/api/start", domain: "admin", action: "Install Erga in the account (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "POST /deploy/api/forget", domain: "admin", action: "Forget the Cloudflare token (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "GET /deploy/api/mock", domain: "none", action: "What pretend Cloudflare was asked (tests only)", exempt: "the tests' pretend Cloudflare" },
 

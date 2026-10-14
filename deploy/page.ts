@@ -1,7 +1,9 @@
-// The deploy page, /deploy: connect Cloudflare, choose
-// where the new server goes (and buy a domain, if you like, after seeing the
-// price), give it a GitHub app to sign in with, deploy, and watch each step.
-// One page; its script asks /deploy/api/* and redraws.
+// The deploy page, /deploy (on the control Worker): connect Cloudflare,
+// choose where the new Erga goes (and buy a domain, if you like, after seeing
+// the price), make its GitHub App in one click (or paste an OAuth app's
+// values), install, and watch each step: the app, and its control Worker
+// beside it, which keeps it up to date. One page; its script asks
+// /deploy/api/* and redraws.
 
 import { appPage, crumbs, esc } from "../server/pages/index.ts";
 
@@ -11,7 +13,10 @@ export interface DeployPageConfig {
   /** "Authorize with Cloudflare" is offered (the server has an OAuth client, or it's the mock). */
   oauth: boolean;
   mock: boolean;
-  release: { version: string; built: string } | null;
+  /** The release the install deploys: stable's latest from the store (from "stable"), or the server's own in local development. */
+  release: { version: string; built: string; from: string } | null;
+  /** The control Worker's name beside the app's (erga-control), for the page's words. */
+  controlWorker: string;
   tokenUrl: string;
   tokenUrlRegistrar: string;
   permissions: { key: string; type: string; why: string }[];
@@ -93,8 +98,8 @@ const STYLE = `
 export function deployPage(c: DeployPageConfig): string {
   const perms = c.permissions.map((p) => `<li><b>${esc(label(p.key))}</b> (${p.type == "read" ? "read" : "edit"}): ${esc(p.why)}</li>`).join("");
   const body = `${crumbs(null, [{ label: "Deploy" }])}<main>
-  <header><div><h1>Deploy your own Erga</h1><p class="sub">A copy of this server on your own Cloudflare account, with you (${esc(c.login)}) as its admin: the same Worker, database and settings${c.release ? ` (release <code>${esc(c.release.version)}</code>)` : ""}.</p></div></header>
-  ${c.release ? "" : `<p class="error">This server has no release to deploy yet: it's made when the server is deployed (<code>bun deploy/release.ts</code>).</p>`}
+  <header><div><h1>Install your own Erga</h1><p class="sub">Erga on your own Cloudflare account, with you (${esc(c.login)}) as its admin: the app, and a small control Worker beside it that keeps it up to date with Erga's releases${c.release ? ` (release <code>${esc(c.release.version)}</code>, ${esc(c.release.from == "stable" ? "the latest on stable" : `from ${c.release.from}`)})` : ""}.</p></div></header>
+  ${c.release ? "" : `<p class="error">There's no release to install yet: an admin promotes one to stable on the Source page first.</p>`}
   <p class="error" id="top-error">${esc(c.error)}</p>
   <ol class="steps">
     <li class="step" id="s-connect" data-step="connect">
@@ -145,13 +150,17 @@ export function deployPage(c: DeployPageConfig): string {
       <h2>Signing in with GitHub <a class="change" href="#" data-goto="github" hidden>Change</a></h2>
       <p class="summary" id="sum-github"></p>
       <div class="body">
-        <p>People sign in to your Erga with GitHub, through a GitHub OAuth app of your own. Make one (it's free, and takes a minute): <a class="pill small" id="gh-new" href="https://github.com/settings/applications/new" target="_blank" rel="noopener">New OAuth app on GitHub ↗</a>, with:</p>
+        <p>People sign in to your Erga with GitHub, through a GitHub App of your own. Erga makes it for you: one click on GitHub (Create GitHub App), and you're back here. Nothing to paste.</p>
+        <p class="row"><a class="new" id="gh-make" href="/deploy/github/start">Make the GitHub App on GitHub ↗</a><span class="muted" id="gh-made"></span></p>
+        <details id="gh-paste"><summary>Or use a GitHub OAuth app you make yourself</summary>
+        <p class="muted">Make one at <a id="gh-new" href="https://github.com/settings/applications/new" target="_blank" rel="noopener">New OAuth app on GitHub ↗</a> with:</p>
         <div class="copy"><span>Application name</span><code id="gh-name">Erga</code><button class="pill small" data-copy="gh-name">Copy</button></div>
         <div class="copy"><span>Homepage URL</span><code id="gh-home"></code><button class="pill small" data-copy="gh-home">Copy</button></div>
         <div class="copy"><span>Callback URL</span><code id="gh-callback"></code><button class="pill small" data-copy="gh-callback">Copy</button></div>
-        <p class="muted">Register it, then copy its Client ID, and press "Generate a new client secret" and copy that.</p>
+        <p class="muted">An OAuth app has one callback URL, the app's: its admins then reach the control Worker with an admin token, not by signing in there. Register it, copy its Client ID, press "Generate a new client secret" and copy that.</p>
         <label class="field">Client ID<input class="input mono" id="gh-id" autocomplete="off" spellcheck="false"></label>
         <label class="field">Client secret<input class="input mono" id="gh-secret" type="password" autocomplete="off" spellcheck="false"></label>
+        </details>
         <label class="field">Anthropic API key (optional: turns on the agent in the editor; add it later as a secret if you like)<input class="input mono" id="anthropic" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"></label>
         <p class="error" id="github-error"></p>
         <p class="row"><button class="new" id="github-next">Continue</button></p>
@@ -164,7 +173,7 @@ export function deployPage(c: DeployPageConfig): string {
         <div id="review-box">
           <dl class="review" id="review"></dl>
           <p class="error" id="deploy-error"></p>
-          <p class="row"><button class="new" id="go"${c.release ? "" : " disabled"}>Deploy to Cloudflare</button></p>
+          <p class="row"><button class="new" id="go"${c.release ? "" : " disabled"}>Install on Cloudflare</button></p>
         </div>
         <div id="run-box" hidden>
           <div class="live" id="live" hidden></div>
@@ -185,8 +194,8 @@ export function deployPage(c: DeployPageConfig): string {
   <p class="error" id="confirm-error"></p>
   <div class="buttons"><button id="buy-cancel">Cancel</button><button class="primary" id="buy-go" disabled>Buy</button></div>
 </dialog>
-<script>${SCRIPT.replace("__CONFIG__", JSON.stringify({ login: c.login, mock: c.mock, tokenUrl: c.tokenUrl, tokenUrlRegistrar: c.tokenUrlRegistrar }).replace(/</g, "\\u003c"))}</script>`;
-  return appPage("Deploy your own", STYLE, body);
+<script>${SCRIPT.replace("__CONFIG__", JSON.stringify({ login: c.login, mock: c.mock, tokenUrl: c.tokenUrl, tokenUrlRegistrar: c.tokenUrlRegistrar, controlWorker: c.controlWorker, release: c.release }).replace(/</g, "\\u003c"))}</script>`;
+  return appPage("Install your own", STYLE, body);
 }
 
 const LABELS: Record<string, string> = { account_settings: "Account Settings", workers_scripts: "Workers Scripts", d1: "D1", workers_routes: "Workers Routes", zone: "Zone", dns: "DNS", registrar_domains: "Registrar: Domains" };
@@ -262,7 +271,16 @@ async function loaded(info) {
   $("account-field").hidden = S.accounts.length < 2;
   await chooseAccount(S.accounts[0] && S.accounts[0].id);
   if (info.run) return showRun(info.run);
+  // Back from GitHub (the App made): where it goes was chosen before leaving, and is kept in this tab.
+  let kept = null;
+  try { kept = JSON.parse(sessionStorage.getItem("erga-install-where") || "null"); } catch {}
+  if (kept && kept.accountId == S.account) { S.where = kept; whereChosen(kept); if (info.githubApp) { githubMade(info.githubApp); go("github"); return; } go("github"); return; }
   go("where");
+}
+function githubMade(app) {
+  S.githubApp = app;
+  $("gh-made").textContent = "Made: " + app.name + " (" + app.clientId + ")";
+  $("gh-make").textContent = "Make another GitHub App ↗";
 }
 $("account").addEventListener("change", (e) => chooseAccount(e.target.value));
 async function chooseAccount(id) {
@@ -313,14 +331,26 @@ $("where-next").addEventListener("click", () => {
   if (w.app.kind == "domain" && !(w.app.hostname == w.app.zoneName || w.app.hostname.endsWith("." + w.app.zoneName))) return say("where-error", "The app's address must be " + w.app.zoneName + " or a name under it.");
   if (w.app.kind == "domain" && w.pages.kind == "zone" && w.app.zoneId == w.pages.zoneId) return say("where-error", "Documents' pages need a different domain from the app's: pick another, or the shared pages address.");
   S.where = w;
-  $("sum-where").textContent = appUrl(w) + " · pages on " + pagesAt(w);
+  try { sessionStorage.setItem("erga-install-where", JSON.stringify(w)); } catch {}
+  whereChosen(w);
+  go("github");
+});
+/** The control Worker's address beside the app's (deploy/install.ts, controlHostOf): shown before the install. */
+function controlHost(w) {
+  if (w.app.kind == "workers.dev") return C.controlWorker + "." + w.subdomain + ".workers.dev";
+  const host = w.app.hostname, zone = w.app.zoneName;
+  if (host == zone) return "ops." + zone;
+  const parts = host.split("."); return parts[0] + "-ops." + parts.slice(1).join(".");
+}
+function whereChosen(w) {
+  $("sum-where").textContent = appUrl(w) + " · pages on " + pagesAt(w) + " · control at " + controlHost(w);
   const home = appUrl(w);
   $("gh-home").textContent = home; $("gh-callback").textContent = home + "/auth/github/callback";
   const gh = new URL("https://github.com/settings/applications/new");
   gh.searchParams.set("oauth_application[name]", "Erga"); gh.searchParams.set("oauth_application[url]", home); gh.searchParams.set("oauth_application[callback_url]", home + "/auth/github/callback");
   $("gh-new").href = gh.toString();
-  go("github");
-});
+  $("gh-make").href = "/deploy/github/start?app=" + encodeURIComponent(home.replace("https://", "")) + "&ops=" + encodeURIComponent(controlHost(w));
+}
 
 // Buying a domain: search, see the price, confirm it, buy.
 $("search").addEventListener("click", async () => {
@@ -368,19 +398,24 @@ $("buy-go").addEventListener("click", async () => {
 $("github-next").addEventListener("click", () => {
   say("github-error");
   const id = $("gh-id").value.trim(), secret = $("gh-secret").value.trim(), key = $("anthropic").value.trim();
-  if (!/^[A-Za-z0-9._-]{8,64}$/.test(id)) return say("github-error", "Paste your GitHub OAuth app's Client ID.");
-  if (secret.length < 20) return say("github-error", "Paste the client secret (press “Generate a new client secret” on the app's page).");
+  const pasted = !!(id || secret);
+  if (pasted && !/^[A-Za-z0-9._-]{8,64}$/.test(id)) return say("github-error", "Paste your GitHub OAuth app's Client ID.");
+  if (pasted && secret.length < 20) return say("github-error", "Paste the client secret (press “Generate a new client secret” on the app's page).");
+  if (!pasted && !S.githubApp) return say("github-error", "Make the GitHub App with the button (or paste an OAuth app's Client ID and secret).");
   if (key && !key.startsWith("sk-")) return say("github-error", "An Anthropic API key starts with sk-; leave it empty to go without the agent.");
-  $("sum-github").textContent = "GitHub app " + id + (key ? ", with the agent" : ", without the agent");
+  const signIn = pasted ? "GitHub OAuth app " + id : "GitHub App " + S.githubApp.name;
+  $("sum-github").textContent = signIn + (key ? ", with the agent" : ", without the agent");
   const w = S.where;
   $("review").innerHTML = [
     ["Account", (S.accounts.find((a) => a.id == w.accountId) || {}).name],
     ["Address", appUrl(w)],
     ["Documents' pages", pagesAt(w) + (w.pages.kind == "shared" ? " (shared)" : " (one origin each)")],
+    ["Control Worker", "https://" + controlHost(w) + " (keeps it up to date)"],
+    ["Release", C.release ? C.release.version + (C.release.from == "stable" ? ", the latest on stable" : ", from " + C.release.from) : "none"],
     ["Worker", w.workerName + (w.createSubdomain ? ", on a new workers.dev subdomain " + w.subdomain : "")],
     ["Database", "D1, “erga”"],
     ["Admin", C.login + " (you)"],
-    ["Sign-in", "GitHub app " + id],
+    ["Sign-in", signIn],
     ["Agent", key ? "on (your Anthropic key)" : "off"],
   ].map(([k, v]) => "<dt>" + esc(k) + "</dt><dd>" + esc(v || "") + "</dd>").join("");
   go("deploy");
@@ -388,7 +423,7 @@ $("github-next").addEventListener("click", () => {
 
 $("go").addEventListener("click", async () => {
   say("deploy-error");
-  const plan = { ...S.where, admin: C.login, githubClientId: $("gh-id").value.trim(), githubClientSecret: $("gh-secret").value.trim(), anthropicKey: $("anthropic").value.trim() || undefined };
+  const plan = { ...S.where, admin: C.login, githubClientId: $("gh-id").value.trim(), githubClientSecret: $("gh-secret").value.trim(), anthropicKey: $("anthropic").value.trim() || undefined, ...(new URLSearchParams(location.search).get("version") ? { version: new URLSearchParams(location.search).get("version") } : {}) };
   S.plan = plan;
   busy($("go"), true, "Starting…");
   try { const r = await api("start", { plan }); showRun(r.run); } catch (e) { say("deploy-error", e.message); }
@@ -409,12 +444,14 @@ function showRun(run) {
   $("progress").innerHTML = run.steps.map((s) => '<li class="' + s.status + '" data-id="' + s.id + '"><span class="icon">' + ICONS[s.status] + "</span><span>" + esc(s.title) + "</span>" + (s.detail ? '<span class="detail">' + esc(s.detail) + "</span>" : "") + "</li>").join("");
   say("run-error", run.status == "failed" ? run.error : "");
   $("run-actions").hidden = run.status != "failed";
-  $("sum-deploy").textContent = run.status == "running" ? "Deploying…" : run.status == "done" ? "Deployed" : "Stopped";
+  $("sum-deploy").textContent = run.status == "running" ? "Installing…" : run.status == "done" ? "Installed" : "Stopped";
   if (run.status == "done") {
     const tokenWay = S.info.via != "oauth";
+    try { sessionStorage.removeItem("erga-install-where"); } catch {}
     $("live").hidden = false;
     $("live").innerHTML = "<h3>Your Erga is live</h3><p><a class='new' id='open-new' href='" + esc(run.result.url) + "' target='_blank' rel='noopener'>Open " + esc(run.result.url.replace("https://", "")) + " ↗</a></p>"
       + "<p>Sign in there with GitHub as <b>" + esc(C.login) + "</b>: you're its admin, and add everyone else on its Admin page. Its front page is made the first time it's opened, yours to edit.</p>"
+      + "<p><b>One more step, so it keeps itself up to date:</b> open <a href='" + esc(run.result.control + "/install") + "' target='_blank' rel='noopener'>" + esc(run.result.control.replace("https://", "")) + "/install ↗</a>, sign in with GitHub, and connect Cloudflare there (a consent, like the one here). Its control Worker then upgrades it from Erga's releases by itself, and rolls back by itself when an upgrade fails its health check.</p>"
       + "<p class='muted'>" + (tokenWay
         ? "Erga has forgotten your Cloudflare token. You can delete it now: <a href='https://dash.cloudflare.com/profile/api-tokens' target='_blank' rel='noopener'>API Tokens on Cloudflare ↗</a> (it's called “Erga deploy”)."
         : "Erga has forgotten its access to your account and given it back to Cloudflare. <a href='https://dash.cloudflare.com/?to=/profile/access-management/authorization' target='_blank' rel='noopener'>Your OAuth authorizations ↗</a>.") + "</p>";

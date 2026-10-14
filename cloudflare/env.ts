@@ -99,6 +99,9 @@ export interface Env {
   BUILDS?: DurableObjectNamespace<import("../control/builder/worker").Builder>;
   /** The control Worker only: the release store's bucket (deploy/releases.ts). */
   RELEASES?: R2Bucket;
+  /** An install's control Worker only (deploy/install.ts): erga.dev's control Worker, whose store it upgrades from and whose OAuth callback relays its consent; and its one target, as JSON (InstallSpec). */
+  UPSTREAM?: string;
+  INSTALL?: string;
   CF_VERSION_METADATA?: { id?: string };
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
   ERGA_DEPLOY_MOCK?: string;

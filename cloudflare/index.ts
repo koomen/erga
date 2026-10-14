@@ -14,8 +14,8 @@
 //                               (erga.dev, staging.erga.dev): the Source page and its API served here, in the admin layout, on
 //                               its objects over the CONTROL binding; the rest a redirect there (CONTROL_URL). All served here in
 //                               local development, over the mock Cloudflare; "not found" on a server with neither
-//   /deploy                    deploy Erga to your own Cloudflare account (deploy-routes.ts; the deploy_page setting,
-//                              not an admin right); /admin/deploy redirects there
+//   /deploy                    install Erga in your own Cloudflare account: the control Worker's too (deploy-routes.ts),
+//                              served here in local development
 //   /__erga/...                the dev server's (dev.ts)
 
 import { handle } from "../server/app.ts";
@@ -67,10 +67,11 @@ export default {
         const mock = env.ERGA_DEPLOY_MOCK == "1";
         return controlRoutes(request, {
           platform: p, deploys: p.deploys as DeploysObject, releases: releaseStoreOf(env), app: url.origin, layout: adminResponse, page: "/admin/source", version: env.ERGA_VERSION ?? null,
+          // The deploy page (installs), in local development only: on erga.dev it's the control Worker's.
+          ...(env.PIPELINE ? { deploy: (request: Request) => deployDoor(request, { env, platform: p, oauthCallback: "/install/callback" }) } : {}),
           oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
         });
       }
-      if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, p);
       return devRoutes(request, env, p, url);
     }));
     if (answer.status == 101) return answer;
