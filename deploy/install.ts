@@ -23,7 +23,9 @@
 // (one level under the zone, which the zone's own certificate covers).
 
 import { Cloudflare, DeployError, checkHealth, runPipeline, STEPS, targetHost, targetOfPlan, WORKER_TAG, type Carry, type DeployPlan, type Fetch, type Release, type Report, type Target } from "./pipeline";
+import { installControlMetadata } from "./control";
 import { CONTROL_ENTRYPOINT } from "./targets";
+export { installControlMetadata };
 
 /** The install's steps, as the page lists them: the pipeline's, with the control Worker's two among them. */
 export const INSTALL_STEPS = [
@@ -72,36 +74,6 @@ export interface Installed { url: string; pages: string; database: string; worke
 export function installAppTarget(plan: DeployPlan, sessionSecret: string, controlHost: string): Target {
   const t = targetOfPlan(plan, sessionSecret);
   return { ...t, vars: { ...t.vars, CONTROL_URL: `https://${controlHost}` }, services: { CONTROL: { service: INSTALL_CONTROL_WORKER, entrypoint: CONTROL_ENTRYPOINT } } };
-}
-
-/**
- * The control Worker's upload metadata for an install: the release's control
- * part (control/wrangler.jsonc as the release has it), with only what an
- * install has. Its Durable Objects are declared as exports (a new Worker has
- * no namespaces; wrangler made erga.dev's), so a second install run matches
- * them. No container, no Artifacts, no bucket.
- */
-export function installControlMetadata(release: Release, o: { accountId: string; dbId: string; vars: Record<string, string>; secrets: Record<string, string> }) {
-  const c = release.control;
-  if (!c) throw new DeployError(`This release (${release.version}) has no control Worker in it: pick a newer one.`);
-  const cfg = c.config;
-  const bindings: Record<string, unknown>[] = [];
-  const classes = cfg.durableObjects.filter((d) => d.name != "BUILDS");
-  for (const d of classes) bindings.push({ type: "durable_object_namespace", name: d.name, class_name: d.className });
-  for (const d of cfg.d1) bindings.push({ type: "d1", name: d.name, database_id: o.dbId, id: o.dbId });
-  if (cfg.versionMetadata) bindings.push({ type: "version_metadata", name: cfg.versionMetadata });
-  for (const [name, value] of Object.entries({ ERGA_VERSION: release.version, ...o.vars })) bindings.push({ type: "plain_text", name, text: value });
-  for (const [name, value] of Object.entries(o.secrets)) bindings.push({ type: "secret_text", name, text: value });
-  return {
-    main_module: c.mainModule,
-    compatibility_date: cfg.compatibilityDate,
-    compatibility_flags: cfg.compatibilityFlags,
-    bindings,
-    keep_bindings: ["secret_text", "secret_key"],
-    exports: Object.fromEntries(classes.map((d) => [d.className, { type: "durable-object", storage: "sqlite" }])),
-    observability: { enabled: cfg.observability.enabled, logs: { enabled: cfg.observability.logs.enabled, invocation_logs: cfg.observability.logs.invocationLogs } },
-    tags: [WORKER_TAG],
-  };
 }
 
 /** The install: both Workers, in order, reporting each step; what it made. */

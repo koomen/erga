@@ -177,6 +177,50 @@ export class ReleaseStore {
   }
 }
 
+/**
+ * Blobs read from another control Worker's store over HTTPS (an install
+ * reading erga.dev's: deploy/fleet.ts): the channel files and each release's
+ * files at /releases/..., as releasesDoor serves them. Read-only.
+ */
+export function httpBlobs(origin: string, net: (input: string, init?: RequestInit) => Promise<Response> = globalThis.fetch.bind(globalThis)): ReleaseBlobs {
+  const base = origin.replace(/\/+$/, "");
+  const urlOf = (key: string) => {
+    const chan = /^channels\/([a-z]+)\.json$/.exec(key);
+    if (chan) return `${base}/releases/${chan[1]}.json`;
+    const rel = /^releases\/([0-9a-f]{12})\/(.+)$/.exec(key);
+    if (rel) return `${base}/releases/${rel[1]}/${rel[2].split("/").map(encodeURIComponent).join("/")}`;
+    throw new DeployError(`Not a key of the release store: ${key}`);
+  };
+  return {
+    get: async (key) => {
+      const r = await net(urlOf(key), { headers: { Accept: "application/octet-stream, application/json" } }).catch((e: Error) => { throw new DeployError(`Couldn't reach the release store at ${base}: ${e.message}`); });
+      if (r.status == 404) return null;
+      if (!r.ok) throw new DeployError(`The release store at ${base} answered ${r.status} for ${key}.`);
+      return new Uint8Array(await r.arrayBuffer());
+    },
+    put: async () => { throw new DeployError("An upstream's release store is read-only here."); },
+    delete: async () => { throw new DeployError("An upstream's release store is read-only here."); },
+  };
+}
+
+/**
+ * A release fetched from a store, in the builder's place (deploy/branches.ts
+ * asks its builder for a commit; an install asks the store for a version):
+ * every file checked against the manifest.
+ */
+export function storeBuilder(store: ReleaseStore): { build(o: { commit: string }, log: (line: string) => void, signal?: AbortSignal): Promise<Release> } {
+  return {
+    async build({ commit }, log, signal) {
+      log(`fetching release ${commit} from the release store`);
+      const release = await store.load(commit);
+      signal?.throwIfAborted();
+      if (!release) throw new DeployError(`The release store has no release ${commit}.`);
+      log(`release ${commit}: ${Object.keys(release.modules).length} modules, ${Object.keys(release.assets).length} files, ${Object.keys(release.migrations).length} migrations${release.control ? ", the control Worker" : ""}; every file matches its manifest`);
+      return release;
+    },
+  };
+}
+
 /** Blobs in memory: the tests, and local development (ERGA_DEPLOY_MOCK). */
 export function memoryBlobs(map = new Map<string, { bytes: Uint8Array; type: string }>()): ReleaseBlobs & { map: Map<string, { bytes: Uint8Array; type: string }> } {
   return {

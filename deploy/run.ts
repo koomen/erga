@@ -38,13 +38,13 @@ import { unpackRelease } from "./bundle";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, targetPagesShown, type Fetch, type Release, type Target } from "./pipeline";
 import { machineCredential } from "./local-credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock-cloudflare";
-import { isDeployName, specOf, type DeployName } from "./targets";
+import { isDeployName, specOf, type OwnDeployName } from "./targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: ROOT }).stdout.toString().trim();
 
 export interface MachineDeploy {
-  name: DeployName;
+  name: OwnDeployName;
   /** The commit to build (default HEAD). */
   commit?: string;
   /** Secrets to set with this upload (the first deploy's: deploy/setup.ts). */

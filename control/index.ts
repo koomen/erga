@@ -63,8 +63,8 @@ export default {
       platform,
       deploys: env.PIPELINE.getByName("deploys"),
       releases: releaseStoreOf(env as never),
-      // /deploy: installs, from the store; not on an install's control Worker, which has no store.
-      ...(upstream ? {} : { deploy: (request: Request) => deployDoor(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }) }),
+      // /deploy: installs, from the store; not on an install's control Worker, which has no store, and whose page shows its upgrades.
+      ...(upstream ? { install: { upstream, channel: env.CHANNEL?.trim() == "edge" ? "edge" : "stable", app: env.APP_URL.replace(/\/+$/, "") } } : { deploy: (request: Request) => deployDoor(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }) }),
       app: env.APP_URL.replace(/\/+$/, ""),
       layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
       version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,

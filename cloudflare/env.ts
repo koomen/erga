@@ -102,6 +102,8 @@ export interface Env {
   /** An install's control Worker only (deploy/install.ts): erga.dev's control Worker, whose store it upgrades from and whose OAuth callback relays its consent; and its one target, as JSON (InstallSpec). */
   UPSTREAM?: string;
   INSTALL?: string;
+  /** An install's control Worker only: the channel it follows (stable unless "edge"). */
+  CHANNEL?: string;
   CF_VERSION_METADATA?: { id?: string };
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
   ERGA_DEPLOY_MOCK?: string;

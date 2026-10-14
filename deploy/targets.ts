@@ -112,12 +112,14 @@ export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([nam
 export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
 
-/** Everything the pipeline deploys: the app's targets, and the control Worker itself (last: after production, on main). */
-export type DeployName = TargetName | "control";
+/** Everything a control Worker deploys: Erga's own targets and the control Worker itself (last: after production, on main); an install's app ("app") and its control Worker (deploy/fleet.ts). */
+export type DeployName = TargetName | "control" | "app";
+/** Erga's own deploys: what deploy/run.ts and the setup deploy from a machine. */
+export type OwnDeployName = TargetName | "control";
 export const deployNames: DeployName[] = [...targetNames, "control"];
-export const isDeployName = (s: string): s is DeployName => isTargetName(s) || s == "control";
+export const isDeployName = (s: string): s is OwnDeployName => isTargetName(s) || s == "control";
 /** What a deploy of `name` is: its branch, its Worker, its hostname, and (an app target) whose data it copies. */
-export const specOf = (name: DeployName): { name: DeployName; branch: "main" | "staging"; worker: string; host: string; snapshotFrom?: TargetName; control: boolean } =>
+export const specOf = (name: OwnDeployName): { name: DeployName; branch: "main" | "staging"; worker: string; host: string; snapshotFrom?: TargetName; control: boolean } =>
   name == "control" ? { name, branch: CONTROL.branch, worker: CONTROL.worker, host: CONTROL.host, control: true } : { ...TARGETS[name], control: false };
 
 /** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; server/identity/admins-only.ts). */

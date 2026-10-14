@@ -16,7 +16,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { ATTEMPTS, BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
+import { ATTEMPTS, BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, UPSTREAM_CHECK_MS, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
 import { CONTROL_OAUTH_SCOPES, exchangeCode, fixedCredential, OAuthCredential, pkce } from "../deploy/credential";
 import { fromBase64, unpackRelease } from "../deploy/bundle";
 import { artifactsNamespace, packRelease } from "../control/builder/build";
@@ -25,7 +25,9 @@ import { containerBuilder, ndjsonLines } from "../control/builder/client";
 import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../control/builder/cache";
 import { ALL_STEPS, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release, type Target } from "../deploy/pipeline";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock-cloudflare";
-import { memoryBlobs, ReleaseStore } from "../deploy/releases";
+import { memoryBlobs, ReleaseStore, storeBuilder } from "../deploy/releases";
+import { installFleet } from "../deploy/fleet";
+import { runInstall } from "../deploy/install";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
 import { TARGETS } from "../deploy/targets";
 
@@ -593,6 +595,68 @@ describe("branches deploy themselves", () => {
     expect(await server.status("production")).toMatchObject({ state: "failed" });
     expect((await store.channel("edge")).latest).toBe(SHA2.slice(0, 12));
     expect(await store.manifest(SHA3.slice(0, 12))).toBeNull();
+  });
+
+  test("an install upgrades itself from upstream's channel: the app, then its control Worker; an unhealthy release rolls back", async () => {
+    // The install, as /deploy makes it, in an account of its own; then its control Worker's deploys, as its Pipeline object runs them.
+    const mock = mockCloudflare();
+    const v1 = { ...release, version: "111111111111" }, v2 = { ...release, version: "222222222222" }, v3 = { ...release, version: "333333333333" };
+    const plan = { accountId: FLEET_ACCOUNT, workerName: "erga", subdomain: "ada-mock", app: { kind: "workers.dev" as const }, pages: { kind: "shared" as const }, admin: "Ada", githubClientId: "Iv1.mockgithubapp0", githubClientSecret: "mock-github-app-secret-0123456789abcdef0123" };
+    await runInstall(new Cloudflare("mock-token", mock.fetch), v1, plan, { sessionSecret: "s".repeat(40), controlSecret: "c".repeat(40), upstream: { origin: "https://ops.erga.test", clientId: "erga-client" }, site: mock.fetch, sleep: async () => {}, waitMs: 1000, report: () => {} });
+    const controlBindings = () => bindingsOf(mock.state, "erga-control");
+    const appBindings = () => bindingsOf(mock.state, "erga");
+    expect(appBindings().ERGA_VERSION.text).toBe("111111111111");
+    const secretsBefore = { ...mock.state.secrets["erga-control"] };
+    // Upstream's store: v1 and v2 published, v2 on stable.
+    const store = new ReleaseStore(memoryBlobs());
+    for (const r of [v1, v2, v3]) await store.publish(r, r.version.repeat(4).slice(0, 40));
+    await store.addTo("stable", "222222222222", "pete");
+    // The install's control Worker's settings, as the install left them (its fleet reads them).
+    const b = controlBindings();
+    const fleet = installFleet({ CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, UPSTREAM: b.UPSTREAM.text, INSTALL: b.INSTALL.text, ADMINS: b.ADMINS.text, APP_URL: b.APP_URL.text, GITHUB_CLIENT_ID: b.GITHUB_CLIENT_ID.text, CLOUDFLARE_OAUTH_CLIENT_ID: b.CLOUDFLARE_OAUTH_CLIENT_ID.text })!;
+    expect(fleet.names).toEqual(["app", "control"]);
+    const server = new Server(mock, storeBuilder(store) as never, "erga-control", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }, { fleet, upstream: { channel: () => store.channel("stable") } });
+    // The alarm: a look at upstream, the app's upgrade queued and run, then the control Worker's.
+    await server.instance.alarm();
+    await server.settle();
+    const status = await server.instance.status({ history: 5 });
+    expect(status.upstream).toMatchObject({ origin: "https://ops.erga.test", channel: "stable", latest: "222222222222", error: null });
+    expect(status.targets.map((t) => `${t.name}:${t.state}:${t.deployed}`)).toEqual(["app:deployed:222222222222", "control:deployed:222222222222"]);
+    expect(appBindings().ERGA_VERSION.text).toBe("222222222222");
+    expect(appBindings().CONTROL).toEqual({ type: "service", name: "CONTROL", service: "erga-control", entrypoint: "App" });
+    expect(appBindings().ADMINS.text).toBe("ada");
+    expect(controlBindings().ERGA_VERSION.text).toBe("222222222222");
+    expect(controlBindings().INSTALL.text).toBe(b.INSTALL.text);
+    expect(controlBindings().UPSTREAM.text).toBe("https://ops.erga.test");
+    expect(mock.state.scripts["erga-control"].metadata.exports).toEqual({ Pipeline: { type: "durable-object", storage: "sqlite" }, SourceHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" } });
+    expect(mock.state.secrets["erga-control"]).toEqual(secretsBefore);
+    const app = status.targets[0];
+    expect(app.steps.map((x) => `${x.id}:${x.status}`)).toEqual(["build:done", "account:done", "database:done", "migrations:done", "assets:done", "worker:done", "address:done", "pages:done", "live:done"]);
+    expect(app.steps[0].title).toBe("Fetch the release");
+    expect(app.history![0]).toMatchObject({ commit: "222222222222", state: "deployed", live: true, trigger: "upgrade: stable moved to 222222222222" });
+    expect(app.history![0].restore).toMatchObject({ version: "111111111111" });
+    expect(status.targets[1].history![0]).toMatchObject({ commit: "222222222222", state: "deployed", trigger: "upgrade: the app runs 222222222222" });
+    // The next alarm: nothing newer, nothing deployed; the alarm is kept for the next look.
+    const deploysBefore = mock.state.calls.filter((c) => c.startsWith("PUT") && c.includes("/workers/scripts/")).length;
+    server.scheduled = [];
+    await server.instance.alarm();
+    await server.settle();
+    expect(mock.state.calls.filter((c) => c.startsWith("PUT") && c.includes("/workers/scripts/")).length).toBe(deploysBefore);
+    expect(server.scheduled).toContain(UPSTREAM_CHECK_MS);
+    // v3 promoted, but unhealthy: the app rolls back to v2 by itself, the control Worker stays on v2.
+    mock.state.unhealthy = ["333333333333"];
+    await store.addTo("stable", "333333333333", "pete");
+    await server.instance.alarm();
+    await server.settle();
+    const after = await server.instance.status({ history: 5 });
+    expect(after.targets[0]).toMatchObject({ state: "failed", deployed: "222222222222" });
+    expect(after.targets[0].error).toContain("Rolled back to release 222222222222 by itself.");
+    expect(appBindings().ERGA_VERSION.text).toBe("222222222222");
+    expect(controlBindings().ERGA_VERSION.text).toBe("222222222222");
+    // Redeploy on an install: the channel's latest, again (still unhealthy: failed again, not stuck).
+    expect((await server.instance.redeploy("app", "redeploy by ada")).ok).toBe(true);
+    await server.settle();
+    expect((await server.instance.status()).targets[0]).toMatchObject({ state: "failed", deployed: "222222222222" });
   });
 
   test("the control Worker deploys itself from main, after production: its Worker only, secrets and containers kept, with a restore point", async () => {

@@ -40,6 +40,8 @@ export interface ControlEnv {
   /** An install's control Worker only: erga.dev's control Worker (the store, the consent relay), and its own target (deploy/install.ts InstallSpec). */
   UPSTREAM?: string;
   INSTALL?: string;
+  /** An install's control Worker only: the channel it follows (stable unless "edge"). */
+  CHANNEL?: string;
   /** This Worker's version id: the release cache's key. */
   CF_VERSION_METADATA?: { id?: string };
   /** The release this Worker is (the commit): set by its own deploy (deploy/control.ts), what /api/health answers; none after a wrangler deploy. */

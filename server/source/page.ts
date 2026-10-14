@@ -50,6 +50,8 @@ export interface SourcePageConfig {
   mirrorUrl: string;
   /** This server's Worker, for the GitHub mirror's setup steps; null when it isn't one of Erga's targets. */
   worker: string | null;
+  /** An install's control Worker (deploy/fleet.ts): no repository; the page shows its upgrades from upstream instead. */
+  install?: { upstream: string; channel: string; app: string };
   /** The page's shell: the admin layout (the app, in local development), or the control Worker's own (control/routes.ts). */
   layout?: (o: AdminLayout) => Response;
 }
@@ -183,6 +185,7 @@ const SOURCE_STYLE = `
 
 /** The source pane: the commits with their deploys, Merge, how to clone; or how to set it up. */
 function sourceMarkup(c: SourcePageConfig): string {
+  if (c.install) return installMarkup(c.install);
   if (!c.ready) {
     return `<div class="pane-head"><h2>git log</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. The steps:</p>
@@ -727,6 +730,92 @@ function mirrorDialog(c: SourcePageConfig): string {
 }
 
 /** /admin/source: the source and deploy dashboard (admins). */
+/** An install's page: what the app runs, what upstream's channel has, the last upgrades, Upgrade now and Roll back. */
+function installMarkup(i: NonNullable<SourcePageConfig["install"]>): string {
+  return `<div class="pane-head"><div class="head-title"><h2>Upgrades</h2></div></div>
+  <div class="box upgrades" id="upgrades">
+    <p>This Erga follows <b>${esc(i.channel)}</b> at <a href="${esc(i.upstream)}/releases/${esc(i.channel)}.json">${esc(i.upstream.replace(/^https?:\/\//, ""))}</a>: when a newer release is on it, the control Worker upgrades the app, checks its health, and rolls back by itself if the check fails. Then it upgrades itself.</p>
+    <dl class="facts">
+      <dt>The app</dt><dd><a href="${esc(i.app)}">${esc(i.app.replace(/^https?:\/\//, ""))}</a> runs <code id="up-running">…</code></dd>
+      <dt>${esc(i.channel)}'s latest</dt><dd><code id="up-latest">…</code> <span class="soft" id="up-checked"></span></dd>
+      <dt>Cloudflare</dt><dd id="up-credential">…</dd>
+    </dl>
+    <p class="error" id="up-error" hidden></p>
+    <div class="buttons"><button class="new" id="up-now" type="button">Upgrade now</button><button class="pill" id="up-rollback" type="button" hidden>Roll back</button><span class="soft" id="up-msg" role="status"></span></div>
+    <h3>Upgrades</h3>
+    <ul class="runs" id="up-runs"><li class="none">Loading…</li></ul>
+    <pre id="up-log" hidden></pre>
+  </div>`;
+}
+
+const INSTALL_STYLE = `
+  .upgrades .facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0; font-size: 14px; }
+  .upgrades .facts dt { color: var(--soft); } .upgrades .facts dd { margin: 0; color: var(--fg); }
+  .upgrades .soft { color: var(--soft); font-size: 12.5px; }
+  .upgrades .buttons { display: flex; align-items: center; gap: 8px; margin: 8px 0 18px; }
+  .upgrades h3 { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
+  .upgrades .runs { list-style: none; margin: 0; padding: 0; }
+  .upgrades .runs li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--rule); font-size: 13px; cursor: pointer; }
+  .upgrades .runs li:first-child { border-top: 0; }
+  .upgrades .runs li .st { font-weight: 600; } .upgrades .runs li .failed .st, .upgrades .runs li.failed .st { color: var(--bad); }
+  .upgrades .runs li .when { margin-left: auto; color: var(--soft); font-size: 12px; }
+  .upgrades .none { padding: 6px 0; font-size: 13px; color: var(--soft); }
+  .upgrades pre { margin: 10px 0 0; max-height: 320px; overflow: auto; font: 12px/1.45 var(--font-mono); padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; }
+  .upgrades .error { color: var(--bad); }
+`;
+
+const INSTALL_SCRIPT = `
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+  const when = (t) => (t ? new Date(t).toLocaleString() : "");
+  const running = (st) => st == "building" || st == "deploying";
+  let shown = null;
+  async function load() {
+    const r = await fetch("/api/deploys?history=10", { headers: { Accept: "application/json" } }).catch(() => null);
+    const body = r && r.ok ? await r.json().catch(() => null) : null;
+    if (!body) { $("up-error").hidden = false; $("up-error").textContent = "The deploys didn't answer."; return; }
+    const app = (body.targets || []).find((t) => t.name == "app") || {}, control = (body.targets || []).find((t) => t.name == "control") || {};
+    const up = body.upstream || {};
+    $("up-running").textContent = app.deployed || "unknown yet";
+    $("up-latest").textContent = up.latest || "none yet";
+    $("up-checked").textContent = up.checkedAt ? "checked " + when(up.checkedAt) : "not checked yet";
+    const cred = body.credential || {};
+    $("up-credential").innerHTML = cred.connected ? "connected" + (cred.by ? " by " + esc(cred.by) : "") : '<span class="error">not connected: <a href="/install">connect Cloudflare</a>, so upgrades can run</span>';
+    $("up-error").hidden = !(up.error || app.error);
+    $("up-error").textContent = up.error || app.error || "";
+    $("up-now").disabled = running(app.state) || running(control.state) || !cred.connected;
+    $("up-now").textContent = running(app.state) ? "Upgrading…" : running(control.state) ? "Upgrading the control Worker…" : "Upgrade now";
+    const live = (app.history || []).find((x) => x.live);
+    $("up-rollback").hidden = !(live && live.restore && live.restore.versionId && !running(app.state));
+    const runs = [...(app.history || []).map((x) => ({ ...x, who: "app" })), ...(control.history || []).map((x) => ({ ...x, who: "control" }))].sort((a, b) => b.started - a.started).slice(0, 10);
+    $("up-runs").innerHTML = runs.length ? runs.map((x) => '<li class="' + esc(x.state) + '" data-who="' + x.who + '" data-id="' + esc(x.id) + '"><span class="st">' + esc(x.live ? "live" : x.state) + '</span><span>' + esc(x.who) + " " + esc(x.commit.slice(0, 12)) + '</span><span class="soft">' + esc(x.trigger) + '</span><span class="when">' + when(x.started) + "</span></li>").join("") : '<li class="none">No upgrades yet.</li>';
+    if (shown) showLog(shown.who, shown.id);
+  }
+  async function showLog(who, id) {
+    shown = { who, id };
+    const r = await fetch("/api/deploys/" + who + "/log?deploy=" + encodeURIComponent(id), { headers: { Accept: "application/json" } }).catch(() => null);
+    const log = r && r.ok ? await r.json().catch(() => null) : null;
+    $("up-log").hidden = false;
+    $("up-log").textContent = log ? log.lines.map((l) => new Date(l.at).toISOString().slice(11, 19) + " " + l.text).join("\n") : "The log didn't load.";
+  }
+  $("up-runs").addEventListener("click", (e) => { const li = e.target.closest("li[data-id]"); if (li) showLog(li.dataset.who, li.dataset.id); });
+  async function act(path, button, doing) {
+    button.disabled = true; const was = button.textContent; button.textContent = doing; $("up-msg").textContent = "";
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) { $("up-msg").textContent = (body && body.error) || "That didn't work."; button.textContent = was; button.disabled = false; }
+    await load();
+  }
+  $("up-now").addEventListener("click", (e) => act("/api/deploys/app", e.currentTarget, "Starting…"));
+  $("up-rollback").addEventListener("click", (e) => { const b = e.currentTarget; if (b.dataset.armed != "1") { b.dataset.armed = "1"; b.textContent = "Click again to roll back"; setTimeout(() => { if (b.dataset.armed == "1") { b.dataset.armed = ""; b.textContent = "Roll back"; } }, 8000); return; } b.dataset.armed = ""; act("/api/deploys/app/rollback", b, "Rolling back…"); });
+  load();
+  const events = new EventSource("/api/events");
+  events.onmessage = (e) => { let ev; try { ev = JSON.parse(e.data); } catch { return; } if (ev.type == "deploys" || ev.type == "deploy-log") load(); };
+  setInterval(load, 15000);
+})();
+`;
+
 export function adminSourcePage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return (c.layout ?? adminResponse)({ session: c.session, title: "Source", here: "source", wide: true, style: PAGE_STYLE + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
@@ -734,5 +823,5 @@ export function adminSourcePage(c: SourcePageConfig): Response {
     <section class="pane" id="source-pane" aria-label="git log">${sourceMarkup(c)}</section>
   </div>
   ${c.ready ? mirrorDialog(c) : ""}
-${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}` });
+${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : c.install ? `<style>${INSTALL_STYLE}</style><script>${INSTALL_SCRIPT}</script>` : ""}` });
 }
