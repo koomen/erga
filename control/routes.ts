@@ -1,8 +1,10 @@
 // The control Worker's routes: Erga's repository, its deploys and the Source
 // page, apart from the app (control/index.ts serves them at ops.erga.dev).
-// In local development the app's own Worker serves the same routes
-// (cloudflare/index.ts), over the mock Cloudflare, so the Source page and
-// its tests run with `bun start`.
+// The app's Worker serves the Source page and its API too (cloudflare/index.ts,
+// isSourcePagePath): at erga.dev/admin/source, in the admin layout, on this
+// Worker's repository and deploys over its CONTROL binding. In local
+// development it serves all of these routes, over the mock Cloudflare, so the
+// Source page and its tests run with `bun start`.
 //
 //   /                           the Source page (the dashboard of source and deploys); /source, /admin/source and
 //                               /admin/factory too
@@ -49,8 +51,9 @@ export interface Control {
   releases?: ReleaseStore | null;
   /** The app's address (https://erga.dev): links, and where the stylesheet comes from. */
   app: string;
-  /** The Source page's shell. */
+  /** The Source page's shell, and its address: "/" here, /admin/source where the app serves it (the default "/"). */
   layout: (o: AdminLayout) => Response;
+  page?: string;
   /** This Worker's release (the commit its own deploy set, else its version id), and its version id, for /api/health. */
   version: string | null;
   build?: string | null;
@@ -58,11 +61,30 @@ export interface Control {
   oauth: { clientId: string; secret?: string; accountId: string; worker: string; net: Fetch; mock?: boolean };
 }
 
-/** The paths these routes own (the app answers them with a redirect to the control Worker when it is apart). */
+/**
+ * The Source page and its API: erga.dev and staging serve them in place, in the admin layout, on the control Worker's
+ * repository and deploys over the app's CONTROL binding. The control Worker serves them too, as the way in when the app is broken.
+ */
+export const isSourcePagePath = (path: string) =>
+  path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/api/releases" || path.startsWith("/api/releases/");
+
+/** The paths these routes own (the app answers the rest of them, all but isSourcePagePath, with a redirect to the control Worker when it is apart). */
 export const isControlPath = (path: string) =>
   path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
   || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install"
   || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/");
+
+/**
+ * How the app's Worker answers `path`: "here", itself (the Source page and its API where the control Worker is apart and
+ * bound, every control route in local development, where it hosts the pipeline); "there", a redirect to the control
+ * Worker (CONTROL_URL); "none", a server with no control Worker (one /deploy made); null, not a control route.
+ */
+export function appAnswer(path: string, has: { control: boolean; controlUrl: boolean; pipeline: boolean }): "here" | "there" | "none" | null {
+  if (!isControlPath(path) || path == "/") return null;
+  if (has.control && isSourcePagePath(path)) return "here";
+  if (has.controlUrl) return "there";
+  return has.pipeline ? "here" : "none";
+}
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
@@ -107,13 +129,15 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
     return json({ error: "Only an admin can do that." }, 403);
   }
 
+  const home = c.page ?? "/";
   if (path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory") {
-    if (path != "/" && !path.startsWith("/admin/source")) return new Response(null, { status: 302, headers: { Location: "/" } });
-    return adminSourcePage({ session, admin: true, ready: !!p.source, origin: url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout });
+    if (path != home && path != "/admin/source") return new Response(null, { status: 302, headers: { Location: home } });
+    // The Git address on the page is the control Worker's, wherever the page is.
+    return adminSourcePage({ session, admin: true, ready: !!p.source, origin: p.control?.url ?? url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout });
   }
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
-  if (path == "/api/releases" && read) return json((await c.deploys.releases()) ?? { error: "This server has no release store." }, c.releases ? 200 : 404);
+  if (path == "/api/releases" && read) { const r = await c.deploys.releases(); return r ? json(r) : json({ error: "This server has no release store." }, 404); }
   if ((path == "/api/releases/promote" || path == "/api/releases/withdraw") && method == "POST") {
     // From this site's pages, or an agent's token: never another site's form.
     if (!session.agent && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
@@ -125,7 +149,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
     return r.ok ? json(r) : json({ ok: false, error: r.error }, r.status ?? 400);
   }
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
-  return wantsPage ? page("Not found", `There's nothing here. <a href="/">The Source page</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
+  return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">The Source page</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
 }
 
 // ---------------------------------------------------------------- /install: the Cloudflare credential

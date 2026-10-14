@@ -39,6 +39,7 @@
 import { esc, page as plainPage } from "../pages/index.ts";
 import type { Session } from "../platform";
 import { adminResponse, type AdminLayout } from "../admin/index.ts";
+import { CONTROL, TARGETS } from "../../deploy/targets.ts";
 
 export interface SourcePageConfig {
   session: Session;
@@ -65,7 +66,7 @@ const SOURCE_STYLE = `
   .merge-row[hidden], #merge-hint:empty { display: none; }
   #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
-  @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
+  @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .head-actions { flex-wrap: wrap; margin-left: 0; } .merge-row { flex: 1 1 100%; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
   .card { padding: 0 0 10px; min-width: 0; background: var(--bg); }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 4px 6px; font-size: 12px; color: var(--soft); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -73,13 +74,14 @@ const SOURCE_STYLE = `
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; flex: none; }
   .dot.staging-only { background: var(--bg); border: 2px solid var(--only-staging); }
   .dot.on-main { background: var(--on-main); border: 2px solid var(--on-main); }
-  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 100px 132px 132px 132px; align-items: center; }
-  .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 44px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
+  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 80px 116px 116px 116px; align-items: center; }
+  .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 58px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
     font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
   .grid > .head.deploy { justify-content: flex-start; padding-left: 2px; }
   .target { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; max-width: 144px; border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
   .target:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   .target b { font-weight: 650; color: var(--fg-strong); font-size: 11.5px; }
+  .target .host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--font-mono); color: var(--soft); }
   .target .st { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; font-size: 11.5px; }
   .target .st i { width: 7px; height: 7px; border-radius: 50%; background: var(--chrome); }
   .target.deployed .st i { background: var(--on-main); }
@@ -136,7 +138,7 @@ const SOURCE_STYLE = `
   .gap .rail::before { content: ""; position: absolute; left: calc(50% - 1px); top: 0; bottom: 0; width: 0; height: auto; display: block; border-left: 2px dashed var(--only-staging); background: none; opacity: .5; }
   .gap .gap-text { grid-column: 2 / -1; padding: 0 6px; font: 12.5px var(--font-text); color: var(--soft); border-block: 1px dashed var(--rule); box-sizing: border-box; }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
-  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) 64px 64px 64px; } .who, .grid > .head.who-h, .sha, .grid > .head.sha-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 64px; padding: 2px 4px; } .target b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; } .target b { font-size: 10.5px; } .target .st span, .target .host { display: none; } .grid > .head { height: 44px; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
   .boxes { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
@@ -186,7 +188,7 @@ function sourceMarkup(c: SourcePageConfig): string {
   <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
   const remote = `${c.origin}/git/erga.git`;
-  const target = (name: string, label: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="st"><i></i><span>not set up</span></span></button></div>`;
+  const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="host">${host}</span><span class="st"><i></i><span>not set up</span></span></button></div>`;
   return `
   <div class="pane-head">
     <div class="head-title"><h2>git log</h2></div>
@@ -198,8 +200,8 @@ function sourceMarkup(c: SourcePageConfig): string {
     <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
       <div class="head"></div>
-      <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
-      ${target("staging", "staging")}${target("production", "production")}${target("control", "control")}
+      <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head sha-h"></div><div class="head time-h"></div>
+      ${target("staging", "staging", TARGETS.staging.host)}${target("production", "production", TARGETS.production.host)}${target("control", "control", CONTROL.host)}
       <div class="none" id="loading">Loading…</div>
     </div>
   </section>
@@ -323,7 +325,7 @@ const SOURCE_SCRIPT = `
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       // Only a row that changed is drawn again: a button with focus, or under the pointer, stays as it is.
       if (drawnRows.get(r) != html) { r.innerHTML = html; drawnRows.set(r, html); }
-      grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
+      grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-" + TARGETS[TARGETS.length - 1]).parentElement.nextSibling);
       prev = r;
       if (gapAfter) {
         const g = document.createElement("div");
@@ -560,7 +562,7 @@ const SOURCE_SCRIPT = `
       const list = (releases[name]?.releases ?? []).slice(0, 8);
       if (!list.length) { ul.innerHTML = '<li class="none">' + (name == "edge" ? "Nothing yet: production's next healthy deploy publishes its release." : "Nothing yet: promote a release from edge.") + "</li>"; continue; }
       ul.innerHTML = list.map((x, i) => {
-        const tip = "Release " + x.version + "\nBuilt " + new Date(x.built).toLocaleString() + "\nOn " + name + " since " + new Date(x.at).toLocaleString() + (x.by ? " (" + x.by + ")" : "");
+        const tip = "Release " + x.version + "\\nBuilt " + new Date(x.built).toLocaleString() + "\\nOn " + name + " since " + new Date(x.at).toLocaleString() + (x.by ? " (" + x.by + ")" : "");
         const act = name == "edge" && !onStable.has(x.version)
           ? '<button class="pill" type="button" data-promote="' + x.version + '" title="Puts this release on stable: installs that follow stable upgrade to it.">Promote</button>'
           : '<button class="pill" type="button" data-withdraw="' + name + '" data-version="' + x.version + '" title="Takes this release off ' + name + ': no install moves to it any more.">Withdraw</button>';

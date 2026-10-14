@@ -29,6 +29,13 @@ test("a push, its deploy and a merge show on the open Source page without a relo
   await page.setViewportSize({ width: 1200, height: 600 });
   await page.goto(`${server.root}/admin/source`);
   await expect.poll(() => text("#grid .row"), { timeout: 10_000 }).toContain("Older commit 30");
+  // Each cell in its column: the dot first, the subject under "Commit" (a row put before the last column's head shifts them all).
+  const place = await page.evaluate(() => {
+    const left = (el: Element | null) => Math.round(el!.getBoundingClientRect().left);
+    const row = document.querySelector("#grid .row")!;
+    return { grid: left(document.getElementById("grid")), commit: left(document.querySelectorAll("#grid > .head")[1]), rail: left(row.querySelector(".rail")), subj: left(row.querySelector(".subj")), subject: row.querySelector(".subj span")!.textContent };
+  });
+  expect(place).toEqual({ grid: place.grid, commit: place.commit, rail: place.grid, subj: place.commit, subject: "Older commit 30" });
   // A marker that a reload would lose, and a scroll that must stay.
   await page.evaluate(() => { (window as unknown as { kept: number }).kept = 1; });
   const scroller = await page.evaluate(() => { const s = document.scrollingElement!; s.scrollTop = 200; return s.scrollTop; });
