@@ -16,7 +16,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Actor, SourceRead } from "../server/source/index.ts";
 import { CONTROL } from "../deploy/targets";
-import { releaseStoreOf } from "../cloudflare/pipeline";
+import { releaseStoreOf } from "../cloudflare/releases";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
 

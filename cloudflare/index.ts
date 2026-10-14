@@ -2,7 +2,9 @@
 // Worker's bindings (platform.ts), hands every request to the app
 // (server/app.ts, the one route table), answers the few routes that run only
 // here, and exports the Durable Objects. The same Worker runs in local
-// development, under Vite.
+// development, under Vite, through dev-entry.ts, which adds the control
+// Worker's two objects (the repository and the deploys) that the app hosts
+// only there.
 //
 // The routes that are this Worker's own, at their place in the app's table:
 //
@@ -19,7 +21,7 @@ import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
 import { controlRoutes, isControlPath } from "../control/routes";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
-import { releaseStoreOf } from "./pipeline";
+import { releaseStoreOf } from "./releases";
 import { CONTROL } from "../deploy/targets";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { deployDoor } from "./deploy-routes";
@@ -32,8 +34,6 @@ export { Deployer } from "./deploy-session";
 export { DocumentObject } from "./document-object";
 export { AdminAgentHost } from "./objects/admin-agent";
 export { PersonAgent } from "./objects/person-agent";
-export { Pipeline } from "./pipeline";
-export { SourceHost } from "./objects/source";
 export { Home } from "./objects/home";
 export { OwnStorage } from "./objects/own";
 export { SiteHost } from "./objects/site";
