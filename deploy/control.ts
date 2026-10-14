@@ -19,7 +19,7 @@
 // the step after the upload), and a rollback of it restarts the object into
 // the older one (the deploy's record is written before the call).
 
-import { checkHealth, CONTROL_STEPS, DeployError, findDatabase, liveVersion, Unhealthy, workerVersion, type Carry, type Cloudflare, type Fetch, type Release, type Report, type RestorePoint, type StepId, type Target } from "./pipeline";
+import { checkHealth, CONTROL_STEPS, DeployError, findDatabase, liveVersion, targetHost, Unhealthy, workerVersion, WORKER_TAG, type Carry, type Cloudflare, type Fetch, type Release, type Report, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { CONTROL } from "./targets";
 
 /** The control Worker as a target of the pipeline: its own steps, secrets kept, in the account. */
@@ -79,7 +79,7 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const carry: Carry = opts.carry ?? {};
   const acc = `/accounts/${target.accountId}`;
-  const host = target.app.kind == "domain" ? target.app.hostname : CONTROL.host;
+  const host = targetHost(target);
   const steps: StepId[] = CONTROL_STEPS.map((s) => s.id);
   const start = opts.from ? steps.indexOf(opts.from) : 0;
   if (start < 0) throw new DeployError(`The control Worker's deploy has no step "${opts.from}".`);
@@ -96,17 +96,24 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
     // The Worker must be there (wrangler made it, with its container and namespaces), and what it runs now is the restore point.
     async account() {
       const rel = needRelease();
-      const settings = await cf.call<{ bindings?: { type: string; class_name?: string; script_name?: string }[] }>("GET", `${acc}/workers/scripts/${target.workerName}/settings`, `read ${target.workerName}'s settings`, undefined, { allow404: true });
-      if (!settings) throw new DeployError(`The control Worker (${target.workerName}) isn't in the account yet: bun deploy/setup.ts --control deploys it the first time (its container image needs Docker). Then it deploys itself.`);
-      const classes = new Set((settings.bindings ?? []).filter((b) => b.type == "durable_object_namespace" && !b.script_name).map((b) => b.class_name));
-      const missing = rel.control!.config.durableObjects.map((d) => d.className).filter((c) => !classes.has(c));
-      if (missing.length) throw new DeployError(`The control Worker has no Durable Object namespace for ${missing.join(", ")} yet: a new class needs bun deploy/setup.ts --control (wrangler makes the namespace); after that it deploys itself again.`);
+      const settings = await cf.call<{ tags?: string[]; bindings?: { type: string; class_name?: string; script_name?: string }[] }>("GET", `${acc}/workers/scripts/${target.workerName}/settings`, `read ${target.workerName}'s settings`, undefined, { allow404: true });
+      if (!settings) throw new DeployError(target.install ? `The control Worker (${target.workerName}) isn't in the account: install again from upstream.` : `The control Worker (${target.workerName}) isn't in the account yet: bun deploy/setup.ts --control deploys it the first time (its container image needs Docker). Then it deploys itself.`);
+      if (target.install) {
+        // An install's: made by the install (deploy/install.ts), its objects declared with each upload.
+        if (!settings.tags?.includes(WORKER_TAG)) throw new DeployError(`${target.workerName} isn't the control Worker the install made (it has no erga-deploy tag): stopped.`);
+      } else {
+        const classes = new Set((settings.bindings ?? []).filter((b) => b.type == "durable_object_namespace" && !b.script_name).map((b) => b.class_name));
+        const missing = rel.control!.config.durableObjects.map((d) => d.className).filter((c) => !classes.has(c));
+        if (missing.length) throw new DeployError(`The control Worker has no Durable Object namespace for ${missing.join(", ")} yet: a new class needs bun deploy/setup.ts --control (wrangler makes the namespace); after that it deploys itself again.`);
+      }
       carry.existing = true;
       // Its databases, by name (production's: who is an admin, the admin-scope tokens).
       const d1: Record<string, string> = {};
       for (const d of rel.control!.config.d1) {
-        const id = await findDatabase(cf, acc, d.databaseName);
-        if (!id) throw new DeployError(`The account has no D1 database called ${d.databaseName} (the control Worker's ${d.name} binding): it is production's, which deploy/setup.ts makes.`);
+        // Erga's own: production's database, by its name; an install's: the app's, by the install's name for it.
+        const name = target.install ? target.databaseName : d.databaseName;
+        const id = await findDatabase(cf, acc, name);
+        if (!id) throw new DeployError(`The account has no D1 database called ${name} (the control Worker's ${d.name} binding): ${target.install ? "the app's database is gone" : "it is production's, which deploy/setup.ts makes"}.`);
         d1[d.name] = id;
       }
       carry.d1 = d1;
@@ -124,7 +131,7 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
       const rel = needRelease();
       const form = new FormData();
       if (!carry.d1) throw new DeployError("The account step didn't run first (its databases aren't known): deploy again.");
-      form.set("metadata", JSON.stringify(controlMetadata(rel, target, carry.d1)));
+      form.set("metadata", JSON.stringify(target.install ? installControlMetadata(rel, { accountId: target.accountId, dbId: carry.d1.DB, vars: target.install.vars, secrets: target.secrets }) : controlMetadata(rel, target, carry.d1)));
       for (const [name, bytes] of Object.entries(rel.control!.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
       await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the control Worker", form);
       return `${target.workerName}, release ${rel.version}`;
@@ -161,3 +168,35 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
   }
   return { url: `https://${host}`, pages: "", database: "", worker: target.workerName };
 }
+
+/**
+ * The control Worker's upload metadata for an install (deploy/install.ts, and its upgrades,
+ * deploy/fleet.ts): the release's control part (control/wrangler.jsonc as the
+ * release has it), with only what an install has. Its Durable Objects are declared as exports (a new Worker has
+ * no namespaces; wrangler made erga.dev's), so a second install run matches
+ * them. No container, no Artifacts, no bucket.
+ */
+export function installControlMetadata(release: Release, o: { accountId: string; dbId: string; vars: Record<string, string>; secrets: Record<string, string> }) {
+  const c = release.control;
+  if (!c) throw new DeployError(`This release (${release.version}) has no control Worker in it: pick a newer one.`);
+  const cfg = c.config;
+  const bindings: Record<string, unknown>[] = [];
+  const classes = cfg.durableObjects.filter((d) => d.name != "BUILDS");
+  for (const d of classes) bindings.push({ type: "durable_object_namespace", name: d.name, class_name: d.className });
+  for (const d of cfg.d1) bindings.push({ type: "d1", name: d.name, database_id: o.dbId, id: o.dbId });
+  if (cfg.versionMetadata) bindings.push({ type: "version_metadata", name: cfg.versionMetadata });
+  for (const [name, value] of Object.entries({ ERGA_VERSION: release.version, ...o.vars })) bindings.push({ type: "plain_text", name, text: value });
+  for (const [name, value] of Object.entries(o.secrets)) bindings.push({ type: "secret_text", name, text: value });
+  return {
+    main_module: c.mainModule,
+    compatibility_date: cfg.compatibilityDate,
+    compatibility_flags: cfg.compatibilityFlags,
+    bindings,
+    keep_bindings: ["secret_text", "secret_key"],
+    exports: Object.fromEntries(classes.map((d) => [d.className, { type: "durable-object", storage: "sqlite" }])),
+    observability: { enabled: cfg.observability.enabled, logs: { enabled: cfg.observability.logs.enabled, invocation_logs: cfg.observability.logs.invocationLogs } },
+    tags: [WORKER_TAG],
+  };
+}
+
+

@@ -357,6 +357,8 @@ export interface Target {
   guard?: { worker: string; database: string; host: string; pages: string; accountId?: string };
   /** The control Worker itself (deploy/control.ts): its own steps, from the release's control part; no database, no pages. */
   control?: boolean;
+  /** An install's control Worker (deploy/fleet.ts): its objects declared, its settings sent again with each upgrade (deploy/install.ts). */
+  install?: { vars: Record<string, string> };
 }
 
 /**

@@ -57,6 +57,8 @@ export interface Control {
   releases?: ReleaseStore | null;
   /** The deploy page (/deploy: installs from the store), where this Worker offers it. */
   deploy?: (request: Request) => Promise<Response>;
+  /** An install's control Worker: its upstream and channel, for its Source page (the upgrades, in the git log's place). */
+  install?: { upstream: string; channel: string; app: string };
   /** The app's address (https://erga.dev): links, and where the stylesheet comes from. */
   app: string;
   /** The Source page's shell, and its address: "/" here, /admin/source where the app serves it (the default "/"). */
@@ -158,7 +160,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory") {
     if (path != home && path != "/admin/source") return new Response(null, { status: 302, headers: { Location: home } });
     // The Git address on the page is the control Worker's, wherever the page is.
-    return adminSourcePage({ session, admin: true, ready: !!p.source, origin: p.control?.url ?? url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout });
+    return adminSourcePage({ session, admin: true, ready: !!p.source && !c.install, origin: p.control?.url ?? url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout, ...(c.install ? { install: c.install } : {}) });
   }
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);

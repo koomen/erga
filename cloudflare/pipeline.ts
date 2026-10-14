@@ -20,7 +20,8 @@ import { DurableObject } from "cloudflare:workers";
 import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type TargetStatus } from "../deploy/branches";
 import { fixedCredential, OAuthCredential, sealKeyFrom, type CredentialStatus, type TokenAnswer } from "../deploy/credential";
 import { loadRelease, type Release } from "../deploy/pipeline";
-import { isChannel, type Channel, type ReleaseStore, type ReleasesView } from "../deploy/releases";
+import { httpBlobs, isChannel, ReleaseStore, storeBuilder, type Channel, type ReleasesView } from "../deploy/releases";
+import { installFleet } from "../deploy/fleet";
 import { releaseStoreOf } from "./releases";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import { containerBuilder } from "../control/builder/client";
@@ -77,14 +78,18 @@ export class Pipeline extends DurableObject<Env> {
       if (now == null || now > at) await ctx.storage.setAlarm(at);
     };
     this.store = releaseStoreOf(env);
+    // An install's control Worker (deploy/fleet.ts): its two targets, and upstream's store in the builder's place.
+    const installed = installFleet(env);
+    const upstream = installed?.upstream ? new ReleaseStore(httpBlobs(installed.upstream.origin, net)) : null;
     this.deploys = new BranchDeploys({
       storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v), delete: (k) => ctx.storage.delete(k) },
       env: deployEnv,
       credential: this.credential,
       net,
-      releases: this.store,
-      // The build container, in this Worker (the control Worker's BUILDS objects), or the mock.
-      builder: mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDS ? containerBuilder({ fetch: (input, init) => builderFetch(new Request(input, init), env as never, (p) => ctx.waitUntil(p)) }) : null,
+      releases: installed ? null : this.store,
+      ...(installed ? { fleet: installed, upstream: { channel: () => upstream!.channel(installed.upstream!.channel) } } : {}),
+      // The build container, in this Worker (the control Worker's BUILDS objects), or the mock; an install fetches releases instead.
+      builder: upstream ? storeBuilder(upstream) : mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDS ? containerBuilder({ fetch: (input, init) => builderFetch(new Request(input, init), env as never, (p) => ctx.waitUntil(p)) }) : null,
       schedule,
       changed: () => this.publish({ type: "deploys" }),
       logged: (event) => this.publish(event),
@@ -96,6 +101,8 @@ export class Pipeline extends DurableObject<Env> {
       },
       ...(mock ? { waitMs: 5000, sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50))) } : {}),
     });
+    // An install looks at upstream's channel now and then (deploy/branches.ts alarm): the first look soon after this object wakes.
+    if (installed) ctx.blockConcurrencyWhile(async () => { if ((await ctx.storage.getAlarm()) == null) await ctx.storage.setAlarm(Date.now() + 5000); });
   }
 
   status(history = 0): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[]; credential: CredentialStatus }> { return this.deploys.status({ history }); }
