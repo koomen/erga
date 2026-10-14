@@ -12,10 +12,10 @@
 //                                                 the store as it reads one from disk
 //
 // Channels: edge gets every release production deploys and finds healthy
-// (each commit of main). stable moves only when an admin promotes a release
-// (Promote on the Source page, or the admin agent's promote_release); other
-// installs follow stable. Withdraw takes a release off a channel (a bad one
-// found late): installs on it see that, and no one moves to it.
+// (each commit of main). stable is the newest release tag (vX.Y.Z on a
+// commit of main: server/source/repo.ts): when a tag is cut and its commit's
+// build is in the store, the deploys' object puts it on stable
+// (deploy/branches.ts, tagged). Other installs follow stable.
 //
 // A release's version is its commit (12 hex digits), as ERGA_VERSION names
 // it everywhere. The files are written first, the manifest last, and a
@@ -45,9 +45,11 @@ export interface ChannelEntry {
   version: string;
   commit: string;
   built: string;
-  /** When it went on this channel (ms since the epoch), and by whom (a promotion); edge's come from the deploy. */
+  /** When it went on this channel (ms since the epoch), and by whom (the release's tagger); edge's come from the deploy. */
   at: number;
   by?: string;
+  /** stable: the release tag (v1.2.0). */
+  tag?: string;
 }
 export interface ChannelFile { channel: Channel; latest: string | null; releases: ChannelEntry[] }
 
@@ -140,12 +142,12 @@ export class ReleaseStore {
     return manifest;
   }
 
-  /** Puts a published release at the head of a channel (edge after a healthy production deploy; stable when an admin promotes). */
-  async addTo(c: Channel, version: string, by?: string): Promise<ChannelFile> {
+  /** Puts a published release at the head of a channel (edge after a healthy production deploy; stable when a release tag is cut). */
+  async addTo(c: Channel, version: string, by?: string, tag?: string): Promise<ChannelFile> {
     const m = await this.manifest(version);
     if (!m) throw new DeployError(`There's no release ${version} in the store${VERSION.test(version) ? ": it was never published (a healthy production deploy publishes its release)" : ""}.`);
     const file = await this.channel(c);
-    const entry: ChannelEntry = { version, commit: m.commit, built: m.built, at: this.now(), ...(by ? { by } : {}) };
+    const entry: ChannelEntry = { version, commit: m.commit, built: m.built, at: this.now(), ...(by ? { by } : {}), ...(tag ? { tag } : {}) };
     file.releases = [entry, ...file.releases.filter((r) => r.version != version)].slice(0, CHANNEL_KEEP);
     file.latest = version;
     await this.blobs.put(channelKey(c), json(file), releaseType("x.json"));

@@ -11,6 +11,13 @@
 // one of staging's commits. So the two never diverge, and there are no merge
 // commits or conflicts between them.
 //
+// Releases are tags: an annotated tag vX.Y.Z (a semantic version) on a
+// commit of main. The tag is the release; the newest one is stable
+// (deploy/releases.ts). Cut release on the Source page (POST
+// /api/source/release) makes one here; `git push erga vX.Y.Z` does the same.
+// A release tag is never moved or deleted, each is newer than the last, and
+// nothing but release tags is taken.
+//
 // A push is staged before it lands: its objects go to Artifacts under a
 // quarantine branch, Erga reads the new
 // commits back and checks them, and only then moves the real branches, each
@@ -28,8 +35,8 @@
 // are smart HTTP remotes.
 
 import {
-  concat, emptyPack, FLUSH, isSha, isTreeMode, parseCommit, parseTree, pkt, readPack, readPkts, subjectOf, text,
-  toSideBand, utf8, ZERO, type Commit,
+  concat, emptyPack, FLUSH, hashObject, isSha, isTreeMode, parseCommit, parseTag, parseTree, pkt, readPack, readPkts, subjectOf, tagBytes, text,
+  toSideBand, utf8, writePack, ZERO, type Commit, type GitObject,
 } from "./git.ts";
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
 import { BrowseError, cleanPath, list, read, search, snapshotOf, view, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
@@ -39,6 +46,19 @@ export const BRANCHES = ["staging", "main"] as const;
 export type Branch = (typeof BRANCHES)[number];
 const REF = (b: Branch) => `refs/heads/${b}`;
 const QUARANTINE = "refs/heads/erga-incoming/";
+const TAGS = "refs/tags/";
+/** A release tag: a semantic version, v first. */
+export const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+export const isReleaseTag = (name: string) => RELEASE_TAG.test(name);
+/** Semantic version order (newest last): vX.Y.Z by its numbers. */
+export function compareVersions(a: string, b: string): number {
+  const x = RELEASE_TAG.exec(a), y = RELEASE_TAG.exec(b);
+  if (!x || !y) return a < b ? -1 : a > b ? 1 : 0;
+  for (let i = 1; i <= 3; i++) if (Number(x[i]) != Number(y[i])) return Number(x[i]) - Number(y[i]);
+  return 0;
+}
+/** The version after `latest` (its patch number up), or the first. */
+export const nextVersion = (latest: string | null) => { const m = latest ? RELEASE_TAG.exec(latest) : null; return m ? `v${m[1]}.${m[2]}.${Number(m[3]) + 1}` : "v0.1.0"; };
 /** How many commits each branch shows. */
 export const LOG = 100;
 /** At most how many commits a task's card holds. */
@@ -74,6 +94,10 @@ export interface CommitInfo {
   /** One of a task's commits: the sha of the task's merge. */
   inTask?: string;
 }
+/** A release: its tag, the commit it marks, who cut it and when, its message. */
+export interface TagInfo { name: string; sha: string; commit: string; tagger: string; at: number; message: string }
+/** A release cut: the tag, its commit, who did it. */
+export interface Released { tag: string; commit: string; sha: string; by: string; via?: string | null; at: number; message: string }
 export interface BranchInfo {
   name: Branch; commit: string | null; commits: CommitInfo[];
   /** Commits on it that main doesn't have (staging only). */
@@ -102,6 +126,8 @@ export interface RepoDeps {
   github(): Remote | null;
   /** A branch moved (after a push or a merge). */
   moved(move: Move): void;
+  /** A release cut: a tag made here, or pushed. */
+  released?(release: Released): void;
   /** Something the Source page shows changed (a branch, the mirror's status). */
   changed(): void;
   /** Work that outlives the request (the mirror). */
@@ -127,6 +153,8 @@ export class SourceRepo {
     db.exec("CREATE TABLE IF NOT EXISTS commits (sha TEXT PRIMARY KEY, tree TEXT NOT NULL, parents TEXT NOT NULL, author TEXT NOT NULL, email TEXT NOT NULL, at INTEGER NOT NULL, committed INTEGER NOT NULL, subject TEXT NOT NULL)");
     db.exec("CREATE TABLE IF NOT EXISTS moves (id INTEGER PRIMARY KEY AUTOINCREMENT, branch TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL, how TEXT NOT NULL, by TEXT NOT NULL, at INTEGER NOT NULL)");
     db.exec("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    // Release tags, as Artifacts has them: the tag object (or the commit, for a plain tag), the commit, who, when, the message.
+    db.exec("CREATE TABLE IF NOT EXISTS tags (name TEXT PRIMARY KEY, sha TEXT NOT NULL, commit_sha TEXT NOT NULL, tagger TEXT NOT NULL, at INTEGER NOT NULL, message TEXT NOT NULL)");
     // #69: how the mover did it, when not in person.
     if (!db.exec<{ name: string }>("PRAGMA table_info(moves)").some((c) => c.name == "via")) db.exec("ALTER TABLE moves ADD COLUMN via TEXT");
   }
@@ -252,14 +280,16 @@ export class SourceRepo {
   // ---- What the Source page shows ---------------------------------------------
 
   /** Each branch's head and its latest commits, which of them main has, and the mirror's status. */
-  async branches(): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; moves: Move[] }> {
+  async branches(): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; moves: Move[]; tags: TagInfo[]; release: string | null }> {
     const remote = await this.deps.artifacts();
-    const { refs } = await lsRefs(remote);
+    const [{ refs }, { refs: tagRefs }] = await Promise.all([lsRefs(remote), lsRefs(remote, TAGS)]);
     const heads = Object.fromEntries(BRANCHES.map((b) => [b, refs.get(REF(b)) ?? null])) as Record<Branch, string | null>;
     await this.locked(async () => {
       await this.sync(remote, BRANCHES.map((b) => heads[b]).filter((s): s is string => !!s));
       this.setState("tips", Object.fromEntries(BRANCHES.filter((b) => heads[b]).map((b) => [b, heads[b]])));
+      await this.syncTags(remote, tagRefs);
     });
+    const tags = this.tags();
     const onMain = heads.main ? this.ancestors(heads.main) : new Set<string>();
     const branches = BRANCHES.map((name): BranchInfo => {
       const tip = heads[name];
@@ -275,7 +305,83 @@ export class SourceRepo {
       }
       return info;
     });
-    return { branches, mirror: this.mirrorStatus(), moves: this.moves(10) };
+    return { branches, mirror: this.mirrorStatus(), moves: this.moves(10), tags, release: tags[0]?.name ?? null };
+  }
+
+  // ---- Releases (tags) ------------------------------------------------------------
+
+  /** The release tags, newest version first. */
+  tags(): TagInfo[] {
+    return this.deps.db.exec<{ name: string; sha: string; commit_sha: string; tagger: string; at: number; message: string }>("SELECT name, sha, commit_sha, tagger, at, message FROM tags")
+      .map((r) => ({ name: r.name, sha: r.sha, commit: r.commit_sha, tagger: r.tagger, at: r.at, message: r.message }))
+      .sort((a, b) => compareVersions(b.name, a.name));
+  }
+
+  /** Indexes the release tags Artifacts has that the index doesn't: each tag object (or plain tag's commit) fetched and read. */
+  private async syncTags(remote: Remote, tagRefs: Map<string, string>) {
+    const known = new Set(this.deps.db.exec<{ name: string }>("SELECT name FROM tags").map((r) => r.name));
+    const missing = [...tagRefs].filter(([ref]) => isReleaseTag(ref.slice(TAGS.length)) && !known.has(ref.slice(TAGS.length)));
+    if (!missing.length) return;
+    const objects = await readPack(await fetchPack(remote, { wants: missing.map(([, sha]) => sha), haves: this.heads().filter((s) => this.known(s)), filter: "blob:none" }), (t) => t == "tag" || t == "commit");
+    for (const [sha, o] of objects) if (o.type == "commit") this.index(sha, parseCommit(o.data));
+    for (const [ref, sha] of missing) {
+      const name = ref.slice(TAGS.length), o = objects.get(sha);
+      if (o?.type == "tag") {
+        const t = parseTag(o.data);
+        this.deps.db.exec("INSERT OR IGNORE INTO tags (name, sha, commit_sha, tagger, at, message) VALUES (?, ?, ?, ?, ?, ?)", name, sha, t.object, t.tagger.name, t.tagger.time * 1000, t.message.trim());
+      } else if (this.known(sha)) {
+        const [c] = this.rows([sha]);
+        this.deps.db.exec("INSERT OR IGNORE INTO tags (name, sha, commit_sha, tagger, at, message) VALUES (?, ?, ?, ?, ?, ?)", name, sha, sha, c?.author ?? "", c?.committed ?? 0, "");
+      }
+    }
+  }
+
+  /**
+   * Cuts a release: an annotated tag `version` (the next one, if not given) on
+   * main's head (or `commit`, one of main's commits), by `who`. Each release
+   * is newer than the last. Returns the tag.
+   */
+  async release(who: Actor, o: { version?: string; notes?: string; commit?: string } = {}): Promise<Released> {
+    if (o.commit != null && !isSha(o.commit)) throw new SourceError("Name the commit by its full id (40 hex digits).");
+    return this.locked(async () => {
+      const remote = await this.deps.artifacts();
+      const [{ refs }, { refs: tagRefs }] = await Promise.all([lsRefs(remote), lsRefs(remote, TAGS)]);
+      const main = refs.get(REF("main"));
+      if (!main) throw new SourceError("main has no commits yet: nothing to release.", 409);
+      await this.sync(remote, [main]);
+      await this.syncTags(remote, tagRefs);
+      const tags = this.tags();
+      const version = (o.version ?? "").trim() || nextVersion(tags[0]?.name ?? null);
+      const wrong = this.checkVersion(version, tags[0]?.name ?? null, tagRefs);
+      if (wrong) throw new SourceError(wrong, 409);
+      const commit = o.commit ?? main;
+      if (!this.known(commit) || !this.isAncestor(commit, main)) throw new SourceError(`${commit.slice(0, 7)} isn't one of main's commits: a release is cut from main.`, 409);
+      const message = (o.notes ?? "").trim() || `Release ${version}`;
+      const time = Math.floor(this.now() / 1000);
+      const object: GitObject = { type: "tag", data: tagBytes({ object: commit, type: "commit", tag: version, tagger: { name: who.name || who.login, email: `${who.login}@users.noreply.github.com`, time, tz: "+0000" }, message }) };
+      const sha = await hashObject(object);
+      const r = await receivePack(remote, [{ ref: `${TAGS}${version}`, old: ZERO, new: sha }], await writePack([object]));
+      const said = r.unpack != "ok" ? r.unpack : r.refs.get(`${TAGS}${version}`) ?? "no answer";
+      if (said != "ok") throw new SourceError(`Artifacts refused the tag: ${said}`, 409);
+      const released: Released = { tag: version, commit, sha, by: who.login, via: who.via ?? null, at: this.now(), message };
+      this.recordRelease(released, who.name || who.login);
+      return released;
+    });
+  }
+
+  /** Why `version` can't be the next release, or null: the shape, and newer than the newest. */
+  private checkVersion(version: string, latest: string | null, tagRefs: Map<string, string>): string | null {
+    if (!isReleaseTag(version)) return `A release is a version tag like v1.2.3 (numbers only, v first): "${version}" isn't one.`;
+    if (tagRefs.has(`${TAGS}${version}`)) return `${version} is already a release.`;
+    if (latest && compareVersions(version, latest) <= 0) return `${version} isn't newer than the newest release, ${latest}: the next is ${nextVersion(latest)} or more.`;
+    return null;
+  }
+
+  private recordRelease(r: Released, tagger: string) {
+    this.deps.db.exec("INSERT OR REPLACE INTO tags (name, sha, commit_sha, tagger, at, message) VALUES (?, ?, ?, ?, ?, ?)", r.tag, r.sha, r.commit, tagger, r.at, r.message);
+    this.deps.released?.(r);
+    this.deps.changed();
+    this.deps.background(this.mirror(byLine(r.by, r.via)).catch(() => {}));
   }
 
   /**
@@ -334,16 +440,18 @@ export class SourceRepo {
   async advertise(): Promise<Uint8Array> {
     const remote = await this.deps.artifacts();
     const { refs } = await lsRefs(remote);
+    const { refs: tagRefs } = await lsRefs(remote, TAGS);
     const caps = "report-status side-band-64k quiet ofs-delta delete-refs agent=erga";
     const names = BRANCHES.map(REF);
-    const lines = names.filter((r) => refs.has(r)).map((r) => `${refs.get(r)} ${r}`);
+    const lines = [...names.filter((r) => refs.has(r)).map((r) => `${refs.get(r)} ${r}`), ...[...tagRefs].map(([r, sha]) => `${sha} ${r}`)];
     if (!lines.length) lines.push(`${ZERO} capabilities^{}`);
     return concat([pkt("# service=git-receive-pack\n"), FLUSH, ...lines.map((l, i) => pkt(`${l}${i == 0 ? `\0${caps}` : ""}\n`)), FLUSH]);
   }
 
   /**
    * A `git push`: the receive-pack request's body in, the report out (in side-band if the client asked).
-   * An admin pushes staging and main: only staging and main are Erga's branches.
+   * An admin pushes staging and main: only staging and main are Erga's branches. And release tags (vX.Y.Z, new, newer
+   * than the newest, on a commit of main after this push's own moves): each is a release cut.
    */
   async receive(body: Uint8Array, who: Actor): Promise<Uint8Array> {
     const { pkts, end } = readPkts(body, 0, (p) => p.kind == "flush");
@@ -364,11 +472,19 @@ export class SourceRepo {
     const { unpack, statuses } = await this.locked(async () => {
       const remote = await this.deps.artifacts();
       const { refs } = await lsRefs(remote);
+      const { refs: tagRefs } = await lsRefs(remote, TAGS);
       const statuses = new Map<string, string>();
       const accepted: (RefUpdate & { branch: Branch })[] = [];
+      const tagging: RefUpdate[] = [];
       for (const c of commands) {
         const branch = BRANCHES.find((b) => REF(b) == c.ref);
-        if (!branch) statuses.set(c.ref, "Erga has two branches, staging and main: push to one of those");
+        if (c.ref.startsWith(TAGS)) {
+          const name = c.ref.slice(TAGS.length);
+          if (!isReleaseTag(name)) statuses.set(c.ref, "Erga takes release tags only: a version like v1.2.3 (numbers only, v first)");
+          else if (c.new == ZERO || tagRefs.has(c.ref)) statuses.set(c.ref, "a release tag is never moved or deleted");
+          else tagging.push(c);
+        }
+        else if (!branch) statuses.set(c.ref, "Erga has two branches, staging and main: push to one of those");
         else if (c.new == ZERO) statuses.set(c.ref, `${branch} can't be deleted`);
         else if ((refs.get(c.ref) ?? ZERO) != c.old) statuses.set(c.ref, "stale info: it moved since you fetched; fetch first");
         else accepted.push({ ...c, branch });
@@ -406,6 +522,33 @@ export class SourceRepo {
         }
       } else if (leftovers.length) {
         await receivePack(remote, leftovers, null).catch(() => {});
+      }
+      // Release tags, after the branches moved: each must mark a commit of main (as it is now), be a new version, and
+      // come as an annotated tag in the pack or point straight at the commit.
+      if (tagging.length && unpack == "ok") {
+        const main = accepted.find((c) => c.branch == "main" && statuses.get(c.ref) == "ok")?.new ?? refs.get(REF("main")) ?? ZERO;
+        const objects = pack.length ? await readPack(pack, (t) => t == "tag") : new Map<string, GitObject>();
+        await this.syncTags(remote, tagRefs);
+        let latest = this.tags()[0]?.name ?? null;
+        const seen = new Map(tagRefs);
+        for (const c of tagging.sort((a, b) => compareVersions(a.ref, b.ref))) {
+          const name = c.ref.slice(TAGS.length);
+          const object = objects.get(c.new);
+          const tag = object ? parseTag(object.data) : null;
+          const commit = tag ? tag.object : c.new;
+          const wrong = this.checkVersion(name, latest, seen) ?? (tag && tag.type != "commit" ? "a release tag marks a commit" : null)
+            ?? (main == ZERO || !this.known(commit) || !this.isAncestor(commit, main) ? `${commit.slice(0, 7)} isn't one of main's commits: a release is cut from main (merge first)` : null);
+          if (wrong) { statuses.set(c.ref, wrong); continue; }
+          const r = await receivePack(remote, [{ ref: c.ref, old: ZERO, new: c.new }], await writePack(object ? [object] : []));
+          const said = r.unpack != "ok" ? r.unpack : r.refs.get(c.ref) ?? "no answer";
+          statuses.set(c.ref, said);
+          if (said != "ok") continue;
+          latest = name;
+          seen.set(c.ref, c.new);
+          const message = tag?.message.trim() || `Release ${name}`;
+          this.recordRelease({ tag: name, commit, sha: c.new, by: who.login, via: who.via ?? null, at: this.now(), message }, tag?.tagger.name || who.name || who.login);
+          messages.push(`Erga: release ${name} cut at ${commit.slice(0, 7)}.`);
+        }
       }
       return { unpack, statuses };
     });
@@ -514,9 +657,11 @@ export class SourceRepo {
     const by = this.mirrorBy;
     try {
       const remote = await this.deps.artifacts();
-      const [{ refs }, advert] = await Promise.all([lsRefs(remote), receiveAdvert(gh)]);
+      const [{ refs }, { refs: tagRefs }, advert] = await Promise.all([lsRefs(remote), lsRefs(remote, TAGS), receiveAdvert(gh)]);
       await this.locked(() => this.sync(remote, BRANCHES.map((b) => refs.get(REF(b)) ?? ZERO)));
       const updates: RefUpdate[] = [], problems: string[] = [];
+      // Release tags GitHub doesn't have yet (never moved there either).
+      for (const [ref, sha] of tagRefs) if (isReleaseTag(ref.slice(TAGS.length)) && !advert.refs.has(ref)) updates.push({ ref, old: ZERO, new: sha });
       for (const b of BRANCHES) {
         const ours = refs.get(REF(b)), theirs = advert.refs.get(REF(b)) ?? ZERO;
         if (!ours || ours == theirs) continue;

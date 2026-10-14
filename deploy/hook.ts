@@ -31,6 +31,11 @@ export async function deployHook(branch: string, commit: string, env?: Env, trig
   await (await deploysOf(env)).hook(branch, commit, trigger);
 }
 
+/** A release was cut (a tag vX.Y.Z on main): the deploys' object puts it on stable once its release is in the store. */
+export async function releaseHook(tag: string, commit: string, by: string, env?: Env): Promise<void> {
+  await (await deploysOf(env)).tagged({ tag, commit, by, at: Date.now() });
+}
+
 /** An event to every admin listening on /api/events ({type: "source"} when a branch moves, for one). */
 export async function publishEvent(event: { type: string } & Record<string, unknown>, env?: Env): Promise<void> {
   await (await deploysOf(env)).publish(event);

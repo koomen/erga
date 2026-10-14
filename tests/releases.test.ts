@@ -1,7 +1,7 @@
 // The release store (deploy/releases.ts): a release published, its files and
 // manifest; the channels (edge after a healthy production deploy, stable when
-// promoted, withdrawn); a release read back and checked; and the control
-// Worker's routes: the store for anyone, Promote and Withdraw for admins.
+// a tag put on it, withdrawn); a release read back and checked; and the control
+// Worker's routes: the store for anyone, the channels for admins.
 import { describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
 import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor, sha256 } from "../deploy/releases";
@@ -136,47 +136,23 @@ describe("the routes", () => {
     expect((await releasesDoor(null, "/releases"))!.status).toBe(404);
   });
 
-  test("Promote and Withdraw on the control Worker: admins, from its own pages or with a token; the store for anyone", async () => {
+  test("the channels on the control Worker: admins read /api/releases; the store is for anyone; a tag rides on stable", async () => {
     const { store: s } = store();
     await s.publish(release(V1), C1);
     await s.addTo("edge", V1);
+    await s.addTo("stable", V1, "ada", "v0.1.0");
+    expect((await s.channel("stable")).releases[0]).toMatchObject({ version: V1, by: "ada", tag: "v0.1.0" });
     const ORIGIN = "https://ops.erga.test";
-    const calls: string[] = [];
     let who: Session | null = { login: "ada", name: "Ada" } as unknown as Session;
     const platform = { sessionOf: async () => who, directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } } } as unknown as Platform;
-    const deploys = {
-      releases: () => s.view(),
-      promoteRelease: async (version: string, by: string) => { calls.push(`promote ${version} by ${by}`); try { return { ok: true as const, stable: await s.addTo("stable", version, by) }; } catch (e) { return { ok: false as const, error: (e as Error).message, status: 409 }; } },
-      withdrawRelease: async (channel: string, version: string, by: string) => { calls.push(`withdraw ${channel} ${version} by ${by}`); try { return { ok: true as const, channel: await s.withdraw(channel as "stable", version) }; } catch (e) { return { ok: false as const, error: (e as Error).message, status: 409 }; } },
-    } as never;
-    const c: Control = { platform, deploys, releases: s, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body), oauth: { clientId: "", accountId: "", worker: "erga-control", net: fetch } };
-    const go = (path: string, init: RequestInit & { origin?: string | null } = {}) => controlRoutes(new Request(`${ORIGIN}${path}`, { ...init, headers: { accept: "application/json", ...(init.origin === null ? {} : { origin: init.origin ?? ORIGIN }), ...(init.headers ?? {}) } }), c);
-    const post = (path: string, body: unknown, origin?: string | null) => go(path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" }, origin });
-
-    // Anyone: the store.
+    const c: Control = { platform, deploys: { releases: () => s.view() } as never, releases: s, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body), oauth: { clientId: "", accountId: "", worker: "erga-control", net: fetch } };
+    const go = (path: string) => controlRoutes(new Request(`${ORIGIN}${path}`, { headers: { accept: "application/json" } }), c);
     who = null;
-    expect((await go("/releases/edge.json")).status).toBe(200);
+    expect((await go("/releases/stable.json")).status).toBe(200);
     expect((await go("/api/releases")).status).toBe(401);
-    expect((await post("/api/releases/promote", { version: V1 })).status).toBe(401);
-    // An admin: both channels, Promote, Withdraw.
     who = { login: "ada", name: "Ada" } as unknown as Session;
-    expect(((await (await go("/api/releases")).json()) as { stable: { latest: string | null } }).stable.latest).toBeNull();
-    const promoted = await post("/api/releases/promote", { version: V1 });
-    expect(promoted.status).toBe(200);
-    expect(((await promoted.json()) as { stable: { latest: string } }).stable.latest).toBe(V1);
-    expect(calls).toEqual([`promote ${V1} by ada`]);
-    expect((await post("/api/releases/promote", { version: "zzz" })).status).toBe(400);
-    expect((await post("/api/releases/promote", { version: V2 })).status).toBe(409);
-    // Another site's form: refused; an agent's token needs no origin.
-    expect((await post("/api/releases/withdraw", { channel: "stable", version: V1 }, "https://evil.test")).status).toBe(403);
-    who = { login: "ada", name: "Ada", agent: { id: "t1", scope: "admin", label: "Test" } } as unknown as Session;
-    const withdrawn = await post("/api/releases/withdraw", { channel: "stable", version: V1 }, null);
-    expect(withdrawn.status).toBe(200);
-    expect(((await withdrawn.json()) as { channel: { latest: string | null } }).channel.latest).toBeNull();
-    expect((await post("/api/releases/withdraw", { channel: "beta", version: V1 }, null)).status).toBe(409);
-    // A store this server doesn't have.
-    const none: Control = { ...c, releases: null, deploys: { ...deploys, releases: async () => null } as never };
+    expect(((await (await go("/api/releases")).json()) as { stable: { latest: string | null; releases: { tag?: string }[] } }).stable).toMatchObject({ latest: V1, releases: [{ tag: "v0.1.0" }] });
+    const none: Control = { ...c, releases: null, deploys: { releases: async () => null } as never };
     expect((await controlRoutes(new Request(`${ORIGIN}/api/releases`, { headers: { accept: "application/json" } }), none)).status).toBe(404);
-    expect((await controlRoutes(new Request(`${ORIGIN}/releases/edge.json`), none)).status).toBe(404);
   });
 });

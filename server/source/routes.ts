@@ -10,6 +10,9 @@
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins). Production deploys it.
+//   POST /api/source/release    { version?, notes?, commit? }: cuts a release: an annotated tag (the next version unless
+//                               given) on main's head (or that commit of main), with the notes as its message (admins):
+//                               { tag, commit } or 4xx { error }. `git push erga vX.Y.Z` does the same.
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
 //   /admin/source               the Source page (admins): the history of staging and main, and their deploys
 //   /source, /admin/factory     redirect to /admin/source
@@ -30,12 +33,12 @@ import type { SourceAnswer, SourceRead } from "./browse.ts";
 import { gitHttp } from "./http.ts";
 import { adminSourcePage } from "./page.ts";
 import type { Remote } from "./remote.ts";
-import type { Actor, BranchInfo, MirrorStatus } from "./repo.ts";
+import type { Actor, BranchInfo, MirrorStatus, Released, TagInfo } from "./repo.ts";
 
 /** The repository's object (one, "erga"): pushes and merges happen there one at a time. Calls name the address the request came to (`origin`). */
 export interface SourceObject {
   advertise(origin: string): Promise<Uint8Array>;
-  branches(origin: string): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus }>;
+  branches(origin: string): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; tags?: TagInfo[]; release?: string | null }>;
   /** `by`: who asked. */
   mirrorNow(origin: string, by?: string): Promise<MirrorStatus>;
   files(origin: string, commit: string): Promise<{ path: string; mode: string; data: Uint8Array }[]>;
@@ -43,6 +46,8 @@ export interface SourceObject {
   read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }>;
   /** A merge: { commit } or { error, status }. */
   merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }>;
+  /** A release cut (a tag): the release, or { error, status }. */
+  release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }): Promise<Released | { error: string; status: number }>;
   /** A push (git-receive-pack's body, with x-erga-actor and x-erga-origin): the report git reads. */
   fetch(request: Request): Promise<Response>;
 }
@@ -136,6 +141,12 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
       const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string };
       if ((body.from ?? "staging") != "staging" || (body.to ?? "main") != "main") return json({ error: "main only follows staging: merge from staging to main." }, 400);
       const r = await source.object.merge(url.origin, who.actor, body.commit);
+      return "error" in r ? json({ error: r.error }, r.status) : json(r);
+    }
+    if (url.pathname == "/api/source/release" && request.method == "POST") {
+      const body = (await request.json().catch(() => ({}))) as { version?: unknown; notes?: unknown; commit?: unknown };
+      const o = { ...(typeof body.version == "string" ? { version: body.version } : {}), ...(typeof body.notes == "string" ? { notes: body.notes.slice(0, 4000) } : {}), ...(typeof body.commit == "string" ? { commit: body.commit } : {}) };
+      const r = await source.object.release(url.origin, who.actor, o);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
     if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await source.object.mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });

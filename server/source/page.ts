@@ -24,11 +24,13 @@
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Above the log, how to clone and
 // push, and the GitHub mirror's status (beside Merge; a click opens a dialog:
-// the mirror's state and Push now, or how to turn it on). Then the Releases
-// box (GET /api/releases): edge, every release production deployed and found
-// healthy, and stable, what other installs follow; Promote puts an edge
-// release on stable (two clicks: the first arms it), Withdraw takes a release
-// off a channel. It follows the system's light or dark.
+// the mirror's state and Push now, or how to turn it on). Releases are tags:
+// a tagged commit's row carries its version, "stable" on the newest release
+// tag, and "edge" on the newest commit of main the store has (GET
+// /api/releases). Cut release (beside Merge) cuts the next one: a dialog with
+// the version (the next patch version, which the admin may change) and short
+// notes, the tag's message (POST /api/source/release). It follows the
+// system's light or dark.
 //
 // It updates by itself, with no reload: /api/events says what changed (a push
 // or a merge, the mirror, each step of a deploy, a redeploy, its log lines),
@@ -158,19 +160,17 @@ const SOURCE_STYLE = `
   .box.clone { margin: 0 0 14px; padding: 10px 14px; }
   .box.clone pre { margin: 4px 0 6px; padding: 8px 12px; }
   .box.clone p { margin: 0; font-size: 12.5px; }
-  .releases .chans { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
-  @media (max-width: 760px) { .releases .chans { grid-template-columns: 1fr; } }
-  .releases h3 { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
-  .releases ul { list-style: none; margin: 0; padding: 0; }
-  .releases li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--rule); font-size: 13px; color: var(--fg); min-height: 32px; }
-  .releases li:first-child { border-top: 0; }
-  .releases li code { color: var(--fg-strong); }
-  .releases li .when { color: var(--soft); font-size: 12px; }
-  .releases li .tag { font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px; }
-  .releases li .pill { margin-left: auto; height: 26px; font-size: 12px; padding: 0 9px; }
-  .releases .none { padding: 6px 0; font-size: 13px; color: var(--soft); }
-  .releases .msg { margin: 6px 0 0; font-size: 13px; }
-  .releases .msg.error { color: var(--bad); }
+  .rel { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font: 600 11.5px/1.5 var(--font-text); color: var(--fg-strong); border: 1px solid var(--rule); background: color-mix(in srgb, var(--chrome) 8%, transparent); vertical-align: 1px; white-space: nowrap; }
+  .rel .chan { font-weight: 500; color: var(--soft); }
+  .rel .chan.stable { color: #1f9d55; }
+  .rel.edge-only { color: var(--soft); font-weight: 500; }
+  #release-dlg label { display: block; margin: 0 0 12px; font-size: 13px; color: var(--soft); }
+  #release-dlg input, #release-dlg textarea { display: block; width: 100%; margin-top: 4px; box-sizing: border-box; font: 14px var(--font-text); padding: 7px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg); }
+  #release-dlg input { font-family: var(--font-mono); }
+  #release-dlg textarea { min-height: 84px; resize: vertical; }
+  #release-dlg .buttons { display: flex; align-items: center; gap: 8px; }
+  #release-dlg .buttons span { flex: 1; font-size: 13px; color: var(--soft); }
+  #release-dlg .buttons .error { color: var(--bad); }
   dialog#deploy-log { width: min(820px, calc(100vw - 32px)); padding: 0; }
   #deploy-log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
   #deploy-log h2 { margin: 0; font-size: 15px; }
@@ -199,7 +199,7 @@ function sourceMarkup(c: SourcePageConfig): string {
   return `
   <div class="pane-head">
     <div class="head-title"><h2>git log</h2></div>
-    <div class="head-actions"><button class="pill" id="mirror-pill" type="button" hidden>GitHub</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
+    <div class="head-actions"><button class="pill" id="mirror-pill" type="button" hidden>GitHub</button><button class="pill" id="release-pill" type="button" hidden title="Cut a release: a version tag on main's head. The newest release tag is stable, what other installs follow.">Cut release</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <p class="hint" id="credential-hint" role="status" hidden></p>
@@ -219,14 +219,13 @@ git push erga HEAD:staging</code></pre>
       <div class="none" id="loading">Loading…</div>
     </div>
   </section>
-  <section class="boxes">
-    <div class="box releases" id="releases">
-      <h2>Releases <a class="pill" href="/releases/stable.json" title="The store, for anyone: /releases/edge.json, /releases/stable.json, /releases/&lt;version&gt;/…">/releases</a></h2>
-      <p>Each release production deploys and finds healthy goes on <b>edge</b>. <b>stable</b> is what other installs of Erga follow: it moves only when an admin promotes a release.</p>
-      <div class="chans"><div><h3>edge</h3><ul id="rel-edge"><li class="none">Loading…</li></ul></div><div><h3>stable</h3><ul id="rel-stable"><li class="none">Loading…</li></ul></div></div>
-      <p class="msg" id="rel-msg" role="status"></p>
-    </div>
-  </section>
+  <dialog id="release-dlg" aria-labelledby="release-title">
+    <h2 id="release-title">Cut a release</h2>
+    <p>A release is a version tag on main's head: <code id="release-head"></code>. The newest release tag is <b>stable</b>, what other installs of Erga follow; they upgrade to it once its build is in the store. <code>git push erga vX.Y.Z</code> does the same.</p>
+    <label>Version<input id="release-version" autocomplete="off" spellcheck="false"></label>
+    <label>Notes (the tag's message; optional)<textarea id="release-notes" placeholder="What this release brings, in a few lines"></textarea></label>
+    <div class="buttons"><span id="release-status" role="status" aria-live="polite"></span><button type="button" id="release-cancel">Cancel</button><button type="button" class="primary" id="release-go">Cut release</button></div>
+  </dialog>
   <dialog id="deploy-log" aria-labelledby="log-title">
     <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill rollback" type="button" id="log-rollback" hidden>Roll back</button><button class="pill close" type="button" id="log-close">Close</button></div>
     <pre id="log-lines"></pre>
@@ -297,6 +296,17 @@ const SOURCE_SCRIPT = `
     return "";
   }
 
+  /** A commit's release marks: its version tag (stable on the newest), and edge on the newest commit of main the store has. */
+  function marks(sha) {
+    const tags = (view.tags || []).filter((t) => t.commit == sha);
+    const out = [];
+    for (const t of tags) {
+      const stable = t.name == view.release;
+      out.push('<span class="rel" title="' + esc("Release " + t.name + (t.tagger ? " · " + t.tagger : "") + (t.at ? " · " + new Date(t.at).toLocaleString() : "") + (t.message && t.message != "Release " + t.name ? "\\n" + t.message : "") + (stable ? "\\nstable: what other installs follow" : "")) + '">' + esc(t.name) + (stable ? '<span class="chan stable">stable</span>' : "") + "</span>");
+    }
+    if (channels && channels.edge && channels.edge.latest && sha.startsWith(channels.edge.latest) && !tags.length) out.push('<span class="rel edge-only" title="edge: the newest commit of main in the release store">edge</span>');
+    return out.join("");
+  }
   function render() {
     if (!view) return;
     const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");
@@ -328,7 +338,7 @@ const SOURCE_SCRIPT = `
       const tail = '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>";
       const html =
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
-        '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit: production deploys it">Merge to here</button>') + "</span>" + tail +
+        '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + marks(x.sha) + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit: production deploys it">Merge to here</button>') + "</span>" + tail +
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       // Only a row that changed is drawn again: a button with focus, or under the pointer, stays as it is.
       if (drawnRows.get(r) != html) { r.innerHTML = html; drawnRows.set(r, html); }
@@ -350,6 +360,9 @@ const SOURCE_SCRIPT = `
     document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
     if (!busy) mergeBtn.disabled = !ahead;
     mergeBtn.title = "Moves main to staging's head: production deploys it.";
+    // Cut release: when main has a commit.
+    const rp = document.getElementById("release-pill");
+    if (rp) { rp.hidden = !main?.commit; rp.textContent = view.release ? "Cut release (" + view.release + " is stable)" : "Cut release"; }
     // The GitHub mirror, beside Merge. Its title has the URL and any error; a click opens its dialog.
     const m = view.mirror, mp = document.getElementById("mirror-pill");
     if (mp) {
@@ -550,54 +563,42 @@ const SOURCE_SCRIPT = `
     await load();
   });
 
-  // The Releases box: both channels, newest first; Promote on an edge release not yet on stable, Withdraw on any.
-  let releases = null;
+  // The store's channels, for the marks on the log: edge's latest, and stable.
+  let channels = null;
   async function loadReleases() {
     const r = await fetch("/api/releases", { headers: { Accept: "application/json" } }).catch(() => null);
-    const body = r ? await r.json().catch(() => null) : null;
+    const body = r && r.ok ? await r.json().catch(() => null) : null;
     if (pageView.signal.aborted) return;
-    releases = r && r.ok ? body : { error: body?.error || "The release store didn't answer." };
-    renderReleases();
+    channels = body && !body.error ? body : null;
+    render();
   }
-  function renderReleases() {
-    const box = document.getElementById("releases");
-    if (!box || !releases) return;
-    const chans = { edge: document.getElementById("rel-edge"), stable: document.getElementById("rel-stable") };
-    if (releases.error) { for (const ul of Object.values(chans)) ul.innerHTML = '<li class="none">' + esc(releases.error) + "</li>"; return; }
-    const onStable = new Set((releases.stable?.releases ?? []).map((x) => x.version));
-    for (const [name, ul] of Object.entries(chans)) {
-      const list = (releases[name]?.releases ?? []).slice(0, 8);
-      if (!list.length) { ul.innerHTML = '<li class="none">' + (name == "edge" ? "Nothing yet: production's next healthy deploy publishes its release." : "Nothing yet: promote a release from edge.") + "</li>"; continue; }
-      ul.innerHTML = list.map((x, i) => {
-        const tip = "Release " + x.version + "\\nBuilt " + new Date(x.built).toLocaleString() + "\\nOn " + name + " since " + new Date(x.at).toLocaleString() + (x.by ? " (" + x.by + ")" : "");
-        const act = name == "edge" && !onStable.has(x.version)
-          ? '<button class="pill" type="button" data-promote="' + x.version + '" title="Puts this release on stable: installs that follow stable upgrade to it.">Promote</button>'
-          : '<button class="pill" type="button" data-withdraw="' + name + '" data-version="' + x.version + '" title="Takes this release off ' + name + ': no install moves to it any more.">Withdraw</button>';
-        return '<li title="' + esc(tip) + '"><code>' + esc(x.version) + "</code>" + (i == 0 ? '<span class="tag">latest</span>' : "") + (name == "edge" && onStable.has(x.version) ? '<span class="tag">stable</span>' : "") + '<span class="when">' + ago(x.at) + "</span>" + act + "</li>";
-      }).join("");
-    }
-  }
-  document.getElementById("releases")?.addEventListener("click", async (e) => {
-    const b = e.target.closest("button[data-promote], button[data-withdraw]");
-    if (!b) return;
-    const msg = document.getElementById("rel-msg");
-    const promote = !!b.dataset.promote;
-    const version = b.dataset.promote || b.dataset.version;
-    // Two clicks: the first arms it.
-    if (b.dataset.armed != "1") {
-      b.dataset.armed = "1"; b.textContent = promote ? "Click again to promote " + version.slice(0, 7) : "Click again to withdraw";
-      setTimeout(() => { if (b.dataset.armed == "1") { b.dataset.armed = ""; b.textContent = promote ? "Promote" : "Withdraw"; } }, 8000);
-      return;
-    }
-    b.disabled = true; b.textContent = promote ? "Promoting…" : "Withdrawing…";
-    msg.className = "msg"; msg.textContent = "";
+  // Cut release: the next version suggested, the notes as the tag's message.
+  const relDlg = document.getElementById("release-dlg");
+  function nextVersion(latest) { const m = latest && /^v(\\d+)\\.(\\d+)\\.(\\d+)$/.exec(latest); return m ? "v" + m[1] + "." + m[2] + "." + (Number(m[3]) + 1) : "v0.1.0"; }
+  document.getElementById("release-pill")?.addEventListener("click", () => {
+    const main = view?.branches.find((b) => b.name == "main");
+    document.getElementById("release-head").textContent = main?.commit ? main.commit.slice(0, 10) + " · " + (main.commits[0]?.subject ?? "") : "";
+    document.getElementById("release-version").value = nextVersion(view?.release);
+    document.getElementById("release-notes").value = "";
+    document.getElementById("release-status").textContent = view?.release ? "The newest release is " + view.release + "." : "The first release.";
+    document.getElementById("release-status").className = "";
+    document.getElementById("release-go").disabled = false;
+    if (!relDlg.open) relDlg.showModal();
+  });
+  document.getElementById("release-cancel").addEventListener("click", () => relDlg.close());
+  document.getElementById("release-go").addEventListener("click", async (e) => {
+    const status = document.getElementById("release-status");
+    const version = document.getElementById("release-version").value.trim(), notes = document.getElementById("release-notes").value.trim();
+    if (!/^v\\d+\\.\\d+\\.\\d+$/.test(version)) { status.className = "error"; status.textContent = "A version looks like v1.2.3."; return; }
+    e.currentTarget.disabled = true; status.className = ""; status.textContent = "Cutting " + version + "…";
     try {
-      const r = await fetch(promote ? "/api/releases/promote" : "/api/releases/withdraw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(promote ? { version } : { channel: b.dataset.withdraw, version }) });
+      const r = await fetch("/api/source/release", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version, ...(notes ? { notes } : {}) }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
-      msg.textContent = promote ? "Release " + version + " is on stable." : "Release " + version + " is off " + b.dataset.withdraw + ".";
-    } catch (err) { msg.className = "msg error"; msg.textContent = err.message; }
-    await loadReleases();
+      status.textContent = "Release " + body.tag + " cut at " + body.commit.slice(0, 10) + ". It goes on stable once its build is in the store.";
+      await load(); loadReleases();
+      setTimeout(() => relDlg.close(), 1500);
+    } catch (err) { status.className = "error"; status.textContent = err.message; e.currentTarget.disabled = false; }
   });
 
   // Live: an event says what changed; a reconnect reloads everything. A stream the server answers with an error
@@ -629,7 +630,7 @@ const SOURCE_SCRIPT = `
     if (asking || Date.now() - heard < 2500) return;
     if (!deploys || deploys.targets?.some((t) => running(t.state) || t.history?.some((r) => running(r.state)))) loadDeploys();
   }, 2000);
-  setInterval(() => { render(); renderTargets(); renderReleases(); }, 30000);
+  setInterval(() => { render(); renderTargets(); }, 30000);
 })();
 `;
 

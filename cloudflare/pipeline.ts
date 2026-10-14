@@ -17,10 +17,10 @@
 // "production", both in the mock.
 
 import { DurableObject } from "cloudflare:workers";
-import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type TargetStatus } from "../deploy/branches";
+import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type ReleaseTag, type TargetStatus } from "../deploy/branches";
 import { fixedCredential, OAuthCredential, sealKeyFrom, type CredentialStatus, type TokenAnswer } from "../deploy/credential";
 import { loadRelease, type Release } from "../deploy/pipeline";
-import { httpBlobs, isChannel, ReleaseStore, storeBuilder, type Channel, type ReleasesView } from "../deploy/releases";
+import { httpBlobs, ReleaseStore, storeBuilder, type ReleasesView } from "../deploy/releases";
 import { installFleet } from "../deploy/fleet";
 import { releaseStoreOf } from "./releases";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
@@ -87,6 +87,7 @@ export class Pipeline extends DurableObject<Env> {
       credential: this.credential,
       net,
       releases: installed ? null : this.store,
+      releasesChanged: () => this.publish({ type: "releases" }),
       ...(installed ? { fleet: installed, upstream: { channel: () => upstream!.channel(installed.upstream!.channel) } } : {}),
       // The build container, in this Worker (the control Worker's BUILDS objects), or the mock; an install fetches releases instead.
       builder: upstream ? storeBuilder(upstream) : mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDS ? containerBuilder({ fetch: (input, init) => builderFetch(new Request(input, init), env as never, (p) => ctx.waitUntil(p)) }) : null,
@@ -135,26 +136,9 @@ export class Pipeline extends DurableObject<Env> {
   /** Whether `origin` (https://ops.example.com) is an install's control Worker made from here. */
   async isInstall(origin: string): Promise<boolean> { return (await this.installs()).some((x) => x.control == origin); }
 
-  // ---- the release store (deploy/releases.ts): both channels; a release promoted to stable, or taken off a channel.
+  // ---- the release store (deploy/releases.ts): both channels; a release tag cut (stable follows the newest).
   async releases(): Promise<ReleasesView | null> { return this.store ? this.store.view() : null; }
-  async promoteRelease(version: string, by: string): Promise<{ ok: true; stable: ReleasesView["stable"] } | { ok: false; error: string; status?: number }> {
-    if (!this.store) return { ok: false, error: "This server has no release store.", status: 404 };
-    try {
-      const stable = await this.store.addTo("stable", version, by);
-      this.publish({ type: "releases" });
-      return { ok: true, stable };
-    } catch (e) { return { ok: false, error: (e as Error).message, status: 409 }; }
-  }
-  async withdrawRelease(channel: string, version: string, by: string): Promise<{ ok: true; channel: ReleasesView["stable"] } | { ok: false; error: string; status?: number }> {
-    if (!this.store) return { ok: false, error: "This server has no release store.", status: 404 };
-    if (!isChannel(channel)) return { ok: false, error: `No channel called ${channel}: edge or stable.`, status: 404 };
-    try {
-      const file = await this.store.withdraw(channel as Channel, version);
-      console.log(`release ${version} withdrawn from ${channel} by ${by}`);
-      this.publish({ type: "releases" });
-      return { ok: true, channel: file };
-    } catch (e) { return { ok: false, error: (e as Error).message, status: 409 }; }
-  }
+  async tagged(t: ReleaseTag): Promise<void> { await this.deploys.tagged(t); }
 
   /** An event to everyone listening on /api/events. */
   publish(event: RelayEvent): void {
