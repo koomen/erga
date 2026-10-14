@@ -799,7 +799,15 @@ export class BranchDeploys {
     const rec = list.find((r) => r.id == run.deployId);
     if (rec) { rec.error = s.status.error; await this.putRecords(name, list); }
     try {
-      await rollbackTo(await this.cf(), this.targetFor(name), restore.versionId, `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`);
+      // Cloudflare's side can fail for a moment (a 500 from its token endpoint refreshing the credential, 2026-10-14): three tries.
+      for (let attempt = 1; ; attempt++) {
+        try { await rollbackTo(await this.cf(), this.targetFor(name), restore.versionId, `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`); break; } catch (e) {
+          const status = e instanceof DeployError ? e.status : undefined;
+          if (attempt >= 3 || (status && status >= 400 && status < 500)) throw e;
+          this.line(s, `the rollback didn't go through (${(e as Error).message}): trying again`, "rollback");
+          await (this.deps.sleep ?? ((ms: number) => new Promise<void>((ok) => setTimeout(ok, ms))))(5000);
+        }
+      }
     } catch (e) {
       const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
       console.log(`the rollback of ${name} failed: ${message}`);

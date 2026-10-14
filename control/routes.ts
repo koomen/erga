@@ -114,6 +114,9 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/auth/github/callback") return finishSignIn(p, request);
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/api/health" && read) {
+    // ?self=1: the pipeline's own check of this Worker after its self-deploy (deploy/control.ts): the version only, no call
+    // into the deploys' object, which is the one running that check.
+    if (url.searchParams.get("self") == "1") return json({ ok: true, worker: "control", version: c.version, build: c.build ?? null, checks: {} });
     const started = Date.now();
     try { await c.deploys.status(0); } catch (e) { return json({ ok: false, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: false, ms: Date.now() - started, error: (e as Error).message } } }, 503); }
     return json({ ok: true, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: true, ms: Date.now() - started } } });
