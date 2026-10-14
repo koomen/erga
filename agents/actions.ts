@@ -78,6 +78,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Source)", tool: "list_branches" },
   { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Source)", tool: "deploy_production" },
   { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Source)", tool: "sync_mirror" },
+  { route: "POST /api/source/release", domain: "admin", action: "Cut a release: a version tag on main's head (Source)", tool: "cut_release" },
   { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Source)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Source)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Source)", tool: "deploy_log" },
@@ -85,10 +86,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
   { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Source)", tool: "rollback" },
   // The release store (control/routes.ts, deploy/releases.ts): the channels edge and stable.
-  { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public, and the Source page's Releases box)", tool: "list_releases" },
+  { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Source page marks them on the log)", tool: "list_releases" },
   { route: "GET /api/releases", domain: "admin", action: "Read both channels (Source)", tool: "list_releases" },
-  { route: "POST /api/releases/promote", domain: "admin", action: "Promote a release to stable (Source)", tool: "promote_release" },
-  { route: "POST /api/releases/withdraw", domain: "admin", action: "Withdraw a release from a channel (Source)", tool: "withdraw_release" },
   // The control Worker's Cloudflare credential (control/routes.ts, /install on ops.erga.dev): a consent in the browser.
   { route: "GET /api/install", domain: "admin", action: "Read whether the control Worker's Cloudflare credential is connected (GET /api/deploys says it too)", tool: "list_deploys" },
   { route: "POST /install/start", domain: "none", action: "Connect Cloudflare: consent on Cloudflare's own page, in the browser (/install)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },

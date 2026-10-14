@@ -572,7 +572,7 @@ describe("branches deploy themselves", () => {
     const blobs = memoryBlobs();
     const store = new ReleaseStore(blobs);
     const events: string[] = [];
-    const server = new Server(mock, builder, "erga-control", env(), { releases: store, logged: (e) => { if (e.type == "releases") events.push("releases"); } });
+    const server = new Server(mock, builder, "erga-control", env(), { releases: store, logged: (e) => { if (e.type == "releases") events.push("releases"); }, releasesChanged: () => events.push("releases") });
     expect(await store.view()).toMatchObject({ edge: { latest: null }, stable: { latest: null } });
     await server.instance.hook("main", SHA2, "merge by ada");
     await server.settle();
@@ -588,12 +588,24 @@ describe("branches deploy themselves", () => {
     expect(log.lines.map((l) => l.text)).toContain(`published release ${SHA2.slice(0, 12)} to the store (${Object.keys(m.files).length} files), on edge`);
     // Read back whole from the store: what a downstream installs.
     expect((await store.load(SHA2.slice(0, 12)))!.modules["index.js"]).toEqual(release.modules["index.js"]);
+    // A release tag on that commit: stable, with the tag. One on a commit not built yet waits for its deploy.
+    await server.instance.tagged({ tag: "v0.1.0", commit: SHA2, by: "ada", at: Date.now() });
+    expect(await store.channel("stable")).toMatchObject({ latest: SHA2.slice(0, 12), releases: [{ version: SHA2.slice(0, 12), tag: "v0.1.0", by: "ada" }] });
+    expect(events).toEqual(["releases", "releases"]);
+    await server.instance.tagged({ tag: "v0.2.0", commit: SHA1, by: "ada", at: Date.now() });
+    expect((await store.channel("stable")).latest).toBe(SHA2.slice(0, 12));
+    await server.instance.hook("main", SHA1, "merge by ada");
+    await server.settle();
+    expect(await store.channel("stable")).toMatchObject({ latest: SHA1.slice(0, 12), releases: [{ tag: "v0.2.0" }, { tag: "v0.1.0" }] });
+    // An older tag cut later (a hotfix on the old line) doesn't move stable back.
+    await server.instance.tagged({ tag: "v0.1.1", commit: SHA2, by: "bo", at: Date.now() });
+    expect((await store.channel("stable")).latest).toBe(SHA1.slice(0, 12));
     // An unhealthy production deploy: rolled back, and nothing published.
     mock.state.unhealthy = [SHA3.slice(0, 12)];
     await server.instance.hook("main", SHA3, "merge by ada");
     await server.settle();
     expect(await server.status("production")).toMatchObject({ state: "failed" });
-    expect((await store.channel("edge")).latest).toBe(SHA2.slice(0, 12));
+    expect((await store.channel("edge")).latest).toBe(SHA1.slice(0, 12));
     expect(await store.manifest(SHA3.slice(0, 12))).toBeNull();
   });
 

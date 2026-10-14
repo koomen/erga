@@ -52,6 +52,7 @@ import { controlTarget } from "./control";
 import type { Credential, CredentialStatus } from "./credential";
 import type { ChannelFile, ReleaseStore } from "./releases";
 import type { Fleet } from "./fleet";
+import { compareVersions } from "../server/source/index.ts";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
@@ -146,6 +147,8 @@ export interface Deps {
   fleet?: Fleet;
   /** An install: upstream's channel, read for a newer release (checkUpstream). */
   upstream?: { channel(): Promise<ChannelFile> };
+  /** Something about the store's channels changed ({type: "releases"} on /api/events). */
+  releasesChanged?(): void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
@@ -378,6 +381,33 @@ export class BranchDeploys {
     }
     const upstream = this.fleet.upstream ? (await this.deps.storage.get<UpstreamStatus>("upstream")) ?? { origin: this.fleet.upstream.origin, channel: this.fleet.upstream.channel, latest: null, checkedAt: null, error: null } : undefined;
     return { targets, credential: await this.deps.credential.status(), ...(upstream ? { upstream } : {}) };
+  }
+
+  /**
+   * A release was cut (a tag vX.Y.Z on a commit of main: server/source/repo.ts). stable is the newest tag whose build is
+   * in the store: put there now, or when production's deploy of that commit publishes it (`published`).
+   */
+  async tagged(t: ReleaseTag): Promise<void> {
+    const tags = ((await this.deps.storage.get<ReleaseTag[]>("tags")) ?? []).filter((x) => x.tag != t.tag);
+    tags.push(t);
+    await this.deps.storage.put("tags", tags);
+    await this.refreshStable();
+  }
+
+  /** stable: the highest release tag whose release is in the store. */
+  private async refreshStable(): Promise<void> {
+    const store = this.deps.releases;
+    if (!store) return;
+    const tags = ((await this.deps.storage.get<ReleaseTag[]>("tags")) ?? []).sort((a, b) => compareVersions(b.tag, a.tag));
+    for (const t of tags) {
+      const version = t.commit.slice(0, 12);
+      if (!(await store.manifest(version))) continue;
+      const stable = await store.channel("stable");
+      if (stable.latest == version && stable.releases[0]?.tag == t.tag) return;
+      await store.addTo("stable", version, t.by, t.tag);
+      this.deps.releasesChanged?.();
+      return;
+    }
   }
 
   /**
@@ -736,6 +766,8 @@ export class BranchDeploys {
           await this.deps.releases.addTo("edge", release.version);
           note = `published release ${release.version} to the store (${Object.keys(m.files).length} files), on edge`;
           this.deps.logged?.({ type: "releases" });
+          // A release tag waiting for this build: stable follows.
+          await this.refreshStable().catch((e) => console.log(`stable wasn't refreshed: ${(e as Error).message}`));
         } catch (e) { note = `not published to the release store: ${(e as Error).message}`; }
       }
       await this.appendTo(s.status.name, run.deployId, note);
@@ -873,6 +905,9 @@ const ERGA: Fleet = {
   specOf: (name) => (name == "control" ? { name, branch: CONTROL.branch, worker: CONTROL.worker, host: CONTROL.host, control: true } : { ...TARGETS[name as keyof typeof TARGETS], control: false }),
   targetFor: (name, env, fresh) => targetFor(name, env, fresh),
 };
+
+/** A release tag, as the repository reports it (deploy/hook.ts releaseHook): the tag, its commit (40 hex), who cut it. */
+export interface ReleaseTag { tag: string; commit: string; by: string; at: number }
 
 /** An install's view of upstream (GET /api/deploys, `upstream`): the channel it follows, its latest, when it last looked. */
 export interface UpstreamStatus { origin: string; channel: string; latest: string | null; checkedAt: number | null; error: string | null }

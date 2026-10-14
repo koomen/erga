@@ -39,10 +39,8 @@ export interface DeploysObject extends DashboardDeploys {
   disconnectCredential(): Promise<void>;
   /** Whether `origin` is the control Worker of an install made from here (cloudflare/pipeline.ts: the consent relay asks). */
   isInstall(origin: string): Promise<boolean>;
-  /** The release store (deploy/releases.ts): both channels (null: no store); a release promoted to stable; one taken off a channel. */
+  /** The release store (deploy/releases.ts): both channels (null: no store). */
   releases(): Promise<ReleasesView | null>;
-  promoteRelease(version: string, by: string): Promise<{ ok: true; stable: ReleasesView["stable"] } | { ok: false; error: string; status?: number }>;
-  withdrawRelease(channel: string, version: string, by: string): Promise<{ ok: true; channel: ReleasesView["stable"] } | { ok: false; error: string; status?: number }>;
   /** GET /api/events: the stream. */
   fetch(request: Request): Promise<Response>;
 }

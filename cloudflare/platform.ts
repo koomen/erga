@@ -60,6 +60,7 @@ function controlSource(control: Service<App>): SourceService {
       files: (origin, commit) => control.files(origin, commit),
       read: (origin, q) => control.read(origin, q),
       merge: (origin, who, commit) => control.merge(origin, who, commit),
+      release: (origin, who, o) => control.release(origin, who, o),
       fetch: async () => new Response("Pushes go to the control Worker's Git endpoint.", { status: 404 }),
     },
     remote: async () => null,

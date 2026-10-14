@@ -222,4 +222,62 @@ describe("Erga's Git endpoint", () => {
     expect(files.map((x) => x.path)).toContain("e.txt");
   });
 
+  test("releases are tags: Cut release makes one on main's head, git push takes one, and nothing else is a release", async () => {
+    const ada = { login: "ada", name: "Ada" };
+    const before = await f.repo.branches();
+    expect(before.tags).toEqual([]);
+    expect(before.release).toBeNull();
+    // Cut release: the next version (the first), on main's head, with notes as the tag's message.
+    const main = before.branches.find((b) => b.name == "main")!.commit!;
+    const first = await f.repo.release(ada, { notes: "The first release.\n\nWith notes." });
+    expect(first).toMatchObject({ tag: "v0.1.0", commit: main, by: "ada", message: "The first release.\n\nWith notes." });
+    const tags = await must(src, "ls-remote", "--tags", f.artifacts);
+    expect(tags).toContain(`${first.sha}\trefs/tags/v0.1.0`);
+    // A real annotated tag: git reads it back, message and all.
+    await must(src, "fetch", "erga", "--tags");
+    expect(await must(src, "cat-file", "-t", "v0.1.0")).toBe("tag");
+    expect(await must(src, "tag", "-l", "--format=%(contents:subject)", "v0.1.0")).toBe("The first release.");
+    expect(await must(src, "rev-list", "-n1", "v0.1.0")).toBe(main);
+    const after = await f.repo.branches();
+    expect(after.tags.map((t) => t.name)).toEqual(["v0.1.0"]);
+    expect(after.tags[0]).toMatchObject({ commit: main, tagger: "Ada", message: "The first release.\n\nWith notes." });
+    expect(after.release).toBe("v0.1.0");
+    // The same version again, or an older one: refused. A version given: taken, if newer.
+    await expect(f.repo.release(ada, { version: "v0.1.0" })).rejects.toThrow(/already a release/);
+    await expect(f.repo.release(ada, { version: "v0.0.9" })).rejects.toThrow(/isn't newer than the newest release, v0.1.0/);
+    await expect(f.repo.release(ada, { version: "release-1" })).rejects.toThrow(/version tag like v1.2.3/);
+    expect((await f.repo.release(ada, { version: "v1.0.0" })).tag).toBe("v1.0.0");
+    // A commit of staging that main doesn't have: not a release. (The checkout catches up with staging first: other tests moved it.)
+    await must(src, "fetch", "-q", "erga"); await must(src, "reset", "-q", "--hard", "erga/staging");
+    writeFileSync(join(src, "r.txt"), "r\n");
+    await must(src, "add", "."); await must(src, "commit", "-qm", "Only on staging");
+    expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    const tip = await must(src, "rev-parse", "HEAD");
+    await expect(f.repo.release(ada, { commit: tip })).rejects.toThrow(/isn't one of main's commits/);
+    // git push of a tag: an annotated one on a commit of main lands (the next version); the rest is refused with a reason.
+    await must(src, "tag", "-a", "v1.0.1", "-m", "Pushed release", main);
+    const pushed = await git(src, "push", "erga", "v1.0.1");
+    expect(pushed.ok).toBe(true);
+    expect(pushed.err).toContain("Erga: release v1.0.1 cut at");
+    await must(src, "tag", "-a", "v1.0.2", "-m", "Not on main", tip);
+    const offMain = await git(src, "push", "erga", "v1.0.2");
+    expect(offMain.ok).toBe(false);
+    expect(offMain.err).toContain("isn't one of main's commits");
+    await must(src, "tag", "nightly", main);
+    const notRelease = await git(src, "push", "erga", "nightly");
+    expect(notRelease.ok).toBe(false);
+    expect(notRelease.err).toContain("release tags only");
+    await must(src, "tag", "-a", "v0.9.0", "-m", "Too old", main);
+    expect((await git(src, "push", "erga", "v0.9.0")).err).toContain("isn't newer than the newest release, v1.0.1");
+    // Deleting or moving a release tag: refused.
+    expect((await git(src, "push", "erga", ":v1.0.1")).err).toContain("never moved or deleted");
+    const view = await f.repo.branches();
+    expect(view.tags.map((t) => t.name)).toEqual(["v1.0.1", "v1.0.0", "v0.1.0"]);
+    expect(view.release).toBe("v1.0.1");
+    // Every release went to the repository's listeners, and to the mirror.
+    await f.settle();
+    const mirrored = await must(src, "ls-remote", "--tags", f.github);
+    for (const t of ["v0.1.0", "v1.0.0", "v1.0.1"]) expect(mirrored).toContain(`refs/tags/${t}`);
+    expect(mirrored).not.toContain("v1.0.2");
+  });
 });

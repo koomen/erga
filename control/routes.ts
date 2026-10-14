@@ -27,9 +27,7 @@
 //   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
 //   GET  /releases, /releases/<channel>.json, /releases/<version>/...
 //                               the release store, for anyone (deploy/releases.ts): the channels, and each release's files
-//   GET  /api/releases          admins: both channels, as the Source page shows them
-//   POST /api/releases/promote  admins: {version}: the release goes on stable (Promote on the Source page)
-//   POST /api/releases/withdraw admins: {channel, version}: the release comes off that channel
+//   GET  /api/releases          admins: both channels (the Source page marks edge's latest and stable's tag on the log)
 //
 // Everything but sign-in, the health check, Git reads, the public source page and the stylesheet
 // needs an admin: a signed-in admin (this Worker's session), or an
@@ -168,16 +166,6 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
   if (path == "/api/releases" && read) { const r = await c.deploys.releases(); return r ? json(r) : json({ error: "This server has no release store." }, 404); }
-  if ((path == "/api/releases/promote" || path == "/api/releases/withdraw") && method == "POST") {
-    // From this site's pages, or an agent's token: never another site's form.
-    if (!session.agent && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
-    const body = ((await request.json().catch(() => ({}))) ?? {}) as { version?: unknown; channel?: unknown };
-    const version = String(body.version ?? "").trim().toLowerCase();
-    if (!/^[0-9a-f]{12}$/.test(version)) return json({ ok: false, error: "Which release? version: its 12-digit commit, as the channels list it." }, 400);
-    const by = session.login.toLowerCase();
-    const r = path.endsWith("/promote") ? await c.deploys.promoteRelease(version, by) : await c.deploys.withdrawRelease(String(body.channel ?? ""), version, by);
-    return r.ok ? json(r) : json({ ok: false, error: r.error }, r.status ?? 400);
-  }
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
   return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">The Source page</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
 }

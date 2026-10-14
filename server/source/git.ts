@@ -74,6 +74,29 @@ export function commitBytes(c: Commit): Uint8Array {
 /** A commit's subject: its message's first line. */
 export const subjectOf = (message: string) => message.split("\n").find((l) => l.trim())?.trim() ?? "";
 
+/** An annotated tag: what it points at (a commit, for a release), its name, who made it, its message. */
+export interface Tag { object: string; type: ObjectType; tag: string; tagger: Person; message: string }
+
+export function parseTag(data: Uint8Array): Tag {
+  const s = text(data);
+  const split = s.indexOf("\n\n");
+  const head = split < 0 ? s : s.slice(0, split), message = split < 0 ? "" : s.slice(split + 2);
+  const t: Tag = { object: "", type: "commit", tag: "", tagger: person(""), message };
+  for (const line of head.split("\n")) {
+    if (line.startsWith(" ")) continue;
+    const sp = line.indexOf(" "), key = line.slice(0, sp), value = line.slice(sp + 1);
+    if (key == "object") t.object = value;
+    else if (key == "type") t.type = value as ObjectType;
+    else if (key == "tag") t.tag = value;
+    else if (key == "tagger") t.tagger = person(value);
+  }
+  return t;
+}
+
+export function tagBytes(t: Tag): Uint8Array {
+  return utf8([`object ${t.object}`, `type ${t.type}`, `tag ${t.tag}`, `tagger ${personLine(t.tagger)}`, "", t.message.endsWith("\n") ? t.message : `${t.message}\n`].join("\n"));
+}
+
 export interface TreeEntry { mode: string; name: string; sha: string }
 export const isTreeMode = (mode: string) => mode == "40000" || mode == "040000";
 

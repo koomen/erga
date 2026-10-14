@@ -40,6 +40,7 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   files(origin: string, commit: string) { return this.source.files(origin, commit); }
   read(origin: string, q: SourceRead) { return this.source.read(origin, q); }
   merge(origin: string, who: Actor, commit?: string) { return this.source.merge(origin, who, commit); }
+  release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }) { return this.source.release(origin, who, o); }
   // The deploys (server/admin/agent.ts DashboardDeploys).
   status(history?: number) { return this.deploys.status(history); }
   logOf(target: string, deploy?: string) { return this.deploys.logOf(target, deploy); }
@@ -49,8 +50,6 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   // The release store (deploy/releases.ts).
   releases() { return this.deploys.releases(); }
-  promoteRelease(version: string, by: string) { return this.deploys.promoteRelease(version, by); }
-  withdrawRelease(channel: string, version: string, by: string) { return this.deploys.withdrawRelease(channel, version, by); }
   /** GET /api/events, the deploys' event stream: the app's Source page (erga.dev/admin/source) listens to it through the app. */
   fetch(request: Request) { return this.deploys.fetch(request); }
 }

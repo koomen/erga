@@ -7,9 +7,9 @@
 // development's stand-ins for Artifacts and GitHub live at.
 
 import { DurableObject } from "cloudflare:workers";
-import { deployHook, publishEvent } from "../../deploy/hook";
+import { deployHook, publishEvent, releaseHook } from "../../deploy/hook";
 import { byLine } from "../../shared/attribution";
-import { SourceError, SourceRepo, ZERO, type Actor, type SourceAnswer, type SourceObject, type SourceRead } from "../../server/source/index.ts";
+import { SourceError, SourceRepo, ZERO, type Actor, type Released, type SourceAnswer, type SourceObject, type SourceRead } from "../../server/source/index.ts";
 import { artifactsRemote, githubRemote } from "../artifacts";
 import { directoryOf, keptKeys } from "../d1";
 import type { Env } from "../env";
@@ -48,6 +48,8 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
           })().catch((e) => console.error("change log (main):", e)));
         }
       },
+      // A release cut (a tag): the deploys' object puts it on stable (once its build is in the store).
+      released: (r) => ctx.waitUntil(releaseHook(r.tag, r.commit, byLine(r.by, r.via), env).catch((e) => console.error(`release hook (${r.tag}):`, e))),
       changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
       background: (work) => ctx.waitUntil(work),
     });
@@ -77,6 +79,14 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
   async read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }> {
     try { return await this.at(origin).read(q); } catch (e) {
       return { error: e instanceof SourceError ? e.message : `Erga couldn't read its repository: ${(e as Error).message}` };
+    }
+  }
+
+  /** A release cut, as POST /api/source/release asks: the tag, or { error, status }. */
+  async release(origin: string, who: Actor, o: { version?: string; notes?: string; commit?: string } = {}): Promise<Released | { error: string; status: number }> {
+    try { return await this.at(origin).release(who, o); } catch (e) {
+      if (e instanceof SourceError) return { error: e.message, status: e.status };
+      return { error: `The release failed: ${(e as Error).message}`, status: 502 };
     }
   }
 
