@@ -22,7 +22,7 @@
 // Only the live deploy has a background. Each target's status is in its column's head. Any deploy opens
 // its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
-// head, or to the commit a row's "Merge to here" names. Also how to clone and
+// head, or to the commit a row's "Merge to here" names. Above the log, how to clone and
 // push, and the GitHub mirror's status (beside Merge; a click opens a dialog:
 // the mirror's state and Push now, or how to turn it on). Then the Releases
 // box (GET /api/releases): edge, every release production deployed and found
@@ -155,6 +155,9 @@ const SOURCE_STYLE = `
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
   .setup code, .box code { font: 12.5px var(--font-mono); }
+  .box.clone { margin: 0 0 14px; padding: 10px 14px; }
+  .box.clone pre { margin: 4px 0 6px; padding: 8px 12px; }
+  .box.clone p { margin: 0; font-size: 12.5px; }
   .releases .chans { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
   @media (max-width: 760px) { .releases .chans { grid-template-columns: 1fr; } }
   .releases h3 { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -200,6 +203,13 @@ function sourceMarkup(c: SourcePageConfig): string {
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <p class="hint" id="credential-hint" role="status" hidden></p>
+  <div class="box clone" id="clone">
+    <h2>Clone and push</h2>
+    <pre><code>git remote add erga ${esc(remote)}
+git fetch erga
+git push erga HEAD:staging</code></pre>
+    <p>Password: an agent token from <a href="/settings">Settings</a> (admins only), any username. main only follows staging: merge here.</p>
+  </div>
   <section class="card" aria-label="Commits">
     <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
@@ -210,13 +220,6 @@ function sourceMarkup(c: SourcePageConfig): string {
     </div>
   </section>
   <section class="boxes">
-    <div class="box" id="clone">
-      <h2>Clone and push</h2>
-      <pre><code>git remote add erga ${esc(remote)}
-git fetch erga
-git push erga HEAD:staging</code></pre>
-      <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main.</p>
-    </div>
     <div class="box releases" id="releases">
       <h2>Releases <a class="pill" href="/releases/stable.json" title="The store, for anyone: /releases/edge.json, /releases/stable.json, /releases/&lt;version&gt;/…">/releases</a></h2>
       <p>Each release production deploys and finds healthy goes on <b>edge</b>. <b>stable</b> is what other installs of Erga follow: it moves only when an admin promotes a release.</p>

@@ -26,3 +26,11 @@ test("the Source page's scripts parse, and each deploy column has a name and its
   const heads = [...html.matchAll(/id="target-([a-z]+)"[^>]*><b>([^<]+)<\/b><span class="host">([^<]+)<\/span>/g)].map((m) => m.slice(1));
   expect(heads).toEqual([["staging", "staging", "staging.erga.dev"], ["production", "production", "erga.dev"], ["control", "control", "ops.erga.dev"]]);
 });
+
+test("the Git instructions come before the git log", async () => {
+  const session = { login: "ada", name: "Ada" } as unknown as Session;
+  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
+  expect(html).toContain("git remote add erga https://ops.erga.test/git/erga.git");
+  expect(html.indexOf('id="clone"')).toBeGreaterThan(0);
+  expect(html.indexOf('id="clone"')).toBeLessThan(html.indexOf('id="grid"'));
+});
