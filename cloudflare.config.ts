@@ -42,11 +42,11 @@ export default defineConfig(({ mode }) => ({
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
       // The deploy page's sessions (/deploy, cloudflare/deploy-session.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),
-      // Erga's own repository: one object, "erga", where pushes and merges happen one at a time.
-      SourceHost: exports.durableObject({ storage: "sqlite" }),
-      // Branch deploys: one object, named "deploys", that builds and deploys
-      // this server's own branch when it moves, keeps each target's status and log, and serves /api/events.
-      Pipeline: exports.durableObject({ storage: "sqlite" }),
+      // Erga's repository ("erga") and the deploys ("deploys") are the control Worker's objects (control/wrangler.jsonc).
+      // The app hosts them only in local development, where it plays the control Worker over the mock Cloudflare.
+      // On erga.dev and staging they are gone, with what they held (the old history and index, until 2026-10-13).
+      SourceHost: exports.durableObject(mode == "development" ? { storage: "sqlite" } : { state: "deleted" }),
+      Pipeline: exports.durableObject(mode == "development" ? { storage: "sqlite" } : { state: "deleted" }),
       // The homepage's deploys and the snapshot / serves: one object, "home".
       Home: exports.durableObject({ storage: "sqlite" }),
       // The server's own small storage (the sign-in values set on /admin/auth): one object, "own", which no copy of another server's data replaces.
@@ -68,10 +68,11 @@ export default defineConfig(({ mode }) => ({
     env: {
       DOCUMENTS: bindings.durableObject({ worker: PROD.worker, exportName: "DocumentObject" }),
       DEPLOYS: bindings.durableObject({ worker: PROD.worker, exportName: "Deployer" }),
-      PIPELINE: bindings.durableObject({ worker: PROD.worker, exportName: "Pipeline" }),
-      // Erga's own repository (Cloudflare Artifacts) and its GitHub mirror are the control Worker's (control/wrangler.jsonc),
-      // not the app's. Locally the dev server stands in for Artifacts and GitHub, and the app hosts the repository's object.
-      SOURCE: bindings.durableObject({ worker: PROD.worker, exportName: "SourceHost" }),
+      // Local development only: the control Worker's objects, hosted here (the dev server stands in for Artifacts and GitHub).
+      ...(mode == "development" ? {
+        PIPELINE: bindings.durableObject({ worker: PROD.worker, exportName: "Pipeline" }),
+        SOURCE: bindings.durableObject({ worker: PROD.worker, exportName: "SourceHost" }),
+      } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       OWN: bindings.durableObject({ worker: PROD.worker, exportName: "OwnStorage" }),
       SITES: bindings.durableObject({ worker: PROD.worker, exportName: "SiteHost" }),

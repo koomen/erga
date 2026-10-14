@@ -67,6 +67,12 @@ function controlSource(control: Service<App>): SourceService {
   };
 }
 
+/** The deploys on a server that has none (no control Worker, and not local development): every call says so. */
+const noDeploys: Platform["deploys"] = (() => {
+  const none = async () => { throw new Error("This server has no control Worker: there are no deploys here."); };
+  return { status: none, logOf: none, redeploy: none, redeployWith: none, rollback: none } as unknown as Platform["deploys"];
+})();
+
 /** Where documents' pages run: an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
 
@@ -91,19 +97,11 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const target = env.DEPLOY_TARGET?.trim() ?? "";
   // Local development only (the tests): stand-ins for GitHub and for the other target's server.
   const standIn = (value: string | undefined) => (env.DEV_LOGIN && value?.trim() ? value.trim().replace(/\/+$/, "") : null);
-  // The server's own storage: its object; a value not there yet is read from where it was kept before (the Pipeline
-  // object, until 2026-10-11) and moved over, once.
+  // The server's own storage: its object.
   const own = () => env.OWN.getByName("own");
-  // The control Worker, over its binding (erga.dev, staging.erga.dev): the repository and the deploys are there.
+  // The control Worker, over its binding (erga.dev, staging.erga.dev): the repository and the deploys are there. In local
+  // development the app hosts the deploys' object itself; a server with neither has no deploys.
   const control = env.CONTROL ? (env.CONTROL as unknown as Service<App>) : null;
-  const ownGet = async (k: string) => {
-    const v = await own().get(k);
-    if (v !== undefined) return v;
-    let old: unknown;
-    try { old = await env.PIPELINE.getByName("deploys").authGet(k); } catch { old = undefined; }
-    if (old !== undefined) await own().put(k, old);
-    return old;
-  };
   const p: Platform = {
     directory,
     sessionOf: (request) => sessionOf(p, request),
@@ -129,11 +127,11 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       devLogin: env.DEV_LOGIN?.trim() || null,
       encryptionKey: factoryKey(env),
     },
-    own: { get: ownGet, put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
+    own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
     source: control ? controlSource(control) : sourceService(env),
     home: env.HOME.getByName("home"),
     adminAgent: env.ADMIN_AGENT.getByName("admin"),
-    deploys: control ?? env.PIPELINE.getByName("deploys"),
+    deploys: control ?? env.PIPELINE?.getByName("deploys") ?? noDeploys,
     ...(env.CONTROL_URL?.trim() ? { control: { url: env.CONTROL_URL.trim().replace(/\/+$/, "") } } : {}),
     agentSettings: () => agentSettings(env),
     edge: {

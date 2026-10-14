@@ -51,7 +51,7 @@ export class Pipeline extends DurableObject<Env> {
     };
     // The mock builder fails a commit whose subject says "[mock-fail]" (a real commit's id can't be chosen to start 0bad).
     const mockFails = async (commit: string) => {
-      if (!hasSource(env)) return false;
+      if (!hasSource(env) || !env.SOURCE) return false;
       const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "").catch(() => null);
       return !!view?.branches.some((b: { commits: { sha: string; subject: string }[] }) => b.commits.some((c) => c.sha == commit && c.subject.includes("[mock-fail]")));
     };
@@ -107,10 +107,6 @@ export class Pipeline extends DurableObject<Env> {
   /** Back to the Worker version before the live deploy (POST /api/deploys/<name>/rollback). */
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   async alarm(): Promise<void> { await this.deploys.alarm(); }
-
-  // ---- sign-in's values set on /admin/auth were kept here until 2026-10-11 (they live in OwnStorage now; the app reads
-  // a value it doesn't have yet from here once, and moves it: cloudflare/platform.ts).
-  authGet(key: string): Promise<unknown> { return this.ctx.storage.get(key); }
 
   /** An event to everyone listening on /api/events. */
   publish(event: RelayEvent): void {
