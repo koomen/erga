@@ -138,17 +138,20 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
     },
 
     // Up: its own health check answers this release, and says it works; unhealthy three times over ten seconds rolls back.
+    // The check is shallow (?self=1): this very object runs the deploy, and a request from here back into it can loop
+    // ("Subrequest depth limit exceeded", 2026-10-14); that the deploy goes on at all says the object answers. A new
+    // version of this Worker has taken more than three minutes to answer (2026-10-14): ten minutes, before giving up.
     async live() {
-      const until = Date.now() + (opts.waitMs ?? 180_000);
+      const until = Date.now() + (opts.waitMs ?? 600_000);
       const want = carry.version;
       if (!want) throw new DeployError("This deploy doesn't know which release it uploaded: deploy again.");
       let seen = "";
       for (let tries = 0; ; tries++) {
-        const r = await site(`https://${host}/api/health`).catch(() => null);
+        const r = await site(`https://${host}/api/health?self=1`).catch(() => null);
         const body = r ? ((await r.json().catch(() => null)) as { version?: string } | null) : null;
         if (body?.version == want) {
-          let h = await checkHealth(site, host, want);
-          for (let again = 0; !h.ok && again < 2; again++) { await sleep(5000); h = await checkHealth(site, host, want); }
+          let h = await checkHealth(site, host, want, { query: "self=1" });
+          for (let again = 0; !h.ok && again < 2; again++) { await sleep(5000); h = await checkHealth(site, host, want, { query: "self=1" }); }
           if (!h.ok) throw new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why);
           return `https://${host}, release ${want}, healthy (${h.summary})`;
         }

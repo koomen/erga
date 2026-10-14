@@ -913,8 +913,8 @@ export interface Health { ok: boolean; version?: string | null; checks?: Record<
  * The app's health, at `host`: GET /api/health must answer 200 with ok true
  * and the release `want` (when given). `why` says what failed, in words.
  */
-export async function checkHealth(site: Fetch, host: string, want: string | null): Promise<{ ok: boolean; why: string; summary: string }> {
-  const r = await site(`https://${host}/api/health`).catch((e) => ({ ok: false, status: 0, json: async () => null, text: async () => (e as Error).message }) as unknown as Response);
+export async function checkHealth(site: Fetch, host: string, want: string | null, o: { query?: string } = {}): Promise<{ ok: boolean; why: string; summary: string }> {
+  const r = await site(`https://${host}/api/health${o.query ? `?${o.query}` : ""}`).catch((e) => ({ ok: false, status: 0, json: async () => null, text: async () => (e as Error).message }) as unknown as Response);
   const body = (await r.json().catch(() => null)) as Health | null;
   if (!body) return { ok: false, why: `GET /api/health answered ${r.status || "nothing"} and no JSON`, summary: "" };
   const failed = Object.entries(body.checks ?? {}).filter(([, c]) => !c.ok).map(([n, c]) => `${n}: ${c.error ?? "failed"}`);
