@@ -50,6 +50,7 @@ import { sourceFor, type Source } from "./source";
 import { CONTROL, CONTROL_ENTRYPOINT, deployNames, isDeployName, PRODUCTION, specOf, TARGETS, type DeployName, type TargetSpec } from "./targets";
 import { controlTarget } from "./control";
 import type { Credential, CredentialStatus } from "./credential";
+import type { ReleaseStore } from "./releases";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
@@ -136,8 +137,10 @@ export interface Deps {
   changed(): void;
   /** Where to clone the commit from (the repository's own reader, sourceForBuild); else the REST API's. */
   source?(commit: string): Promise<Source | null>;
-  /** New lines of a deploy's log ({type: "deploy-log"} on /api/events). */
-  logged?(event: { type: "deploy-log"; target: DeployName; deployId: string; lines: LogLine[] }): void;
+  /** New lines of a deploy's log ({type: "deploy-log"} on /api/events), and a release published ({type: "releases"}). */
+  logged?(event: { type: "deploy-log"; target: DeployName; deployId: string; lines: LogLine[] } | { type: "releases" }): void;
+  /** The release store (deploy/releases.ts): a healthy production deploy publishes its release there, on edge. */
+  releases?: ReleaseStore | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
@@ -660,6 +663,23 @@ export class BranchDeploys {
     s.run = null;
     s.oldDocs = [];
     await this.save(s);
+    // Production, healthy: its release goes to the store, on edge (each commit of main). After the deploy is over and
+    // recorded: nothing here fails it, and a restart here loses only the publication (Redeploy publishes again).
+    if (s.status.name == "production" && this.deps.releases) {
+      let note: string;
+      if (!release) note = "not published to the release store: the build is gone (the server restarted part way). Redeploy publishes it.";
+      else {
+        try {
+          const m = await this.deps.releases.publish(release, run.commit);
+          await this.deps.releases.addTo("edge", release.version);
+          note = `published release ${release.version} to the store (${Object.keys(m.files).length} files), on edge`;
+          this.deps.logged?.({ type: "releases" });
+        } catch (e) { note = `not published to the release store: ${(e as Error).message}`; }
+      }
+      await this.appendTo(s.status.name, run.deployId, note);
+      s.status.log = [...s.status.log, `${new Date(this.now()).toISOString().slice(11, 19)} ${note}`].slice(-LOG_LINES);
+      await this.save(s);
+    }
   }
 
   /**

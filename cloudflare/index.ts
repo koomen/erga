@@ -19,6 +19,7 @@ import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
 import { controlRoutes, isControlPath } from "../control/routes";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
+import { releaseStoreOf } from "./pipeline";
 import { CONTROL } from "../deploy/targets";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { deployDoor } from "./deploy-routes";
@@ -61,7 +62,7 @@ export default {
         if (!env.PIPELINE) return Response.json({ error: "This server has no control Worker: no repository, no deploys." }, { status: 404, headers: { "Cache-Control": "no-store" } });
         const mock = env.ERGA_DEPLOY_MOCK == "1";
         return controlRoutes(request, {
-          platform: p, deploys: env.PIPELINE.getByName("deploys"), app: url.origin, layout: adminResponse, version: env.ERGA_VERSION ?? null,
+          platform: p, deploys: env.PIPELINE.getByName("deploys"), releases: releaseStoreOf(env), app: url.origin, layout: adminResponse, version: env.ERGA_VERSION ?? null,
           oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
         });
       }

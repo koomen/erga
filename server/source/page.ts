@@ -24,8 +24,11 @@
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Also how to clone and
 // push, and the GitHub mirror's status (beside Merge; a click opens a dialog:
-// the mirror's state and Push now, or how to turn it on). It follows the
-// system's light or dark.
+// the mirror's state and Push now, or how to turn it on). Then the Releases
+// box (GET /api/releases): edge, every release production deployed and found
+// healthy, and stable, what other installs follow; Promote puts an edge
+// release on stable (two clicks: the first arms it), Withdraw takes a release
+// off a channel. It follows the system's light or dark.
 //
 // It updates by itself, with no reload: /api/events says what changed (a push
 // or a merge, the mirror, each step of a deploy, a redeploy, its log lines),
@@ -147,6 +150,19 @@ const SOURCE_STYLE = `
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
   .setup code, .box code { font: 12.5px var(--font-mono); }
+  .releases .chans { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+  @media (max-width: 760px) { .releases .chans { grid-template-columns: 1fr; } }
+  .releases h3 { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
+  .releases ul { list-style: none; margin: 0; padding: 0; }
+  .releases li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--rule); font-size: 13px; color: var(--fg); min-height: 32px; }
+  .releases li:first-child { border-top: 0; }
+  .releases li code { color: var(--fg-strong); }
+  .releases li .when { color: var(--soft); font-size: 12px; }
+  .releases li .tag { font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px; }
+  .releases li .pill { margin-left: auto; height: 26px; font-size: 12px; padding: 0 9px; }
+  .releases .none { padding: 6px 0; font-size: 13px; color: var(--soft); }
+  .releases .msg { margin: 6px 0 0; font-size: 13px; }
+  .releases .msg.error { color: var(--bad); }
   dialog#deploy-log { width: min(820px, calc(100vw - 32px)); padding: 0; }
   #deploy-log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
   #deploy-log h2 { margin: 0; font-size: 15px; }
@@ -194,6 +210,12 @@ function sourceMarkup(c: SourcePageConfig): string {
 git fetch erga
 git push erga HEAD:staging</code></pre>
       <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main.</p>
+    </div>
+    <div class="box releases" id="releases">
+      <h2>Releases <a class="pill" href="/releases/stable.json" title="The store, for anyone: /releases/edge.json, /releases/stable.json, /releases/&lt;version&gt;/…">/releases</a></h2>
+      <p>Each release production deploys and finds healthy goes on <b>edge</b>. <b>stable</b> is what other installs of Erga follow: it moves only when an admin promotes a release.</p>
+      <div class="chans"><div><h3>edge</h3><ul id="rel-edge"><li class="none">Loading…</li></ul></div><div><h3>stable</h3><ul id="rel-stable"><li class="none">Loading…</li></ul></div></div>
+      <p class="msg" id="rel-msg" role="status"></p>
     </div>
   </section>
   <dialog id="deploy-log" aria-labelledby="log-title">
@@ -519,6 +541,56 @@ const SOURCE_SCRIPT = `
     await load();
   });
 
+  // The Releases box: both channels, newest first; Promote on an edge release not yet on stable, Withdraw on any.
+  let releases = null;
+  async function loadReleases() {
+    const r = await fetch("/api/releases", { headers: { Accept: "application/json" } }).catch(() => null);
+    const body = r ? await r.json().catch(() => null) : null;
+    if (pageView.signal.aborted) return;
+    releases = r && r.ok ? body : { error: body?.error || "The release store didn't answer." };
+    renderReleases();
+  }
+  function renderReleases() {
+    const box = document.getElementById("releases");
+    if (!box || !releases) return;
+    const chans = { edge: document.getElementById("rel-edge"), stable: document.getElementById("rel-stable") };
+    if (releases.error) { for (const ul of Object.values(chans)) ul.innerHTML = '<li class="none">' + esc(releases.error) + "</li>"; return; }
+    const onStable = new Set((releases.stable?.releases ?? []).map((x) => x.version));
+    for (const [name, ul] of Object.entries(chans)) {
+      const list = (releases[name]?.releases ?? []).slice(0, 8);
+      if (!list.length) { ul.innerHTML = '<li class="none">' + (name == "edge" ? "Nothing yet: production's next healthy deploy publishes its release." : "Nothing yet: promote a release from edge.") + "</li>"; continue; }
+      ul.innerHTML = list.map((x, i) => {
+        const tip = "Release " + x.version + "\nBuilt " + new Date(x.built).toLocaleString() + "\nOn " + name + " since " + new Date(x.at).toLocaleString() + (x.by ? " (" + x.by + ")" : "");
+        const act = name == "edge" && !onStable.has(x.version)
+          ? '<button class="pill" type="button" data-promote="' + x.version + '" title="Puts this release on stable: installs that follow stable upgrade to it.">Promote</button>'
+          : '<button class="pill" type="button" data-withdraw="' + name + '" data-version="' + x.version + '" title="Takes this release off ' + name + ': no install moves to it any more.">Withdraw</button>';
+        return '<li title="' + esc(tip) + '"><code>' + esc(x.version) + "</code>" + (i == 0 ? '<span class="tag">latest</span>' : "") + (name == "edge" && onStable.has(x.version) ? '<span class="tag">stable</span>' : "") + '<span class="when">' + ago(x.at) + "</span>" + act + "</li>";
+      }).join("");
+    }
+  }
+  document.getElementById("releases")?.addEventListener("click", async (e) => {
+    const b = e.target.closest("button[data-promote], button[data-withdraw]");
+    if (!b) return;
+    const msg = document.getElementById("rel-msg");
+    const promote = !!b.dataset.promote;
+    const version = b.dataset.promote || b.dataset.version;
+    // Two clicks: the first arms it.
+    if (b.dataset.armed != "1") {
+      b.dataset.armed = "1"; b.textContent = promote ? "Click again to promote " + version.slice(0, 7) : "Click again to withdraw";
+      setTimeout(() => { if (b.dataset.armed == "1") { b.dataset.armed = ""; b.textContent = promote ? "Promote" : "Withdraw"; } }, 8000);
+      return;
+    }
+    b.disabled = true; b.textContent = promote ? "Promoting…" : "Withdrawing…";
+    msg.className = "msg"; msg.textContent = "";
+    try {
+      const r = await fetch(promote ? "/api/releases/promote" : "/api/releases/withdraw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(promote ? { version } : { channel: b.dataset.withdraw, version }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      msg.textContent = promote ? "Release " + version + " is on stable." : "Release " + version + " is off " + b.dataset.withdraw + ".";
+    } catch (err) { msg.className = "msg error"; msg.textContent = err.message; }
+    await loadReleases();
+  });
+
   // Live: an event says what changed; a reconnect reloads everything. A stream the server answers with an error
   // (a server restarting into its new version) the browser closes for good: open it again.
   let heard = 0;
@@ -526,12 +598,13 @@ const SOURCE_SCRIPT = `
     if (pageView.signal.aborted) return;
     const events = new EventSource("/api/events");
     pageView.onLeave(() => events.close());
-    events.onopen = () => { load(); loadDeploys(); };
+    events.onopen = () => { load(); loadDeploys(); loadReleases(); };
     events.onerror = () => { if (events.readyState == EventSource.CLOSED) setTimeout(listen, 3000); };
     events.onmessage = (e) => {
       let ev; try { ev = JSON.parse(e.data); } catch { return; }
       if (ev.type == "source") { load(); loadDeploys(); } // a move starts a deploy, here or on another server
       if (ev.type == "deploys") { heard = Date.now(); loadDeploys(); }
+      if (ev.type == "releases") loadReleases();
       if (ev.type == "deploy-log" && open && ev.target == open.target) {
         if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
         else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
@@ -539,7 +612,7 @@ const SOURCE_SCRIPT = `
     };
   }
   listen();
-  load(); loadDeploys();
+  load(); loadDeploys(); loadReleases();
   // Events don't tell everything: the other server's events can fail to come (no DEPLOY_HOOK_SECRET, or it doesn't
   // answer), and a server that deploys itself cuts the stream and can miss its last change. So while
   // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
@@ -547,7 +620,7 @@ const SOURCE_SCRIPT = `
     if (asking || Date.now() - heard < 2500) return;
     if (!deploys || deploys.targets?.some((t) => running(t.state) || t.history?.some((r) => running(r.state)))) loadDeploys();
   }, 2000);
-  setInterval(() => { render(); renderTargets(); }, 30000);
+  setInterval(() => { render(); renderTargets(); renderReleases(); }, 30000);
 })();
 `;
 

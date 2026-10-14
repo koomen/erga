@@ -25,6 +25,7 @@ import { containerBuilder, ndjsonLines } from "../control/builder/client";
 import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../control/builder/cache";
 import { ALL_STEPS, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release, type Target } from "../deploy/pipeline";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock-cloudflare";
+import { memoryBlobs, ReleaseStore } from "../deploy/releases";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
 import { TARGETS } from "../deploy/targets";
 
@@ -347,7 +348,7 @@ class Server {
       builder: this.builder,
       schedule: (ms) => { if (alive.on) this.scheduled.push(ms); },
       changed: () => { if (alive.on) this.events++; },
-      logged: (e) => { if (alive.on) this.logs.push({ deployId: e.deployId, lines: e.lines }); },
+      logged: (e) => { if (alive.on && e.type == "deploy-log") this.logs.push({ deployId: e.deployId, lines: e.lines }); },
       ...quick,
       ...this.extra,
     });
@@ -563,6 +564,37 @@ describe("branches deploy themselves", () => {
     expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA1 });
   });
 
+  test("a healthy production deploy publishes its release to the store, on edge; a failed one doesn't", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const builder = mockBuilder(async () => release);
+    const blobs = memoryBlobs();
+    const store = new ReleaseStore(blobs);
+    const events: string[] = [];
+    const server = new Server(mock, builder, "erga-control", env(), { releases: store, logged: (e) => { if (e.type == "releases") events.push("releases"); } });
+    expect(await store.view()).toMatchObject({ edge: { latest: null }, stable: { latest: null } });
+    await server.instance.hook("main", SHA2, "merge by ada");
+    await server.settle();
+    expect(await server.status("production")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    const edge = await store.channel("edge");
+    expect(edge.latest).toBe(SHA2.slice(0, 12));
+    expect(edge.releases).toEqual([{ version: SHA2.slice(0, 12), commit: SHA2, built: release.built, at: expect.any(Number) }]);
+    expect((await store.channel("stable")).releases).toEqual([]);
+    expect(events).toEqual(["releases"]);
+    const m = (await store.manifest(SHA2.slice(0, 12)))!;
+    expect(Object.keys(m.files)).toEqual(expect.arrayContaining(["release.json", "bundle/index.js", "control/index.js", "migrations/0001_erga.sql"]));
+    const log = (await server.instance.logOf("production"))!;
+    expect(log.lines.map((l) => l.text)).toContain(`published release ${SHA2.slice(0, 12)} to the store (${Object.keys(m.files).length} files), on edge`);
+    // Read back whole from the store: what a downstream installs.
+    expect((await store.load(SHA2.slice(0, 12)))!.modules["index.js"]).toEqual(release.modules["index.js"]);
+    // An unhealthy production deploy: rolled back, and nothing published.
+    mock.state.unhealthy = [SHA3.slice(0, 12)];
+    await server.instance.hook("main", SHA3, "merge by ada");
+    await server.settle();
+    expect(await server.status("production")).toMatchObject({ state: "failed" });
+    expect((await store.channel("edge")).latest).toBe(SHA2.slice(0, 12));
+    expect(await store.manifest(SHA3.slice(0, 12))).toBeNull();
+  });
+
   test("the control Worker deploys itself from main, after production: its Worker only, secrets and containers kept, with a restore point", async () => {
     const mock = mockCloudflare({ fleet: true });
     const builder = mockBuilder(async () => release);
@@ -592,6 +624,7 @@ describe("branches deploy themselves", () => {
     expect(b.SOURCE.class_name).toBe("SourceHost");
     expect(b.DB).toEqual({ type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB });
     expect(b.ARTIFACTS).toEqual({ type: "artifacts", name: "ARTIFACTS", namespace: "erga" });
+    expect(b.RELEASES).toEqual({ type: "r2_bucket", name: "RELEASES", bucket_name: "erga-releases" });
     expect(b.CF_VERSION_METADATA).toEqual({ type: "version_metadata", name: "CF_VERSION_METADATA" });
     expect(b.ERGA_VERSION.text).toBe(SHA2.slice(0, 12));
     expect(b.CLOUDFLARE_ACCOUNT_ID.text).toBe(FLEET_ACCOUNT);

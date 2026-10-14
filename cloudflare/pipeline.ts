@@ -20,6 +20,7 @@ import { DurableObject } from "cloudflare:workers";
 import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type TargetStatus } from "../deploy/branches";
 import { fixedCredential, OAuthCredential, sealKeyFrom, type CredentialStatus, type TokenAnswer } from "../deploy/credential";
 import { loadRelease, type Release } from "../deploy/pipeline";
+import { isChannel, memoryBlobs, r2Blobs, ReleaseStore, type Channel, type ReleasesView } from "../deploy/releases";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import { containerBuilder } from "../control/builder/client";
 import { builderFetch } from "../control/builder/worker";
@@ -29,8 +30,16 @@ import { sourceForBuild } from "./source";
 
 export type RelayEvent = { type: string } & Record<string, unknown>;
 
+/** Local development's release store (ERGA_DEPLOY_MOCK): in memory, shared by the deploys' object and the routes that serve it. */
+export const DEV_BLOBS = memoryBlobs();
+
+/** The release store this Worker has: its bucket (the control Worker), the memory one under the mock, or none. */
+export const releaseStoreOf = (env: Pick<Env, "RELEASES" | "ERGA_DEPLOY_MOCK">): ReleaseStore | null =>
+  env.RELEASES ? new ReleaseStore(r2Blobs(env.RELEASES)) : env.ERGA_DEPLOY_MOCK == "1" ? new ReleaseStore(DEV_BLOBS) : null;
+
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
+  private store: ReleaseStore | null;
   private credential: ReturnType<typeof fixedCredential> | OAuthCredential;
   private listeners = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private beat: ReturnType<typeof setInterval> | null = null;
@@ -70,11 +79,13 @@ export class Pipeline extends DurableObject<Env> {
       const now = await ctx.storage.getAlarm();
       if (now == null || now > at) await ctx.storage.setAlarm(at);
     };
+    this.store = releaseStoreOf(env);
     this.deploys = new BranchDeploys({
       storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v), delete: (k) => ctx.storage.delete(k) },
       env: deployEnv,
       credential: this.credential,
       net,
+      releases: this.store,
       // The build container, in this Worker (the control Worker's BUILDS objects), or the mock.
       builder: mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDS ? containerBuilder({ fetch: (input, init) => builderFetch(new Request(input, init), env as never, (p) => ctx.waitUntil(p)) }) : null,
       schedule,
@@ -107,6 +118,27 @@ export class Pipeline extends DurableObject<Env> {
   /** Back to the Worker version before the live deploy (POST /api/deploys/<name>/rollback). */
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   async alarm(): Promise<void> { await this.deploys.alarm(); }
+
+  // ---- the release store (deploy/releases.ts): both channels; a release promoted to stable, or taken off a channel.
+  async releases(): Promise<ReleasesView | null> { return this.store ? this.store.view() : null; }
+  async promoteRelease(version: string, by: string): Promise<{ ok: true; stable: ReleasesView["stable"] } | { ok: false; error: string; status?: number }> {
+    if (!this.store) return { ok: false, error: "This server has no release store.", status: 404 };
+    try {
+      const stable = await this.store.addTo("stable", version, by);
+      this.publish({ type: "releases" });
+      return { ok: true, stable };
+    } catch (e) { return { ok: false, error: (e as Error).message, status: 409 }; }
+  }
+  async withdrawRelease(channel: string, version: string, by: string): Promise<{ ok: true; channel: ReleasesView["stable"] } | { ok: false; error: string; status?: number }> {
+    if (!this.store) return { ok: false, error: "This server has no release store.", status: 404 };
+    if (!isChannel(channel)) return { ok: false, error: `No channel called ${channel}: edge or stable.`, status: 404 };
+    try {
+      const file = await this.store.withdraw(channel as Channel, version);
+      console.log(`release ${version} withdrawn from ${channel} by ${by}`);
+      this.publish({ type: "releases" });
+      return { ok: true, channel: file };
+    } catch (e) { return { ok: false, error: (e as Error).message, status: 409 }; }
+  }
 
   /** An event to everyone listening on /api/events. */
   publish(event: RelayEvent): void {
