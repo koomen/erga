@@ -28,7 +28,7 @@
 //   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; server/admin/agent.ts)
 //                              Every /admin page has the same layout, and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own door.
-//   /page.js, /style.css, ...  the editor's own files (static assets)
+//   /page.js, /style.css, ...  the editor's own files (static assets); /logo.png, Erga's logo
 //   GET /api/release           the build of each of them: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
 //
@@ -130,10 +130,10 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   return frontDoor(request, p);
 }
 
-/** The editor's own files (static assets, client/build.sh). */
-const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css"]);
+/** The editor's own files, and Erga's logo (static assets, client/build.sh). */
+const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/logo.png"]);
 const isAsset = (path: string) => ASSET_FILES.has(path) || path.startsWith("/fonts/");
 
 /** A path that may be one of the homepage's files at the root: /<name>.<ext> or /<folder>/<name>.<ext>, but none of the app's own. */
-const APP_FILES = new Set(["/page.js", "/frame.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/editor.html", "/llms.txt"]);
+const APP_FILES = new Set(["/page.js", "/frame.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/logo.png", "/editor.html", "/llms.txt"]);
 const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !path.startsWith("/fonts/") && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);

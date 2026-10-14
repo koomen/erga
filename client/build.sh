@@ -12,6 +12,8 @@
 #   live.js          open pages across a redeploy (live.ts), on every page of the site's own
 #   editor.html      the editor's page, served under each document's address
 #   style.css, fonts/
+#   logo.png         Erga's logo (assets/logo/logo.png), public at /logo.png: a square 512 px PNG for
+#                    places that want one (an OAuth client's logo)
 #   build.json       the build id of each file: a bundle's own stamp, else the first 16 hex
 #                    digits of its SHA-256. The Worker answers GET /api/release with it.
 #
@@ -47,6 +49,7 @@ bundle live.ts live.js "Erga, open pages across a redeploy."
 put() { local tmp; tmp="$(dirname "$out/$2")/.$(basename "$2").$$"; cp "$1" "$tmp" && mv -f "$tmp" "$out/$2"; }
 put client/editor.html editor.html
 put client/style.css style.css
+put assets/logo/logo.png logo.png
 for f in client/fonts/*; do put "$f" "fonts/$(basename "$f")"; done
 bundles="page.js frame.js settings.js pages-tree.js admin-agent.js admin-share.js admin-nav.js live.js"
 manifest="{"
