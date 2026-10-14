@@ -21,6 +21,7 @@ import { TARGETS, type TargetName } from "../deploy/targets";
 import { sessionOf, Tokens } from "../server/identity/index.ts";
 import type { Platform } from "../server/platform";
 import type { Builder } from "./builder/worker";
+import type { Deployer } from "../cloudflare/deploy-session";
 
 /** The control Worker's bindings (control/wrangler.jsonc); its secrets are set by deploy/setup.ts --control. */
 export interface ControlEnv {
@@ -32,8 +33,13 @@ export interface ControlEnv {
   PIPELINE: DurableObjectNamespace<Pipeline>;
   SOURCE: DurableObjectNamespace<SourceHost>;
   BUILDS: DurableObjectNamespace<Builder>;
-  /** The release store (deploy/releases.ts): an R2 bucket, erga-releases, made by deploy/setup.ts. */
+  /** The release store (deploy/releases.ts): an R2 bucket, erga-releases, made by deploy/setup.ts. An install's control Worker has none. */
   RELEASES?: R2Bucket;
+  /** The install sessions of /deploy (cloudflare/deploy-session.ts), one object each. */
+  DEPLOYS: DurableObjectNamespace<Deployer>;
+  /** An install's control Worker only: erga.dev's control Worker (the store, the consent relay), and its own target (deploy/install.ts InstallSpec). */
+  UPSTREAM?: string;
+  INSTALL?: string;
   /** This Worker's version id: the release cache's key. */
   CF_VERSION_METADATA?: { id?: string };
   /** The release this Worker is (the commit): set by its own deploy (deploy/control.ts), what /api/health answers; none after a wrangler deploy. */

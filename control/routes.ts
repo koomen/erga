@@ -15,10 +15,15 @@
 //   /auth/github[/callback], /auth/logout   signing in (this Worker's own GitHub app) and out
 //   GET /api/health             {ok, worker: "control", version (the release), build (the version id)}: anyone
 //   /install                    the Cloudflare credential: its status, and Connect (a consent in the browser: deploy/credential.ts)
-//   POST /install/start         to Cloudflare's consent page (PKCE; the state and verifier in a short cookie)
-//   GET  /install/callback      back from it: the code exchanged, the grant kept, checked with one read
+//   POST /install/start         to Cloudflare's consent page (PKCE; the state and verifier in a short cookie). On an install's
+//                               control Worker, through erga.dev's callback (below): the one registered on Erga's OAuth client
+//   GET  /install/callback      back from it: the code exchanged, the grant kept, checked with one read. Also the deploy page's
+//                               return (cloudflare/deploy-routes.ts, its cookie says so), and the relay: a consent an install's
+//                               control Worker started (its origin in the state, one erga.dev made) is sent on to it, code and all
 //   POST /install/disconnect    the grant revoked and forgotten
 //   GET  /api/install           the credential's status, as JSON
+//   /deploy, /deploy/...        install Erga in your own Cloudflare account (cloudflare/deploy-routes.ts); not on an install's
+//                               control Worker
 //   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
 //   GET  /releases, /releases/<channel>.json, /releases/<version>/...
 //                               the release store, for anyone (deploy/releases.ts): the channels, and each release's files
@@ -35,8 +40,9 @@ import { authorizeUrl, CONTROL_OAUTH_SCOPES, exchangeCode, pkce, randomToken, ty
 import { mockConsentPage } from "../deploy/page.ts";
 import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
 import { releasesDoor, type ReleaseStore } from "../deploy/releases.ts";
+import { DEPLOY_OAUTH_COOKIE } from "../deploy/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
-import { finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
+import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
 import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
@@ -49,6 +55,8 @@ export interface Control {
   deploys: DeploysObject;
   /** The release store (deploy/releases.ts), read here for anyone; null where there's none. */
   releases?: ReleaseStore | null;
+  /** The deploy page (/deploy: installs from the store), where this Worker offers it. */
+  deploy?: (request: Request) => Promise<Response>;
   /** The app's address (https://erga.dev): links, and where the stylesheet comes from. */
   app: string;
   /** The Source page's shell, and its address: "/" here, /admin/source where the app serves it (the default "/"). */
@@ -58,7 +66,11 @@ export interface Control {
   version: string | null;
   build?: string | null;
   /** The Cloudflare credential's consent (/install): Erga's OAuth client, the account, Cloudflare (or the mock) and this Worker's name. */
-  oauth: { clientId: string; secret?: string; accountId: string; worker: string; net: Fetch; mock?: boolean };
+  oauth: {
+    clientId: string; secret?: string; accountId: string; worker: string; net: Fetch; mock?: boolean;
+    /** An install's control Worker: erga.dev's control Worker, whose /install/callback (registered on the client) relays the consent here. */
+    relay?: string;
+  };
 }
 
 /**
@@ -72,7 +84,8 @@ export const isSourcePagePath = (path: string) =>
 export const isControlPath = (path: string) =>
   path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
   || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install"
-  || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/");
+  || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/")
+  || path == "/deploy" || path.startsWith("/deploy/");
 
 /**
  * How the app's Worker answers `path`: "here", itself (the Source page and its API where the control Worker is apart and
@@ -112,6 +125,18 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (read && isPublicSourcePath(path)) return publicSourcePage(p, url, c.app);
   // The release store, for anyone: the channels and each release's files.
   if (read) { const r = await releasesDoor(c.releases ?? null, path); if (r) return r; }
+  // Cloudflare's consent coming back for the deploy page (its cookie), or for an install's control Worker (the relay).
+  if (path == "/install/callback" && read) {
+    if (c.deploy && cookies(request).has(DEPLOY_OAUTH_COOKIE)) return c.deploy(request);
+    const relayTo = relayOrigin(url.searchParams.get("state"));
+    if (relayTo && !cookieOf(request, INSTALL_COOKIE)) {
+      if (!(await c.deploys.isInstall(relayTo))) return page("Not an install", `This consent names ${esc(relayTo)}, which isn't a control Worker installed from here.`, 400);
+      return new Response(null, { status: 302, headers: { Location: `${relayTo}/install/callback${url.search}`, "Cache-Control": "no-store" } });
+    }
+  }
+  // The deploy page: installs in your own account. It checks who may use it itself (the deploy_page setting).
+  if (c.deploy && (path == "/deploy" || path.startsWith("/deploy/"))) return c.deploy(request);
+  if (path == "/deploy" || path.startsWith("/deploy/")) return wantsPageAt(request, path) ? page("Not here", `Installs are made from Erga's own control Worker, not from an install's. <a href="/">The Source page</a>.`, 404) : json({ error: "Not here: installs are made from erga.dev's control Worker." }, 404);
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
 
@@ -152,9 +177,22 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">The Source page</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
 }
 
+const wantsPageAt = (request: Request, path: string) => !path.startsWith("/api/") && (request.headers.get("accept") ?? "").includes("text/html");
+
 // ---------------------------------------------------------------- /install: the Cloudflare credential
 
 const INSTALL_COOKIE = "erga_install";
+/** An install's consent state: its control Worker's origin (base64url), a dot, a random part; relayOrigin reads the origin back. */
+const b64u = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const relayState = (origin: string, random: string) => `${b64u(origin)}.${random}`;
+export function relayOrigin(state: string | null): string | null {
+  const [head, rest] = (state ?? "").split(".");
+  if (!head || !rest) return null;
+  try {
+    const origin = atob(head.replace(/-/g, "+").replace(/_/g, "/"));
+    return /^https:\/\/[a-z0-9.-]+$/i.test(origin) ? origin : null;
+  } catch { return null; }
+}
 const installCookie = (value: string, maxAge: number) => `${INSTALL_COOKIE}=${value}; Max-Age=${maxAge}; Path=/install; HttpOnly; Secure; SameSite=Lax`;
 const cookieOf = (request: Request, name: string) => request.headers.get("cookie")?.split(/;\s*/).map((c) => c.split("=")).find(([k]) => k == name)?.slice(1).join("=") ?? "";
 
@@ -162,7 +200,8 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   const login = session.login;
   const path = url.pathname.replace(/\/+$/, "");
   const method = request.method;
-  const redirect = `${url.origin}/install/callback`;
+  // The consent comes back to this Worker's callback, or, on an install's control Worker, through erga.dev's (the relay).
+  const redirect = `${c.oauth.relay ?? url.origin}/install/callback`;
   const back = (q: Record<string, string>, ...setCookies: string[]) => {
     const headers = new Headers({ Location: `/install?${new URLSearchParams(q)}`, "Cache-Control": "no-store" });
     for (const x of setCookies) headers.append("Set-Cookie", x);
@@ -175,7 +214,7 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   if (method == "POST" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   if (path == "/install/start" && method == "POST") {
     if (!c.oauth.clientId && !c.oauth.mock) return back({ error: "This control Worker has no OAuth client yet. Put its client id in control/wrangler.jsonc (CLOUDFLARE_OAUTH_CLIENT_ID) and deploy it." });
-    const state = randomToken(16), { verifier, challenge } = await pkce();
+    const state = c.oauth.relay ? relayState(url.origin, randomToken(16)) : randomToken(16), { verifier, challenge } = await pkce();
     const to = authorizeUrl({ ...(c.oauth.mock ? { authorize: `${url.origin}/install/mock/consent` } : {}), clientId: c.oauth.clientId || "mock", redirect, state, challenge });
     return new Response(null, { status: 302, headers: { Location: to, "Set-Cookie": installCookie(`${state}.${verifier}`, 600), "Cache-Control": "no-store" } });
   }

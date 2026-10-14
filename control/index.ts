@@ -18,12 +18,15 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Actor, SourceRead } from "../server/source/index.ts";
 import { CONTROL } from "../deploy/targets";
 import { releaseStoreOf } from "../cloudflare/releases";
+import { deployDoor } from "../cloudflare/deploy-routes";
+import type { Env } from "../cloudflare/env";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
 
 export { Builder } from "./builder/worker";
 export { Pipeline } from "../cloudflare/pipeline";
 export { SourceHost } from "../cloudflare/objects/source";
+export { Deployer } from "../cloudflare/deploy-session";
 
 /** What the app calls over its CONTROL binding: the repository's object and the deploys', for the admin's agent. */
 export class App extends WorkerEntrypoint<ControlEnv> {
@@ -55,15 +58,23 @@ export class App extends WorkerEntrypoint<ControlEnv> {
 export default {
   async fetch(request: Request, env: ControlEnv, ctx: ExecutionContext): Promise<Response> {
     const platform = controlPlatform(env, ctx);
+    const upstream = env.UPSTREAM?.trim().replace(/\/+$/, "") || null;
     return controlRoutes(request, {
       platform,
       deploys: env.PIPELINE.getByName("deploys"),
       releases: releaseStoreOf(env as never),
+      // /deploy: installs, from the store; not on an install's control Worker, which has no store.
+      ...(upstream ? {} : { deploy: (request: Request) => deployDoor(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }) }),
       app: env.APP_URL.replace(/\/+$/, ""),
       layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
       version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,
       build: env.CF_VERSION_METADATA?.id ?? null,
-      oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}), accountId: env.CLOUDFLARE_ACCOUNT_ID, worker: CONTROL.worker, net: globalThis.fetch.bind(globalThis), mock: env.ERGA_DEPLOY_MOCK == "1" },
+      oauth: {
+        clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}),
+        accountId: env.CLOUDFLARE_ACCOUNT_ID, worker: upstream ? "erga-control" : CONTROL.worker, net: globalThis.fetch.bind(globalThis), mock: env.ERGA_DEPLOY_MOCK == "1",
+        // An install's consent goes through erga.dev's callback (the one registered on the client), which relays it here.
+        ...(upstream ? { relay: upstream } : {}),
+      },
     });
   },
 } satisfies ExportedHandler<ControlEnv>;

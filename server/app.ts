@@ -87,7 +87,7 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   // Erga's own source and deploys (the Git endpoint, the Source page, their APIs) are the control Worker's: `outside`
   // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
   if (path == "/git" || path.startsWith("/git/")) return (await outside(request, url)) ?? frontDoor(request, p);
-  // Its old address, from when admin settings linked to it: it's a page of its own now, not an admin one, so before the admins' gate.
+  // Its old address, from when admin settings linked to it: it's the control Worker's page now, so before the admins' gate.
   if (path == "/admin/deploy" || path == "/admin/deploy/") return new Response(null, { status: 301, headers: { Location: "/deploy" } });
   // Every /admin route: the server's admins only, checked on the server before any of them answers.
   if (isAdminPath(path)) {

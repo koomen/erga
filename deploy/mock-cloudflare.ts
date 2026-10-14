@@ -460,7 +460,7 @@ export function mockCloudflare(opts: {
       if (m == "GET" && (r = /^\/workers\/scripts\/([^/]+)\/settings$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
         const bindings = (state.scripts[r[1]].metadata.bindings ?? []).map((b: any) => (b.type == "durable_object_namespace" && !b.script_name ? { ...b, namespace_id: namespaceId(r![1], b.class_name) } : b));
-        return ok({ bindings, compatibility_date: state.scripts[r[1]].metadata.compatibility_date });
+        return ok({ bindings, compatibility_date: state.scripts[r[1]].metadata.compatibility_date, tags: state.scripts[r[1]].tags });
       }
       if ((r = /^\/workers\/scripts\/([^/]+)\/secrets$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
@@ -685,6 +685,12 @@ export function mockCloudflare(opts: {
       state.revoked++;
       return new Response(null, { status: 200 });
     }
+    // GitHub's manifest flow (cloudflare/deploy-routes.ts): the code traded for a pretend GitHub App.
+    if (url.origin == "https://api.github.com") {
+      const conv = /^\/app-manifests\/([^/]+)\/conversions$/.exec(url.pathname);
+      if (conv && req.method == "POST" && conv[1] == "mock-github-code") return Response.json({ id: 1, client_id: "Iv1.mockgithubapp0", client_secret: "mock-github-app-secret-0123456789abcdef0123", name: "Erga at erga.ada-mock.workers.dev", html_url: "https://github.com/apps/erga-at-erga-ada-mock-workers-dev" }, { status: 201 });
+      return Response.json({ message: "Not Found" }, { status: 404 });
+    }
     if (url.origin == "https://api.cloudflare.com") {
       const path = url.pathname.replace(/^\/client\/v4/, "") + url.search;
       const token = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
@@ -782,10 +788,10 @@ function seedFleet(state: MockState) {
   // The control Worker (control/): the repository, the pipeline, the build container; deployed by deploy/setup.ts.
   // As wrangler deployed it (control/wrangler.jsonc): no ERGA_VERSION until it deploys itself.
   state.scripts["erga-control"] = { metadata: { main_module: "index.js", compatibility_date: "2026-09-30", bindings: [
-    { type: "durable_object_namespace", name: "BUILDS", class_name: "Builder" }, { type: "durable_object_namespace", name: "PIPELINE", class_name: "Pipeline" }, { type: "durable_object_namespace", name: "SOURCE", class_name: "SourceHost" },
+    { type: "durable_object_namespace", name: "BUILDS", class_name: "Builder" }, { type: "durable_object_namespace", name: "PIPELINE", class_name: "Pipeline" }, { type: "durable_object_namespace", name: "SOURCE", class_name: "SourceHost" }, { type: "durable_object_namespace", name: "DEPLOYS", class_name: "Deployer" },
     { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB }, { type: "artifacts", name: "ARTIFACTS", namespace: "erga" }, { type: "version_metadata", name: "CF_VERSION_METADATA" },
     { type: "plain_text", name: "CLOUDFLARE_ACCOUNT_ID", text: FLEET_ACCOUNT }, { type: "plain_text", name: "APP_URL", text: "https://erga.dev" },
-  ] }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["Builder", "Pipeline", "SourceHost"] };
+  ] }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["Builder", "Pipeline", "SourceHost", "Deployer"] };
   state.versions = { erga: 1, "erga-control": 1 };
   deployVersion(state, "erga", state.scripts.erga);
   deployVersion(state, "erga-control", state.scripts["erga-control"]);
