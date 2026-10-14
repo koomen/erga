@@ -13,7 +13,8 @@
 //   assets/logo/logo.ts         the wordmark sized for the header and the favicon as a
 //                        data: URL, for the pages (server/pages/viewer.ts, client/editor.html, assets/landing/)
 // and puts the wordmark and the favicon into client/editor.html and assets/landing/index.html,
-// which can't import logo.ts. No dependencies: the script reads the TrueType
+// which can't import logo.ts. It does not write assets/logo/logo.png (the 512 px PNG served at /logo.png):
+// that is erga-ink.svg at 368 px wide, centred on white, captured in a browser; make it again the same way after a change. No dependencies: the script reads the TrueType
 // tables it needs (cmap, hmtx, loca, glyf) itself.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
