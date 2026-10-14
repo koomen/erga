@@ -50,6 +50,8 @@ const secret = () => randomBytes(32).toString("hex");
 /** The wrangler that deploys the control Worker (its containers need a recent one). */
 export const WRANGLER = "wrangler@4.147.0";
 const CONTROL_DIR = new URL("../control/", import.meta.url).pathname;
+/** The release store's bucket (control/wrangler.jsonc: RELEASES; deploy/releases.ts). */
+const RELEASES_BUCKET = "erga-releases";
 
 /** The control Worker's GitHub OAuth app's Client ID, as control/wrangler.jsonc has it (JSONC: comments stripped). */
 /** One of control/wrangler.jsonc's vars (its GitHub app's and OAuth client's ids), or "". */
@@ -63,7 +65,7 @@ const controlClientId = () => controlVar("GITHUB_CLIENT_ID");
 
 const PLAN = [
   `Check the credential, the account, and its zones ${[...new Set([CONTROL.zone, STAGING.zone, PROD.pages.zone, STAGING.pages.zone])].join(", ")} (reads only).`,
-  `Erga's source: the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (made if it isn't there). The control Worker reaches it through its Artifacts binding, not a token.`,
+  `Erga's source: the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (made if it isn't there). The control Worker reaches it through its Artifacts binding, not a token. And the release store's R2 bucket, ${RELEASES_BUCKET} (made if it isn't there), which the control Worker binds.`,
   `The control Worker's GitHub OAuth app: its Client ID in control/wrangler.jsonc (homepage https://${CONTROL.host}, callback https://${CONTROL.host}/auth/github/callback).`,
   `The control Worker (${CONTROL.worker}, control/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its container image) if it isn't there, or with --control. It gets ${CONTROL.host}.`,
   `The control Worker's secrets: a SESSION_SECRET (kept if it has one), its GitHub app's client secret, a GitHub mirror token if you want the mirror, and SNAPSHOT_TOKEN, which it shares with ${APP_WORKERS.join(" and ")} (set on all three: staging's data copy goes through it).`,
@@ -155,6 +157,12 @@ try {
       await cf.call("POST", base, "make the source repo", { name: SOURCE.repo, default_branch: "main", description: "Erga's source: staging and main" });
       console.log("   Made. Push the history to it through the control Worker's Git endpoint (bun server/source/import.ts), or straight to Artifacts.");
     } else console.log("   Skipped: the control Worker has no repository until it's there.");
+    const buckets = ((await cf.call<{ buckets?: { name: string }[] }>("GET", `${acc}/r2/buckets?name_contains=${RELEASES_BUCKET}`, "list the R2 buckets"))?.buckets ?? []).map((b) => b.name);
+    if (buckets.includes(RELEASES_BUCKET)) console.log(`   The release store's bucket ${RELEASES_BUCKET} is there.`);
+    else if (ask(`   Make the R2 bucket ${RELEASES_BUCKET} (the release store)?`, yes)) {
+      await cf.call("POST", `${acc}/r2/buckets`, "make the release store's bucket", { name: RELEASES_BUCKET });
+      console.log("   Made.");
+    } else console.log("   Skipped: the control Worker's deploy fails until it's there (its config binds it).");
 
     step(3);
     const clientId = controlClientId() || (mock ? "Ov23liMockControl" : "");
