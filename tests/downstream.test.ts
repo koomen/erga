@@ -148,19 +148,28 @@ describe("the consent relay", () => {
     expect((await go("code=abc&state=plain")).headers.get("location")).toContain("/auth/github");
   });
 
-  test("an install's control Worker consents through its upstream's callback, with its origin in the state", async () => {
+  test("an install's control Worker consents through its upstream's callback, with its origin in the state, and takes the relayed code", async () => {
     const session = { login: "ada", name: "Ada" } as unknown as Session;
     const platform = { sessionOf: async () => session, directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } } } as unknown as Platform;
+    const mock = mockCloudflare();
+    const connected: string[] = [];
     const c: Control = {
       platform, app: "https://erga.ada-mock.workers.dev", version: "v1", layout: (o) => new Response(o.body),
-      deploys: { credentialStatus: async () => ({ connected: false }) } as never,
-      oauth: { clientId: "erga-client", accountId: ACC, worker: "erga-control", net: fetch, relay: "https://ops.erga.test" },
+      deploys: { credentialStatus: async () => ({ connected: false }), connectCredential: async (answer: { access_token?: string }, by: string) => { connected.push(by); return answer.access_token!; } } as never,
+      oauth: { clientId: "erga-client", accountId: ACC, worker: "erga-control", net: mock.fetch, relay: "https://ops.erga.test" },
     };
     const own = "https://erga-control.ada-mock.workers.dev";
     const r = await controlRoutes(new Request(`${own}/install/start`, { method: "POST", headers: { accept: "text/html", origin: own } }), c);
     expect(r.status).toBe(302);
     const to = new URL(r.headers.get("location")!);
     expect(to.searchParams.get("redirect_uri")).toBe("https://ops.erga.test/install/callback");
-    expect(relayOrigin(to.searchParams.get("state"))).toBe(own);
+    const state = to.searchParams.get("state")!;
+    expect(relayOrigin(state)).toBe(own);
+    // Back from upstream's relay with the code: the cookie's state matches (its own dot and all), the code is exchanged with upstream's redirect URI, the grant kept.
+    const cookie = r.headers.get("set-cookie")!.split(";")[0];
+    const back = await controlRoutes(new Request(`${own}/install/callback?code=mock-code&state=${encodeURIComponent(state)}`, { headers: { accept: "text/html", cookie } }), c);
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toContain("/install?ok=1");
+    expect(connected).toEqual(["ada"]);
   });
 });

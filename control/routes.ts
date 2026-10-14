@@ -222,7 +222,9 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   }
   if (path == "/install/mock/consent" && c.oauth.mock) return mockConsentPage(url);
   if (path == "/install/callback" && method == "GET") {
-    const [state, verifier] = cookieOf(request, INSTALL_COOKIE).split(".");
+    // The cookie: the state, a dot, the verifier (an install's state has a dot of its own: split at the last one).
+    const kept = cookieOf(request, INSTALL_COOKIE), cut = kept.lastIndexOf(".");
+    const state = cut > 0 ? kept.slice(0, cut) : "", verifier = cut > 0 ? kept.slice(cut + 1) : "";
     const clear = installCookie("", 0);
     if (url.searchParams.get("error")) return back({ error: `Cloudflare did not authorize Erga: ${url.searchParams.get("error_description") || url.searchParams.get("error")}` }, clear);
     if (!state || !verifier || url.searchParams.get("state") != state) return back({ error: "This consent did not start here, or took more than ten minutes. Try again." }, clear);
