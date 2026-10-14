@@ -108,7 +108,9 @@ const SOURCE_STYLE = `
   .rail.up::before, .rail.down::after { display: block; }
   .rail .dot { position: relative; z-index: 1; }
   .subj { min-width: 0; padding: 0 8px 0 6px; gap: 8px; }
-  .subj span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); }
+  .subj > span:first-child { flex: 1 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); }
+  /* A release or channel badge keeps its whole width: the subject shortens instead, at any width. */
+  .subj .rel { flex: none; margin-left: 0; }
   .row.on-main .subj span { color: var(--fg); }
   .subj .here { flex: none; display: none; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
   .row.staging-only:hover .subj .here, .subj .here:focus-visible { display: inline-flex; align-items: center; }
@@ -355,11 +357,12 @@ const SOURCE_SCRIPT = `
     });
     drawn = true;
     const mergeBtn = document.getElementById("merge");
-    // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
-    if (!busy) document.getElementById("merge-row").hidden = !ahead;
-    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
+    // The Merge row is always there (it is how production deploys): disabled, and saying so, when main is at staging.
+    // While a merge runs the button stays, disabled.
+    document.getElementById("merge-row").hidden = !staging?.commit;
+    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "staging and production are the same";
     if (!busy) mergeBtn.disabled = !ahead;
-    mergeBtn.title = "Moves main to staging's head: production deploys it.";
+    mergeBtn.title = ahead ? "Moves main to staging's head: production deploys it." : "Nothing to merge: main is at staging's head. Push to staging first.";
     // Cut release: when main has a commit.
     const rp = document.getElementById("release-pill");
     if (rp) { rp.hidden = !main?.commit; rp.textContent = view.release ? "Cut release (" + view.release + " is stable)" : "Cut release"; }

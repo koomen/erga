@@ -42,7 +42,7 @@ test("a push, its deploy and a merge show on the open Source page without a relo
   expect(scroller).toBeGreaterThan(0);
 
   // A push: its row comes at the top, and its deploy shows in the staging column, then ends (the mock fails it).
-  git("commit", "-q", "--allow-empty", "-m", "Live push [mock-fail]");
+  git("commit", "-q", "--allow-empty", "-m", "Live push [mock-fail] with a subject long enough to run under the badge at any width, so the subject must shorten and the badge must not");
   const sha = git("rev-parse", "HEAD");
   git("push", "-q", remote, "HEAD:staging");
   const row = `#grid .row[data-sha="${sha}"]`, stagingDep = `${row} .deps[data-target="staging"] .dep`;
@@ -60,7 +60,22 @@ test("a push, its deploy and a merge show on the open Source page without a relo
   expect(merged.status, await merged.clone().text()).toBe(200);
   await expect.poll(() => classOf(`${row} .dot`), { timeout: 10_000 }).toContain("on-main");
   await expect.poll(() => classOf(`${row} .deps[data-target="production"] .dep`), { timeout: 15_000 }).toContain("dep");
-  await expect.poll(() => page.evaluate(() => (document.getElementById("merge-row") as HTMLElement).hidden)).toBe(true);
+  // Nothing left to merge: the Merge row stays, disabled, and says so.
+  await expect.poll(() => text("#ahead")).toBe("staging and production are the same");
+  expect(await page.evaluate(() => (document.getElementById("merge-row") as HTMLElement).hidden)).toBe(false);
+  expect(await page.evaluate(() => (document.getElementById("merge") as HTMLButtonElement).disabled)).toBe(true);
+
+  // A release cut on main's head: its badge on the row shows whole, at desktop and phone width (the subject shortens instead).
+  const cut = await fetch(`${server.root}/api/source/release`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ version: "v0.1.0", notes: "First" }) });
+  expect(cut.status, await cut.clone().text()).toBe(200);
+  const badge = `${row} .subj .rel`;
+  await expect.poll(() => text(badge), { timeout: 10_000 }).toContain("v0.1.0");
+  const whole = (sel: string) => page.evaluate((s) => { const el = document.querySelector(s) as HTMLElement | null; if (!el) return null; const cell = el.parentElement!; const r = el.getBoundingClientRect(), c = cell.getBoundingClientRect(); return { fits: el.scrollWidth <= el.clientWidth && cell.scrollWidth <= cell.clientWidth, inside: r.right <= c.right + 0.5 && r.left >= c.left - 0.5, width: r.width }; }, sel);
+  expect(await whole(badge)).toMatchObject({ fits: true, inside: true });
+  await page.setViewportSize({ width: 390, height: 700 });
+  await expect.poll(async () => (await whole(badge))?.width).toBeGreaterThan(30);
+  expect(await whole(badge)).toMatchObject({ fits: true, inside: true });
+  await page.setViewportSize({ width: 1200, height: 600 });
 
   expect(await page.evaluate(() => (window as unknown as { kept?: number }).kept)).toBe(1);
 });
