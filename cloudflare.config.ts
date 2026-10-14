@@ -6,6 +6,8 @@
 // start`, dev/start.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
 import * as entrypoint from "./cloudflare/index.ts" with { type: "cf-worker" };
+// In development the entry adds the control Worker's objects, which the app hosts only there (cloudflare/dev-entry.ts).
+import * as devEntrypoint from "./cloudflare/dev-entry.ts" with { type: "cf-worker" };
 // The server settings the deploy fixes (locks): deploy/locked-settings.ts, with ERGA_SERVER_CONFIG
 // (JSON, from the environment) over them. client/build.sh and dev/start.ts check them first (`bun deploy/locked-settings.ts`).
 import { deployed } from "./deploy/locked-settings.ts";
@@ -26,7 +28,7 @@ export default defineConfig(({ mode }) => ({
     name: PROD.worker,
     compatibilityDate: "2026-09-30",
     compatibilityFlags: ["nodejs_compat"],
-    entrypoint,
+    entrypoint: mode == "development" ? devEntrypoint : entrypoint,
     domains: [PROD.host],
     // Each document's page runs on an origin of its own, <id>-<owner>.erga-pages.dev:
     // a wildcard route, with a proxied wildcard DNS record

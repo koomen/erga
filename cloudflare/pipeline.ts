@@ -20,7 +20,8 @@ import { DurableObject } from "cloudflare:workers";
 import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type TargetStatus } from "../deploy/branches";
 import { fixedCredential, OAuthCredential, sealKeyFrom, type CredentialStatus, type TokenAnswer } from "../deploy/credential";
 import { loadRelease, type Release } from "../deploy/pipeline";
-import { isChannel, memoryBlobs, r2Blobs, ReleaseStore, type Channel, type ReleasesView } from "../deploy/releases";
+import { isChannel, type Channel, type ReleaseStore, type ReleasesView } from "../deploy/releases";
+import { releaseStoreOf } from "./releases";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import { containerBuilder } from "../control/builder/client";
 import { builderFetch } from "../control/builder/worker";
@@ -29,13 +30,6 @@ import { hasSource } from "./artifacts";
 import { sourceForBuild } from "./source";
 
 export type RelayEvent = { type: string } & Record<string, unknown>;
-
-/** Local development's release store (ERGA_DEPLOY_MOCK): in memory, shared by the deploys' object and the routes that serve it. */
-export const DEV_BLOBS = memoryBlobs();
-
-/** The release store this Worker has: its bucket (the control Worker), the memory one under the mock, or none. */
-export const releaseStoreOf = (env: Pick<Env, "RELEASES" | "ERGA_DEPLOY_MOCK">): ReleaseStore | null =>
-  env.RELEASES ? new ReleaseStore(r2Blobs(env.RELEASES)) : env.ERGA_DEPLOY_MOCK == "1" ? new ReleaseStore(DEV_BLOBS) : null;
 
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
