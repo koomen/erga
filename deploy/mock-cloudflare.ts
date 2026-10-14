@@ -81,6 +81,8 @@ export interface MockState {
   deployments: Record<string, { id: string; created_on: string; strategy: string; versions: { version_id: string; percentage: number }[] }[]>;
   /** Deleted D1 databases, by name. */
   deletedDatabases: string[];
+  /** R2 buckets, by name (the release store's). */
+  buckets?: string[];
   /** Releases (ERGA_VERSION values) whose /api/health answers ok false: a test's broken deploy. */
   unhealthy?: string[];
   /** OAuth: the refresh tokens still good (each refresh rotates), how many grants were given, and how long an access token lasts. */
@@ -279,6 +281,11 @@ export function mockCloudflare(opts: {
         if (one && !t) return fail(404, 1003, "token not found");
         if (m == "GET" && t) return ok({ id: t.id, name: t.name, status: "active", policies: t.policies });
         if (m == "DELETE" && t) { state.tokens = state.tokens.filter((x) => x != t); tokenValues.delete(t.id); return ok({ id: t.id }); }
+      }
+      if (rest.startsWith("/r2/buckets")) {
+        state.buckets ??= [];
+        if (m == "GET") { const q = new URLSearchParams(rest.split("?")[1] ?? "").get("name_contains") ?? ""; return ok({ buckets: state.buckets.filter((b) => b.includes(q)).map((name) => ({ name })) }); }
+        if (m == "POST" && rest == "/r2/buckets") { const { name } = await body(); if (state.buckets.includes(name)) return fail(409, 10004, "The bucket you tried to create already exists"); state.buckets.push(name); return ok({ name }); }
       }
       if (rest.startsWith("/d1/database")) {
         if (token == "mock-noperm") return fail(403, 10000, "Authentication error");
