@@ -19,14 +19,19 @@ async function envOf(env?: Env): Promise<Env> {
   return mod.env;
 }
 
+/** The deploys' object: the control Worker's (and the app's in local development); a Worker without it has no deploys. */
+async function deploysOf(env?: Env) {
+  const e = await envOf(env);
+  if (!e.PIPELINE) throw new Error("This Worker has no deploys (no PIPELINE binding): only the control Worker deploys.");
+  return e.PIPELINE.getByName("deploys");
+}
+
 /** A branch moved to `commit`: deploy it where it goes. Never throws for a deploy that fails (that's in the status). */
 export async function deployHook(branch: string, commit: string, env?: Env, trigger?: string): Promise<void> {
-  const e = await envOf(env);
-  await e.PIPELINE.getByName("deploys").hook(branch, commit, trigger);
+  await (await deploysOf(env)).hook(branch, commit, trigger);
 }
 
 /** An event to every admin listening on /api/events ({type: "source"} when a branch moves, for one). */
 export async function publishEvent(event: { type: string } & Record<string, unknown>, env?: Env): Promise<void> {
-  const e = await envOf(env);
-  await e.PIPELINE.getByName("deploys").publish(event);
+  await (await deploysOf(env)).publish(event);
 }

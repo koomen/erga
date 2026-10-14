@@ -72,8 +72,8 @@ export interface Env {
    */
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
-  /** Branch deploys: one object, "deploys", per server. */
-  PIPELINE: DurableObjectNamespace<Pipeline>;
+  /** Local development only: the deploys' object ("deploys"), hosted by the app in place of the control Worker. */
+  PIPELINE?: DurableObjectNamespace<Pipeline>;
   /**
    * Which of Erga's own deploy targets this server is:
    * "production" on erga.dev, "staging" on staging.erga.dev, empty on any
@@ -115,8 +115,8 @@ export interface Env {
   ERGA_GITHUB_ORIGIN?: string;
   /** Local development only (the tests): the other deploy target's server, in place of https://<its host>. */
   ERGA_PEER_ORIGIN?: string;
-  /** Erga's own repository: one Durable Object, "erga". */
-  SOURCE: DurableObjectNamespace<SourceHost>;
+  /** Local development only: the repository's object ("erga"), hosted by the app in place of the control Worker. */
+  SOURCE?: DurableObjectNamespace<SourceHost>;
   /**
    * Cloudflare Artifacts, where Erga's repository is:
    * bound only when the deploy names a namespace (ERGA_ARTIFACTS_NAMESPACE).

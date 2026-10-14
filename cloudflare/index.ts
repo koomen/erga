@@ -10,7 +10,7 @@
 //                                                          snapshot endpoints (branch-deploys.ts)
 //   the control Worker's        the repository, the Source page and the deploys' API (control/routes.ts): a redirect to the
 //                               control Worker where it is apart (CONTROL_URL: erga.dev, staging.erga.dev); served here in
-//                               local development, over the mock Cloudflare
+//                               local development, over the mock Cloudflare; "not found" on a server with neither
 //   /deploy                    deploy Erga to your own Cloudflare account (deploy-routes.ts; the deploy_page setting,
 //                              not an admin right); /admin/deploy redirects there
 //   /__erga/...                the dev server's (dev.ts)
@@ -57,7 +57,8 @@ export default {
           if (read && !path.startsWith("/api/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
           return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
         }
-        // Local development (and a server /deploy made, which has no control Worker): this Worker hosts them.
+        // Local development: this Worker hosts them. A server with no control Worker (one /deploy made) has none of this.
+        if (!env.PIPELINE) return Response.json({ error: "This server has no control Worker: no repository, no deploys." }, { status: 404, headers: { "Cache-Control": "no-store" } });
         const mock = env.ERGA_DEPLOY_MOCK == "1";
         return controlRoutes(request, {
           platform: p, deploys: env.PIPELINE.getByName("deploys"), app: url.origin, layout: adminResponse, version: env.ERGA_VERSION ?? null,
