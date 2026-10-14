@@ -97,6 +97,8 @@ export interface Env {
   CONTROL_URL?: string;
   /** The control Worker only: its build containers (control/builder/worker.ts), and its own version (the release cache's key). */
   BUILDS?: DurableObjectNamespace<import("../control/builder/worker").Builder>;
+  /** The control Worker only: the release store's bucket (deploy/releases.ts). */
+  RELEASES?: R2Bucket;
   CF_VERSION_METADATA?: { id?: string };
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
   ERGA_DEPLOY_MOCK?: string;

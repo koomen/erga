@@ -45,6 +45,10 @@ export interface DashboardDeploys {
   redeployWith(name: string, trigger: string, o: { fresh?: boolean }): Promise<{ ok: boolean; status?: unknown; error?: string }>;
   /** Back to the Worker version before the target's live deploy (its restore point). */
   rollback(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
+  /** The release store (deploy/releases.ts): both channels (null: no store); a release promoted to stable; one taken off a channel. */
+  releases(): Promise<object | null>;
+  promoteRelease(version: string, by: string): Promise<{ ok: boolean; error?: string; stable?: unknown }>;
+  withdrawRelease(channel: string, version: string, by: string): Promise<{ ok: boolean; error?: string; channel?: unknown }>;
 }
 
 /**
@@ -147,6 +151,17 @@ export class AdminAgents {
         const r = await pipeline().rollback(target, `rollback by ${byLine(login, VIA.admin)}`);
         if (!r.ok) throw new Error(r.error ?? "refused");
         return { done: `${target} is rolled back`, target: r.status };
+      },
+      releases: async () => (await pipeline().releases()) ?? { error: "This server has no release store." },
+      promote: async (version) => {
+        const r = await pipeline().promoteRelease(version, byLine(login, VIA.admin));
+        if (!r.ok) throw new Error(r.error ?? "refused");
+        return { done: `release ${version} is on stable now: installs that follow stable upgrade to it`, stable: r.stable };
+      },
+      withdraw: async (channel, version) => {
+        const r = await pipeline().withdrawRelease(channel, version, byLine(login, VIA.admin));
+        if (!r.ok) throw new Error(r.error ?? "refused");
+        return { done: `release ${version} is off ${channel}`, channel: r.channel };
       },
       deployHome: async () => {
         if (!(await this.platform.directory.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");

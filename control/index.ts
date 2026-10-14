@@ -16,6 +16,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Actor, SourceRead } from "../server/source/index.ts";
 import { CONTROL } from "../deploy/targets";
+import { releaseStoreOf } from "../cloudflare/pipeline";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
 
@@ -42,6 +43,10 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
   redeployWith(name: string, trigger: string, o: { fresh?: boolean }) { return this.deploys.redeployWith(name, trigger, o); }
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
+  // The release store (deploy/releases.ts).
+  releases() { return this.deploys.releases(); }
+  promoteRelease(version: string, by: string) { return this.deploys.promoteRelease(version, by); }
+  withdrawRelease(channel: string, version: string, by: string) { return this.deploys.withdrawRelease(channel, version, by); }
 }
 
 export default {
@@ -50,6 +55,7 @@ export default {
     return controlRoutes(request, {
       platform,
       deploys: env.PIPELINE.getByName("deploys"),
+      releases: releaseStoreOf(env as never),
       app: env.APP_URL.replace(/\/+$/, ""),
       layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
       version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,

@@ -24,6 +24,7 @@
 // gate, or the app's in local development) has checked that already.
 
 import type { CredentialStatus, TokenAnswer } from "../../deploy/credential.ts";
+import type { ReleasesView } from "../../deploy/releases.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../platform.ts";
 import { whoOf } from "../platform.ts";
@@ -36,6 +37,10 @@ export interface DeploysObject extends DashboardDeploys {
   credentialStatus(): Promise<CredentialStatus>;
   connectCredential(answer: TokenAnswer, by: string): Promise<string>;
   disconnectCredential(): Promise<void>;
+  /** The release store (deploy/releases.ts): both channels (null: no store); a release promoted to stable; one taken off a channel. */
+  releases(): Promise<ReleasesView | null>;
+  promoteRelease(version: string, by: string): Promise<{ ok: true; stable: ReleasesView["stable"] } | { ok: false; error: string; status?: number }>;
+  withdrawRelease(channel: string, version: string, by: string): Promise<{ ok: true; channel: ReleasesView["stable"] } | { ok: false; error: string; status?: number }>;
   /** GET /api/events: the stream. */
   fetch(request: Request): Promise<Response>;
 }

@@ -94,6 +94,7 @@ export function controlConfig(jsonc: string): ControlConfig {
     name: string; compatibility_date: string; compatibility_flags?: string[];
     containers?: { class_name: string; name?: string }[]; durable_objects?: { bindings?: { name: string; class_name: string }[] };
     d1_databases?: { binding: string; database_name: string }[]; artifacts?: { binding: string; namespace: string }[];
+    r2_buckets?: { binding: string; bucket_name: string }[];
     version_metadata?: { binding: string }; vars?: Record<string, string>;
     observability?: { enabled?: boolean; logs?: { enabled?: boolean; invocation_logs?: boolean } };
   };
@@ -104,6 +105,7 @@ export function controlConfig(jsonc: string): ControlConfig {
     durableObjects: (w.durable_objects?.bindings ?? []).map((b) => ({ name: b.name, className: b.class_name })),
     d1: (w.d1_databases ?? []).map((d) => ({ name: d.binding, databaseName: d.database_name })),
     artifacts: (w.artifacts ?? []).map((a) => ({ name: a.binding, namespace: a.namespace })),
+    r2: (w.r2_buckets ?? []).map((b) => ({ name: b.binding, bucketName: b.bucket_name })),
     versionMetadata: w.version_metadata?.binding ?? null,
     vars: Object.fromEntries(Object.entries(w.vars ?? {}).map(([k, v]) => [k, String(v)])),
     observability: { enabled: !!w.observability?.enabled, logs: { enabled: !!w.observability?.logs?.enabled, invocationLogs: !!w.observability?.logs?.invocation_logs } },

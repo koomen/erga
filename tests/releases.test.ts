@@ -1,0 +1,182 @@
+// The release store (deploy/releases.ts): a release published, its files and
+// manifest; the channels (edge after a healthy production deploy, stable when
+// promoted, withdrawn); a release read back and checked; and the control
+// Worker's routes: the store for anyone, Promote and Withdraw for admins.
+import { describe, expect, test } from "bun:test";
+import { controlRoutes, type Control } from "../control/routes";
+import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor, sha256 } from "../deploy/releases";
+import { DeployError, type Release } from "../deploy/pipeline";
+import type { Platform } from "../server/platform";
+import type { Session } from "../server/identity/index";
+
+const enc = (s: string) => new TextEncoder().encode(s);
+const V1 = "111111111111", V2 = "222222222222", C1 = "1".repeat(40), C2 = "2".repeat(40);
+
+/** A small release, as the builder would hand one back. */
+function release(version: string): Release {
+  return {
+    version, built: "2026-10-13T10:00:00.000Z", mainModule: "index.js",
+    worker: { name: "erga", compatibilityDate: "2026-09-30", env: {} },
+    modules: { "index.js": enc(`export default { fetch: () => new Response("${version}") }`) },
+    assets: { "/page.js": enc("page"), "/fonts/inter.css": enc("@font-face{}") },
+    migrations: { "0001_erga.sql": "CREATE TABLE IF NOT EXISTS users (login TEXT);" },
+    control: { config: { name: "erga-control", compatibilityDate: "2026-09-30", compatibilityFlags: [], containers: [], durableObjects: [], d1: [], artifacts: [], r2: [], versionMetadata: null, vars: {}, observability: { enabled: true, logs: { enabled: true, invocationLogs: true } } }, mainModule: "index.js", modules: { "index.js": enc("export default {}") } },
+  };
+}
+
+function store() {
+  let t = 1_700_000_000_000;
+  const blobs = memoryBlobs();
+  return { blobs, store: new ReleaseStore(blobs, () => (t += 1000)) };
+}
+
+describe("the store", () => {
+  test("a published release: every file under releases/<version>/, release.json, and the manifest last with each file's hash", async () => {
+    const { blobs, store: s } = store();
+    const m = await s.publish(release(V1), C1);
+    expect(m).toMatchObject({ version: V1, commit: C1, built: "2026-10-13T10:00:00.000Z" });
+    expect(Object.keys(m.files).sort()).toEqual(["assets/fonts/inter.css", "assets/page.js", "bundle/index.js", "control/index.js", "migrations/0001_erga.sql", "release.json"]);
+    expect(m.files["assets/page.js"]).toEqual({ sha256: await sha256(enc("page")), size: 4 });
+    expect([...blobs.map.keys()].sort()).toEqual([...Object.keys(m.files).map((p) => `releases/${V1}/${p}`), `releases/${V1}/manifest.json`].sort());
+    expect(blobs.map.get(`releases/${V1}/bundle/index.js`)!.type).toBe("application/javascript; charset=utf-8");
+    expect(blobs.map.get(`releases/${V1}/assets/fonts/inter.css`)!.type).toBe("text/css; charset=utf-8");
+    // Nothing on a channel yet: publishing isn't releasing.
+    expect(await s.view()).toEqual({ edge: { channel: "edge", latest: null, releases: [] }, stable: { channel: "stable", latest: null, releases: [] } });
+  });
+
+  test("the store refuses a version that isn't a commit", async () => {
+    const { store: s } = store();
+    await expect(s.publish(release("dev"), C1)).rejects.toThrow(DeployError);
+  });
+
+  test("edge, stable, promote and withdraw: newest first, latest kept, only a published release goes on a channel", async () => {
+    const { store: s } = store();
+    await s.publish(release(V1), C1);
+    await s.publish(release(V2), C2);
+    await s.addTo("edge", V1);
+    const edge = await s.addTo("edge", V2);
+    expect(edge.latest).toBe(V2);
+    expect(edge.releases.map((r) => r.version)).toEqual([V2, V1]);
+    expect(edge.releases[0]).toMatchObject({ version: V2, commit: C2, built: "2026-10-13T10:00:00.000Z" });
+    expect(edge.releases[0].by).toBeUndefined();
+    // Promoted: stable, with who did it; edge unchanged.
+    const stable = await s.addTo("stable", V1, "ada");
+    expect(stable).toMatchObject({ channel: "stable", latest: V1 });
+    expect(stable.releases[0]).toMatchObject({ version: V1, by: "ada" });
+    expect((await s.channel("edge")).latest).toBe(V2);
+    // A version never published can't go on a channel; neither can a non-version.
+    await expect(s.addTo("stable", "333333333333", "ada")).rejects.toThrow(/never published/);
+    await expect(s.addTo("stable", "nope", "ada")).rejects.toThrow(/no release nope/);
+    // Promoted again: moved to the head, listed once.
+    await s.addTo("stable", V2, "ada");
+    await s.addTo("stable", V1, "bo");
+    expect((await s.channel("stable")).releases.map((r) => `${r.version}:${r.by}`)).toEqual([`${V1}:bo`, `${V2}:ada`]);
+    // Withdrawn: off the channel, latest is the newest that stays; the files stay.
+    const after = await s.withdraw("stable", V1);
+    expect(after.latest).toBe(V2);
+    expect(after.releases.map((r) => r.version)).toEqual([V2]);
+    await expect(s.withdraw("stable", V1)).rejects.toThrow(/isn't on stable/);
+    expect(await s.manifest(V1)).not.toBeNull();
+    expect((await s.withdraw("stable", V2)).latest).toBeNull();
+  });
+
+  test("a channel lists at most CHANNEL_KEEP releases", async () => {
+    const { store: s } = store();
+    for (let i = 0; i < CHANNEL_KEEP + 3; i++) {
+      const v = i.toString(16).padStart(12, "0");
+      await s.publish(release(v), v.repeat(4).slice(0, 40));
+      await s.addTo("edge", v);
+    }
+    const edge = await s.channel("edge");
+    expect(edge.releases.length).toBe(CHANNEL_KEEP);
+    expect(edge.latest).toBe((CHANNEL_KEEP + 2).toString(16).padStart(12, "0"));
+  });
+
+  test("a release read back is the release published; a changed file is refused", async () => {
+    const { blobs, store: s } = store();
+    const r = release(V1);
+    await s.publish(r, C1);
+    const back = (await s.load(V1))!;
+    expect(back.version).toBe(V1);
+    expect(new TextDecoder().decode(back.modules["index.js"])).toBe(new TextDecoder().decode(r.modules["index.js"]));
+    expect(Object.keys(back.assets).sort()).toEqual(["/fonts/inter.css", "/page.js"]);
+    expect(back.migrations).toEqual(r.migrations);
+    expect(new TextDecoder().decode(back.control!.modules["index.js"])).toBe("export default {}");
+    expect(await s.load(V2)).toBeNull();
+    // The files of a release are its own: the same release published again writes the same bytes.
+    expect(Object.keys(releaseFiles(r)).sort()).toEqual(Object.keys((await s.manifest(V1))!.files).sort());
+    blobs.map.set(`releases/${V1}/assets/page.js`, { bytes: enc("PAGE"), type: "text/plain" });
+    await expect(s.load(V1)).rejects.toThrow(/doesn't match its manifest/);
+  });
+});
+
+describe("the routes", () => {
+  test("the store is read by anyone: the channels, a release's manifest and files, each with its media type", async () => {
+    const { store: s } = store();
+    await s.publish(release(V1), C1);
+    await s.addTo("edge", V1);
+    const get = async (path: string) => (await releasesDoor(s, path))!;
+    expect(await releasesDoor(s, "/install")).toBeNull();
+    const all = await get("/releases");
+    expect(all.status).toBe(200);
+    expect(((await all.json()) as { edge: { latest: string } }).edge.latest).toBe(V1);
+    expect(((await (await get("/releases/edge.json")).json()) as { releases: unknown[] }).releases.length).toBe(1);
+    expect((await get("/releases/stable.json")).headers.get("cache-control")).toBe("no-cache");
+    expect((await get("/releases/beta.json")).status).toBe(404);
+    const manifest = await get(`/releases/${V1}/manifest.json`);
+    expect(manifest.headers.get("cache-control")).toBe("public, max-age=60");
+    expect(((await manifest.json()) as { commit: string }).commit).toBe(C1);
+    const js = await get(`/releases/${V1}/bundle/index.js`);
+    expect(js.headers.get("content-type")).toBe("application/javascript; charset=utf-8");
+    expect(js.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(await js.text()).toContain(V1);
+    expect((await get(`/releases/${V1}/bundle/nope.js`)).status).toBe(404);
+    expect((await get(`/releases/${V2}/manifest.json`)).status).toBe(404);
+    expect((await get(`/releases/${V1}/../x`)).status).toBe(404);
+    expect((await releasesDoor(null, "/releases"))!.status).toBe(404);
+  });
+
+  test("Promote and Withdraw on the control Worker: admins, from its own pages or with a token; the store for anyone", async () => {
+    const { store: s } = store();
+    await s.publish(release(V1), C1);
+    await s.addTo("edge", V1);
+    const ORIGIN = "https://ops.erga.test";
+    const calls: string[] = [];
+    let who: Session | null = { login: "ada", name: "Ada" } as unknown as Session;
+    const platform = { sessionOf: async () => who, directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } } } as unknown as Platform;
+    const deploys = {
+      releases: () => s.view(),
+      promoteRelease: async (version: string, by: string) => { calls.push(`promote ${version} by ${by}`); try { return { ok: true as const, stable: await s.addTo("stable", version, by) }; } catch (e) { return { ok: false as const, error: (e as Error).message, status: 409 }; } },
+      withdrawRelease: async (channel: string, version: string, by: string) => { calls.push(`withdraw ${channel} ${version} by ${by}`); try { return { ok: true as const, channel: await s.withdraw(channel as "stable", version) }; } catch (e) { return { ok: false as const, error: (e as Error).message, status: 409 }; } },
+    } as never;
+    const c: Control = { platform, deploys, releases: s, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body), oauth: { clientId: "", accountId: "", worker: "erga-control", net: fetch } };
+    const go = (path: string, init: RequestInit & { origin?: string | null } = {}) => controlRoutes(new Request(`${ORIGIN}${path}`, { ...init, headers: { accept: "application/json", ...(init.origin === null ? {} : { origin: init.origin ?? ORIGIN }), ...(init.headers ?? {}) } }), c);
+    const post = (path: string, body: unknown, origin?: string | null) => go(path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" }, origin });
+
+    // Anyone: the store.
+    who = null;
+    expect((await go("/releases/edge.json")).status).toBe(200);
+    expect((await go("/api/releases")).status).toBe(401);
+    expect((await post("/api/releases/promote", { version: V1 })).status).toBe(401);
+    // An admin: both channels, Promote, Withdraw.
+    who = { login: "ada", name: "Ada" } as unknown as Session;
+    expect(((await (await go("/api/releases")).json()) as { stable: { latest: string | null } }).stable.latest).toBeNull();
+    const promoted = await post("/api/releases/promote", { version: V1 });
+    expect(promoted.status).toBe(200);
+    expect(((await promoted.json()) as { stable: { latest: string } }).stable.latest).toBe(V1);
+    expect(calls).toEqual([`promote ${V1} by ada`]);
+    expect((await post("/api/releases/promote", { version: "zzz" })).status).toBe(400);
+    expect((await post("/api/releases/promote", { version: V2 })).status).toBe(409);
+    // Another site's form: refused; an agent's token needs no origin.
+    expect((await post("/api/releases/withdraw", { channel: "stable", version: V1 }, "https://evil.test")).status).toBe(403);
+    who = { login: "ada", name: "Ada", agent: { id: "t1", scope: "admin", label: "Test" } } as unknown as Session;
+    const withdrawn = await post("/api/releases/withdraw", { channel: "stable", version: V1 }, null);
+    expect(withdrawn.status).toBe(200);
+    expect(((await withdrawn.json()) as { channel: { latest: string | null } }).channel.latest).toBeNull();
+    expect((await post("/api/releases/withdraw", { channel: "beta", version: V1 }, null)).status).toBe(409);
+    // A store this server doesn't have.
+    const none: Control = { ...c, releases: null, deploys: { ...deploys, releases: async () => null } as never };
+    expect((await controlRoutes(new Request(`${ORIGIN}/api/releases`, { headers: { accept: "application/json" } }), none)).status).toBe(404);
+    expect((await controlRoutes(new Request(`${ORIGIN}/releases/edge.json`), none)).status).toBe(404);
+  });
+});

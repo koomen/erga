@@ -51,6 +51,7 @@ export function controlMetadata(release: Release, target: Pick<Target, "accountI
     bindings.push({ type: "d1", name: d.name, database_id: id, id });
   }
   for (const a of cfg.artifacts) bindings.push({ type: "artifacts", name: a.name, namespace: a.namespace });
+  for (const b of cfg.r2 ?? []) bindings.push({ type: "r2_bucket", name: b.name, bucket_name: b.bucketName });
   if (cfg.versionMetadata) bindings.push({ type: "version_metadata", name: cfg.versionMetadata });
   const text: Record<string, string> = { ...cfg.vars, ERGA_VERSION: release.version, CLOUDFLARE_ACCOUNT_ID: target.accountId };
   for (const [name, value] of Object.entries(text)) bindings.push({ type: "plain_text", name, text: value });

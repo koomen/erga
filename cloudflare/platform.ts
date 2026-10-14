@@ -70,7 +70,7 @@ function controlSource(control: Service<App>): SourceService {
 /** The deploys on a server that has none (no control Worker, and not local development): every call says so. */
 const noDeploys: Platform["deploys"] = (() => {
   const none = async () => { throw new Error("This server has no control Worker: there are no deploys here."); };
-  return { status: none, logOf: none, redeploy: none, redeployWith: none, rollback: none } as unknown as Platform["deploys"];
+  return { status: none, logOf: none, redeploy: none, redeployWith: none, rollback: none, releases: none, promoteRelease: none, withdrawRelease: none } as unknown as Platform["deploys"];
 })();
 
 /** Where documents' pages run: an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */

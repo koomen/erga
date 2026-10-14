@@ -122,6 +122,8 @@ export interface ControlConfig {
   /** Each D1 binding's database, by name: found in the account at deploy time (another account has its own ids). */
   d1: { name: string; databaseName: string }[];
   artifacts: { name: string; namespace: string }[];
+  /** Its R2 buckets (the release store). */
+  r2: { name: string; bucketName: string }[];
   /** The version_metadata binding's name, if any. */
   versionMetadata: string | null;
   vars: Record<string, string>;

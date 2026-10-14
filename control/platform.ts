@@ -32,6 +32,8 @@ export interface ControlEnv {
   PIPELINE: DurableObjectNamespace<Pipeline>;
   SOURCE: DurableObjectNamespace<SourceHost>;
   BUILDS: DurableObjectNamespace<Builder>;
+  /** The release store (deploy/releases.ts): an R2 bucket, erga-releases, made by deploy/setup.ts. */
+  RELEASES?: R2Bucket;
   /** This Worker's version id: the release cache's key. */
   CF_VERSION_METADATA?: { id?: string };
   /** The release this Worker is (the commit): set by its own deploy (deploy/control.ts), what /api/health answers; none after a wrangler deploy. */

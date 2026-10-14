@@ -18,6 +18,11 @@
 //   POST /install/disconnect    the grant revoked and forgotten
 //   GET  /api/install           the credential's status, as JSON
 //   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
+//   GET  /releases, /releases/<channel>.json, /releases/<version>/...
+//                               the release store, for anyone (deploy/releases.ts): the channels, and each release's files
+//   GET  /api/releases          admins: both channels, as the Source page shows them
+//   POST /api/releases/promote  admins: {version}: the release goes on stable (Promote on the Source page)
+//   POST /api/releases/withdraw admins: {channel, version}: the release comes off that channel
 //
 // Everything but sign-in, the health check, Git reads, the public source page and the stylesheet
 // needs an admin: a signed-in admin (this Worker's session), or an
@@ -27,6 +32,7 @@
 import { authorizeUrl, CONTROL_OAUTH_SCOPES, exchangeCode, pkce, randomToken, type CredentialStatus } from "../deploy/credential.ts";
 import { mockConsentPage } from "../deploy/page.ts";
 import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
+import { releasesDoor, type ReleaseStore } from "../deploy/releases.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
 import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
@@ -39,6 +45,8 @@ import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourc
 export interface Control {
   platform: Platform;
   deploys: DeploysObject;
+  /** The release store (deploy/releases.ts), read here for anyone; null where there's none. */
+  releases?: ReleaseStore | null;
   /** The app's address (https://erga.dev): links, and where the stylesheet comes from. */
   app: string;
   /** The Source page's shell. */
@@ -53,7 +61,8 @@ export interface Control {
 /** The paths these routes own (the app answers them with a redirect to the control Worker when it is apart). */
 export const isControlPath = (path: string) =>
   path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
-  || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install";
+  || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install"
+  || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/");
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
@@ -79,6 +88,8 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   }
   // Erga's source, read-only, for anyone (a browser's GET of /git/erga.git too: Git asks only for paths under it).
   if (read && isPublicSourcePath(path)) return publicSourcePage(p, url, c.app);
+  // The release store, for anyone: the channels and each release's files.
+  if (read) { const r = await releasesDoor(c.releases ?? null, path); if (r) return r; }
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
 
@@ -102,6 +113,17 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   }
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
+  if (path == "/api/releases" && read) return json((await c.deploys.releases()) ?? { error: "This server has no release store." }, c.releases ? 200 : 404);
+  if ((path == "/api/releases/promote" || path == "/api/releases/withdraw") && method == "POST") {
+    // From this site's pages, or an agent's token: never another site's form.
+    if (!session.agent && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+    const body = ((await request.json().catch(() => ({}))) ?? {}) as { version?: unknown; channel?: unknown };
+    const version = String(body.version ?? "").trim().toLowerCase();
+    if (!/^[0-9a-f]{12}$/.test(version)) return json({ ok: false, error: "Which release? version: its 12-digit commit, as the channels list it." }, 400);
+    const by = session.login.toLowerCase();
+    const r = path.endsWith("/promote") ? await c.deploys.promoteRelease(version, by) : await c.deploys.withdrawRelease(String(body.channel ?? ""), version, by);
+    return r.ok ? json(r) : json({ ok: false, error: r.error }, r.status ?? 400);
+  }
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
   return wantsPage ? page("Not found", `There's nothing here. <a href="/">The Source page</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
 }

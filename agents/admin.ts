@@ -52,6 +52,10 @@ export interface DashboardOps {
   redeploy(target: string, fresh?: boolean): Promise<object>;
   /** Back to the Worker version before the target's live deploy (its restore point). */
   rollback(target: string): Promise<object>;
+  /** The release store: both channels; a release promoted to stable; one taken off a channel. */
+  releases(): Promise<object>;
+  promote(version: string): Promise<object>;
+  withdraw(channel: string, version: string): Promise<object>;
   /** The homepage (the landing_document setting) deployed again, as Redeploy in the editor's settings does. */
   deployHome(): Promise<object>;
   agentTokens(): Promise<object[]>;
@@ -100,6 +104,14 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
     tool("rollback", "Roll a target back", "Puts back the version a target ran before its live deploy, as the dashboard's Roll back does: one deployment of that Worker version, in seconds, with no build. The database keeps its schema (migrations only add). Only when the admin asks in this conversation to roll back; list_deploys shows which deploy is live and what it would go back to (restore).",
       Type.Object({ target: TARGET }),
       (a) => ops.rollback(String(a.target ?? ""))),
+    tool("list_releases", "Read the releases", "The release store's channels, as the Source page's Releases box shows them: edge (every release production deployed and found healthy, newest first) and stable (what other installs of Erga follow; it moves only when an admin promotes a release). Each release: its version (the commit's first 12 digits), when it was built and when it went on the channel.",
+      Type.Object({}), () => ops.releases()),
+    tool("promote_release", "Promote a release to stable", "Puts a release on stable, as Promote on the Source page does: installs that follow stable upgrade to it. The release must be on edge (list_releases). Only when the admin asks in this conversation to promote or release to stable.",
+      Type.Object({ version: Type.String({ description: "The release's version: its 12-digit commit, as list_releases shows it" }) }),
+      (a) => ops.promote(String(a.version ?? "").trim())),
+    tool("withdraw_release", "Withdraw a release from a channel", "Takes a release off edge or stable, as Withdraw on the Source page does (a bad release found late): no install moves to it any more. Only when the admin asks in this conversation.",
+      Type.Object({ channel: Type.String({ description: "edge or stable" }), version: Type.String({ description: "The release's version (list_releases)" }) }),
+      (a) => ops.withdraw(String(a.channel ?? "").trim(), String(a.version ?? "").trim())),
     tool("deploy_homepage", "Redeploy the homepage", "Deploys the homepage (the document the landing_document setting names, which set_setting changes) again now, as Redeploy in that document's settings does in the editor.",
       Type.Object({}), () => ops.deployHome()),
     tool("list_agent_tokens", "Read your agent tokens", "Your own agent tokens (/settings): id, label, kind (share: a share button's: the editor's, scope documents, or Share with agent's on the admin pages, scope admin), scope (document, documents or admin), when made, when it ends and when last used. Never a token itself: a token is made, or an agent's request for one approved, only on /settings.",
@@ -191,6 +203,9 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   deploy_log: ["Reading the deploy log of", "Read the deploy log of"],
   redeploy: ["Redeploying", "Redeployed"],
   rollback: ["Rolling back", "Rolled back"],
+  list_releases: ["Reading the releases", "Read the releases"],
+  promote_release: ["Promoting to stable", "Promoted to stable"],
+  withdraw_release: ["Withdrawing", "Withdrew"],
   deploy_homepage: ["Redeploying the homepage", "Redeployed the homepage"],
   list_agent_tokens: ["Reading your agent tokens", "Read your agent tokens"],
   revoke_agent_token: ["Revoking the agent token", "Revoked the agent token"],
@@ -240,11 +255,14 @@ For staging, production and access (the Source page, /admin/source, and /setting
 - list_deploys reads each target's deploys (staging, production); deploy_log reads a
   deploy's log; redeploy deploys a target's branch again; rollback puts the version before its live deploy back. deploy_homepage deploys the
   homepage again.
+- list_releases reads the release store's channels: edge (each release production deployed
+  and found healthy) and stable (what other installs of Erga follow). promote_release puts
+  a release on stable; withdraw_release takes one off a channel.
 - list_agent_tokens and revoke_agent_token: ${owner}'s own agent tokens, the one Share with
   agent made for an outside agent too (kind share, scope admin). A token is made, or an
   agent's request approved, only on the page (/settings, or Share with agent).
-- Deploy production, redeploy, or revoke a token only when ${owner} asks for it
-  in this conversation. Say what you did, and what happens next.
+- Deploy production, redeploy, promote or withdraw a release, or revoke a token only when
+  ${owner} asks for it in this conversation. Say what you did, and what happens next.
 
 For Erga's own code, you can read the server's copy of its repository (read-only: you
 can't change, commit or push anything):
