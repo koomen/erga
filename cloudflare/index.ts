@@ -10,8 +10,9 @@
 //
 //   /api/deploys/version, /api/health, /api/snapshot/...   what the deploy pipeline asks of this server, and staging's
 //                                                          snapshot endpoints (branch-deploys.ts)
-//   the control Worker's        the repository, the Source page and the deploys' API (control/routes.ts): a redirect to the
-//                               control Worker where it is apart (CONTROL_URL: erga.dev, staging.erga.dev); served here in
+//   the control Worker's        the repository, the Source page and the deploys' API (control/routes.ts). Where it is apart
+//                               (erga.dev, staging.erga.dev): the Source page and its API served here, in the admin layout, on
+//                               its objects over the CONTROL binding; the rest a redirect there (CONTROL_URL). All served here in
 //                               local development, over the mock Cloudflare; "not found" on a server with neither
 //   /deploy                    deploy Erga to your own Cloudflare account (deploy-routes.ts; the deploy_page setting,
 //                              not an admin right); /admin/deploy redirects there
@@ -19,10 +20,11 @@
 
 import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
-import { controlRoutes, isControlPath } from "../control/routes";
+import { appAnswer, controlRoutes } from "../control/routes";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { releaseStoreOf } from "./releases";
 import { CONTROL } from "../deploy/targets";
+import type { DeploysObject } from "../server/deploys/api";
 import { deploysDoor, isDeploysPath } from "./branch-deploys";
 import { deployDoor } from "./deploy-routes";
 import { devRoutes } from "./dev";
@@ -46,23 +48,25 @@ export default {
     const { value: answer, timing } = await tallied(() => handle(request, p, async (request, url) => {
       const path = url.pathname;
       if (isDeploysPath(path)) return deploysDoor(request, env, p);
-      if (isControlPath(path) && path != "/") {
+      const where = appAnswer(path, { control: !!env.CONTROL, controlUrl: !!env.CONTROL_URL, pipeline: !!env.PIPELINE });
+      if (where == "there") {
         // Apart: there. A page goes by a redirect, and so does Git: a Git client follows the redirect of its first request
         // (info/refs) and carries on at the new address, so a checkout whose origin is this host keeps pushing (it says
         // "redirecting to https://ops.erga.dev/git/erga.git/" once). The API says where (its callers send a token, which
         // a redirect to another host would drop).
-        if (env.CONTROL_URL) {
-          const there = `${env.CONTROL_URL.replace(/\/+$/, "")}${path}${url.search}`;
-          const read = request.method == "GET" || request.method == "HEAD";
-          if (path.startsWith("/git/")) return new Response(null, { status: 301, headers: { Location: there, "Cache-Control": "no-store" } });
-          if (read && !path.startsWith("/api/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
-          return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
-        }
-        // Local development: this Worker hosts them. A server with no control Worker (one /deploy made) has none of this.
-        if (!env.PIPELINE) return Response.json({ error: "This server has no control Worker: no repository, no deploys." }, { status: 404, headers: { "Cache-Control": "no-store" } });
+        const there = `${env.CONTROL_URL!.replace(/\/+$/, "")}${path}${url.search}`;
+        const read = request.method == "GET" || request.method == "HEAD";
+        if (path.startsWith("/git/")) return new Response(null, { status: 301, headers: { Location: there, "Cache-Control": "no-store" } });
+        if (read && !path.startsWith("/api/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
+        return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
+      }
+      if (where == "none") return Response.json({ error: "This server has no control Worker: no repository, no deploys." }, { status: 404, headers: { "Cache-Control": "no-store" } });
+      if (where == "here") {
+        // The Source page in place, on the control Worker's objects (p.deploys and p.source go over CONTROL); or, in local
+        // development, every control route, on this Worker's own objects.
         const mock = env.ERGA_DEPLOY_MOCK == "1";
         return controlRoutes(request, {
-          platform: p, deploys: env.PIPELINE.getByName("deploys"), releases: releaseStoreOf(env), app: url.origin, layout: adminResponse, version: env.ERGA_VERSION ?? null,
+          platform: p, deploys: p.deploys as DeploysObject, releases: releaseStoreOf(env), app: url.origin, layout: adminResponse, page: "/admin/source", version: env.ERGA_VERSION ?? null,
           oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
         });
       }
