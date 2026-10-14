@@ -70,6 +70,8 @@ export interface Snapshot {
   column: number;
   canPause: boolean;
   paused: boolean;
+  /** The page zooms itself (window.ergaZoom: a canvas's camera), so the editor's zoom goes to it. */
+  zoomsItself?: boolean;
   fmt: Fmt;
   /** Where the page is scrolled to (kept across a reload for a new release: live.ts). */
   scrollY?: number;
@@ -91,6 +93,8 @@ export type ToFrame =
   | { type: "render" }
   /** The level to draw the page at (zoom.ts). */
   | { type: "zoom"; level: number }
+  /** A zoom for a page that zooms itself: `by` times closer, or 0 for its own first view (window.ergaZoom). */
+  | { type: "pageZoom"; by: number }
   | { type: "focus" }
   | { type: "reveal"; pos: number }
   | { type: "peers"; peers: Peer[] }

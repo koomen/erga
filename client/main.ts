@@ -34,7 +34,7 @@ import { dirOf, isPage, pageUrl } from "../document/pages";
 import { mountLayout } from "./layout";
 import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
-import { applyZoom, catchZoomGestures, clampZoom, zoomKey, type ZoomBy } from "./zoom";
+import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "./zoom";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -1149,6 +1149,7 @@ Once you've read the guide, await further instructions.`;
     },
     onSelection() { queueCursor(); queuePeers(); queueFmt(); },
     onUpdate(rendered) {
+      syncZoom();
       if (rendered) {
         syncPause();
         const t = page.title().slice(0, 200);
@@ -1193,18 +1194,24 @@ Once you've read the guide, await further instructions.`;
 
   // Zooming in the editor zooms the page, never the controls or the agent (zoom.ts): the keys, a pinch and ctrl with
   // the wheel, here in the shell or on the page (the frame sends them: onKey, onZoom). Each document keeps its level
-  // on this browser. Viewing, the browser zooms the window as it always does.
+  // on this browser. Viewing, the browser zooms the window as it always does. A page that zooms itself (window.ergaZoom:
+  // a canvas's camera, with no limits of ours) gets them instead, and is drawn at 100%.
   const ZOOM_KEY = `erga:zoom:v1:${docId}`;
   let zoomLevel = clampZoom(Number(store.get(ZOOM_KEY) ?? 1));
-  if (editing()) page.setZoom(zoomLevel);
+  const syncZoom = (on = editing()) => page.setZoom(on && !page.zoomsItself ? zoomLevel : 1);
+  syncZoom();
   function setZoomLevel(level: number) {
     zoomLevel = clampZoom(level);
-    page.setZoom(zoomLevel);
+    syncZoom();
     if (zoomLevel == 1) { try { localStorage.removeItem(ZOOM_KEY); } catch {} }
     else store.set(ZOOM_KEY, String(Math.round(zoomLevel * 1000) / 1000));
     flash(`Zoom ${Math.round(zoomLevel * 100)}%`);
   }
-  function zoomPage(by: ZoomBy) { if (editing()) setZoomLevel(applyZoom(zoomLevel, by)); }
+  function zoomPage(by: ZoomBy) {
+    if (!editing()) return;
+    if (page.zoomsItself) page.zoomItself(zoomFactor(by));
+    else setZoomLevel(applyZoom(zoomLevel, by));
+  }
   catchZoomGestures(window, zoomPage, editing);
 
   // ---------------------------------------------------------------- style bar
@@ -1705,7 +1712,7 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && key == "k" && mode == "text") { openLink(); return true; }
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     const zoom = zoomKey(e, isMac);
-    if (zoom) { setZoomLevel(zoom == "reset" ? 1 : applyZoom(zoomLevel, { step: zoom })); return true; }
+    if (zoom) { if (zoom == "reset") { if (page.zoomsItself) page.zoomItself(0); else setZoomLevel(1); } else zoomPage({ step: zoom }); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
       // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs to cancel.
@@ -1818,7 +1825,7 @@ Once you've read the guide, await further instructions.`;
       requestAnimationFrame(() => requestAnimationFrame(() => { if (mine == entering && editing()) showAgent(true); })));
   }
   function setEditing(on: boolean) {
-    page.setZoom(on ? zoomLevel : 1);
+    syncZoom(on);
     if (on) {
       page.focus();
       openAgentOnEntry();

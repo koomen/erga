@@ -121,6 +121,19 @@ rendered page:
     make such a page, or when someone asks to make one editable. See "Custom
     edits" below.
 
+13. **Let a page with its own zoom take the editor's.** In the editor, the
+    zoom keys (⌘+, ⌘−, ⌘0) zoom the whole page, 50% to 300%. A page that
+    zooms itself (a canvas with a camera, a map) defines `window.ergaZoom`.
+    Then the editor calls it instead, with the factor to zoom by (1.25 is a
+    step closer, 0.8 a step back), or 0 to go back to the page's own first
+    view, and leaves the page at 100%. Zoom around the middle of the window.
+    If the page also takes ctrl and the wheel (a pinch) itself, call
+    `preventDefault()` on it: the editor leaves that one to the page.
+
+    ```js
+    window.ergaZoom = (k) => { if (k > 0) zoomBy(k); else showStart(); };
+    ```
+
 ## Presentations
 
 A page is a presentation when `window.ergaSteps` is an object with these

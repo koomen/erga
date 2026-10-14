@@ -94,6 +94,14 @@ window.addEventListener("message", (e: MessageEvent) => {
     // (The editor keeps the reader's place across it.)
     case "render": page.render(); return;
     case "zoom": setZoom(m.level); return;
+    case "pageZoom": {
+      const win = cur().contentWindow as (Window & { ergaZoom?: unknown }) | null;
+      if (typeof win?.ergaZoom == "function" && Number.isFinite(m.by)) {
+        try { (win.ergaZoom as (by: number) => void)(m.by); }
+        catch (e) { post({ type: "notice", message: `window.ergaZoom(${m.by}) threw: ${e instanceof Error ? e.message : String(e)}` }); }
+      }
+      return;
+    }
     // The shell focuses this frame as it asks (Remote.focus): if this frame lost the focus since, something that opened
     // after the ask has it (the pages card, the agent's box), and keeps it.
     case "focus": if (document.hasFocus()) page.focus(); return;
@@ -225,6 +233,7 @@ function queueSnapshot(rendered = false) {
       column,
       canPause: page.canPause,
       paused: page.isPaused,
+      zoomsItself: typeof (cur().contentWindow as (Window & { ergaZoom?: unknown }) | null)?.ergaZoom == "function",
       fmt: {
         rect: rect && { left: z(rect.left), top: z(rect.top), width: z(rect.width), bottom: z(rect.bottom) },
         blocker: page.styleBlocker(),
