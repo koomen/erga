@@ -56,7 +56,8 @@ interface Envelope<T> { success: boolean; result: T; errors?: { code: number; me
  * a token without the permission, a bad token, or Cloudflare's own message.
  */
 export class Cloudflare {
-  constructor(private token: string, private fetch: Fetch = globalThis.fetch) {}
+  /** `words`: how a refusal is said (explain, by default: an API token's words). */
+  constructor(private token: string, private fetch: Fetch = globalThis.fetch, private words: typeof explain = explain) {}
 
   async call<T>(method: string, path: string, what: string, body?: unknown, opts: { bearer?: string; allow404?: boolean } = {}): Promise<T | null> {
     const headers: Record<string, string> = { Authorization: `Bearer ${opts.bearer ?? this.token}` };
@@ -71,7 +72,7 @@ export class Cloudflare {
     const answer = (await r.json().catch(() => null)) as Envelope<T> | null;
     if (r.status == 404 && opts.allow404) return null;
     if (r.ok && answer?.success !== false) return (answer?.result ?? null) as T | null;
-    throw new DeployError(explain(what, r.status, answer?.errors ?? []), r.status);
+    throw new DeployError(this.words(what, r.status, answer?.errors ?? []), r.status);
   }
 }
 

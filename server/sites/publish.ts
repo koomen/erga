@@ -20,9 +20,11 @@
 // editor's own renderer, in a plain readable page). The page is also
 // index.html, so the site's root shows it.
 
-import { Cloudflare, DeployError, uploadAssets, type Fetch } from "../../deploy/pipeline.ts";
+import { Cloudflare, DeployError, explain, uploadAssets, type Fetch } from "../../deploy/pipeline.ts";
 import type { Directory } from "../directory/index.ts";
-import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteOAuth, type SiteRow } from "./rows.ts";
+import { checkHostname, scriptName, SITE_NEEDS, SITE_OAUTH_SCOPES, SiteError, type CfAccount, type CfZone, type SiteOAuth, type SiteRow } from "./rows.ts";
+
+export { SITE_NEEDS, SITE_OAUTH_SCOPES };
 
 /** A site's deploys, as the API gives them. */
 export interface SiteDeploy {
@@ -53,29 +55,26 @@ export interface SiteOps {
 
 // ------------------------------------------------------------------ the grant
 
-/**
- * What a person's consent asks for: Account Settings Read (their accounts),
- * Workers Editor (the site's Worker and its files; Cloudflare's API takes it
- * for a Worker's custom domain too), Workers Routes Write (the custom domain,
- * as the installs ask), Zone Read (the list of domains), and offline_access
- * (a refresh token, so a site follows its document after the hour an access
- * token lasts). Each is among the scopes of Erga's OAuth client
- * (CONTROL_OAUTH_SCOPES); Cloudflare takes a request for some of them.
- */
-export const SITE_OAUTH_SCOPES = "account-settings.read workers-scripts.edit workers-routes.write zone.read offline_access";
-
-/** The scopes a grant must have (offline_access isn't one Cloudflare names in the grant's scope). */
-export const SITE_NEEDS = SITE_OAUTH_SCOPES.split(" ").filter((s) => s != "offline_access");
+/** Cloudflare's API with a person's grant: a refusal says to connect again, not to make a token. */
+export function siteCloudflare(token: string, net: Fetch): Cloudflare {
+  return new Cloudflare(token, net, (what, status, errors) => {
+    const said = errors.map((e) => (e.code ? `${e.message} [code ${e.code}]` : e.message)).filter(Boolean).join("; ");
+    const tail = said ? ` (Cloudflare said: ${said})` : "";
+    if (status == 401 || errors.some((e) => e.code == 1000 || e.code == 9109 || e.code == 6003)) return `Cloudflare didn't accept your connection when Erga tried to ${what}: it may be revoked. Connect Cloudflare again.${tail}`;
+    if (status == 403 || errors.some((e) => e.code == 10000 || e.code == 9103)) return `Your Cloudflare connection isn't allowed to ${what}. Connect Cloudflare again, and allow everything Erga asks for.${tail}`;
+    return explain(what, status, errors);
+  });
+}
 
 /** The accounts a token reaches. */
 export async function listAccounts(token: string, net: Fetch): Promise<CfAccount[]> {
-  const accounts = (await new Cloudflare(token, net).call<{ id: string; name: string }[]>("GET", "/accounts?per_page=50", "read your accounts")) ?? [];
+  const accounts = (await siteCloudflare(token, net).call<{ id: string; name: string }[]>("GET", "/accounts?per_page=50", "read your accounts")) ?? [];
   return accounts.map((a) => ({ id: a.id, name: a.name }));
 }
 
 /** The zones (domains) a token reaches, active ones first, each with its account. */
 export async function listZones(token: string, net: Fetch, accounts: CfAccount[]): Promise<CfZone[]> {
-  const cf = new Cloudflare(token, net);
+  const cf = siteCloudflare(token, net);
   const zones = (await cf.call<{ id: string; name: string; status?: string; account?: { id: string; name?: string } }[]>("GET", "/zones?per_page=50", "list your domains")) ?? [];
   const fallback = accounts[0] ?? { id: "", name: "" };
   return zones

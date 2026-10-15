@@ -12,10 +12,10 @@
 // published version afresh, so a new consent is used at the next one. Every change of state is told to everyone who has the document
 // open ({ type: "site" } on its /api/events).
 
-import { Cloudflare, type Fetch } from "../../deploy/pipeline.ts";
+import type { Fetch } from "../../deploy/pipeline.ts";
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
 import type { Directory } from "../directory/index.ts";
-import { deploySite, IDLE_SITE, removeSite, siteFiles, type SiteDeploy } from "./publish.ts";
+import { deploySite, IDLE_SITE, removeSite, siteCloudflare, siteFiles, type SiteDeploy } from "./publish.ts";
 import type { SiteOAuth, SiteRow } from "./rows.ts";
 
 /** What the rest of the app may ask a site's deploys (the Durable Object answers, by RPC). */
@@ -111,7 +111,7 @@ export class SiteDeploys implements SiteObject {
     const token = await this.deps.directory.cloudflare.token(site.login, this.deps.oauth).catch(() => null);
     if (!token) return `${site.login}'s Cloudflare connection is gone, so Erga can't reach the account.`;
     try {
-      await removeSite(new Cloudflare(token, this.deps.net(token)), site);
+      await removeSite(siteCloudflare(token, this.deps.net(token)), site);
       return null;
     } catch (e) {
       return e instanceof Error ? e.message : String(e);
@@ -148,7 +148,7 @@ export class SiteDeploys implements SiteObject {
       const published = await this.deps.published(docId);
       if (!published) return { ok: false, error: "The document has no published version yet." };
       const files = await siteFiles(published.index, published.files, doc.title);
-      await deploySite(new Cloudflare(token, this.deps.net(token)), site, files, `${this.s.origin ?? ""}/${doc.owner}/${doc.slug}`);
+      await deploySite(siteCloudflare(token, this.deps.net(token)), site, files, `${this.s.origin ?? ""}/${doc.owner}/${doc.slug}`);
       return { ok: true, version: published.version };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
