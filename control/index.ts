@@ -1,5 +1,5 @@
 // The control Worker (erga-control, at ops.erga.dev): Erga's repository and
-// Git endpoint, the deploy pipeline and the build container, the Source page
+// Git endpoint, the deploy pipeline and the build container, the Ops page
 // and its sign-in, apart from the app, so a broken app never takes the way
 // to fix it down with it. It deploys every target (deploy/targets.json); the
 // app Workers hold no repository, no pipeline and no deploy token.
@@ -11,8 +11,8 @@
 // version; a deploy, bun deploy/run.ts from a machine).
 //
 // The app reaches it over a service binding (CONTROL, the entrypoint App
-// below): its admin agent's dashboard and source tools, and the Source page
-// the app serves at /admin/source, as the admin.
+// below): its admin agent's dashboard and source tools, and the Ops page
+// the app serves at /admin/ops, as the admin.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Actor, SourceRead } from "../server/source/index.ts";
@@ -50,7 +50,7 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   // The release store (deploy/releases.ts).
   releases() { return this.deploys.releases(); }
-  /** GET /api/events, the deploys' event stream: the app's Source page (erga.dev/admin/source) listens to it through the app. */
+  /** GET /api/events, the deploys' event stream: the app's Ops page (erga.dev/admin/ops) listens to it through the app. */
   fetch(request: Request) { return this.deploys.fetch(request); }
 }
 

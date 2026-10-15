@@ -20,7 +20,7 @@
 //   /api/docs/<id>/home        whether a document is the homepage, setting it, and its deploys
 //   /api/docs/<id>/site        a document's site on its person's Cloudflare account
 //   /_home/<gen>/<path>        the homepage's files, as deployed
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/source
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
 //                              and /api/source/...; `outside` answers them (a redirect to the control Worker, or itself in local development)
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
@@ -84,7 +84,7 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (path == "/auth/test") return testSignIn(p, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor.
   if (assets || path == "/editor.html") return p.assets(request);
-  // Erga's own source and deploys (the Git endpoint, the Source page, their APIs) are the control Worker's: `outside`
+  // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
   // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
   if (path == "/git" || path.startsWith("/git/")) return (await outside(request, url)) ?? frontDoor(request, p);
   // Its old address, from when admin settings linked to it: it's the control Worker's page now, so before the admins' gate.

@@ -30,7 +30,7 @@
 //                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin; a test person's token never passes. Past this guard the token's
 //                                   own scope decides, as on production: no admin
-//                                   power, so no /admin, settings, users, deploys, credentials, Source page or Git
+//                                   power, so no /admin, settings, users, deploys, credentials, Ops page or Git
 //
 // Everything else needs an admin: documents and their sockets, /docs, the front page and the homepage, /new, /deploy,
 // /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin

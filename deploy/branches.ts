@@ -889,7 +889,7 @@ function step(s: Stored, id: StepStatus["id"], status: StepStatus["status"], det
  * One of Erga's own targets as the pipeline's Target: in the control
  * Worker's account, its secrets kept from version to version (set once:
  * deploy/setup.ts), the control Worker bound (CONTROL, the app's way to the
- * Source page's API for its admin agent), and, for staging, production's data
+ * Ops page's API for its admin agent), and, for staging, production's data
  * copied in. No repository, no deploy token: those are the control Worker's.
  */
 export function targetFor(name: DeployName, env: DeployEnv, fresh?: Fresh): Target {

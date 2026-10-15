@@ -99,7 +99,7 @@ export function deployPage(c: DeployPageConfig): string {
   const perms = c.permissions.map((p) => `<li><b>${esc(label(p.key))}</b> (${p.type == "read" ? "read" : "edit"}): ${esc(p.why)}</li>`).join("");
   const body = `${crumbs(null, [{ label: "Deploy" }])}<main>
   <header><div><h1>Install your own Erga</h1><p class="sub">Erga on your own Cloudflare account, with you (${esc(c.login)}) as its admin: the app, and a small control Worker beside it that keeps it up to date with Erga's releases${c.release ? ` (release <code>${esc(c.release.version)}</code>, ${esc(c.release.from == "stable" ? "the latest on stable" : `from ${c.release.from}`)})` : ""}.</p></div></header>
-  ${c.release ? "" : `<p class="error">There's no release to install yet: an admin promotes one to stable on the Source page first.</p>`}
+  ${c.release ? "" : `<p class="error">There's no release to install yet: an admin promotes one to stable on the Ops page first.</p>`}
   <p class="error" id="top-error">${esc(c.error)}</p>
   <ol class="steps">
     <li class="step" id="s-connect" data-step="connect">

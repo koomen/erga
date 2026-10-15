@@ -8,7 +8,7 @@
 //
 // Both are deployed by the control Worker (`control`: erga-control, at
 // ops.erga.dev, control/), which holds Erga's repository, the pipeline, the
-// Source page and the build container, apart from the app, so a broken app
+// Ops page and the build container, apart from the app, so a broken app
 // never takes the way to fix it down with it. It is the one Worker in the
 // account that deploys, with the one credential: an admin's OAuth grant (deploy/credential.ts).
 //
@@ -65,7 +65,7 @@ export interface TargetSpec {
 }
 
 /**
- * The control Worker: Erga's repository, the pipeline, the Source page and
+ * The control Worker: Erga's repository, the pipeline, the Ops page and
  * the build container, on its own hostname. It deploys itself too, from
  * `branch` (main), after production: the release carries its bundle
  * (deploy/release.ts), and the pipeline uploads it with the same health

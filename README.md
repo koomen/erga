@@ -44,7 +44,7 @@ AGENTS.md has the rules for working on it.
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
       admin/          the admin pages (pages.ts), the layout they share (layout.ts), each admin's agent (agent.ts)
       deploys/        who may use the deploy page (access.ts)
-      source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts), the Source page
+      source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts), the Ops page
       live.ts         open pages follow a redeploy
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     editor-agent/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
@@ -63,7 +63,7 @@ AGENTS.md has the rules for working on it.
                   (dev.ts), the app's own deploy routes (branch-deploys.ts: its version, its health check, staging's
                   data copy) and /deploy's (deploy-routes.ts)
     control/      the control Worker (erga-control, ops.erga.dev): Erga's repository and Git endpoint, the deploy
-                  pipeline, the Source page and its sign-in, and the build container (builder/), apart from the app, so a
+                  pipeline, the Ops page and its sign-in, and the build container (builder/), apart from the app, so a
                   broken app never takes the way to fix it down (index.ts the entry, routes.ts, wrangler.jsonc;
                   deploy/setup.ts deploys it the first time, then it deploys itself from main: deploy/control.ts). The
                   app reaches it over a service binding; locally the app hosts its routes.

@@ -1,10 +1,16 @@
-// The Source page, /admin/source, for admins with admin
-// access: the one place to manage Erga's own source and its deploys. It has
-// the layout every admin page shares: the breadcrumb, Share
-// with agent, the admin's agent and the sidebar. /source, /admin/factory and
-// /admin/deploys redirect here.
+// The Ops page, /admin/ops, for admins with admin access: the one place to
+// manage Erga's environments, its Cloudflare credential, its own source and
+// its deploys. It has the layout every admin page shares: the breadcrumb,
+// Share with agent, the admin's agent and the sidebar. /admin/ops,
+// /source, /admin/factory and /admin/deploys redirect here.
 //
-// The dashboard:
+// Status, at the top: one card for each environment (production, staging,
+// the control Worker): its state, when, the commit that is live, and its
+// latest deploy's log. And the control Worker's Cloudflare credential, with a
+// link to /install, where an admin connects or disconnects it.
+//
+// Git Repository, below: how to clone and push, the GitHub mirror, Merge
+// and Cut release, then the git log:
 //
 // One list: staging's history, newest first (staging is always at or ahead
 // of main, so it holds every commit main has). When staging is far ahead, a
@@ -63,6 +69,36 @@ const SOURCE_STYLE = `
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; } }
   :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; }
   .pane-head { justify-content: space-between; }
+  /* Ops: Status (each environment, and the Cloudflare credential), then the Git repository. */
+  .ops-section { margin: 0 0 32px; }
+  #status-head { margin: 0 0 4px; font-size: 18px; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
+  .ops-section h3 { margin: 14px 0 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
+  .envs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .env { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; }
+  .env.cloudflare { max-width: calc((100% - 24px) / 3); box-sizing: border-box; }
+  .env-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .env-top b { font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+  .env-top .host { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--font-mono); color: var(--soft); }
+  .env .st { display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-size: 13.5px; color: var(--fg); }
+  .env .st > span { min-width: 0; overflow-wrap: anywhere; }
+  .env .st i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--chrome); }
+  .env.deployed .st i { background: var(--on-main); }
+  .env.failed .st { color: var(--bad); }
+  .env.failed .st i { background: var(--bad); }
+  .env.building .st i, .env.deploying .st i { background: transparent; border: 2px solid var(--only-staging); border-right-color: transparent; width: 6px; height: 6px; animation: spin .8s linear infinite; }
+  .env-more { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+  .env-commit { font: 11.5px var(--font-mono); color: var(--chrome); }
+  .env-log { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
+  .env-log:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
+  .env-log[hidden] { display: none; }
+  .repo-note { margin: -4px 0 14px; font-size: 13.5px; color: var(--soft); }
+  .repo-note a { color: inherit; }
+  .repo-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin: 0 0 14px; }
+  .repo-tools .box.clone { margin: 0; }
+  .box.actions { padding: 10px 14px; }
+  .box.actions .head-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; margin: 8px 0 0; }
+  .box.actions #merge-hint { margin: 8px 0 0; text-align: left; }
+  @media (max-width: 760px) { .envs, .repo-tools { grid-template-columns: 1fr; } .env.cloudflare { max-width: none; } }
   .head-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
   .head-actions:not(:has(> :not([hidden]))) { display: none; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
@@ -192,25 +228,38 @@ const SOURCE_STYLE = `
 function sourceMarkup(c: SourcePageConfig): string {
   if (c.install) return installMarkup(c.install);
   if (!c.ready) {
-    return `<div class="pane-head"><h2>git log</h2></div>
+    return `<div class="pane-head"><h2>Git Repository</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. The steps:</p>
   <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
   const remote = `${c.origin}/git/erga.git`;
   const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="host">${host}</span><span class="st"><i></i><span>not set up</span></span></button></div>`;
+  const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${host}" target="_blank" rel="noopener">${host}</a></div><span class="st"><i></i><span>not set up</span></span><span class="env-more"><code class="env-commit"></code><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span></div>`;
   return `
+  <section class="ops-section" id="status" aria-labelledby="status-head">
+    <h2 id="status-head">Status</h2>
+    <h3>Environments</h3>
+    <div class="envs">${env("production", "Production", TARGETS.production.host)}${env("staging", "Staging", TARGETS.staging.host)}${env("control", "Control", CONTROL.host)}</div>
+    <h3>Cloudflare</h3>
+    <div class="env cloudflare" id="env-cloudflare"><div class="env-top"><b>Deploy credential</b><a class="host" href="/install">Manage</a></div><span class="st"><i></i><span id="cloudflare-state">…</span></span></div>
+  </section>
+  <section class="ops-section" id="repo" aria-labelledby="repo-head">
   <div class="pane-head">
-    <div class="head-title"><h2>git log</h2></div>
-    <div class="head-actions"><button class="pill" id="mirror-pill" type="button" hidden>GitHub</button><button class="pill" id="release-pill" type="button" hidden title="Cut a release: a version tag on main's head. The newest release tag is stable, what other installs follow.">Cut release</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
+    <div class="head-title"><h2 id="repo-head">Git Repository</h2></div>
   </div>
-  <p class="hint" id="merge-hint" role="status"></p>
-  <p class="hint" id="credential-hint" role="status" hidden></p>
+  <p class="repo-note">Erga's source repository is self-managed and stored in a <a href="https://developers.cloudflare.com/artifacts/" target="_blank" rel="noopener">Cloudflare Artifact</a>.</p>
+  <div class="repo-tools">
   <div class="box clone" id="clone">
     <h2>Clone and push</h2>
     <pre><code>git remote add erga ${esc(remote)}
 git fetch erga
 git push erga HEAD:staging</code></pre>
     <p>Password: an agent token from <a href="/settings">Settings</a> (admins only), any username. main only follows staging: merge here.</p>
+  </div>
+  <div class="box actions"><h2>Branches and releases</h2>
+    <div class="head-actions"><button class="pill" id="mirror-pill" type="button" hidden>GitHub</button><button class="pill" id="release-pill" type="button" hidden title="Cut a release: a version tag on main's head. The newest release tag is stable, what other installs follow.">Cut release</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
+    <p class="hint" id="merge-hint" role="status"></p>
+  </div>
   </div>
   <section class="card" aria-label="Commits">
     <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
@@ -220,6 +269,7 @@ git push erga HEAD:staging</code></pre>
       ${target("staging", "staging", TARGETS.staging.host)}${target("production", "production", TARGETS.production.host)}${target("control", "control", CONTROL.host)}
       <div class="none" id="loading">Loading…</div>
     </div>
+  </section>
   </section>
   <dialog id="release-dlg" aria-labelledby="release-title">
     <h2 id="release-title">Cut a release</h2>
@@ -398,11 +448,18 @@ const SOURCE_SCRIPT = `
   }
 
   function renderTargets() {
-    // The control Worker's Cloudflare credential (an admin's OAuth grant): a line only when deploys can't run on it.
-    const cred = deploys && deploys.credential, ch = document.getElementById("credential-hint");
-    if (ch) {
-      ch.hidden = !(cred && !cred.connected);
-      if (cred && !cred.connected) { ch.textContent = ""; ch.append("Nothing deploys: " + (cred.problem || "the Cloudflare credential isn't connected.") + " "); const a = document.createElement("a"); a.href = "/install"; a.textContent = "Connect Cloudflare"; ch.append(a); }
+    // Status: the control Worker's Cloudflare credential (an admin's OAuth grant), and each environment's state.
+    const cred = deploys && deploys.credential, cf = document.getElementById("env-cloudflare");
+    cf.className = "env cloudflare " + (!cred ? "" : cred.connected ? "deployed" : "failed");
+    document.getElementById("cloudflare-state").textContent = !cred ? "unknown" : cred.connected ? "connected" + (cred.by ? " by " + cred.by : "") : "Nothing deploys: " + (cred.problem || "not connected.");
+    for (const n of TARGETS) {
+      const e = document.getElementById("env-" + n), t = targetOf(n);
+      e.className = "env " + (t ? t.state : "");
+      const what = !t ? "not set up" : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
+      e.querySelector(".st span").textContent = what + (t?.at ? " · " + ago(t.at) : "");
+      e.querySelector(".st").title = t?.error || "";
+      e.querySelector(".env-commit").textContent = t?.deployed ? t.deployed.slice(0, 7) : "";
+      e.querySelector(".env-log").hidden = !t;
     }
     for (const n of TARGETS) {
       const b = document.getElementById("target-" + n), t = targetOf(n);
@@ -525,6 +582,7 @@ const SOURCE_SCRIPT = `
     refreshLog(false);
   }, 2000);
   for (const n of TARGETS) document.getElementById("target-" + n).addEventListener("click", () => openLog(n));
+  for (const b of document.querySelectorAll(".env-log")) b.addEventListener("click", () => openLog(b.dataset.target));
   document.getElementById("log-close").addEventListener("click", () => dlg.close());
   dlg.addEventListener("close", () => { open = null; });
   grid.addEventListener("click", (e) => {
@@ -736,7 +794,7 @@ function mirrorDialog(c: SourcePageConfig): string {
   </dialog>`;
 }
 
-/** /admin/source: the source and deploy dashboard (admins). */
+/** /admin/ops: the source and deploy dashboard (admins). */
 /** An install's page: what the app runs, what upstream's channel has, the last upgrades, Upgrade now and Roll back. */
 function installMarkup(i: NonNullable<SourcePageConfig["install"]>): string {
   return `<div class="pane-head"><div class="head-title"><h2>Upgrades</h2></div></div>
@@ -825,9 +883,9 @@ const INSTALL_SCRIPT = `
 
 export function adminSourcePage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
-  return (c.layout ?? adminResponse)({ session: c.session, title: "Source", here: "source", wide: true, style: PAGE_STYLE + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
+  return (c.layout ?? adminResponse)({ session: c.session, title: "Ops", here: "ops", wide: true, style: PAGE_STYLE + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
   <div class="panes">
-    <section class="pane" id="source-pane" aria-label="git log">${sourceMarkup(c)}</section>
+    <section class="pane" id="source-pane" aria-label="Ops">${sourceMarkup(c)}</section>
   </div>
   ${c.ready ? mirrorDialog(c) : ""}
 ${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : c.install ? `<style>${INSTALL_STYLE}</style><script>${INSTALL_SCRIPT}</script>` : ""}` });

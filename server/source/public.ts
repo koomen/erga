@@ -6,7 +6,7 @@
 //
 // The page shows how to clone, the two branches (main, which erga.dev runs, and
 // staging), the branch's recent commits, and its files. Nothing else of the
-// Source page: no merge, deploys, logs, mirror or settings. Git itself (clone,
+// Ops page: no merge, deploys, logs, mirror or settings. Git itself (clone,
 // fetch) is routes.ts's sourceGit, which also needs no sign-in.
 
 import { appPage, crumbs, esc, TIMES_SCRIPT } from "../pages/index.ts";

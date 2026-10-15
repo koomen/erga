@@ -160,7 +160,7 @@ export class Deployer extends DurableObject<Env> {
         if (!r) return { error: `There's no release ${want} in the store.` };
         return { release: r, from: version ? `release ${want}` : `stable's latest, ${want}` };
       }
-      if (!this.env.ASSETS) return { error: "No release is on stable yet: an admin promotes one on the Source page (Releases) first." };
+      if (!this.env.ASSETS) return { error: "No release is on stable yet: an admin promotes one on the Ops page (Releases) first." };
     }
     if (!this.env.ASSETS) return { error: "This server has no release store." };
     let unreadable = "";
@@ -215,7 +215,7 @@ export class Deployer extends DurableObject<Env> {
         // Done with the token: forget it, and give back what Cloudflare's OAuth gave. The GitHub App's secret goes with it.
         if (t.session.via == "oauth") await net(OAUTH.revoke, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: t.token, client_id: this.env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock" }) }).catch(() => {});
         await this.ctx.storage.put(SESSION, { ...t.session, sealed: null, github: undefined });
-        // Upstream remembers the install: its control Worker may consent through the relay (control/routes.ts), and the Source page lists it.
+        // Upstream remembers the install: its control Worker may consent through the relay (control/routes.ts), and the Ops page lists it.
         await this.env.PIPELINE?.getByName("deploys").registerInstall({ control: run.result.control, app: run.result.url, accountId: plan.accountId, by: owner.toLowerCase(), at: Date.now(), version: release.version }).catch((e) => console.log(`the install wasn't registered: ${message(e)}`));
       } catch (e) {
         run.status = "failed";

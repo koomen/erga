@@ -1,4 +1,4 @@
-// The Source page (/admin/source) updates live, with no reload: a push to staging adds its row, and the staging
+// The Ops page (/admin/ops) updates live, with no reload: a push to staging adds its row, and the staging
 // column follows its deploy (the mock builder, ERGA_DEPLOY_MOCK); a merge turns the dots green and starts production's
 // deploy. The scroll and the open log stay as they were.
 import { spawnSync } from "node:child_process";
@@ -8,7 +8,7 @@ import { expect, servers, test } from "../../fixtures";
 
 const own = () => servers.of("source-live", { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging" } });
 await own();
-test("a push, its deploy and a merge show on the open Source page without a reload", { timeout: 60_000 }, async ({ tab }) => {
+test("a push, its deploy and a merge show on the open Ops page without a reload", { timeout: 60_000 }, async ({ tab }) => {
   const server = await own(), { page } = tab;
   const text = (sel: string) => page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
   const classOf = (sel: string) => page.evaluate((s) => document.querySelector(s)?.className ?? "", sel);
@@ -27,7 +27,7 @@ test("a push, its deploy and a merge show on the open Source page without a relo
   git("push", "-q", remote, "HEAD:staging");
 
   await page.setViewportSize({ width: 1200, height: 600 });
-  await page.goto(`${server.root}/admin/source`);
+  await page.goto(`${server.root}/admin/ops`);
   await expect.poll(() => text("#grid .row"), { timeout: 10_000 }).toContain("Older commit 30");
   // Each cell in its column: the dot first, the subject under "Commit" (a row put before the last column's head shifts them all).
   const place = await page.evaluate(() => {

@@ -1,11 +1,11 @@
-// The control Worker's page shell (controlLayout): the Source page's script runs
+// The control Worker's page shell (controlLayout): the Ops page's script runs
 // in it. That script reads window.ergaView at once, so the shell must set it first.
 import { expect, test } from "bun:test";
 import { controlLayout } from "../control/routes";
 import { adminSourcePage } from "../server/source/index";
 import type { Session } from "../server/identity/index";
 
-test("the Source page on the control Worker sets window.ergaView before its script reads it", async () => {
+test("the Ops page on the control Worker sets window.ergaView before its script reads it", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
   const r = adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") });
   const html = await r.text();
@@ -16,7 +16,7 @@ test("the Source page on the control Worker sets window.ergaView before its scri
   expect(set).toBeLessThan(read);
 });
 
-test("the Source page's scripts parse, and each deploy column has a name and its host", async () => {
+test("the Ops page's scripts parse, and each deploy column has a name and its host", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
   const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/g)].filter((m) => !/type="(module|application\/json)"/.test(m[1])).map((m) => m[2]);
@@ -33,4 +33,15 @@ test("the Git instructions come before the git log", async () => {
   expect(html).toContain("git remote add erga https://ops.erga.test/git/erga.git");
   expect(html.indexOf('id="clone"')).toBeGreaterThan(0);
   expect(html.indexOf('id="clone"')).toBeLessThan(html.indexOf('id="grid"'));
+});
+
+test("the sidebar has one Ops link, in place of Source and Cloudflare: here on the control Worker, marked on its pages", async () => {
+  const session = { login: "ada", name: "Ada" } as unknown as Session;
+  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
+  const side = /<nav class="admin-side"[\s\S]*?<\/nav>/.exec(html)![0];
+  const labels = [...side.matchAll(/<span class="label">([^<]+)<\/span>/g)].map((m) => m[1]);
+  expect(labels).toContain("Ops");
+  expect(labels).not.toContain("Source");
+  expect(labels).not.toContain("Cloudflare");
+  expect(side).toMatch(/<a href="\/" aria-current="page">/);
 });

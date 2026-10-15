@@ -125,7 +125,7 @@ export class Pipeline extends DurableObject<Env> {
   async alarm(): Promise<void> { await this.deploys.alarm(); }
 
   // ---- the installs made from here (/deploy, deploy/install.ts): remembered, so their control Workers may consent
-  // through this Worker's OAuth callback (control/routes.ts, the relay), and the Source page can list them.
+  // through this Worker's OAuth callback (control/routes.ts, the relay), and the Ops page can list them.
   async installs(): Promise<InstallRecord[]> { return (await this.ctx.storage.get<InstallRecord[]>("installs")) ?? []; }
   async registerInstall(i: InstallRecord): Promise<void> {
     const list = (await this.installs()).filter((x) => x.control != i.control);
