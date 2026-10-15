@@ -52,7 +52,7 @@ import { controlTarget } from "./control";
 import type { Credential, CredentialStatus } from "./credential";
 import type { ChannelFile, ReleaseStore } from "./releases";
 import type { Fleet } from "./fleet";
-import { compareVersions } from "../server/source/index.ts";
+import { compareVersions, type UpdateResult } from "../server/source/index.ts";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
@@ -139,14 +139,18 @@ export interface Deps {
   changed(): void;
   /** Where to clone the commit from (the repository's own reader, sourceForBuild); else the REST API's. */
   source?(commit: string): Promise<Source | null>;
-  /** New lines of a deploy's log ({type: "deploy-log"} on /api/events), and a release published ({type: "releases"}). */
-  logged?(event: { type: "deploy-log"; target: DeployName; deployId: string; lines: LogLine[] } | { type: "releases" }): void;
+  /** New lines of a deploy's log ({type: "deploy-log"} on /api/events), a release published ({type: "releases"}), an environment's domains changed ({type: "domains"}). */
+  logged?(event: { type: "deploy-log"; target: DeployName; deployId: string; lines: LogLine[] } | { type: "releases" } | { type: "domains" }): void;
   /** The release store (deploy/releases.ts): a healthy production deploy publishes its release there, on edge. */
   releases?: ReleaseStore | null;
   /** What this control Worker deploys (deploy/fleet.ts): Erga's own targets unless an install's. */
   fleet?: Fleet;
-  /** An install: upstream's channel, read for a newer release (checkUpstream). */
-  upstream?: { channel(): Promise<ChannelFile> };
+  /**
+   * An install (a downstream): upstream's channel, read now and then; its repository's Update from upstream, which
+   * merges the channel's commit into staging (server/source/repo.ts) and so deploys it, through the hook; and the
+   * branches' heads, for a target never deployed from here (staging, right after the install).
+   */
+  upstream?: { channel(): Promise<ChannelFile>; update?(): Promise<UpdateResult | { error: string }>; heads?(): Promise<Record<string, string>> };
   /** Something about the store's channels changed ({type: "releases"} on /api/events). */
   releasesChanged?(): void;
   now?: () => number;
@@ -228,7 +232,7 @@ export class BranchDeploys {
     const credential = await this.deps.credential.status();
     if (credential.problem) return `Nothing is deployed: ${credential.problem}`;
     if (!/^[0-9a-f]{32}$/.test(e.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "")) return "This server doesn't know its Cloudflare account (CLOUDFLARE_ACCOUNT_ID).";
-    if (!this.deps.builder) return this.fleet.kind == "install" ? "This control Worker doesn't know its upstream's release store." : "This server has no build container (control/builder/).";
+    if (!this.deps.builder) return this.fleet.kind == "install" ? "This control Worker doesn't know its upstream (UPSTREAM): nothing to fetch releases from, or build with." : "This server has no build container (control/builder/).";
     if (this.specOf(name).snapshotFrom && !(e.SNAPSHOT_TOKEN?.trim().length! >= 32)) return "Staging copies production's data, which needs SNAPSHOT_TOKEN here and on both servers (deploy/setup.ts).";
     return null;
   }
@@ -411,36 +415,127 @@ export class BranchDeploys {
   }
 
   /**
-   * An install: reads upstream's channel, and when its latest release isn't what the app runs (nor on its way), deploys
-   * it: the app, then the control Worker (checkUpstream's second half, in `pipeline`). Called from the alarm, every
-   * UPSTREAM_CHECK_MS, and by Redeploy. Nothing here throws: what went wrong is in the status.
+   * An install: reads upstream's channel, and when its latest isn't what staging has, asks the repository to Update
+   * (upstream's commit merged into staging: a fast-forward or a merge commit, which the hook then deploys to staging;
+   * production follows through the instance's own Merge). A merge that conflicts stops here and says so: the Ops page
+   * shows the files and the ways out. Called from the alarm, every UPSTREAM_CHECK_MS. Nothing here throws: what went
+   * wrong is in the status.
    */
-  async checkUpstream(trigger = "upstream's channel checked"): Promise<UpstreamStatus | null> {
+  async checkUpstream(): Promise<UpstreamStatus | null> {
     const up = this.fleet.upstream, read = this.deps.upstream;
     if (!up || !read) return null;
-    const status: UpstreamStatus = { origin: up.origin, channel: up.channel, latest: null, checkedAt: this.now(), error: null };
+    const last = await this.deps.storage.get<UpstreamStatus>("upstream");
+    const status: UpstreamStatus = { origin: up.origin, channel: up.channel, latest: null, checkedAt: this.now(), error: null, ...(last?.update ? { update: last.update } : {}) };
     try {
       const file = await read.channel();
       status.latest = file.latest;
       await this.deps.storage.put("upstream", status);
-      if (!file.latest) return status;
-      const app = await this.load("app");
-      const q = await this.queue("app");
-      const running = app.run?.commit ?? null;
-      if (app.status.deployed == file.latest || running == file.latest || q.pending == file.latest) return status;
-      // What the app runs, when this object has no deploy of it yet (right after the install).
-      if (!app.status.deployed && !running && !(await this.notReady("app"))) {
-        const target = this.targetFor("app");
-        const there = await this.cf().then((cf) => workerVersion(cf, target.accountId, target.workerName)).catch(() => null);
-        if (there == file.latest) { app.status.deployed = file.latest; await this.save(app); return status; }
-      }
-      await this.enqueue("app", file.latest, `${up.channel} moved to ${file.latest} at ${up.origin} (${trigger})`, `upgrade: ${up.channel} moved to ${file.latest}`);
+      if (!file.latest || !read.update) return status;
+      // The channel moved since the last look (or this is the first): the repository brings it in.
+      if (last?.latest == file.latest && !last.error) return status;
+      const r = await read.update();
+      if ("error" in r) throw new DeployError(r.error);
+      status.update = r.result == "up-to-date" ? `${file.latest}: staging has it`
+        : r.result == "conflicts" ? `${r.conflict.version}: the merge conflicts in ${r.conflict.files.length} file${r.conflict.files.length == 1 ? "" : "s"} (${r.conflict.files.map((f) => f.path).join(", ")})`
+        : `${r.version} ${r.result == "fast-forward" ? "fast-forwarded" : "merged"} into staging (${r.brought} commit${r.brought == 1 ? "" : "s"})`;
+      if (r.result == "conflicts") status.error = `Update from ${up.origin} stopped: ${status.update}. Resolve it on the Ops page (your admin agent can), or merge in a checkout and push staging.`;
+      await this.deps.storage.put("upstream", status);
+      this.deps.changed();
     } catch (e) {
       status.error = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
       await this.deps.storage.put("upstream", status);
       this.deps.changed();
     }
     return status;
+  }
+
+  /**
+   * An install's targets this object never deployed (right after the install: production and the control Worker, which
+   * the install put up; staging, which nothing has yet): each is told what it runs when its Worker answers its branch's
+   * head, else deploys that head now.
+   */
+  private async firstDeploys(): Promise<void> {
+    const heads = await this.deps.upstream?.heads?.().catch(() => null);
+    if (!heads) return;
+    for (const name of this.fleet.names) {
+      const s = await this.load(name);
+      if (s.status.deployed || s.run || s.status.pending || s.status.state != "idle") continue;
+      const head = heads[this.specOf(name).branch];
+      if (!head || (await this.notReady(name))) continue;
+      const target = this.targetFor(name);
+      const there = await this.cf().then((cf) => workerVersion(cf, target.accountId, target.workerName)).catch(() => null);
+      if (there && head.startsWith(there)) { s.status = { ...s.status, state: "deployed", deployed: head, commit: head, at: this.now() }; await this.save(s); continue; }
+      await this.enqueue(name, head, `first deploy of ${this.specOf(name).branch} (${head.slice(0, 12)}) after the install`, "first deploy after the install");
+    }
+  }
+
+  // ---- each environment's domains: its Worker's custom domains, through the credential (control/routes.ts, /api/domains).
+
+  /** Every environment's domains: its own address first (the fleet's: a deploy puts the Worker on it), then the others added here. */
+  async domains(): Promise<DomainsView | { error: string; status?: number }> {
+    const wrong = await this.deps.credential.status();
+    if (wrong.problem) return { error: `Nothing can be read: ${wrong.problem}`, status: 409 };
+    try {
+      const cf = await this.cf();
+      const acc = this.deps.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+      const all = (await cf.call<{ id: string; hostname: string; service: string; zone_name?: string; zone_id: string }[]>("GET", `/accounts/${acc}/workers/domains`, "read the account's custom domains")) ?? [];
+      const targets: DomainsView["targets"] = {};
+      for (const name of this.fleet.names) {
+        const spec = this.specOf(name);
+        const own: DomainEntry = { hostname: spec.host, primary: true, zone: all.find((d) => d.hostname == spec.host)?.zone_name ?? null };
+        const more = all.filter((d) => d.service == spec.worker && d.hostname != spec.host).map((d): DomainEntry => ({ hostname: d.hostname, primary: false, zone: d.zone_name ?? null }));
+        targets[name] = [own, ...more.sort((a, b) => (a.hostname < b.hostname ? -1 : 1))];
+      }
+      return { targets };
+    } catch (e) {
+      return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
+    }
+  }
+
+  /** A domain added to an environment: a hostname on one of the account's zones (the zone found by the hostname's end), put on its Worker. */
+  async addDomain(name: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }> {
+    if (!this.fleet.has(name)) return { error: `There's no environment called ${name}.`, status: 404 };
+    const host = hostname.trim().toLowerCase();
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) return { error: "A hostname looks like docs.example.com.", status: 400 };
+    const spec = this.specOf(name);
+    for (const other of this.fleet.names) if (this.specOf(other).host == host) return { error: `${host} is ${other}'s own address.`, status: 409 };
+    const wrong = await this.deps.credential.status();
+    if (wrong.problem) return { error: `Nothing can be changed: ${wrong.problem}`, status: 409 };
+    try {
+      const cf = await this.cf();
+      const acc = this.deps.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+      const zones = (await cf.call<{ id: string; name: string }[]>("GET", `/zones?account.id=${acc}&per_page=50`, "list the account's zones")) ?? [];
+      const zone = zones.filter((z) => host == z.name || host.endsWith(`.${z.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
+      if (!zone) return { error: `${host} isn't on one of this account's zones (${zones.map((z) => z.name).join(", ") || "none"}): add the domain to Cloudflare first.`, status: 400 };
+      await cf.call("PUT", `/accounts/${acc}/workers/domains`, `put ${spec.worker} on ${host}`, { hostname: host, service: spec.worker, zone_id: zone.id, environment: "production" });
+      console.log(`domain ${host} added to ${name} (${spec.worker}) by ${by}`);
+      this.deps.logged?.({ type: "domains" });
+      return this.domains();
+    } catch (e) {
+      return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
+    }
+  }
+
+  /** A domain taken off an environment's Worker (never its own address: a deploy would put it back, and the health check goes there). */
+  async removeDomain(name: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }> {
+    if (!this.fleet.has(name)) return { error: `There's no environment called ${name}.`, status: 404 };
+    const host = hostname.trim().toLowerCase(), spec = this.specOf(name);
+    if (host == spec.host) return { error: `${host} is ${name}'s own address: it stays.`, status: 409 };
+    const wrong = await this.deps.credential.status();
+    if (wrong.problem) return { error: `Nothing can be changed: ${wrong.problem}`, status: 409 };
+    try {
+      const cf = await this.cf();
+      const acc = this.deps.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+      const there = (await cf.call<{ id: string; hostname: string; service: string }[]>("GET", `/accounts/${acc}/workers/domains?hostname=${encodeURIComponent(host)}`, `read ${host}'s custom domain`)) ?? [];
+      const mine = there.find((d) => d.hostname == host && d.service == spec.worker);
+      if (!mine) return { error: `${host} isn't one of ${name}'s domains.`, status: 404 };
+      await cf.call("DELETE", `/accounts/${acc}/workers/domains/${mine.id}`, `take ${spec.worker} off ${host}`);
+      console.log(`domain ${host} removed from ${name} (${spec.worker}) by ${by}`);
+      this.deps.logged?.({ type: "domains" });
+      return this.domains();
+    } catch (e) {
+      return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
+    }
   }
 
   /**
@@ -463,13 +558,6 @@ export class BranchDeploys {
     if (o.fresh && !this.specOf(name).snapshotFrom) return { ok: false, error: `${name} takes no copy of another server's data: only staging redeploys with a fresh copy.`, status: 400 };
     const why = (commit: string) => `redeploy of ${commit.slice(0, 12)} asked for (${trigger})${o.fresh ? ", with a fresh copy of production's data" : ""}`;
     const s = await this.load(name);
-    // An install: Redeploy means the channel's latest, now.
-    if (this.fleet.upstream && this.deps.upstream) {
-      const latest = (await this.deps.upstream.channel().catch(() => null))?.latest ?? (await this.queue(name)).head ?? s.status.commit;
-      if (!latest) return { ok: false, error: `${this.fleet.upstream.origin} has no release on ${this.fleet.upstream.channel} yet.`, status: 409 };
-      await this.enqueue(name, latest, `upgrade to ${latest} asked for (${trigger})`, trigger);
-      return { ok: true, status: (await this.load(name)).status };
-    }
     const commit = (await this.queue(name)).head ?? s.status.commit;
     if (!commit) return { ok: false, error: `No commit of ${this.specOf(name).branch} has reached this server yet: push to it first.`, status: 409 };
     await this.enqueue(name, commit, why(commit), trigger, o);
@@ -582,11 +670,15 @@ export class BranchDeploys {
       const next = await this.load(name);
       if (next.status.pending && !(await this.notReady(name))) await this.deploy(next, next.status.pending);
     }
-    // An install looks at upstream's channel now and then, and keeps its alarm going for the next look.
+    // An install: what the install put up is noted, staging gets its first deploy; then a look at upstream's channel now
+    // and then (its Update deploys through the hook), and the alarm kept going for the next look.
     if (this.fleet.upstream) {
-      if (!this.running && !(await this.notReady("app"))) await this.checkUpstream();
-      const app = await this.load("app");
-      if (app.status.pending && !this.running) await this.deploy(app, app.status.pending);
+      if (!this.running) await this.firstDeploys();
+      for (const name of this.fleet.names) {
+        const next = await this.load(name);
+        if (next.status.pending && !this.running && !(await this.notReady(name))) await this.deploy(next, next.status.pending);
+      }
+      if (!this.running && !(await this.notReady("production"))) await this.checkUpstream();
       await this.deps.schedule(UPSTREAM_CHECK_MS);
     }
   }
@@ -596,7 +688,7 @@ export class BranchDeploys {
     const name = s.status.name;
     const spec = this.specOf(name);
     this.running = name;
-    const steps: StepStatus[] = [{ id: "build", title: this.fleet.upstream ? "Fetch the release" : "Build the commit", status: "running" }, ...stepsFor(this.targetFor(name)).map((x) => ({ id: x.id, title: x.title, status: "pending" as const }))];
+    const steps: StepStatus[] = [{ id: "build", title: this.fleet.upstream ? "Fetch the release, or build the commit" : "Build the commit", status: "running" }, ...stepsFor(this.targetFor(name)).map((x) => ({ id: x.id, title: x.title, status: "pending" as const }))];
     const q = await this.queue(name);
     const trigger = (q.pending == commit ? q.trigger : null) ?? "deploy";
     const attempt = (q.pending == commit ? q.attempt : null) ?? 1;
@@ -753,8 +845,6 @@ export class BranchDeploys {
     s.run = null;
     s.oldDocs = [];
     await this.save(s);
-    // An install: the app upgraded, its control Worker follows, from the same release.
-    if (this.fleet.upstream && s.status.name == "app") await this.enqueue("control", run.commit, `the app runs ${run.commit}: the control Worker follows`, `upgrade: the app runs ${run.commit}`);
     // Production, healthy: its release goes to the store, on edge (each commit of main). After the deploy is over and
     // recorded: nothing here fails it, and a restart here loses only the publication (Redeploy publishes again).
     if (s.status.name == "production" && this.deps.releases) {
@@ -906,11 +996,16 @@ const ERGA: Fleet = {
   targetFor: (name, env, fresh) => targetFor(name, env, fresh),
 };
 
+/** One of an environment's domains: its own address (`primary`, the fleet's), or one added on the Ops page; the zone it's on, when known. */
+export interface DomainEntry { hostname: string; primary: boolean; zone: string | null }
+/** GET /api/domains: each environment's domains. */
+export interface DomainsView { targets: Partial<Record<DeployName, DomainEntry[]>> }
+
 /** A release tag, as the repository reports it (deploy/hook.ts releaseHook): the tag, its commit (40 hex), who cut it. */
 export interface ReleaseTag { tag: string; commit: string; by: string; at: number }
 
-/** An install's view of upstream (GET /api/deploys, `upstream`): the channel it follows, its latest, when it last looked. */
-export interface UpstreamStatus { origin: string; channel: string; latest: string | null; checkedAt: number | null; error: string | null }
+/** An install's view of upstream (GET /api/deploys, `upstream`): the channel it follows, its latest, when it last looked, what the last Update did. */
+export interface UpstreamStatus { origin: string; channel: string; latest: string | null; checkedAt: number | null; error: string | null; update?: string }
 
 export function targetOf(spec: TargetSpec, env: DeployEnv, fresh?: Fresh): Target {
   const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";

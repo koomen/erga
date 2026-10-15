@@ -21,6 +21,11 @@ export interface Fixture {
   github: string;
   /** The pretend Artifacts' repository, with a write token. */
   artifacts: string;
+  /** With `upstream`: the pretend upstream's repository (erga/upstream on the pretend Artifacts), with a write token, for the git CLI; and the channel the downstream follows. */
+  upstream: string;
+  channel: "stable" | "edge";
+  /** A second repository on the pretend Artifacts (erga/<name>), as a Remote with a write token (a fork to seed). */
+  remoteOf(name: string): Remote & { cli: string };
   repo: SourceRepo;
   moves: Move[];
   /** Background work (the mirror) settled. */
@@ -45,13 +50,15 @@ export async function must(cwd: string, ...args: string[]) {
   return r.out;
 }
 
-export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
+export function startFixture(opts: { mirror?: boolean; upstream?: boolean } = {}): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "erga-source-"));
   const secret = "test-secret";
   const background: Promise<unknown>[] = [];
   const moves: Move[] = [];
   let origin = "";
   const artifacts = (): Remote => ({ url: `${origin}/__artifacts/git/erga/erga.git`, headers: { Authorization: `Bearer ${localToken(secret, "erga/erga", "write")}` } });
+  const remoteOf = (name: string): Remote => ({ url: `${origin}/__artifacts/git/erga/${name}.git`, headers: { Authorization: `Bearer ${localToken(secret, `erga/${name}`, "write")}` } });
+  const state = { channel: "stable" as "stable" | "edge" };
   const repo = new SourceRepo({
     db: (() => { const db = new Database(":memory:"); return { exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[] }; })(),
     artifacts: async () => artifacts(),
@@ -59,6 +66,8 @@ export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
     moved: (m) => moves.push(m),
     changed: () => {},
     background: (p) => background.push(p),
+    // A downstream: upstream is a second repository on the pretend Artifacts (anyone may read erga.dev's; here a token does).
+    ...(opts.upstream ? { upstream: () => ({ remote: remoteOf("upstream"), origin: "https://ops.erga.test", channel: state.channel }) } : {}),
   });
   const server = Bun.serve({
     port: 0,
@@ -88,6 +97,10 @@ export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
     erga: withAuth("/git/erga.git", "x", "anything"),
     github: withAuth("/__github/koomen/erga.git", "x", MOCK_GITHUB_TOKEN),
     artifacts: withAuth("/__artifacts/git/erga/erga.git", "x", localToken(secret, "erga/erga", "write").split("?")[0]),
+    upstream: withAuth("/__artifacts/git/erga/upstream.git", "x", localToken(secret, "erga/upstream", "write").split("?")[0]),
+    get channel() { return state.channel; },
+    set channel(c) { state.channel = c; },
+    remoteOf: (name) => ({ ...remoteOf(name), cli: withAuth(`/__artifacts/git/erga/${name}.git`, "x", localToken(secret, `erga/${name}`, "write").split("?")[0]) }),
     repo, moves, dir,
     async settle() { while (background.length) await Promise.allSettled(background.splice(0)); },
     stop() { server.stop(true); rmSync(dir, { recursive: true, force: true }); },

@@ -130,6 +130,9 @@ export default defineConfig(({ mode }) => ({
         ERGA_PEER_ORIGIN: bindings.text(process.env.ERGA_PEER_ORIGIN ?? ""),
         // "1": /deploy and the branch deploys talk to a pretend Cloudflare, for their tests and for trying them safely.
         ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),
+        // The dev server as a downstream of another (the tests start two): where upstream is, and the channel followed.
+        UPSTREAM: bindings.text(process.env.ERGA_UPSTREAM ?? ""),
+        CHANNEL: bindings.text(process.env.ERGA_CHANNEL ?? ""),
         // The dev server's address, where its stand-ins for Artifacts and GitHub answer.
         ERGA_DEV_ORIGIN: bindings.text(process.env.ERGA_DEV_ORIGIN ?? ""),
         // The agent's key: a real one in .dev.vars, else the environment's, so a

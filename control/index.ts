@@ -18,6 +18,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Actor, SourceRead } from "../server/source/index.ts";
 import { CONTROL } from "../deploy/targets";
 import { releaseStoreOf } from "../cloudflare/releases";
+import { installFleet } from "../deploy/fleet";
 import { deployDoor } from "../cloudflare/deploy-routes";
 import type { Env } from "../cloudflare/env";
 import { controlPlatform, type ControlEnv } from "./platform";
@@ -41,6 +42,11 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   read(origin: string, q: SourceRead) { return this.source.read(origin, q); }
   merge(origin: string, who: Actor, commit?: string) { return this.source.merge(origin, who, commit); }
   release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }) { return this.source.release(origin, who, o); }
+  // A downstream's Update from upstream, and the ways out of a merge that conflicted.
+  update(origin: string, who: Actor) { return this.source.update(origin, who); }
+  resolveUpdate(origin: string, who: Actor, path: string, content: string | null) { return this.source.resolveUpdate(origin, who, path, content); }
+  finishUpdate(origin: string, who: Actor) { return this.source.finishUpdate(origin, who); }
+  abandonUpdate(origin: string) { return this.source.abandonUpdate(origin); }
   // The deploys (server/admin/agent.ts DashboardDeploys).
   status(history?: number) { return this.deploys.status(history); }
   logOf(target: string, deploy?: string) { return this.deploys.logOf(target, deploy); }
@@ -48,6 +54,10 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
   redeployWith(name: string, trigger: string, o: { fresh?: boolean }) { return this.deploys.redeployWith(name, trigger, o); }
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
+  // Each environment's domains.
+  domains() { return this.deploys.domains(); }
+  addDomain(name: string, hostname: string, by: string) { return this.deploys.addDomain(name, hostname, by); }
+  removeDomain(name: string, hostname: string, by: string) { return this.deploys.removeDomain(name, hostname, by); }
   // The release store (deploy/releases.ts).
   releases() { return this.deploys.releases(); }
   /** GET /api/events, the deploys' event stream: the app's Ops page (erga.dev/admin/ops) listens to it through the app. */
@@ -58,12 +68,24 @@ export default {
   async fetch(request: Request, env: ControlEnv, ctx: ExecutionContext): Promise<Response> {
     const platform = controlPlatform(env, ctx);
     const upstream = env.UPSTREAM?.trim().replace(/\/+$/, "") || null;
+    const fleet = installFleet(env);
+    const hosts = fleet ? { production: fleet.specOf("production").host, staging: fleet.specOf("staging").host, control: fleet.specOf("control").host } : null;
     return controlRoutes(request, {
       platform,
       deploys: env.PIPELINE.getByName("deploys"),
       releases: releaseStoreOf(env as never),
-      // /deploy: installs, from the store; not on an install's control Worker, which has no store, and whose page shows its upgrades.
-      ...(upstream ? { install: { upstream, channel: env.CHANNEL?.trim() == "edge" ? "edge" : "stable", app: env.APP_URL.replace(/\/+$/, "") } } : { deploy: (request: Request) => deployDoor(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }) }),
+      // /deploy: installs, from the store; and the installs' forks (their repositories and builds). Not on a downstream's
+      // control Worker, which names its upstream and its own hosts instead.
+      ...(upstream ? { upstream, ...(hosts ? { hosts } : {}) } : {
+        deploy: (request: Request) => deployDoor(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }),
+        forks: {
+          access: (id: string, secret: string, scope: "read" | "write") => env.PIPELINE.getByName("deploys").forkAccess(id, secret, scope),
+          builder: async (id: string, secret: string, request: Request) => {
+            const u = new URL(request.url);
+            return env.PIPELINE.getByName("deploys").forkBuild(id, secret, u.pathname.endsWith("/cancel") ? "cancel" : "build", u.searchParams.get("id") ?? "", await request.text());
+          },
+        },
+      }),
       app: env.APP_URL.replace(/\/+$/, ""),
       layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
       version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,

@@ -104,6 +104,8 @@ export interface Env {
   INSTALL?: string;
   /** An install's control Worker only: the channel it follows (stable unless "edge"). */
   CHANNEL?: string;
+  /** An install's control Worker only (a secret): what it reaches its fork's repository and builds at upstream with (deploy/forks.ts). */
+  FORK_SECRET?: string;
   CF_VERSION_METADATA?: { id?: string };
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
   ERGA_DEPLOY_MOCK?: string;

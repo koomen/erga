@@ -1,15 +1,24 @@
 // Installing Erga in another Cloudflare account, from erga.dev's control
 // Worker (/deploy on ops.erga.dev: cloudflare/deploy-routes.ts, the session
 // in cloudflare/deploy-session.ts). An install makes two Workers there, from
-// a release of the store (deploy/releases.ts; stable's latest):
+// a release of the store (deploy/releases.ts; stable's latest), and is a
+// downstream of erga.dev from then on:
 //
-//   the app, erga          as /deploy always made it (the same pipeline, deploy/pipeline.ts): its database,
+//   production, erga       as /deploy always made it (the same pipeline, deploy/pipeline.ts): its database,
 //                          migrations, files, Worker, address and pages
-//   its control Worker,    erga.dev's control Worker (control/), without the parts an install can't have: no
-//   erga-control           repository (Artifacts), no build container, no release store of its own. It reads the
+//   its control Worker,    erga.dev's control Worker (control/) in that account: the Ops page, its own
+//   erga-control           environments (production, staging, control) and their deploys, and the instance's
+//                          repository: a fork of erga.dev's, kept at erga.dev (its Artifacts, one repo per
+//                          install, reached with the install's FORK_SECRET: cloudflare/pipeline.ts, the forks)
+//                          and built there (erga.dev's build container, over the same secret). It reads the
 //                          app's database (who is an admin), signs admins in with the same GitHub App, and
-//                          upgrades the app from erga.dev's store once an admin consents at its /install
-//                          (cloudflare/pipeline.ts, the UPSTREAM and INSTALL settings).
+//                          deploys its environments from its own branches, as erga.dev's does, once an admin
+//                          consents at its /install (the UPSTREAM, INSTALL and FORK_SECRET settings).
+//
+// Staging comes after: the control Worker deploys it from the fork's staging
+// (the same commit as production, at first) on its first alarm: its own
+// Worker and database, a copy of production's data, at staging.<zone> (or
+// <first label>-staging.<rest>, or erga-staging.<subdomain>.workers.dev).
 //
 // The order: the account, the database and its migrations (the pipeline's
 // first steps), then the control Worker (the app's CONTROL service binding
@@ -22,7 +31,7 @@
 // ops.<zone> for an app at the zone's apex, else <first label>-ops.<rest>
 // (one level under the zone, which the zone's own certificate covers).
 
-import { Cloudflare, DeployError, checkHealth, runPipeline, STEPS, targetHost, targetOfPlan, WORKER_TAG, type Carry, type DeployPlan, type Fetch, type Release, type Report, type Target } from "./pipeline";
+import { Cloudflare, DB_NAME, DeployError, checkHealth, runPipeline, STEPS, targetHost, targetOfPlan, WORKER_TAG, type Carry, type DeployPlan, type Fetch, type Release, type Report, type Target } from "./pipeline";
 import { installControlMetadata } from "./control";
 import { CONTROL_ENTRYPOINT } from "./targets";
 export { installControlMetadata };
@@ -42,23 +51,43 @@ export const INSTALL_CONTROL_WORKER = "erga-control";
 export const DEPLOY_OAUTH_COOKIE = "erga_deploy_oauth";
 
 /** The control Worker's hostname beside the app's. */
-export function controlHostOf(plan: Pick<DeployPlan, "app" | "subdomain">): string {
-  if (plan.app.kind == "workers.dev") return `${INSTALL_CONTROL_WORKER}.${plan.subdomain}.workers.dev`;
+export const controlHostOf = (plan: Pick<DeployPlan, "app" | "subdomain">): string => besideApp(plan, INSTALL_CONTROL_WORKER, "ops");
+/** Staging's hostname beside the app's: staging.<zone>, <first label>-staging.<rest>, or erga-staging.<subdomain>.workers.dev. */
+export const stagingHostOf = (plan: Pick<DeployPlan, "app" | "subdomain" | "workerName">): string => besideApp(plan, `${plan.workerName}-staging`, "staging");
+function besideApp(plan: Pick<DeployPlan, "app" | "subdomain">, worker: string, label: string): string {
+  if (plan.app.kind == "workers.dev") return `${worker}.${plan.subdomain}.workers.dev`;
   const host = plan.app.hostname.toLowerCase(), zone = plan.app.zoneName.toLowerCase();
-  if (host == zone) return `ops.${zone}`;
+  if (host == zone) return `${label}.${zone}`;
   const [first, ...rest] = host.split(".");
-  return `${first}-ops.${rest.join(".")}`;
+  return `${first}-${label}.${rest.join(".")}`;
 }
 
-/** What an install's control Worker is told about itself (its INSTALL setting, JSON): its one target, to upgrade. */
+/** One of an install's app environments (production, staging): its Worker, database and addresses. */
+export interface InstallEnvironment { worker: string; database: string; app: DeployPlan["app"]; pages: DeployPlan["pages"] }
+/** What an install's control Worker is told about itself (its INSTALL setting, JSON): its environments, and its fork at upstream. */
 export interface InstallSpec {
   accountId: string;
-  worker: string;
-  database: string;
   subdomain?: string;
-  app: DeployPlan["app"];
-  pages: DeployPlan["pages"];
+  /** The fork's id at upstream: its repository and its builds live there (control/routes.ts, /forks/<id>/...). */
+  fork: string;
+  production: InstallEnvironment;
+  staging: InstallEnvironment;
   control: { worker: string; host: string };
+}
+
+/** An install's spec from its plan: production as chosen, staging beside it (its pages on the shared host), the control Worker beside both. */
+export function installSpecOf(plan: DeployPlan, fork: string): InstallSpec {
+  const stagingHost = stagingHostOf(plan);
+  return {
+    accountId: plan.accountId, ...(plan.subdomain ? { subdomain: plan.subdomain } : {}), fork,
+    production: { worker: plan.workerName, database: DB_NAME, app: plan.app, pages: plan.pages },
+    staging: {
+      worker: `${plan.workerName}-staging`, database: `${DB_NAME}-staging`,
+      app: plan.app.kind == "domain" ? { kind: "domain", zoneId: plan.app.zoneId, zoneName: plan.app.zoneName, hostname: stagingHost } : { kind: "workers.dev" },
+      pages: { kind: "shared" },
+    },
+    control: { worker: INSTALL_CONTROL_WORKER, host: controlHostOf(plan) },
+  };
 }
 
 export interface Upstream {
@@ -68,18 +97,22 @@ export interface Upstream {
   clientId: string;
 }
 
-export interface Installed { url: string; pages: string; database: string; worker: string; control: string }
+export interface Installed { url: string; pages: string; database: string; worker: string; control: string; staging: string }
 
-/** The app's target: /deploy's, plus the control Worker beside it (its service binding and address). */
-export function installAppTarget(plan: DeployPlan, sessionSecret: string, controlHost: string): Target {
+/** The app's target: /deploy's, plus the control Worker beside it (its service binding and address), and the token staging's copies go through. */
+export function installAppTarget(plan: DeployPlan, sessionSecret: string, controlHost: string, snapshotToken?: string): Target {
   const t = targetOfPlan(plan, sessionSecret);
-  return { ...t, vars: { ...t.vars, CONTROL_URL: `https://${controlHost}` }, services: { CONTROL: { service: INSTALL_CONTROL_WORKER, entrypoint: CONTROL_ENTRYPOINT } } };
+  return { ...t, vars: { ...t.vars, CONTROL_URL: `https://${controlHost}` }, secrets: { ...t.secrets, ...(snapshotToken ? { SNAPSHOT_TOKEN: snapshotToken } : {}) }, services: { CONTROL: { service: INSTALL_CONTROL_WORKER, entrypoint: CONTROL_ENTRYPOINT } } };
 }
 
 /** The install: both Workers, in order, reporting each step; what it made. */
 export async function runInstall(cf: Cloudflare, release: Release, plan: DeployPlan, o: {
   /** The new app's SESSION_SECRET, and the control Worker's (each new for this install). */
   sessionSecret: string; controlSecret: string;
+  /** The token staging's copies of production's data go through (SNAPSHOT_TOKEN on production, staging and the control Worker). */
+  snapshotToken: string;
+  /** The install's fork at upstream (made before the install: cloudflare/pipeline.ts makeFork), and the secret its control Worker reaches it with. */
+  fork: { id: string; secret: string };
   upstream: Upstream;
   report: (step: InstallStepId, status: "running" | "done" | "skipped", detail?: string) => void;
   site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number;
@@ -87,7 +120,7 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   const site = o.site ?? globalThis.fetch;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const controlHost = controlHostOf(plan);
-  const app = installAppTarget(plan, o.sessionSecret, controlHost);
+  const app = installAppTarget(plan, o.sessionSecret, controlHost, o.snapshotToken);
   const appHost = targetHost(app);
   const acc = `/accounts/${plan.accountId}`;
   const carry: Carry = {};
@@ -101,14 +134,14 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   o.report("control", "running");
   const settings = await cf.call<{ tags?: string[] }>("GET", `${acc}/workers/scripts/${INSTALL_CONTROL_WORKER}/settings`, `read ${INSTALL_CONTROL_WORKER}'s settings`, undefined, { allow404: true });
   if (settings && !settings.tags?.includes(WORKER_TAG)) throw new DeployError(`Your account already has a Worker called ${INSTALL_CONTROL_WORKER} that isn't Erga's. So it isn't overwritten, the install stops here: delete or rename that Worker, then try again.`);
-  const spec: InstallSpec = { accountId: plan.accountId, worker: plan.workerName, database: app.databaseName, ...(plan.subdomain ? { subdomain: plan.subdomain } : {}), app: plan.app, pages: plan.pages, control: { worker: INSTALL_CONTROL_WORKER, host: controlHost } };
+  const spec = installSpecOf(plan, o.fork.id);
   const vars = {
     ADMINS: plan.admin.toLowerCase(), CLOUDFLARE_ACCOUNT_ID: plan.accountId, APP_URL: `https://${appHost}`,
     GITHUB_CLIENT_ID: plan.githubClientId.trim(), CLOUDFLARE_OAUTH_CLIENT_ID: o.upstream.clientId,
     UPSTREAM: o.upstream.origin, INSTALL: JSON.stringify(spec),
   };
   const form = new FormData();
-  form.set("metadata", JSON.stringify(installControlMetadata(release, { accountId: plan.accountId, dbId: carry.dbId!, vars, secrets: { SESSION_SECRET: o.controlSecret, GITHUB_CLIENT_SECRET: plan.githubClientSecret.trim() } })));
+  form.set("metadata", JSON.stringify(installControlMetadata(release, { accountId: plan.accountId, dbId: carry.dbId!, vars, secrets: { SESSION_SECRET: o.controlSecret, GITHUB_CLIENT_SECRET: plan.githubClientSecret.trim(), SNAPSHOT_TOKEN: o.snapshotToken, FORK_SECRET: o.fork.secret } })));
   for (const [name, bytes] of Object.entries(release.control!.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
   await cf.call("PUT", `${acc}/workers/scripts/${INSTALL_CONTROL_WORKER}`, "upload the control Worker", form);
   if (plan.app.kind == "workers.dev") {
@@ -133,5 +166,5 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
     if (Date.now() > until) throw new DeployError(`The control Worker is uploaded, but https://${controlHost} hasn't answered yet${h?.why ? ` (${h.why})` : ""}. Open it in a little while; if it still doesn't answer, try again.`);
     await sleep(Math.min(5000, 1000 + tries * 500));
   }
-  return { ...made, control: `https://${controlHost}` };
+  return { ...made, control: `https://${controlHost}`, staging: `https://${stagingHostOf(plan)}` };
 }

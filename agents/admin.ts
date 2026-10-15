@@ -56,6 +56,15 @@ export interface DashboardOps {
   releases(): Promise<object>;
   /** A release cut: an annotated tag (the next version unless given) on main's head, with the notes as its message. */
   cutRelease(version?: string, notes?: string): Promise<object>;
+  /** Each environment's domains (its Worker's custom domains), and one added or removed. */
+  domains(): Promise<object>;
+  addDomain(target: string, hostname: string): Promise<object>;
+  removeDomain(target: string, hostname: string): Promise<object>;
+  /** A downstream: Update from upstream (erga.dev) into staging; one conflicted file of a waiting merge resolved; the merge finished; or dropped. */
+  updateFromUpstream(): Promise<object>;
+  resolveUpstreamFile(path: string, content: string | null): Promise<object>;
+  finishUpstreamMerge(): Promise<object>;
+  abandonUpstreamMerge(): Promise<object>;
   /** The homepage (the landing_document setting) deployed again, as Redeploy in the editor's settings does. */
   deployHome(): Promise<object>;
   agentTokens(): Promise<object[]>;
@@ -109,6 +118,23 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
     tool("cut_release", "Cut a release", "Cuts a release, as Cut release on the Ops page does: an annotated tag vX.Y.Z on main's head (the next patch version unless version says otherwise; each release is newer than the last), with notes as the tag's message. The tag is the release: it goes on stable once its build is in the store, and installs that follow stable upgrade to it. Only when the admin asks in this conversation to cut, tag or release a version.",
       Type.Object({ version: Type.Optional(Type.String({ description: "The version, like v0.14.0 (default: the next patch version)" })), notes: Type.Optional(Type.String({ description: "Short release notes: the tag's message" })) }),
       (a) => ops.cutRelease(typeof a.version == "string" && a.version.trim() ? a.version.trim() : undefined, typeof a.notes == "string" && a.notes.trim() ? a.notes.trim() : undefined)),
+    tool("list_domains", "Read the environments' domains", "Each environment's domains (production, staging, control): its own address first (primary: the one deploys put it on), then the domains added to it, with the Cloudflare zone each is on.",
+      Type.Object({}), () => ops.domains()),
+    tool("add_domain", "Add a domain to an environment", "Attaches a hostname on one of this account's Cloudflare zones to an environment's Worker (a Workers custom domain: Cloudflare makes the DNS record and certificate), as Add domain on the Ops page does. Only when the admin asks in this conversation.",
+      Type.Object({ target: Type.String({ description: "The environment: production, staging or control" }), hostname: Type.String({ description: "The hostname, like docs.example.com" }) }),
+      (a) => ops.addDomain(String(a.target ?? ""), String(a.hostname ?? ""))),
+    tool("remove_domain", "Remove a domain from an environment", "Takes a hostname off an environment's Worker (never its own address), as the × on the Ops page does. Only when the admin asks in this conversation.",
+      Type.Object({ target: Type.String({ description: "The environment: production, staging or control" }), hostname: Type.String({ description: "The hostname to remove" }) }),
+      (a) => ops.removeDomain(String(a.target ?? ""), String(a.hostname ?? ""))),
+    tool("update_from_upstream", "Update from erga.dev", "On an Erga installed on its own domain (a downstream of erga.dev): brings erga.dev's newest release (the channel this install follows: stable, or edge for main's head) into staging, as Update from erga.dev on the Ops page does. A fast-forward when this install has no commits of its own past it; else a merge commit. When files conflict, staging stays and the answer lists the files: the merge waits on the branch upstream-merge/<version>. Then read each file with read_source (ref: that branch), decide the resolution, write it with resolve_upstream_file, and finish_upstream_merge. Production follows only through deploy_production. Only when the admin asks in this conversation to update, upgrade or pull from erga.dev (list_branches shows upstream: how far behind, and any merge waiting).",
+      Type.Object({}), () => ops.updateFromUpstream()),
+    tool("resolve_upstream_file", "Resolve a conflicted file", "Writes one file of the waiting upstream merge (update_from_upstream's conflicts), resolved: the whole file's content, with no conflict markers left (<<<<<<<, =======, >>>>>>>); null deletes the file. Read it first with read_source at the merge branch, keep both sides' intent, and keep what this install changed on purpose. Answers the files that still carry markers.",
+      Type.Object({ path: Type.String({ description: "The file's path, as the conflict lists it" }), content: Type.Union([Type.String(), Type.Null()], { description: "The resolved file, whole; null to delete the file" }) }),
+      (a) => ops.resolveUpstreamFile(String(a.path ?? ""), typeof a.content == "string" ? a.content : null)),
+    tool("finish_upstream_merge", "Finish the upstream merge", "Finishes the waiting upstream merge once every conflicted file is resolved: one merge commit moves staging (staging deploys it), and the merge branch goes. Refused while a file still carries markers, or when staging moved since (then update_from_upstream again).",
+      Type.Object({}), () => ops.finishUpstreamMerge()),
+    tool("abandon_upstream_merge", "Drop the upstream merge", "Drops the waiting upstream merge and its branch; staging stays as it is. Only when the admin asks for it.",
+      Type.Object({}), () => ops.abandonUpstreamMerge()),
     tool("deploy_homepage", "Redeploy the homepage", "Deploys the homepage (the document the landing_document setting names, which set_setting changes) again now, as Redeploy in that document's settings does in the editor.",
       Type.Object({}), () => ops.deployHome()),
     tool("list_agent_tokens", "Read your agent tokens", "Your own agent tokens (/settings): id, label, kind (share: a share button's: the editor's, scope documents, or Share with agent's on the admin pages, scope admin), scope (document, documents or admin), when made, when it ends and when last used. Never a token itself: a token is made, or an agent's request for one approved, only on /settings.",
@@ -202,6 +228,13 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   rollback: ["Rolling back", "Rolled back"],
   list_releases: ["Reading the release channels", "Read the release channels"],
   cut_release: ["Cutting a release", "Cut a release"],
+  list_domains: ["Reading the domains", "Read the domains"],
+  add_domain: ["Adding the domain", "Added the domain"],
+  remove_domain: ["Removing the domain", "Removed the domain"],
+  update_from_upstream: ["Updating from erga.dev", "Updated from erga.dev"],
+  resolve_upstream_file: ["Resolving", "Resolved"],
+  finish_upstream_merge: ["Finishing the upstream merge", "Finished the upstream merge"],
+  abandon_upstream_merge: ["Dropping the upstream merge", "Dropped the upstream merge"],
   deploy_homepage: ["Redeploying the homepage", "Redeployed the homepage"],
   list_agent_tokens: ["Reading your agent tokens", "Read your agent tokens"],
   revoke_agent_token: ["Revoking the agent token", "Revoked the agent token"],
@@ -255,6 +288,17 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
   main's head, with notes. list_branches shows the release tags; list_releases reads the
   store's channels: edge (each commit of main, deployed and healthy) and stable (the newest
   release tag, what other installs of Erga follow).
+- list_domains reads each environment's domains (production, staging, control: its own
+  address, and those added); add_domain and remove_domain attach a hostname on one of
+  the account's Cloudflare zones to an environment, or take one off.
+- On an Erga installed on its own domain (list_branches has upstream: erga.dev's release this
+  install follows, how many of its commits are missing here, how many commits are this
+  install's own, and a merge waiting on conflicts, if any): update_from_upstream brings
+  erga.dev's release into staging (a fast-forward, or a merge commit). When files
+  conflict, the merge waits on upstream-merge/<version>: read each listed file there
+  (read_source with that ref), resolve it keeping both sides' intent, write it with
+  resolve_upstream_file, then finish_upstream_merge; abandon_upstream_merge drops it.
+  Production follows only through deploy_production.
 - list_agent_tokens and revoke_agent_token: ${owner}'s own agent tokens, the one Share with
   agent made for an outside agent too (kind share, scope admin). A token is made, or an
   agent's request approved, only on the page (/settings, or Share with agent).
@@ -313,6 +357,8 @@ function about(name: string, args: unknown): string | null {
   if (name == "clear_api_key" && typeof a.name == "string") return a.name;
   if (name == "clear_sign_in_app") return `${a.server == "other" ? "the other server" : "this server"}${a.what == "pending" ? " (pending)" : ""}`;
   if (name == "deploy_production") return typeof a.commit == "string" && a.commit ? `main to ${a.commit.slice(0, 10)}` : "main to staging";
+  if (name == "resolve_upstream_file" && typeof a.path == "string") return a.path;
+  if ((name == "add_domain" || name == "remove_domain") && typeof a.hostname == "string") return `${a.hostname} (${a.target})`;
   if (/^revoke_/.test(name) && typeof a.id == "string") return a.id;
   if (typeof a.login == "string") return a.login;
   return null;

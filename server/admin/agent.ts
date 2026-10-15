@@ -47,6 +47,10 @@ export interface DashboardDeploys {
   rollback(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
   /** The release store (deploy/releases.ts): both channels (null: no store). */
   releases(): Promise<object | null>;
+  /** Each environment's domains, and one added or removed (deploy/branches.ts). */
+  domains(): Promise<object>;
+  addDomain(target: string, hostname: string, by: string): Promise<object>;
+  removeDomain(target: string, hostname: string, by: string): Promise<object>;
 }
 
 /**
@@ -155,6 +159,44 @@ export class AdminAgents {
         const r = await source().release(state.origin, await actor(), { ...(version ? { version } : {}), ...(notes ? { notes } : {}) });
         if ("error" in r) throw new Error(r.error);
         return { ...r, done: `release ${r.tag} cut at ${r.commit.slice(0, 10)}: it goes on stable once its build is in the store, and installs that follow stable upgrade to it` };
+      },
+      domains: async () => {
+        const r = await pipeline().domains() as { error?: string };
+        if (r.error) throw new Error(r.error);
+        return r;
+      },
+      addDomain: async (target, hostname) => {
+        const r = await pipeline().addDomain(target, hostname, byLine(login, VIA.admin)) as { error?: string };
+        if (r.error) throw new Error(r.error);
+        return { ...r, done: `${hostname} added to ${target}: Cloudflare makes its DNS record and certificate in a minute or two` };
+      },
+      removeDomain: async (target, hostname) => {
+        const r = await pipeline().removeDomain(target, hostname, byLine(login, VIA.admin)) as { error?: string };
+        if (r.error) throw new Error(r.error);
+        return { ...r, done: `${hostname} removed from ${target}` };
+      },
+      updateFromUpstream: async () => {
+        const r = await source().update(state.origin, await actor());
+        if ("error" in r) throw new Error(r.error);
+        const done = r.result == "up-to-date" ? "staging has everything upstream's channel has: nothing to update"
+          : r.result == "conflicts" ? `the merge of ${r.conflict.version} waits on the branch ${r.conflict.branch}: ${r.conflict.files.length} file${r.conflict.files.length == 1 ? "" : "s"} conflict (${r.conflict.files.map((f) => f.path).join(", ")}). Read each at that branch, resolve it with resolve_upstream_file, then finish_upstream_merge`
+          : `staging is at ${r.commit.slice(0, 10)} (${r.result}, ${r.version}, ${r.brought} commit${r.brought == 1 ? "" : "s"} brought in): staging deploys it; production follows through deploy_production`;
+        return { ...r, done };
+      },
+      resolveUpstreamFile: async (path, content) => {
+        const r = await source().resolveUpdate(state.origin, await actor(), path, content);
+        if ("error" in r) throw new Error(r.error);
+        return { ...r, done: r.remaining.length ? `${r.path} written; still carrying markers: ${r.remaining.join(", ")}` : `${r.path} written; no file carries markers: finish_upstream_merge finishes the merge` };
+      },
+      finishUpstreamMerge: async () => {
+        const r = await source().finishUpdate(state.origin, await actor());
+        if ("error" in r) throw new Error(r.error);
+        return { ...r, done: `merged ${r.version}: staging is at ${r.commit.slice(0, 10)} and deploys it; production follows through deploy_production` };
+      },
+      abandonUpstreamMerge: async () => {
+        const r = await source().abandonUpdate(state.origin);
+        if ("error" in r) throw new Error(r.error);
+        return { done: "the waiting merge and its branch are gone; staging is as it was" };
       },
       deployHome: async () => {
         if (!(await this.platform.directory.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");

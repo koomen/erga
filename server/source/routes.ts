@@ -14,6 +14,12 @@
 //                               given) on main's head (or that commit of main), with the notes as its message (admins):
 //                               { tag, commit } or 4xx { error }. `git push erga vX.Y.Z` does the same.
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
+//   POST /api/source/update     a downstream: Update from upstream (erga.dev): the channel's commit merged into staging, a
+//                               fast-forward or a merge commit; on conflicts, the merge goes on upstream-merge/<version> and
+//                               staging stays: { result: "up-to-date" | "fast-forward" | "merged" | "conflicts", ... } (admins)
+//   POST /api/source/update/resolve   { path, content | null }: one conflicted file of that merge, resolved (the admin's agent)
+//   POST /api/source/update/finish    the resolved merge moves staging; the branch goes
+//   POST /api/source/update/abandon   drops the waiting merge and its branch
 //   /admin/ops               the Ops page (admins): the history of staging and main, and their deploys
 //   /source, /admin/factory     redirect to /admin/ops
 //
@@ -33,12 +39,12 @@ import type { SourceAnswer, SourceRead } from "./browse.ts";
 import { gitHttp } from "./http.ts";
 import { adminSourcePage } from "./page.ts";
 import type { Remote } from "./remote.ts";
-import type { Actor, BranchInfo, MirrorStatus, Released, TagInfo } from "./repo.ts";
+import type { Actor, BranchInfo, MirrorStatus, Released, TagInfo, UpdateResult, UpstreamView } from "./repo.ts";
 
 /** The repository's object (one, "erga"): pushes and merges happen there one at a time. Calls name the address the request came to (`origin`). */
 export interface SourceObject {
   advertise(origin: string): Promise<Uint8Array>;
-  branches(origin: string): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; tags?: TagInfo[]; release?: string | null }>;
+  branches(origin: string): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; tags?: TagInfo[]; release?: string | null; upstream?: UpstreamView }>;
   /** `by`: who asked. */
   mirrorNow(origin: string, by?: string): Promise<MirrorStatus>;
   files(origin: string, commit: string): Promise<{ path: string; mode: string; data: Uint8Array }[]>;
@@ -48,6 +54,11 @@ export interface SourceObject {
   merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }>;
   /** A release cut (a tag): the release, or { error, status }. */
   release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }): Promise<Released | { error: string; status: number }>;
+  /** A downstream's Update from upstream, and the ways out of a merge that conflicted: each the result, or { error, status }. */
+  update(origin: string, who: Actor): Promise<UpdateResult | { error: string; status: number }>;
+  resolveUpdate(origin: string, who: Actor, path: string, content: string | null): Promise<{ branch: string; path: string; remaining: string[] } | { error: string; status: number }>;
+  finishUpdate(origin: string, who: Actor): Promise<{ commit: string; version: string } | { error: string; status: number }>;
+  abandonUpdate(origin: string): Promise<{ ok: true } | { error: string; status: number }>;
   /** A push (git-receive-pack's body, with x-erga-actor and x-erga-origin): the report git reads. */
   fetch(request: Request): Promise<Response>;
 }
@@ -150,6 +161,24 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
     if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await source.object.mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });
+    if (url.pathname == "/api/source/update" && request.method == "POST") {
+      const r = await source.object.update(url.origin, who.actor);
+      return "error" in r ? json({ error: r.error }, r.status) : json(r);
+    }
+    if (url.pathname == "/api/source/update/resolve" && request.method == "POST") {
+      const body = (await request.json().catch(() => ({}))) as { path?: unknown; content?: unknown };
+      if (typeof body.path != "string" || !(typeof body.content == "string" || body.content === null)) return json({ error: "Give the file's path, and its content (a string), or null to delete it." }, 400);
+      const r = await source.object.resolveUpdate(url.origin, who.actor, body.path, body.content);
+      return "error" in r ? json({ error: r.error }, r.status) : json(r);
+    }
+    if (url.pathname == "/api/source/update/finish" && request.method == "POST") {
+      const r = await source.object.finishUpdate(url.origin, who.actor);
+      return "error" in r ? json({ error: r.error }, r.status) : json(r);
+    }
+    if (url.pathname == "/api/source/update/abandon" && request.method == "POST") {
+      const r = await source.object.abandonUpdate(url.origin);
+      return "error" in r ? json({ error: r.error }, r.status) : json(r);
+    }
   } catch (e) {
     return json({ error: `Erga couldn't reach its repository: ${(e as Error).message}` }, 502);
   }

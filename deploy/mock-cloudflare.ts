@@ -61,6 +61,8 @@ export interface MockState {
   blobs: Record<string, string>;
   served: Record<string, Record<string, string>>;
   domains: { hostname: string; service: string; zone_id: string }[];
+  /** The Artifacts repos in the namespace erga (the fleet mock): Erga's own, and the installs' forks. */
+  repos: string[];
   routes: Record<string, { pattern: string; script: string }[]>;
   dns: Record<string, { type: string; name: string; content: string; proxied: boolean }[]>;
   registrations: { domain: string; price?: string }[];
@@ -175,7 +177,7 @@ export function mockCloudflare(opts: {
     account: { id: ACCOUNT_ID, name: "Ada's account" },
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
-    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
+    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], repos: opts.fleet ? ["erga"] : [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
     secrets: {}, docs: {}, versions: {}, kept: {}, deployments: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} }, refreshTokens: [], oauthGrants: 0,
   };
   /** Tokens' values, by token id (never in `state`). */
@@ -503,17 +505,26 @@ export function mockCloudflare(opts: {
         return ok({ id: ns, ...state.containers.apps[ns] });
       }
       if (m == "GET" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos\/([^/]+)$/.exec(rest))) {
-        if (!opts.fleet || r[1] != "erga" || r[2] != "erga") return fail(404, 10404, "repo not found");
-        return ok({ name: r[2], namespace: r[1], remote: "https://artifacts.mock/git/erga/erga.git", default_branch: "main" });
+        if (!opts.fleet || r[1] != "erga" || !state.repos.includes(r[2])) return fail(404, 10404, "repo not found");
+        return ok({ name: r[2], namespace: r[1], remote: `https://artifacts.mock/git/erga/${r[2]}.git`, default_branch: "main" });
+      }
+      // A repo made (an install's fork: deploy/forks.ts).
+      if (m == "POST" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos$/.exec(rest))) {
+        const b = await body();
+        if (!opts.fleet || r[1] != "erga") return fail(404, 10404, "namespace not found");
+        if (!/^[a-z0-9][\w.-]*$/.test(b?.name ?? "")) return fail(400, 10400, "a repo name is needed");
+        if (state.repos.includes(b.name)) return fail(409, 10409, "a repo of that name exists");
+        state.repos.push(b.name);
+        return ok({ name: b.name, namespace: r[1], remote: `https://artifacts.mock/git/erga/${b.name}.git`, default_branch: b.default_branch ?? "main" });
       }
       if (m == "POST" && (r = /^\/artifacts\/namespaces\/([^/]+)\/tokens$/.exec(rest))) {
         const b = await body();
-        if (!opts.fleet || r[1] != "erga" || b?.repo != "erga") return fail(404, 10404, "repo not found");
+        if (!opts.fleet || r[1] != "erga" || !state.repos.includes(b?.repo)) return fail(404, 10404, "repo not found");
         return ok({ id: hex(8), token: `art-read-${hex(8)}`, scope: b.scope ?? "write", expires_at: new Date(Date.now() + (b.ttl ?? 3600) * 1000).toISOString() });
       }
       if (m == "GET" && rest.startsWith("/workers/domains")) {
-        const hostname = new URLSearchParams(rest.split("?")[1] ?? "").get("hostname");
-        return ok(state.domains.filter((d) => !hostname || d.hostname == hostname).map((d) => ({ id: domainId(d.hostname), zone_name: state.zones.find((z) => z.id == d.zone_id)?.name, ...d })));
+        const q = new URLSearchParams(rest.split("?")[1] ?? ""), hostname = q.get("hostname"), service = q.get("service");
+        return ok(state.domains.filter((d) => (!hostname || d.hostname == hostname) && (!service || d.service == service)).map((d) => ({ id: domainId(d.hostname), zone_name: state.zones.find((z) => z.id == d.zone_id)?.name, ...d })));
       }
       if (m == "DELETE" && (r = /^\/workers\/domains\/([0-9a-f]+)$/.exec(rest))) {
         const d = state.domains.find((x) => domainId(x.hostname) == r![1]);

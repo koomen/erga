@@ -219,7 +219,7 @@ export interface DeployPlan {
 }
 
 /** The database a /deploy server gets. */
-const DB_NAME = "erga";
+export const DB_NAME = "erga";
 
 export const appHost = (p: Pick<DeployPlan, "app" | "workerName" | "subdomain">) =>
   p.app.kind == "domain" ? p.app.hostname : `${p.workerName}.${p.subdomain}.workers.dev`;

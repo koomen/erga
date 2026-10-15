@@ -20,7 +20,7 @@ test("an install from the page: consent, the GitHub App, both Workers, and the n
   await page.click("#where-next");
   await expect.poll(() => text("#sum-where")).toContain("erga.ada-mock.workers.dev · pages on erga-pages.ada-mock.workers.dev · control at erga-control.ada-mock.workers.dev");
   // The GitHub App: off to the pretend GitHub and back, made.
-  expect(await page.getAttribute("#gh-make", "href")).toBe("/deploy/github/start?app=erga.ada-mock.workers.dev&ops=erga-control.ada-mock.workers.dev");
+  expect(await page.getAttribute("#gh-make", "href")).toBe("/deploy/github/start?app=erga.ada-mock.workers.dev&ops=erga-control.ada-mock.workers.dev&staging=erga-staging.ada-mock.workers.dev");
   await page.click("#gh-make");
   await expect.poll(() => text("#gh-made"), { timeout: 15_000 }).toContain("Made: Erga at erga.ada-mock.workers.dev (Iv1.mockgithubapp0)");
   expect(await text("#sum-where")).toContain("control at erga-control.ada-mock.workers.dev");

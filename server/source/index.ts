@@ -6,7 +6,8 @@
 export { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "./browse.ts";
 export { tar, ZERO } from "./git.ts";
 export type { Remote } from "./remote.ts";
-export { compareVersions, isReleaseTag, nextVersion, SourceError, SourceRepo, type Actor, type Released, type TagInfo } from "./repo.ts";
+export { compareVersions, isReleaseTag, nextVersion, SourceError, SourceRepo, type Actor, type Released, type TagInfo, type UpdateResult, type UpstreamConflict, type UpstreamSource, type UpstreamView } from "./repo.ts";
+export type { Conflict } from "./merge.ts";
 export { isGitRead, sourceApi, sourceDoor, sourceGit, type RepoAccess, type SourceObject, type SourceService } from "./routes.ts";
 export { adminSourcePage, type SourcePageConfig } from "./page.ts";
 export { isPublicSourcePath, publicSourcePage } from "./public.ts";

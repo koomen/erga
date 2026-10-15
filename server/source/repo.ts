@@ -18,6 +18,21 @@
 // A release tag is never moved or deleted, each is newer than the last, and
 // nothing but release tags is taken.
 //
+// A downstream (an Erga installed on its own domain: deploy/install.ts) has a
+// repository of this same shape, forked from erga.dev's, and an upstream:
+// erga.dev's Git endpoint, which anyone may read. It stands behind upstream
+// (commits of erga.dev it doesn't have) and ahead of it (its own commits).
+// Update brings upstream in: the newest release tag's commit (the stable
+// channel) or main's head (edge) is merged into staging, a fast-forward where
+// it can be, else a merge commit made here (server/source/merge.ts); production
+// follows through the instance's own Merge, as always. When files conflict,
+// staging stays as it is, and the merge with Git's conflict markers goes on a
+// branch, upstream-merge/<version>, for an admin (or their agent) to resolve:
+// the agent writes the files and finishes the merge from here (resolveUpdate,
+// finishUpdate); a person merges in a checkout and pushes staging, which ends
+// the conflict too. Upstream's objects come into this repository under a
+// tracking branch, erga-upstream/main, so the merge can read them.
+//
 // A push is staged before it lands: its objects go to Artifacts under a
 // quarantine branch, Erga reads the new
 // commits back and checks them, and only then moves the real branches, each
@@ -35,11 +50,12 @@
 // are smart HTTP remotes.
 
 import {
-  concat, emptyPack, FLUSH, hashObject, isSha, isTreeMode, parseCommit, parseTag, parseTree, pkt, readPack, readPkts, subjectOf, tagBytes, text,
-  toSideBand, utf8, writePack, ZERO, type Commit, type GitObject,
+  commitBytes, concat, emptyPack, FLUSH, hashObject, isSha, isTreeMode, parseCommit, parseTag, parseTree, pkt, readPack, readPkts, subjectOf, tagBytes, text, treeBytes,
+  toSideBand, utf8, writePack, ZERO, type Commit, type GitObject, type TreeEntry,
 } from "./git.ts";
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
 import { BrowseError, cleanPath, list, read, search, snapshotOf, view, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
+import { isBinary, mergeTrees, type Conflict } from "./merge.ts";
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
@@ -47,6 +63,14 @@ export type Branch = (typeof BRANCHES)[number];
 const REF = (b: Branch) => `refs/heads/${b}`;
 const QUARANTINE = "refs/heads/erga-incoming/";
 const TAGS = "refs/tags/";
+/** A downstream's copy of upstream's main: the objects Update brings in live under it. */
+const TRACK = "refs/heads/erga-upstream/main";
+/** A downstream's merge that conflicted: upstream-merge/<version>, with Git's markers in the files, for an admin or their agent. */
+const MERGE_BRANCH = "refs/heads/upstream-merge/";
+/** Temporary refs a merge sets so Artifacts sends the trees it needs (a commit that isn't a branch's head can't be asked for). */
+const SCRATCH = "refs/heads/erga-merge/";
+/** Git's conflict markers, at a line's start: a file that still has one isn't resolved. */
+const MARKER = /^(<{7}|={7}|>{7})(?: |$)/m;
 /** A release tag: a semantic version, v first. */
 export const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 export const isReleaseTag = (name: string) => RELEASE_TAG.test(name);
@@ -93,6 +117,8 @@ export interface CommitInfo {
   task?: { id: number; branch: string; title: string; commits: string[] };
   /** One of a task's commits: the sha of the task's merge. */
   inTask?: string;
+  /** A downstream: this commit isn't on upstream's main (the instance's own). */
+  own?: boolean;
 }
 /** A release: its tag, the commit it marks, who cut it and when, its message. */
 export interface TagInfo { name: string; sha: string; commit: string; tagger: string; at: number; message: string }
@@ -105,9 +131,41 @@ export interface BranchInfo {
   /** The AFTER_MAIN commits only on staging that come just after main's head, newest first (staging only): the Ops page shows them below its break, when staging is far ahead. */
   afterMain?: CommitInfo[];
 }
-/** A branch moved: `by` (a login) did it, `via` how when not in person. */
+/** A downstream's upstream: erga.dev's Git endpoint (read for anyone), and the channel it follows: stable (the newest release tag) or edge (main). */
+export interface UpstreamSource { remote: Remote; origin: string; channel: "stable" | "edge" }
+/** An Update that stopped on conflicts: the branch that holds the merge with Git's markers, what it merges, and the files. */
+export interface UpstreamConflict {
+  /** The branch's short name (upstream-merge/v0.15.0), and the version it brings (the tag, or main's commit on edge). */
+  branch: string; version: string;
+  /** Upstream's commit being merged, staging's head it is merged into, and their common ancestor (null: none). */
+  target: string; ours: string; base: string | null;
+  files: Conflict[];
+  at: number; by: string;
+}
+/** Where a downstream stands against upstream (the Ops page shows it above the git log). */
+export interface UpstreamView {
+  origin: string; channel: "stable" | "edge";
+  /** Upstream's main, and its newest release tag. */
+  main: string | null; release: { tag: string; commit: string } | null;
+  /** What Update brings in: the release's commit (stable), or main's head (edge). */
+  target: string | null;
+  /** The version Update brings: the tag, or main's short id on edge. */
+  version: string | null;
+  /** Upstream's commits (behind `target`) that staging doesn't have: how many, and the newest LOG of them, newest first. */
+  behind: number; commits: CommitInfo[];
+  /** Staging's commits that upstream's main doesn't have: this instance's own. */
+  own: number;
+  checkedAt: number | null; error: string | null;
+  conflict: UpstreamConflict | null;
+}
+export type UpdateResult =
+  | { result: "up-to-date"; commit: string }
+  | { result: "fast-forward" | "merged"; commit: string; version: string; brought: number }
+  | { result: "conflicts"; conflict: UpstreamConflict };
+
+/** A branch moved: `by` (a login) did it, `via` how when not in person. "update": an Update from upstream (a downstream). */
 export interface Move {
-  branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; via?: string | null; at: number;
+  branch: Branch; old: string; new: string; how: "push" | "merge" | "update"; by: string; via?: string | null; at: number;
   /** main moved past the production gate (a merge's emergency override, before the gate was removed): the reason given, and what the gate said. */
   override?: { reason: string; gate: string };
 }
@@ -128,6 +186,8 @@ export interface RepoDeps {
   moved(move: Move): void;
   /** A release cut: a tag made here, or pushed. */
   released?(release: Released): void;
+  /** A downstream: where upstream's repository is, and the channel followed (null, or absent: this is erga.dev's own). */
+  upstream?(): UpstreamSource | null;
   /** Something the Ops page shows changed (a branch, the mirror's status). */
   changed(): void;
   /** Work that outlives the request (the mirror). */
@@ -280,20 +340,23 @@ export class SourceRepo {
   // ---- What the Ops page shows ---------------------------------------------
 
   /** Each branch's head and its latest commits, which of them main has, and the mirror's status. */
-  async branches(): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; moves: Move[]; tags: TagInfo[]; release: string | null }> {
+  async branches(): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; moves: Move[]; tags: TagInfo[]; release: string | null; upstream?: UpstreamView }> {
     const remote = await this.deps.artifacts();
     const [{ refs }, { refs: tagRefs }] = await Promise.all([lsRefs(remote), lsRefs(remote, TAGS)]);
     const heads = Object.fromEntries(BRANCHES.map((b) => [b, refs.get(REF(b)) ?? null])) as Record<Branch, string | null>;
+    let upstream: UpstreamView | undefined;
     await this.locked(async () => {
       await this.sync(remote, BRANCHES.map((b) => heads[b]).filter((s): s is string => !!s));
       this.setState("tips", Object.fromEntries(BRANCHES.filter((b) => heads[b]).map((b) => [b, heads[b]])));
       await this.syncTags(remote, tagRefs);
+      if (this.deps.upstream?.()) upstream = await this.upstreamView(heads.staging);
     });
     const tags = this.tags();
     const onMain = heads.main ? this.ancestors(heads.main) : new Set<string>();
+    const theirs = upstream?.main && this.known(upstream.main) ? this.ancestors(upstream.main) : null;
     const branches = BRANCHES.map((name): BranchInfo => {
       const tip = heads[name];
-      const commit = (r: Row): CommitInfo => ({ sha: r.sha, subject: r.subject, author: r.author, email: r.email, at: r.at, parents: r.parents ? r.parents.split(" ") : [], inMain: onMain.has(r.sha) });
+      const commit = (r: Row): CommitInfo => ({ sha: r.sha, subject: r.subject, author: r.author, email: r.email, at: r.at, parents: r.parents ? r.parents.split(" ") : [], inMain: onMain.has(r.sha), ...(theirs ? { own: !theirs.has(r.sha) } : {}) });
       const commits = tip ? this.withTasks(this.log(tip).map(commit), commit) : [];
       const info: BranchInfo = { name, commit: tip, commits };
       if (name == "staging" && tip) {
@@ -305,7 +368,297 @@ export class SourceRepo {
       }
       return info;
     });
-    return { branches, mirror: this.mirrorStatus(), moves: this.moves(10), tags, release: tags[0]?.name ?? null };
+    return { branches, mirror: this.mirrorStatus(), moves: this.moves(10), tags, release: tags[0]?.name ?? null, ...(upstream ? { upstream } : {}) };
+  }
+
+  // ---- Upstream (a downstream's fork of erga.dev) --------------------------------------
+
+  /** Upstream's refs as last read: main's head, the newest release tag and its commit, and when. */
+  private upstreamRefs(): { main: string | null; release: { tag: string; commit: string } | null; checkedAt: number | null; error: string | null } {
+    return this.state("upstream") ?? { main: null, release: null, checkedAt: null, error: null };
+  }
+
+  /**
+   * Reads upstream's main and release tags, and indexes their commits (no files), so the position can be counted. An
+   * upstream that doesn't answer leaves the last reading, with the error. Inside the lock.
+   */
+  private async syncUpstream(): Promise<ReturnType<SourceRepo["upstreamRefs"]>> {
+    const up = this.deps.upstream?.();
+    const last = this.upstreamRefs();
+    if (!up) return last;
+    try {
+      const [{ refs }, { refs: tagRefs }] = await Promise.all([lsRefs(up.remote), lsRefs(up.remote, TAGS)]);
+      const main = refs.get("refs/heads/main") ?? null;
+      const tags = [...tagRefs].filter(([ref]) => isReleaseTag(ref.slice(TAGS.length))).sort(([a], [b]) => compareVersions(b.slice(TAGS.length), a.slice(TAGS.length)));
+      const newest = tags[0] ?? null;
+      const wants = [...new Set([main, newest?.[1]].filter((s): s is string => !!s && !this.known(s)))];
+      let release: { tag: string; commit: string } | null = newest ? { tag: newest[0].slice(TAGS.length), commit: last.release?.tag == newest[0].slice(TAGS.length) ? last.release.commit : "" } : null;
+      if (wants.length) {
+        const haves = [...new Set([...this.heads(), last.main ?? "", last.release?.commit ?? ""])].filter((s) => s && this.known(s));
+        const objects = await readPack(await fetchPack(up.remote, { wants, haves, filter: "blob:none" }), (t) => t == "commit" || t == "tag");
+        for (const [sha, o] of objects) if (o.type == "commit") this.index(sha, parseCommit(o.data));
+        if (newest && release && !release.commit) {
+          const o = objects.get(newest[1]);
+          release.commit = o?.type == "tag" ? parseTag(o.data).object : newest[1];
+        }
+      } else if (newest && release && !release.commit) release.commit = this.known(newest[1]) ? newest[1] : "";
+      if (release && !release.commit) release = null;
+      const now = { main, release, checkedAt: this.now(), error: null };
+      this.setState("upstream", now);
+      return now;
+    } catch (e) {
+      const error = e instanceof RemoteError || e instanceof SourceError ? e.message : `upstream didn't answer: ${(e as Error).message}`;
+      const now = { ...last, error };
+      this.setState("upstream", now);
+      return now;
+    }
+  }
+
+  /** What Update brings in, from the last reading of upstream: the release's commit on stable, main's head on edge; and the version's name. */
+  private upstreamTarget(refs: ReturnType<SourceRepo["upstreamRefs"]>): { target: string | null; version: string | null } {
+    const up = this.deps.upstream?.();
+    if (!up) return { target: null, version: null };
+    if (up.channel == "stable") return refs.release ? { target: refs.release.commit, version: refs.release.tag } : { target: null, version: null };
+    return refs.main ? { target: refs.main, version: refs.main.slice(0, 12) } : { target: null, version: null };
+  }
+
+  /** The position against upstream, for the Ops page. Inside the lock. */
+  private async upstreamView(staging: string | null): Promise<UpstreamView> {
+    const up = this.deps.upstream!()!;
+    const refs = await this.syncUpstream();
+    const { target, version } = this.upstreamTarget(refs);
+    const ours = staging ? this.ancestors(staging) : new Set<string>();
+    const commit = (r: Row): CommitInfo => ({ sha: r.sha, subject: r.subject, author: r.author, email: r.email, at: r.at, parents: r.parents ? r.parents.split(" ") : [], inMain: false });
+    let behind = 0, commits: CommitInfo[] = [];
+    if (target && this.known(target)) {
+      behind = [...this.ancestors(target)].filter((s) => !ours.has(s)).length;
+      let seen = 0;
+      const order = this.order(target, (o) => { if (o.length && !ours.has(o[o.length - 1])) seen++; return seen >= Math.min(behind, LOG); }).filter((s) => !ours.has(s));
+      commits = this.rows(order).map(commit);
+    }
+    const theirs = refs.main && this.known(refs.main) ? this.ancestors(refs.main) : null;
+    const own = theirs ? [...ours].filter((s) => !theirs.has(s)).length : 0;
+    return { origin: up.origin, channel: up.channel, main: refs.main, release: refs.release, target, version, behind, commits, own, checkedAt: refs.checkedAt, error: refs.error, conflict: this.state<UpstreamConflict>("conflict") };
+  }
+
+  /** The common ancestor of `a` and `b` to merge over: the newest of the best ones (one of several is enough: a criss-cross is rare here). */
+  private mergeBase(a: string, b: string): string | null {
+    const ofA = this.ancestors(a), nodes = this.nodes();
+    // Walk b's history newest first; the first commits met that are a's ancestors too, and not ancestors of one already found, are the candidates.
+    const found: string[] = [], seen = new Set<string>(), frontier = [b];
+    while (frontier.length) {
+      frontier.sort((x, y) => (nodes.get(x)?.committed ?? 0) - (nodes.get(y)?.committed ?? 0));
+      const s = frontier.pop()!;
+      if (seen.has(s)) continue;
+      seen.add(s);
+      if (ofA.has(s)) { found.push(s); continue; }
+      for (const p of nodes.get(s)?.parents ?? []) if (!seen.has(p) && nodes.has(p)) frontier.push(p);
+    }
+    const best = found.filter((c) => !found.some((d) => d != c && this.isAncestor(c, d)));
+    return best.sort((x, y) => (nodes.get(y)?.committed ?? 0) - (nodes.get(x)?.committed ?? 0))[0] ?? null;
+  }
+
+  /**
+   * Update from upstream: brings the channel's commit (the newest release tag's on stable, main's head on edge) into
+   * staging. A fast-forward when staging has no commits of its own past it; else a merge commit made here; and when
+   * files conflict, staging stays, and the merge with Git's markers goes on upstream-merge/<version> (the result says
+   * which files). `who`: the admin, or the system (an install that follows the channel by itself).
+   */
+  async update(who: Actor): Promise<UpdateResult> {
+    const up = this.deps.upstream?.();
+    if (!up) throw new SourceError("This is erga.dev's own repository: it has no upstream to update from.", 409);
+    return this.locked(async () => {
+      const remote = await this.deps.artifacts();
+      const { refs } = await lsRefs(remote);
+      const staging = refs.get(REF("staging")), main = refs.get(REF("main"));
+      if (!staging) throw new SourceError("staging has no commits yet.", 409);
+      await this.sync(remote, [staging, ...(main ? [main] : [])]);
+      const read = await this.syncUpstream();
+      if (read.error) throw new SourceError(`${up.origin} didn't answer: ${read.error}`, 502);
+      const { target, version } = this.upstreamTarget(read);
+      if (!target || !version || !this.known(target)) throw new SourceError(`${up.origin} has no release on ${up.channel} yet.`, 409);
+      // Upstream was read again: the page's position may have changed even when nothing moves here.
+      this.deps.changed();
+      if (this.isAncestor(target, staging)) return { result: "up-to-date", commit: staging };
+      const base = this.mergeBase(staging, target);
+      // Upstream's objects into this repository, under the tracking branch: what it has past what we had of it.
+      const tracked = refs.get(TRACK) ?? null;
+      if (tracked != target) {
+        const haves = [...new Set([tracked, base].filter((s): s is string => !!s))];
+        const pack = await fetchPack(up.remote, { wants: [target], haves });
+        const r = await receivePack(remote, [{ ref: TRACK, old: tracked ?? ZERO, new: target }], pack);
+        const said = r.unpack != "ok" ? r.unpack : r.refs.get(TRACK) ?? "no answer";
+        if (said != "ok") throw new SourceError(`Artifacts didn't take upstream's objects: ${said}`, 502);
+      }
+      const brought = [...this.ancestors(target)].filter((s) => !this.isAncestor(s, staging)).length;
+      if (this.isAncestor(staging, target)) {
+        await this.moveStaging(remote, staging, target, null, who);
+        return { result: "fast-forward", commit: target, version, brought };
+      }
+      // A merge: the three trees, read whole (a scratch ref for the base, which isn't a branch's head).
+      const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
+      if (base) await receivePack(remote, [{ ref: scratch, old: ZERO, new: base }], await emptyPack());
+      let objects: Map<string, GitObject>;
+      try { objects = await readPack(await fetchPack(remote, { wants: [staging, target, ...(base ? [base] : [])], deepen: 1 })); }
+      finally { if (base) await receivePack(remote, [{ ref: scratch, old: base, new: ZERO }], null).catch(() => {}); }
+      const treeOf = (sha: string) => { const o = objects.get(sha); if (!o || o.type != "commit") throw new SourceError(`Artifacts didn't send commit ${sha.slice(0, 7)}`, 502); return parseCommit(o.data).tree; };
+      const label = `${up.origin.replace(/^https?:\/\//, "")} ${version}`;
+      const merged = await mergeTrees({ get: (sha) => objects.get(sha) }, base ? treeOf(base) : null, treeOf(staging), treeOf(target), { ours: "staging", theirs: label });
+      const files = merged.conflicts;
+      const message = files.length
+        ? `Update from ${label}: ${files.length} file${files.length == 1 ? "" : "s"} conflict\n\n${files.map((f) => `${f.path} (${f.kind})`).join("\n")}\n`
+        : `Update from ${label}\n`;
+      const commit = this.commitObject({ tree: merged.tree, parents: [staging, target], who, message });
+      const sha = await hashObject(commit);
+      const pack = await writePack([...merged.objects, commit]);
+      if (!files.length) {
+        await this.moveStaging(remote, staging, sha, pack, who);
+        return { result: "merged", commit: sha, version, brought };
+      }
+      // Conflicts: the merge on its branch, staging as it was; an older conflict branch goes.
+      const branch = `${MERGE_BRANCH}${version}`;
+      const old = refs.get(branch) ?? ZERO;
+      const drop: RefUpdate[] = [...refs].filter(([r]) => r.startsWith(MERGE_BRANCH) && r != branch).map(([ref, s]) => ({ ref, old: s, new: ZERO }));
+      const r = await receivePack(remote, [{ ref: branch, old, new: sha }, ...drop], pack);
+      const said = r.unpack != "ok" ? r.unpack : r.refs.get(branch) ?? "no answer";
+      if (said != "ok") throw new SourceError(`Artifacts refused the merge branch: ${said}`, 502);
+      const conflict: UpstreamConflict = { branch: branch.slice("refs/heads/".length), version, target, ours: staging, base, files, at: this.now(), by: byLine(who.login, who.via) };
+      this.setState("conflict", conflict);
+      this.index(sha, parseCommit(commit.data));
+      this.deps.changed();
+      return { result: "conflicts", conflict };
+    });
+  }
+
+  /** staging moved by an Update (to upstream's commit, or to a merge commit in `pack`). */
+  private async moveStaging(remote: Remote, old: string, to: string, pack: Uint8Array | null, who: Actor): Promise<void> {
+    const r = await receivePack(remote, [{ ref: REF("staging"), old, new: to }], pack ?? await emptyPack());
+    const said = r.unpack != "ok" ? r.unpack : r.refs.get(REF("staging")) ?? "no answer";
+    if (said != "ok") throw new SourceError(/stale|lock|old/i.test(said) ? "staging moved while updating: try again." : `Artifacts refused it: ${said}`, 409);
+    await this.sync(remote, [to]);
+    this.recordMove({ branch: "staging", old, new: to, how: "update", by: who.login, via: who.via ?? null, at: this.now() });
+  }
+
+  /** A commit object by `who`, now. */
+  private commitObject(o: { tree: string; parents: string[]; who: Actor; message: string }): GitObject {
+    const time = Math.floor(this.now() / 1000);
+    const person = { name: o.who.name || o.who.login, email: o.who.login == SYSTEM ? "noreply@erga.dev" : `${o.who.login}@users.noreply.github.com`, time, tz: "+0000" };
+    return { type: "commit", data: commitBytes({ tree: o.tree, parents: o.parents, author: person, committer: person, message: o.message }) };
+  }
+
+  /** The conflict branch's head and its files, for resolving: the conflict, the head, and the objects of its tree. */
+  private async conflictHead(remote: Remote): Promise<{ conflict: UpstreamConflict; head: string; objects: Map<string, GitObject> }> {
+    const conflict = this.state<UpstreamConflict>("conflict");
+    if (!conflict) throw new SourceError("No Update is waiting on conflicts.", 409);
+    const { refs } = await lsRefs(remote);
+    const head = refs.get(`refs/heads/${conflict.branch}`);
+    if (!head) { this.setState("conflict", null); throw new SourceError(`The branch ${conflict.branch} is gone: run Update again.`, 409); }
+    const objects = await readPack(await fetchPack(remote, { wants: [head], deepen: 1 }));
+    return { conflict, head, objects };
+  }
+
+  /** The conflicted files that still carry Git's markers, in the tree `root` of `objects`. */
+  private unresolved(conflict: UpstreamConflict, objects: Map<string, GitObject>, root: string): string[] {
+    return conflict.files.filter((f) => { const data = blobAt(objects, root, f.path); return !!data && !isBinary(data) && MARKER.test(text(data)); }).map((f) => f.path);
+  }
+
+  /**
+   * One file of the waiting merge, as `who` (an admin's agent) resolved it: the branch gets a commit with it (`content`
+   * null deletes the file). Returns the files that still carry conflict markers.
+   */
+  async resolveUpdate(who: Actor, path: string, content: string | null): Promise<{ branch: string; path: string; remaining: string[] }> {
+    const clean = cleanPath(path);
+    if (!clean) throw new SourceError("Which file? Give its path, as the conflict lists it.");
+    return this.locked(async () => {
+      const remote = await this.deps.artifacts();
+      const { conflict, head, objects } = await this.conflictHead(remote);
+      const headCommit = parseCommit(objects.get(head)!.data);
+      const blob: GitObject | null = content == null ? null : { type: "blob", data: utf8(content) };
+      const edit = await editTree(objects, headCommit.tree, clean, blob);
+      if (edit.tree == headCommit.tree) return { branch: conflict.branch, path: clean, remaining: this.unresolved(conflict, objects, headCommit.tree) };
+      const commit = this.commitObject({ tree: edit.tree, parents: [head], who, message: `Resolve ${clean}\n` });
+      const sha = await hashObject(commit);
+      const r = await receivePack(remote, [{ ref: `refs/heads/${conflict.branch}`, old: head, new: sha }], await writePack([...edit.objects, commit]));
+      const said = r.unpack != "ok" ? r.unpack : r.refs.get(`refs/heads/${conflict.branch}`) ?? "no answer";
+      if (said != "ok") throw new SourceError(`Artifacts refused it: ${said}`, 502);
+      for (const o of edit.objects) objects.set(await hashObject(o), o);
+      return { branch: conflict.branch, path: clean, remaining: this.unresolved(conflict, objects, edit.tree) };
+    });
+  }
+
+  /**
+   * Finishes the waiting merge: a merge commit of staging and upstream's commit with the branch's tree (every conflict
+   * resolved) moves staging; the branch goes. Refused while a file still carries markers, or when staging moved since.
+   */
+  async finishUpdate(who: Actor): Promise<{ commit: string; version: string }> {
+    return this.locked(async () => {
+      const remote = await this.deps.artifacts();
+      const { conflict, head, objects } = await this.conflictHead(remote);
+      const { refs } = await lsRefs(remote);
+      const staging = refs.get(REF("staging"));
+      if (staging != conflict.ours) throw new SourceError(`staging moved since this Update started (it was at ${conflict.ours.slice(0, 7)}): run Update again.`, 409);
+      const tree = parseCommit(objects.get(head)!.data).tree;
+      const left = this.unresolved(conflict, objects, tree);
+      if (left.length) throw new SourceError(`${left.length} file${left.length == 1 ? " still carries" : "s still carry"} conflict markers: ${left.join(", ")}.`, 409);
+      const label = `${this.deps.upstream?.()?.origin.replace(/^https?:\/\//, "") ?? "upstream"} ${conflict.version}`;
+      const commit = this.commitObject({ tree, parents: [conflict.ours, conflict.target], who, message: `Update from ${label}\n\nConflicts in ${conflict.files.map((f) => f.path).join(", ")} resolved.\n` });
+      const sha = await hashObject(commit);
+      await this.moveStaging(remote, conflict.ours, sha, await writePack([commit]), who);
+      return { commit: sha, version: conflict.version };
+    });
+  }
+
+  /** Drops the waiting merge: its branch goes, staging stays. */
+  async abandonUpdate(): Promise<void> {
+    await this.locked(async () => {
+      const conflict = this.state<UpstreamConflict>("conflict");
+      if (!conflict) return;
+      const remote = await this.deps.artifacts();
+      const { refs } = await lsRefs(remote);
+      const drop: RefUpdate[] = [...refs].filter(([r]) => r.startsWith(MERGE_BRANCH)).map(([ref, s]) => ({ ref, old: s, new: ZERO }));
+      if (drop.length) await receivePack(remote, drop, null).catch(() => {});
+      this.setState("conflict", null);
+      this.deps.changed();
+    });
+  }
+
+  /** After staging moved: a waiting merge whose upstream commit staging now has is over (a person merged in a checkout and pushed). */
+  private settleConflict(staging: string): void {
+    const conflict = this.state<UpstreamConflict>("conflict");
+    if (!conflict || !this.known(conflict.target) || !this.isAncestor(conflict.target, staging)) return;
+    this.setState("conflict", null);
+    this.deps.background((async () => {
+      const remote = await this.deps.artifacts();
+      const { refs } = await lsRefs(remote);
+      const drop: RefUpdate[] = [...refs].filter(([r]) => r.startsWith(MERGE_BRANCH)).map(([ref, s]) => ({ ref, old: s, new: ZERO }));
+      if (drop.length) await receivePack(remote, drop, null);
+    })().catch(() => {}));
+  }
+
+  /**
+   * Seeds a fork: every object behind `commit` (one of this repository's commits) pushed to `fork`, as its main and
+   * staging. The pack goes through as Artifacts sends it: nothing is unpacked here (the whole history is some 20MB).
+   */
+  async seedFork(fork: Remote, commit: string): Promise<void> {
+    if (!isSha(commit)) throw new SourceError("Name the commit by its full id (40 hex digits).");
+    await this.locked(async () => {
+      const remote = await this.deps.artifacts();
+      const { refs } = await lsRefs(remote);
+      await this.sync(remote, [commit].filter(() => [...refs.values()].includes(commit)));
+      if (!this.known(commit)) throw new SourceError(`${commit.slice(0, 7)} isn't one of this repository's commits.`, 409);
+      const { refs: theirs } = await lsRefs(fork);
+      if (theirs.has(REF("main")) || theirs.has(REF("staging"))) throw new SourceError("That fork already has branches.", 409);
+      // A commit that isn't a branch's head can't be asked for: a scratch ref on it, for the fetch.
+      const head = [...refs.values()].includes(commit);
+      const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
+      if (!head) await receivePack(remote, [{ ref: scratch, old: ZERO, new: commit }], await emptyPack());
+      try {
+        const pack = await fetchPack(remote, { wants: [commit] });
+        const r = await receivePack(fork, [{ ref: REF("main"), old: ZERO, new: commit }, { ref: REF("staging"), old: ZERO, new: commit }], pack);
+        const said = r.unpack != "ok" ? r.unpack : [REF("main"), REF("staging")].map((ref) => r.refs.get(ref) ?? "no answer").find((s) => s != "ok") ?? "ok";
+        if (said != "ok") throw new SourceError(`The fork's repository refused the seed: ${said}`, 502);
+      } finally { if (!head) await receivePack(remote, [{ ref: scratch, old: commit, new: ZERO }], null).catch(() => {}); }
+    });
   }
 
   // ---- Releases (tags) ------------------------------------------------------------
@@ -484,7 +837,7 @@ export class SourceRepo {
           else if (c.new == ZERO || tagRefs.has(c.ref)) statuses.set(c.ref, "a release tag is never moved or deleted");
           else tagging.push(c);
         }
-        else if (!branch) statuses.set(c.ref, "Erga has two branches, staging and main: push to one of those");
+        else if (!branch) statuses.set(c.ref, c.ref.startsWith(MERGE_BRANCH) ? "that branch is Erga's own (the merge that conflicted): merge upstream in your checkout and push the result to staging" : "Erga has two branches, staging and main: push to one of those");
         else if (c.new == ZERO) statuses.set(c.ref, `${branch} can't be deleted`);
         else if ((refs.get(c.ref) ?? ZERO) != c.old) statuses.set(c.ref, "stale info: it moved since you fetched; fetch first");
         else accepted.push({ ...c, branch });
@@ -566,6 +919,7 @@ export class SourceRepo {
     this.deps.db.exec("INSERT INTO moves (branch, old, new, how, by, via, at) VALUES (?, ?, ?, ?, ?, ?, ?)", m.branch, m.old, m.new, m.how, m.by, m.via ?? null, m.at);
     const tips = this.state<Record<string, string>>("tips") ?? {};
     this.setState("tips", { ...tips, [m.branch]: m.new });
+    if (m.branch == "staging") this.settleConflict(m.new);
     this.deps.moved(m);
     this.deps.changed();
     // The mirror's push is the mover's: it follows what they did.
@@ -796,6 +1150,58 @@ export class SourceRepo {
     while (this.snapshots.size > 3) this.snapshots.delete(this.snapshots.keys().next().value!);
     return s;
   }
+}
+
+/**
+ * The tree `root` with the file at `path` replaced by `blob` (null: removed): the new trees along the path, and the
+ * new root. A folder along the way that isn't there is made; one left empty is dropped. Nothing changes if the file
+ * is already that blob.
+ */
+export async function editTree(objects: Map<string, GitObject>, root: string, path: string, blob: GitObject | null): Promise<{ tree: string; objects: GitObject[] }> {
+  const made: GitObject[] = [];
+  const blobSha = blob ? await hashObject(blob) : null;
+  if (blob) made.push(blob);
+  const edit = async (tree: string | null, parts: string[]): Promise<string | null> => {
+    const entries: TreeEntry[] = tree ? parseTree(objects.get(tree)?.data ?? new Uint8Array()) : [];
+    const [name, ...rest] = parts;
+    const at = entries.findIndex((e) => e.name == name);
+    const was = at >= 0 ? entries[at] : null;
+    let next: TreeEntry | null;
+    if (rest.length) {
+      const sub = await edit(was && isTreeMode(was.mode) ? was.sha : null, rest);
+      next = sub ? { mode: "40000", name, sha: sub } : null;
+    } else next = blobSha ? { mode: was && !isTreeMode(was.mode) ? was.mode : "100644", name, sha: blobSha } : null;
+    if ((was?.sha ?? null) == (next?.sha ?? null) && (was?.mode ?? null) == (next?.mode ?? null)) return tree;
+    const kept = entries.filter((_, i) => i != at);
+    if (next) kept.push(next);
+    if (!kept.length) return null;
+    const o: GitObject = { type: "tree", data: treeBytes(kept) };
+    const sha = await hashObject(o);
+    made.push(o);
+    objects.set(sha, o);
+    return sha;
+  };
+  const tree = await edit(root, path.split("/"));
+  if (tree) return { tree, objects: made };
+  const empty: GitObject = { type: "tree", data: new Uint8Array() };
+  made.push(empty);
+  return { tree: await hashObject(empty), objects: made };
+}
+
+/** The file at `path` in the tree `root`, from `objects`; null when there's none (or it's a folder). */
+export function blobAt(objects: Map<string, GitObject>, root: string, path: string): Uint8Array | null {
+  let tree = root;
+  const parts = path.split("/");
+  for (let i = 0; i < parts.length; i++) {
+    const t = objects.get(tree);
+    if (!t || t.type != "tree") return null;
+    const e = parseTree(t.data).find((x) => x.name == parts[i]);
+    if (!e) return null;
+    if (i == parts.length - 1) return isTreeMode(e.mode) ? null : objects.get(e.sha)?.data ?? null;
+    if (!isTreeMode(e.mode)) return null;
+    tree = e.sha;
+  }
+  return null;
 }
 
 /** A remote's URL as shown: no credentials in it. */
