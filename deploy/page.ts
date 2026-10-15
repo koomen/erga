@@ -342,6 +342,13 @@ function controlHost(w) {
   if (host == zone) return "ops." + zone;
   const parts = host.split("."); return parts[0] + "-ops." + parts.slice(1).join(".");
 }
+/** Staging's address beside the app's (deploy/install.ts, stagingHostOf): the control Worker deploys it after the install. */
+function stagingHost(w) {
+  if (w.app.kind == "workers.dev") return w.workerName + "-staging." + w.subdomain + ".workers.dev";
+  const host = w.app.hostname, zone = w.app.zoneName;
+  if (host == zone) return "staging." + zone;
+  const parts = host.split("."); return parts[0] + "-staging." + parts.slice(1).join(".");
+}
 function whereChosen(w) {
   $("sum-where").textContent = appUrl(w) + " · pages on " + pagesAt(w) + " · control at " + controlHost(w);
   const home = appUrl(w);
@@ -349,7 +356,7 @@ function whereChosen(w) {
   const gh = new URL("https://github.com/settings/applications/new");
   gh.searchParams.set("oauth_application[name]", "Erga"); gh.searchParams.set("oauth_application[url]", home); gh.searchParams.set("oauth_application[callback_url]", home + "/auth/github/callback");
   $("gh-new").href = gh.toString();
-  $("gh-make").href = "/deploy/github/start?app=" + encodeURIComponent(home.replace("https://", "")) + "&ops=" + encodeURIComponent(controlHost(w));
+  $("gh-make").href = "/deploy/github/start?app=" + encodeURIComponent(home.replace("https://", "")) + "&ops=" + encodeURIComponent(controlHost(w)) + "&staging=" + encodeURIComponent(stagingHost(w));
 }
 
 // Buying a domain: search, see the price, confirm it, buy.

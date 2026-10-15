@@ -38,6 +38,18 @@
 // notes, the tag's message (POST /api/source/release). It follows the
 // system's light or dark.
 //
+// A downstream (an Erga on its own domain, forked from erga.dev's: the
+// repository's `upstream`) sees its own environments and hosts, and where it
+// stands against erga.dev: upstream's commits it doesn't have yet come first
+// in the log, as their own kind of row (a hollow blue dot, no deploys), then a
+// line says how many ("erga.dev: 12 commits (v0.15.0) that you do not have ·
+// 3 commits of your own"); its own commits (not on erga.dev) carry "yours".
+// Update from erga.dev (POST /api/source/update) merges upstream's channel
+// into staging; when files conflict, a box lists them and the two ways out
+// (the admin agent, or a merge in a checkout pushed to staging), and Drop.
+// Each environment's card lists its domains (GET /api/domains), with Add and
+// remove (POST and DELETE), through the instance's own Cloudflare grant.
+//
 // It updates by itself, with no reload: /api/events says what changed (a push
 // or a merge, the mirror, each step of a deploy, a redeploy, its log lines),
 // for this server and for Erga's other server too (deploy/relay.ts passes each
@@ -58,16 +70,18 @@ export interface SourcePageConfig {
   mirrorUrl: string;
   /** This server's Worker, for the GitHub mirror's setup steps; null when it isn't one of Erga's targets. */
   worker: string | null;
-  /** An install's control Worker (deploy/fleet.ts): no repository; the page shows its upgrades from upstream instead. */
-  install?: { upstream: string; channel: string; app: string };
+  /** Each environment's hostname, as the fleet has them (deploy/fleet.ts): erga.dev's own (deploy/targets.json) unless given. */
+  hosts?: Record<"production" | "staging" | "control", string>;
+  /** A downstream: where upstream is (the page names it on Update, and in the clone box). */
+  upstream?: string;
   /** The page's shell: the admin layout (the app, in local development), or the control Worker's own (control/routes.ts). */
   layout?: (o: AdminLayout) => Response;
 }
 
 const SOURCE_STYLE = `
-  :root { --on-main: #1f7a4d; --only-staging: #c26a00; --bad: #c2410c; --row: 32px; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; } }
-  :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; }
+  :root { --on-main: #1f7a4d; --only-staging: #c26a00; --upstream: #2563eb; --bad: #c2410c; --row: 32px; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-main: #4cc38a; --only-staging: #f0a742; --upstream: #7aa7ff; --bad: #ff8a65; } }
+  :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --upstream: #7aa7ff; --bad: #ff8a65; }
   .pane-head { justify-content: space-between; }
   /* Ops: Status (each environment, and the Cloudflare credential), then the Git repository. */
   .ops-section { margin: 0 0 32px; }
@@ -87,6 +101,21 @@ const SOURCE_STYLE = `
   .env.failed .st i { background: var(--bad); }
   .env.building .st i, .env.deploying .st i { background: transparent; border: 2px solid var(--only-staging); border-right-color: transparent; width: 6px; height: 6px; animation: spin .8s linear infinite; }
   .env-more { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+  /* Each environment's domains: one chip each, removable, and Add. */
+  .env-domains { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 22px; }
+  .env-domains[hidden] { display: none; }
+  .env-domains .dom { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 4px 1px 8px; border: 1px solid var(--rule); border-radius: 999px; font: 11.5px var(--font-mono); color: var(--fg); }
+  .env-domains .dom span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .env-domains .dom.primary { color: var(--fg-strong); }
+  .env-domains .dom button { flex: none; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--soft); font: 13px/1 var(--font-text); cursor: pointer; }
+  .env-domains .dom button:hover { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+  .env-domains .add { height: 22px; padding: 0 8px; border: 1px dashed var(--rule); border-radius: 999px; background: transparent; color: var(--soft); font: 500 11.5px var(--font-text); cursor: pointer; }
+  .env-domains .add:hover { color: var(--fg-strong); border-color: var(--chrome); }
+  #domain-dlg label { display: block; margin: 0 0 12px; font-size: 13px; color: var(--soft); }
+  #domain-dlg input { display: block; width: 100%; margin-top: 4px; box-sizing: border-box; font: 14px var(--font-mono); padding: 7px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg); }
+  #domain-dlg .buttons { display: flex; align-items: center; gap: 8px; }
+  #domain-dlg .buttons span { flex: 1; font-size: 13px; color: var(--soft); }
+  #domain-dlg .buttons .error { color: var(--bad); }
   .env-commit { font: 11.5px var(--font-mono); color: var(--chrome); }
   .env-log { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
   .env-log:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
@@ -104,6 +133,24 @@ const SOURCE_STYLE = `
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
   .merge-row[hidden], #merge-hint:empty { display: none; }
+  /* A downstream: where it stands against erga.dev, and Update. */
+  .update-row { display: flex; align-items: center; gap: 10px; }
+  .update-row .count { font-size: 13px; color: var(--soft); }
+  .update-row[hidden] { display: none; }
+  #update-hint { margin: 8px 0 0; font-size: 13.5px; }
+  #update-hint:empty { display: none; }
+  #update-hint.error { color: var(--bad); }
+  .box.conflict { margin: 0 0 14px; border-color: color-mix(in srgb, var(--bad) 45%, var(--rule)); }
+  .box.conflict[hidden] { display: none; }
+  .box.conflict h2 { color: var(--bad); }
+  .box.conflict ul { margin: 0 0 8px; padding-left: 20px; font-size: 13.5px; color: var(--fg); }
+  .box.conflict li code { font: 12.5px var(--font-mono); }
+  .box.conflict .ways { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin: 8px 0 0; }
+  .box.conflict .ways h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--fg-strong); }
+  .box.conflict .ways p { margin: 0 0 4px; }
+  .box.conflict pre { margin: 4px 0 0; }
+  .box.conflict .buttons { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
+  @media (max-width: 760px) { .box.conflict .ways { grid-template-columns: 1fr; } }
   #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
   @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .head-actions { flex-wrap: wrap; margin-left: 0; } .merge-row { flex: 1 1 100%; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
@@ -114,6 +161,9 @@ const SOURCE_STYLE = `
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; flex: none; }
   .dot.staging-only { background: var(--bg); border: 2px solid var(--only-staging); }
   .dot.on-main { background: var(--on-main); border: 2px solid var(--on-main); }
+  /* Hollow blue, dashed: on erga.dev, not merged here yet. */
+  .dot.upstream { background: var(--bg); border: 2px dashed var(--upstream); }
+  .legend .up-only[hidden] { display: none; }
   .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 80px 116px 116px 116px; align-items: center; }
   .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 58px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
     font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
@@ -141,6 +191,7 @@ const SOURCE_STYLE = `
   .rail::before { top: 0; } .rail::after { bottom: 0; }
   .rail::before, .rail::after { background: var(--only-staging); }
   .rail.on-main::before, .rail.on-main::after { background: var(--on-main); }
+  .rail.upstream::before, .rail.upstream::after { background: var(--upstream); }
   .rail.up::before, .rail.down::after { display: block; }
   .rail .dot { position: relative; z-index: 1; }
   .subj { min-width: 0; padding: 0 8px 0 6px; gap: 8px; }
@@ -148,6 +199,11 @@ const SOURCE_STYLE = `
   /* A release or channel badge keeps its whole width: the subject shortens instead, at any width. */
   .subj .rel { flex: none; margin-left: 0; }
   .row.on-main .subj span { color: var(--fg); }
+  .row.upstream .subj > span:first-child { color: var(--soft); }
+  .rel.own { color: var(--only-staging); font-weight: 500; }
+  /* The line between upstream's commits and this instance's: how far behind, how far ahead. */
+  .gap.upstream-line .rail::before { border-left-color: var(--upstream); }
+  .gap.upstream-line .gap-text { color: var(--fg); }
   .subj .here { flex: none; display: none; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
   .row.staging-only:hover .subj .here, .subj .here:focus-visible { display: inline-flex; align-items: center; }
   .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -174,7 +230,7 @@ const SOURCE_STYLE = `
   .head-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
   #mirror-pill { height: 28px; font-size: 12.5px; padding: 0 10px; }
   #mirror-pill.off { color: var(--bad); }
-  #mirror-pill[hidden] { display: none; }
+  #mirror-pill[hidden], #release-pill[hidden] { display: none; }
   /* The break, when staging is far ahead of main: a dashed rail and how many commits it leaves out. */
   .gap { display: contents; }
   .gap > * { height: var(--row); display: flex; align-items: center; }
@@ -226,20 +282,21 @@ const SOURCE_STYLE = `
 
 /** The source pane: the commits with their deploys, Merge, how to clone; or how to set it up. */
 function sourceMarkup(c: SourcePageConfig): string {
-  if (c.install) return installMarkup(c.install);
   if (!c.ready) {
     return `<div class="pane-head"><h2>Git Repository</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. The steps:</p>
   <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
   const remote = `${c.origin}/git/erga.git`;
-  const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="host">${host}</span><span class="st"><i></i><span>not set up</span></span></button></div>`;
-  const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${host}" target="_blank" rel="noopener">${host}</a></div><span class="st"><i></i><span>not set up</span></span><span class="env-more"><code class="env-commit"></code><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span></div>`;
+  const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
+  const upstreamName = c.upstream ? esc(c.upstream.replace(/^https?:\/\//, "").replace(/^ops\./, "")) : "erga.dev";
+  const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="host">${esc(host)}</span><span class="st"><i></i><span>not set up</span></span></button></div>`;
+  const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${esc(host)}" target="_blank" rel="noopener">${esc(host)}</a></div><span class="st"><i></i><span>not set up</span></span><span class="env-more"><code class="env-commit"></code><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span><div class="env-domains" id="domains-${name}" hidden></div></div>`;
   return `
   <section class="ops-section" id="status" aria-labelledby="status-head">
     <h2 id="status-head">Status</h2>
     <h3>Environments</h3>
-    <div class="envs">${env("production", "Production", TARGETS.production.host)}${env("staging", "Staging", TARGETS.staging.host)}${env("control", "Control", CONTROL.host)}</div>
+    <div class="envs">${env("production", "Production", hosts.production)}${env("staging", "Staging", hosts.staging)}${env("control", "Control", hosts.control)}</div>
     <h3>Cloudflare</h3>
     <div class="env cloudflare" id="env-cloudflare"><div class="env-top"><b>Deploy credential</b><a class="host" href="/install">Manage</a></div><span class="st"><i></i><span id="cloudflare-state">…</span></span></div>
   </section>
@@ -247,7 +304,17 @@ function sourceMarkup(c: SourcePageConfig): string {
   <div class="pane-head">
     <div class="head-title"><h2 id="repo-head">Git Repository</h2></div>
   </div>
-  <p class="repo-note">Erga's source repository is self-managed and stored in a <a href="https://developers.cloudflare.com/artifacts/" target="_blank" rel="noopener">Cloudflare Artifact</a>.</p>
+  <p class="repo-note">${c.upstream ? `This Erga's source repository is a fork of ${upstreamName}'s, stored in a <a href="https://developers.cloudflare.com/artifacts/" target="_blank" rel="noopener">Cloudflare Artifact</a>: it can have commits of its own, and Update brings ${upstreamName}'s in.` : `Erga's source repository is self-managed and stored in a <a href="https://developers.cloudflare.com/artifacts/" target="_blank" rel="noopener">Cloudflare Artifact</a>.`}</p>
+  <div class="box conflict" id="conflict-box" hidden>
+    <h2>Update from ${upstreamName} stopped: <span id="conflict-count"></span></h2>
+    <p>The merge of <b id="conflict-version"></b> into staging conflicts in these files. Staging is unchanged. The merge, with Git's conflict markers, waits on the branch <code id="conflict-branch"></code>.</p>
+    <ul id="conflict-files"></ul>
+    <div class="ways">
+      <div><h3>Your admin agent resolves it</h3><p>Ask it, on any admin page: <i>resolve the update from ${upstreamName}</i>. It reads each file on that branch, writes the resolution, and finishes the merge: staging deploys it.</p></div>
+      <div><h3>Your own coding agent resolves it</h3><p>In a checkout, merge ${upstreamName}'s commit, resolve, and push to staging:</p><pre><code id="conflict-git"></code></pre></div>
+    </div>
+    <div class="buttons"><button class="pill" id="conflict-drop" type="button" title="Drops the waiting merge and its branch. Staging stays as it is.">Drop this merge</button><span class="hint" id="conflict-hint" role="status"></span></div>
+  </div>
   <div class="repo-tools">
   <div class="box clone" id="clone">
     <h2>Clone and push</h2>
@@ -259,10 +326,12 @@ git push erga HEAD:staging</code></pre>
   <div class="box actions"><h2>Branches and releases</h2>
     <div class="head-actions"><button class="pill" id="mirror-pill" type="button" hidden>GitHub</button><button class="pill" id="release-pill" type="button" hidden title="Cut a release: a version tag on main's head. The newest release tag is stable, what other installs follow.">Cut release</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
     <p class="hint" id="merge-hint" role="status"></p>
+    <div class="update-row" id="update-row" hidden><span class="count" id="upstream-count"></span><button class="new" id="update" disabled title="Brings ${upstreamName}'s newest release into staging: a fast-forward, or a merge commit. Production follows through Merge.">Update from ${upstreamName}</button></div>
+    <p class="hint" id="update-hint" role="status"></p>
   </div>
   </div>
   <section class="card" aria-label="Commits">
-    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
+    <div class="legend"><span class="up-only" id="legend-upstream" hidden><i class="dot upstream"></i>on ${upstreamName}, not here yet</span><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
       <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head sha-h"></div><div class="head time-h"></div>
@@ -271,6 +340,12 @@ git push erga HEAD:staging</code></pre>
     </div>
   </section>
   </section>
+  <dialog id="domain-dlg" aria-labelledby="domain-title">
+    <h2 id="domain-title">Add a domain</h2>
+    <p>A hostname on one of this account's Cloudflare zones, for <b id="domain-env"></b>. Cloudflare routes it to the environment's Worker and makes its DNS record and certificate (a minute or two).</p>
+    <label>Hostname<input id="domain-host" autocomplete="off" spellcheck="false" placeholder="docs.example.com"></label>
+    <div class="buttons"><span id="domain-status" role="status" aria-live="polite"></span><button type="button" id="domain-cancel">Cancel</button><button type="button" class="primary" id="domain-go">Add</button></div>
+  </dialog>
   <dialog id="release-dlg" aria-labelledby="release-title">
     <h2 id="release-title">Cut a release</h2>
     <p>A release is a version tag on main's head: <code id="release-head"></code>. The newest release tag is <b>stable</b>, what other installs of Erga follow; they upgrade to it once its build is in the store. <code>git push erga vX.Y.Z</code> does the same.</p>
@@ -348,10 +423,11 @@ const SOURCE_SCRIPT = `
     return "";
   }
 
-  /** A commit's release marks: its version tag (stable on the newest), and edge on the newest commit of main the store has. */
-  function marks(sha) {
+  /** A commit's release marks: its version tag (stable on the newest), and edge on the newest commit of main the store has; "yours" on a downstream's own commit. */
+  function marks(sha, own) {
     const tags = (view.tags || []).filter((t) => t.commit == sha);
     const out = [];
+    if (own) out.push('<span class="rel own" title="' + esc("This instance's own commit: not on " + upstreamName()) + '">yours</span>');
     for (const t of tags) {
       const stable = t.name == view.release;
       out.push('<span class="rel" title="' + esc("Release " + t.name + (t.tagger ? " · " + t.tagger : "") + (t.at ? " · " + new Date(t.at).toLocaleString() : "") + (t.message && t.message != "Release " + t.name ? "\\n" + t.message : "") + (stable ? "\\nstable: what other installs follow" : "")) + '">' + esc(t.name) + (stable ? '<span class="chan stable">stable</span>' : "") + "</span>");
@@ -359,16 +435,21 @@ const SOURCE_SCRIPT = `
     if (channels && channels.edge && channels.edge.latest && sha.startsWith(channels.edge.latest) && !tags.length) out.push('<span class="rel edge-only" title="edge: the newest commit of main in the release store">edge</span>');
     return out.join("");
   }
+  const upstreamName = () => String(view?.upstream?.origin || "erga.dev").replace(/^https?:\\/\\//, "").replace(/^ops\\./, "");
   function render() {
     if (!view) return;
     const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");
+    const up = view.upstream || null;
     // Staging far ahead of main: its head and the GAP_TOP - 1 commits before it, a break that counts the commits left out,
     // the commits just after main's head (afterMain), then main's head and the GAP_MAIN - 1 behind it, so the list shows
     // where production is. The break only when commits are left out; else staging's log, as always.
     const recent = staging?.commits ?? [], ahead = staging?.ahead ?? 0, after = staging?.afterMain ?? [];
     const only = recent.filter((x) => !x.inMain), top = only.slice(0, GAP_TOP);
     const hidden = Math.max(0, ahead - top.length - after.length);
-    const commits = hidden && after.length ? [...top, ...after.map((x) => ({ ...x, inMain: false })), ...(main?.commits ?? []).slice(0, GAP_MAIN).map((x) => ({ ...x, inMain: true }))] : recent;
+    const ours = hidden && after.length ? [...top, ...after.map((x) => ({ ...x, inMain: false })), ...(main?.commits ?? []).slice(0, GAP_MAIN).map((x) => ({ ...x, inMain: true }))] : recent;
+    // A downstream: upstream's commits it doesn't have first, as their own kind of row, then the line that counts them.
+    const theirs = (up?.commits ?? []).map((x) => ({ ...x, upstream: true }));
+    const commits = [...theirs, ...ours];
     document.getElementById("loading")?.remove();
     const groups = Object.fromEntries(TARGETS.map((n) => [n, byCommit(n)]));
     // One row per commit, kept: a new commit fades in at the top, the oldest goes at the bottom.
@@ -382,20 +463,28 @@ const SOURCE_SCRIPT = `
     commits.forEach((x, i) => {
       let r = rows.get(x.sha);
       if (!r) { r = document.createElement("div"); r.dataset.sha = x.sha; }
-      const kind = x.inMain ? "on-main" : "staging-only";
+      const kind = x.upstream ? "upstream" : x.inMain ? "on-main" : "staging-only";
       const next = commits[i + 1];
       r.className = "row " + kind;
-      const up = i > 0, down = !!next || x.parents.length > 0, gapAfter = hidden && after.length && i == top.length - 1;
-      const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (x.inMain ? " · on main" : " · only on staging");
+      const above = i > 0, down = !!next || x.parents.length > 0, gapAfter = hidden && after.length && i == theirs.length + top.length - 1, lineAfter = x.upstream && i == theirs.length - 1;
+      const where = x.upstream ? " · on " + upstreamName() + (up.version ? " (" + up.version + ")" : "") + ", not here yet" : x.inMain ? " · on main" : " · only on staging";
+      const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + where + (x.own ? " · this instance's own" : "");
       const tail = '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>";
       const html =
-        '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
-        '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + marks(x.sha) + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit: production deploys it">Merge to here</button>') + "</span>" + tail +
-        TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
+        '<span class="rail ' + (above ? "up " : "") + (down ? "down " : "") + kind + '"><i class="dot ' + kind + '" title="' + (x.upstream ? "On " + esc(upstreamName()) + ", not merged here yet" : x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
+        '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + marks(x.sha, !!x.own) + (x.inMain || x.upstream ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit: production deploys it">Merge to here</button>') + "</span>" + tail +
+        TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + (x.upstream ? "" : deployCell(n, x.sha, groups[n])) + "</span>").join("");
       // Only a row that changed is drawn again: a button with focus, or under the pointer, stays as it is.
       if (drawnRows.get(r) != html) { r.innerHTML = html; drawnRows.set(r, html); }
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-" + TARGETS[TARGETS.length - 1]).parentElement.nextSibling);
       prev = r;
+      if (lineAfter) {
+        const g = document.createElement("div");
+        g.className = "gap upstream-line";
+        g.innerHTML = '<span class="rail"></span><span class="gap-text" title="Above: ' + esc(upstreamName()) + "'s commits this instance does not have yet. Update from " + esc(upstreamName()) + ' brings them into staging.">' + esc(positionText(up)) + "</span>";
+        grid.insertBefore(g, prev.nextSibling);
+        prev = g;
+      }
       if (gapAfter) {
         const g = document.createElement("div");
         g.className = "gap";
@@ -405,6 +494,7 @@ const SOURCE_SCRIPT = `
         prev = g;
       }
     });
+    renderUpstream(up);
     drawn = true;
     const mergeBtn = document.getElementById("merge");
     // The Merge row is always there (it is how production deploys): disabled, and saying so, when main is at staging.
@@ -413,9 +503,9 @@ const SOURCE_SCRIPT = `
     document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "staging and production are the same";
     if (!busy) mergeBtn.disabled = !ahead;
     mergeBtn.title = ahead ? "Moves main to staging's head: production deploys it." : "Nothing to merge: main is at staging's head. Push to staging first.";
-    // Cut release: when main has a commit.
+    // Cut release: when main has a commit; a downstream's releases are upstream's.
     const rp = document.getElementById("release-pill");
-    if (rp) { rp.hidden = !main?.commit; rp.textContent = view.release ? "Cut release (" + view.release + " is stable)" : "Cut release"; }
+    if (rp) { rp.hidden = !main?.commit || !!up; rp.textContent = view.release ? "Cut release (" + view.release + " is stable)" : "Cut release"; }
     // The GitHub mirror, beside Merge. Its title has the URL and any error; a click opens its dialog.
     const m = view.mirror, mp = document.getElementById("mirror-pill");
     if (mp) {
@@ -428,6 +518,112 @@ const SOURCE_SCRIPT = `
       renderMirror(where);
     }
   }
+  const conflictCount = (n) => (n == 1 ? "1 file conflicts" : n + " files conflict");
+  /** "erga.dev: 12 commits (v0.15.0) that you do not have · 3 commits of your own". */
+  function positionText(up) {
+    const n = (k, w) => k + " commit" + (k == 1 ? "" : "s") + w;
+    const behind = up.behind ? upstreamName() + ": " + n(up.behind, " (" + (up.version || up.channel) + ") that you do not have") : "up to date with " + upstreamName() + (up.version ? " " + up.version : "");
+    return behind + " · " + (up.own ? n(up.own, " of your own") : "no commits of your own");
+  }
+  /** The Update row and the conflict box, from the view's upstream (a downstream only). */
+  function renderUpstream(up) {
+    const row = document.getElementById("update-row"), legend = document.getElementById("legend-upstream"), box = document.getElementById("conflict-box");
+    row.hidden = !up; legend.hidden = !up; box.hidden = !up || !up.conflict;
+    if (!up) return;
+    const btn = document.getElementById("update"), count = document.getElementById("upstream-count");
+    count.textContent = up.error ? upstreamName() + " did not answer: " + up.error : positionText(up);
+    if (!updating) btn.disabled = !up.behind || !!up.conflict;
+    btn.title = up.conflict ? "A merge is waiting on conflicts: resolve or drop it first." : up.behind ? "Brings " + upstreamName() + "'s " + (up.version || "newest") + " into staging: a fast-forward, or a merge commit. Production follows through Merge." : "Nothing to update: staging has everything " + upstreamName() + "'s " + up.channel + " channel has.";
+    const c = up.conflict;
+    if (!c) return;
+    document.getElementById("conflict-count").textContent = conflictCount(c.files.length);
+    document.getElementById("conflict-version").textContent = c.version;
+    document.getElementById("conflict-branch").textContent = c.branch;
+    document.getElementById("conflict-files").innerHTML = c.files.map((f) => "<li><code>" + esc(f.path) + "</code> <span class='soft'>(" + esc(f.kind) + ")</span></li>").join("");
+    document.getElementById("conflict-git").textContent = ["git fetch erga erga-upstream/main", "git checkout -B update erga/staging", "git merge FETCH_HEAD   # resolve the conflicts, then commit", "git push erga HEAD:staging"].join("\\n");
+  }
+  let updating = false;
+  const updateHint = document.getElementById("update-hint");
+  document.getElementById("update").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    updating = true; btn.disabled = true; updateHint.className = "hint"; updateHint.textContent = "Updating from " + upstreamName() + "…";
+    try {
+      const r = await fetch("/api/source/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "The update failed (HTTP " + r.status + ").");
+      updateHint.textContent = body.result == "up-to-date" ? "Nothing to update: staging has everything."
+        : body.result == "conflicts" ? "Stopped: " + conflictCount(body.conflict.files.length) + ". Staging is unchanged; see below."
+        : (body.result == "fast-forward" ? "Fast-forwarded" : "Merged") + " " + body.version + " into staging (" + body.brought + " commit" + (body.brought == 1 ? "" : "s") + "): staging deploys it. Merge to production when it's good.";
+      if (body.result == "conflicts") updateHint.className = "hint error";
+    } catch (err) { updateHint.className = "hint error"; updateHint.textContent = err.message; }
+    updating = false;
+    await load();
+  });
+  document.getElementById("conflict-drop").addEventListener("click", async (e) => {
+    const btn = e.currentTarget, hint = document.getElementById("conflict-hint");
+    if (btn.dataset.armed != "1") { btn.dataset.armed = "1"; btn.textContent = "Click again to drop it"; setTimeout(() => { if (btn.dataset.armed == "1") { btn.dataset.armed = ""; btn.textContent = "Drop this merge"; } }, 8000); return; }
+    btn.dataset.armed = ""; btn.textContent = "Drop this merge"; btn.disabled = true;
+    const r = await fetch("/api/source/update/abandon", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    hint.textContent = !r || !r.ok ? (body.error || "Couldn't drop it.") : "";
+    btn.disabled = false;
+    await load();
+  });
+
+  // Each environment's domains (its Worker's custom domains), with Add and remove.
+  let domains = null;
+  async function loadDomains() {
+    const r = await fetch("/api/domains", { headers: { Accept: "application/json" } }).catch(() => null);
+    const body = r && r.ok ? await r.json().catch(() => null) : null;
+    if (pageView.signal.aborted) return;
+    domains = body && !body.error ? body : null;
+    renderDomains();
+  }
+  function renderDomains() {
+    for (const n of TARGETS) {
+      const el = document.getElementById("domains-" + n);
+      const list = domains && domains.targets && domains.targets[n];
+      el.hidden = !list;
+      if (!list) continue;
+      el.innerHTML = list.map((d) => '<span class="dom' + (d.primary ? " primary" : "") + '" title="' + esc(d.hostname + (d.zone ? " · zone " + d.zone : "") + (d.primary ? " · the environment's own address" : "")) + '"><span>' + esc(d.hostname) + "</span>" + (d.primary ? "" : '<button type="button" data-remove="' + esc(d.hostname) + '" data-target="' + n + '" title="Remove this domain from ' + n + '" aria-label="Remove ' + esc(d.hostname) + '">×</button>') + "</span>").join("") +
+        '<button class="add" type="button" data-add="' + n + '">+ Add domain</button>';
+    }
+  }
+  const domDlg = document.getElementById("domain-dlg");
+  document.getElementById("status").addEventListener("click", async (e) => {
+    const add = e.target.closest("button[data-add]"), rm = e.target.closest("button[data-remove]");
+    if (add) {
+      domDlg.dataset.target = add.dataset.add;
+      document.getElementById("domain-env").textContent = add.dataset.add;
+      document.getElementById("domain-host").value = "";
+      document.getElementById("domain-status").textContent = ""; document.getElementById("domain-status").className = "";
+      document.getElementById("domain-go").disabled = false;
+      if (!domDlg.open) domDlg.showModal();
+      document.getElementById("domain-host").focus();
+    }
+    if (rm) {
+      if (rm.dataset.armed != "1") { rm.dataset.armed = "1"; rm.textContent = "remove?"; rm.parentElement.style.borderColor = "var(--bad)"; setTimeout(() => { if (rm.dataset.armed == "1") { rm.dataset.armed = ""; rm.textContent = "×"; rm.parentElement.style.borderColor = ""; } }, 6000); return; }
+      rm.disabled = true;
+      const r = await fetch("/api/domains", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target: rm.dataset.target, hostname: rm.dataset.remove }) }).catch(() => null);
+      if (!r || !r.ok) { const body = r ? await r.json().catch(() => ({})) : {}; rm.disabled = false; rm.title = body.error || "Couldn't remove it."; rm.textContent = "!"; return; }
+      await loadDomains();
+    }
+  });
+  document.getElementById("domain-cancel").addEventListener("click", () => domDlg.close());
+  document.getElementById("domain-go").addEventListener("click", async (e) => {
+    const status = document.getElementById("domain-status"), hostname = document.getElementById("domain-host").value.trim().toLowerCase();
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(hostname)) { status.className = "error"; status.textContent = "A hostname looks like docs.example.com."; return; }
+    e.currentTarget.disabled = true; status.className = ""; status.textContent = "Adding " + hostname + "…";
+    try {
+      const r = await fetch("/api/domains", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target: domDlg.dataset.target, hostname }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      status.textContent = "Added. Cloudflare makes its DNS record and certificate in a minute or two.";
+      await loadDomains();
+      setTimeout(() => domDlg.close(), 1200);
+    } catch (err) { status.className = "error"; status.textContent = err.message; e.currentTarget.disabled = false; }
+  });
+
   /** The mirror's dialog: how to turn it on while it's off; its state, any error, and Push now while it's on. */
   function renderMirror(where) {
     const m = view?.mirror, d = document.getElementById("mirror-dlg");
@@ -460,6 +656,8 @@ const SOURCE_SCRIPT = `
       e.querySelector(".st").title = t?.error || "";
       e.querySelector(".env-commit").textContent = t?.deployed ? t.deployed.slice(0, 7) : "";
       e.querySelector(".env-log").hidden = !t;
+      // The environment's own address, as the deploys know it (a fork's are its own, not erga.dev's).
+      if (t?.host) { const a = e.querySelector(".env-top .host"); a.textContent = t.host; a.href = "https://" + t.host; const h = document.querySelector("#target-" + n + " .host"); if (h) h.textContent = t.host; }
     }
     for (const n of TARGETS) {
       const b = document.getElementById("target-" + n), t = targetOf(n);
@@ -669,13 +867,14 @@ const SOURCE_SCRIPT = `
     if (pageView.signal.aborted) return;
     const events = new EventSource("/api/events");
     pageView.onLeave(() => events.close());
-    events.onopen = () => { load(); loadDeploys(); loadReleases(); };
+    events.onopen = () => { load(); loadDeploys(); loadReleases(); loadDomains(); };
     events.onerror = () => { if (events.readyState == EventSource.CLOSED) setTimeout(listen, 3000); };
     events.onmessage = (e) => {
       let ev; try { ev = JSON.parse(e.data); } catch { return; }
       if (ev.type == "source") { load(); loadDeploys(); } // a move starts a deploy, here or on another server
       if (ev.type == "deploys") { heard = Date.now(); loadDeploys(); }
       if (ev.type == "releases") loadReleases();
+      if (ev.type == "domains") loadDomains();
       if (ev.type == "deploy-log" && open && ev.target == open.target) {
         if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
         else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
@@ -683,7 +882,7 @@ const SOURCE_SCRIPT = `
     };
   }
   listen();
-  load(); loadDeploys(); loadReleases();
+  load(); loadDeploys(); loadReleases(); loadDomains();
   // Events don't tell everything: the other server's events can fail to come (no DEPLOY_HOOK_SECRET, or it doesn't
   // answer), and a server that deploys itself cuts the stream and can miss its last change. So while
   // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
@@ -691,7 +890,8 @@ const SOURCE_SCRIPT = `
     if (asking || Date.now() - heard < 2500) return;
     if (!deploys || deploys.targets?.some((t) => running(t.state) || t.history?.some((r) => running(r.state)))) loadDeploys();
   }, 2000);
-  setInterval(() => { render(); renderTargets(); }, 30000);
+  // A downstream reads its position against upstream again now and then (upstream moves without an event here).
+  setInterval(() => { if (view?.upstream) load(); else render(); renderTargets(); }, 30000);
 })();
 `;
 
@@ -795,92 +995,6 @@ function mirrorDialog(c: SourcePageConfig): string {
 }
 
 /** /admin/ops: the source and deploy dashboard (admins). */
-/** An install's page: what the app runs, what upstream's channel has, the last upgrades, Upgrade now and Roll back. */
-function installMarkup(i: NonNullable<SourcePageConfig["install"]>): string {
-  return `<div class="pane-head"><div class="head-title"><h2>Upgrades</h2></div></div>
-  <div class="box upgrades" id="upgrades">
-    <p>This Erga follows <b>${esc(i.channel)}</b> at <a href="${esc(i.upstream)}/releases/${esc(i.channel)}.json">${esc(i.upstream.replace(/^https?:\/\//, ""))}</a>: when a newer release is on it, the control Worker upgrades the app, checks its health, and rolls back by itself if the check fails. Then it upgrades itself.</p>
-    <dl class="facts">
-      <dt>The app</dt><dd><a href="${esc(i.app)}">${esc(i.app.replace(/^https?:\/\//, ""))}</a> runs <code id="up-running">…</code></dd>
-      <dt>${esc(i.channel)}'s latest</dt><dd><code id="up-latest">…</code> <span class="soft" id="up-checked"></span></dd>
-      <dt>Cloudflare</dt><dd id="up-credential">…</dd>
-    </dl>
-    <p class="error" id="up-error" hidden></p>
-    <div class="buttons"><button class="new" id="up-now" type="button">Upgrade now</button><button class="pill" id="up-rollback" type="button" hidden>Roll back</button><span class="soft" id="up-msg" role="status"></span></div>
-    <h3>Upgrades</h3>
-    <ul class="runs" id="up-runs"><li class="none">Loading…</li></ul>
-    <pre id="up-log" hidden></pre>
-  </div>`;
-}
-
-const INSTALL_STYLE = `
-  .upgrades .facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0; font-size: 14px; }
-  .upgrades .facts dt { color: var(--soft); } .upgrades .facts dd { margin: 0; color: var(--fg); }
-  .upgrades .soft { color: var(--soft); font-size: 12.5px; }
-  .upgrades .buttons { display: flex; align-items: center; gap: 8px; margin: 8px 0 18px; }
-  .upgrades h3 { margin: 0 0 4px; font-size: 12.5px; font-weight: 600; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
-  .upgrades .runs { list-style: none; margin: 0; padding: 0; }
-  .upgrades .runs li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--rule); font-size: 13px; cursor: pointer; }
-  .upgrades .runs li:first-child { border-top: 0; }
-  .upgrades .runs li .st { font-weight: 600; } .upgrades .runs li .failed .st, .upgrades .runs li.failed .st { color: var(--bad); }
-  .upgrades .runs li .when { margin-left: auto; color: var(--soft); font-size: 12px; }
-  .upgrades .none { padding: 6px 0; font-size: 13px; color: var(--soft); }
-  .upgrades pre { margin: 10px 0 0; max-height: 320px; overflow: auto; font: 12px/1.45 var(--font-mono); padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; }
-  .upgrades .error { color: var(--bad); }
-`;
-
-const INSTALL_SCRIPT = `
-(() => {
-  const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
-  const when = (t) => (t ? new Date(t).toLocaleString() : "");
-  const running = (st) => st == "building" || st == "deploying";
-  let shown = null;
-  async function load() {
-    const r = await fetch("/api/deploys?history=10", { headers: { Accept: "application/json" } }).catch(() => null);
-    const body = r && r.ok ? await r.json().catch(() => null) : null;
-    if (!body) { $("up-error").hidden = false; $("up-error").textContent = "The deploys didn't answer."; return; }
-    const app = (body.targets || []).find((t) => t.name == "app") || {}, control = (body.targets || []).find((t) => t.name == "control") || {};
-    const up = body.upstream || {};
-    $("up-running").textContent = app.deployed || "unknown yet";
-    $("up-latest").textContent = up.latest || "none yet";
-    $("up-checked").textContent = up.checkedAt ? "checked " + when(up.checkedAt) : "not checked yet";
-    const cred = body.credential || {};
-    $("up-credential").innerHTML = cred.connected ? "connected" + (cred.by ? " by " + esc(cred.by) : "") : '<span class="error">not connected: <a href="/install">connect Cloudflare</a>, so upgrades can run</span>';
-    $("up-error").hidden = !(up.error || app.error);
-    $("up-error").textContent = up.error || app.error || "";
-    $("up-now").disabled = running(app.state) || running(control.state) || !cred.connected;
-    $("up-now").textContent = running(app.state) ? "Upgrading…" : running(control.state) ? "Upgrading the control Worker…" : "Upgrade now";
-    const live = (app.history || []).find((x) => x.live);
-    $("up-rollback").hidden = !(live && live.restore && live.restore.versionId && !running(app.state));
-    const runs = [...(app.history || []).map((x) => ({ ...x, who: "app" })), ...(control.history || []).map((x) => ({ ...x, who: "control" }))].sort((a, b) => b.started - a.started).slice(0, 10);
-    $("up-runs").innerHTML = runs.length ? runs.map((x) => '<li class="' + esc(x.state) + '" data-who="' + x.who + '" data-id="' + esc(x.id) + '"><span class="st">' + esc(x.live ? "live" : x.state) + '</span><span>' + esc(x.who) + " " + esc(x.commit.slice(0, 12)) + '</span><span class="soft">' + esc(x.trigger) + '</span><span class="when">' + when(x.started) + "</span></li>").join("") : '<li class="none">No upgrades yet.</li>';
-    if (shown) showLog(shown.who, shown.id);
-  }
-  async function showLog(who, id) {
-    shown = { who, id };
-    const r = await fetch("/api/deploys/" + who + "/log?deploy=" + encodeURIComponent(id), { headers: { Accept: "application/json" } }).catch(() => null);
-    const log = r && r.ok ? await r.json().catch(() => null) : null;
-    $("up-log").hidden = false;
-    $("up-log").textContent = log ? log.lines.map((l) => new Date(l.at).toISOString().slice(11, 19) + " " + l.text).join("\n") : "The log didn't load.";
-  }
-  $("up-runs").addEventListener("click", (e) => { const li = e.target.closest("li[data-id]"); if (li) showLog(li.dataset.who, li.dataset.id); });
-  async function act(path, button, doing) {
-    button.disabled = true; const was = button.textContent; button.textContent = doing; $("up-msg").textContent = "";
-    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
-    if (!r || !r.ok) { $("up-msg").textContent = (body && body.error) || "That didn't work."; button.textContent = was; button.disabled = false; }
-    await load();
-  }
-  $("up-now").addEventListener("click", (e) => act("/api/deploys/app", e.currentTarget, "Starting…"));
-  $("up-rollback").addEventListener("click", (e) => { const b = e.currentTarget; if (b.dataset.armed != "1") { b.dataset.armed = "1"; b.textContent = "Click again to roll back"; setTimeout(() => { if (b.dataset.armed == "1") { b.dataset.armed = ""; b.textContent = "Roll back"; } }, 8000); return; } b.dataset.armed = ""; act("/api/deploys/app/rollback", b, "Rolling back…"); });
-  load();
-  const events = new EventSource("/api/events");
-  events.onmessage = (e) => { let ev; try { ev = JSON.parse(e.data); } catch { return; } if (ev.type == "deploys" || ev.type == "deploy-log") load(); };
-  setInterval(load, 15000);
-})();
-`;
-
 export function adminSourcePage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return (c.layout ?? adminResponse)({ session: c.session, title: "Ops", here: "ops", wide: true, style: PAGE_STYLE + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
@@ -888,5 +1002,5 @@ export function adminSourcePage(c: SourcePageConfig): Response {
     <section class="pane" id="source-pane" aria-label="Ops">${sourceMarkup(c)}</section>
   </div>
   ${c.ready ? mirrorDialog(c) : ""}
-${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : c.install ? `<style>${INSTALL_STYLE}</style><script>${INSTALL_SCRIPT}</script>` : ""}` });
+${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}` });
 }

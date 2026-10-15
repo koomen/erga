@@ -28,6 +28,13 @@
 //   GET  /releases, /releases/<channel>.json, /releases/<version>/...
 //                               the release store, for anyone (deploy/releases.ts): the channels, and each release's files
 //   GET  /api/releases          admins: both channels (the Ops page marks edge's latest and stable's tag on the log)
+//   GET  /api/domains           admins: each environment's domains (its Worker's custom domains; the first is its own address)
+//   POST /api/domains           admins: { target, hostname }: a domain added to an environment (a hostname on one of the account's zones)
+//   DELETE /api/domains         admins: { target, hostname }: a domain removed (not the environment's own address)
+//   POST /forks/<id>/token      a downstream's control Worker (its FORK_SECRET as the Bearer token): a short-lived token for its
+//                               fork's repository here, and the remote: { remote, token, expiresAt }
+//   POST /forks/<id>/builder/build|cancel   the same: a build of one of the fork's commits in this Worker's build container, its
+//                               output streamed back as the container sends it (control/builder/client.ts)
 //
 // Everything but sign-in, the health check, Git reads, the public source page and the stylesheet
 // needs an admin: a signed-in admin (this Worker's session), or an
@@ -41,6 +48,7 @@ import { releasesDoor, type ReleaseStore } from "../deploy/releases.ts";
 import { DEPLOY_OAUTH_COOKIE } from "../deploy/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
+import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
@@ -55,8 +63,12 @@ export interface Control {
   releases?: ReleaseStore | null;
   /** The deploy page (/deploy: installs from the store), where this Worker offers it. */
   deploy?: (request: Request) => Promise<Response>;
-  /** An install's control Worker: its upstream and channel, for its Ops page (the upgrades, in the git log's place). */
-  install?: { upstream: string; channel: string; app: string };
+  /** Each environment's hostname, for the Ops page: the fleet's (deploy/fleet.ts); erga.dev's own when not given. */
+  hosts?: Record<"production" | "staging" | "control", string>;
+  /** A downstream: its upstream's origin (the page names it). */
+  upstream?: string;
+  /** erga.dev's control Worker: the forks' repositories and builds (cloudflare/pipeline.ts), for downstreams' control Workers. */
+  forks?: { access(id: string, secret: string, scope: "read" | "write"): Promise<{ remote: string; token: string; expiresAt: string } | null>; builder(id: string, secret: string, request: Request): Promise<Response> };
   /** The app's address (https://erga.dev): links, and where the stylesheet comes from. */
   app: string;
   /** The Ops page's shell, and its address: "/" here, /admin/ops where the app serves it (the default "/"). */
@@ -78,7 +90,7 @@ export interface Control {
  * repository and deploys over the app's CONTROL binding. The control Worker serves them too, as the way in when the app is broken.
  */
 export const isSourcePagePath = (path: string) =>
-  OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/api/releases" || path.startsWith("/api/releases/");
+  OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/api/releases" || path.startsWith("/api/releases/") || path == "/api/domains";
 
 /** The Ops page's addresses: /admin/ops, and its old ones, which redirect to it. */
 const OPS_PATHS = new Set(["/admin/ops", "/admin/source", "/source", "/admin/factory"]);
@@ -88,8 +100,8 @@ export const isOpsPagePath = (path: string) => OPS_PATHS.has(path);
 export const isControlPath = (path: string) =>
   path == "/" || OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
   || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install"
-  || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/")
-  || path == "/deploy" || path.startsWith("/deploy/");
+  || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/") || path == "/api/domains"
+  || path == "/deploy" || path.startsWith("/deploy/") || path.startsWith("/forks/");
 
 /**
  * How the app's Worker answers `path`: "here", itself (the Ops page and its API where the control Worker is apart and
@@ -146,6 +158,8 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/deploy" || path.startsWith("/deploy/")) return wantsPageAt(request, path) ? page("Not here", `Installs are made from Erga's own control Worker, not from an install's. <a href="/">Ops</a>.`, 404) : json({ error: "Not here: installs are made from erga.dev's control Worker." }, 404);
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
+  // A downstream's control Worker, with its fork's secret: its repository's token, and builds of its commits.
+  if (path.startsWith("/forks/")) return forkRoutes(request, path, c);
 
   // An admin, from here: signed in here, or an admin-scope token.
   const session = await p.sessionOf(request);
@@ -165,16 +179,52 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/" || OPS_PATHS.has(path)) {
     if (path != home && path != "/admin/ops") return new Response(null, { status: 302, headers: { Location: home } });
     // The Git address on the page is the control Worker's, wherever the page is.
-    return adminSourcePage({ session, admin: true, ready: !!p.source && !c.install, origin: p.control?.url ?? url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout, ...(c.install ? { install: c.install } : {}) });
+    return adminSourcePage({ session, admin: true, ready: !!p.source, origin: p.control?.url ?? url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout, ...(c.hosts ? { hosts: c.hosts } : {}), ...(c.upstream ? { upstream: c.upstream } : {}) });
   }
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
+  if (path == "/api/domains") return domainRoutes(request, url, c, session);
   if (path == "/api/releases" && read) { const r = await c.deploys.releases(); return r ? json(r) : json({ error: "This server has no release store." }, 404); }
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
   return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">Ops</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
 }
 
 const wantsPageAt = (request: Request, path: string) => !path.startsWith("/api/") && (request.headers.get("accept") ?? "").includes("text/html");
+
+// ---------------------------------------------------------------- /api/domains: each environment's domains
+
+async function domainRoutes(request: Request, url: URL, c: Control, session: AdminLayout["session"]): Promise<Response> {
+  const method = request.method;
+  if (method == "GET" || method == "HEAD") {
+    const r = await c.deploys.domains();
+    return "error" in r ? json({ error: r.error }, r.status ?? 502) : json(r);
+  }
+  if (method != "POST" && method != "DELETE") return json({ error: "Not found" }, 404);
+  if (!session.agent && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  const body = (await request.json().catch(() => ({}))) as { target?: unknown; hostname?: unknown };
+  const target = typeof body.target == "string" ? body.target : "", hostname = typeof body.hostname == "string" ? body.hostname.trim().toLowerCase() : "";
+  if (!target || !hostname) return json({ error: "Give the environment (target) and the hostname." }, 400);
+  const by = byLine(session.login.toLowerCase(), whoOf(session).via);
+  const r = method == "POST" ? await c.deploys.addDomain(target, hostname, by) : await c.deploys.removeDomain(target, hostname, by);
+  return "error" in r ? json({ error: r.error }, r.status ?? 400) : json(r);
+}
+
+// ---------------------------------------------------------------- /forks: a downstream's repository and builds, here
+
+async function forkRoutes(request: Request, path: string, c: Control): Promise<Response> {
+  const m = /^\/forks\/([a-z0-9-]{4,40})\/(token|builder\/build|builder\/cancel)$/.exec(path);
+  if (!m || request.method != "POST") return json({ error: "Not found" }, 404);
+  if (!c.forks) return json({ error: "This control Worker hosts no forks: forks live at erga.dev's." }, 404);
+  const secret = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
+  if (!secret) return json({ error: "This fork's secret (FORK_SECRET) goes as the Bearer token." }, 401);
+  const [, id, what] = m;
+  if (what == "token") {
+    const body = (await request.json().catch(() => ({}))) as { scope?: unknown };
+    const access = await c.forks.access(id, secret, body.scope == "write" ? "write" : "read");
+    return access ? json(access) : json({ error: "No such fork, or the secret is wrong." }, 403);
+  }
+  return c.forks.builder(id, secret, request);
+}
 
 // ---------------------------------------------------------------- /install: the Cloudflare credential
 

@@ -80,12 +80,24 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Ops)", tool: "deploy_production" },
   { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Ops)", tool: "sync_mirror" },
   { route: "POST /api/source/release", domain: "admin", action: "Cut a release: a version tag on main's head (Ops)", tool: "cut_release" },
+  // A downstream (an Erga on its own domain): its position against erga.dev, and Update from erga.dev (server/source/repo.ts).
+  { route: "POST /api/source/update", domain: "admin", action: "Update from erga.dev: upstream's release merged into staging (Ops)", tool: "update_from_upstream" },
+  { route: "POST /api/source/update/resolve", domain: "admin", action: "Resolve one conflicted file of the waiting upstream merge (the agent's way out of a conflict)", tool: "resolve_upstream_file" },
+  { route: "POST /api/source/update/finish", domain: "admin", action: "Finish the resolved upstream merge: staging moves (Ops)", tool: "finish_upstream_merge" },
+  { route: "POST /api/source/update/abandon", domain: "admin", action: "Drop the waiting upstream merge and its branch (Ops)", tool: "abandon_upstream_merge" },
   { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Ops)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Ops)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Ops)", tool: "deploy_log" },
   { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Ops)", tool: "redeploy" },
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
   { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Ops)", tool: "rollback" },
+  // Each environment's domains (control/routes.ts, deploy/branches.ts): its Worker's custom domains.
+  { route: "GET /api/domains", domain: "admin", action: "Read each environment's domains (Ops)", tool: "list_domains" },
+  { route: "POST /api/domains", domain: "admin", action: "Add a domain to an environment (Ops)", tool: "add_domain" },
+  { route: "DELETE /api/domains", domain: "admin", action: "Remove a domain from an environment (Ops)", tool: "remove_domain" },
+  // A downstream's control Worker, with its fork's secret (control/routes.ts): its repository's token, and builds of its commits.
+  { route: "POST /forks/<id>/token", domain: "none", action: "A downstream's control Worker gets a token for its fork's repository", exempt: "server to server, with the fork's secret" },
+  { route: "POST /forks/<id>/builder/build|cancel", domain: "none", action: "A downstream's control Worker has one of its commits built here", exempt: "server to server, with the fork's secret" },
   // The release store (control/routes.ts, deploy/releases.ts): the channels edge and stable.
   { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Ops page marks them on the log)", tool: "list_releases" },
   { route: "GET /api/releases", domain: "admin", action: "Read both channels (Ops)", tool: "list_releases" },

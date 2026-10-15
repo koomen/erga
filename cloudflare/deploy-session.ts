@@ -19,13 +19,16 @@ import {
   checkPlan, Cloudflare, DeployError, loadRelease, OAUTH, pagesShown, appHost, registerDomain, registrationStatus, searchDomains,
   type DeployPlan, type DomainOffer, type Fetch, type Release,
 } from "../deploy/pipeline";
-import { controlHostOf, INSTALL_STEPS, runInstall, type Installed } from "../deploy/install";
+import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf, type Installed } from "../deploy/install";
+import { hashSecret } from "../deploy/forks";
 import { mockCloudflare, type MockState } from "../deploy/mock-cloudflare";
 import { open, randomSecret, seal, type Sealed } from "../deploy/seal";
 import type { Env } from "./env";
 import { releaseStoreOf } from "./releases";
 
 const SESSION = "session", RUN = "run";
+/** A fork's id: 16 lowercase letters and digits (deploy/forks.ts isForkId). */
+const forkId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
 const LIFETIME_MS = 2 * 60 * 60 * 1000;
 
 /** The GitHub App the manifest flow made for this install (cloudflare/deploy-routes.ts): its secret sealed as the token is. */
@@ -41,7 +44,7 @@ export interface RunState {
   error?: string;
   result?: Installed;
   /** What was asked for, as the page shows it again. */
-  summary: { app: string; pages: string; worker: string; account: string; control: string; release: string };
+  summary: { app: string; pages: string; worker: string; account: string; control: string; staging: string; release: string };
 }
 export type Answer<T> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -192,7 +195,7 @@ export class Deployer extends DurableObject<Env> {
     const run: RunState & { owner: string } = {
       owner: owner.toLowerCase(), status: "running", started: Date.now(),
       steps: INSTALL_STEPS.map((s) => ({ id: s.id, title: s.title, status: "pending" })),
-      summary: { app: `https://${appHost(plan)}`, pages: pagesShown(plan), worker: plan.workerName, account: t.session.accounts.find((a) => a.id == plan.accountId)?.name ?? plan.accountId, control: `https://${controlHostOf(plan)}`, release: release.version },
+      summary: { app: `https://${appHost(plan)}`, pages: pagesShown(plan), worker: plan.workerName, account: t.session.accounts.find((a) => a.id == plan.accountId)?.name ?? plan.accountId, control: `https://${controlHostOf(plan)}`, staging: `https://${stagingHostOf(plan)}`, release: release.version },
     };
     const save = () => this.ctx.storage.put(RUN, run);
     await save();
@@ -200,8 +203,14 @@ export class Deployer extends DurableObject<Env> {
     const net = this.net(mock);
     const work = (async () => {
       try {
+        // The install's fork first (deploy/forks.ts): its repository here, seeded at the release's commit, which its
+        // control Worker reaches with a secret only it and the hash here know.
+        const fork = { id: forkId(), secret: randomSecret() };
+        const made = await this.env.PIPELINE?.getByName("deploys").makeFork(fork.id, await hashSecret(fork.secret), (await this.commitOf(release)) ?? null, owner.toLowerCase());
+        if (!made) throw new DeployError("This server has no deploys' object to keep the install's fork.");
+        if (!made.ok) throw new DeployError(`The install's repository (a fork of Erga's) couldn't be made: ${made.error}`);
         run.result = await runInstall(new Cloudflare(t.token, net), release, plan, {
-          sessionSecret: randomSecret(), controlSecret: randomSecret(),
+          sessionSecret: randomSecret(), controlSecret: randomSecret(), snapshotToken: randomSecret(), fork,
           upstream: { origin, clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : "") },
           site: net,
           report: (id, status, detail) => {
@@ -216,7 +225,7 @@ export class Deployer extends DurableObject<Env> {
         if (t.session.via == "oauth") await net(OAUTH.revoke, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: t.token, client_id: this.env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock" }) }).catch(() => {});
         await this.ctx.storage.put(SESSION, { ...t.session, sealed: null, github: undefined });
         // Upstream remembers the install: its control Worker may consent through the relay (control/routes.ts), and the Ops page lists it.
-        await this.env.PIPELINE?.getByName("deploys").registerInstall({ control: run.result.control, app: run.result.url, accountId: plan.accountId, by: owner.toLowerCase(), at: Date.now(), version: release.version }).catch((e) => console.log(`the install wasn't registered: ${message(e)}`));
+        await this.env.PIPELINE?.getByName("deploys").registerInstall({ control: run.result.control, app: run.result.url, accountId: plan.accountId, by: owner.toLowerCase(), at: Date.now(), version: release.version, fork: fork.id }).catch((e) => console.log(`the install wasn't registered: ${message(e)}`));
       } catch (e) {
         run.status = "failed";
         const step = run.steps.find((s) => s.status == "running");
@@ -231,6 +240,13 @@ export class Deployer extends DurableObject<Env> {
     })();
     this.ctx.waitUntil(work);
     return { ok: true, run };
+  }
+
+  /** The commit a release of the store was built from (its manifest says), for the fork's seed; null for this server's own release (the repository's main, then). */
+  private async commitOf(release: Release): Promise<string | null> {
+    const store = releaseStoreOf(this.env);
+    const m = store ? await store.manifest(release.version).catch(() => null) : null;
+    return m?.commit ?? null;
   }
 
   /** Forgets the token now (the run's record stays, for the page). */

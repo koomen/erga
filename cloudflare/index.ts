@@ -72,6 +72,13 @@ export default {
         const mock = env.ERGA_DEPLOY_MOCK == "1";
         return controlRoutes(request, {
           platform: p, deploys: p.deploys as DeploysObject, releases: releaseStoreOf(env), app: url.origin, layout: adminResponse, page: "/admin/ops", version: env.ERGA_VERSION ?? null,
+          // Local development as a downstream (ERGA_UPSTREAM): the page names upstream.
+          ...(env.UPSTREAM?.trim() ? { upstream: env.UPSTREAM.trim().replace(/\/+$/, "") } : {}),
+          // Local development as upstream: the forks' repositories and builds, over the mock.
+          ...(env.PIPELINE && !env.UPSTREAM?.trim() ? { forks: {
+            access: (id: string, secret: string, scope: "read" | "write") => env.PIPELINE!.getByName("deploys").forkAccess(id, secret, scope),
+            builder: async (id: string, secret: string, request: Request) => { const u = new URL(request.url); return env.PIPELINE!.getByName("deploys").forkBuild(id, secret, u.pathname.endsWith("/cancel") ? "cancel" : "build", u.searchParams.get("id") ?? "", await request.text()); },
+          } } : {}),
           // The deploy page (installs), in local development only: on erga.dev it's the control Worker's.
           ...(env.PIPELINE ? { deploy: (request: Request) => deployDoor(request, { env, platform: p, oauthCallback: "/install/callback" }) } : {}),
           oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },

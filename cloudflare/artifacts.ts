@@ -19,6 +19,8 @@
 // an expiry), signed with the dev server's secret. The GitHub mirror is a
 // pretend GitHub there too: local development never reaches the real ones.
 
+import { forkRemote, type ForkAccess } from "../deploy/forks";
+import type { InstallSpec } from "../deploy/install";
 import type { Remote } from "../server/source/index.ts";
 import type { Env } from "./env";
 
@@ -42,33 +44,56 @@ export interface ArtifactsBinding {
 const devOrigin = (env: Env, origin?: string) => env.ERGA_DEV_ORIGIN || origin || "";
 const local = (env: Env) => !env.ARTIFACTS && !!env.ERGA_LINK_SECRET;
 
-/** Whether this server has a repository at all (the binding, or local development's stand-in). */
-export const hasSource = (env: Env) => !!env.ARTIFACTS || local(env);
+/**
+ * A downstream's control Worker (deploy/install.ts): its fork at upstream, reached with its FORK_SECRET (deploy/forks.ts);
+ * null elsewhere.
+ */
+export function forkOf(env: Pick<Env, "UPSTREAM" | "INSTALL" | "FORK_SECRET">): ForkAccess | null {
+  const upstream = env.UPSTREAM?.trim().replace(/\/+$/, ""), secret = env.FORK_SECRET?.trim();
+  if (!upstream || !secret || !env.INSTALL) return null;
+  try { const id = (JSON.parse(env.INSTALL) as InstallSpec).fork; return id ? { upstream, id, secret } : null; } catch { return null; }
+}
+
+/** Whether this server has a repository at all (the binding, local development's stand-in, or a downstream's fork at upstream). */
+export const hasSource = (env: Env) => !!env.ARTIFACTS || local(env) || !!forkOf(env);
 
 /** Tokens minted, kept while they have more than ten minutes left. */
 const minted = new Map<string, { token: string; remote: string; expires: number }>();
 
 export interface RepoAccess extends Remote { token: string; expiresAt: string }
 
-/** The Artifacts repo as a Git remote, with a token of this scope. Null when there's no repository. */
+/** This server's repository (Erga's own, or a downstream's fork) as a Git remote, with a token of this scope. Null when there's no repository. */
 export async function artifactsRemote(env: Env, scope: "read" | "write", origin?: string): Promise<RepoAccess | null> {
   if (!hasSource(env)) return null;
-  const key = `${scope}`;
+  const fork = forkOf(env);
+  return fork ? artifactsRemoteFor(env, `fork:${fork.id}`, scope, origin, fork) : artifactsRemoteFor(env, REPO, scope, origin);
+}
+
+/**
+ * A repo of Erga's namespace as a Git remote, with a token of this scope (minted through the binding, or local
+ * development's stand-in); a downstream's fork, through upstream (deploy/forks.ts). Tokens are kept while they have
+ * more than ten minutes left.
+ */
+export async function artifactsRemoteFor(env: Env, repo: string, scope: "read" | "write", origin?: string, fork?: ForkAccess): Promise<RepoAccess> {
+  const key = `${repo}:${scope}`;
   const have = minted.get(key);
   if (have && have.expires - Date.now() > 10 * 60_000) return access(have.remote, have.token, have.expires);
   let remote: string, token: string, expires: number;
-  if (env.ARTIFACTS) {
-    const repo = await env.ARTIFACTS.get(REPO);
+  if (fork) {
+    const r = await forkRemote(fork, scope);
+    remote = r.url; token = r.token; expires = Date.parse(r.expiresAt) || Date.now() + 3600_000;
+  } else if (env.ARTIFACTS) {
+    const handle = await env.ARTIFACTS.get(repo);
     try {
-      remote = (await repo.info()).remote;
-      const t = await repo.createToken(scope, 3600);
+      remote = (await handle.info()).remote;
+      const t = await handle.createToken(scope, 3600);
       token = t.plaintext;
       expires = Date.parse(t.expiresAt) || Date.now() + 3600_000;
-    } finally { repo[Symbol.dispose]?.(); }
+    } finally { handle[Symbol.dispose]?.(); }
   } else {
-    remote = `${devOrigin(env, origin)}/__artifacts/git/${REPO}/${REPO}.git`;
+    remote = `${devOrigin(env, origin)}/__artifacts/git/${REPO}/${repo}.git`;
     expires = Date.now() + 3600_000;
-    token = await localToken(env.ERGA_LINK_SECRET!, `${REPO}/${REPO}`, scope, Math.floor(expires / 1000));
+    token = await localToken(env.ERGA_LINK_SECRET!, `${REPO}/${repo}`, scope, Math.floor(expires / 1000));
   }
   minted.set(key, { remote, token, expires });
   return access(remote, token, expires);

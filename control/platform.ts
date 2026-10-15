@@ -42,6 +42,8 @@ export interface ControlEnv {
   INSTALL?: string;
   /** An install's control Worker only: the channel it follows (stable unless "edge"). */
   CHANNEL?: string;
+  /** An install's control Worker only (a secret): what it reaches its fork's repository and builds at upstream with (deploy/forks.ts). */
+  FORK_SECRET?: string;
   /** This Worker's version id: the release cache's key. */
   CF_VERSION_METADATA?: { id?: string };
   /** The release this Worker is (the commit): set by its own deploy (deploy/control.ts), what /api/health answers; none after a wrangler deploy. */

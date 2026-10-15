@@ -109,12 +109,13 @@ export async function deployDoor(request: Request, host: DeployHost): Promise<Re
   if (path == "/deploy/github/start" && request.method == "GET") {
     const current = await sessionOf(request, env);
     if (!current) return back("Connect your Cloudflare account first.");
-    const app = hostOf(url.searchParams.get("app")), ops = hostOf(url.searchParams.get("ops"));
+    const app = hostOf(url.searchParams.get("app")), ops = hostOf(url.searchParams.get("ops")), staging = hostOf(url.searchParams.get("staging"));
     if (!app || !ops) return back("The GitHub App needs the app's address and its control Worker's: choose where it goes first.");
     const state = rand(16);
+    // One App for the install's three servers: production, its control Worker, and staging (deploy/install.ts stagingHostOf).
     const manifest = {
       name: `Erga at ${app}`.slice(0, 34), url: `https://${app}`, redirect_url: `${url.origin}/deploy/github/callback`,
-      callback_urls: [`https://${app}/auth/github/callback`, `https://${ops}/auth/github/callback`],
+      callback_urls: [`https://${app}/auth/github/callback`, `https://${ops}/auth/github/callback`, ...(staging ? [`https://${staging}/auth/github/callback`] : [])],
       public: true, hook_attributes: { active: false }, default_permissions: {}, default_events: [],
     };
     const action = mock ? `${url.origin}/deploy/mock/github?state=${encodeURIComponent(state)}` : `https://github.com/settings/apps/new?state=${encodeURIComponent(state)}`;

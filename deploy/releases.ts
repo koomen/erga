@@ -212,7 +212,9 @@ export function httpBlobs(origin: string, net: (input: string, init?: RequestIni
  */
 export function storeBuilder(store: ReleaseStore): { build(o: { commit: string }, log: (line: string) => void, signal?: AbortSignal): Promise<Release> } {
   return {
-    async build({ commit }, log, signal) {
+    async build({ commit: sha }, log, signal) {
+      // A release's version is its commit's first 12 digits (the branch deploys name the whole commit).
+      const commit = sha.slice(0, 12);
       log(`fetching release ${commit} from the release store`);
       const release = await store.load(commit);
       signal?.throwIfAborted();

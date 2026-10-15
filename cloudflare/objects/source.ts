@@ -9,7 +9,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { deployHook, publishEvent, releaseHook } from "../../deploy/hook";
 import { byLine } from "../../shared/attribution";
-import { SourceError, SourceRepo, ZERO, type Actor, type Released, type SourceAnswer, type SourceObject, type SourceRead } from "../../server/source/index.ts";
+import { SourceError, SourceRepo, ZERO, type Actor, type Released, type SourceAnswer, type SourceObject, type SourceRead, type UpdateResult, type UpstreamSource } from "../../server/source/index.ts";
 import { artifactsRemote, githubRemote } from "../artifacts";
 import { directoryOf, keptKeys } from "../d1";
 import type { Env } from "../env";
@@ -52,7 +52,14 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
       released: (r) => ctx.waitUntil(releaseHook(r.tag, r.commit, byLine(r.by, r.via), env).catch((e) => console.error(`release hook (${r.tag}):`, e))),
       changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
       background: (work) => ctx.waitUntil(work),
+      // A downstream (an install's control Worker: UPSTREAM names erga.dev's): its upstream's Git endpoint, read for anyone.
+      upstream: () => upstreamOf(env),
     });
+  }
+
+  /** Which answer a repository call gives when it throws: a SourceError's own message and status, else a 502. */
+  private static failed(e: unknown, what: string): { error: string; status: number } {
+    return e instanceof SourceError ? { error: e.message, status: e.status } : { error: `${what} failed: ${(e as Error).message}`, status: 502 };
   }
 
   private at(origin: string) { if (origin) this.origin = origin; return this.repo; }
@@ -90,6 +97,26 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
     }
   }
 
+  // A downstream's Update from upstream, and the ways out of one that conflicted (POST /api/source/update[/resolve|/finish|/abandon]).
+  async update(origin: string, who: Actor): Promise<UpdateResult | { error: string; status: number }> {
+    try { return await this.at(origin).update(who); } catch (e) { return SourceHost.failed(e, "The update"); }
+  }
+  async resolveUpdate(origin: string, who: Actor, path: string, content: string | null): Promise<{ branch: string; path: string; remaining: string[] } | { error: string; status: number }> {
+    try { return await this.at(origin).resolveUpdate(who, path, content); } catch (e) { return SourceHost.failed(e, "Resolving the file"); }
+  }
+  async finishUpdate(origin: string, who: Actor): Promise<{ commit: string; version: string } | { error: string; status: number }> {
+    try { return await this.at(origin).finishUpdate(who); } catch (e) { return SourceHost.failed(e, "Finishing the merge"); }
+  }
+  async abandonUpdate(origin: string): Promise<{ ok: true } | { error: string; status: number }> {
+    try { await this.at(origin).abandonUpdate(); return { ok: true }; } catch (e) { return SourceHost.failed(e, "Dropping the merge"); }
+  }
+  /** Every branch's head (the deploys' object asks, for a target never deployed from here). */
+  async heads(origin: string): Promise<Record<string, string>> { return (await this.at(origin).stagingLog()).heads; }
+  /** Seeds a fork's repository with this one's history up to `commit` (erga.dev's control Worker, for an install). */
+  async seedFork(origin: string, fork: { url: string; headers: Record<string, string> }, commit: string): Promise<{ ok: true } | { error: string; status: number }> {
+    try { await this.at(origin).seedFork(fork, commit); return { ok: true }; } catch (e) { return SourceHost.failed(e, "Seeding the fork"); }
+  }
+
   /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
   async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
     try { return await this.at(origin).merge(who, commit); } catch (e) {
@@ -97,4 +124,11 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
       return { error: `The merge failed: ${(e as Error).message}`, status: 502 };
     }
   }
+}
+
+/** A downstream's upstream (its UPSTREAM setting: erga.dev's control Worker), whose Git endpoint anyone may read; null on erga.dev's own. */
+export function upstreamOf(env: Pick<Env, "UPSTREAM" | "CHANNEL">): UpstreamSource | null {
+  const origin = env.UPSTREAM?.trim().replace(/\/+$/, "");
+  if (!origin) return null;
+  return { remote: { url: `${origin}/git/erga.git`, headers: {} }, origin, channel: env.CHANNEL?.trim() == "edge" ? "edge" : "stable" };
 }

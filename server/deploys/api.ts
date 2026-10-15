@@ -25,6 +25,7 @@
 
 import type { CredentialStatus, TokenAnswer } from "../../deploy/credential.ts";
 import type { ReleasesView } from "../../deploy/releases.ts";
+import type { DomainsView } from "../../deploy/branches.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../platform.ts";
 import { whoOf } from "../platform.ts";
@@ -41,6 +42,10 @@ export interface DeploysObject extends DashboardDeploys {
   isInstall(origin: string): Promise<boolean>;
   /** The release store (deploy/releases.ts): both channels (null: no store). */
   releases(): Promise<ReleasesView | null>;
+  /** Each environment's domains (its Worker's custom domains), and one added or removed (control/routes.ts, /api/domains). */
+  domains(): Promise<DomainsView | { error: string; status?: number }>;
+  addDomain(target: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }>;
+  removeDomain(target: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }>;
   /** GET /api/events: the stream. */
   fetch(request: Request): Promise<Response>;
 }
