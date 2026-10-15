@@ -67,7 +67,7 @@ test("Connect Cloudflare goes to Cloudflare's consent page: Erga's client, PKCE 
   const to = new URL(r.headers.get("location")!);
   expect(to.origin + to.pathname).toBe(`${ORIGIN}/auth/cloudflare/mock/consent`);
   expect(Object.fromEntries(to.searchParams)).toMatchObject({ response_type: "code", client_id: "mock", redirect_uri: `${ORIGIN}/auth/cloudflare/callback`, scope: SITE_OAUTH_SCOPES, code_challenge_method: "S256" });
-  expect(SITE_OAUTH_SCOPES.split(" ").sort()).toEqual(["account-settings.read", "offline_access", "workers-routes.write", "workers-scripts.write", "zone.read"]);
+  expect(SITE_OAUTH_SCOPES.split(" ").sort()).toEqual(["account-settings.read", "offline_access", "workers-routes.write", "workers-scripts.admin", "zone.read"]);
   expect(to.searchParams.get("code_challenge")).toMatch(/^[\w-]{43}$/);
   expect(r.headers.get("set-cookie")).toMatch(/^erga_cf_consent=[\w-]+; Path=\/auth\/cloudflare; Max-Age=600; HttpOnly; SameSite=Lax; Secure$/);
   // Not signed in: sign in first, then back here.
@@ -121,7 +121,7 @@ test("a refused consent, a scope taken out, or a callback that didn't start here
   r = await s.consent({ error: "invalid_scope", error_description: "The requested scope is invalid: dns.edit" });
   expect(errorOf(r)).toBe("Cloudflare didn't authorize Erga: The requested scope is invalid: dns.edit");
   // The grant lacks a scope a site needs (an optional one left out): it is revoked at once, and nothing is kept.
-  s.cf.state.oauthScopes = "account-settings.read workers-scripts.write zone.read offline_access";
+  s.cf.state.oauthScopes = "account-settings.read workers-scripts.admin zone.read offline_access";
   const revoked = s.cf.state.revoked;
   r = await s.consent();
   expect(errorOf(r)).toContain("workers-routes.write is missing");
@@ -168,9 +168,9 @@ test("the access token is refreshed before it expires (the refresh token rotated
 test("a grant without a scope publishing needs now says to connect again, and Cloudflare's refusal says the same", async () => {
   const s = server();
   await s.consent();
-  // A grant made when the consent asked for workers-scripts.edit (before Workers Scripts Write).
+  // A grant made when the consent asked for workers-scripts.edit (Workers Editor: it can't create a Worker).
   s.db.query(`UPDATE cloudflare_grants SET "grant" = json_set("grant", '$.scopes', json('["account-settings.read","workers-scripts.edit","workers-routes.write","zone.read"]'))`).run();
-  expect(await s.dir.cloudflare.info("ada")).toMatchObject({ connected: false, error: "it doesn't allow workers-scripts.write, which publishing needs now" });
+  expect(await s.dir.cloudflare.info("ada")).toMatchObject({ connected: false, error: "it doesn't allow workers-scripts.admin, which publishing needs now" });
   const refused = (async () => Response.json({ success: false, errors: [{ code: 10000, message: "No access to the specified resource." }] }, { status: 403 })) as typeof fetch;
   const e = await siteCloudflare("mock-x", refused).call("POST", "/accounts/a/workers/scripts/w/assets-upload-session", "start uploading the site's files", {}).catch((x) => x);
   expect(e.message).toBe("Your Cloudflare connection isn't allowed to start uploading the site's files. Connect Cloudflare again, and allow everything Erga asks for. (Cloudflare said: No access to the specified resource. [code 10000])");

@@ -37,16 +37,16 @@ export interface SiteOAuth { clientId: string; net: Fetch; authorize?: string }
 
 /**
  * What a person's consent asks for: Account Settings Read (their accounts),
- * Workers Scripts Write (the site's Worker, its files, and its custom domain:
- * Cloudflare's API takes this one for each), Workers Routes Write (the custom
- * domain, as the installs ask), Zone Read (the list of domains), and
- * offline_access (a refresh token, so a site follows its document after the
- * hour an access token lasts). Each must be among the scopes of Erga's OAuth
- * client; Cloudflare takes a request for some of them. (Workers Editor,
- * workers-scripts.edit, isn't enough: Cloudflare refuses it the upload of a
- * new Worker's files.)
+ * Workers Admin (the site's Worker: Cloudflare's Editor role updates and
+ * deploys a Worker that exists, but only Admin creates or deletes one;
+ * developers.cloudflare.com/workers/authorization/workers/), Workers Routes
+ * Write (the custom domain: Cloudflare asks for it on the zone, beside the
+ * Worker's role), Zone Read (the list of domains), and offline_access (a
+ * refresh token, so a site follows its document after the hour an access
+ * token lasts). Each must be among the scopes of Erga's OAuth client;
+ * Cloudflare takes a request for some of them.
  */
-export const SITE_OAUTH_SCOPES = "account-settings.read workers-scripts.write workers-routes.write zone.read offline_access";
+export const SITE_OAUTH_SCOPES = "account-settings.read workers-scripts.admin workers-routes.write zone.read offline_access";
 
 /** The scopes a grant must have (offline_access isn't one Cloudflare names in the grant's scope). */
 export const SITE_NEEDS = SITE_OAUTH_SCOPES.split(" ").filter((s) => s != "offline_access");
