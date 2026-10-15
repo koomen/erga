@@ -35,6 +35,21 @@ test("the Git instructions come before the git log", async () => {
   expect(html.indexOf('id="clone"')).toBeLessThan(html.indexOf('id="grid"'));
 });
 
+test("the Ops page asks for the log and statuses at once, and its live updates hold no HTTP connection", async () => {
+  const session = { login: "ada", name: "Ada" } as unknown as Session;
+  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
+  // An EventSource holds one of the browser's six HTTP/1.1 connections to the host while the page is open: a few admin
+  // tabs, and the page's own requests wait minutes. The events come over a WebSocket.
+  expect(html).not.toContain("new EventSource");
+  expect(html).toContain('new WebSocket((location.protocol == "https:" ? "wss://" : "ws://") + location.host + "/api/events")');
+  // The first render's requests go out as the script starts, before the socket, and the socket's first open asks again for nothing.
+  const start = html.indexOf("\n  load(); loadDeploys(); loadReleases(); loadDomains();\n  listen();");
+  expect(start).toBeGreaterThan(0);
+  expect(html).toContain("events.onopen = () => { if (opened) {");
+  // Until the statuses come, a column says it is loading, not "not set up".
+  expect(html.match(/id="target-[a-z]+"[^]*?<span class="st"><i><\/i><span>([^<]*)</)?.[1]).toBe("…");
+});
+
 test("the sidebar has one Ops link, in place of Source and Cloudflare: here on the control Worker, marked on its pages", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
   const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();

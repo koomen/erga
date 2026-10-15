@@ -6,7 +6,7 @@
 //   GET  /api/admin/agent              the state: on or off (and why), the model, the conversation so far
 //   POST /api/admin/agent              { text, context }: a message; context says which admin page is open
 //   POST /api/admin/agent/abort|reset|model
-//   /api/admin/agent/events            { type: "agent", ev } for this admin's agent
+//   /api/admin/agent/events            { type: "agent", ev } for this admin's agent (a WebSocket)
 //   GET|DELETE /api/admin/agent/conversation   the conversation, kept on the server (read on mount); a new one
 //   GET|PUT    /api/admin/agent/prefs          the panel as the admin left it: open, side, width
 //
@@ -207,20 +207,21 @@ async function load(tries = 0): Promise<void> {
   renderBusy();
 }
 
-// The agent's events, to this admin only; a reconnect reads the whole conversation again.
-// An event stream reconnects by itself, but not after an answer that isn't one (a gateway's error while the server
-// restarts): then it's made again, a little later each time.
+// The agent's events, to this admin only; a reconnect reads the whole conversation again. They come over a
+// WebSocket, not an EventSource: over HTTP/1.1 an EventSource holds one of the browser's six connections to the host
+// while the page is open, and with a few admin tabs open every later request waits. A socket that closes (the server
+// restarts) is made again, a little later each time.
 let tries = 0;
 function connect() {
-  const es = new EventSource("/api/admin/agent/events");
-  es.onopen = () => { tries = 0; live((l) => l.connection("admin-agent", true)); load(); };
-  es.onerror = () => {
+  const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}/api/admin/agent/events`);
+  ws.onopen = () => { tries = 0; live((l) => l.connection("admin-agent", true)); load(); };
+  ws.onclose = () => {
     live((l) => l.connection("admin-agent", false));
-    if (es.readyState == EventSource.CLOSED) setTimeout(connect, backoff(tries++));
+    setTimeout(connect, backoff(tries++));
   };
-  es.onmessage = (e) => {
+  ws.onmessage = (e) => {
     let m: { type?: string; ev?: LogEvent };
-    try { m = JSON.parse(e.data); } catch { return; }
+    try { m = JSON.parse(String(e.data)); } catch { return; }
     if (m.type == "agent" && m.ev) { heard++; talk.apply(m.ev); renderBusy(); }
   };
 }

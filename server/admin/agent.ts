@@ -8,7 +8,8 @@
 //   POST   /api/admin/agent                 { text, context, files? }: a message (it steers a turn that is running)
 //   POST   /api/admin/agent/abort|reset     stops the turn; starts a new conversation
 //   POST   /api/admin/agent/model           { model }: sonnet or opus-fast, from the next message
-//   GET    /api/admin/agent/events          server-sent events, to that admin's pages only: { type: "agent", ev }
+//   GET    /api/admin/agent/events          a WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that
+//                                           admin's pages only: { type: "agent", ev }
 //   GET    /api/admin/agent/conversation    { log: { items, busy, undoable } }: the admin's conversation
 //   DELETE /api/admin/agent/conversation    a new conversation (the "New conversation" button)
 //   GET    /api/admin/agent/prefs           { open?, side?, width? }: their panel, as they left it
@@ -67,6 +68,7 @@ export interface AdminAgentsDeps {
 export class AdminAgents {
   /** The event streams open, each with the admin it's for. */
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string>();
+  private sockets = new Map<(text: string) => void, string>();
   /** Each admin's agent, with where the server is, as their page said last. */
   private agents = new Map<string, { agent: AdminAgent; origin: string }>();
   private beat: ReturnType<typeof setInterval> | null = null;
@@ -282,21 +284,43 @@ export class AdminAgents {
   // -- live updates: the event stream of one admin's pages
 
   async fetch(request: Request): Promise<Response> {
+    this.keepBeating();
+    const login = request.headers.get("x-erga-login") ?? "";
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const w = writable.getWriter();
-    this.clients.set(w, request.headers.get("x-erga-login") ?? "");
+    this.clients.set(w, login);
     this.send(w, ": connected\nretry: 2000\n\n");
+    return new Response(readable, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
+  }
+
+  /** A beat now and then keeps proxies from closing a quiet stream, and finds the ones that went away. */
+  private keepBeating() {
     this.beat ??= setInterval(() => {
       for (const c of this.clients.keys()) this.send(c, ": beat\n\n");
-      if (!this.clients.size && this.beat) { clearInterval(this.beat); this.beat = null; }
+      for (const to of this.sockets.keys()) this.sendTo(to, '{"type":"beat"}');
+      if (!this.clients.size && !this.sockets.size && this.beat) { clearInterval(this.beat); this.beat = null; }
     }, 20_000);
-    return new Response(readable, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
   }
 
   /** An event for that admin's pages only. */
   private event(data: Record<string, unknown>, login: string) {
-    const line = enc.encode(`data: ${JSON.stringify(data)}\n\n`);
+    const text = JSON.stringify(data), line = enc.encode(`data: ${text}\n\n`);
     for (const [c, who] of this.clients) if (who == login) this.send(c, line);
+    for (const [to, who] of this.sockets) if (who == login) this.sendTo(to, text);
+  }
+
+  /**
+   * A WebSocket's side of the stream (the panel's: the Durable Object accepts it): that admin's events, as JSON, to
+   * `send`. It holds none of the browser's six connections to the host, as an event stream does. Returns its leave.
+   */
+  join(request: Request, send: (text: string) => void): () => void {
+    this.sockets.set(send, request.headers.get("x-erga-login") ?? "");
+    this.keepBeating();
+    return () => { this.sockets.delete(send); };
+  }
+
+  private sendTo(send: (text: string) => void, text: string) {
+    try { send(text); } catch { this.sockets.delete(send); }
   }
 
   private send(w: WritableStreamDefaultWriter<Uint8Array>, s: string | Uint8Array) {

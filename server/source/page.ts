@@ -50,7 +50,7 @@
 // Each environment's card lists its domains (GET /api/domains), with Add and
 // remove (POST and DELETE), through the instance's own Cloudflare grant.
 //
-// It updates by itself, with no reload: /api/events says what changed (a push
+// It updates by itself, with no reload: /api/events (a WebSocket) says what changed (a push
 // or a merge, the mirror, each step of a deploy, a redeploy, its log lines),
 // for this server and for Erga's other server too (deploy/relay.ts passes each
 // server's events to the other). Only rows that changed are drawn again, so
@@ -290,8 +290,8 @@ function sourceMarkup(c: SourcePageConfig): string {
   const remote = `${c.origin}/git/erga.git`;
   const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
   const upstreamName = c.upstream ? esc(c.upstream.replace(/^https?:\/\//, "").replace(/^ops\./, "")) : "erga.dev";
-  const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="host">${esc(host)}</span><span class="st"><i></i><span>not set up</span></span></button></div>`;
-  const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${esc(host)}" target="_blank" rel="noopener">${esc(host)}</a></div><span class="st"><i></i><span>not set up</span></span><span class="env-more"><code class="env-commit"></code><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span><div class="env-domains" id="domains-${name}" hidden></div></div>`;
+  const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Loading"><b>${label}</b><span class="host">${esc(host)}</span><span class="st"><i></i><span>…</span></span></button></div>`;
+  const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${esc(host)}" target="_blank" rel="noopener">${esc(host)}</a></div><span class="st"><i></i><span>…</span></span><span class="env-more"><code class="env-commit"></code><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span><div class="env-domains" id="domains-${name}" hidden></div></div>`;
   return `
   <section class="ops-section" id="status" aria-labelledby="status-head">
     <h2 id="status-head">Status</h2>
@@ -379,7 +379,7 @@ const SOURCE_SCRIPT = `
   const TARGETS = ["staging", "production", "control"];
   /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
   const GAP_TOP = 11, GAP_MAIN = 6;
-  let view = null, deploys = null, busy = false, drawn = false;
+  let view = null, deploys = null, deploysKnown = false, busy = false, drawn = false;
   const drawnRows = new WeakMap();
   const grid = document.getElementById("grid");
   const running = (state) => state == "building" || state == "deploying";
@@ -647,11 +647,11 @@ const SOURCE_SCRIPT = `
     // Status: the control Worker's Cloudflare credential (an admin's OAuth grant), and each environment's state.
     const cred = deploys && deploys.credential, cf = document.getElementById("env-cloudflare");
     cf.className = "env cloudflare " + (!cred ? "" : cred.connected ? "deployed" : "failed");
-    document.getElementById("cloudflare-state").textContent = !cred ? "unknown" : cred.connected ? "connected" + (cred.by ? " by " + cred.by : "") : "Nothing deploys: " + (cred.problem || "not connected.");
+    document.getElementById("cloudflare-state").textContent = !cred ? (deploysKnown ? "unknown" : "…") : cred.connected ? "connected" + (cred.by ? " by " + cred.by : "") : "Nothing deploys: " + (cred.problem || "not connected.");
     for (const n of TARGETS) {
       const e = document.getElementById("env-" + n), t = targetOf(n);
       e.className = "env " + (t ? t.state : "");
-      const what = !t ? "not set up" : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
+      const what = !t ? (deploysKnown ? "not set up" : "…") : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
       e.querySelector(".st span").textContent = what + (t?.at ? " · " + ago(t.at) : "");
       e.querySelector(".st").title = t?.error || "";
       e.querySelector(".env-commit").textContent = t?.deployed ? t.deployed.slice(0, 7) : "";
@@ -663,8 +663,8 @@ const SOURCE_SCRIPT = `
       const b = document.getElementById("target-" + n), t = targetOf(n);
       b.className = "target " + (t ? t.state : "");
       b.disabled = !t;
-      b.title = t ? (t.host + ": " + t.state + (t.deployed ? ", live on " + t.deployed.slice(0, 7) : "") + (t.error ? " (" + t.error + ")" : "") + ". Click for the latest deploy's log.") : "Deploys aren't set up yet";
-      const what = !t ? "not set up" : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
+      b.title = t ? (t.host + ": " + t.state + (t.deployed ? ", live on " + t.deployed.slice(0, 7) : "") + (t.error ? " (" + t.error + ")" : "") + ". Click for the latest deploy's log.") : deploysKnown ? "Deploys aren't set up yet" : "Loading";
+      const what = !t ? (deploysKnown ? "not set up" : "…") : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
       b.querySelector(".st span").textContent = what + (t?.at ? " · " + ago(t.at) : "");
     }
     render();
@@ -687,11 +687,12 @@ const SOURCE_SCRIPT = `
   async function loadDeploys() {
     if (asking) { again = true; return asking; }
     asking = (async () => {
-      const r = await fetch("/api/deploys?history=100", { headers: { Accept: "application/json" } }).catch(() => null);
+      // A request that hangs ends: else it would hold every later status back (they wait for this one).
+      const r = await fetch("/api/deploys?history=100", { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15000) }).catch(() => null);
       // No answer, or a 5xx (a server restarting into its new version): keep what's shown, and the poll below asks again.
       const body = r && r.ok ? await r.json().catch(() => null) : null;
       if (pageView.signal.aborted) return;
-      if (body || (r && r.status < 500)) deploys = body;
+      if (body || (r && r.status < 500)) { deploys = body; deploysKnown = true; }
       renderTargets();
       if (open && !open.pinned) { const t = targetOf(open.target); if (t?.deployId && t.deployId != open.deployId) refreshLog(false); }
       await new Promise((ok) => setTimeout(ok, 500));
@@ -860,15 +861,18 @@ const SOURCE_SCRIPT = `
     } catch (err) { status.className = "error"; status.textContent = err.message; e.currentTarget.disabled = false; }
   });
 
-  // Live: an event says what changed; a reconnect reloads everything. A stream the server answers with an error
-  // (a server restarting into its new version) the browser closes for good: open it again.
-  let heard = 0;
+  // Live: an event says what changed; a reconnect reloads everything. The events come over a WebSocket, not an
+  // EventSource: over HTTP/1.1 an EventSource holds one of the browser's six connections to the host for as long as
+  // the tab is open, and with a few admin tabs open the page's own requests (the git log, the statuses) wait for minutes.
+  let heard = 0, opened = false;
   function listen() {
     if (pageView.signal.aborted) return;
-    const events = new EventSource("/api/events");
-    pageView.onLeave(() => events.close());
-    events.onopen = () => { load(); loadDeploys(); loadReleases(); loadDomains(); };
-    events.onerror = () => { if (events.readyState == EventSource.CLOSED) setTimeout(listen, 3000); };
+    const events = new WebSocket((location.protocol == "https:" ? "wss://" : "ws://") + location.host + "/api/events");
+    let closed = false;
+    pageView.onLeave(() => { closed = true; events.close(); });
+    // The first open needs no reload: the page asked for everything as it started, beside it.
+    events.onopen = () => { if (opened) { load(); loadDeploys(); loadReleases(); loadDomains(); } opened = true; };
+    events.onclose = () => { if (!closed) setTimeout(listen, 3000); };
     events.onmessage = (e) => {
       let ev; try { ev = JSON.parse(e.data); } catch { return; }
       if (ev.type == "source") { load(); loadDeploys(); } // a move starts a deploy, here or on another server
@@ -881,8 +885,8 @@ const SOURCE_SCRIPT = `
       }
     };
   }
-  listen();
   load(); loadDeploys(); loadReleases(); loadDomains();
+  listen();
   // Events don't tell everything: the other server's events can fail to come (no DEPLOY_HOOK_SECRET, or it doesn't
   // answer), and a server that deploys itself cuts the stream and can miss its last change. So while
   // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
