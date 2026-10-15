@@ -15,8 +15,9 @@
 //   GET  /api/deploys/<name>/log[?deploy=<id>]
 //                                       admins: the latest deploy's whole log, or that deploy's
 //                                       {deployId, commit, state, trigger, started, ended, error, live, lines: [{at, text, step?}]}
-//   GET  /api/events                    admins: server-sent events, {type: "deploys"} on each change, {type: "deploy-log",
-//                                       target, deployId, lines} as a deploy's lines arrive, {type: "source"} on a push or merge
+//   GET  /api/events                    admins: the events, over a WebSocket (Upgrade: websocket, as the Ops page asks), else
+//                                       as server-sent events: {type: "deploys"} on each change, {type: "deploy-log", target,
+//                                       deployId, lines} as a deploy's lines arrive, {type: "source"} on a push or merge
 //   GET  /admin/deploys                 redirects to /admin/ops: the dashboard of source and deploys
 //
 // "Admins" are the server's admins signed in, in a browser or with an

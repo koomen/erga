@@ -32,5 +32,14 @@ export class AdminAgentHost extends DurableObject<Env> implements AdminAgentObje
   clearConversation(login: string) { return this.agents.clearConversation(login); }
   agentPrefs(login: string) { return this.agents.agentPrefs(login); }
   setAgentPrefs(login: string, body: unknown) { return this.agents.setAgentPrefs(login, body); }
-  fetch(request: Request) { return this.agents.fetch(request); }
+  /** The panel's events: a WebSocket (Upgrade: websocket), else server-sent events. */
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade")?.toLowerCase() != "websocket") return this.agents.fetch(request);
+    const { 0: client, 1: server } = new WebSocketPair();
+    server.accept();
+    const leave = this.agents.join(request, (text) => server.send(text));
+    server.addEventListener("close", leave);
+    server.addEventListener("error", leave);
+    return new Response(null, { status: 101, webSocket: client });
+  }
 }

@@ -44,6 +44,7 @@ export class Pipeline extends DurableObject<Env> {
   private deps: { net: typeof globalThis.fetch };
   private credential: ReturnType<typeof fixedCredential> | OAuthCredential;
   private listeners = new Set<WritableStreamDefaultWriter<Uint8Array>>();
+  private sockets = new Set<WebSocket>();
   private beat: ReturnType<typeof setInterval> | null = null;
   /** The mock's builder over HTTP, for forks' builds in local development (erga.dev's go to the build container). */
   private mockBuilds: ((request: Request) => Promise<Response>) | null = null;
@@ -225,19 +226,38 @@ export class Pipeline extends DurableObject<Env> {
   publish(event: RelayEvent): void {
     const bytes = new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
     for (const w of this.listeners) w.write(bytes).catch(() => this.listeners.delete(w));
+    for (const ws of this.sockets) this.send(ws, JSON.stringify(event));
   }
 
-  /** /api/events (the door has checked it's an admin): server-sent events, one `data:` line of JSON each. */
-  async fetch(): Promise<Response> {
+  private send(ws: WebSocket, text: string): void {
+    try { ws.send(text); } catch { this.sockets.delete(ws); }
+  }
+
+  /**
+   * /api/events (the door has checked it's an admin): a WebSocket (the Ops page: it holds none of the browser's six
+   * connections to the host), else server-sent events (an API client), one message of JSON each.
+   */
+  async fetch(request?: Request): Promise<Response> {
+    // A comment now and then keeps proxies from closing a quiet stream, and finds the ones that went away.
+    this.beat ??= setInterval(() => {
+      for (const w of this.listeners) w.write(new TextEncoder().encode(": ping\n\n")).catch(() => this.listeners.delete(w));
+      for (const ws of this.sockets) this.send(ws, JSON.stringify({ type: "ping" }));
+      if (!this.listeners.size && !this.sockets.size && this.beat) { clearInterval(this.beat); this.beat = null; }
+    }, 20_000);
+    if (request?.headers.get("Upgrade")?.toLowerCase() == "websocket") {
+      const { 0: client, 1: server } = new WebSocketPair();
+      server.accept();
+      this.sockets.add(server);
+      const gone = () => this.sockets.delete(server);
+      server.addEventListener("close", gone);
+      server.addEventListener("error", gone);
+      this.send(server, JSON.stringify({ type: "hello" }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     this.listeners.add(writer);
     writer.write(new TextEncoder().encode(`retry: 3000\ndata: ${JSON.stringify({ type: "hello" })}\n\n`)).catch(() => this.listeners.delete(writer));
-    // A comment now and then keeps proxies from closing a quiet stream, and finds the ones that went away.
-    this.beat ??= setInterval(() => {
-      for (const w of this.listeners) w.write(new TextEncoder().encode(": ping\n\n")).catch(() => this.listeners.delete(w));
-      if (!this.listeners.size && this.beat) { clearInterval(this.beat); this.beat = null; }
-    }, 20_000);
     return new Response(readable, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
   }
 }
