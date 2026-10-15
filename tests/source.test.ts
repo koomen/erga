@@ -210,7 +210,7 @@ describe("Erga's Git endpoint", () => {
     expect((await must(w, "ls-remote", f.github, "staging")).split("\t")[0]).toBe((await must(w, "ls-remote", "origin", "staging")).split("\t")[0]);
   });
 
-  test("the Source page's view: the latest commits, and which main has", async () => {
+  test("the Ops page's view: the latest commits, and which main has", async () => {
     const view = await f.repo.branches();
     const [staging, main] = view.branches;
     expect(main.commits[0].subject).toBe("Ninth");

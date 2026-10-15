@@ -2,7 +2,7 @@
 // (one repo, "erga", two branches, staging and main), and this is Erga's side
 // of it. Every push and merge comes through here, so Erga can hold the line
 // Artifacts doesn't, and knows each time a branch moves (an event for the
-// Source page, the deploy hook, the GitHub mirror).
+// Ops page, the deploy hook, the GitHub mirror).
 //
 // The model is strict: only two branches, ever; staging is always at or
 // ahead of main; main only follows staging. A push to main must be one of
@@ -13,7 +13,7 @@
 //
 // Releases are tags: an annotated tag vX.Y.Z (a semantic version) on a
 // commit of main. The tag is the release; the newest one is stable
-// (deploy/releases.ts). Cut release on the Source page (POST
+// (deploy/releases.ts). Cut release on the Ops page (POST
 // /api/source/release) makes one here; `git push erga vX.Y.Z` does the same.
 // A release tag is never moved or deleted, each is newer than the last, and
 // nothing but release tags is taken.
@@ -65,7 +65,7 @@ export const LOG = 100;
 export const TASK_COMMITS = 100;
 /** A task's merge commit, by the factory: "Merge task/<id>-<slug>: title". */
 const TASK_MERGE = /^Merge (task\/(\d+)-[^\s:]*): (.+)$/;
-/** How many of staging's commits just after main's head the Source page gets (BranchInfo.afterMain). */
+/** How many of staging's commits just after main's head the Ops page gets (BranchInfo.afterMain). */
 export const AFTER_MAIN = 5;
 
 export interface Db { exec<T = Record<string, unknown>>(sql: string, ...params: (string | number | null)[]): T[] }
@@ -102,7 +102,7 @@ export interface BranchInfo {
   name: Branch; commit: string | null; commits: CommitInfo[];
   /** Commits on it that main doesn't have (staging only). */
   ahead?: number;
-  /** The AFTER_MAIN commits only on staging that come just after main's head, newest first (staging only): the Source page shows them below its break, when staging is far ahead. */
+  /** The AFTER_MAIN commits only on staging that come just after main's head, newest first (staging only): the Ops page shows them below its break, when staging is far ahead. */
   afterMain?: CommitInfo[];
 }
 /** A branch moved: `by` (a login) did it, `via` how when not in person. */
@@ -128,7 +128,7 @@ export interface RepoDeps {
   moved(move: Move): void;
   /** A release cut: a tag made here, or pushed. */
   released?(release: Released): void;
-  /** Something the Source page shows changed (a branch, the mirror's status). */
+  /** Something the Ops page shows changed (a branch, the mirror's status). */
   changed(): void;
   /** Work that outlives the request (the mirror). */
   background(work: Promise<unknown>): void;
@@ -277,7 +277,7 @@ export class SourceRepo {
     return order.map((s) => by.get(s)!).filter(Boolean);
   }
 
-  // ---- What the Source page shows ---------------------------------------------
+  // ---- What the Ops page shows ---------------------------------------------
 
   /** Each branch's head and its latest commits, which of them main has, and the mirror's status. */
   async branches(): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; moves: Move[]; tags: TagInfo[]; release: string | null }> {
@@ -585,7 +585,7 @@ export class SourceRepo {
         if (u.branch == "main") {
           if (u.old != ZERO && !this.isAncestor(u.old, u.new)) return refuse(u, "main only moves forward (fast-forward): it follows staging");
           const staging = after("staging");
-          if (staging == ZERO || !this.isAncestor(u.new, staging)) return refuse(u, "main only follows staging: push the commit to staging first (git push erga HEAD:staging), then merge it on the Source page, or push both at once (git push erga HEAD:staging HEAD:main)");
+          if (staging == ZERO || !this.isAncestor(u.new, staging)) return refuse(u, "main only follows staging: push the commit to staging first (git push erga HEAD:staging), then merge it on the Ops page, or push both at once (git push erga HEAD:staging HEAD:main)");
           return true;
         }
         const main = after("main");
@@ -599,7 +599,7 @@ export class SourceRepo {
     function refuse(u: T, why: string) { statuses.set(u.ref, why); return false; }
   }
 
-  // ---- Merging (the Source page, POST /api/source/merge) ------------------------------
+  // ---- Merging (the Ops page, POST /api/source/merge) ------------------------------
 
   /**
    * Moves main forward to staging's head, or to `commit`, one of staging's

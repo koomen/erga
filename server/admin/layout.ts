@@ -1,10 +1,10 @@
-// The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/source,
+// The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/ops,
 // /admin/api-keys, /admin/auth): a breadcrumb in the upper left (Erga › Admin › the page),
 // Share with agent in the header bar upper right (the editor's button and
 // card: admin-share.js, built from client/admin-share.ts), the admin's agent
 // (agents/admin.ts: its panel is admin-agent.js, built from
 // client/admin-agent.ts) in a column left of the page, and, on the left, a
-// sidebar that links to Settings, API keys, Authentication, Change log, Users and Source.
+// sidebar that links to Settings, API keys, Authentication, Change log, Users and Ops.
 //
 // As in the editor, the user drags the agent by its head to the right of the
 // page, and its inner edge to resize it (client/layout.ts, mountPaneLayout;
@@ -31,7 +31,7 @@
 import { appPage, crumbs as trail, esc, ICON, link, page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 
-export type AdminSection = "settings" | "keys" | "auth" | "changes" | "users" | "source" | "install";
+export type AdminSection = "settings" | "keys" | "auth" | "changes" | "users" | "ops";
 
 const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }[] = [
   { key: "settings", label: "Settings", path: "/admin", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>` },
@@ -39,9 +39,10 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
   { key: "auth", label: "Authentication", path: "/admin/auth", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/><path d="M12 14.5v2"/></svg>` },
   { key: "changes", label: "Change log", path: "/admin/changes", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4.2l2.8 1.8"/></svg>` },
   { key: "users", label: "Users", path: "/admin/users", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14.4c1.4.8 2.3 2.4 2.5 4.6"/></svg>` },
-  { key: "source", label: "Source", path: "/admin/source", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-3 4-9.5 5"/></svg>` },
-  // The control Worker's Cloudflare credential (/install there; the app sends the path on, as it does Source's).
-  { key: "install", label: "Cloudflare", path: "/install", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.6 9.3 4.6 4.6 0 0 0 7 18.5Z"/></svg>` },
+  // Ops: the environments, the Cloudflare credential and Erga's repository. The control Worker's page: the app serves it in
+  // place over the CONTROL binding (/install, its Cloudflare credential, is marked Ops too). With no control Worker, the
+  // app says so on this page (cloudflare/index.ts).
+  { key: "ops", label: "Ops", path: "/admin/ops", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="6" rx="2"/><rect x="3.5" y="13.5" width="17" height="6" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/></svg>` },
 ];
 export const ADMIN_SECTIONS: readonly { key: AdminSection; label: string; path: string }[] = SECTIONS;
 
@@ -63,7 +64,7 @@ export interface AdminLayout {
   style?: string;
   /** What goes in <main>. */
   body: string;
-  /** The page uses the whole width (the Source page); otherwise a column. */
+  /** The page uses the whole width (the Ops page); otherwise a column. */
   wide?: boolean;
 }
 
@@ -170,7 +171,7 @@ export const LAYOUT_STYLE = `
   }
   main.admin-main { min-width: 0; max-width: 880px; margin: 0 auto; padding: 8px 24px 96px; }
   main.admin-main.wide { max-width: none; margin: 0; padding: 0 max(16px, env(safe-area-inset-right)) 24px 8px; }
-  /* Room on the right, for the agent docked there; the wide page (the Source page) has none of its own then. */
+  /* Room on the right, for the agent docked there; the wide page (the Ops page) has none of its own then. */
   @media (min-width: 1000px) { .admin-body { padding-right: max(16px, env(safe-area-inset-right)); } main.admin-main.wide { padding-right: 0; } }
   main.admin-main > header { margin-bottom: 24px; }
   /* A phone: the links in a row above the page, always with their labels. */
@@ -187,7 +188,7 @@ export const LAYOUT_STYLE = `
 /** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. And the first page's view: what its scripts stop when it goes. */
 /** The sidebar's remembered state, before it paints. */
 export const SIDEBAR_EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}</script>`;
-/** The first page's view (window.ergaView): what its scripts stop when it goes. Every page's scripts read it (the Source page's too). */
+/** The first page's view (window.ergaView): what its scripts stop when it goes. Every page's scripts read it (the Ops page's too). */
 export const VIEW_SCRIPT = `<script>window.ergaView = (() => { const c = new AbortController(), fns = []; return { signal: c.signal, onLeave: (fn) => { if (c.signal.aborted) fn(); else fns.push(fn); }, leave: () => { c.abort(); for (const fn of fns.splice(0)) try { fn(); } catch (e) { console.error(e); } } }; })();</script>`;
 const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}<script>try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}</script>`;
 

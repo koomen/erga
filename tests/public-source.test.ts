@@ -1,6 +1,6 @@
 // Erga's source for anyone (control/routes.ts, server/source/public.ts): a clone and a fetch with no
 // credentials, the read-only page with no sign-in, and what stays shut: a push without an admin's token,
-// the Source page and its APIs, /install, and all of it on staging (admins only). Real git, in front of
+// the Ops page and its APIs, /install, and all of it on staging (admins only). Real git, in front of
 // pretend Artifacts (tests/source-fixture.ts), through the control Worker's routes.
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
@@ -137,8 +137,8 @@ describe("the page, with no sign-in", () => {
 });
 
 describe("what stays shut", () => {
-  test("the Source page, its APIs and /install ask for an admin", async () => {
-    for (const p of ["/", "/admin/source", "/install"]) {
+  test("the Ops page, its APIs and /install ask for an admin", async () => {
+    for (const p of ["/", "/admin/ops", "/install"]) {
       const r = await page(p);
       expect(`${p}: ${r.status}`).toBe(`${p}: 302`);
       expect(r.headers.get("location")).toStartWith("/auth/github?next=");

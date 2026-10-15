@@ -129,7 +129,7 @@ export interface Platform {
   /** The deploys, as the admin agent's dashboard asks them: the pipeline's object (the control Worker's, over its binding, on erga.dev). */
   deploys: DashboardDeploys;
   /**
-   * The control Worker (control/), where the repository, the Source page and the deploys live, when it's apart from
+   * The control Worker (control/), where the repository, the Ops page and the deploys live, when it's apart from
    * this server: its address. The app sends admins there for those pages, and answers their routes with a redirect.
    * Absent in local development and on a server /deploy made, where this server hosts them itself.
    */

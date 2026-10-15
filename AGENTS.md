@@ -93,7 +93,7 @@ For example:
    listed there with its reason.
 2. **Erga's embedded agents can do what their person can.** An agent inside
    Erga can do everything its person can do in its domain. The admin agent
-   (`agents/admin.ts`) covers everything on `/admin` (the Source page and
+   (`agents/admin.ts`) covers everything on `/admin` (the Ops page and
    `/settings` too); the document agent (`editor-agent/session.ts`, with `agents/tools.ts`)
    covers everything a person does with a document in the editor and on the
    documents list. The exceptions: a secret (an API key, a token) is set only

@@ -123,7 +123,7 @@ export class AdminAgents {
   }
 
   /**
-   * The dashboard tools' work, as the admin: the same calls the Source page's API
+   * The dashboard tools' work, as the admin: the same calls the Ops page's API
    * makes, and /settings' tokens, so the change log and a deploy's trigger name the admin, as when they click.
    */
   private dashboard(login: string, state: { origin: string }): DashboardOps {

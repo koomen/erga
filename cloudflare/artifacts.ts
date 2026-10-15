@@ -10,7 +10,7 @@
 // Erga proxies Git itself rather than hand out this
 // remote: Artifacts' tokens don't know Erga's admins, Artifacts can't hold
 // Erga's rules (two branches, main only forward), and every branch move must
-// go through Erga so it can tell the Source page, the deploys and the mirror.
+// go through Erga so it can tell the Ops page, the deploys and the mirror.
 //
 // Artifacts has no local mode (the binding in `vite dev` only proxies to the
 // real service), so local development uses a stand-in: the dev server serves

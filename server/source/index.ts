@@ -1,4 +1,4 @@
-// Erga's own repository, hosted by Erga: the Git endpoint, the Source page and
+// Erga's own repository, hosted by Erga: the Git endpoint, the Ops page and
 // its API (routes.ts); the repository itself (repo.ts), which runs in its
 // Durable Object; reading a commit's files (browse.ts). The rest of the app
 // imports source through this file.

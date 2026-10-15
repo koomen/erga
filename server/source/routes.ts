@@ -14,8 +14,8 @@
 //                               given) on main's head (or that commit of main), with the notes as its message (admins):
 //                               { tag, commit } or 4xx { error }. `git push erga vX.Y.Z` does the same.
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
-//   /admin/source               the Source page (admins): the history of staging and main, and their deploys
-//   /source, /admin/factory     redirect to /admin/source
+//   /admin/ops               the Ops page (admins): the history of staging and main, and their deploys
+//   /source, /admin/factory     redirect to /admin/ops
 //
 // The API takes the app's session or an admin-scope token ("Authorization:
 // Bearer erga_..."), an admin's either way. A POST with the session alone
@@ -156,11 +156,11 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
   return json({ error: "Not found" }, 404);
 }
 
-/** /admin/source: the page, for admins in a browser (/source and /admin/factory redirect here). */
+/** /admin/ops: the page, for admins in a browser (/source and /admin/factory redirect here). */
 export async function sourceDoor(request: Request, platform: Platform, url: URL): Promise<Response> {
-  if (url.pathname != "/admin/source") return new Response(null, { status: 302, headers: { Location: "/admin/source" } });
+  if (url.pathname != "/admin/ops") return new Response(null, { status: 302, headers: { Location: "/admin/ops" } });
   const session = await platform.sessionOf(request);
-  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/source")}` } });
+  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/ops")}` } });
   const admin = !session.test && !session.agent && (await platform.directory.users.actsAsAdmin(whoOf(session)));
   const target = platform.deploy.target;
   return adminSourcePage({ session, admin, ready: !!platform.source, origin: url.origin, mirrorUrl: platform.source?.mirrorUrl ?? "", worker: target ? TARGETS[target].worker : null });

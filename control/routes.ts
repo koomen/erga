@@ -1,20 +1,20 @@
-// The control Worker's routes: Erga's repository, its deploys and the Source
+// The control Worker's routes: Erga's repository, its deploys and the Ops
 // page, apart from the app (control/index.ts serves them at ops.erga.dev).
-// The app's Worker serves the Source page and its API too (cloudflare/index.ts,
-// isSourcePagePath): at erga.dev/admin/source, in the admin layout, on this
+// The app's Worker serves the Ops page and its API too (cloudflare/index.ts,
+// isSourcePagePath): at erga.dev/admin/ops, in the admin layout, on this
 // Worker's repository and deploys over its CONTROL binding. In local
 // development it serves all of these routes, over the mock Cloudflare, so the
-// Source page and its tests run with `bun start`.
+// Ops page and its tests run with `bun start`.
 //
-//   /                           the Source page (the dashboard of source and deploys); /source, /admin/source and
-//                               /admin/factory too
+//   /                           the Ops page (the environments, the Cloudflare credential, the source and deploys);
+//                               /admin/ops too, and /source, /admin/source and /admin/factory redirect to it
 //   /api/source/...             its API (server/source/routes.ts)
 //   /api/deploys..., /api/events    the deploys' API and the event stream (server/deploys/api.ts)
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
 //   /git, /git/tree/...         Erga's source for anyone, read-only: branches, commits, files (server/source/public.ts)
 //   /auth/github[/callback], /auth/logout   signing in (this Worker's own GitHub app) and out
 //   GET /api/health             {ok, worker: "control", version (the release), build (the version id)}: anyone
-//   /install                    the Cloudflare credential: its status, and Connect (a consent in the browser: deploy/credential.ts)
+//   /install                    the Cloudflare credential (Ops links to it): its status, and Connect (a consent in the browser: deploy/credential.ts)
 //   POST /install/start         to Cloudflare's consent page (PKCE; the state and verifier in a short cookie). On an install's
 //                               control Worker, through erga.dev's callback (below): the one registered on Erga's OAuth client
 //   GET  /install/callback      back from it: the code exchanged, the grant kept, checked with one read. Also the deploy page's
@@ -27,7 +27,7 @@
 //   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
 //   GET  /releases, /releases/<channel>.json, /releases/<version>/...
 //                               the release store, for anyone (deploy/releases.ts): the channels, and each release's files
-//   GET  /api/releases          admins: both channels (the Source page marks edge's latest and stable's tag on the log)
+//   GET  /api/releases          admins: both channels (the Ops page marks edge's latest and stable's tag on the log)
 //
 // Everything but sign-in, the health check, Git reads, the public source page and the stylesheet
 // needs an admin: a signed-in admin (this Worker's session), or an
@@ -55,11 +55,11 @@ export interface Control {
   releases?: ReleaseStore | null;
   /** The deploy page (/deploy: installs from the store), where this Worker offers it. */
   deploy?: (request: Request) => Promise<Response>;
-  /** An install's control Worker: its upstream and channel, for its Source page (the upgrades, in the git log's place). */
+  /** An install's control Worker: its upstream and channel, for its Ops page (the upgrades, in the git log's place). */
   install?: { upstream: string; channel: string; app: string };
   /** The app's address (https://erga.dev): links, and where the stylesheet comes from. */
   app: string;
-  /** The Source page's shell, and its address: "/" here, /admin/source where the app serves it (the default "/"). */
+  /** The Ops page's shell, and its address: "/" here, /admin/ops where the app serves it (the default "/"). */
   layout: (o: AdminLayout) => Response;
   page?: string;
   /** This Worker's release (the commit its own deploy set, else its version id), and its version id, for /api/health. */
@@ -74,21 +74,25 @@ export interface Control {
 }
 
 /**
- * The Source page and its API: erga.dev and staging serve them in place, in the admin layout, on the control Worker's
+ * The Ops page and its API: erga.dev and staging serve them in place, in the admin layout, on the control Worker's
  * repository and deploys over the app's CONTROL binding. The control Worker serves them too, as the way in when the app is broken.
  */
 export const isSourcePagePath = (path: string) =>
-  path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/api/releases" || path.startsWith("/api/releases/");
+  OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/api/releases" || path.startsWith("/api/releases/");
+
+/** The Ops page's addresses: /admin/ops, and its old ones, which redirect to it. */
+const OPS_PATHS = new Set(["/admin/ops", "/admin/source", "/source", "/admin/factory"]);
+export const isOpsPagePath = (path: string) => OPS_PATHS.has(path);
 
 /** The paths these routes own (the app answers the rest of them, all but isSourcePagePath, with a redirect to the control Worker when it is apart). */
 export const isControlPath = (path: string) =>
-  path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory" || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
+  path == "/" || OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
   || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install"
   || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/")
   || path == "/deploy" || path.startsWith("/deploy/");
 
 /**
- * How the app's Worker answers `path`: "here", itself (the Source page and its API where the control Worker is apart and
+ * How the app's Worker answers `path`: "here", itself (the Ops page and its API where the control Worker is apart and
  * bound, every control route in local development, where it hosts the pipeline); "there", a redirect to the control
  * Worker (CONTROL_URL); "none", a server with no control Worker (one /deploy made); null, not a control route.
  */
@@ -139,7 +143,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   }
   // The deploy page: installs in your own account. It checks who may use it itself (the deploy_page setting).
   if (c.deploy && (path == "/deploy" || path.startsWith("/deploy/"))) return c.deploy(request);
-  if (path == "/deploy" || path.startsWith("/deploy/")) return wantsPageAt(request, path) ? page("Not here", `Installs are made from Erga's own control Worker, not from an install's. <a href="/">The Source page</a>.`, 404) : json({ error: "Not here: installs are made from erga.dev's control Worker." }, 404);
+  if (path == "/deploy" || path.startsWith("/deploy/")) return wantsPageAt(request, path) ? page("Not here", `Installs are made from Erga's own control Worker, not from an install's. <a href="/">Ops</a>.`, 404) : json({ error: "Not here: installs are made from erga.dev's control Worker." }, 404);
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
 
@@ -158,8 +162,8 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   }
 
   const home = c.page ?? "/";
-  if (path == "/" || path == "/source" || path == "/admin/source" || path == "/admin/factory") {
-    if (path != home && path != "/admin/source") return new Response(null, { status: 302, headers: { Location: home } });
+  if (path == "/" || OPS_PATHS.has(path)) {
+    if (path != home && path != "/admin/ops") return new Response(null, { status: 302, headers: { Location: home } });
     // The Git address on the page is the control Worker's, wherever the page is.
     return adminSourcePage({ session, admin: true, ready: !!p.source && !c.install, origin: p.control?.url ?? url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout, ...(c.install ? { install: c.install } : {}) });
   }
@@ -167,7 +171,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
   if (path == "/api/releases" && read) { const r = await c.deploys.releases(); return r ? json(r) : json({ error: "This server has no release store." }, 404); }
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
-  return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">The Source page</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
+  return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">Ops</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
 }
 
 const wantsPageAt = (request: Request, path: string) => !path.startsWith("/api/") && (request.headers.get("accept") ?? "").includes("text/html");
@@ -202,7 +206,7 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   };
   if (path == "/api/install" && (method == "GET" || method == "HEAD")) return json(await c.deploys.credentialStatus());
   if (path == "/install" && (method == "GET" || method == "HEAD")) {
-    return c.layout({ title: "Cloudflare", here: "install", session, style: INSTALL_STYLE, body: installBody(await c.deploys.credentialStatus(), c, url) });
+    return c.layout({ title: "Cloudflare", here: "ops", session, style: INSTALL_STYLE, body: installBody(await c.deploys.credentialStatus(), c, url, c.page ?? "/") });
   }
   if (method == "POST" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   if (path == "/install/start" && method == "POST") {
@@ -236,6 +240,9 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
 
 const INSTALL_STYLE = `
   .install { max-width: 620px; }
+  .install .back { margin: 0 0 10px; font-size: 13.5px; }
+  .install .back a { color: var(--soft); text-decoration: none; }
+  .install .back a:hover { color: var(--fg-strong); }
   .install h2 { margin: 0 0 18px; font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
   .install .state-line { display: flex; align-items: baseline; gap: 10px; margin: 0 0 18px; font-size: 15px; color: var(--fg); }
   .install .state-line b { color: var(--fg-strong); font-weight: 600; }
@@ -256,7 +263,7 @@ const INSTALL_STYLE = `
 const when = (ms: number | null) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "");
 
 /** The page: one status line, what the last consent said, one button (and Disconnect when connected), the details folded. */
-function installBody(s: CredentialStatus, c: Control, url: URL): string {
+function installBody(s: CredentialStatus, c: Control, url: URL, ops: string): string {
   const q = url.searchParams;
   const note = (kind: "ok" | "bad", text: string) => `<p class="msg ${kind}">${text}</p>`;
   const notes: string[] = [];
@@ -285,6 +292,7 @@ function installBody(s: CredentialStatus, c: Control, url: URL): string {
     </dl>
   </details>`;
   return `<div class="install">
+  <p class="back"><a href="${esc(ops)}">← Ops</a></p>
   <h2 id="install-head">Cloudflare</h2>
   ${status}
   ${notes.join("\n  ")}
@@ -296,13 +304,13 @@ function installBody(s: CredentialStatus, c: Control, url: URL): string {
 /**
  * The control Worker's own page shell: the admin pages' look (server/admin/layout.ts). The breadcrumbs upper left
  * (Erga › Admin › the page; the wordmark and Admin go to the app), the account corner upper right, the same sidebar (its
- * links to the app's admin pages, Source and Cloudflare here), and the page in a column, or the whole width (Source).
+ * links to the app's admin pages, Ops here), and the page in a column, or the whole width (Ops).
  * No agent: the admin's agent lives in the app.
  */
 export function controlLayout(app: string): (o: AdminLayout) => Response {
   return (o) => {
     const trail = crumbs(o.session, [{ label: "Admin", href: `${app}/admin` }, { label: o.title }], "h1", app);
-    const side = adminSidebar(o.here, (path) => (path == "/admin/source" ? "/" : path == "/install" ? "/install" : `${app}${path}`));
+    const side = adminSidebar(o.here, (path) => (path == "/admin/ops" ? "/" : `${app}${path}`));
     const corner = accountHtml(accountOf(o.session, true), "/");
     return new Response(appPage(o.title, LAYOUT_STYLE + CONTROL_STYLE + (o.style ?? ""), `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}
 ${trail}

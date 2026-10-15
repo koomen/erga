@@ -91,7 +91,7 @@ export interface Env {
   SNAPSHOT_IMPORT?: string;
   /** A secret, the same on the servers that tell each other of branch moves (production tells staging). */
   DEPLOY_HOOK_SECRET?: string;
-  /** The control Worker (control/index.ts), bound on the app Workers the pipeline deploys: the app's way to the Source page's API, for its admin agent. */
+  /** The control Worker (control/index.ts), bound on the app Workers the pipeline deploys: the app's way to the Ops page's API, for its admin agent. */
   CONTROL?: Fetcher;
   /** Where the control Worker is (https://ops.erga.dev), on an app Worker the pipeline deployed; the app sends its admins there. */
   CONTROL_URL?: string;

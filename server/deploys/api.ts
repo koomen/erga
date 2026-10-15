@@ -1,5 +1,5 @@
 // The deploys' API, over the pipeline's object (deploy/branches.ts in
-// cloudflare/pipeline.ts): what the Source page and the admin agent ask.
+// cloudflare/pipeline.ts): what the Ops page and the admin agent ask.
 // Served by the control Worker (control/routes.ts); in local development the
 // app's own Worker serves it, over the mock Cloudflare.
 //
@@ -17,7 +17,7 @@
 //                                       {deployId, commit, state, trigger, started, ended, error, live, lines: [{at, text, step?}]}
 //   GET  /api/events                    admins: server-sent events, {type: "deploys"} on each change, {type: "deploy-log",
 //                                       target, deployId, lines} as a deploy's lines arrive, {type: "source"} on a push or merge
-//   GET  /admin/deploys                 redirects to /admin/source: the dashboard of source and deploys
+//   GET  /admin/deploys                 redirects to /admin/ops: the dashboard of source and deploys
 //
 // "Admins" are the server's admins signed in, in a browser or with an
 // admin-scope token; a test person never. The caller (the control Worker's
@@ -56,7 +56,7 @@ export async function deploysApi(request: Request, session: Session, deploys: De
   const json = (body: unknown, status = 200) => Response.json(body, { status, ...noStore });
   const by = byLine(session.login.toLowerCase(), whoOf(session).via);
 
-  if (path == "/admin/deploys") return new Response(null, { status: 302, headers: { Location: "/admin/source" } });
+  if (path == "/admin/deploys") return new Response(null, { status: 302, headers: { Location: "/admin/ops" } });
   if (path == "/api/events" && method == "GET") return deploys.fetch(new Request(url, request));
   if (path == "/api/deploys" && method == "GET") return json(await deploys.status(Number(url.searchParams.get("history") ?? 0) || 0));
   const [, logOf] = /^\/api\/deploys\/([a-z]+)\/log$/.exec(path) ?? [];

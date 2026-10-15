@@ -2,7 +2,7 @@
 // domain, so they can ask for anything there in words.
 //
 //   the admin agent     (agents/admin.ts: on every /admin page) everything on /admin: the settings, the API keys,
-//                       sign-in (Authentication), the change log, the users, the dashboard of source and deploys (Source), the
+//                       sign-in (Authentication), the change log, the users, the dashboard of source and deploys (Ops), the
 //                       homepage's deploy, and the admin's own agent tokens (/settings)
 //   the document agent  (editor-agent/session.ts, with agents/tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
@@ -72,22 +72,22 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/admin/agent/prefs", domain: "none", action: "The admin agent's panel, as the admin left it", exempt: PANEL },
   { route: "PUT /api/admin/agent/prefs", domain: "none", action: "Keep the admin agent's panel layout", exempt: PANEL },
 
-  // ------------------------------------------------------------ /admin/source: the dashboard of source and deploys
+  // ------------------------------------------------------------ /admin/ops: the dashboard of source and deploys
   { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "list_source" },
   { route: "GET /git/tree/<ref>/<path>", domain: "admin", action: "Read a folder or a file of Erga's source (the public page, for anyone)", tool: "read_source" },
-  { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Source)", tool: "list_branches" },
-  { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Source)", tool: "deploy_production" },
-  { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Source)", tool: "sync_mirror" },
-  { route: "POST /api/source/release", domain: "admin", action: "Cut a release: a version tag on main's head (Source)", tool: "cut_release" },
-  { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Source)", tool: "list_deploys" },
-  { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Source)", tool: "list_deploys" },
-  { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Source)", tool: "deploy_log" },
-  { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Source)", tool: "redeploy" },
+  { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Ops)", tool: "list_branches" },
+  { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Ops)", tool: "deploy_production" },
+  { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Ops)", tool: "sync_mirror" },
+  { route: "POST /api/source/release", domain: "admin", action: "Cut a release: a version tag on main's head (Ops)", tool: "cut_release" },
+  { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Ops)", tool: "list_deploys" },
+  { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Ops)", tool: "list_deploys" },
+  { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Ops)", tool: "deploy_log" },
+  { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Ops)", tool: "redeploy" },
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
-  { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Source)", tool: "rollback" },
+  { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Ops)", tool: "rollback" },
   // The release store (control/routes.ts, deploy/releases.ts): the channels edge and stable.
-  { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Source page marks them on the log)", tool: "list_releases" },
-  { route: "GET /api/releases", domain: "admin", action: "Read both channels (Source)", tool: "list_releases" },
+  { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Ops page marks them on the log)", tool: "list_releases" },
+  { route: "GET /api/releases", domain: "admin", action: "Read both channels (Ops)", tool: "list_releases" },
   // The control Worker's Cloudflare credential (control/routes.ts, /install on ops.erga.dev): a consent in the browser.
   { route: "GET /api/install", domain: "admin", action: "Read whether the control Worker's Cloudflare credential is connected (GET /api/deploys says it too)", tool: "list_deploys" },
   { route: "POST /install/start", domain: "none", action: "Connect Cloudflare: consent on Cloudflare's own page, in the browser (/install)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },

@@ -1,5 +1,5 @@
 // The control Worker's Platform: what the shared code (sign-in, sessions,
-// tokens, the Source page, the deploys' API) needs from where it runs, built
+// tokens, the Ops page, the deploys' API) needs from where it runs, built
 // from the control Worker's bindings (control/wrangler.jsonc). It is the
 // app's Platform (server/platform.ts) with only the parts the control Worker
 // has: production's database (for who is an admin, and the admin-scope
@@ -49,7 +49,7 @@ export interface ControlEnv {
   /** The bootstrap admins (deploy/targets.json), the account, where the app is. */
   ADMINS: string;
   CLOUDFLARE_ACCOUNT_ID: string;
-  /** The app's address (https://erga.dev): links back, and the stylesheet the Source page uses. */
+  /** The app's address (https://erga.dev): links back, and the stylesheet the Ops page uses. */
   APP_URL: string;
   /** Sign-in: this Worker's own GitHub OAuth app (callback https://<its host>/auth/github/callback). */
   GITHUB_CLIENT_ID?: string;

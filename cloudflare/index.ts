@@ -10,8 +10,8 @@
 //
 //   /api/deploys/version, /api/health, /api/snapshot/...   what the deploy pipeline asks of this server, and staging's
 //                                                          snapshot endpoints (branch-deploys.ts)
-//   the control Worker's        the repository, the Source page and the deploys' API (control/routes.ts). Where it is apart
-//                               (erga.dev, staging.erga.dev): the Source page and its API served here, in the admin layout, on
+//   the control Worker's        the repository, the Ops page and the deploys' API (control/routes.ts). Where it is apart
+//                               (erga.dev, staging.erga.dev): the Ops page and its API served here, in the admin layout, on
 //                               its objects over the CONTROL binding; the rest a redirect there (CONTROL_URL). All served here in
 //                               local development, over the mock Cloudflare; "not found" on a server with neither
 //   /deploy                    install Erga in your own Cloudflare account: the control Worker's too (deploy-routes.ts),
@@ -20,7 +20,7 @@
 
 import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
-import { appAnswer, controlRoutes } from "../control/routes";
+import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { releaseStoreOf } from "./releases";
 import { CONTROL } from "../deploy/targets";
@@ -60,13 +60,18 @@ export default {
         if (read && !path.startsWith("/api/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
         return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
       }
+      // No control Worker: the Ops page (the sidebar always links it) says so; the rest of its routes answer 404.
+      if (where == "none" && isOpsPagePath(path) && (request.method == "GET" || request.method == "HEAD")) {
+        const session = await p.sessionOf(request);
+        if (session) return adminResponse({ session, title: "Ops", here: "ops", body: NO_OPS });
+      }
       if (where == "none") return Response.json({ error: "This server has no control Worker: no repository, no deploys." }, { status: 404, headers: { "Cache-Control": "no-store" } });
       if (where == "here") {
-        // The Source page in place, on the control Worker's objects (p.deploys and p.source go over CONTROL); or, in local
+        // The Ops page in place, on the control Worker's objects (p.deploys and p.source go over CONTROL); or, in local
         // development, every control route, on this Worker's own objects.
         const mock = env.ERGA_DEPLOY_MOCK == "1";
         return controlRoutes(request, {
-          platform: p, deploys: p.deploys as DeploysObject, releases: releaseStoreOf(env), app: url.origin, layout: adminResponse, page: "/admin/source", version: env.ERGA_VERSION ?? null,
+          platform: p, deploys: p.deploys as DeploysObject, releases: releaseStoreOf(env), app: url.origin, layout: adminResponse, page: "/admin/ops", version: env.ERGA_VERSION ?? null,
           // The deploy page (installs), in local development only: on erga.dev it's the control Worker's.
           ...(env.PIPELINE ? { deploy: (request: Request) => deployDoor(request, { env, platform: p, oauthCallback: "/install/callback" }) } : {}),
           oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
@@ -95,3 +100,10 @@ function timed(response: Response, entries: string[]): Response {
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   }
 }
+
+/** The Ops page where there is no ops (control) Worker: what it is, and that this server has none. */
+const NO_OPS = `<section class="no-ops" aria-labelledby="no-ops-head">
+  <h2 id="no-ops-head" style="margin:0 0 10px;font-size:18px;font-weight:650;color:var(--fg-strong)">The ops Worker isn't deployed</h2>
+  <p style="margin:0 0 10px;color:var(--fg)">Ops shows the status of each environment, the Cloudflare credential that deploys them, and Erga's Git repository. All of these run on the ops Worker (the control Worker). This server has no ops Worker, so it has no deploys and no repository here.</p>
+  <p style="margin:0;color:var(--soft)">To set one up, run <code>CLOUDFLARE_ACCOUNT_ID=… bun deploy/setup.ts</code> from a checkout of Erga.</p>
+</section>`;
