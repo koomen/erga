@@ -34,6 +34,9 @@ import { open, seal, type Sealed } from "./seal";
  */
 export const CONTROL_OAUTH_SCOPES = "workers-scripts.edit containers.write cloudchamber.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
 
+/** Erga's OAuth client on Cloudflare (public, PKCE; made on erga.dev's account, any Cloudflare user may consent). */
+export const ERGA_OAUTH_CLIENT_ID = "62d43878d5673b62dd0453086a5f4fe9";
+
 /** The grant as stored: the tokens sealed with the Worker's key; the rest in the clear (nothing secret). */
 export interface StoredGrant {
   access: Sealed;
@@ -82,6 +85,17 @@ const NONE = "The control Worker has no Cloudflare credential: an admin connects
 const REFRESH_BEFORE_MS = 10 * 60 * 1000;
 const KEY = "credential";
 
+/** How a credential's messages name it, and say what to do: the control Worker's (the default), or a person's. */
+export interface CredentialWords {
+  /** "The control Worker's Cloudflare credential" */
+  subject: string;
+  /** "an admin connects it again at /install" */
+  fix: string;
+  /** There is none at all. */
+  none: string;
+}
+const CONTROL_WORDS: CredentialWords = { subject: "The control Worker's Cloudflare credential", fix: "an admin connects it again at /install", none: NONE };
+
 export interface TokenAnswer { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; error?: string; error_description?: string }
 
 /**
@@ -100,7 +114,10 @@ export class OAuthCredential implements Credential {
     sealKey: string | Promise<string>;
     now?: () => number;
     log?: (line: string) => void;
+    words?: CredentialWords;
   }) {}
+
+  private get words() { return this.deps.words ?? CONTROL_WORDS; }
 
   private now() { return (this.deps.now ?? Date.now)(); }
   private stored() { return this.deps.storage.get<StoredGrant>(KEY); }
@@ -133,19 +150,21 @@ export class OAuthCredential implements Credential {
 
   async status(): Promise<CredentialStatus> {
     const g = await this.stored();
-    if (!g) return { connected: false, by: null, at: null, refreshedAt: null, expiresAt: null, scopes: [], error: null, problem: NONE };
+    const w = this.words;
+    if (!g) return { connected: false, by: null, at: null, refreshedAt: null, expiresAt: null, scopes: [], error: null, problem: w.none };
     const dead = !g.refresh && g.expiresAt <= this.now();
     return {
       connected: !g.error && !dead, by: g.by, at: g.at, refreshedAt: g.refreshedAt, expiresAt: g.expiresAt, scopes: g.scopes, error: g.error,
-      problem: g.error ? `The control Worker's Cloudflare credential stopped working (${g.error}): an admin connects it again at /install.` : dead ? "The control Worker's Cloudflare credential expired and had no refresh token: an admin connects it again at /install." : null,
+      problem: g.error ? `${w.subject} stopped working (${g.error}): ${w.fix}.` : dead ? `${w.subject} expired and had no refresh token: ${w.fix}.` : null,
     };
   }
 
   /** A token with at least REFRESH_BEFORE_MS left: the stored one, or a fresh one from the refresh token. */
   async token(): Promise<string> {
     const g = await this.stored();
-    if (!g) throw new DeployError(NONE);
-    if (g.error) throw new DeployError(`The control Worker's Cloudflare credential stopped working (${g.error}): an admin connects it again at /install.`);
+    const w = this.words;
+    if (!g) throw new DeployError(w.none);
+    if (g.error) throw new DeployError(`${w.subject} stopped working (${g.error}): ${w.fix}.`);
     if (g.expiresAt - this.now() > REFRESH_BEFORE_MS) return open(g.access, await this.deps.sealKey);
     // One refresh at a time: a second caller waits for the first's token.
     this.refreshing ??= this.refresh(g).finally(() => { this.refreshing = null; });
@@ -153,18 +172,22 @@ export class OAuthCredential implements Credential {
   }
 
   private async refresh(g: StoredGrant): Promise<string> {
-    if (!g.refresh) throw new DeployError("The control Worker's Cloudflare credential expired and had no refresh token: an admin connects it again at /install.");
+    const w = this.words;
+    if (!g.refresh) throw new DeployError(`${w.subject} expired and had no refresh token: ${w.fix}.`);
     const refresh = await open(g.refresh, await this.deps.sealKey);
     const r = await this.deps.net(OAUTH.token, {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refresh, client_id: this.deps.client.id, ...(this.deps.client.secret ? { client_secret: this.deps.client.secret } : {}) }),
-    }).catch((e: Error) => { throw new DeployError(`Couldn't reach Cloudflare to refresh the control Worker's credential (${e.message}): try again in a moment.`); });
+    }).catch((e: Error) => { throw new DeployError(`Couldn't reach Cloudflare to refresh ${w.subject.replace(/^The /, "the ")} (${e.message}): try again in a moment.`); });
     const answer = (await r.json().catch(() => null)) as TokenAnswer | null;
     if (!r.ok || !answer?.access_token) {
       const why = `${r.status}${answer?.error ? ` ${answer.error}` : ""}${answer?.error_description ? `: ${answer.error_description}` : ""}`;
+      // Another worker refreshed first (Cloudflare rotates the refresh token, so this one's is spent): use its grant.
+      const now = await this.stored();
+      if (now && !now.error && now.refreshedAt != g.refreshedAt && now.expiresAt - this.now() > REFRESH_BEFORE_MS) return open(now.access, await this.deps.sealKey);
       // A refusal is final (revoked, or the client changed): said once, kept, until an admin connects again. A 5xx isn't.
       if (r.status >= 400 && r.status < 500) { await this.deps.storage.put(KEY, { ...g, error: why }); this.deps.log?.(`Cloudflare credential refresh refused: ${why}`); }
-      throw new DeployError(r.status >= 500 || r.status == 0 ? `Cloudflare couldn't refresh the control Worker's credential (${why}): try again in a few minutes.` : `The control Worker's Cloudflare credential stopped working (${why}): an admin connects it again at /install.`);
+      throw new DeployError(r.status >= 500 || r.status == 0 ? `Cloudflare couldn't refresh ${w.subject.replace(/^The /, "the ")} (${why}): try again in a few minutes.` : `${w.subject} stopped working (${why}): ${w.fix}.`);
     }
     const next: StoredGrant = {
       ...g,

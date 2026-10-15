@@ -1893,6 +1893,17 @@ Once you've read the guide, await further instructions.`;
     if (back.help) toggleHelp(true);
     if (back.files?.length) agentFiles.restore(back.files);
   }
+  // Back from Cloudflare's consent without its popup (a browser that blocked it): the settings open at Custom domain.
+  {
+    const q = new URL(location.href);
+    if (q.searchParams.has("cloudflare") || q.searchParams.has("cloudflare_error")) {
+      const error = q.searchParams.get("cloudflare_error");
+      q.searchParams.delete("cloudflare");
+      q.searchParams.delete("cloudflare_error");
+      window.history.replaceState(window.history.state, "", q.pathname + q.search + q.hash);
+      void loadSettings().then((s) => s?.consented(error));
+    }
+  }
 
   // ---------------------------------------------------------------- another page
 

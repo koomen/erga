@@ -1,7 +1,7 @@
 // The site API for a document: its connection and site, publishing it to a
 // hostname, deploying again, taking it down.
 //
-//   GET    /api/docs/<id>/site          { canEdit, connection, site, deploy, tokenUrl } (?zones=1 adds your domains)
+//   GET    /api/docs/<id>/site          { canEdit, connection, site, deploy } (?zones=1 adds your domains)
 //   POST   /api/docs/<id>/site          { hostname }: publishes the document there, with your Cloudflare connection
 //   POST   /api/docs/<id>/site/deploy   deploys the published version again, now
 //   DELETE /api/docs/<id>/site          takes the site down: its custom domain and its Worker go from the account
@@ -11,7 +11,7 @@ import { byLine } from "../../shared/attribution.ts";
 import { roleMay } from "../directory/index.ts";
 import { fromElsewhere } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
-import { IDLE_SITE, publishTo, SITE_PERMISSIONS, siteView, tokenTemplateUrl, zonesOf } from "./publish.ts";
+import { IDLE_SITE, publishTo, siteView, zonesOf } from "./publish.ts";
 import { SiteError } from "./rows.ts";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -37,7 +37,7 @@ export async function siteApi(request: Request, platform: Platform, id: string, 
   const state = async (extra: Record<string, unknown> = {}) => {
     const site = await dir.sites.get(doc.id);
     const connection = await dir.cloudflare.info(session.login);
-    return { canEdit, connection, site: site && siteView(site), deploy: site ? await ops.status(doc.id) : IDLE_SITE, tokenUrl: tokenTemplateUrl(), permissions: SITE_PERMISSIONS, ...extra };
+    return { canEdit, connection, site: site && siteView(site), deploy: site ? await ops.status(doc.id) : IDLE_SITE, ...extra };
   };
   if (request.method == "GET" || request.method == "HEAD") {
     if (action) return json({ error: "Not found" }, 404);

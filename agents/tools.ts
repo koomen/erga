@@ -19,8 +19,8 @@
 //                                       those that wait for a test sign-in. Admins only, with ToolWho.auth; an app's
 //                                       values are set only on /admin/auth, never in a conversation
 //   domain_status, publish_to_domain,   a document's site at a domain of the person's own, from their Cloudflare account
-//   deploy_domain, remove_domain,       a document at a domain of the person's own, where the platform has it (ToolWho.sites); the token is
-//   disconnect_cloudflare               pasted only on /settings, never in a conversation (the agent may disconnect it)
+//   deploy_domain, remove_domain,       a document at a domain of the person's own, where the platform has it (ToolWho.sites); connecting is
+//   disconnect_cloudflare               a consent in the person's browser only, never in a conversation (the agent may disconnect it)
 //   list_users, add_user,               who may sign in, and who's an admin,
 //   set_user_role, set_user_deploy,     admins only
 //   remove_user
@@ -185,7 +185,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     sites: true,
     label: "Custom domain",
     activity: "checking the custom domain",
-    description: "Whether a document is published at a domain of the person's own (served from their Cloudflare account), and how its deploys are going: its address, the version that's live, a deploy that's scheduled, running or failed (and why). Also whether the person has connected Cloudflare, and the domains (zones) their token reaches, to choose a hostname from. Connecting is done only on /settings, where they paste a token: never ask for the token in the conversation.",
+    description: "Whether a document is published at a domain of the person's own (served from their Cloudflare account), and how its deploys are going: its address, the version that's live, a deploy that's scheduled, running or failed (and why). Also whether the person has connected Cloudflare, and the domains (zones) their connection reaches, to choose a hostname from. Connecting is a consent in the person's own browser (Connect Cloudflare, under Custom domain in the document's settings, or on /settings): you can't do it, and there's no token to ask for.",
     parameters: Type.Object({ document: DOCUMENT }),
     run: async (args, ctx) => {
       const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "open");
@@ -195,7 +195,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
       return {
         document: described(doc, ctx), site: site ? { ...siteView(site), deploy: await ops.status(doc.id) } : null,
         cloudflare: connection.connected ? { connected: true, accounts: connection.accounts.map((a) => a.name), ...(zones && "zones" in zones ? { domains: zones.zones.map((z) => z.name) } : { error: zones?.error }) }
-          : { connected: false, connect: `${ctx.origin ?? ""}/settings#cloudflare` },
+          : { connected: false, connect: "The person clicks Connect Cloudflare under Custom domain in the document's settings (the gear), and allows Erga on Cloudflare's page.", ...(connection.error ? { error: connection.error } : {}) },
       };
     },
   },
@@ -204,7 +204,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     sites: true,
     label: "Publish to a domain",
     activity: "publishing to a domain",
-    description: "Publishes a document at a hostname on one of the person's own domains (such as notes.example.com, or the domain itself), as Custom domain in the editor's settings does: Erga puts the published version up as a Worker in their Cloudflare account, on that hostname, and puts each new published version up after it. Needs their Cloudflare connection (domain_status says; they connect only on /settings). The first deploy runs at once; check domain_status for how it went.",
+    description: "Publishes a document at a hostname on one of the person's own domains (such as notes.example.com, or the domain itself), as Custom domain in the editor's settings does: Erga puts the published version up as a Worker in their Cloudflare account, on that hostname, and puts each new published version up after it. Needs their Cloudflare connection (domain_status says; they connect it themselves, in the browser). The first deploy runs at once; check domain_status for how it went.",
     parameters: Type.Object({ document: DOCUMENT, hostname: Type.String({ description: "The site's address, on one of their domains: notes.example.com" }) }),
     run: async (args, ctx) => {
       const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "edit");
@@ -251,10 +251,10 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     sites: true,
     label: "Disconnect Cloudflare",
     activity: "disconnecting Cloudflare",
-    description: "Forgets the person's Cloudflare token (Disconnect on /settings). Their sites stay up as they are, but stop following their documents until they connect again, which they do only on /settings.",
+    description: "Revokes Erga's access to the person's Cloudflare account and forgets it (Disconnect on /settings). Their sites stay up as they are, but stop following their documents until they connect again, which they do themselves, in the browser.",
     parameters: Type.Object({}),
     run: async (_args, ctx) => {
-      const c = await ctx.dir.cloudflare.remove(ctx.who.login);
+      const c = await ctx.dir.cloudflare.disconnect(ctx.who.login, sitesOf(ctx).oauth);
       return { connected: c.connected, sites: (await ctx.dir.sites.list(ctx.who.login)).map((s) => s.hostname) };
     },
   },
