@@ -34,6 +34,7 @@ export interface AgentAction {
 }
 
 const SECRET = "a secret: pasted or made only on the page, never in a conversation";
+const CONSENT = "a secret: the consent gives Erga a grant to the person's Cloudflare account, only on Cloudflare's own page in their browser, never in a conversation (the agent may disconnect it)";
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
 
@@ -112,8 +113,10 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/docs/<id>/site", domain: "document", action: "Publish a document at a domain of yours (editor's settings, Custom domain)", tool: "publish_to_domain" },
   { route: "POST /api/docs/<id>/site/deploy", domain: "document", action: "Deploy to the domain now (editor's settings, Custom domain)", tool: "deploy_domain" },
   { route: "DELETE /api/docs/<id>/site", domain: "document", action: "Take the site down (editor's settings, Custom domain)", tool: "remove_domain" },
-  { route: "POST /settings/cloudflare", domain: "document", action: "Connect your Cloudflare account with an API token (/settings)", exempt: SECRET },
-  { route: "POST /settings/cloudflare/disconnect", domain: "document", action: "Disconnect your Cloudflare account (/settings)", tool: "disconnect_cloudflare" },
+  { route: "GET /auth/cloudflare/start", domain: "document", action: "Connect your Cloudflare account: Cloudflare's consent page (editor's settings, Custom domain; /settings)", exempt: CONSENT },
+  { route: "GET /auth/cloudflare/callback", domain: "document", action: "Come back from Cloudflare's consent page", exempt: CONSENT },
+  { route: "GET /auth/cloudflare/mock/consent", domain: "none", action: "The pretend Cloudflare consent page (local development)", exempt: "the dev server's" },
+  { route: "POST /settings/cloudflare/disconnect", domain: "document", action: "Disconnect your Cloudflare account: revoke Erga's access (/settings)", tool: "disconnect_cloudflare" },
   { route: "GET /__erga/site/<host>/<path>", domain: "none", action: "A site on the pretend Cloudflare (local development)", exempt: "the dev server's" },
 
   // ------------------------------------------------------------ /settings: the person's agent tokens

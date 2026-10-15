@@ -8,16 +8,15 @@
 // edits, so a site follows the document within a minute or so; in "manual"
 // mode, it follows each publish. "Deploy now" (POST /api/docs/<id>/site/deploy)
 // runs it at once. A deploy that fails leaves the last good one live, and
-// says why. Each deploy reads the site's row, its person's token and the
-// published version afresh, so a token replaced on /settings is used at the
-// next one. Every change of state is told to everyone who has the document
+// says why. Each deploy reads the site's row, its person's grant and the
+// published version afresh, so a new consent is used at the next one. Every change of state is told to everyone who has the document
 // open ({ type: "site" } on its /api/events).
 
 import { Cloudflare, type Fetch } from "../../deploy/pipeline.ts";
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
 import type { Directory } from "../directory/index.ts";
 import { deploySite, IDLE_SITE, removeSite, siteFiles, type SiteDeploy } from "./publish.ts";
-import type { SiteRow } from "./rows.ts";
+import type { SiteOAuth, SiteRow } from "./rows.ts";
 
 /** What the rest of the app may ask a site's deploys (the Durable Object answers, by RPC). */
 export interface SiteObject {
@@ -26,7 +25,7 @@ export interface SiteObject {
   changed(docId: string): Promise<void>;
   /** Deploys now; answers the status (deploying). `origin`: the server's, for the note in the site's Worker. */
   deploy(docId: string, by: string, origin?: string): Promise<SiteDeploy>;
-  /** Takes the site down in Cloudflare, with its person's token, and forgets its deploys. Cloudflare's refusal, if any. */
+  /** Takes the site down in Cloudflare, with its person's grant, and forgets its deploys. Cloudflare's refusal, if any. */
   remove(docId: string, site: SiteRow): Promise<string | null>;
 }
 
@@ -41,6 +40,8 @@ export interface SiteDeps {
   published(docId: string): Promise<PublishedSite | null>;
   /** How to reach Cloudflare with this token: the real API, or (local development) a pretend one. */
   net(token: string): Fetch;
+  /** Cloudflare's OAuth, to refresh the person's grant. */
+  oauth: SiteOAuth;
   /** Tells everyone with the document open that its site's state changed. */
   notify(docId: string): void;
   delay(): number;
@@ -107,7 +108,7 @@ export class SiteDeploys implements SiteObject {
     this.s = { ...IDLE_SITE, at: null, scheduledFor: null, docId };
     await this.deps.storage.deleteAll();
     this.deps.notify(docId);
-    const token = await this.deps.directory.cloudflare.token(site.login).catch(() => null);
+    const token = await this.deps.directory.cloudflare.token(site.login, this.deps.oauth).catch(() => null);
     if (!token) return `${site.login}'s Cloudflare connection is gone, so Erga can't reach the account.`;
     try {
       await removeSite(new Cloudflare(token, this.deps.net(token)), site);
@@ -142,8 +143,8 @@ export class SiteDeploys implements SiteObject {
       const dir = this.deps.directory;
       const [site, doc] = await Promise.all([dir.sites.get(docId), dir.get(docId)]);
       if (!site || !doc) return { ok: false, error: "The document has no site any more." };
-      const token = await dir.cloudflare.token(site.login);
-      if (!token) return { ok: false, error: `${site.login}'s Cloudflare connection is gone. ${site.login} must connect Cloudflare again on /settings.` };
+      const token = await dir.cloudflare.token(site.login, this.deps.oauth);
+      if (!token) return { ok: false, error: `${site.login}'s Cloudflare connection is gone. ${site.login} must connect Cloudflare again (Custom domain, in the document's settings).` };
       const published = await this.deps.published(docId);
       if (!published) return { ok: false, error: "The document has no published version yet." };
       const files = await siteFiles(published.index, published.files, doc.title);

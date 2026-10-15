@@ -2,7 +2,7 @@
 // the calls to Cloudflare and the site's files. rows.ts has the tables and
 // the design; deploys.ts runs each document's deploys; api.ts is the API.
 //
-// A deploy, in their account, with their token (the Cloudflare API only):
+// A deploy, in their account, with their grant (the Cloudflare API only):
 //
 //   1. the published version's files go up as a Worker's static assets
 //      (direct upload: only files Cloudflare doesn't have yet are sent);
@@ -13,10 +13,8 @@
 //      DNS record and the certificate (a hostname with a DNS record of its
 //      own already is refused, and the message says so).
 //
-// The token needs: Account Settings Read (its accounts), Workers Scripts Edit
-// (the Worker and its files), Workers Routes Edit and Zone Read on the zones
-// (the custom domain, the list of domains). tokenTemplateUrl fills in
-// Cloudflare's "Create token" page with exactly these.
+// The grant (a consent in the browser, connect.ts) asks for SITE_OAUTH_SCOPES
+// only, a part of the scopes Erga's OAuth client allows.
 //
 // An HTML page goes up as it is; a Markdown page goes up as HTML (the
 // editor's own renderer, in a plain readable page). The page is also
@@ -24,7 +22,7 @@
 
 import { Cloudflare, DeployError, uploadAssets, type Fetch } from "../../deploy/pipeline.ts";
 import type { Directory } from "../directory/index.ts";
-import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteRow } from "./rows.ts";
+import { checkHostname, scriptName, SiteError, type CfAccount, type CfZone, type SiteOAuth, type SiteRow } from "./rows.ts";
 
 /** A site's deploys, as the API gives them. */
 export interface SiteDeploy {
@@ -44,6 +42,8 @@ export const IDLE_SITE: SiteDeploy = { state: "idle", at: null, scheduledFor: nu
 export interface SiteOps {
   /** How to reach Cloudflare with this token: the real API, or (local development) a pretend one. */
   net(token: string): Fetch;
+  /** Cloudflare's OAuth, for the consent, and to refresh and revoke the grants. */
+  oauth: SiteOAuth;
   status(docId: string): Promise<SiteDeploy>;
   /** Deploys now (`by`: byLine). */
   deploy(docId: string, by: string): Promise<SiteDeploy>;
@@ -51,29 +51,25 @@ export interface SiteOps {
   remove(docId: string, site: SiteRow): Promise<string | null>;
 }
 
-// ------------------------------------------------------------------ the token
+// ------------------------------------------------------------------ the grant
 
-/** The permissions a site needs, as Cloudflare's token template link takes them. */
-export const SITE_PERMISSIONS = [
-  { key: "account_settings", type: "read", label: "Account Settings: Read", why: "find your account" },
-  { key: "workers_scripts", type: "edit", label: "Workers Scripts: Edit", why: "upload the site's files" },
-  { key: "workers_routes", type: "edit", label: "Workers Routes: Edit", why: "put the site on your domain" },
-  { key: "zone", type: "read", label: "Zone: Read", why: "list your domains" },
-] as const;
+/**
+ * What a person's consent asks for: Account Settings Read (their accounts),
+ * Workers Editor (the site's Worker and its files; Cloudflare's API takes it
+ * for a Worker's custom domain too), Workers Routes Write (the custom domain,
+ * as the installs ask), Zone Read (the list of domains), and offline_access
+ * (a refresh token, so a site follows its document after the hour an access
+ * token lasts). Each is among the scopes of Erga's OAuth client
+ * (CONTROL_OAUTH_SCOPES); Cloudflare takes a request for some of them.
+ */
+export const SITE_OAUTH_SCOPES = "account-settings.read workers-scripts.edit workers-routes.write zone.read offline_access";
 
-/** Cloudflare's "Create API token" page, filled in with what a site needs, and nothing else. */
-export function tokenTemplateUrl(): string {
-  const keys = SITE_PERMISSIONS.map(({ key, type }) => ({ key, type }));
-  return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodeURIComponent(JSON.stringify(keys))}&accountId=*&zoneId=all&name=${encodeURIComponent("Erga sites")}`;
-}
+/** The scopes a grant must have (offline_access isn't one Cloudflare names in the grant's scope). */
+export const SITE_NEEDS = SITE_OAUTH_SCOPES.split(" ").filter((s) => s != "offline_access");
 
-/** Checks a token as pasted: that Cloudflare takes it, and the accounts it reaches. */
-export async function verifyToken(token: string, net: Fetch): Promise<CfAccount[]> {
-  const t = token.trim();
-  if (!/^[\w.-]{20,2000}$/.test(t)) throw new SiteError("That doesn't look like a Cloudflare API token. Copy the whole token from the page Cloudflare showed after you made it.");
-  const cf = new Cloudflare(t, net);
-  const accounts = (await cf.call<{ id: string; name: string }[]>("GET", "/accounts?per_page=50", "read your accounts")) ?? [];
-  if (!accounts.length) throw new SiteError("Cloudflare took the token, but it reaches no account. Make it again with the link on this page: it needs Account Settings Read.");
+/** The accounts a token reaches. */
+export async function listAccounts(token: string, net: Fetch): Promise<CfAccount[]> {
+  const accounts = (await new Cloudflare(token, net).call<{ id: string; name: string }[]>("GET", "/accounts?per_page=50", "read your accounts")) ?? [];
   return accounts.map((a) => ({ id: a.id, name: a.name }));
 }
 
@@ -203,10 +199,12 @@ export const dashboardUrl = (site: SiteRow) => `https://dash.cloudflare.com/${si
 
 /** The domains someone's connection reaches; or why there are none to show. */
 export async function zonesOf(dir: Directory, ops: SiteOps, login: string): Promise<{ zones: CfZone[] } | { error: string }> {
-  const info = await dir.cloudflare.info(login);
-  const token = await dir.cloudflare.token(login);
-  if (!token) return { error: info.unreadable ? "Your Cloudflare token doesn't open on this server. Connect again on /settings." : "Connect your Cloudflare account first, on /settings." };
-  try { return { zones: await listZones(token, ops.net(token), info.accounts) }; } catch (e) {
+  try {
+    const info = await dir.cloudflare.info(login);
+    const token = await dir.cloudflare.token(login, ops.oauth);
+    if (!token) return { error: info.unreadable ? "Your Cloudflare connection doesn't open on this server. Connect Cloudflare again." : "Connect Cloudflare first." };
+    return { zones: await listZones(token, ops.net(token), info.accounts) };
+  } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
 }

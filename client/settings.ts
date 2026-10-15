@@ -13,8 +13,9 @@
 //   - Homepage (for admins, and on the homepage itself): whether this is the
 //     server's homepage, how its deploy is going, and Redeploy now.
 //   - Custom domain: the document published at a domain of the person's own,
-//     from their Cloudflare account: Connect Cloudflare
-//     (on /settings) if they haven't, else a name and one of their domains,
+//     from their Cloudflare account: Connect Cloudflare if they haven't
+//     (Cloudflare's consent page in a popup; when it's done, the popup tells
+//     this panel on a BroadcastChannel), else a name and one of their domains,
 //     and once it's up, the site's address, how its deploy is going, Deploy
 //     now and Remove.
 //   - Versions: the latest ten, each with its number, the model's five-word
@@ -37,7 +38,7 @@ export interface Home { isHome: boolean; canSet: boolean; /** An admin acting th
 /** GET /api/docs/<id>/site. */
 export interface SiteState {
   canEdit: boolean;
-  connection: { connected: boolean; last4: string | null; accounts: { id: string; name: string }[]; canStore: boolean; unreadable: boolean };
+  connection: { connected: boolean; accounts: { id: string; name: string }[]; canStore: boolean; unreadable: boolean; error: string | null };
   site: { hostname: string; url: string; zone: string; by: string; created: string; dashboard: string } | null;
   deploy: Deploy & { by?: string | null };
   zones?: { id: string; name: string; account: { id: string; name: string } }[];
@@ -67,6 +68,8 @@ export interface Settings {
   event(type: string): void;
   /** Whether a node is part of it (the popover or one of its menus). */
   contains(node: Node): boolean;
+  /** Back from Cloudflare's consent without the popup: opens at Custom domain, with the refusal if there was one. */
+  consented(error: string | null): void;
 }
 
 declare global { interface Window { ergaSettings?: { mount(host: SettingsHost): Settings } } }
@@ -300,7 +303,7 @@ function mount(host: SettingsHost): Settings {
   let homeBusy = false;
   let loadSeq = 0, homeSeq = 0, siteSeq = 0;
   let site: SiteState | null = null;
-  let siteBusy = false, removeArmed = false;
+  let siteBusy = false, removeArmed = false, consenting = false;
   /** What's typed in the name, kept across redraws. */
   let siteName = "", siteZone = "";
 
@@ -574,12 +577,14 @@ function mount(host: SettingsHost): Settings {
     const c = st.connection;
     if (!c.connected) {
       siteBody.innerHTML = `<p class="ds-explain">Publish this document at a domain of yours, such as <b>notes.example.com</b>. It is served from your own Cloudflare account, and follows each published version.</p>
-        <div class="ds-site-go"><a class="ds-btn primary" id="ds-site-connect" href="/settings#cloudflare" target="_blank" rel="noopener">${c.unreadable ? "Connect Cloudflare again" : "Connect Cloudflare"}</a></div>`;
+        ${c.error ? `<p class="ds-explain">Your Cloudflare connection stopped working: ${esc(c.error)}.</p>` : ""}
+        <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-connect"${consenting ? ` aria-disabled="true"` : ""}>${consenting ? "Waiting for Cloudflare…" : c.unreadable || c.error ? "Connect Cloudflare again" : "Connect Cloudflare"}</button></div>
+        <p class="ds-explain">Cloudflare asks you to allow Erga to put Workers on your domains, and to read your accounts and domains.</p>`;
       return;
     }
     const zones = st.zones ?? [];
     if (!zones.length) {
-      siteBody.innerHTML = `<p class="ds-explain">${esc(st.zonesError ? "" : "Your Cloudflare token reaches no domains. Add a domain to Cloudflare, or give the token Zone Read on your domains.")}</p>
+      siteBody.innerHTML = `<p class="ds-explain">${esc(st.zonesError ? "" : "Your Cloudflare account has no domains. Add a domain to Cloudflare first.")}</p>
         <div class="ds-site-go"><a class="ds-btn" href="/settings#cloudflare" target="_blank" rel="noopener">Cloudflare settings</a></div>`;
       return;
     }
@@ -633,6 +638,7 @@ function mount(host: SettingsHost): Settings {
     const b = (e.target as Element).closest<HTMLElement>("button");
     if (!b || b.getAttribute("aria-disabled") == "true") return;
     if (b.id == "ds-site-publish") return publishSite();
+    if (b.id == "ds-site-connect") return connectCloudflare();
     if (b.id == "ds-site-deploy") return siteCall("site/deploy", { method: "POST" }, "Couldn't deploy");
     if (b.id == "ds-site-remove") {
       if (!removeArmed) { removeArmed = true; renderSite(); setTimeout(() => { removeArmed = false; renderSite(); }, 4000); return; }
@@ -640,7 +646,27 @@ function mount(host: SettingsHost): Settings {
       await siteCall("site", { method: "DELETE" }, "Couldn't take the site down");
     }
   });
-  // Back from connecting Cloudflare in another tab: the section shows the domains.
+  // Connect Cloudflare: Cloudflare's consent page in a popup, so this panel stays as it is. The popup's last page
+  // (/auth/cloudflare/callback) says how it went on a BroadcastChannel (and to its opener, where it still has one).
+  // A browser that blocks the popup goes there itself, and comes back to this document.
+  function connectCloudflare() {
+    siteError.textContent = "";
+    const back = location.pathname + location.search + location.hash;
+    const win = window.open(`/auth/cloudflare/start?popup=1&return=${encodeURIComponent(back)}`, "erga-cloudflare", "popup,width=560,height=760");
+    if (!win) { location.href = `/auth/cloudflare/start?return=${encodeURIComponent(back)}`; return; }
+    consenting = true;
+    renderSite();
+    const watch = window.setInterval(() => { if (win.closed) { clearInterval(watch); if (consenting) { consenting = false; loadSite(); } } }, 700);
+  }
+  function consented(m: unknown) {
+    const r = m as { type?: string; ok?: boolean; error?: string } | null;
+    if (r?.type != "erga-cloudflare") return;
+    consenting = false;
+    loadSite().then(() => { if (!r.ok) siteError.textContent = r.error || "Cloudflare didn't connect."; });
+  }
+  try { new BroadcastChannel("erga-cloudflare").onmessage = (e) => consented(e.data); } catch { /* the popup's opener message, and the focus, are enough */ }
+  window.addEventListener("message", (e) => { if (e.origin == location.origin) consented(e.data); });
+  // Back from Cloudflare (the popup closed, or another tab): the section shows the domains.
   window.addEventListener("focus", () => { if (!pop.hidden && site && !site.connection.connected) loadSite(); });
 
   // ------------------------------------------------------------ menus
@@ -851,6 +877,11 @@ function mount(host: SettingsHost): Settings {
       pending[type] = window.setTimeout(() => (type == "home" ? loadHome() : type == "site" ? loadSite() : loadVersions()), 120);
     },
     contains,
+    consented(error) {
+      toggle(true);
+      consented({ type: "erga-cloudflare", ok: !error, error });
+      siteSec.scrollIntoView({ block: "nearest" });
+    },
   };
 }
 

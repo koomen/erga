@@ -10,33 +10,42 @@
 //
 // Two tables:
 //
-//   - cloudflare_connections: each person's Cloudflare API token, pasted on
-//     /settings, encrypted with AES-GCM under a key from FACTORY_KEY (as the
-//     API keys are, server/directory/api-keys.ts), the login as the additional data, so a
-//     row can't be moved to another person. Nothing answers a token to a
-//     page: only its last four characters, and the accounts it reaches.
+//   - cloudflare_grants: each person's Cloudflare connection, an OAuth grant
+//     from a consent in the browser (connect.ts; deploy/credential.ts keeps
+//     and refreshes it, as it does the control Worker's). Its tokens are
+//     sealed with AES-GCM under a key from FACTORY_KEY and the login, so a
+//     row opens only for its own person, and only on this server. Nothing
+//     answers a token to a page: only the accounts it reaches.
 //   - sites: each document's hostname, the zone and account it is on, the
 //     Worker that serves it, and whose connection deploys it. One site for
 //     each document; one document for each hostname.
 //
 // Reached through the directory (dir.cloudflare, dir.sites).
 
+import { OAuthCredential, sealKeyFrom, type StoredGrant, type TokenAnswer } from "../../deploy/credential.ts";
+import type { Fetch } from "../../deploy/pipeline.ts";
+import { open } from "../../deploy/seal.ts";
 import type { Sql } from "../directory/index.ts";
 
-/** A Cloudflare account, as a token reaches it. */
+/** A Cloudflare account, as a grant reaches it. */
 export interface CfAccount { id: string; name: string }
 /** A zone (a domain on Cloudflare), with the account it is in. */
 export interface CfZone { id: string; name: string; account: CfAccount }
 
-/** A person's connection, as their own pages show it: never the token. */
+/** How this server reaches Cloudflare's OAuth: Erga's client, the network (or the pretend one), and the consent page's address (the pretend one's, locally). */
+export interface SiteOAuth { clientId: string; net: Fetch; authorize?: string }
+
+/** A person's connection, as their own pages show it: never a token. */
 export interface ConnectionInfo {
   connected: boolean;
-  last4: string | null;
   accounts: CfAccount[];
+  /** When they consented (ms since the epoch). */
   updated: number | null;
-  /** This server has the secret to encrypt with, so it can keep a token. */
+  /** Why the grant no longer works (Cloudflare refused a refresh: revoked), or null. */
+  error: string | null;
+  /** This server has the secret to seal with, so it can keep a grant. */
   canStore: boolean;
-  /** A token is kept, but it doesn't open here (another FACTORY_KEY: staging's copy of production's data). */
+  /** A grant is kept, but it doesn't open here (another FACTORY_KEY: staging's copy of production's data). */
   unreadable: boolean;
 }
 
@@ -55,70 +64,104 @@ export interface SiteRow {
   createdVia: string | null;
 }
 
-/** A refusal said for the person to act on (a bad hostname, a token that can't be kept). */
+/** A refusal said for the person to act on (a bad hostname, a grant that can't be kept). */
 export class SiteError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }
 
-const enc = new TextEncoder();
-const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+interface GrantRow { grant: string; accounts: string; updated: number }
 
-interface ConnRow { login: string; iv: string; data: string; last4: string; accounts: string; updated: number }
+/** What a person's grant says about itself in its messages: what to do is theirs, in the document's settings. */
+const WORDS = (login: string) => ({
+  subject: `${login}'s Cloudflare connection`,
+  fix: `${login} connects Cloudflare again (a document's settings, Custom domain, or /settings)`,
+  none: `${login} hasn't connected Cloudflare: connect it in a document's settings, under Custom domain.`,
+});
 
-export class CloudflareConnections {
-  private aesKey: Promise<CryptoKey> | null;
+export class CloudflareGrants {
+  /** One credential for each person, so two calls at once share one refresh (Cloudflare rotates the refresh token). */
+  private credentials = new Map<string, OAuthCredential>();
 
-  constructor(private sql: Sql, secret: string | null) {
-    this.aesKey = secret ? (async () => {
-      const raw = await crypto.subtle.digest("SHA-256", enc.encode(`erga-cloudflare:${secret}`));
-      return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
-    })() : null;
-  }
+  constructor(private sql: Sql, private secret: string | null) {}
 
   /** Someone's connection, as their pages show it. */
   async info(login: string): Promise<ConnectionInfo> {
     const r = await this.row(login);
-    const unreadable = !!r && (await this.decrypt(login, r)) == null;
-    return { connected: !!r && !unreadable, last4: r?.last4 ?? null, accounts: r ? parseAccounts(r.accounts) : [], updated: r ? Number(r.updated) : null, canStore: !!this.aesKey, unreadable };
+    const grant = r ? parseGrant(r.grant) : null;
+    const unreadable = !!grant && !(await this.opens(login, grant));
+    const dead = !!grant && !grant.refresh && grant.expiresAt <= Date.now();
+    const error = grant?.error ?? (dead ? "it expired and had no refresh token" : null);
+    return { connected: !!grant && !unreadable && !error, accounts: r ? parseAccounts(r.accounts) : [], updated: grant ? grant.at : null, error, canStore: !!this.secret, unreadable };
   }
 
-  /** Keeps a token someone checked, in place of theirs. */
-  async save(login: string, token: string, accounts: CfAccount[], via?: string | null): Promise<ConnectionInfo> {
-    if (!this.aesKey) throw new SiteError("This server has no FACTORY_KEY to encrypt the token with, so it can't keep one.", 503);
-    const who = login.toLowerCase();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(who) }, await this.aesKey, enc.encode(token)));
-    await this.sql.run(`INSERT INTO cloudflare_connections (login, iv, data, last4, accounts, updated, updated_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-      ON CONFLICT (login) DO UPDATE SET iv = excluded.iv, data = excluded.data, last4 = excluded.last4, accounts = excluded.accounts, updated = excluded.updated, updated_via = excluded.updated_via`,
-      who, b64(iv), b64(data), token.slice(-4), JSON.stringify(accounts), Date.now(), via ?? null);
-    return this.info(who);
+  /** The grant after a consent (Cloudflare's answer to the code exchange), in place of theirs. Answers the access token. */
+  async connect(login: string, oauth: SiteOAuth, answer: TokenAnswer, via?: string | null): Promise<string> {
+    const token = await this.credential(login, oauth).connect(answer, login.toLowerCase());
+    if (via) await this.sql.run("UPDATE cloudflare_grants SET updated_via = ?2 WHERE login = ?1", login.toLowerCase(), via);
+    return token;
   }
 
-  /** Forgets someone's token. Their sites stay up as they are, but don't change again until they connect again. */
-  async remove(login: string): Promise<ConnectionInfo> {
-    await this.sql.run("DELETE FROM cloudflare_connections WHERE login = ?1", login.toLowerCase());
+  /** The accounts the grant reaches, as read after the consent. */
+  async setAccounts(login: string, accounts: CfAccount[]): Promise<void> {
+    await this.sql.run("UPDATE cloudflare_grants SET accounts = ?2 WHERE login = ?1", login.toLowerCase(), JSON.stringify(accounts));
+  }
+
+  /** Revokes someone's grant on Cloudflare and forgets it. Their sites stay up as they are, but don't change again until they connect again. */
+  async disconnect(login: string, oauth: SiteOAuth): Promise<ConnectionInfo> {
+    if (this.secret) await this.credential(login, oauth).disconnect();
+    await this.sql.run("DELETE FROM cloudflare_grants WHERE login = ?1", login.toLowerCase());
     return this.info(login);
   }
 
-  /** Someone's token, decrypted, for the server's own calls to Cloudflare; null if none, or it doesn't open here. Never for a page. */
-  async token(login: string): Promise<string | null> {
+  /**
+   * Someone's access token, for the server's own calls to Cloudflare (refreshed when it is about to expire); null if
+   * they have no grant, or it doesn't open here. Throws (DeployError) when Cloudflare refuses the refresh. Never for a page.
+   */
+  async token(login: string, oauth: SiteOAuth): Promise<string | null> {
     const r = await this.row(login);
-    return r ? this.decrypt(login, r) : null;
+    const grant = r ? parseGrant(r.grant) : null;
+    if (!grant || !(await this.opens(login, grant))) return null;
+    return this.credential(login, oauth).token();
   }
 
-  private async row(login: string): Promise<ConnRow | null> {
-    return (await this.sql.all<ConnRow>("SELECT login, iv, data, last4, accounts, updated FROM cloudflare_connections WHERE login = ?1", login.toLowerCase()))[0] ?? null;
+  /** The grant's refresh, revoke and sealing (deploy/credential.ts), on this person's row. */
+  private credential(login: string, oauth: SiteOAuth): OAuthCredential {
+    const who = login.toLowerCase();
+    if (!this.secret) throw new SiteError("This server has no FACTORY_KEY to seal a Cloudflare connection with, so it can't keep one.", 503);
+    const kept = this.credentials.get(who);
+    if (kept) return kept;
+    const credential = new OAuthCredential({
+      storage: {
+        get: async <T>() => { const r = await this.row(who); return (r ? parseGrant(r.grant) : undefined) as T | undefined; },
+        put: async (_key, value) => {
+          await this.sql.run(`INSERT INTO cloudflare_grants (login, "grant", accounts, updated) VALUES (?1, ?2, '[]', ?3)
+            ON CONFLICT (login) DO UPDATE SET "grant" = excluded."grant", updated = excluded.updated`, who, JSON.stringify(value), Date.now());
+        },
+        delete: async () => { await this.sql.run("DELETE FROM cloudflare_grants WHERE login = ?1", who); },
+      },
+      net: oauth.net,
+      client: { id: oauth.clientId },
+      sealKey: this.keyOf(who),
+      words: WORDS(who),
+    });
+    this.credentials.set(who, credential);
+    return credential;
   }
 
-  private async decrypt(login: string, r: Pick<ConnRow, "iv" | "data">): Promise<string | null> {
-    if (!this.aesKey) return null;
-    try {
-      return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(r.iv), additionalData: enc.encode(login.toLowerCase()) }, await this.aesKey, unb64(r.data)));
-    } catch {
-      return null;
-    }
+  private keyOf(login: string) { return sealKeyFrom(`cloudflare-grant:${login.toLowerCase()}:${this.secret}`); }
+
+  private async opens(login: string, grant: StoredGrant): Promise<boolean> {
+    if (!this.secret) return false;
+    try { await open(grant.access, await this.keyOf(login)); return true; } catch { return false; }
   }
+
+  private async row(login: string): Promise<GrantRow | null> {
+    return (await this.sql.all<GrantRow>('SELECT "grant", accounts, updated FROM cloudflare_grants WHERE login = ?1', login.toLowerCase()))[0] ?? null;
+  }
+}
+
+function parseGrant(s: string): StoredGrant | null {
+  try { const g = JSON.parse(s); return g && typeof g == "object" && g.access ? (g as StoredGrant) : null; } catch { return null; }
 }
 
 function parseAccounts(s: string): CfAccount[] {
@@ -166,7 +209,7 @@ export class Sites {
 
 /**
  * A hostname as typed ("Notes.Example.com.", "https://notes.example.com/"),
- * checked against the zones the token reaches: the hostname, and the zone it
+ * checked against the zones the grant reaches: the hostname, and the zone it
  * is on (the longest zone name that ends it).
  */
 export function checkHostname(typed: string, zones: CfZone[]): { hostname: string; zone: CfZone } {
@@ -179,8 +222,8 @@ export function checkHostname(typed: string, zones: CfZone[]): { hostname: strin
   const zone = zones.filter((z) => hostname == z.name || hostname.endsWith(`.${z.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
   if (!zone) {
     throw new SiteError(zones.length
-      ? `${hostname} isn't on a domain your Cloudflare token reaches. Your domains: ${zones.map((z) => z.name).join(", ")}.`
-      : "Your Cloudflare token reaches no domains. Add a domain to Cloudflare, or give the token Zone Read on your domains.");
+      ? `${hostname} isn't on a domain your Cloudflare connection reaches. Your domains: ${zones.map((z) => z.name).join(", ")}.`
+      : "Your Cloudflare account has no domains. Add a domain to Cloudflare first.");
   }
   return { hostname, zone };
 }

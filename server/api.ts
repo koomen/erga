@@ -18,8 +18,8 @@
 //                                  signed in (the tree's UI) as well as tokens
 //   /tokens, /tokens/...           a person's tokens: make one (a scope, an expiry), revoke one, approve or deny an agent's request
 //   /settings                      their settings: their Cloudflare connection, the test token, and a link to /tokens
-//   POST /settings/cloudflare      connects their Cloudflare account: a token they paste, page only
-//   POST /settings/cloudflare/disconnect   forgets it
+//   POST /settings/cloudflare/disconnect   revokes their Cloudflare grant and forgets it (Connect is a consent:
+//                                  /auth/cloudflare/start, server/sites/connect.ts)
 //
 // The Worker sends those paths here, with the platform
 // that knows agent tokens. The share button's token
@@ -46,8 +46,6 @@ import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } fr
 import { cleanRel } from "../document/host";
 import { authOps, LABEL_MAX, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { TEMPLATES, templateById } from "./pages/index.ts";
-import { SITE_PERMISSIONS, SiteError, tokenTemplateUrl, verifyToken } from "./sites/index.ts";
-import { DeployError } from "../deploy/pipeline";
 
 // ---------------------------------------------------------------- the registry
 
@@ -674,22 +672,9 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
       throw e;
     }
   }
-  if (path == "/settings/cloudflare" && post) {
-    const token = field("token").trim();
-    if (!token) return tokensPage(platform, session, url, { notice: error("Paste the Cloudflare API token first.") });
-    try {
-      const ops = platform.sites?.(origin);
-      if (!ops) return tokensPage(platform, session, url, { notice: error("This server can't publish to Cloudflare.") });
-      const accounts = await verifyToken(token, ops.net(token));
-      await platform.directory.cloudflare.save(session.login, token, accounts);
-      return new Response(null, { status: 303, headers: { Location: "/settings?connected=cloudflare#cloudflare" } });
-    } catch (e) {
-      if (e instanceof SiteError || e instanceof DeployError) return tokensPage(platform, session, url, { notice: error(e.message), anchor: "cloudflare" });
-      throw e;
-    }
-  }
   if (path == "/settings/cloudflare/disconnect" && post) {
-    await platform.directory.cloudflare.remove(session.login);
+    const ops = platform.sites?.(origin);
+    if (ops) await platform.directory.cloudflare.disconnect(session.login, ops.oauth);
     return new Response(null, { status: 303, headers: { Location: "/settings#cloudflare" } });
   }
   if (path == "/tokens/revoke" && post) {
@@ -819,13 +804,7 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   .cf-card .cf-who b { display: block; font-weight: 600; color: var(--fg-strong); }
   .cf-card .cf-who span { font-size: 13px; color: var(--soft); }
   .cf-card button.deny { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--soft); cursor: pointer; }
-  .cf-steps { margin: 0 0 14px; padding-left: 20px; font-size: 14px; line-height: 1.6; }
-  .cf-steps li { margin-bottom: 6px; }
-  .cf-steps a { color: var(--fg-strong); text-underline-offset: 0.2em; }
-  .cf-perms { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; padding: 0; list-style: none; }
-  .cf-perms li { margin: 0; padding: 2px 9px; border-radius: 999px; font-size: 12px; color: var(--soft); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  .cf-form { display: flex; gap: 8px; align-items: center; }
-  .cf-form input { flex: 1; min-width: 0; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: transparent; color: var(--fg-strong); }
+  .cf-card .cf-connect { flex: none; text-decoration: none; }
   .cf-sites { list-style: none; margin: 14px 0 0; padding: 0; font-size: 13.5px; }
   .cf-sites li { display: flex; gap: 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--rule); }
   .cf-sites li a { color: var(--fg-strong); font-weight: 550; text-decoration: none; }
@@ -874,34 +853,28 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
 /** The Cloudflare logo's cloud, small, for the connection's card. */
 const CLOUD = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#f38020" d="M16.6 16.9c.2-.5.1-1-.2-1.3-.3-.3-.7-.5-1.1-.5l-8.8-.1c-.1 0-.1 0-.2-.1v-.2c0-.1.1-.1.2-.1l8.9-.1c1-.1 2.2-.9 2.6-2l.5-1.4.1-.2C18 8.1 15.7 6 12.9 6c-2.6 0-4.8 1.7-5.6 4-.5-.4-1.2-.6-1.9-.5-1.2.1-2.2 1.1-2.3 2.4 0 .3 0 .6.1.9C1.3 12.8 0 14.2 0 15.8c0 .2 0 .3.1.5 0 .1.1.1.2.1h16.2c.1 0 .2-.1.2-.2l-.1.7z"/><path fill="#faae40" d="M19.4 11.2h-.2l-.1.1-.3 1.1c-.2.5-.1 1 .2 1.3.3.3.7.5 1.1.5l1.9.1c.1 0 .1 0 .2.1v.2c0 .1-.1.1-.2.1l-1.9.1c-1 .1-2.2.9-2.6 2l-.1.4c0 .1 0 .1.1.1h6.6c.1 0 .2 0 .2-.1.1-.4.2-.8.2-1.2 0-2.6-2.1-4.8-4.8-4.8z"/></svg>`;
 
-/** /settings' Cloudflare section: connect (a token pasted, with the link that makes it), or who's connected and the sites it deploys. */
+/** /settings' Cloudflare section: Connect (a consent on Cloudflare's page), or the account it's connected as, Disconnect, and the sites it deploys. */
 async function cloudflareBlock(platform: Platform, session: Session, url: URL, notice?: string): Promise<string> {
   if (!platform.sites) return "";
   const dir = platform.directory;
   const [c, sites] = await Promise.all([dir.cloudflare.info(session.login), dir.sites.list(session.login)]);
   const docs = new Map((await Promise.all(sites.map((s) => dir.get(s.docId)))).filter((d) => d != null).map((d) => [d.id, d]));
   const siteList = sites.length ? `<ul class="cf-sites">${sites.map((s) => { const d = docs.get(s.docId); return `<li><a href="https://${esc(s.hostname)}/" target="_blank" rel="noopener">${esc(s.hostname)}</a><span>${d ? `${esc(d.title)} · /${esc(d.owner)}/${esc(d.slug)}` : "a document that's gone"}</span></li>`; }).join("")}</ul>` : "";
-  const connected = url.searchParams.get("connected") == "cloudflare" && c.connected ? `<p class="notice">Connected. Open a document's settings (the gear in the editor) and choose a domain under Custom domain.</p>` : "";
-  const body = c.connected ? `${connected}<div class="cf-card on"><span class="cf-mark">${CLOUD}</span>
-    <div class="cf-who"><b>${esc(c.accounts.map((a) => a.name).join(", ") || "Cloudflare")}</b><span>Token ending in ${esc(c.last4 ?? "")} · connected ${c.updated ? day(c.updated) : ""}</span></div>
-    <form method="post" action="/settings/cloudflare/disconnect" data-confirm="Disconnect Cloudflare? Your sites stay up, but they stop following your documents until you connect again."><button class="deny">Disconnect</button></form></div>
+  const back = url.searchParams.get("cloudflare") == "connected" && c.connected ? `<p class="notice">Connected. Open a document's settings (the gear in the editor) and choose a domain under Custom domain.</p>`
+    : url.searchParams.get("cloudflare_error") ? `<p class="notice error">${esc(url.searchParams.get("cloudflare_error")!)}</p>` : "";
+  const connect = c.canStore ? `<a class="pill cf-connect" href="/auth/cloudflare/start?return=${encodeURIComponent("/settings#cloudflare")}">${c.unreadable || c.error ? "Connect again" : "Connect Cloudflare"}</a>` : "";
+  const body = c.connected ? `<div class="cf-card on"><span class="cf-mark">${CLOUD}</span>
+    <div class="cf-who"><b>Connected as ${esc(c.accounts.map((a) => a.name).join(", ") || "your Cloudflare account")}</b><span>Since ${c.updated ? day(c.updated) : ""}</span></div>
+    <form method="post" action="/settings/cloudflare/disconnect" data-confirm="Disconnect Cloudflare? Erga revokes its access. Your sites stay up, but they stop following your documents until you connect again."><button class="deny">Disconnect</button></form></div>
     ${sites.length ? `<p class="sub" style="margin-top:18px">Your documents on your domains:</p>${siteList}` : ""}`
-    : `<div class="cf-card">
-    ${c.unreadable ? `<p class="notice error">The token you connected doesn't open on this server. Connect again.</p>` : ""}
-    <ol class="cf-steps">
-      <li><a href="${esc(tokenTemplateUrl())}" target="_blank" rel="noopener">Make a Cloudflare API token</a>. The link fills in what Erga needs, and nothing more:
-        <ul class="cf-perms">${SITE_PERMISSIONS.map((p) => `<li title="To ${esc(p.why)}">${esc(p.label)}</li>`).join("")}</ul>
-        You can limit it to some of your domains.</li>
-      <li>Paste the token here.</li>
-    </ol>
-    ${c.canStore ? `<form class="cf-form" method="post" action="/settings/cloudflare"><input name="token" type="password" placeholder="Cloudflare API token" autocomplete="off" spellcheck="false" aria-label="Cloudflare API token" required><button class="pill">Connect</button></form>`
-      : `<p class="notice error">This server has no FACTORY_KEY to encrypt a token with, so it can't keep one.</p>`}
-    ${siteList}
-  </div>`;
+    : `<div class="cf-card on"><span class="cf-mark">${CLOUD}</span>
+    <div class="cf-who"><b>Not connected</b><span>${c.unreadable ? "The connection you made doesn't open on this server." : c.error ? `The connection stopped working: ${esc(c.error)}.` : "Cloudflare asks you to allow Erga, and which account."}</span></div>
+    ${connect || `<span class="notice error">This server has no FACTORY_KEY to seal a connection with, so it can't keep one.</span>`}</div>
+    ${siteList}`;
   return `<section class="part cf" id="cloudflare">
   <h2>Cloudflare</h2>
-  <p class="sub">Publish documents at your own domains, from your own Cloudflare account. Erga keeps the token encrypted, and never shows it again.</p>
-  ${notice ?? ""}
+  <p class="sub">Publish documents at your own domains, from your own Cloudflare account. Erga asks only to put Workers on your domains and to read your accounts and domains.</p>
+  ${notice ?? ""}${back}
   ${body}
 </section>`;
 }
