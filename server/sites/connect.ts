@@ -49,6 +49,10 @@ export async function cloudflareAuth(request: Request, platform: Platform): Prom
   if (path == "/auth/cloudflare/start") {
     if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname + url.search)}` } });
     if (session.test || session.agent) return page("Not for this sign-in", "Only a person, signed in, connects their Cloudflare account.", 403);
+    // A consent while an older one of this client's is active (other scopes) fails on Cloudflare's page ("Upstream
+    // error"): the old grant is revoked first. Connect shows only when there's none, or it no longer works.
+    const dir = platform.directory;
+    if ((await dir.cloudflare.info(session.login)).updated != null) await dir.cloudflare.disconnect(session.login, ops.oauth).catch(() => {});
     const { verifier, challenge } = await pkce();
     const c: Consent = { state: randomToken(16), verifier, login: session.login, back: safeReturn(url.searchParams.get("return")), popup: url.searchParams.get("popup") == "1" };
     const to = authorizeUrl({ ...(ops.oauth.authorize ? { authorize: ops.oauth.authorize } : {}), clientId: ops.oauth.clientId, redirect, scopes: SITE_OAUTH_SCOPES, state: c.state, challenge });
