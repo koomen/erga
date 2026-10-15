@@ -177,6 +177,18 @@ test("a grant without a scope publishing needs now says to connect again, and Cl
   expect(e.message).not.toContain("token");
 });
 
+test("a new consent revokes the person's old grant first (Cloudflare's page fails while an older one is active)", async () => {
+  const s = server();
+  await s.consent();
+  const old = s.cf.state.refreshTokens[0];
+  const revoked = s.cf.state.revoked;
+  await s.get("/auth/cloudflare/start");
+  expect(s.cf.state.revoked).toBe(revoked + 1);
+  expect(s.cf.state.refreshTokens).not.toContain(old);
+  expect((await s.dir.cloudflare.info("ada")).updated).toBeNull();
+  expect((await s.consent()).headers.get("location")).toContain("cloudflare=connected");
+});
+
 test("without a FACTORY_KEY, the server keeps no grant", async () => {
   const s = server(null);
   const r = await s.consent();
