@@ -35,6 +35,22 @@ export interface CfZone { id: string; name: string; account: CfAccount }
 /** How this server reaches Cloudflare's OAuth: Erga's client, the network (or the pretend one), and the consent page's address (the pretend one's, locally). */
 export interface SiteOAuth { clientId: string; net: Fetch; authorize?: string }
 
+/**
+ * What a person's consent asks for: Account Settings Read (their accounts),
+ * Workers Scripts Write (the site's Worker, its files, and its custom domain:
+ * Cloudflare's API takes this one for each), Workers Routes Write (the custom
+ * domain, as the installs ask), Zone Read (the list of domains), and
+ * offline_access (a refresh token, so a site follows its document after the
+ * hour an access token lasts). Each must be among the scopes of Erga's OAuth
+ * client; Cloudflare takes a request for some of them. (Workers Editor,
+ * workers-scripts.edit, isn't enough: Cloudflare refuses it the upload of a
+ * new Worker's files.)
+ */
+export const SITE_OAUTH_SCOPES = "account-settings.read workers-scripts.write workers-routes.write zone.read offline_access";
+
+/** The scopes a grant must have (offline_access isn't one Cloudflare names in the grant's scope). */
+export const SITE_NEEDS = SITE_OAUTH_SCOPES.split(" ").filter((s) => s != "offline_access");
+
 /** A person's connection, as their own pages show it: never a token. */
 export interface ConnectionInfo {
   connected: boolean;
@@ -90,7 +106,8 @@ export class CloudflareGrants {
     const grant = r ? parseGrant(r.grant) : null;
     const unreadable = !!grant && !(await this.opens(login, grant));
     const dead = !!grant && !grant.refresh && grant.expiresAt <= Date.now();
-    const error = grant?.error ?? (dead ? "it expired and had no refresh token" : null);
+    const lacks = grant ? SITE_NEEDS.filter((s) => !grant.scopes.includes(s)) : [];
+    const error = grant?.error ?? (dead ? "it expired and had no refresh token" : lacks.length ? `it doesn't allow ${lacks.join(", ")}, which publishing needs now` : null);
     return { connected: !!grant && !unreadable && !error, accounts: r ? parseAccounts(r.accounts) : [], updated: grant ? grant.at : null, error, canStore: !!this.secret, unreadable };
   }
 

@@ -8,14 +8,18 @@
 import { ERGA_OAUTH_CLIENT_ID } from "../deploy/credential";
 import type { Fetch } from "../deploy/pipeline";
 import { mockCloudflare, mockSite } from "../deploy/mock-cloudflare";
-import type { SiteOAuth, SiteOps } from "../server/sites/index.ts";
+import { SITE_OAUTH_SCOPES, type SiteOAuth, type SiteOps } from "../server/sites/index.ts";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
 /** The pretend Cloudflare (local development only): one for the whole isolate, so every document's sites share one account. */
 let mock: ReturnType<typeof mockCloudflare> | null = null;
 const mockOn = (env: Env) => env.ERGA_DEPLOY_MOCK == "1";
-const mockNet = () => (mock ??= mockCloudflare({ delayMs: 60 })).fetch;
+/** Its consent grants what a site's asks for (its default is the control Worker's scopes). */
+const mockNet = () => {
+  if (!mock) { mock = mockCloudflare({ delayMs: 60 }); mock.state.oauthScopes = SITE_OAUTH_SCOPES; }
+  return mock.fetch;
+};
 
 /** How to reach Cloudflare with a token: the pretend one for a "mock-" token while ERGA_DEPLOY_MOCK=1, else the real API. */
 export function siteNet(env: Env, token: string): Fetch {

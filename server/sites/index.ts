@@ -5,5 +5,5 @@
 export { siteApi } from "./api.ts";
 export { SiteDeploys, type PublishedSite, type SiteDeps, type SiteObject } from "./deploys.ts";
 export { cloudflareAuth } from "./connect.ts";
-export { deploySite, IDLE_SITE, listAccounts, listZones, publishTo, removeSite, SITE_NEEDS, SITE_OAUTH_SCOPES, siteFiles, siteView, zonesOf, type SiteDeploy, type SiteOps } from "./publish.ts";
+export { deploySite, IDLE_SITE, listAccounts, listZones, publishTo, removeSite, siteCloudflare, SITE_NEEDS, SITE_OAUTH_SCOPES, siteFiles, siteView, zonesOf, type SiteDeploy, type SiteOps } from "./publish.ts";
 export { checkHostname, CloudflareGrants, scriptName, SiteError, Sites, type CfAccount, type CfZone, type ConnectionInfo, type SiteOAuth, type SiteRow } from "./rows.ts";

@@ -78,7 +78,7 @@ test("in the editor's settings, Connect Cloudflare opens the consent in a popup,
   const [popup] = await Promise.all([p.context().waitForEvent("page"), p.click("#ds-site-connect")]);
   await popup.waitForLoadState();
   expect(new URL(popup.url()).pathname).toBe("/auth/cloudflare/mock/consent");
-  expect(await popup.locator(".scopes").textContent()).toContain("workers-scripts.edit");
+  expect(await popup.locator(".scopes").textContent()).toContain("workers-scripts.write");
   expect(await p.locator("#ds-site-connect").textContent()).toBe("Waiting for Cloudflare…");
   await popup.click("#authorize");
   await popup.waitForEvent("close", { timeout: 10_000 });
