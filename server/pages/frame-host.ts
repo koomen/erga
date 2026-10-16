@@ -16,6 +16,12 @@ const versionOf = (text: string) => {
 /** What a document's page may do in its frame, in the viewer and the editor alike (frame.ts makes the editor's the same). */
 export const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
 
+/**
+ * What a document's page as it renders (#view) may do beyond its sandbox: nothing (the editor's frame passes autoplay
+ * and fullscreen on to the editable page only while the person has agent control on, client/frame.ts).
+ */
+export const PAGE_ALLOW = "autoplay 'none'; fullscreen 'none'";
+
 /** Where the frame's host page shows the page as it renders from: what viewers see, which the document serves at pub/. */
 export const VIEW_FILES = "pub";
 
@@ -308,7 +314,7 @@ export const HOST_SCRIPT = `(function () {
       var old = document.getElementById("view");
       if (old) old.remove();
       var v = document.createElement("iframe");
-      v.id = "view"; v.title = "Document"; v.setAttribute("sandbox", "${PAGE_SANDBOX}");
+      v.id = "view"; v.title = "Document"; v.setAttribute("sandbox", "${PAGE_SANDBOX}"); v.setAttribute("allow", "${PAGE_ALLOW}");
       v.onload = function () { still(v); moved(v); follow(v); if (want == "view") show(v); };
       v.src = src;
       document.body.prepend(v);
@@ -323,4 +329,4 @@ export const HOST_SCRIPT = `(function () {
   parent.postMessage({ type: "erga-host" }, SHELL);
 })();`;
 
-export const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + HOST_SCRIPT + VIEW_FILES);
+export const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + PAGE_ALLOW + HOST_SCRIPT + VIEW_FILES);

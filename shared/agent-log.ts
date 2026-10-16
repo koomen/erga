@@ -7,6 +7,7 @@
 // tabs all show it, collaborators never see it.
 
 import type { FileRef } from "./attach";
+import type { LiveRequest } from "./live-page";
 
 export type LogItem =
   /** `files`: what was attached, as the log shows it. */
@@ -85,6 +86,11 @@ export interface ViewRequest {
   evaluate?: string;
   /** How long evaluate waits for its result, in ms (EVAL_TIMEOUT). */
   timeout?: number;
+  /**
+   * The live page instead (shared/live-page.ts): every one of the person's tabs answers, its result as JSON in
+   * `value`, and the host takes the focused tab's (else a visible one's) answer.
+   */
+  live?: LiveRequest;
 }
 
 export type ColorScheme = "light" | "dark";
@@ -118,11 +124,15 @@ export interface ViewResult {
   error?: string;
   /** evaluate's result as JSON text, cut to EVAL_MAX_JSON characters ("undefined" when there is none). */
   value?: string;
+  /** A live request: this tab couldn't (agent control off, no editor), so another tab's answer comes first. */
+  declined?: boolean;
+  /** A live request: 2 from the focused tab, 1 a visible one, 0 one in the background. */
+  rank?: number;
 }
 
 /** evaluate_page's limits: how long it waits, by default and at most (ms), and how much JSON it sends back. */
 export const EVAL_TIMEOUT = { default: 5_000, max: 15_000 };
 export const EVAL_MAX_JSON = 20_000;
-export const evalTimeout = (req: ViewRequest) => Math.max(100, Math.min(EVAL_TIMEOUT.max, Number(req.timeout) || EVAL_TIMEOUT.default));
+export const evalTimeout = (req: { timeout?: number }) => Math.max(100, Math.min(EVAL_TIMEOUT.max, Number(req.timeout) || EVAL_TIMEOUT.default));
 /** How long a tab may take to answer a view request: the render, plus evaluate's own wait. */
-export const viewWait = (req: ViewRequest) => 20_000 + (req.evaluate != null ? evalTimeout(req) : 0);
+export const viewWait = (req: ViewRequest) => req.live ? 10_000 + (req.live.kind == "inspect" ? evalTimeout(req.live) : 0) : 20_000 + (req.evaluate != null ? evalTimeout(req) : 0);

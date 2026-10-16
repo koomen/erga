@@ -171,6 +171,8 @@ export const Api = HttpApi.make("erga")
         note: Schema.optional(Schema.String),
         error: Schema.optional(Schema.String),
         value: Schema.optional(Schema.String),
+        declined: Schema.optional(Schema.Boolean),
+        rank: Schema.optional(Schema.Number),
       }),
       success: Ok,
     }))

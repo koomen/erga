@@ -715,7 +715,9 @@ export function viewerPage(o: { title: string; docId: string; origin: string; ho
   // (EDITING_HEAD, EDITING_BODY), the frame starts on its half of the editor at once (&edit=1), and the editor's files are
   // fetched as the page parses, rather than one after another once its script runs (EDIT_BOOT).
   const opening = o.editable ? `<script>${EDITING_HEAD}</script>` : "";
-  const frame = `<iframe id="frame" class="erga-view" ${o.editable ? "data-src" : "src"}="${esc(src)}" title="${esc(o.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>`;
+  // It may pass autoplay and fullscreen on: only the editor's frame gives them to the page, and only while the person
+  // has agent control on (client/frame.ts); the plain page never gets them (PAGE_ALLOW).
+  const frame = `<iframe id="frame" class="erga-view" ${o.editable ? "data-src" : "src"}="${esc(src)}" title="${esc(o.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups" allow="autoplay; fullscreen"></iframe>`;
   // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
   // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT).
   const backdrop = `<script>${BAND_HEAD}ergaBand(${JSON.stringify(o.docId)});</script>`;
