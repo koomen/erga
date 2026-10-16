@@ -6,7 +6,7 @@
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./front-door.ts";
-import { esc, HOST_SCRIPT, HOST_STYLE, HOST_VERSION, PAGE_SANDBOX, VIEW_FILES } from "../pages/index.ts";
+import { esc, HOST_SCRIPT, HOST_STYLE, HOST_VERSION, PAGE_ALLOW, PAGE_SANDBOX, VIEW_FILES } from "../pages/index.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -118,7 +118,7 @@ export async function pagesDoor(request: Request, url: URL, doc: { owner: string
     // resolves the document's files there from the start, even in Chrome's preload scanner, which otherwise asks for them here too.
     const html = `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(files)}"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
 <style>${HOST_STYLE}</style>
-</head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`;
+</head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}" allow="${PAGE_ALLOW}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`;
     // Everything in it comes from its address (the token names the shell) and this code: with this code's version in the
     // address (?v=, as the document's page links it), the browser may keep it for the day the token stays the same; without,
     // it's checked with the server each time (answered 304 when unchanged).

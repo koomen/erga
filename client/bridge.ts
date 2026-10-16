@@ -23,6 +23,7 @@ import { markdownLanguage } from "@codemirror/lang-markdown";
 import { LanguageSupport } from "@codemirror/language";
 import type { InlineStyle, Kind, MarkAuthor, Peer } from "./editor";
 import type { ViewRequest, ViewResult } from "../shared/agent-log";
+import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { zoomKey, type ZoomBy } from "./zoom";
 
 /**
@@ -107,7 +108,11 @@ export type ToFrame =
   | { type: "style"; id: number; op: "toggle"; style: InlineStyle }
   | { type: "style"; id: number; op: "clear" }
   | { type: "style"; id: number; op: "link"; url: string }
-  | { type: "capture"; id: number; req: ViewRequest; text?: string };
+  | { type: "capture"; id: number; req: ViewRequest; text?: string }
+  /** The agent's request to the live page (shared/live-page.ts). */
+  | { type: "live"; id: number; req: LiveRequest }
+  /** The person turned agent control on or off in this tab: the page's frame gets (or loses) autoplay and fullscreen, and page_click and page_key work (or don't). */
+  | { type: "control"; on: boolean };
 
 /** Frame → shell. Nothing here is trusted: the page can send any of it. */
 export type FromFrame =
@@ -131,6 +136,7 @@ export type FromFrame =
   | { type: "detached"; id: number; state: unknown; version: number }
   | { type: "styled"; id: number; why: string | null }
   | { type: "captured"; id: number; result: ViewResult }
+  | { type: "lived"; id: number; result: LiveResult }
   /** A link to another of the document's pages, followed on the page: the shell goes to it. */
   | { type: "open"; path: string };
 

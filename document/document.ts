@@ -566,8 +566,8 @@ export class Document {
     if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const bytes = await this.storage.get<Uint8Array>(FILE + rel);
     if (!bytes) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    const r = docFile(rel, bytes, request.headers.get("if-none-match"));
-    return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers, "Server-Timing": 'doc;desc="stored"' } });
+    const r = docFile(rel, bytes, request.headers.get("if-none-match"), request.headers.get("range"), "stored");
+    return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers } });
   }
 
   /**
@@ -593,8 +593,8 @@ export class Document {
     }
     const bytes = await this.versions.file(v, rel);
     if (!bytes) return notFound();
-    const r = docFile(rel, bytes, request.headers.get("if-none-match"));
-    return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers, "Server-Timing": `doc;desc="version ${n}"` } });
+    const r = docFile(rel, bytes, request.headers.get("if-none-match"), request.headers.get("range"), `version ${n}`);
+    return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers } });
   }
 
   /** The published version's number in "manual" mode; null in "latest". */

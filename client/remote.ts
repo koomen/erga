@@ -10,6 +10,7 @@ import { historyField } from "@codemirror/commands";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
 import type { InlineStyle, Kind, MarkAuthor, PageProblem, Peer } from "./editor";
 import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
+import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { changesBetween } from "../document/merge";
 import { clampZoom, type ZoomBy } from "./zoom";
 
@@ -142,6 +143,8 @@ export class RemotePage {
         // A focus asked for before the frame was up only if the frame still has it: focus moved on since (the pages
         // card opened, the agent's box) stays where it went.
         for (const q of this.queue.splice(0)) if (q.type != "focus" || document.activeElement == this.frame) this.post(q);
+        // A frame that loaded again has agent control off: on again, if the person had it on.
+        if (this.control) this.post({ type: "control", on: true });
         return;
       }
       case "push": {
@@ -189,7 +192,7 @@ export class RemotePage {
       }
       case "activity": if (m.kind == "focus" || m.kind == "key") c.onActivity(m.kind); return;
       case "open": if (typeof m.path == "string" && m.path.length < 1000) c.onOpen?.(m.path); return;
-      case "detached": case "styled": case "captured":
+      case "detached": case "styled": case "captured": case "lived":
         this.waiting.get(m.id)?.(m);
         this.waiting.delete(m.id);
         return;
@@ -299,6 +302,18 @@ export class RemotePage {
     const reply = await this.request<Extract<FromFrame, { type: "styled" }>>({ type: "style", id: this.nextId++, ...op } as ToFrame & { id: number }, 3000);
     return reply && typeof reply.why == "string" ? reply.why.slice(0, 500) : null;
   }
+
+  /** The agent's request to the live page (shared/live-page.ts): the frame answers from its logs, or acts. */
+  async live(req: LiveRequest, wait: number): Promise<LiveResult> {
+    const reply = await this.request<Extract<FromFrame, { type: "lived" }>>({ type: "live", id: this.nextId++, req }, wait);
+    const r = reply?.result;
+    // (The page could have sent anything: it goes to the agent as data, cut to size by the host.)
+    return r && typeof r == "object" ? r : { error: "The page didn't answer in time." };
+  }
+
+  /** Agent control on or off, in this tab (live-page.ts). */
+  setControl(on: boolean): void { this.control = on; if (this.ready) this.post({ type: "control", on }); }
+  private control = false;
 
   /** The agent's look at the page: the frame renders it, with `text` if the source view has newer. */
   async capture(req: ViewRequest): Promise<ViewResult> {

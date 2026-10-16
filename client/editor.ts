@@ -28,6 +28,7 @@ import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
 import { watchMoves } from "./moves";
 import { TEXT_GUARD, listenAsEditor } from "./text-guard";
+import { LIVE_WATCH } from "./live-page";
 
 export type Kind = "html" | "md";
 
@@ -503,14 +504,14 @@ export class PageEditor {
       return { units: a.units, html: this.injectHead(M.stamp(src, a.units)) };
     }
     const a = analyzeMarkdown(src, this.state.selection.main.head);
-    const head = `<base href="${this.config.base}">${PROBLEM_WATCH}<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${this.config.markdownHead ?? ""}<style>${PAGE_STYLE}</style>`;
+    const head = `<base href="${this.config.base}">${PROBLEM_WATCH}${LIVE_WATCH}<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${this.config.markdownHead ?? ""}<style>${PAGE_STYLE}</style>`;
     return { units: a.units, html: `<!doctype html><html><head>${head}</head><body><article class="prose" id="erga-article">${a.html}</article></body></html>` };
   }
 
   private injectHead(html: string): string {
     // <base> first, before any script: Chrome's preload scanner otherwise fetches the page's files against the frame's own address too (404s).
     // TEXT_GUARD before the page's scripts too: a press on the text is the editor's, not the page's (text-guard.ts).
-    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${TEXT_GUARD}${CUSTOM_EDITS_API}<style data-erga>${PAGE_STYLE}</style>`;
+    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${LIVE_WATCH}${TEXT_GUARD}${CUSTOM_EDITS_API}<style data-erga>${PAGE_STYLE}</style>`;
     const m = /<head(\s[^>]*)?>/i.exec(html);
     if (m) return html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length);
     const h = /<html(\s[^>]*)?>/i.exec(html);

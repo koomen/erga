@@ -35,8 +35,18 @@ import { mountLayout } from "./layout";
 import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "./zoom";
+import { liveWatch } from "./live-page";
+import { ConsoleLog, actsOnPage, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+// The editor's own console (this window's), from its first line: page_console gives it with the page's ("editor").
+const shellConsole = new ConsoleLog(300);
+liveWatch({ events: false, net: false, types: [] });
+(window as Window & { __ergaLiveTake?: (sink: (kind: string, data: unknown) => void) => void }).__ergaLiveTake?.((kind, data) => {
+  const c = data as { level: ConsoleLevel; text: string; at: number };
+  if (kind == "console" && typeof c?.text == "string") shellConsole.add(c.level, c.text, "editor", c.at);
+});
 
 // Other people's carets and selections in the source view, as CodeMirror
 // decorations (the page draws its own, see PageEditor.setPeers).
@@ -660,6 +670,7 @@ type TreeModule = { mountTree: typeof mountTree };
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
+      else if (msg.type == "view" && msg.id && msg.req?.live) answerLive(msg.id, msg.req.live);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
       else if (msg.type == "versions" || msg.type == "home" || msg.type == "site") docSettings?.event(msg.type);
@@ -1348,6 +1359,61 @@ Once you've read the guide, await further instructions.`;
     await fetch(api("/api/agent/view"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...result }) }).catch(() => {});
   }
 
+  // ---------------------------------------------------------------- the live page
+
+  // The agent's page_console, page_network, page_events, page_inspect, page_click and page_key: the page as it runs
+  // in this tab (live-page.ts, in the frame). Every tab of the person's answers; the host takes the focused one's,
+  // else a visible one's. page_inspect, page_click and page_key show a line here each time, so the person sees what
+  // the agent does in their page; page_click and page_key work only while the person has agent control on.
+  let agentControl = false;
+  const controlBox = $("agent-control") as HTMLInputElement;
+  const liveBar = $("agent-live");
+  const liveText = $("agent-live-text");
+  let liveTimer = 0;
+  /** The bar over the page: on while agent control is, and the agent's last action there for a moment. */
+  function renderLiveBar(line?: string) {
+    clearTimeout(liveTimer);
+    liveText.textContent = line ?? (agentControl ? "The agent can control this page" : "");
+    liveBar.classList.toggle("control", agentControl);
+    $("agent-live-off").hidden = !agentControl;
+    liveBar.hidden = !line && !agentControl;
+    if (line) liveTimer = window.setTimeout(() => renderLiveBar(), ms(4000));
+  }
+  function setAgentControl(on: boolean) {
+    agentControl = on;
+    controlBox.checked = on;
+    page.setControl(on);
+    renderLiveBar();
+  }
+  // A real click, so this tab has the person's activation from it: their page's media may play after the agent's click.
+  controlBox.addEventListener("change", () => setAgentControl(controlBox.checked));
+  $("agent-live-off").addEventListener("click", () => setAgentControl(false));
+  const lineFor = (req: LiveRequest) => req.kind == "click" ? `The agent clicked ${req.selector ?? `the point (${req.x}, ${req.y})`}`
+    : req.kind == "key" ? `The agent pressed ${req.key}${req.selector ? ` on ${req.selector}` : ""}`
+    : req.kind == "inspect" ? (req.expression ? `The agent inspected the page: ${req.expression.replace(/\s+/g, " ").slice(0, 80)}` : "The agent read the page's media and permissions")
+    : "";
+  async function answerLive(id: string, req: LiveRequest) {
+    const tab = { page: pagePath, visible: document.visibilityState == "visible", focused: document.hasFocus(), control: agentControl };
+    let result: LiveResult;
+    if (actsOnPage(req) && !agentControl) result = { error: "The person hasn't turned on \"Allow the agent to control this page\" in this tab. Ask them to turn it on (in the agent panel), then try again." };
+    else {
+      if (shownInTab(req)) renderLiveBar(lineFor(req));
+      result = await page.live(req, (req.kind == "inspect" ? 20_000 : 8_000));
+      if (req.kind == "console" && result.console) {
+        // The page's entries and this window's, together.
+        const r = queryConsole([...result.console.entries, ...queryConsole(shellConsole.entries(), { ...req, limit: 200 }).entries], req);
+        result.console = { entries: r.entries, matched: Math.max(r.matched, result.console.matched), total: result.console.total + shellConsole.total, dropped: result.console.dropped + shellConsole.dropped };
+      }
+      if (req.kind == "inspect" && Array.isArray(result.inspect?.facts)) {
+        const ua = (navigator as Navigator & { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation;
+        result.inspect!.facts = [{ frame: "the editor (the tab itself)", url: location.origin, userActivation: ua ? { isActive: ua.isActive, hasBeenActive: ua.hasBeenActive } : "not supported here", editorFrame: { sandbox: frame.getAttribute("sandbox"), allow: frame.getAttribute("allow") } }, ...result.inspect!.facts as unknown[]];
+      }
+    }
+    const declined = result.error != null;
+    const rank = tab.focused ? 2 : tab.visible ? 1 : 0;
+    await fetch(api("/api/agent/view"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, width: 0, height: 0, errors: [], value: JSON.stringify({ ...result, tab }), declined, rank }) }).catch(() => {});
+  }
+
   // ---------------------------------------------------------------- the agent
 
   const agentPanel = $("agent");
@@ -1366,7 +1432,7 @@ Once you've read the guide, await further instructions.`;
   // The conversation as the log shows it (agent-chat.ts, which the admin's panel shares).
   const agentChat = chat({
     logEl: agentLog, jump: $("agent-jump") as HTMLButtonElement,
-    verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"], evaluate_page: ["Inspecting the page", "Inspected the page"] },
+    verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"], evaluate_page: ["Inspecting the page", "Inspected the page"], page_console: ["Reading the page's console", "Read the page's console"], page_network: ["Reading the page's requests", "Read the page's requests"], page_events: ["Reading the page's events", "Read the page's events"], page_inspect: ["Inspecting the live page", "Inspected the live page"], page_click: ["Clicking on the page", "Clicked on the page"], page_key: ["Pressing a key on the page", "Pressed a key on the page"] },
     externalTip: "An agent you shared this page with, working as your agent",
   });
   const log: Log = agentChat.log;

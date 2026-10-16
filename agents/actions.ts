@@ -178,7 +178,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /d/<id>/api/agent/abort", domain: "none", action: "Stop the editor's agent", exempt: PANEL },
   { route: "POST /d/<id>/api/agent/reset", domain: "none", action: "A new conversation with the editor's agent", exempt: PANEL },
   { route: "POST /d/<id>/api/agent/undo", domain: "none", action: "Undo the editor's agent's last change", exempt: PANEL },
-  { route: "POST /d/<id>/api/agent/view", domain: "none", action: "The tab answers the agent's view_page and evaluate_page", exempt: PANEL },
+  { route: "POST /d/<id>/api/agent/view", domain: "none", action: "The tab answers the agent's view_page and evaluate_page, and its page_console, page_network, page_events, page_inspect, page_click and page_key", exempt: PANEL },
+  // The live page in the person's tab (shared/live-page.ts): no route of its own, but what the person does there.
+  { route: "UI /d/<id>#page-click", domain: "document", action: "Click on the page as it runs (editor)", tool: "page_click" },
+  { route: "UI /d/<id>#page-key", domain: "document", action: "Press a key on the page as it runs (editor)", tool: "page_key" },
+  { route: "UI /d/<id>#devtools", domain: "document", action: "Read the page's console, requests and state, as the browser's developer tools show them (editor)", tool: "page_console" },
+  { route: "UI /d/<id>#agent-control", domain: "none", action: "Allow the agent to control this page (the agent panel's switch)", exempt: "the person's own consent: only their real click in their tab turns it on (and gives the tab the user activation the agent's clicks lack); an agent can't grant it to itself" },
 
   // ------------------------------------------------------------ the API for outside agents
   { route: "GET /llms.txt", domain: "none", action: "The guide for outside agents", exempt: "the outside agents' API: its tools are theirs" },

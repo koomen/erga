@@ -14,7 +14,9 @@ import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
 import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { catchZoomGestures, clampZoom } from "./zoom";
-import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../shared/agent-log";
+import { evaluateIn } from "./evaluate";
+import { LivePage } from "./live-page";
+import { evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../shared/agent-log";
 
 declare global {
   interface Window { ergaFrame?: unknown; __ergaTimescale?: number; ergaHost?: { ready(): void; changed?(): void } }
@@ -28,6 +30,19 @@ const BASE = location.pathname.replace(/\/?$/, "/") + "doc/";
 
 const post = (m: FromFrame) => window.parent.postMessage(m, SHELL);
 
+// The live page, for the agent's page_console, page_network, page_events, page_inspect, page_click and page_key
+// (live-page.ts). A stack frame of this script is the editor's code.
+const SELF = (document.currentScript as HTMLScriptElement | null)?.src || `${location.origin}/frame.js`;
+const live = new LivePage(BASE, SELF);
+live.watchEditor(window);
+/**
+ * What the page's frame may do beyond its sandbox: nothing, unless the person turned on agent control in this tab.
+ * Then its media may play (and go full screen) once the person has clicked in the tab, even when the click that
+ * starts it is the agent's (which the browser never counts as the person's): the shell's frame delegates the
+ * same two (editor.html), and the person's click on the switch is a real one.
+ */
+const ALLOW = { off: "autoplay 'none'; fullscreen 'none'", on: "autoplay; fullscreen" };
+
 // The page itself: scripts, forms and the rest, as on any web page. It's on
 // this origin, which holds nothing but this document. It starts out of sight,
 // behind the page as it renders (the host page's #view, server/pages/frame-host.ts), and takes
@@ -36,6 +51,7 @@ const frame = document.createElement("iframe");
 frame.id = "page";
 frame.title = "Document";
 frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-modals allow-popups");
+frame.setAttribute("allow", ALLOW.off);
 document.body.append(frame);
 // Your caret on the page, wider than the browser's own; in the frame of each render too (onUpdate).
 drawCaret(frame);
@@ -77,6 +93,18 @@ window.addEventListener("message", (e: MessageEvent) => {
   // The shell asks for the editor: it may have missed our "ready", sent before it was listening.
   if (m.type == "erga-edit") { if (!page) post({ type: "ready" }); return; }
   if (m.type == "init") return start(m);
+  if (m.type == "live") {
+    const answer = page ? live.answer(m.req).catch((e: Error) => ({ error: `The page couldn't answer: ${e.message}` })) : Promise.resolve({ error: "The editor hasn't started in this tab yet." });
+    answer.then((result) => post({ type: "lived", id: m.id, result }));
+    return;
+  }
+  if (m.type == "control") {
+    live.control = !!m.on;
+    const allow = m.on ? ALLOW.on : ALLOW.off;
+    // An iframe takes a new allow when it next loads: the page renders again (a render's frame copies this one's).
+    if (cur().getAttribute("allow") != allow) { cur().setAttribute("allow", allow); frame.setAttribute("allow", allow); page?.render(); }
+    return;
+  }
   if (!page || !relay) return;
   switch (m.type) {
     case "external": {
@@ -186,6 +214,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
       // A presentation's pictures of its steps are out of date once its text changes.
       if (u.docChanged) { window.ergaHost?.changed?.(); queueBackdrop(); }
       if (u.rendered) {
+        live.attach(cur());
         drawCaret(cur());
         watchPage();
         watchBackdrop();
@@ -559,91 +588,3 @@ function renderedFonts(d: Document, root: Element): RenderedFont[] {
   return [...by.values()].sort((a, b) => b.elements - a.elements).slice(0, 10);
 }
 const unquote = (s: string) => s.replace(/^["']|["']$/g, "");
-
-
-// evaluate_page: the agent's expression runs in the same throwaway render
-// view_page draws, so it sees computed styles, fonts and sizes as the page
-// has them. Nothing goes back to the document: the render is a copy of its
-// text, removed once the result is out, and nothing reads its DOM back.
-// The expression gets what the page's own scripts have, no more: this
-// origin holds only the document. parent, top, opener and frameElement
-// read as null in it, so it doesn't reach into the editor by mistake.
-// Only the result's JSON comes back, cut to EVAL_MAX_JSON characters.
-// The time limit can't stop an expression that never yields (while (true)):
-// it stalls this tab, and the host gives up after viewWait.
-async function evaluateIn(win: Window, expr: string, timeoutMs: number): Promise<{ value?: string; note?: string; error?: string }> {
-  const W = win as Window & typeof globalThis;
-  for (const k of ["parent", "opener", "frameElement"]) try { Object.defineProperty(W, k, { value: null, configurable: true }); } catch { /* not replaceable here */ }
-  const params = ["parent", "top", "opener", "frameElement"];
-  let fn: (...a: null[]) => Promise<unknown>;
-  try { fn = new W.Function(...params, `return (async () => (${expr}\n))()`) as typeof fn; } catch {
-    // Not one expression: statements, with their own return.
-    try { fn = new W.Function(...params, `return (async () => {${expr}\n})()`) as typeof fn; } catch (e) { return { error: `The expression doesn't parse: ${(e as Error).message}` }; }
-  }
-  let timer = 0;
-  try {
-    const value = await Promise.race([
-      Promise.resolve().then(() => fn(null, null, null, null)),
-      new Promise((_, reject) => { timer = window.setTimeout(() => reject(new EvalTimeout()), timeoutMs); }),
-    ]);
-    const json = toJSON(value, W);
-    if (json.length <= EVAL_MAX_JSON) return { value: json };
-    return { value: json.slice(0, EVAL_MAX_JSON), note: `The result is ${json.length} characters of JSON; this is the first ${EVAL_MAX_JSON}. Return less (pick the properties you need).` };
-  } catch (e) {
-    if (e instanceof EvalTimeout) return { error: `The expression didn't finish within ${timeoutMs} ms.` };
-    const err = e as { name?: unknown; message?: unknown } | null;
-    return { error: `The expression threw: ${err && typeof err == "object" && "message" in err ? `${String(err.name ?? "Error")}: ${String(err.message)}` : String(e)}` };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-class EvalTimeout extends Error {}
-
-/**
- * A value from the page as JSON, whatever it is: elements become a short
- * description (<p#id.class>), lists and sets arrays, computed styles their
- * properties, cycles "[circular]". Stops early once it is far over the cap.
- */
-function toJSON(value: unknown, W: Window & typeof globalThis): string {
-  if (value === undefined) return "undefined";
-  const seen = new WeakSet<object>();
-  let budget = EVAL_MAX_JSON * 4;
-  const plain = (x: unknown, depth: number): unknown => {
-    if (budget-- <= 0) return "…";
-    if (x === null || typeof x == "boolean" || typeof x == "string") return x;
-    if (typeof x == "number") return Number.isFinite(x) ? x : String(x);
-    if (typeof x == "bigint") return `${x}n`;
-    if (typeof x == "undefined") return null;
-    if (typeof x == "function") return `[function ${x.name || "anonymous"}]`;
-    if (typeof x == "symbol") return x.toString();
-    const o = x as object;
-    if (seen.has(o)) return "[circular]";
-    if (depth > 12) return "[too deep]";
-    seen.add(o);
-    try {
-      if (o instanceof W.Element) return `<${o.localName}${o.id ? `#${o.id}` : ""}${[...o.classList].map((c) => `.${c}`).join("")}>`;
-      if (o instanceof W.Node) return o.nodeType == 3 ? `#text ${JSON.stringify((o.textContent ?? "").slice(0, 80))}` : `[${o.nodeName}]`;
-      if (o instanceof W.CSSStyleDeclaration) {
-        const out: Record<string, string> = {};
-        for (let i = 0; i < o.length; i++) out[o[i]] = o.getPropertyValue(o[i]);
-        return out;
-      }
-      if (o instanceof W.FontFace) return { family: o.family, style: o.style, weight: o.weight, status: o.status };
-      if (o instanceof W.Error) return { name: o.name, message: o.message };
-      if (o instanceof W.Map) return plain(Object.fromEntries([...o.entries()].slice(0, 1000).map(([k, v]) => [String(k), v])), depth + 1);
-      if (typeof (o as { toJSON?: unknown }).toJSON == "function") return plain((o as { toJSON(): unknown }).toJSON(), depth + 1);
-      if (Array.isArray(o) || (Symbol.iterator in o && typeof o != "string")) {
-        const out: unknown[] = [];
-        for (const v of o as Iterable<unknown>) { if (out.length >= 1000 || budget <= 0) { out.push("…"); break; } out.push(plain(v, depth + 1)); }
-        return out;
-      }
-      const out: Record<string, unknown> = {};
-      for (const k of Object.keys(o)) { if (budget <= 0) { out["…"] = "…"; break; } out[k] = plain((o as Record<string, unknown>)[k], depth + 1); }
-      return out;
-    } finally {
-      seen.delete(o);
-    }
-  };
-  return JSON.stringify(plain(value, 0)) ?? "undefined";
-}

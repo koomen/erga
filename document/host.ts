@@ -105,6 +105,8 @@ export const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
   ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf",
   ".txt": "text/plain; charset=utf-8", ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4", ".aac": "audio/aac", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg; codecs=opus", ".wav": "audio/wav",
+  ".flac": "audio/flac", ".m4v": "video/mp4", ".mov": "video/quicktime",
 };
 export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase())?.[0] ?? ""];
 
@@ -115,13 +117,47 @@ export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase()
  * had it comes back as a 304 with no body. Shared by the host's route and the
  * Durable Object's own (cloudflare/document-object.ts, which serves stored files before
  * the room is open).
+ *
+ * A Range request (`range`, one range of bytes, as audio and video ask: Safari
+ * plays none without) gets those bytes (206), or 416 if they're past the end.
+ * `serverTiming` says which store it came from (Server-Timing's file, which the
+ * page's Resource Timing reads, for page_network); the bytes sent and the type
+ * are added to it.
  */
-export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | null): { status: number; type: string; headers: Record<string, string>; body: Uint8Array | null } {
+export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | null, range?: string | null, store = "room"): { status: number; type: string; headers: Record<string, string>; body: Uint8Array | null } {
   const etag = `"${digest(bytes)}"`;
   const type = mimeOf(rel) ?? (isTextFile(rel) ? "text/plain; charset=utf-8" : "application/octet-stream");
-  const headers = { "Cache-Control": "no-cache", ETag: etag };
+  const timing = (more: string) => `file;desc="${store}${more} type ${type.split(";")[0]}"`;
+  const headers: Record<string, string> = { "Cache-Control": "no-cache", ETag: etag, "Accept-Ranges": "bytes" };
   const fresh = !!ifNoneMatch && ifNoneMatch.split(",").some((t) => t.trim().replace(/^W\//, "") == etag);
-  return fresh ? { status: 304, type, headers, body: null } : { status: 200, type, headers, body: bytes };
+  if (fresh) return { status: 304, type, headers: { ...headers, "Server-Timing": timing(" not modified") }, body: null };
+  const r = range ? byteRange(range, bytes.length) : null;
+  if (r == "unsatisfiable") return { status: 416, type, headers: { ...headers, "Content-Range": `bytes */${bytes.length}`, "Server-Timing": timing(` bytes */${bytes.length}`) }, body: new Uint8Array() };
+  if (r) {
+    const cr = `bytes ${r.start}-${r.end}/${bytes.length}`;
+    return { status: 206, type, headers: { ...headers, "Content-Range": cr, "Server-Timing": timing(` ${cr}`) }, body: bytes.subarray(r.start, r.end + 1) };
+  }
+  return { status: 200, type, headers: { ...headers, "Server-Timing": timing(` bytes 0-${Math.max(0, bytes.length - 1)}/${bytes.length}`) }, body: bytes };
+}
+
+/**
+ * One range of a Range header ("bytes=0-", "bytes=100-199", "bytes=-500"),
+ * clamped to the file's `size`; null to send the whole file (no range, a
+ * header it doesn't understand, several ranges); "unsatisfiable" when it
+ * starts past the end.
+ */
+export function byteRange(header: string, size: number): { start: number; end: number } | "unsatisfiable" | null {
+  const m = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(header);
+  if (!m || (m[1] == "" && m[2] == "")) return null;
+  if (m[1] == "") {
+    const n = Number(m[2]);
+    if (n == 0) return "unsatisfiable";
+    return { start: Math.max(0, size - n), end: size - 1 };
+  }
+  const start = Number(m[1]);
+  const end = m[2] == "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (start >= size || end < start) return "unsatisfiable";
+  return { start, end };
 }
 
 /** HttpApi's platform needs, none of which a document served from storage uses. */
@@ -171,13 +207,29 @@ export function makeHost(opts: HostOptions) {
   // view_page: ask the owner's tabs; the first to answer wins. With none of
   // their tabs open there's nothing to look with (no server-side browser
   // yet; Cloudflare Browser Rendering could stand in), and the tool says so.
+  // The live page (req.live, shared/live-page.ts) is one tab's in particular:
+  // every tab answers, and the focused one's answer wins at once; else, once
+  // all have answered, a visible one's, then any. A tab that couldn't (agent
+  // control off there) loses to one that could.
   const views = new Map<string, (r: ViewResult) => void>();
   const view = (user: string) => (req: ViewRequest): Promise<ViewResult> => {
-    if (![...tabs].some((t) => t.user == user)) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
+    const mine = [...tabs].filter((t) => t.user == user).length;
+    if (!mine) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
     const id = crypto.randomUUID();
     return new Promise((resolve) => {
-      const timer = setTimeout(() => { views.delete(id); resolve({ width: 0, height: 0, errors: [], error: `The editor didn't send ${req.evaluate != null ? "the result" : "a picture"} back in time.` }); }, viewWait(req) + 2_000);
-      views.set(id, (r) => { clearTimeout(timer); views.delete(id); resolve(r); });
+      const answers: ViewResult[] = [];
+      const best = () => [...answers].sort((a, b) => Number(!!a.declined) - Number(!!b.declined) || (b.rank ?? 0) - (a.rank ?? 0))[0];
+      const done = (r: ViewResult) => { clearTimeout(timer); views.delete(id); const { declined: _d, rank: _r, ...rest } = r; resolve(rest); };
+      const timer = setTimeout(() => {
+        views.delete(id);
+        if (answers.length) return done(best());
+        resolve({ width: 0, height: 0, errors: [], error: `The editor didn't send ${req.live ? "an answer" : req.evaluate != null ? "the result" : "a picture"} back in time.` });
+      }, viewWait(req) + 2_000);
+      views.set(id, (r) => {
+        if (!req.live) return done(r);
+        answers.push(r);
+        if ((!r.declined && r.rank == 2) || answers.length >= mine) done(best());
+      });
       sendTo(user, { type: "view", id, req });
     });
   };
@@ -420,7 +472,7 @@ export function makeHost(opts: HostOptions) {
       const text = room.text(rel);
       const bytes = text != null ? new TextEncoder().encode(text) : yield* files.read(rel);
       if (!bytes) return HttpServerResponse.text("Not found", { status: 404 });
-      const r = docFile(rel, bytes, req.headers["if-none-match"]);
+      const r = docFile(rel, bytes, req.headers["if-none-match"], req.headers["range"], text != null ? "room" : "stored");
       return HttpServerResponse.uint8Array(r.body ?? new Uint8Array(), { status: r.status, contentType: r.type, headers: r.headers });
     })),
   ];
