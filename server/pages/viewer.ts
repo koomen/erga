@@ -4,7 +4,7 @@
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { crumbsFont, esc, link, viewCrumbs } from "./chrome.ts";
-import { HOST_VERSION } from "./frame-host.ts";
+import { HOST_VERSION, PAGE_ALLOW, PAGE_SANDBOX } from "./frame-host.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
 /** The viewer's Clone button (a copy of your own, at `href`): also the homepage's. */
@@ -182,7 +182,9 @@ export const BAND_BOOT = `(() => {
     if (!c || typeof c.image != "string" || !c.image) return scrolled();
     let image = c.image;
     // Its images: the files sent (erga-file:n), each at an address of this page's own; nothing else.
-    if (/url\\(/i.test(image.replace(/url\\("erga-file:\\d+"\\)/g, "")) || /image-set|image\\(|element\\(|cross-fade/i.test(image)) return scrolled();
+    // (Gradients and colours only besides: no escapes, which could spell url( another way, and no other function.)
+    const rest = image.replace(/url\\("erga-file:\\d+"\\)/g, "");
+    if (/[\\\\]/.test(rest) || (rest.match(/[\\w-]+(?=\\()/g) || []).some((f) => !/^(repeating-)?(linear|radial|conic)-gradient$|^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|calc)$/i.test(f)) || /\\(/.test(rest.replace(/[\\w-]+\\(/g, ""))) return scrolled();
     image = image.replace(/url\\("erga-file:(\\d+)"\\)/g, (_, n) => {
       const f = files?.[n];
       if (!(f instanceof Blob) || !/^image\\//.test(f.type)) return "none";
@@ -715,9 +717,11 @@ export function viewerPage(o: { title: string; docId: string; origin: string; ho
   // (EDITING_HEAD, EDITING_BODY), the frame starts on its half of the editor at once (&edit=1), and the editor's files are
   // fetched as the page parses, rather than one after another once its script runs (EDIT_BOOT).
   const opening = o.editable ? `<script>${EDITING_HEAD}</script>` : "";
-  // It may pass autoplay and fullscreen on: only the editor's frame gives them to the page, and only while the person
-  // has agent control on (client/frame.ts); the plain page never gets them (PAGE_ALLOW).
-  const frame = `<iframe id="frame" class="erga-view" ${o.editable ? "data-src" : "src"}="${esc(src)}" title="${esc(o.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups" allow="autoplay; fullscreen"></iframe>`;
+  // For someone who may edit, it may pass autoplay and fullscreen on: only the editor's frame gives them to the page, and
+  // only while the person has agent control on (client/frame.ts); the plain page never gets them (PAGE_ALLOW). For anyone
+  // else the frame has neither: the page's script can act as the frame's host page (its origin), so what the frame may
+  // do, the page may.
+  const frame = `<iframe id="frame" class="erga-view" ${o.editable ? "data-src" : "src"}="${esc(src)}" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${o.editable ? "autoplay; fullscreen" : PAGE_ALLOW}"></iframe>`;
   // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
   // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT).
   const backdrop = `<script>${BAND_HEAD}ergaBand(${JSON.stringify(o.docId)});</script>`;

@@ -112,10 +112,15 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   const origin = request.headers.get("origin");
   if (request.headers.get("upgrade")?.toLowerCase() == "websocket" && origin && origin != url.origin) return new Response("Not from this site", { status: 403 });
   const answer = await platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session, accessOf(access)));
-  // A document's own files are its own: nothing of the site's goes into them.
-  if (!/^text\/html\b/i.test(answer.headers.get("content-type") ?? "") || answer.status == 101) return answer;
+  if (answer.status == 101) return answer;
+  // A document's files (an HTML page, an SVG) are its authors' code. Here, on this site's own origin, they run in a
+  // sandbox of their own (an opaque origin, no scripts): opened at this address, a page's script would otherwise act as
+  // whoever opened it, with their session. Pages run on their pages origin (pagesDoor), never here.
   const headers = new Headers(answer.headers);
-  headers.set(OWN_ACCOUNT, "1");
+  headers.set("Content-Security-Policy", "sandbox");
+  headers.set("X-Content-Type-Options", "nosniff");
+  // A document's own files are its own: nothing of the site's goes into them.
+  if (/^text\/html\b/i.test(answer.headers.get("content-type") ?? "")) headers.set(OWN_ACCOUNT, "1");
   return new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers });
 }
 

@@ -37,6 +37,7 @@ import { restoredFor } from "./restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "./zoom";
 import { liveWatch } from "./live-page";
 import { ConsoleLog, actsOnPage, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
+import { FIX_REPORTED, pageReport } from "../shared/page-report";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -228,8 +229,14 @@ type TreeModule = { mountTree: typeof mountTree };
     setTimeout(() => { if (goingTo == url) goingTo = null; }, 2000);
     if (replace) location.replace(url); else location.assign(url);
   };
-  /** Goes to another of the document's pages: in place while editing (swapPage), else to its address. */
-  const openPage = (path: string) => { if (!swapPage(path)) goTo(addressOf(path)); };
+  /**
+   * Goes to another of the document's pages: in place while editing (swapPage), else to its address. Only a path inside
+   * the document: the page's own script can ask (the frame's "open"), and "../.." would take this tab elsewhere on this site.
+   */
+  const openPage = (path: string) => {
+    if (!path.replace(/\/$/, "").split("/").every((s) => s && s != "." && s != "..")) return;
+    if (!swapPage(path)) goTo(addressOf(path));
+  };
 
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
@@ -1097,7 +1104,7 @@ Once you've read the guide, await further instructions.`;
       b.addEventListener("click", () => {
         if (agentOff) { explain(agentOff); return; }
         hideExplanation();
-        fixWithAgent(fix, key);
+        fixReported(fix, key);
       });
       toast.append(b);
     }
@@ -1633,11 +1640,20 @@ Once you've read the guide, await further instructions.`;
     if (document.body.classList.contains("agent-open")) agentInput.focus();
   }
   agentVoice.addEventListener("click", () => voice ? stopVoice() : startVoice());
-  /** The "Fix with agent" button: opens the panel and sends the prompt that names the problem. */
-  function fixWithAgent(prompt: string, key?: string) {
-    if (key) shownProblems.delete(key);
+  /** A "Fix with agent" button of the shell's own (the pause card's): opens the panel and sends its prompt. */
+  function fixWithAgent(prompt: string) {
     toggleAgent(true);
     ask(prompt, null);
+  }
+  /**
+   * The toast's "Fix with agent": the problem as the page editor reported it. The page editor shares its origin with the
+   * page, so the page's own script can write that report (an error's message, or the whole of it): it goes to the
+   * agent as a report in the <editor> block, which the agent reads as data. What the person asks is the shell's words.
+   */
+  function fixReported(report: string, key?: string) {
+    if (key) shownProblems.delete(key);
+    toggleAgent(true);
+    ask(FIX_REPORTED, `${editorContext()}\n${pageReport(report)}`);
   }
   // The box sizes itself with field-sizing: content; its wrapper follows the
   // box's height through a ResizeObserver, and CSS eases the wrapper. Without

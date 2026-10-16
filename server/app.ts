@@ -79,6 +79,9 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   const refused = await adminsOnlyGate(request, p, url);
   if (refused) return refused;
   // A document's pages origin serves its frame and files, and nothing of this site's.
+  // No service workers there: one would outlive the page that registered it, in the browser of whoever viewed it, and
+  // answer for the document's files (or, at /, for the frame's host page) after its authors had changed them.
+  if (isPagesSite(url, p) && request.headers.get("service-worker") == "script") return new Response("A document's page can't register a service worker.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   if (isPagesSite(url, p)) return assets ? p.assets(request) : frontDoor(request, p);
   if (path == "/auth/github") return startSignIn(p, request);
   if (path == "/auth/github/callback") return finishSignIn(p, request);

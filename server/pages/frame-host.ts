@@ -13,7 +13,16 @@ const versionOf = (text: string) => {
   return (h >>> 0).toString(36);
 };
 
-/** What a document's page may do in its frame, in the viewer and the editor alike (frame.ts makes the editor's the same). */
+/**
+ * What a document's page may do in its frame, in the viewer and the editor alike (frame.ts makes the editor's the same).
+ *
+ * allow-same-origin stays, with allow-scripts: the page keeps its pages origin, which holds nothing but this one
+ * document, and this host page (and the page editor, frame.ts) reach into it there (its scroll, its colours, its
+ * steps; typing and carets). So the page's script can remove its own sandbox and act as this host page: Chrome warns
+ * about that, rightly, and it changes nothing. The boundary is the origin: the page can't reach erga.dev, its cookies
+ * or another document's origin, and the shell (client/remote.ts, viewer.ts) treats every message from here as the
+ * page's own. Without allow-same-origin the page would lose its own storage and the editor couldn't edit it.
+ */
 export const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
 
 /**
