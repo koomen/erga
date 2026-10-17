@@ -232,7 +232,7 @@ try {
     if (secret && scripts.includes(CONTROL.worker)) { await putSecret(CONTROL.worker, "CLOUDFLARE_OAUTH_CLIENT_SECRET", secret); console.log(`   Stored its secret on ${CONTROL.worker} as CLOUDFLARE_OAUTH_CLIENT_SECRET (not printed).`); }
     else if (secret) console.log(`   There's no ${CONTROL.worker} to store the client secret on yet.`);
     const status = await (await net(`https://${CONTROL.host}/api/install`, { headers: { Authorization: `Bearer ${token}` } })).json().catch(() => null) as { connected?: boolean; by?: string; problem?: string } | null;
-    console.log(`   The grant: ${status?.connected ? `connected by ${status.by}` : `not connected${status?.problem ? ` (${status.problem})` : ""}. An admin opens https://${CONTROL.host}/install and consents in the browser; deploys run after that.`}`);
+    console.log(`   The grant: ${status?.connected ? `connected by ${status.by}` : `not connected${status?.problem ? ` (${status.problem})` : ""}. An admin clicks Connect Cloudflare on the Ops page (https://${CONTROL.host}/), a consent in a popup; the deploys that waited run after that.`}`);
   }
 
   step(8);

@@ -1,5 +1,7 @@
 // /install on the control Worker: the consent's start, and what the page says
 // when Cloudflare refuses (a scope the OAuth client doesn't allow) or consents.
+// And the same consent from the Ops page's Cloudflare card: a popup, whose last
+// page tells the page that opened it.
 import { describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
 import { CONTROL_OAUTH_SCOPES, OAuthCredential, sealKeyFrom, type CredentialStatus } from "../deploy/credential";
@@ -40,7 +42,7 @@ describe("/install", () => {
     expect(to.searchParams.get("scope")).toBe(CONTROL_OAUTH_SCOPES);
     expect(to.searchParams.get("scope")!.split(" ")).toContain("cloudchamber.write");
     expect(to.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(r.headers.get("set-cookie")).toMatch(/^erga_install=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+; Max-Age=600; Path=\/install; HttpOnly; Secure; SameSite=Lax$/);
+    expect(r.headers.get("set-cookie")).toMatch(/^erga_install=[A-Za-z0-9_-]+; Max-Age=600; Path=\/install; HttpOnly; Secure; SameSite=Lax$/);
   });
 
   test("a scope the client doesn't allow: Cloudflare's refusal reaches the page, names the scope, and nothing is stored", async () => {
@@ -54,7 +56,7 @@ describe("/install", () => {
     expect(back.status).toBe(302);
     const where = new URL(back.headers.get("location")!, ORIGIN);
     expect(where.pathname).toBe("/install");
-    expect(where.searchParams.get("error")).toBe("Cloudflare did not authorize Erga: The requested scope is invalid, unknown, or malformed. The OAuth 2.0 Client is not allowed to request scope 'cloudchamber.write'.");
+    expect(where.searchParams.get("error")).toBe("Cloudflare didn't authorize Erga: The requested scope is invalid, unknown, or malformed. The OAuth 2.0 Client is not allowed to request scope 'cloudchamber.write'.");
     expect(back.headers.get("set-cookie")).toContain("erga_install=; Max-Age=0");
     expect(calls).toEqual([]); // no token exchange
     expect(await credential.status()).toMatchObject({ connected: false, by: null });
@@ -66,7 +68,7 @@ describe("/install", () => {
   test("a callback that didn't start here, or without Cloudflare's code, is refused", async () => {
     const { go, calls } = control(fetch);
     const r = await go("/install/callback?code=mock-code&state=other");
-    expect(new URL(r.headers.get("location")!, ORIGIN).searchParams.get("error")).toBe("This consent did not start here, or took more than ten minutes. Try again.");
+    expect(new URL(r.headers.get("location")!, ORIGIN).searchParams.get("error")).toBe("This consent didn't start here, or took more than ten minutes. Try again.");
     expect(calls).toEqual([]);
   });
 
@@ -91,5 +93,40 @@ describe("/install", () => {
     const state2 = new URL(again.headers.get("location")!).searchParams.get("state")!;
     const back2 = await go(`/install/callback?code=mock-code&state=${state2}`, { cookie: cookie2 });
     expect(Object.fromEntries(new URL(back2.headers.get("location")!, ORIGIN).searchParams)).toEqual({ ok: "1", missing: "cloudchamber.write" });
+  });
+});
+
+describe("Connect Cloudflare from the Ops page: a popup", () => {
+  /** The popup's last page: the message it posts to the page that opened it. */
+  const posted = async (r: Response) => JSON.parse(/const m = (\{.*\});/.exec(await r.text())![1]) as { type: string; ok: boolean; error?: string; warnings: string[] };
+
+  test("a GET starts it (the Ops page may be on another origin); the callback tells the opener and closes; the deploys waiting go", async () => {
+    const cf = mockCloudflare({ fleet: true });
+    const { go, credential } = control(cf.fetch as never);
+    const start = await go("/install/start?popup=1", { headers: { origin: "" } });
+    expect(start.status).toBe(302);
+    const cookie = start.headers.get("set-cookie")!.split(";")[0];
+    const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
+    const back = await go(`/install/callback?code=mock-code&state=${state}`, { cookie });
+    expect(back.status).toBe(200);
+    expect(back.headers.get("set-cookie")).toContain("erga_install=; Max-Age=0");
+    const html = await back.clone().text();
+    // Posted to Erga's own origins only (this one, the app's, and the environments'), and on the channel here.
+    expect(html).toContain(`for (const o of ["${ORIGIN}","https://erga.test","https://erga.dev","https://staging.erga.dev","https://ops.erga.dev"])`);
+    expect(html).toContain("window.close()");
+    expect(await posted(back)).toEqual({ type: "erga-deploy-credential", ok: true, warnings: [] });
+    expect(await credential.status()).toMatchObject({ connected: true, by: "ada" });
+  });
+
+  test("Cancel on Cloudflare's page, in the popup: the opener hears why, and the popup stays open to say it", async () => {
+    const { go, credential } = control(fetch);
+    const start = await go("/install/start?popup=1");
+    const cookie = start.headers.get("set-cookie")!.split(";")[0];
+    const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
+    const back = await go(`/install/callback?error=access_denied&state=${state}`, { cookie });
+    expect(back.status).toBe(400);
+    expect(await back.clone().text()).not.toContain("window.close()");
+    expect(await posted(back)).toEqual({ type: "erga-deploy-credential", ok: false, error: "You didn't authorize Erga on Cloudflare, so nothing changed.", warnings: [] });
+    expect(await credential.status()).toMatchObject({ connected: false });
   });
 });

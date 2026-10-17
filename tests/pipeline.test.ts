@@ -368,16 +368,16 @@ async function bootstrap(mock: ReturnType<typeof mockCloudflare>) {
 }
 
 describe("branches deploy themselves", () => {
-  test("not set up (no Cloudflare credential: nobody consented at /install): a push is noted, nothing deployed", async () => {
+  test("not set up (no Cloudflare credential: nobody consented): a push waits, says why, nothing deployed", async () => {
     const mock = mockCloudflare({ fleet: true });
     const builder = mockBuilder(async () => release);
     const server = new Server(mock, builder, "erga", { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }, { credential: fixedCredential(null) });
     await server.instance.hook("main", SHA1);
     await server.settle();
     const t = await server.status("production");
-    expect(t).toMatchObject({ name: "production", host: "erga.dev", branch: "main", state: "idle", commit: SHA1, error: null });
-    expect(t.log.at(-1)).toContain("no Cloudflare credential: an admin connects it at /install");
-    expect((await server.instance.status()).credential).toMatchObject({ connected: false, problem: expect.stringContaining("/install") });
+    expect(t).toMatchObject({ name: "production", host: "erga.dev", branch: "main", state: "idle", commit: SHA1, pending: SHA1, error: "111111111111 waits to deploy. The control Worker has no Cloudflare credential: an admin connects Cloudflare (a consent in a popup)." });
+    expect(t.log.at(-1)).toContain("waits: Nothing is deployed: The control Worker has no Cloudflare credential");
+    expect((await server.instance.status()).credential).toMatchObject({ connected: false, problem: expect.stringContaining("connects Cloudflare") });
     expect(builder.built).toEqual([]);
     expect(mock.state.calls).toEqual([]);
   });
@@ -691,7 +691,7 @@ describe("branches deploy themselves", () => {
     status = await server.instance.status();
     expect(uploads()).toBe(before);
     expect(status.upstream!.error).toContain("Update from https://ops.erga.test stopped: v0.3.0: the merge conflicts in 1 file (a.txt)");
-    expect(status.upstream!.error).toContain("Resolve it on the Ops page");
+    expect(status.upstream!.error).toContain("Resolve the files it lists");
     // Resolved (staging moved to the merge, C3 here), but the release is unhealthy: staging rolls back to v2 by itself.
     mock.state.unhealthy = [v3.version];
     await server.instance.hook("staging", C3, "update by ada");
@@ -1078,7 +1078,7 @@ describe("the one-time setup", () => {
     expect(out).toContain("(the mock Cloudflare: nothing real)");
     expect(out).toContain("Set: erga-control: SESSION_SECRET, GITHUB_CLIENT_SECRET, SNAPSHOT_TOKEN; erga: SNAPSHOT_TOKEN.");
     expect(out).toContain("Copy production's documents into it: done, 3 documents copied");
-    expect(out).toContain("The grant: not connected. An admin opens https://ops.erga.dev/install and consents in the browser; deploys run after that.");
+    expect(out).toContain("The grant: not connected. An admin clicks Connect Cloudflare on the Ops page (https://ops.erga.dev/), a consent in a popup; the deploys that waited run after that.");
     expect(out).not.toContain("CLOUDFLARE_DEPLOY_TOKEN");
     expect(out).not.toContain("mock-scoped-");
     expect(out).toContain("https://ops.erga.dev/api/health: ok true");
@@ -1620,8 +1620,9 @@ describe("the Cloudflare credential: an OAuth grant, consented to once, refreshe
   test("before the consent: no token, and the status says what to do", async () => {
     const mock = mockCloudflare({ fleet: true });
     const { c } = grant(mock);
-    await expect(c.token()).rejects.toThrow("an admin connects it at /install");
-    expect(await c.status()).toMatchObject({ connected: false, by: null, problem: expect.stringContaining("/install") });
+    await expect(c.token()).rejects.toThrow("an admin connects Cloudflare (a consent in a popup)");
+    expect(await c.status()).toMatchObject({ connected: false, by: null, problem: expect.stringContaining("connects Cloudflare") });
+    expect((await c.status()).problem).not.toContain("/install");
   });
 
   test("the consent gives a grant; the token is the same until ten minutes before it expires, then a refresh rotates both tokens", async () => {
@@ -1652,7 +1653,7 @@ describe("the Cloudflare credential: an OAuth grant, consented to once, refreshe
     await consent(mock, c);
     mock.state.refreshTokens = [];
     clock.now += 55 * 60_000;
-    await expect(c.token()).rejects.toThrow("stopped working (400 invalid_grant: refresh token revoked or unknown): an admin connects it again at /install");
+    await expect(c.token()).rejects.toThrow("stopped working (400 invalid_grant: refresh token revoked or unknown): an admin connects Cloudflare again.");
     expect(await c.status()).toMatchObject({ connected: false, error: "400 invalid_grant: refresh token revoked or unknown", problem: expect.stringContaining("stopped working") });
     await consent(mock, c, "bo");
     expect(await c.status()).toMatchObject({ connected: true, by: "bo", error: null });
@@ -1662,7 +1663,38 @@ describe("the Cloudflare credential: an OAuth grant, consented to once, refreshe
     expect(await c.status()).toMatchObject({ connected: false, by: null });
   });
 
-  test("the branch deploys run on it: staging deploys after the consent, and a deploy an hour later refreshes first", async () => {
+  test("a 429 on the refresh is a moment's trouble, not a dead grant: the next use refreshes again", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const { c, clock, log } = grant(mock);
+    await consent(mock, c);
+    clock.now += 55 * 60_000;
+    mock.state.oauthRefreshStatus = 429;
+    await expect(c.token()).rejects.toThrow("Cloudflare asked Erga to slow down while it refreshed the control Worker's Cloudflare credential (429 rate_limited): try again in a minute.");
+    expect(await c.status()).toMatchObject({ connected: true, error: null, problem: null });
+    expect(log.at(-1)).toContain("failed for now");
+    expect(await c.token()).toMatch(/^mock-oauth-/);
+    expect(await c.status()).toMatchObject({ connected: true, refreshedAt: clock.now });
+  });
+
+  test("an access token Cloudflare's API refuses (401): the next use refreshes first, and a refused refresh ends the grant", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const { c } = grant(mock);
+    const first = await consent(mock, c);
+    // Revoked on the dashboard: the access token is refused at once, and so is the refresh token.
+    mock.state.refusedTokens = [first];
+    mock.state.refreshTokens = [];
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-control", env(), { credential: c });
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    expect(await server.status("staging")).toMatchObject({ state: "failed" });
+    expect(await c.status()).toMatchObject({ connected: true }); // not known yet: only the refresh says
+    await expect(c.token()).rejects.toThrow("stopped working (400 invalid_grant: refresh token revoked or unknown)");
+    expect(await c.status()).toMatchObject({ connected: false, error: "400 invalid_grant: refresh token revoked or unknown" });
+  });
+
+  test("the branch deploys run on it: a push with no credential waits, deploys once Cloudflare is connected, and a deploy an hour later refreshes first", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const { c, clock } = grant(mock);
@@ -1670,12 +1702,12 @@ describe("the Cloudflare credential: an OAuth grant, consented to once, refreshe
     const server = new Server(mock, builder, "erga-control", env(), { credential: c, now: () => clock.now });
     await server.instance.hook("staging", SHA2);
     await server.settle();
-    expect(await server.status("staging")).toMatchObject({ state: "idle", commit: SHA2 });
-    expect((await server.status("staging")).log.at(-1)).toContain("/install");
+    // It waits, and says why: no credential. (It used to be dropped, with a log line only.)
+    expect(await server.status("staging")).toMatchObject({ state: "idle", commit: SHA2, pending: SHA2, error: expect.stringContaining("waits to deploy. The control Worker has no Cloudflare credential") });
     await consent(mock, c);
-    await server.instance.hook("staging", SHA2);
+    await server.instance.ready();
     await server.settle();
-    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2, pending: null, error: null });
     expect((await server.instance.status()).credential).toMatchObject({ connected: true, by: "ada" });
     clock.now += 61 * 60_000;
     await server.instance.hook("staging", SHA3);

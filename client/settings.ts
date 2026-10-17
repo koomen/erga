@@ -360,7 +360,7 @@ function mount(host: SettingsHost): Settings {
     let st: SiteState | null = null;
     try { st = await call<SiteState>("site", undefined, { zones: "1" }); } catch (e) { if (seq == siteSeq) siteError.textContent = `Couldn't load the custom domain: ${(e as Error).message}`; }
     if (seq != siteSeq) return;
-    if (st) { site = st; siteError.textContent = st.zonesError && st.connection.connected && !st.site ? st.zonesError : ""; }
+    if (st) { site = st; siteError.textContent = ""; }
     renderSite();
   }
 
@@ -564,9 +564,12 @@ function mount(host: SettingsHost): Settings {
         : d.state == "failed" ? `<span><b>Failed:</b> ${esc(d.error || "the deploy didn't finish.")}${d.at ? ` The last good deploy${live} is still live.` : ""}</span>`
         : d.at ? `<span><b>Live</b>${live} · ${esc(ago(d.at))}</span>` : `<span>Not deployed yet</span>`;
       const can = st.canEdit && !siteBusy && d.state != "deploying";
+      // The deploy failed on the connection (gone, or Cloudflare refused it): connect again here, then Deploy now.
+      const reconnect = st.canEdit && (!st.connection.connected || (d.state == "failed" && /Cloudflare connection|connects? Cloudflare again/i.test(d.error ?? "")));
       siteBody.innerHTML = `<div class="ds-site-live"><a href="${esc(st.site.url)}" target="_blank" rel="noopener" id="ds-site-link">${esc(st.site.hostname)}</a>${EXT}</div>
         <div class="ds-deploy"><div class="ds-status" role="status" aria-live="polite"><span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}</div></div>
         ${st.canEdit ? `<div class="ds-site-acts">
+          ${reconnect ? `<button type="button" class="ds-btn primary" id="ds-site-connect"${consenting ? ` aria-disabled="true"` : ""}>${consenting ? "Waiting for Cloudflare…" : "Connect Cloudflare again"}</button>` : ""}
           <button type="button" class="ds-btn" id="ds-site-deploy"${can ? "" : ` aria-disabled="true"`}>${d.state == "deploying" ? "Deploying…" : "Deploy now"}</button>
           <a class="ds-btn" href="${esc(st.site.dashboard)}" target="_blank" rel="noopener">Open in Cloudflare</a>
           <button type="button" class="ds-quiet${removeArmed ? " armed" : ""}" id="ds-site-remove"${siteBusy ? ` aria-disabled="true"` : ""}>${removeArmed ? "Click again to take it down" : "Remove"}</button>
@@ -584,8 +587,10 @@ function mount(host: SettingsHost): Settings {
     }
     const zones = st.zones ?? [];
     if (!zones.length) {
-      siteBody.innerHTML = `<p class="ds-explain">${esc(st.zonesError ? "" : "Your Cloudflare account has no domains. Add a domain to Cloudflare first.")}</p>
-        <div class="ds-site-go"><a class="ds-btn" href="/settings#cloudflare" target="_blank" rel="noopener">Cloudflare settings</a></div>`;
+      // No domains (or they couldn't be read): add one on Cloudflare (the only place), then Check again here; or connect
+      // again when the connection is what failed.
+      siteBody.innerHTML = `<p class="ds-explain">${esc(st.zonesError ? `Erga couldn't read your domains: ${st.zonesError}` : "Your Cloudflare account has no domains yet. Add one on Cloudflare, then check again.")}</p>
+        <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-recheck">Check again</button>${st.zonesError ? `<button type="button" class="ds-btn" id="ds-site-connect"${consenting ? ` aria-disabled="true"` : ""}>${consenting ? "Waiting for Cloudflare…" : "Connect Cloudflare again"}</button>` : `<a class="ds-btn" href="https://dash.cloudflare.com/?to=/:account/add-site" target="_blank" rel="noopener">Add a domain on Cloudflare</a>`}</div>`;
       return;
     }
     if (!zones.some((z) => z.id == siteZone)) siteZone = zones[0].id;
@@ -639,6 +644,7 @@ function mount(host: SettingsHost): Settings {
     if (!b || b.getAttribute("aria-disabled") == "true") return;
     if (b.id == "ds-site-publish") return publishSite();
     if (b.id == "ds-site-connect") return connectCloudflare();
+    if (b.id == "ds-site-recheck") return loadSite();
     if (b.id == "ds-site-deploy") return siteCall("site/deploy", { method: "POST" }, "Couldn't deploy");
     if (b.id == "ds-site-remove") {
       if (!removeArmed) { removeArmed = true; renderSite(); setTimeout(() => { removeArmed = false; renderSite(); }, 4000); return; }

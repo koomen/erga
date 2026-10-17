@@ -27,7 +27,8 @@ import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../../agents/cha
 import { restoredLog } from "../../agents/checkpoint.ts";
 import type { ToolWho } from "../../agents/tools.ts";
 import { isModelChoice, MODELS } from "../../editor-agent/session.ts";
-import { emptyLog, type Log } from "../../shared/agent-log.ts";
+import { emptyLog, type Log, type Offer } from "../../shared/agent-log.ts";
+import type { CredentialStatus } from "../../deploy/credential.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { forgetHome } from "../home/index.ts";
@@ -52,6 +53,9 @@ export interface DashboardDeploys {
   domains(): Promise<object>;
   addDomain(target: string, hostname: string, by: string): Promise<object>;
   removeDomain(target: string, hostname: string, by: string): Promise<object>;
+  /** The control Worker's Cloudflare credential (deploy/credential.ts): its status, and revoked (the Ops page's card). */
+  credentialStatus(): Promise<CredentialStatus>;
+  disconnectCredential(): Promise<void>;
 }
 
 /**
@@ -135,6 +139,11 @@ export class AdminAgents {
   private dashboard(login: string, state: { origin: string }): DashboardOps {
     const source = () => this.source();
     const pipeline = () => this.platform.deploys;
+    const withOffer = <T extends { credential?: CredentialStatus }>(o: T): T | (T & { offer: Offer; connect: string }) => !o.credential || o.credential.connected ? o : {
+      ...o,
+      offer: { kind: "connect-cloudflare", label: o.credential.by ? "Connect Cloudflare again" : "Connect Cloudflare", url: `${this.platform.control?.url ?? state.origin}/install/start?popup=1` },
+      connect: "Nothing deploys until the admin connects Cloudflare. A Connect Cloudflare button shows under this call in their panel: it opens Cloudflare's consent in a popup, on this page. Tell them so, with Cloudflare's own words (credential.error, else credential.problem). You can't consent for them.",
+    };
     const actor = async () => ({ login, name: (await this.platform.directory.users.get(login))?.name || login, via: VIA.admin });
     return {
       branches: async () => source().branches(state.origin),
@@ -144,7 +153,15 @@ export class AdminAgents {
         return { ...r, done: r.upToDate ? "main was at staging already: nothing to deploy" : `main moved to ${r.commit.slice(0, 10)}: production deploys it now (list_deploys follows it)` };
       },
       mirror: async () => ({ mirror: await source().mirrorNow(state.origin, byLine(login, VIA.admin)) }),
-      deploys: (history) => pipeline().status(history),
+      // Not connected: the answer carries Connect Cloudflare, a button under the call in the admin's panel (a consent in a
+      // popup, on the control Worker's origin). The consent is the admin's own: the agent only offers it.
+      deploys: async (history) => withOffer(await pipeline().status(history) as { credential?: CredentialStatus }),
+      // (From the deploys' status: a control Worker a release behind has no credentialStatus over its binding yet.)
+      credential: async () => withOffer({ credential: ((await pipeline().status(0)) as { credential?: CredentialStatus }).credential }),
+      disconnectCredential: async () => {
+        await pipeline().disconnectCredential();
+        return { done: "The control Worker's Cloudflare grant is revoked: nothing deploys until the admin connects Cloudflare again (a consent of their own)", credential: await pipeline().credentialStatus() };
+      },
       deployLog: (target, deploy) => pipeline().logOf(target, deploy),
       redeploy: async (target, fresh) => {
         const r = fresh ? await pipeline().redeployWith(target, `redeploy by ${byLine(login, VIA.admin)}`, { fresh: true }) : await pipeline().redeploy(target, `redeploy by ${byLine(login, VIA.admin)}`);

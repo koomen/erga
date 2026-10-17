@@ -47,7 +47,7 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   }
   const { apiKey, model, effort } = read.success;
   if (model == "script") return { apiKey: Redacted.make(""), model, effort: "medium" } satisfies AgentConfig;
-  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (an admin sets the Anthropic API key on /admin/api-keys; locally, export it before bun start, or put it in .dev.vars)` };
+  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (an admin pastes the Anthropic API key in the admin agent's panel; locally, export it before bun start, or put it in .dev.vars)` };
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
 

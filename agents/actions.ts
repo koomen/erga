@@ -88,7 +88,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Ops)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Ops)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Ops)", tool: "deploy_log" },
-  { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Ops)", tool: "redeploy" },
+  { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target, or Retry a failed deploy (Ops)", tool: "redeploy" },
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
   { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Ops)", tool: "rollback" },
   // Each environment's domains (control/routes.ts, deploy/branches.ts): its Worker's custom domains.
@@ -101,11 +101,13 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // The release store (control/routes.ts, deploy/releases.ts): the channels edge and stable.
   { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Ops page marks them on the log)", tool: "list_releases" },
   { route: "GET /api/releases", domain: "admin", action: "Read both channels (Ops)", tool: "list_releases" },
-  // The control Worker's Cloudflare credential (control/routes.ts, /install on ops.erga.dev): a consent in the browser.
-  { route: "GET /api/install", domain: "admin", action: "Read whether the control Worker's Cloudflare credential is connected (GET /api/deploys says it too)", tool: "list_deploys" },
-  { route: "POST /install/start", domain: "none", action: "Connect Cloudflare: consent on Cloudflare's own page, in the browser (/install)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },
+  // The control Worker's Cloudflare credential (control/routes.ts): a consent in the browser, from the Ops page's
+  // Cloudflare card (a popup). The admin agent reads it and offers the button; the consent is the admin's own.
+  { route: "GET /api/install", domain: "admin", action: "Read whether the control Worker's Cloudflare credential is connected (GET /api/deploys says it too)", tool: "deploy_credential" },
+  { route: "GET|POST /install/start", domain: "none", action: "Connect Cloudflare: consent on Cloudflare's own page, in a popup (the Ops page's Cloudflare card, or the button under the agent's deploy_credential)", exempt: "a secret: the consent gives Erga a grant, on Cloudflare's consent screen, never in a conversation (the agent offers the button)" },
   { route: "GET /install/callback", domain: "none", action: "Back from Cloudflare's consent page", exempt: "the consent's own return" },
-  { route: "POST /install/disconnect", domain: "none", action: "Disconnect: revoke and forget the control Worker's Cloudflare credential (/install)", exempt: "a credential's revocation, on the page that holds it; an admin's deliberate act" },
+  { route: "POST /install/disconnect", domain: "admin", action: "Disconnect: revoke and forget the control Worker's Cloudflare credential (/install)", tool: "disconnect_deploy_credential" },
+  { route: "POST /api/deploys/credential/disconnect", domain: "admin", action: "Disconnect the control Worker's Cloudflare credential (the Ops page's Cloudflare card)", tool: "disconnect_deploy_credential" },
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
   { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
   { route: "GET /admin/deploys", domain: "none", action: "An old address of the dashboard", exempt: "a redirect" },

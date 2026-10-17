@@ -1,13 +1,20 @@
 // The control Worker's Cloudflare credential: an OAuth grant, not an API
-// token. An admin consents once in the browser (GET /install on the control
-// Worker: control/routes.ts), Cloudflare's consent page shows Erga's scopes
+// token. An admin consents in the browser (Connect Cloudflare on the Ops
+// page, a popup: control/routes.ts), Cloudflare's consent page shows Erga's scopes
 // (CONTROL_OAUTH_SCOPES), and the grant (its access token, an hour's, and
 // its refresh token) is kept here, sealed, in the pipeline's Durable Object
 // storage. Before each use the access token is refreshed when it is about
 // to expire; a refresh token Cloudflare rotates is kept in the old one's
 // place. Revoking the grant on Cloudflare's dashboard (My Profile › Manage
-// OAuth authorizations) cuts the control Worker off at once, and /install
-// says so.
+// OAuth authorizations) cuts the control Worker off at once, and the Ops
+// page says so, with Connect Cloudflare in place.
+//
+// Only a refusal ends the grant: Cloudflare answers the refresh with 400 or
+// 401 (invalid_grant: the refresh token is revoked, spent or expired). A 429
+// (too many requests), a 5xx or no answer is a moment's trouble: the deploy
+// fails, says so, and the next try refreshes again (a 429 recorded as final
+// stopped every deploy on 2026-10-15). An API call the access token is
+// refused on (401) makes the next use refresh first (`refused`).
 //
 // Nothing here is a person's hand-made token: no permission list to assemble,
 // no value to paste. The OAuth client itself ("Erga", public, PKCE) is made
@@ -48,8 +55,10 @@ export interface StoredGrant {
   by: string;
   at: number;
   refreshedAt: number | null;
-  /** The last refresh's failure (Cloudflare's answer), if the grant no longer works. */
+  /** The last refresh's refusal (Cloudflare's answer), if the grant no longer works. */
   error: string | null;
+  /** When Cloudflare's API last refused the access token (401): the next use refreshes first. */
+  refusedAt?: number | null;
 }
 
 /** What /install and GET /api/deploys show of it. */
@@ -69,6 +78,8 @@ export interface CredentialStatus {
 export interface Credential {
   token(): Promise<string>;
   status(): Promise<CredentialStatus>;
+  /** Cloudflare's API refused the token (401): the next token() checks the grant first. */
+  refused?(): Promise<void>;
 }
 
 /** A token given outright (a machine's own, the tests'): the same interface. */
@@ -80,7 +91,9 @@ export function fixedCredential(token: string | null | undefined, by = "a fixed 
   };
 }
 
-const NONE = "The control Worker has no Cloudflare credential: an admin connects it at /install (a consent in the browser).";
+const NONE = "The control Worker has no Cloudflare credential: an admin connects Cloudflare (a consent in a popup).";
+/** Whether Cloudflare's answer to a refresh ends the grant: 400 (invalid_grant) or 401 (invalid_client); never a 429 or a 5xx. */
+const refusal = (status: number) => status == 400 || status == 401;
 /** Refresh when the access token has less than this left (a deploy's upload must not outlive it). */
 const REFRESH_BEFORE_MS = 10 * 60 * 1000;
 const KEY = "credential";
@@ -89,12 +102,12 @@ const KEY = "credential";
 export interface CredentialWords {
   /** "The control Worker's Cloudflare credential" */
   subject: string;
-  /** "an admin connects it again at /install" */
+  /** What brings it back, said where the button is: "an admin connects Cloudflare again". */
   fix: string;
   /** There is none at all. */
   none: string;
 }
-const CONTROL_WORDS: CredentialWords = { subject: "The control Worker's Cloudflare credential", fix: "an admin connects it again at /install", none: NONE };
+const CONTROL_WORDS: CredentialWords = { subject: "The control Worker's Cloudflare credential", fix: "an admin connects Cloudflare again", none: NONE };
 
 export interface TokenAnswer { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; error?: string; error_description?: string }
 
@@ -165,10 +178,19 @@ export class OAuthCredential implements Credential {
     const w = this.words;
     if (!g) throw new DeployError(w.none);
     if (g.error) throw new DeployError(`${w.subject} stopped working (${g.error}): ${w.fix}.`);
-    if (g.expiresAt - this.now() > REFRESH_BEFORE_MS) return open(g.access, await this.deps.sealKey);
+    if (g.expiresAt - this.now() > REFRESH_BEFORE_MS && !g.refusedAt) return open(g.access, await this.deps.sealKey);
     // One refresh at a time: a second caller waits for the first's token.
     this.refreshing ??= this.refresh(g).finally(() => { this.refreshing = null; });
     return this.refreshing;
+  }
+
+  /**
+   * Cloudflare's API refused the access token (401): the grant may be revoked. The next token() refreshes first,
+   * and only the refresh's answer says whether the grant is gone.
+   */
+  async refused(): Promise<void> {
+    const g = await this.stored();
+    if (g && !g.error && !g.refusedAt) await this.deps.storage.put(KEY, { ...g, refusedAt: this.now() });
   }
 
   private async refresh(g: StoredGrant): Promise<string> {
@@ -185,9 +207,11 @@ export class OAuthCredential implements Credential {
       // Another worker refreshed first (Cloudflare rotates the refresh token, so this one's is spent): use its grant.
       const now = await this.stored();
       if (now && !now.error && now.refreshedAt != g.refreshedAt && now.expiresAt - this.now() > REFRESH_BEFORE_MS) return open(now.access, await this.deps.sealKey);
-      // A refusal is final (revoked, or the client changed): said once, kept, until an admin connects again. A 5xx isn't.
-      if (r.status >= 400 && r.status < 500) { await this.deps.storage.put(KEY, { ...g, error: why }); this.deps.log?.(`Cloudflare credential refresh refused: ${why}`); }
-      throw new DeployError(r.status >= 500 || r.status == 0 ? `Cloudflare couldn't refresh ${w.subject.replace(/^The /, "the ")} (${why}): try again in a few minutes.` : `${w.subject} stopped working (${why}): ${w.fix}.`);
+      // A refusal is final (revoked, spent, or the client changed): said once, kept, until an admin connects again.
+      // Anything else (429, 5xx) is a moment's: nothing is kept, and the next use refreshes again.
+      if (refusal(r.status)) { await this.deps.storage.put(KEY, { ...g, error: why }); this.deps.log?.(`Cloudflare credential refresh refused: ${why}`); }
+      else this.deps.log?.(`Cloudflare credential refresh failed for now: ${why}`);
+      throw new DeployError(refusal(r.status) ? `${w.subject} stopped working (${why}): ${w.fix}.` : r.status == 429 ? `Cloudflare asked Erga to slow down while it refreshed ${w.subject.replace(/^The /, "the ")} (${why}): try again in a minute.` : `Cloudflare couldn't refresh ${w.subject.replace(/^The /, "the ")} (${why}): try again in a few minutes.`);
     }
     const next: StoredGrant = {
       ...g,
@@ -195,7 +219,7 @@ export class OAuthCredential implements Credential {
       refresh: answer.refresh_token ? await seal(answer.refresh_token, await this.deps.sealKey) : g.refresh,
       expiresAt: this.now() + (answer.expires_in ?? 3600) * 1000,
       scopes: answer.scope ? answer.scope.split(/\s+/).filter(Boolean) : g.scopes,
-      refreshedAt: this.now(), error: null,
+      refreshedAt: this.now(), error: null, refusedAt: null,
     };
     await this.deps.storage.put(KEY, next);
     this.deps.log?.(`Cloudflare credential refreshed; the access token lasts until ${new Date(next.expiresAt).toISOString()}`);
