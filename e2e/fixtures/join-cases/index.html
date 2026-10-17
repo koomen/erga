@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Joining every kind of block</title>
+  <style>
+    body { font: 18px/1.5 Georgia, serif; max-width: 40rem; margin: 3rem auto; }
+    .box { border: 1px solid #ccc; padding: 0 1rem; }
+    .big { font-size: 1.4em; }
+    .widget { background: #eef; padding: 0.5rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Joining every kind of block</h1>
+    <div id="divp-a">A div</div>
+    <p id="divp-b">then a paragraph</p>
+    <p id="pdiv-a">A paragraph</p>
+    <div id="pdiv-b">then a div</div>
+    <p id="intobox-a">Before the box</p>
+    <div class="box">
+      <p id="intobox-b">First in the box</p>
+      <p>Second in the box</p>
+    </div>
+    <div class="box">
+      <p>One in the box</p>
+      <p id="outofbox-a">Last in the box</p>
+    </div>
+    <p id="outofbox-b">After the box</p>
+    <p id="section-a">Before the section</p>
+    <section>
+      <h3 id="section-b">The section's heading</h3>
+      <p>The section's text</p>
+    </section>
+    <ul>
+      <li><p id="nested-a">A parent item</p>
+        <ul>
+          <li id="nested-b">a child item</li>
+        </ul>
+      </li>
+      <li id="nested-c">The next item</li>
+    </ul>
+    <blockquote>
+      <p id="quote-a">A quote's first line</p>
+      <p id="quote-b">and its second</p>
+    </blockquote>
+    <p id="empty-a"><br></p>
+    <p id="empty-b">After an empty block</p>
+    <p id="link-a">This ends in <a href="#here">a link</a></p>
+    <p id="link-b">and the link goes on</p>
+    <p id="br-a">This ends in a line break<br></p>
+    <p id="br-b">and the break goes on</p>
+    <p id="style-a" style="color: #a33">A red paragraph</p>
+    <p id="style-b" class="big">and a big one</p>
+    <p id="comment-a">Before a comment</p>
+    <!-- a note in the source -->
+    <p id="comment-b">after the comment</p>
+    <p id="bold-a">Before bold</p>
+    <p id="bold-b"><b>Bold</b> at the start</p>
+    <p id="anchor-a">Before a link</p>
+    <p id="anchor-b"><a href="#there">A link</a> at the start</p>
+    <p id="span-a">Before a span</p>
+    <p id="span-b"><span class="s"><em>Deep</em></span> at the start</p>
+    <details open>
+      <summary id="summary-a">A summary</summary>
+      <p id="summary-b">and the details</p>
+    </details>
+    <pre id="pre-a">some code</pre>
+    <p id="pre-b">after the code</p>
+    <p id="rule-a">Before a rule</p>
+    <hr>
+    <p id="rule-b">after the rule</p>
+    <table>
+      <tr><td id="table-a">A cell</td></tr>
+    </table>
+    <p id="table-b">After the table</p>
+    <p id="widget-a">Before a widget</p>
+    <div class="widget" contenteditable="false"><button>Press</button></div>
+    <p id="widget-b">After the widget</p>
+    <p id="noedit-a">Before a locked block</p>
+    <div data-erga-noedit><p>Locked text</p></div>
+    <p id="noedit-b">After the locked block</p>
+    <p id="pic-a">Before a picture</p>
+    <svg width="40" height="20"><rect width="40" height="20" fill="#7fb6e0"/></svg>
+    <p id="pic-b">After the picture</p>
+  </main>
+</body>
+</html>

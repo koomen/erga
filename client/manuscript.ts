@@ -532,6 +532,55 @@ export function textEnd(unit: Unit): number {
   return unit.contentTo;
 }
 
+/** A table's structure: a join never takes text into a table or out of one. */
+const TABLE = new Set(["table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup"]);
+/** Elements that show nothing on the page. */
+const UNSEEN = new Set(["script", "style", "template", "noscript", "link", "meta", "base", "source", "track", "param", "col", "colgroup"]);
+
+/** Whether an element shows something on the page: text, a picture, a widget, a rule, a line break. */
+function shows(src: string, el: ElementNode): boolean {
+  if (UNSEEN.has(el.tag)) return false;
+  if (ATOMIC.has(el.tag) || el.tag == "hr" || el.tag == "br" || el.tag.includes("-")) return true;
+  return el.children.some((c) => c.kind == "text" ? /\S/.test(src.slice(c.from, c.to)) : shows(src, c));
+}
+
+/** What lies between two units, for Backspace and Delete at their edges (see gap). */
+export type Gap = { kind: "join" } | { kind: "rule"; from: number; to: number } | { kind: "apart" };
+
+/**
+ * What lies in the source between unit `a` and a later unit `b`. "join": nothing the page shows (whitespace,
+ * comments, the tags of the blocks around them, empty elements), so the two can become one. "rule": an <hr> and
+ * nothing else that shows. "apart": text, a picture, a widget, a locked part, or a table's edge.
+ */
+export function gap(src: string, a: Unit, b: Unit): Gap {
+  if (!a.node || !b.node || a.to > b.from) return { kind: "apart" };
+  let root = a.node;
+  while (root.parent) root = root.parent;
+  const from = a.to, to = b.from;
+  let rule: ElementNode | null = null, apart = false;
+  const walk = (el: ElementNode) => {
+    for (const c of el.children) {
+      if (apart) return;
+      if (c.to <= from || c.from >= to) continue;
+      if (c.kind == "text") { if (/\S/.test(src.slice(Math.max(c.from, from), Math.min(c.to, to)))) apart = true; continue; }
+      if (c.from >= from && c.to <= to) {
+        // Wholly between the two.
+        if (!shows(src, c)) continue;
+        if (c.tag == "hr" && !rule) rule = c;
+        else apart = true;
+        continue;
+      }
+      // Around one of them or both: its open or close tag is between them, unless it holds both.
+      if (TABLE.has(c.tag) && (c.from >= from || c.to <= to)) apart = true;
+      walk(c);
+    }
+  };
+  walk(root);
+  if (apart) return { kind: "apart" };
+  const r = rule as ElementNode | null;
+  return r ? { kind: "rule", from: r.from, to: r.to } : { kind: "join" };
+}
+
 /** Whether the source between two units is only whitespace (they are adjacent siblings). */
 export function adjacent(src: string, a: Unit, b: Unit): boolean {
   return a.to <= b.from && /^\s*$/.test(src.slice(a.to, b.from));
