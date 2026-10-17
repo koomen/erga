@@ -12,6 +12,7 @@
 // (Tokens, byHash).
 
 import type { ArtifactsBinding } from "../cloudflare/artifacts";
+import { githubAppOf } from "../cloudflare/github-app";
 import { adminsOf, directoryOf, sqlOn } from "../cloudflare/d1";
 import type { Env } from "../cloudflare/env";
 import type { Pipeline } from "../cloudflare/pipeline";
@@ -53,9 +54,20 @@ export interface ControlEnv {
   CLOUDFLARE_ACCOUNT_ID: string;
   /** The app's address (https://erga.dev): links back, and the stylesheet the Ops page uses. */
   APP_URL: string;
-  /** Sign-in: this Worker's own GitHub OAuth app (callback https://<its host>/auth/github/callback). */
-  GITHUB_CLIENT_ID?: string;
-  GITHUB_CLIENT_SECRET?: string;
+  /**
+   * Erga's GitHub App (cloudflare/github-app.ts): sign-in here (its user authorization, callback
+   * https://ops.erga.dev/auth/github/callback), Connect GitHub on the Ops page, and the webhook. erga.dev's control Worker
+   * has its secrets (the client secret, the private key as PKCS#8 PEM, the webhook secret: set from files, never printed);
+   * an install's has the public parts, and goes through erga.dev (UPSTREAM) for the rest.
+   */
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_SLUG?: string;
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_CLIENT_SECRET?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_WEBHOOK_SECRET?: string;
+  /** Local development only: the pretend GitHub (dev/github-mock.ts), at the dev server. */
+  ERGA_GITHUB_ORIGIN?: string;
   /** Signs this Worker's own session cookies (not production's secret). */
   SESSION_SECRET: string;
   /** Erga's OAuth client on Cloudflare ("Erga", public, PKCE: deploy/credential.ts): its id, and a secret only if it was made confidential. */
@@ -65,9 +77,6 @@ export interface ControlEnv {
   SNAPSHOT_TOKEN?: string;
   /** Local development only: the mock Cloudflare, consent included. */
   ERGA_DEPLOY_MOCK?: string;
-  /** The GitHub mirror: where, and a token that may push there. */
-  GITHUB_MIRROR_URL?: string;
-  GITHUB_MIRROR_TOKEN?: string;
 }
 
 /** The Platform the shared code runs on, in the control Worker. */
@@ -75,6 +84,7 @@ export function controlPlatform(env: ControlEnv, ctx: ExecutionContext): Platfor
   // The shared modules read only the bindings named here; the rest of the app's Env they never touch.
   const e = env as unknown as Env;
   const directory = directoryOf(e);
+  const app = githubAppOf(env);
   const p = {
     directory,
     tokens: new Tokens(sqlOn(env.DB), env.SESSION_SECRET, directory, true),
@@ -84,9 +94,11 @@ export function controlPlatform(env: ControlEnv, ctx: ExecutionContext): Platfor
     pagesDomain: () => "",
     pagesShared: () => null,
     adminsOnly: false,
+    // Sign-in with Erga's GitHub App; on an install's control Worker, through erga.dev's callback (the relay).
     signIn: {
-      app: { clientId: env.GITHUB_CLIENT_ID?.trim() ?? "", secret: env.GITHUB_CLIENT_SECRET?.trim() ?? "" },
-      github: "https://github.com",
+      app: { clientId: app?.clientId ?? "", secret: app?.clientSecret ?? "" },
+      github: app?.www ?? "https://github.com",
+      relay: env.UPSTREAM?.trim().replace(/\/+$/, "") || null,
       devLogin: null,
       encryptionKey: null,
     },

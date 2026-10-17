@@ -6,7 +6,8 @@
 //   /__artifacts/git/<namespace>/<repo>.git/...   Cloudflare Artifacts (which has no local mode:
 //                                                 miniflare's binding only proxies to the real service),
 //                                                 with repo tokens as Artifacts checks them (read, write)
-//   /__github/<owner>/<repo>.git/...              GitHub, for the mirror, with one made-up token
+//   /__github/<owner>/<repo>.git/...              GitHub, for the sync, with one made-up token (or the pretend GitHub's
+//                                                 installation tokens: github-mock.ts, `githubToken`)
 //
 // Both make the bare repository the first time it's asked for.
 
@@ -119,9 +120,10 @@ export function tokenOf(authorization: string | undefined): string | null {
 
 /**
  * The two pretend servers' routes (above), for a request to `path`, or null
- * if it isn't theirs. Repositories live under `stateDir`.
+ * if it isn't theirs. Repositories live under `stateDir`. `githubToken`: which tokens the pretend GitHub takes (the
+ * fixed one alone, if not given).
  */
-export async function gitServers(stateDir: string, secret: string, req: GitRequest): Promise<GitResponse | null> {
+export async function gitServers(stateDir: string, secret: string, req: GitRequest, o: { githubToken?: (token: string | null) => boolean } = {}): Promise<GitResponse | null> {
   const deny = (status: number, why: string): GitResponse => ({ status, headers: { "content-type": "text/plain", ...(status == 401 ? { "www-authenticate": 'Basic realm="git"' } : {}) }, body: new TextEncoder().encode(`${why}\n`) });
   const pushing = req.query.includes("service=git-receive-pack") || req.path.endsWith("/git-receive-pack");
   const artifacts = /^\/__artifacts\/git\/([A-Za-z0-9][\w.-]*)\/([A-Za-z0-9][\w.-]*)\.git(\/.*)$/.exec(req.path);
@@ -138,7 +140,8 @@ export async function gitServers(stateDir: string, secret: string, req: GitReque
   const github = /^\/__github\/([A-Za-z0-9-]+)\/([\w.-]+?)(?:\.git)?(\/.*)$/.exec(req.path);
   if (github) {
     const [, owner, repo, rest] = github;
-    if (tokenOf(req.headers.authorization) != MOCK_GITHUB_TOKEN) return deny(401, "GitHub (pretend): bad credentials");
+    const token = tokenOf(req.headers.authorization);
+    if (o.githubToken ? !o.githubToken(token) : token != MOCK_GITHUB_TOKEN) return deny(401, "GitHub (pretend): bad credentials");
     const root = join(stateDir, "github", owner);
     ensureBare(join(root, `${repo}.git`));
     return httpBackend(root, { ...req, path: `/${repo}.git${rest}` });

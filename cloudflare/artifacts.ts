@@ -16,8 +16,8 @@
 // real service), so local development uses a stand-in: the dev server serves
 // a bare repository with real `git http-backend`, and
 // this file mints tokens for it the way Artifacts would (read or write, with
-// an expiry), signed with the dev server's secret. The GitHub mirror is a
-// pretend GitHub there too: local development never reaches the real ones.
+// an expiry), signed with the dev server's secret. GitHub is a pretend GitHub
+// there too (dev/github-mock.ts): local development never reaches the real ones.
 
 import { forkRemote, type ForkAccess } from "../deploy/forks";
 import type { InstallSpec } from "../deploy/install";
@@ -26,10 +26,6 @@ import type { Env } from "./env";
 
 /** The repository's name in the namespace. */
 export const REPO = "erga";
-/** The pretend GitHub's token. */
-const MOCK_GITHUB_TOKEN = "erga-dev-github-token";
-/** Erga's canonical repository on GitHub, which becomes a mirror. */
-export const GITHUB_DEFAULT = "https://github.com/koomen/erga.git";
 
 /** The part of the Artifacts binding Erga uses (the binding's types: workerd's Artifacts, ArtifactsRepo). */
 export interface ArtifactsBinding {
@@ -100,17 +96,6 @@ export async function artifactsRemoteFor(env: Env, repo: string, scope: "read" |
 }
 
 const access = (url: string, token: string, expires: number): RepoAccess => ({ url, token, expiresAt: new Date(expires).toISOString(), headers: { Authorization: `Bearer ${token}` } });
-
-/** The GitHub mirror as a Git remote, or null when there's none (no token). Locally, the pretend GitHub. */
-export function githubRemote(env: Env, origin?: string): Remote | null {
-  if (local(env)) return { url: `${devOrigin(env, origin)}/__github/koomen/erga.git`, headers: { Authorization: `Basic ${btoa(`x-access-token:${MOCK_GITHUB_TOKEN}`)}` } };
-  const token = env.GITHUB_MIRROR_TOKEN?.trim();
-  if (!token) return null;
-  return { url: env.GITHUB_MIRROR_URL?.trim() || GITHUB_DEFAULT, headers: { Authorization: `Basic ${btoa(`x-access-token:${token}`)}` } };
-}
-
-/** Where the mirror would push, for the page when it's off. */
-export const githubUrl = (env: Env) => (local(env) ? "the pretend GitHub (local development)" : env.GITHUB_MIRROR_URL?.trim() || GITHUB_DEFAULT);
 
 /** A local repo token, as dev/git-server.ts checks it. */
 async function localToken(secret: string, repo: string, scope: string, exp: number): Promise<string> {

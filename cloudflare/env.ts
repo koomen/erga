@@ -131,9 +131,19 @@ export interface Env {
    * bound only when the deploy names a namespace (ERGA_ARTIFACTS_NAMESPACE).
    */
   ARTIFACTS?: ArtifactsBinding;
-  /** The GitHub mirror: where it is (github.com/koomen/erga by default) and a token that may push there (a secret). No token, no mirror. */
-  GITHUB_MIRROR_URL?: string;
-  GITHUB_MIRROR_TOKEN?: string;
+  /**
+   * Erga's GitHub App (server/source/github.ts; cloudflare/github-app.ts), on a control Worker: its id, slug and client
+   * id; and on erga.dev's, its secrets: the client secret (sign-in's code exchange), the private key (PKCS#8 PEM:
+   * installation tokens) and the webhook secret. An install's control Worker has the public parts only.
+   */
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_SLUG?: string;
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_CLIENT_SECRET?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_WEBHOOK_SECRET?: string;
+  /** An install's app Worker: erga.dev's control Worker, whose GitHub callback relays its sign-in (the App's one callback). */
+  SIGN_IN_RELAY?: string;
   /** Local development only: the dev server's address, where the stand-ins for Artifacts and GitHub are. */
   ERGA_DEV_ORIGIN?: string;
   /** Local development only: how long after the homepage changes its next deploy runs (5 minutes by default; tests shorten it). */

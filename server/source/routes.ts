@@ -7,17 +7,22 @@
 //                               fast-forwards only.
 //   GET  /git, /git/tree/<ref>/<path>   Erga's source for anyone, read-only, with no sign-in: how to clone, main and staging,
 //                               their recent commits, and the files (public.ts). A browser at /git/erga.git sees it too.
-//   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
+//   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), GitHub's
+//                               status, and the merge waiting on conflicts (if one)
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins). Production deploys it.
 //   POST /api/source/release    { version?, notes?, commit? }: cuts a release: an annotated tag (the next version unless
 //                               given) on main's head (or that commit of main), with the notes as its message (admins):
 //                               { tag, commit } or 4xx { error }. `git push erga vX.Y.Z` does the same.
-//   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
+//   GET  /api/source/github     GitHub: the repository connected (or none), the sync's state and its last error (admins)
+//   POST /api/source/github/sync        syncs with GitHub now: what GitHub has comes in, what it lacks goes out (admins)
+//   POST /api/source/github/disconnect  forgets the repository and uninstalls the App from the account (admins). Connect is a
+//                               consent in a popup, on the control Worker (control/routes.ts, /github/connect)
 //   POST /api/source/update     a downstream: Update from upstream (erga.dev): the channel's commit merged into staging, a
 //                               fast-forward or a merge commit; on conflicts, the merge goes on upstream-merge/<version> and
 //                               staging stays: { result: "up-to-date" | "fast-forward" | "merged" | "conflicts", ... } (admins)
-//   POST /api/source/update/resolve   { path, content | null }: one conflicted file of that merge, resolved (the admin's agent)
+//   POST /api/source/update/resolve   { path, content | null }: one conflicted file of the waiting merge (from upstream, or from
+//                               GitHub: github-merge/<commit>), resolved (the admin's agent)
 //   POST /api/source/update/finish    the resolved merge moves staging; the branch goes
 //   POST /api/source/update/abandon   drops the waiting merge and its branch
 //   /admin/ops               the Ops page (admins): the history of staging and main, and their deploys
@@ -31,7 +36,6 @@
 // (staging's secret is its own, so they don't work there), and a bad staging
 // deploy can't break the way pushes reach staging. Both proxy one repository.
 
-import { TARGETS } from "../../deploy/targets.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { LOCKED } from "../directory/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
@@ -39,14 +43,19 @@ import type { SourceAnswer, SourceRead } from "./browse.ts";
 import { gitHttp } from "./http.ts";
 import { adminSourcePage } from "./page.ts";
 import type { Remote } from "./remote.ts";
-import type { Actor, BranchInfo, MirrorStatus, Released, TagInfo, UpdateResult, UpstreamView } from "./repo.ts";
+import type { GithubLink, PushEvent } from "./github.ts";
+import type { Actor, BranchInfo, GithubStatus, MergeConflict, Released, TagInfo, UpdateResult, UpstreamView } from "./repo.ts";
 
 /** The repository's object (one, "erga"): pushes and merges happen there one at a time. Calls name the address the request came to (`origin`). */
 export interface SourceObject {
   advertise(origin: string): Promise<Uint8Array>;
-  branches(origin: string): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; tags?: TagInfo[]; release?: string | null; upstream?: UpstreamView }>;
-  /** `by`: who asked. */
-  mirrorNow(origin: string, by?: string): Promise<MirrorStatus>;
+  branches(origin: string): Promise<{ branches: BranchInfo[]; github: GithubStatus; conflict: MergeConflict | null; tags?: TagInfo[]; release?: string | null; upstream?: UpstreamView }>;
+  /** GitHub: the status; a sync now (`by`: who asked); the repository connected (the consent's end: control/routes.ts); disconnected; a push there (the webhook). */
+  githubStatus(origin: string): Promise<GithubStatus>;
+  syncGithub(origin: string, by: string): Promise<GithubStatus>;
+  connectGithub(origin: string, link: GithubLink, by: string): Promise<GithubStatus>;
+  disconnectGithub(origin: string): Promise<{ ok: true } | { error: string; status: number }>;
+  githubPushed(origin: string, event: PushEvent): Promise<GithubStatus | null>;
   files(origin: string, commit: string): Promise<{ path: string; mode: string; data: Uint8Array }[]>;
   /** A read of the source: the answer, or { error }. */
   read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }>;
@@ -71,8 +80,6 @@ export interface SourceService {
   object: SourceObject;
   /** The repository as a Git remote, with a token of this scope. */
   remote(scope: "read" | "write", origin?: string): Promise<RepoAccess | null>;
-  /** Where the GitHub mirror is (for the page when the mirror is off). */
-  mirrorUrl: string;
 }
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -146,7 +153,7 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
   try {
     if (url.pathname == "/api/source/branches" && request.method == "GET") {
       const view = await source.object.branches(url.origin);
-      return json({ ...view, mirror: { ...view.mirror, url: view.mirror.url ?? source.mirrorUrl }, remote: `${url.origin}/git/erga.git` });
+      return json({ ...view, remote: `${url.origin}/git/erga.git` });
     }
     if (url.pathname == "/api/source/merge" && request.method == "POST") {
       const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string };
@@ -160,7 +167,12 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
       const r = await source.object.release(url.origin, who.actor, o);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
-    if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await source.object.mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });
+    if (url.pathname == "/api/source/github" && request.method == "GET") return json({ github: await source.object.githubStatus(url.origin) });
+    if (url.pathname == "/api/source/github/sync" && request.method == "POST") return json({ github: await source.object.syncGithub(url.origin, byLine(who.actor.login, who.actor.via)) });
+    if (url.pathname == "/api/source/github/disconnect" && request.method == "POST") {
+      const r = await source.object.disconnectGithub(url.origin);
+      return "error" in r ? json({ error: r.error }, r.status) : json({ ok: true, github: await source.object.githubStatus(url.origin) });
+    }
     if (url.pathname == "/api/source/update" && request.method == "POST") {
       const r = await source.object.update(url.origin, who.actor);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
@@ -191,6 +203,5 @@ export async function sourceDoor(request: Request, platform: Platform, url: URL)
   const session = await platform.sessionOf(request);
   if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/ops")}` } });
   const admin = !session.test && !session.agent && (await platform.directory.users.actsAsAdmin(whoOf(session)));
-  const target = platform.deploy.target;
-  return adminSourcePage({ session, admin, ready: !!platform.source, origin: url.origin, mirrorUrl: platform.source?.mirrorUrl ?? "", worker: target ? TARGETS[target].worker : null });
+  return adminSourcePage({ session, admin, ready: !!platform.source, origin: url.origin });
 }

@@ -24,6 +24,8 @@ export const VIA = {
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,
   /** A factory VM, on a task they added. */
   factory: (task: number) => `the factory (task #${task})`,
+  /** A push on GitHub (the webhook), synced back into Erga's repository. */
+  github: "a push on GitHub",
 } as const;
 
 /** The actor of what the server does by itself, with nobody behind it. Not a GitHub login (those have no parentheses). */

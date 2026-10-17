@@ -35,7 +35,7 @@ import { forgetHome } from "../home/index.ts";
 import { authOps, SHARE_ADMIN_HOURS } from "../identity/index.ts";
 import { LOCKED } from "../directory/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
-import type { SourceAnswer, SourceRead } from "../source/index.ts";
+import type { GithubStatus, SourceAnswer, SourceRead } from "../source/index.ts";
 
 const enc = new TextEncoder();
 
@@ -145,6 +145,13 @@ export class AdminAgents {
       connect: "Nothing deploys until the admin connects Cloudflare. A Connect Cloudflare button shows under this call in their panel: it opens Cloudflare's consent in a popup, on this page. Tell them so, with Cloudflare's own words (credential.error, else credential.problem). You can't consent for them.",
     };
     const actor = async () => ({ login, name: (await this.platform.directory.users.get(login))?.name || login, via: VIA.admin });
+    // Not connected (or the sync is refused): the answer carries Connect GitHub, a button under the call in the admin's panel
+    // (the App's install page, in a popup, on the control Worker's origin). The consent is the admin's own.
+    const withGithubOffer = <T extends { github: GithubStatus }>(o: T): T | (T & { offer: Offer; connect: string }) => o.github.connected && !o.github.error ? o : {
+      ...o,
+      offer: { kind: "connect-github", label: o.github.link ? "Connect GitHub again" : "Connect GitHub", url: `${this.platform.control?.url ?? state.origin}/github/connect?popup=1` },
+      connect: o.github.connected ? "The sync with GitHub stopped (github.error says why). If GitHub refused the App's access, a Connect GitHub button shows under this call in the admin's panel: tell them to click it. You can't consent for them." : "Nothing syncs with GitHub until the admin connects a repository. A Connect GitHub button shows under this call in their panel: it opens the App's install page on GitHub in a popup, where they pick the account and the repository. Tell them so. You can't consent for them, and there's no token to ask for.",
+    };
     return {
       branches: async () => source().branches(state.origin),
       release: async (commit) => {
@@ -152,7 +159,17 @@ export class AdminAgents {
         if ("error" in r) throw new Error(r.error);
         return { ...r, done: r.upToDate ? "main was at staging already: nothing to deploy" : `main moved to ${r.commit.slice(0, 10)}: production deploys it now (list_deploys follows it)` };
       },
-      mirror: async () => ({ mirror: await source().mirrorNow(state.origin, byLine(login, VIA.admin)) }),
+      // GitHub: the status (with Connect GitHub, a button in the panel, when nothing is connected), a sync now, Disconnect.
+      githubStatus: async () => withGithubOffer({ github: await source().githubStatus(state.origin), conflict: (await source().branches(state.origin)).conflict ?? null }),
+      syncGithub: async () => {
+        const github = await source().syncGithub(state.origin, byLine(login, VIA.admin));
+        return withGithubOffer({ github, done: github.error ? `the sync stopped: ${github.error}` : "in sync: what GitHub had came in, what it lacked went out" });
+      },
+      disconnectGithub: async () => {
+        const r = await source().disconnectGithub(state.origin);
+        if ("error" in r) throw new Error(r.error);
+        return withGithubOffer({ github: await source().githubStatus(state.origin), done: "GitHub is disconnected: the repository there stays, the App is uninstalled from the account, and nothing syncs until the admin connects GitHub again" });
+      },
       // Not connected: the answer carries Connect Cloudflare, a button under the call in the admin's panel (a consent in a
       // popup, on the control Worker's origin). The consent is the admin's own: the agent only offers it.
       deploys: async (history) => withOffer(await pipeline().status(history) as { credential?: CredentialStatus }),
@@ -198,21 +215,21 @@ export class AdminAgents {
         const r = await source().update(state.origin, await actor());
         if ("error" in r) throw new Error(r.error);
         const done = r.result == "up-to-date" ? "staging has everything upstream's channel has: nothing to update"
-          : r.result == "conflicts" ? `the merge of ${r.conflict.version} waits on the branch ${r.conflict.branch}: ${r.conflict.files.length} file${r.conflict.files.length == 1 ? "" : "s"} conflict (${r.conflict.files.map((f) => f.path).join(", ")}). Read each at that branch, resolve it with resolve_upstream_file, then finish_upstream_merge`
+          : r.result == "conflicts" ? `the merge of ${r.conflict.version} waits on the branch ${r.conflict.branch}: ${r.conflict.files.length} file${r.conflict.files.length == 1 ? "" : "s"} conflict (${r.conflict.files.map((f) => f.path).join(", ")}). Read each at that branch, resolve it with resolve_conflict_file, then finish_waiting_merge`
           : `staging is at ${r.commit.slice(0, 10)} (${r.result}, ${r.version}, ${r.brought} commit${r.brought == 1 ? "" : "s"} brought in): staging deploys it; production follows through deploy_production`;
         return { ...r, done };
       },
-      resolveUpstreamFile: async (path, content) => {
+      resolveConflictFile: async (path, content) => {
         const r = await source().resolveUpdate(state.origin, await actor(), path, content);
         if ("error" in r) throw new Error(r.error);
-        return { ...r, done: r.remaining.length ? `${r.path} written; still carrying markers: ${r.remaining.join(", ")}` : `${r.path} written; no file carries markers: finish_upstream_merge finishes the merge` };
+        return { ...r, done: r.remaining.length ? `${r.path} written; still carrying markers: ${r.remaining.join(", ")}` : `${r.path} written; no file carries markers: finish_waiting_merge finishes the merge` };
       },
-      finishUpstreamMerge: async () => {
+      finishWaitingMerge: async () => {
         const r = await source().finishUpdate(state.origin, await actor());
         if ("error" in r) throw new Error(r.error);
         return { ...r, done: `merged ${r.version}: staging is at ${r.commit.slice(0, 10)} and deploys it; production follows through deploy_production` };
       },
-      abandonUpstreamMerge: async () => {
+      dropWaitingMerge: async () => {
         const r = await source().abandonUpdate(state.origin);
         if ("error" in r) throw new Error(r.error);
         return { done: "the waiting merge and its branch are gone; staging is as it was" };

@@ -20,7 +20,7 @@ const APP = "https://erga.test";
 let fx: Fixture, server: ReturnType<typeof Bun.serve>, origin = "", main = "";
 
 beforeAll(async () => {
-  fx = startFixture({ mirror: false });
+  fx = startFixture();
   const d = mkdtempSync(join(tmpdir(), "erga-public-"));
   await must(d, "init", "-q", "-b", "main");
   mkdirSync(join(d, "src/page"), { recursive: true });
@@ -39,12 +39,11 @@ beforeAll(async () => {
   const source = {
     object: {
       advertise: () => fx.repo.advertise(),
-      branches: async () => { const b = await fx.repo.branches(); return { branches: b.branches, mirror: b.mirror }; },
+      branches: async () => { const b = await fx.repo.branches(); return { branches: b.branches, github: b.github, conflict: b.conflict }; },
       read: (_: string, q: never) => fx.repo.read(q).catch((e: Error) => ({ error: e.message })),
       fetch: async (r: Request) => new Response(await fx.repo.receive(new Uint8Array(await r.arrayBuffer()), JSON.parse(r.headers.get("x-erga-actor")!)) as BodyInit),
     },
     remote: async () => ({ ...read, token: "t", expiresAt: "" }),
-    mirrorUrl: "",
   } as unknown as SourceService;
   const platform = {
     source,

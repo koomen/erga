@@ -61,7 +61,7 @@ function controlVar(name: string): string {
     return String((JSON.parse(text) as { vars?: Record<string, string> }).vars?.[name] ?? "").trim();
   } catch { return ""; }
 }
-const controlClientId = () => controlVar("GITHUB_CLIENT_ID");
+const controlClientId = () => controlVar("GITHUB_APP_CLIENT_ID");
 
 const PLAN = [
   `Check the credential, the account, and its zones ${[...new Set([CONTROL.zone, STAGING.zone, PROD.pages.zone, STAGING.pages.zone])].join(", ")} (reads only).`,
@@ -165,12 +165,12 @@ try {
     } else console.log("   Skipped: the control Worker's deploy fails until it's there (its config binds it).");
 
     step(3);
-    const clientId = controlClientId() || (mock ? "Ov23liMockControl" : "");
-    if (clientId) console.log(`   Client ID ${clientId}.`);
+    const clientId = controlClientId() || (mock ? "Iv1.mockgithubapp0" : "");
+    if (clientId) console.log(`   The GitHub App's client id is ${clientId} (control/wrangler.jsonc: GITHUB_APP_ID, GITHUB_APP_SLUG, GITHUB_APP_CLIENT_ID).`);
     else {
-      console.log(`   None yet: signing in to ${CONTROL.host} won't work until there is one (admin-scope tokens work). Make a GitHub OAuth app (github.com/settings/applications/new):`);
-      console.log(`   homepage https://${CONTROL.host}, callback https://${CONTROL.host}/auth/github/callback. Put its Client ID in control/wrangler.jsonc (vars.GITHUB_CLIENT_ID),`);
-      console.log(`   run this again with --control, and give its client secret at step 5.`);
+      console.log(`   None yet: signing in to ${CONTROL.host} won't work until there is one (admin-scope tokens work). Make a GitHub App (github.com/settings/apps/new; public):`);
+      console.log(`   callback https://${CONTROL.host}/auth/github/callback (request user authorization during installation), webhook https://${CONTROL.host}/github/webhook (push events),`);
+      console.log(`   permissions Contents read and write, Metadata read, Administration read and write. Put its id, slug and client id in control/wrangler.jsonc, run this again with --control, and give its secrets at step 5.`);
     }
 
     step(4);
@@ -186,10 +186,15 @@ try {
     else {
       const had = await secretsOf(CONTROL.worker);
       const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }) };
-      const github = read("GITHUB_CLIENT_SECRET", "mock-control-github-client-secret");
-      if (github) secrets.GITHUB_CLIENT_SECRET = github;
-      const mirror = read("GITHUB_MIRROR_TOKEN");
-      if (mirror) secrets.GITHUB_MIRROR_TOKEN = mirror;
+      // The GitHub App's secrets, from files (never typed, never printed): the client secret, the webhook secret, and the
+      // private key as PKCS#8 (openssl pkcs8 -topk8 -nocrypt -in <GitHub's .pem>).
+      const fileSecret = (what: string, fallback: string) => { const path = read(`${what}_FILE`, fallback); return path && !mock ? readFileSync(path, "utf8").replace(/\n+$/, "") : path; };
+      const github = fileSecret("GITHUB_APP_CLIENT_SECRET", "mock-control-github-client-secret");
+      if (github) secrets.GITHUB_APP_CLIENT_SECRET = github;
+      const hook = fileSecret("GITHUB_WEBHOOK_SECRET", "");
+      if (hook) secrets.GITHUB_WEBHOOK_SECRET = hook;
+      const key = fileSecret("GITHUB_APP_PRIVATE_KEY", "");
+      if (key) secrets.GITHUB_APP_PRIVATE_KEY = key.includes("BEGIN PRIVATE KEY") ? `${key}\n` : (() => { throw new DeployError("GITHUB_APP_PRIVATE_KEY_FILE must hold a PKCS#8 key (-----BEGIN PRIVATE KEY-----): openssl pkcs8 -topk8 -nocrypt -in <GitHub's .pem> -out key.pem"); })();
       // One SNAPSHOT_TOKEN on the control Worker and every app Worker that's there: kept when all of them have one (a run
       // of this after the setup, for a new client secret or --control, rotates nothing), new otherwise.
       const apps = APP_WORKERS.filter((w) => scripts.includes(w));
@@ -198,7 +203,7 @@ try {
       snapshot = snapshotKept ? null : secret();
       const setting = [...Object.keys(secrets), ...(snapshot ? ["SNAPSHOT_TOKEN"] : [])];
       const kept = [...(had.includes("SESSION_SECRET") ? ["SESSION_SECRET"] : []), ...(snapshotKept ? ["SNAPSHOT_TOKEN"] : [])];
-      if (!setting.length) console.log(`   Nothing to set (${kept.join(" and ")} kept as they are${read("GITHUB_CLIENT_SECRET") ? "" : "; GITHUB_CLIENT_SECRET in the environment sets the GitHub app's secret"}).`);
+      if (!setting.length) console.log(`   Nothing to set (${kept.join(" and ")} kept as they are; GITHUB_APP_CLIENT_SECRET_FILE, GITHUB_WEBHOOK_SECRET_FILE and GITHUB_APP_PRIVATE_KEY_FILE in the environment name files to set the GitHub App's secrets from).`);
       else {
         console.log(`   Ready: ${setting.join(", ")}${kept.length ? ` (${kept.join(" and ")} kept as ${kept.length > 1 ? "they are" : "it is"})` : ""} (new ones made here; none are printed).`);
         if (ask(`   Set them on ${CONTROL.worker}${snapshot && apps.length ? `, and SNAPSHOT_TOKEN on ${apps.join(" and ")} too` : ""}?`, yes)) {

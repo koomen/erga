@@ -8,8 +8,10 @@ import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitServers, localToken, MOCK_GITHUB_TOKEN } from "../dev/git-server.ts";
+import { gitServers, localToken } from "../dev/git-server.ts";
+import { mockGithub, type MockGithub } from "../dev/github-mock.ts";
 import { gitHttp } from "../server/source/http.ts";
+import { installationToken, linkOf, uninstall, type GithubLink } from "../server/source/github.ts";
 import { SourceRepo, type Move } from "../server/source/repo.ts";
 import type { Remote } from "../server/source/remote.ts";
 
@@ -17,8 +19,11 @@ export interface Fixture {
   url: string;
   /** Erga's endpoint, with credentials, for the git CLI. */
   erga: string;
-  /** The pretend GitHub's repository, with credentials. */
-  github: string;
+  /** The pretend GitHub (dev/github-mock.ts), with Erga's App; `githubRepo(owner/name)`: its repository, with credentials, for the git CLI. */
+  mock: MockGithub;
+  githubRepo(full: string): string;
+  /** Connects the repository `owner/name` on the pretend GitHub (as Connect GitHub ends), and waits for the first sync. */
+  connectGithub(full: string, by?: string): Promise<GithubLink>;
   /** The pretend Artifacts' repository, with a write token. */
   artifacts: string;
   /** With `upstream`: the pretend upstream's repository (erga/upstream on the pretend Artifacts), with a write token, for the git CLI; and the channel the downstream follows. */
@@ -50,7 +55,16 @@ export async function must(cwd: string, ...args: string[]) {
   return r.out;
 }
 
-export function startFixture(opts: { mirror?: boolean; upstream?: boolean } = {}): Fixture {
+/** The pretend GitHub App the fixture runs with: its key is made once for the test run (the mock checks the JWTs with it). */
+export const TEST_APP = { slug: "erga-editor", clientId: "Iv1.testapp", clientSecret: "test-client-secret", webhookSecret: "test-webhook-secret" };
+let testKey: Promise<string> | null = null;
+export const testPrivateKey = () => (testKey ??= (async () => {
+  const k = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+  const der = Buffer.from(await crypto.subtle.exportKey("pkcs8", k.privateKey)).toString("base64");
+  return `-----BEGIN PRIVATE KEY-----\n${der.match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----\n`;
+})());
+
+export function startFixture(opts: { upstream?: boolean; /** The pretend GitHub's repositories from the start ("ada/erga"), and who uses the browser. */ repos?: string[]; user?: string; /** Where the pretend GitHub sends push events (none: nowhere). */ webhook?: (request: Request) => Promise<Response> } = {}): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "erga-source-"));
   const secret = "test-secret";
   const background: Promise<unknown>[] = [];
@@ -59,10 +73,14 @@ export function startFixture(opts: { mirror?: boolean; upstream?: boolean } = {}
   const artifacts = (): Remote => ({ url: `${origin}/__artifacts/git/erga/erga.git`, headers: { Authorization: `Bearer ${localToken(secret, "erga/erga", "write")}` } });
   const remoteOf = (name: string): Remote => ({ url: `${origin}/__artifacts/git/erga/${name}.git`, headers: { Authorization: `Bearer ${localToken(secret, `erga/${name}`, "write")}` } });
   const state = { channel: "stable" as "stable" | "edge" };
+  let mock: MockGithub;
+  const app = async () => ({ appId: "1", ...TEST_APP, privateKey: await testPrivateKey(), www: `${origin}/__github`, api: `${origin}/__github/api` });
   const repo = new SourceRepo({
     db: (() => { const db = new Database(":memory:"); return { exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[] }; })(),
     artifacts: async () => artifacts(),
-    github: () => (opts.mirror === false ? null : { url: `${origin}/__github/koomen/erga.git`, headers: { Authorization: `Basic ${btoa(`x-access-token:${MOCK_GITHUB_TOKEN}`)}` } }),
+    // GitHub, as the App: installation tokens from the pretend GitHub (a JWT it checks), the uninstall.
+    githubToken: async (id) => installationToken(await app(), id),
+    githubUninstall: async (id) => uninstall(await app(), id),
     moved: (m) => moves.push(m),
     changed: () => {},
     background: (p) => background.push(p),
@@ -74,6 +92,8 @@ export function startFixture(opts: { mirror?: boolean; upstream?: boolean } = {}
     hostname: "127.0.0.1",
     async fetch(request) {
       const url = new URL(request.url);
+      const gh = await mock.fetch(request);
+      if (gh) return gh;
       if (url.pathname.startsWith("/git/erga.git")) {
         // As server/source/routes.ts, but anyone with credentials is Ada.
         const basic = /^Basic\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
@@ -85,17 +105,34 @@ export function startFixture(opts: { mirror?: boolean; upstream?: boolean } = {}
         });
       }
       const body = new Uint8Array(await request.arrayBuffer());
-      const r = await gitServers(dir, secret, { method: request.method, path: url.pathname, query: url.search.slice(1), headers: Object.fromEntries(request.headers), body });
+      const r = await gitServers(dir, secret, { method: request.method, path: url.pathname, query: url.search.slice(1), headers: Object.fromEntries(request.headers), body }, { githubToken: mock.gitTokenOk });
       if (!r) return new Response("Not found", { status: 404 });
+      // A push to the pretend GitHub: its webhook, after the answer.
+      const pushed = /^\/__github\/([^/]+)\/([^/]+)\.git\/git-receive-pack$/.exec(url.pathname);
+      if (pushed && r.status == 200) background.push(mock.pushed(pushed[1], pushed[2], body));
       return new Response(r.body as BodyInit, { status: r.status, headers: r.headers });
     },
   });
   origin = `http://127.0.0.1:${server.port}`;
+  // The pretend GitHub, on this same server: its clone URLs point at the pretend Git host above; its webhook, where the test says.
+  mock = mockGithub({ app: { ...TEST_APP, administration: true }, origin, callback: `${origin}/auth/github/callback`, user: opts.user ?? "ada", repos: opts.repos ?? [], ...(opts.webhook ? { webhook: `${origin}/github/webhook`, net: (async (input: RequestInfo | URL, init?: RequestInit) => opts.webhook!(new Request(input, init))) as typeof fetch } : {}) });
+  // The App's key reaches the mock once it's made: from then on it checks the Worker's JWTs with it.
+  testPrivateKey().then((k) => { mock.app.privateKey = k; }).catch(() => {});
   const withAuth = (path: string, user: string, pass: string) => `http://${user}:${encodeURIComponent(pass)}@127.0.0.1:${server.port}${path}`;
   return {
     url: origin,
     erga: withAuth("/git/erga.git", "x", "anything"),
-    github: withAuth("/__github/koomen/erga.git", "x", MOCK_GITHUB_TOKEN),
+    get mock() { return mock; },
+    githubRepo: (full) => withAuth(`/__github/${full}.git`, "x-access-token", "erga-dev-github-token"),
+    async connectGithub(full, by = "ada") {
+      const [owner, name] = full.split("/");
+      const r = mock.state.repos.find((x) => x.owner == owner && x.name == name) ?? (() => { const made = { id: 9000 + mock.state.repos.length, owner, name, private: false }; mock.state.repos.push(made); return made; })();
+      const installation = mock.state.installations.find((i) => i.account.login == owner) ?? (() => { const made = { id: 5000 + mock.state.installations.length, account: { login: owner, type: "User" }, selection: "selected" as const, repoIds: [] as number[] }; mock.state.installations.push(made); return made; })();
+      if (!installation.repoIds.includes(r.id)) installation.repoIds.push(r.id);
+      const link = linkOf(installation.id, installation.account, { id: r.id, full_name: full, clone_url: `${origin}/__github/${full}.git`, html_url: `${origin}/__github/${full}`, private: false, default_branch: "main" }, by);
+      await repo.connectGithub(link, by);
+      return link;
+    },
     artifacts: withAuth("/__artifacts/git/erga/erga.git", "x", localToken(secret, "erga/erga", "write").split("?")[0]),
     upstream: withAuth("/__artifacts/git/erga/upstream.git", "x", localToken(secret, "erga/upstream", "write").split("?")[0]),
     get channel() { return state.channel; },

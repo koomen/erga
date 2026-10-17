@@ -10,21 +10,18 @@
 //   GET  /deploy/auth/cloudflare           "Authorize with Cloudflare": OAuth with PKCE, through the control Worker's
 //                                          callback (/install/callback, the one registered on Erga's OAuth client)
 //   POST /deploy/api/connect               {token}: a pasted API token instead
-//   GET  /deploy/api/session               connected?, the accounts, the GitHub App made, and the install's progress
+//   GET  /deploy/api/session               connected?, the accounts, and the install's progress
 //   POST /deploy/api/account               {accountId}: its workers.dev subdomain and domains
 //   POST /deploy/api/domains/search        {accountId, q}: names, availability and prices (Registrar)
 //   POST /deploy/api/domains/register      {accountId, name, price, currency}: buys it, at the price confirmed
-//   GET  /deploy/github/start              makes the GitHub App on GitHub (the manifest flow: a form GitHub takes, one
-//                                          click there), for the app and its control Worker (?app= and ?ops=, their hosts)
-//   GET  /deploy/github/callback           back from GitHub with a code: traded for the App's client id and secret,
-//                                          kept in the session
-//   POST /deploy/api/start                 {plan}: installs (DeployPlan; the GitHub App from the session unless pasted)
+//   POST /deploy/api/start                 {plan}: installs (DeployPlan). People sign in to the new server with Erga's
+//                                          GitHub App, through this Worker's callback: nothing to make or paste
 //   POST /deploy/api/forget                forgets the token now
 //
 // Each browser's session is a Durable Object named by a
 // random id in a cookie (erga_deploy, with the key half that seals the token).
-// For the tests only (local development with ERGA_DEPLOY_MOCK=1), Cloudflare and GitHub are pretend
-// (/deploy/mock/consent, /deploy/mock/github), and
+// For the tests only (local development with ERGA_DEPLOY_MOCK=1), Cloudflare is pretend
+// (/deploy/mock/consent), and
 // GET /deploy/api/mock shows what Cloudflare was asked to do.
 
 import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploy/pipeline";
@@ -38,7 +35,7 @@ import { cookieName, cookies } from "../server/identity/index.ts";
 import type { Env } from "./env";
 import { releaseStoreOf } from "./releases";
 
-const COOKIE = "erga_deploy", OAUTH_COOKIE = DEPLOY_OAUTH_COOKIE, GITHUB_COOKIE = "erga_deploy_github";
+const COOKIE = "erga_deploy", OAUTH_COOKIE = DEPLOY_OAUTH_COOKIE;
 
 /** Where the page runs: the Worker's bindings it uses, and where Cloudflare's consent comes back to. */
 export interface DeployHost {
@@ -103,51 +100,6 @@ export async function deployDoor(request: Request, host: DeployHost): Promise<Re
     headers.append("Set-Cookie", clear);
     headers.append("Set-Cookie", set);
     return new Response(null, { status: 302, headers });
-  }
-
-  // The GitHub App, made on GitHub from a manifest: one click there, and its client id and secret come back here.
-  if (path == "/deploy/github/start" && request.method == "GET") {
-    const current = await sessionOf(request, env);
-    if (!current) return back("Connect your Cloudflare account first.");
-    const app = hostOf(url.searchParams.get("app")), ops = hostOf(url.searchParams.get("ops")), staging = hostOf(url.searchParams.get("staging"));
-    if (!app || !ops) return back("The GitHub App needs the app's address and its control Worker's: choose where it goes first.");
-    const state = rand(16);
-    // One App for the install's three servers: production, its control Worker, and staging (deploy/install.ts stagingHostOf).
-    const manifest = {
-      name: `Erga at ${app}`.slice(0, 34), url: `https://${app}`, redirect_url: `${url.origin}/deploy/github/callback`,
-      callback_urls: [`https://${app}/auth/github/callback`, `https://${ops}/auth/github/callback`, ...(staging ? [`https://${staging}/auth/github/callback`] : [])],
-      public: true, hook_attributes: { active: false }, default_permissions: {}, default_events: [],
-    };
-    const action = mock ? `${url.origin}/deploy/mock/github?state=${encodeURIComponent(state)}` : `https://github.com/settings/apps/new?state=${encodeURIComponent(state)}`;
-    // GitHub takes the manifest as a form field, posted by the browser: this page posts it at once.
-    const body = `<form method="post" action="${esc(action)}" id="gh"><input type="hidden" name="manifest" value="${esc(JSON.stringify(manifest))}"><noscript><button type="submit">Make the GitHub App</button></noscript></form><script>document.getElementById("gh").submit()</script>`;
-    return new Response(`<!doctype html><meta charset="utf-8"><title>Making the GitHub App…</title><p>Off to GitHub to make the app <b>${esc(manifest.name)}</b>: one click there (Create GitHub App), and you're back here.</p>${body}`, {
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Set-Cookie": cookie(request, GITHUB_COOKIE, state, 900, "/deploy") },
-    });
-  }
-  if (path == "/deploy/mock/github" && mock && request.method == "POST") {
-    // The pretend GitHub: takes the manifest and comes straight back with a code.
-    const form = await request.formData().catch(() => null);
-    const manifest = JSON.parse(String(form?.get("manifest") ?? "{}")) as { redirect_url?: string };
-    const to = new URL(manifest.redirect_url ?? "/deploy", url);
-    if (to.origin != url.origin) return new Response("Bad redirect", { status: 400 });
-    to.searchParams.set("code", "mock-github-code"); to.searchParams.set("state", url.searchParams.get("state") ?? "");
-    return new Response(null, { status: 302, headers: { Location: to.toString() } });
-  }
-  if (path == "/deploy/github/callback" && request.method == "GET") {
-    const state = cookies(request).get(GITHUB_COOKIE);
-    const clear = cookie(request, GITHUB_COOKIE, "", 0, "/deploy");
-    if (!state || url.searchParams.get("state") != state) return back("That didn't come from GitHub for this page (or took too long): try again.", clear);
-    const current = await sessionOf(request, env);
-    if (!current) return back("Connect your Cloudflare account first.", clear);
-    const net = mock ? mockCloudflare().fetch : globalThis.fetch.bind(globalThis);
-    const code = url.searchParams.get("code") ?? "";
-    const r = await net(`https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`, { method: "POST", headers: { Accept: "application/vnd.github+json", "User-Agent": "erga.dev", "Content-Length": "0" } }).catch(() => null);
-    const made = r ? await r.json().catch(() => null) as { client_id?: string; client_secret?: string; name?: string; html_url?: string; message?: string } | null : null;
-    if (!r?.ok || !made?.client_id || !made.client_secret) return back(`GitHub didn't hand the app over${made?.message ? ` (${made.message})` : r ? ` (HTTP ${r.status})` : ""}: try again.`, clear);
-    const kept = await env.DEPLOYS.getByName(current.id).setGithubApp(owner, current.key, { name: made.name ?? "Erga", clientId: made.client_id, secret: made.client_secret, url: made.html_url ?? "" });
-    if (!kept.ok) return back(kept.error, clear);
-    return new Response(null, { status: 302, headers: { Location: "/deploy#github", "Set-Cookie": clear } });
   }
 
   if (!path.startsWith("/deploy/api/")) return page("Not found", "There's nothing here. <a href=\"/deploy\">Back to installing</a>.", 404);

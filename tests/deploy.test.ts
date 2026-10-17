@@ -32,7 +32,7 @@ beforeAll(async () => {
 
 const plan = (over: Partial<DeployPlan> = {}): DeployPlan => ({
   accountId: ACC, workerName: "erga", subdomain: "ada-mock", app: { kind: "workers.dev" }, pages: { kind: "shared" },
-  admin: "Ada", githubClientId: "Ov23liMockClientId", githubClientSecret: "0123456789abcdef0123456789abcdef01234567", ...over,
+  admin: "Ada", ...over,
 });
 
 async function run(token: string, p: DeployPlan, mock = mockCloudflare()) {
@@ -77,10 +77,12 @@ describe("deploying", () => {
     expect(b.DB).toMatchObject({ type: "d1", database_id: db.uuid });
     expect(b.ASSETS.type).toBe("assets");
     expect(b.ADMINS).toMatchObject({ type: "plain_text", text: "ada" });
-    expect(b.GITHUB_CLIENT_ID.text).toBe("Ov23liMockClientId");
+    // Sign-in: a plain /deploy target names no GitHub app (an install's gets Erga's App through the relay: tests/downstream.test.ts).
+    expect(b.GITHUB_CLIENT_ID.text).toBe("");
+    expect(b.SIGN_IN_RELAY.text).toBe("");
     expect(b.SERVER_CONFIG.text).toBe("{}");
     expect(b.SESSION_SECRET.type).toBe("secret_text");
-    expect(b.GITHUB_CLIENT_SECRET.type).toBe("secret_text");
+    expect(b.GITHUB_CLIENT_SECRET).toBeUndefined();
     expect(b.ANTHROPIC_API_KEY).toBeUndefined();
     expect(b.PAGES_HOST.text).toBe("erga-pages.ada-mock.workers.dev");
     // Durable Objects as declarative exports (as cf deploy sends them), never migrations; erga.dev's tombstones (DocList, Factory,
@@ -180,7 +182,6 @@ describe("deploying", () => {
 
   test("checks a plan before it starts", () => {
     expect(checkPlan(plan())).toBeNull();
-    expect(checkPlan(plan({ githubClientSecret: "short" }))).toMatch(/client secret/);
     expect(checkPlan(plan({ app: { kind: "domain", zoneId: "z1", zoneName: "a.com", hostname: "erga.b.com" } }))).toMatch(/must be a.com or a name under it/);
     expect(checkPlan(plan({ app: { kind: "domain", zoneId: "z1", zoneName: "a.com", hostname: "a.com" }, pages: { kind: "zone", zoneId: "z1", zoneName: "a.com" } }))).toMatch(/different domain/);
     expect(checkPlan(plan({ anthropicKey: "nope" }))).toMatch(/starts with sk-/);

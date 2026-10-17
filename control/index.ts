@@ -15,7 +15,7 @@
 // the app serves at /admin/ops, as the admin.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { Actor, SourceRead } from "../server/source/index.ts";
+import type { Actor, GithubLink, PushEvent, SourceRead } from "../server/source/index.ts";
 import { CONTROL } from "../deploy/targets";
 import { releaseStoreOf } from "../cloudflare/releases";
 import { installFleet } from "../deploy/fleet";
@@ -23,6 +23,9 @@ import { deployDoor } from "../cloudflare/deploy-routes";
 import type { Env } from "../cloudflare/env";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
+import { githubAppOf } from "../cloudflare/github-app";
+import { sealKeyFrom } from "../deploy/credential";
+import { hashSecret } from "../deploy/forks";
 
 export { Builder } from "./builder/worker";
 export { Pipeline } from "../cloudflare/pipeline";
@@ -37,7 +40,12 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   // The repository (server/source/routes.ts SourceObject, but a push).
   advertise(origin: string) { return this.source.advertise(origin); }
   branches(origin: string) { return this.source.branches(origin); }
-  mirrorNow(origin: string, by?: string) { return this.source.mirrorNow(origin, by); }
+  // GitHub: the status, a sync now, the repository connected (the consent's end), disconnected, a push there (the webhook).
+  githubStatus(origin: string) { return this.source.githubStatus(origin); }
+  syncGithub(origin: string, by: string) { return this.source.syncGithub(origin, by); }
+  connectGithub(origin: string, link: GithubLink, by: string) { return this.source.connectGithub(origin, link, by); }
+  disconnectGithub(origin: string) { return this.source.disconnectGithub(origin); }
+  githubPushed(origin: string, event: PushEvent) { return this.source.githubPushed(origin, event); }
   files(origin: string, commit: string) { return this.source.files(origin, commit); }
   read(origin: string, q: SourceRead) { return this.source.read(origin, q); }
   merge(origin: string, who: Actor, commit?: string) { return this.source.merge(origin, who, commit); }
@@ -80,7 +88,7 @@ export default {
       releases: releaseStoreOf(env as never),
       // /deploy: installs, from the store; and the installs' forks (their repositories and builds). Not on a downstream's
       // control Worker, which names its upstream and its own hosts instead.
-      ...(upstream ? { upstream, ...(hosts ? { hosts } : {}) } : {
+      ...(upstream ? { upstream, ...(hosts ? { hosts } : {}), ...(env.FORK_SECRET ? { forkSecretHash: await hashSecret(env.FORK_SECRET) } : {}) } : {
         deploy: (request: Request) => deployDoor(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }),
         forks: {
           access: (id: string, secret: string, scope: "read" | "write") => env.PIPELINE.getByName("deploys").forkAccess(id, secret, scope),
@@ -88,8 +96,17 @@ export default {
             const u = new URL(request.url);
             return env.PIPELINE.getByName("deploys").forkBuild(id, secret, u.pathname.endsWith("/cancel") ? "cancel" : "build", u.searchParams.get("id") ?? "", await request.text());
           },
+          githubToken: (id: string, secret: string, installation: number) => env.PIPELINE.getByName("deploys").forkGithubToken(id, secret, installation),
+          githubUninstall: (id: string, secret: string, installation: number) => env.PIPELINE.getByName("deploys").forkGithubUninstall(id, secret, installation),
+          hosts: (id: string, secret: string, hosts: string[]) => env.PIPELINE.getByName("deploys").forkHosts(id, secret, hosts),
+          installationSeen: (origin: string, installation: number) => env.PIPELINE.getByName("deploys").installationSeen(origin, installation),
+          ofInstallation: (installation: number) => env.PIPELINE.getByName("deploys").forkOfInstallation(installation),
         },
       }),
+      github: githubAppOf(env),
+      sealKey: sealKeyFrom(env.SESSION_SECRET),
+      background: (work: Promise<unknown>) => ctx.waitUntil(work),
+      net: globalThis.fetch.bind(globalThis),
       app: env.APP_URL.replace(/\/+$/, ""),
       layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
       version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,

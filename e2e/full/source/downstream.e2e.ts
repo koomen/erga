@@ -106,7 +106,8 @@ test("the position against upstream, Update with a merge, a conflict and its way
   await expect.poll(() => text("#update-hint"), { timeout: 20_000 }).toContain("Stopped: 1 file conflicts");
   await expect.poll(() => hidden("conflict-box")).toBe(false);
   expect(await text("#conflict-count")).toBe("1 file conflicts");
-  expect(await text("#conflict-version")).toBe("v0.3.0");
+  expect(await text("#conflict-title")).toContain("Update from");
+  expect(await text("#conflict-intro")).toContain("v0.3.0");
   expect(await text("#conflict-branch")).toBe("upstream-merge/v0.3.0");
   expect(await text("#conflict-files")).toContain("a.txt");
   expect(await text("#conflict-git")).toContain("git push erga HEAD:staging");
@@ -120,6 +121,8 @@ test("the position against upstream, Update with a merge, a conflict and its way
   await expect.poll(() => page.evaluate(() => (document.getElementById("update") as HTMLButtonElement).disabled)).toBe(false);
 
   // Each environment's domains: its own address first; one added to staging, then removed.
+  // (Staging's Worker is there once its deploy is live: a domain goes on the Worker.)
+  await expect.poll(() => text("#env-staging .st"), { timeout: 30_000 }).toContain("live");
   await expect.poll(() => text("#domains-staging"), { timeout: 10_000 }).toContain("staging.erga.dev");
   expect(await text("#domains-staging .dom.primary")).toBe("staging.erga.dev");
   await page.click('#domains-staging button[data-add="staging"]');

@@ -23,7 +23,7 @@ let fx: Fixture, repo: SourceRepo, staging = "", task = "", first = "";
 const BRANCH = "task/9-add-a-greeting";
 
 beforeAll(async () => {
-  fx = startFixture({ mirror: false });
+  fx = startFixture();
   const d = mkdtempSync(join(tmpdir(), "erga-read-"));
   await must(d, "init", "-q", "-b", "main");
   mkdirSync(join(d, "src/page"), { recursive: true });

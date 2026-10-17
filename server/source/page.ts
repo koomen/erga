@@ -15,7 +15,7 @@
 // deploys that waited for the credential go by themselves. Disconnect
 // (POST /api/deploys/credential/disconnect) revokes it. No link elsewhere.
 //
-// Git Repository, below: how to clone and push, the GitHub mirror, Merge
+// Git Repository, below: how to clone and push, Merge
 // and Cut release, then the git log:
 //
 // One list: staging's history, newest first (staging is always at or ahead
@@ -35,8 +35,8 @@
 // its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Above the log, how to clone and
-// push, and the GitHub mirror's status (beside Merge; a click opens a dialog:
-// the mirror's state and Push now, or how to turn it on). Releases are tags:
+// push. GitHub's card in Status says which repository is connected and how
+// the sync stands (Connect GitHub, a popup; Sync now; Disconnect). Releases are tags:
 // a tagged commit's row carries its version, "stable" on the newest release
 // tag, and "edge" on the newest commit of main the store has (GET
 // /api/releases). Cut release (beside Merge) cuts the next one: a dialog with
@@ -57,7 +57,7 @@
 // remove (POST and DELETE), through the instance's own Cloudflare grant.
 //
 // It updates by itself, with no reload: /api/events (a WebSocket) says what changed (a push
-// or a merge, the mirror, each step of a deploy, a redeploy, its log lines),
+// or a merge, the sync with GitHub, each step of a deploy, a redeploy, its log lines),
 // for this server and for Erga's other server too (deploy/relay.ts passes each
 // server's events to the other). Only rows that changed are drawn again, so
 // the scroll, an open log or dialog, and the focus stay.
@@ -72,10 +72,8 @@ export interface SourcePageConfig {
   admin: boolean;
   /** Whether this server has a repository (an Artifacts binding, or local development's stand-in). */
   ready: boolean;
+  /** The control Worker's origin: the Git address, and where the consents (Connect Cloudflare, Connect GitHub) open. */
   origin: string;
-  mirrorUrl: string;
-  /** This server's Worker, for the GitHub mirror's setup steps; null when it isn't one of Erga's targets. */
-  worker: string | null;
   /** Each environment's hostname, as the fleet has them (deploy/fleet.ts): erga.dev's own (deploy/targets.json) unless given. */
   hosts?: Record<"production" | "staging" | "control", string>;
   /** A downstream: where upstream is (the page names it on Update, and in the clone box). */
@@ -95,7 +93,10 @@ const SOURCE_STYLE = `
   .ops-section h3 { margin: 14px 0 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
   .envs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   .env { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; }
-  .env.cloudflare { max-width: calc((100% - 24px) / 3); box-sizing: border-box; }
+  .env.cloudflare, .env.github { max-width: calc((100% - 24px) / 3); box-sizing: border-box; }
+  .services { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .services .env.cloudflare, .services .env.github { max-width: none; }
+  .env.github .st i.busy { background: transparent; border: 2px solid var(--only-staging); border-right-color: transparent; width: 6px; height: 6px; animation: spin .8s linear infinite; }
   .env-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
   .env-top b { font-size: 14px; font-weight: 600; color: var(--fg-strong); }
   .env-top .host { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--font-mono); color: var(--soft); }
@@ -123,16 +124,16 @@ const SOURCE_STYLE = `
   #domain-dlg .buttons span { flex: 1; font-size: 13px; color: var(--soft); }
   #domain-dlg .buttons .error { color: var(--bad); }
   .env-commit { font: 11.5px var(--font-mono); color: var(--chrome); }
-  .env-log { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
+  .env-log { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); white-space: nowrap; cursor: pointer; }
   .env-log:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
   .env-log[hidden] { display: none; }
   .env-retry { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--bad); border-radius: 6px; background: var(--bg); color: var(--bad); font: 550 12px var(--font-text); cursor: pointer; }
   .env-retry + .env-log { margin-left: 0; }
   .env-retry[hidden], .cf-connect[hidden] { display: none; }
   .env-retry:hover { background: color-mix(in srgb, var(--bad) 10%, transparent); }
-  .env.cloudflare .env-more { gap: 8px; }
-  .env.cloudflare .cf-connect { height: 28px; }
-  .env.cloudflare .cf-connect + .env-log { margin-left: 0; }
+  .env.cloudflare .env-more, .env.github .env-more { gap: 8px; }
+  .env.cloudflare .cf-connect, .env.github .cf-connect { height: 28px; }
+  .env.cloudflare .cf-connect + .env-log, .env.github .cf-connect + .env-log, .env.github .env-log + .env-log { margin-left: 0; }
   .cf-why, .cf-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--soft); overflow-wrap: anywhere; }
   .cf-why { color: var(--fg); }
   .cf-note.bad { color: var(--bad); }
@@ -244,9 +245,7 @@ const SOURCE_STYLE = `
   .dep.building .w::before, .dep.deploying .w::before { content: ""; display: inline-block; vertical-align: middle; margin: -2px 6px 0 0; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
   .head-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  #mirror-pill { height: 28px; font-size: 12.5px; padding: 0 10px; }
-  #mirror-pill.off { color: var(--bad); }
-  #mirror-pill[hidden], #release-pill[hidden] { display: none; }
+  #release-pill[hidden] { display: none; }
   /* The break, when staging is far ahead of main: a dashed rail and how many commits it leaves out. */
   .gap { display: contents; }
   .gap > * { height: var(--row); display: flex; align-items: center; }
@@ -313,8 +312,11 @@ function sourceMarkup(c: SourcePageConfig): string {
     <h2 id="status-head">Status</h2>
     <h3>Environments</h3>
     <div class="envs">${env("production", "Production", hosts.production)}${env("staging", "Staging", hosts.staging)}${env("control", "Control", hosts.control)}</div>
-    <h3>Cloudflare</h3>
+    <h3>Cloudflare and GitHub</h3>
+    <div class="services">
     <div class="env cloudflare" id="env-cloudflare" data-connect="${esc(`${c.origin}/install/start?popup=1`)}"><div class="env-top"><b>Deploy credential</b></div><span class="st"><i></i><span id="cloudflare-state">…</span></span><p class="cf-why" id="cloudflare-why" hidden></p><span class="env-more"><button class="new cf-connect" type="button" id="cloudflare-connect" hidden>Connect Cloudflare</button><button class="env-log" type="button" id="cloudflare-disconnect" hidden title="Revokes the grant on Cloudflare. Nothing deploys until an admin connects again.">Disconnect</button></span><p class="cf-note" id="cloudflare-note" role="status" hidden></p></div>
+    <div class="env github" id="env-github" data-connect="${esc(`${c.origin}/github/connect?popup=1`)}"><div class="env-top"><b>GitHub</b><a class="host" id="github-repo" href="#" target="_blank" rel="noopener" hidden></a></div><span class="st"><i></i><span id="github-state">…</span></span><p class="cf-why" id="github-why" hidden></p><span class="env-more"><button class="new cf-connect" type="button" id="github-connect" hidden>Connect GitHub</button><button class="env-log" type="button" id="github-sync" hidden title="Syncs now: what GitHub has comes in, what it lacks goes out.">Sync now</button><button class="env-log" type="button" id="github-disconnect" hidden title="Forgets the repository and uninstalls Erga's GitHub App from the account. The repository on GitHub stays.">Disconnect</button></span><p class="cf-note" id="github-note" role="status" hidden></p></div>
+    </div>
   </section>
   <section class="ops-section" id="repo" aria-labelledby="repo-head">
   <div class="pane-head">
@@ -322,12 +324,12 @@ function sourceMarkup(c: SourcePageConfig): string {
   </div>
   <p class="repo-note">${c.upstream ? `This Erga's source repository is a fork of ${upstreamName}'s, stored in a <a href="https://developers.cloudflare.com/artifacts/" target="_blank" rel="noopener">Cloudflare Artifact</a>: it can have commits of its own, and Update brings ${upstreamName}'s in.` : `Erga's source repository is self-managed and stored in a <a href="https://developers.cloudflare.com/artifacts/" target="_blank" rel="noopener">Cloudflare Artifact</a>.`}</p>
   <div class="box conflict" id="conflict-box" hidden>
-    <h2>Update from ${upstreamName} stopped: <span id="conflict-count"></span></h2>
-    <p>The merge of <b id="conflict-version"></b> into staging conflicts in these files. Staging is unchanged. The merge, with Git's conflict markers, waits on the branch <code id="conflict-branch"></code>.</p>
+    <h2><span id="conflict-title">Update from ${upstreamName} stopped</span>: <span id="conflict-count"></span></h2>
+    <p><span id="conflict-intro">The merge of <b id="conflict-version"></b> into staging conflicts in these files.</span> Staging is unchanged. The merge, with Git's conflict markers, waits on the branch <code id="conflict-branch"></code>.</p>
     <ul id="conflict-files"></ul>
     <div class="ways">
-      <div><h3>Your admin agent resolves it</h3><p>Ask it, on any admin page: <i>resolve the update from ${upstreamName}</i>. It reads each file on that branch, writes the resolution, and finishes the merge: staging deploys it.</p></div>
-      <div><h3>Your own coding agent resolves it</h3><p>In a checkout, merge ${upstreamName}'s commit, resolve, and push to staging:</p><pre><code id="conflict-git"></code></pre></div>
+      <div><h3>Your admin agent resolves it</h3><p>Ask it, on any admin page: <i id="conflict-ask">resolve the update from ${upstreamName}</i>. It reads each file on that branch, writes the resolution, and finishes the merge: staging deploys it.</p></div>
+      <div><h3>Your own coding agent resolves it</h3><p id="conflict-how">In a checkout, merge ${upstreamName}'s commit, resolve, and push to staging:</p><pre><code id="conflict-git"></code></pre></div>
     </div>
     <div class="buttons"><button class="pill" id="conflict-drop" type="button" title="Drops the waiting merge and its branch. Staging stays as it is.">Drop this merge</button><span class="hint" id="conflict-hint" role="status"></span></div>
   </div>
@@ -340,7 +342,7 @@ git push erga HEAD:staging</code></pre>
     <p>Password: an agent token from <a href="/settings">Settings</a> (admins only), any username. main only follows staging: merge here.</p>
   </div>
   <div class="box actions"><h2>Branches and releases</h2>
-    <div class="head-actions"><button class="pill" id="mirror-pill" type="button" hidden>GitHub</button><button class="pill" id="release-pill" type="button" hidden title="Cut a release: a version tag on main's head. The newest release tag is stable, what other installs follow.">Cut release</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
+    <div class="head-actions"><button class="pill" id="release-pill" type="button" hidden title="Cut a release: a version tag on main's head. The newest release tag is stable, what other installs follow.">Cut release</button><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
     <p class="hint" id="merge-hint" role="status"></p>
     <div class="update-row" id="update-row" hidden><span class="count" id="upstream-count"></span><button class="new" id="update" disabled title="Brings ${upstreamName}'s newest release into staging: a fast-forward, or a merge commit. Production follows through Merge.">Update from ${upstreamName}</button></div>
     <p class="hint" id="update-hint" role="status"></p>
@@ -522,17 +524,8 @@ const SOURCE_SCRIPT = `
     // Cut release: when main has a commit; a downstream's releases are upstream's.
     const rp = document.getElementById("release-pill");
     if (rp) { rp.hidden = !main?.commit || !!up; rp.textContent = view.release ? "Cut release (" + view.release + " is stable)" : "Cut release"; }
-    // The GitHub mirror, beside Merge. Its title has the URL and any error; a click opens its dialog.
-    const m = view.mirror, mp = document.getElementById("mirror-pill");
-    if (mp) {
-      mp.hidden = false;
-      mp.className = "pill " + (m.state == "off" ? "" : m.state == "pushing" ? "pushing" : m.error ? "off" : "on");
-      mp.textContent = "GitHub: " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing…" : m.error ? "behind" : m.lastPushAt ? "up to date" : "not pushed yet");
-      const where = String(m.url || "").includes("/__github/") ? "A pretend GitHub, in the dev server (local development never pushes to the real one)" : String(m.url || "").replace(/^https?:\\/\\//, "").replace(/\\.git$/, "");
-      mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN. Click for how to turn it on." : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) + (m.lastPushBy ? ", for " + m.lastPushBy : "") : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
-      mp.setAttribute("aria-haspopup", "dialog");
-      renderMirror(where);
-    }
+    renderGithub(view.github);
+    renderConflict(view.conflict);
   }
   const conflictCount = (n) => (n == 1 ? "1 file conflicts" : n + " files conflict");
   /** "erga.dev: 12 commits (v0.15.0) that you do not have · 3 commits of your own". */
@@ -541,22 +534,58 @@ const SOURCE_SCRIPT = `
     const behind = up.behind ? upstreamName() + ": " + n(up.behind, " (" + (up.version || up.channel) + ") that you do not have") : "up to date with " + upstreamName() + (up.version ? " " + up.version : "");
     return behind + " · " + (up.own ? n(up.own, " of your own") : "no commits of your own");
   }
-  /** The Update row and the conflict box, from the view's upstream (a downstream only). */
+  /** The Update row, from the view's upstream (a downstream only). */
   function renderUpstream(up) {
-    const row = document.getElementById("update-row"), legend = document.getElementById("legend-upstream"), box = document.getElementById("conflict-box");
-    row.hidden = !up; legend.hidden = !up; box.hidden = !up || !up.conflict;
+    const row = document.getElementById("update-row"), legend = document.getElementById("legend-upstream");
+    row.hidden = !up; legend.hidden = !up;
     if (!up) return;
     const btn = document.getElementById("update"), count = document.getElementById("upstream-count");
+    const waiting = !!(view && view.conflict);
     count.textContent = up.error ? upstreamName() + " did not answer: " + up.error : positionText(up);
-    if (!updating) btn.disabled = !up.behind || !!up.conflict;
-    btn.title = up.conflict ? "A merge is waiting on conflicts: resolve or drop it first." : up.behind ? "Brings " + upstreamName() + "'s " + (up.version || "newest") + " into staging: a fast-forward, or a merge commit. Production follows through Merge." : "Nothing to update: staging has everything " + upstreamName() + "'s " + up.channel + " channel has.";
-    const c = up.conflict;
+    if (!updating) btn.disabled = !up.behind || waiting;
+    btn.title = waiting ? "A merge is waiting on conflicts: resolve or drop it first." : up.behind ? "Brings " + upstreamName() + "'s " + (up.version || "newest") + " into staging: a fast-forward, or a merge commit. Production follows through Merge." : "Nothing to update: staging has everything " + upstreamName() + "'s " + up.channel + " channel has.";
+  }
+  /** The merge waiting on conflicts (from upstream, or from GitHub): the files, and the two ways out. */
+  function renderConflict(c) {
+    const box = document.getElementById("conflict-box");
+    box.hidden = !c;
     if (!c) return;
+    const gh = c.kind == "github";
+    document.getElementById("conflict-title").textContent = gh ? "The sync from GitHub stopped" : "Update from " + upstreamName() + " stopped";
     document.getElementById("conflict-count").textContent = conflictCount(c.files.length);
-    document.getElementById("conflict-version").textContent = c.version;
+    document.getElementById("conflict-intro").innerHTML = gh
+      ? "GitHub's staging (<b>" + esc(c.target.slice(0, 7)) + "</b>) and staging here have each moved, and the merge conflicts in these files."
+      : "The merge of <b>" + esc(c.version) + "</b> into staging conflicts in these files.";
     document.getElementById("conflict-branch").textContent = c.branch;
+    document.getElementById("conflict-ask").textContent = gh ? "resolve the merge from GitHub" : "resolve the update from " + upstreamName();
+    document.getElementById("conflict-how").textContent = gh ? "In a checkout of the GitHub repository, merge Erga's staging, resolve, and push to GitHub's staging (the sync brings it here):" : "In a checkout, merge " + upstreamName() + "'s commit, resolve, and push to staging:";
     document.getElementById("conflict-files").innerHTML = c.files.map((f) => "<li><code>" + esc(f.path) + "</code> <span class='soft'>(" + esc(f.kind) + ")</span></li>").join("");
-    document.getElementById("conflict-git").textContent = ["git fetch erga erga-upstream/main", "git checkout -B update erga/staging", "git merge FETCH_HEAD   # resolve the conflicts, then commit", "git push erga HEAD:staging"].join("\\n");
+    document.getElementById("conflict-git").textContent = (gh
+      ? ["git fetch erga staging   # erga: this Erga's Git address, above", "git checkout staging      # GitHub's", "git merge FETCH_HEAD      # resolve the conflicts, then commit", "git push origin staging"]
+      : ["git fetch erga erga-upstream/main", "git checkout -B update erga/staging", "git merge FETCH_HEAD   # resolve the conflicts, then commit", "git push erga HEAD:staging"]).join("\\n");
+  }
+  /** GitHub's card: the repository connected, the sync's state and its last error; Connect (a popup), Sync now, Disconnect. */
+  function renderGithub(g) {
+    const card = document.getElementById("env-github");
+    if (!g) return;
+    const link = g.link;
+    const busy = g.state == "syncing";
+    card.className = "env github " + (!g.connected ? "" : g.error ? "failed" : "deployed");
+    card.querySelector(".st i").className = busy ? "busy" : "";
+    const repo = document.getElementById("github-repo");
+    repo.hidden = !link;
+    if (link) { repo.textContent = link.repo.fullName; repo.href = link.repo.htmlUrl; }
+    document.getElementById("github-state").textContent = !g.connected ? "not connected" : busy ? "syncing…" : g.error ? "the last sync stopped" : g.lastSyncAt ? "in sync · " + ago(g.lastSyncAt) + (g.lastSyncBy ? ", for " + g.lastSyncBy : "") : "connected" + (link && link.by ? " by " + link.by : "");
+    const why = document.getElementById("github-why");
+    why.hidden = g.connected && !g.error;
+    why.textContent = !g.connected ? "Connect a repository on GitHub: staging, main and the releases go there, and a push there comes back here." : g.error || "";
+    const connect = document.getElementById("github-connect");
+    connect.hidden = g.connected && !g.error;
+    connect.textContent = link ? "Connect GitHub again" : "Connect GitHub";
+    document.getElementById("github-sync").hidden = !g.connected;
+    document.getElementById("github-sync").disabled = busy;
+    document.getElementById("github-disconnect").hidden = !g.connected;
+    if (g.connected && githubAsked) githubConnected({ ok: true, repo: link ? link.repo.fullName : "" });
   }
   let updating = false;
   const updateHint = document.getElementById("update-hint");
@@ -646,25 +675,6 @@ const SOURCE_SCRIPT = `
       setTimeout(() => domDlg.close(), 1200);
     } catch (err) { status.className = "error"; status.textContent = err.message; e.currentTarget.disabled = false; }
   });
-
-  /** The mirror's dialog: how to turn it on while it's off; its state, any error, and Push now while it's on. */
-  function renderMirror(where) {
-    const m = view?.mirror, d = document.getElementById("mirror-dlg");
-    if (!m || !d) return;
-    const off = m.state == "off";
-    document.getElementById("mirror-off").hidden = !off;
-    document.getElementById("mirror-on").hidden = off;
-    const push = document.getElementById("mirror-push");
-    push.hidden = off;
-    push.disabled = m.state == "pushing";
-    push.textContent = m.state == "pushing" ? "Pushing…" : "Push now";
-    if (off) return;
-    document.getElementById("mirror-state").textContent = "GitHub sync is on. " + (m.state == "pushing" ? "It pushes now." : m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) + (m.lastPushBy ? ", for " + m.lastPushBy : "") + "." : "Not pushed yet.");
-    document.getElementById("mirror-where").textContent = where ? "Where: " + where : "";
-    const err = document.getElementById("mirror-error");
-    err.hidden = !m.error;
-    err.textContent = m.error || "";
-  }
 
   // The control Worker's Cloudflare credential, fixed here: Connect Cloudflare opens the consent in a popup, on the
   // control Worker's origin (data-connect). The popup posts its outcome back (and the event stream says the
@@ -858,7 +868,7 @@ const SOURCE_SCRIPT = `
     refreshLog(false);
   }, 2000);
   for (const n of TARGETS) document.getElementById("target-" + n).addEventListener("click", () => openLog(n));
-  for (const b of document.querySelectorAll(".env-log")) b.addEventListener("click", () => openLog(b.dataset.target));
+  for (const b of document.querySelectorAll(".env-log[data-target]")) b.addEventListener("click", () => openLog(b.dataset.target));
   document.getElementById("log-close").addEventListener("click", () => dlg.close());
   dlg.addEventListener("close", () => { open = null; });
   grid.addEventListener("click", (e) => {
@@ -883,20 +893,48 @@ const SOURCE_SCRIPT = `
     const b = e.target.closest("button[data-merge]");
     if (b) return merge(b.dataset.merge);
   });
-  const mirrorDlg = document.getElementById("mirror-dlg");
-  document.getElementById("mirror-pill")?.addEventListener("click", () => {
-    document.getElementById("mirror-status").textContent = "";
-    render();
-    if (!mirrorDlg.open) mirrorDlg.showModal();
+  // GitHub, fixed here too: Connect GitHub opens the App's install page in a popup, on the control Worker's origin
+  // (data-connect); the popup posts its outcome back (and the event stream says the repository changed).
+  const gh = document.getElementById("env-github"), ghNote = document.getElementById("github-note");
+  const ghOrigin = new URL(gh.dataset.connect, location.href).origin;
+  let githubAsked = false;
+  const ghSay = (text, bad) => { ghNote.hidden = !text; ghNote.textContent = text || ""; ghNote.className = "cf-note" + (bad ? " bad" : ""); };
+  document.getElementById("github-connect").addEventListener("click", () => {
+    const w = window.open(gh.dataset.connect, "erga-github-connect", "popup,width=720,height=820");
+    if (!w) { ghSay("The browser blocked the GitHub window. Allow pop-ups for this page, then click Connect GitHub again.", true); return; }
+    githubAsked = true;
+    ghSay("Waiting for GitHub: pick the account and the repository in the window that opened.");
   });
-  document.getElementById("mirror-close").addEventListener("click", () => mirrorDlg.close());
-  document.getElementById("mirror-push").addEventListener("click", async (e) => {
-    e.currentTarget.disabled = true;
-    const status = document.getElementById("mirror-status");
-    status.textContent = "Pushing…";
-    const r = await fetch("/api/source/mirror", { method: "POST" }).catch(() => null);
-    const body = r ? await r.json().catch(() => null) : null;
-    status.textContent = !r || !r.ok ? (body?.error || "Couldn't push.") : "";
+  function githubConnected(m) {
+    githubAsked = false;
+    if (m.ok) ghSay("Connected" + (m.repo ? " to " + m.repo : "") + "." + (m.warning ? " " + m.warning : " The first sync runs now."), !!m.warning);
+    else ghSay(m.error || "GitHub didn't connect.", true);
+    load();
+  }
+  window.addEventListener("message", (e) => {
+    if (!e.data || e.data.type != "erga-github" || (e.origin != ghOrigin && e.origin != location.origin)) return;
+    githubConnected(e.data);
+  }, { signal: pageView.signal });
+  try { const bc = new BroadcastChannel("erga-github"); bc.onmessage = (e) => { if (e.data && e.data.type == "erga-github") githubConnected(e.data); }; pageView.onLeave(() => bc.close()); } catch {}
+  document.getElementById("github-sync").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    ghSay("Syncing…");
+    const r = await fetch("/api/source/github/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    btn.disabled = false;
+    const g = body && body.github;
+    ghSay(!r || !r.ok ? (body.error || "Couldn't sync.") : g && g.error ? g.error : "In sync.", !(r && r.ok) || !!(g && g.error));
+    await load();
+  });
+  document.getElementById("github-disconnect").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.dataset.armed != "1") { btn.dataset.armed = "1"; btn.textContent = "Click again to disconnect"; setTimeout(() => { if (btn.dataset.armed == "1") { btn.dataset.armed = ""; btn.textContent = "Disconnect"; } }, 8000); return; }
+    btn.dataset.armed = ""; btn.textContent = "Disconnect"; btn.disabled = true;
+    const r = await fetch("/api/source/github/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    btn.disabled = false;
+    ghSay(r && r.ok ? "Disconnected: the App is uninstalled from the account; the repository on GitHub stays." : body.error || "Couldn't disconnect.", !(r && r.ok));
     await load();
   });
 
@@ -1032,48 +1070,7 @@ const PAGE_STYLE = `
   .pane-head h2 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
   .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
   .pane-note { margin: -4px 0 10px; font-size: 13px; color: var(--soft); }
-  /* The GitHub mirror: its state and Push now, or how to turn it on. */
-  dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }
-  #mirror-dlg p { margin: 0 0 12px; font-size: 13.5px; color: var(--soft); overflow-wrap: anywhere; }
-  #mirror-dlg p.error { color: var(--bad, #c2410c); }
-  #mirror-dlg ol { margin: 0 0 14px; padding-left: 22px; font-size: 13.5px; color: var(--fg); }
-  #mirror-dlg li { margin: 0 0 10px; }
-  #mirror-dlg li p { margin: 4px 0 0; }
-  #mirror-dlg a { color: inherit; }
-  #mirror-dlg code { font: 12.5px var(--font-mono); }
-  #mirror-dlg pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--code-bg); color: var(--fg-strong); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-  #mirror-dlg [hidden] { display: none; }
-  #mirror-dlg .buttons { align-items: center; }
-  #mirror-status { margin-right: auto; font-size: 12.5px; color: var(--soft); }
 `;
-
-/** The GitHub mirror's dialog: the steps that turn it on shown while it's off; its state and Push now while it's on. */
-function mirrorDialog(c: SourcePageConfig): string {
-  const repo = /github\.com\/([^/]+\/[^/]+?)(\.git)?$/.exec(c.mirrorUrl)?.[1] ?? "koomen/erga";
-  const name = c.worker ? ` --name ${c.worker}` : " --name <this server's Worker>";
-  return `<dialog id="mirror-dlg" aria-labelledby="mirror-title">
-    <h2 id="mirror-title">GitHub sync</h2>
-    <div id="mirror-on" hidden>
-      <p id="mirror-state"></p>
-      <p id="mirror-where"></p>
-      <p class="error" id="mirror-error" hidden></p>
-      <p>After each push or merge, Erga pushes staging and main to GitHub by itself. Push now does it at once.</p>
-    </div>
-    <div id="mirror-off" hidden>
-      <p>GitHub sync is off: this server has no <code>GITHUB_MIRROR_TOKEN</code>. With a token, Erga pushes staging and main to <a href="https://github.com/${esc(repo)}" target="_blank" rel="noopener">github.com/${esc(repo)}</a> after each push or merge. To turn it on:</p>
-      <ol>
-        <li>Make a fine-grained token on GitHub: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a>.
-          <p>Resource owner: <code>${esc(repo.split("/")[0])}</code>. Repository access: only <code>${esc(repo)}</code>. Permissions: Contents, read and write. You must be able to push to that repository.</p></li>
-        <li>Paste the token on <a href="/admin/api-keys">Admin › API keys</a> (GitHub mirror token). The server uses it within a minute. Or set it as a secret on this server's Worker. Paste the token when the command asks for it:
-          <pre><code>bunx cf workers secrets update GITHUB_MIRROR_TOKEN${esc(name)}</code></pre>
-          <p>Do this when no deploy runs: a new secret restarts the deploy pipeline.</p></li>
-        <li>Come back to this page. The status changes to "GitHub: not pushed yet". Click it, then click Push now.</li>
-      </ol>
-      <p>To sync to a different repository, set <code>GITHUB_MIRROR_URL</code> in the deploy's environment, then deploy again. If GitHub's main has commits that Erga's main does not have, the sync stops for main. Pull those commits into Erga's main, and it continues.</p>
-    </div>
-    <div class="buttons"><span id="mirror-status" role="status" aria-live="polite"></span><button type="button" class="primary" id="mirror-push" hidden>Push now</button><button type="button" id="mirror-close" autofocus>Close</button></div>
-  </dialog>`;
-}
 
 /** /admin/ops: the source and deploy dashboard (admins). */
 export function adminSourcePage(c: SourcePageConfig): Response {
@@ -1082,6 +1079,5 @@ export function adminSourcePage(c: SourcePageConfig): Response {
   <div class="panes">
     <section class="pane" id="source-pane" aria-label="Ops">${sourceMarkup(c)}</section>
   </div>
-  ${c.ready ? mirrorDialog(c) : ""}
 ${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}` });
 }

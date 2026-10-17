@@ -34,7 +34,6 @@ import type { Actor, Users } from "./index.ts";
 export const CREDENTIALS = {
   anthropic: { env: "ANTHROPIC_API_KEY", label: "Anthropic API key", service: "Anthropic", prefixes: ["sk-ant-"], description: "The editor's agent, the admin's agent and the descriptions of versions call Anthropic's API with it." },
   openai: { env: "OPENAI_API_KEY", label: "OpenAI API key", service: "OpenAI", prefixes: ["sk-"], description: "For OpenAI's models. Erga doesn't call OpenAI yet: a key set here is ready for when it does." },
-  github_mirror: { env: "GITHUB_MIRROR_TOKEN", label: "GitHub mirror token", service: "GitHub", prefixes: ["github_pat_", "ghp_"], description: "Pushes staging and main to Erga's GitHub mirror. A fine-grained token, with Contents read and write on that one repository." },
   cloudflare_deploy: { env: "CLOUDFLARE_DEPLOY_TOKEN", label: "Cloudflare deploy token", service: "Cloudflare", prefixes: [], description: "The server deploys itself with it when its branch moves. A Cloudflare API token: bun deploy/setup.ts makes one as narrow as Cloudflare allows." },
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 

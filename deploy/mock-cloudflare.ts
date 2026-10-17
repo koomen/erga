@@ -705,12 +705,6 @@ export function mockCloudflare(opts: {
       state.revoked++;
       return new Response(null, { status: 200 });
     }
-    // GitHub's manifest flow (cloudflare/deploy-routes.ts): the code traded for a pretend GitHub App.
-    if (url.origin == "https://api.github.com") {
-      const conv = /^\/app-manifests\/([^/]+)\/conversions$/.exec(url.pathname);
-      if (conv && req.method == "POST" && conv[1] == "mock-github-code") return Response.json({ id: 1, client_id: "Iv1.mockgithubapp0", client_secret: "mock-github-app-secret-0123456789abcdef0123", name: "Erga at erga.ada-mock.workers.dev", html_url: "https://github.com/apps/erga-at-erga-ada-mock-workers-dev" }, { status: 201 });
-      return Response.json({ message: "Not Found" }, { status: 404 });
-    }
     if (url.origin == "https://api.cloudflare.com") {
       const path = url.pathname.replace(/^\/client\/v4/, "") + url.search;
       const token = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";

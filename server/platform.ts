@@ -117,8 +117,10 @@ export interface Platform {
   signIn: {
     /** The deploy's GitHub OAuth app (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET); the values an admin sets on /admin/auth win while set. */
     app: AppValues;
-    /** GitHub's origin (the tests' stand-in for it). */
+    /** GitHub's origin (the tests' stand-in for it; its API is api.github.com, or the stand-in's /api). */
     github: string;
+    /** An install's server: erga.dev's control Worker, whose GitHub callback (the App's one) relays the sign-in here (server/source/github.ts); null elsewhere. */
+    relay: string | null;
     /** Local development: the login signed in without GitHub; null elsewhere. */
     devLogin: string | null;
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */

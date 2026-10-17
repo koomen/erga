@@ -82,19 +82,16 @@ test("admins only, with admin power; a key that isn't one, or a server with no s
   expect(() => checkKey("openai", "")).toThrow(/Paste/);
   const none = fresh(null, ["ANTHROPIC_API_KEY"]).dir;
   await expect(none.credentials.set(ada, "anthropic", ANTHROPIC)).rejects.toThrow(/no FACTORY_KEY/);
-  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])).toEqual([["anthropic", false, true], ["openai", false, false], ["github_mirror", false, false], ["cloudflare_deploy", false, false]]);
+  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])).toEqual([["anthropic", false, true], ["openai", false, false], ["cloudflare_deploy", false, false]]);
 });
 
-test("every key Erga calls a service with: the GitHub mirror's and Cloudflare's too; the deploy's own secrets only as set or not", async () => {
+test("every key Erga calls a service with: Cloudflare's too; the deploy's own secrets only as set or not", async () => {
   const { dir } = fresh("the factory key", ["SESSION_SECRET", "GITHUB_CLIENT_SECRET"]);
-  expect(() => checkKey("github_mirror", "gho_" + "q".repeat(36))).toThrow(/starts with github_pat_ or ghp_/);
-  expect(checkKey("github_mirror", " " + GITHUB + " ")).toBe(GITHUB);
   expect(checkKey("cloudflare_deploy", CLOUDFLARE)).toBe(CLOUDFLARE);
   expect(() => checkKey("cloudflare_deploy", "short")).toThrow(/20 to 400 characters/);
-  await dir.credentials.set(ada, "github_mirror", GITHUB);
   await dir.credentials.set(ada, "cloudflare_deploy", CLOUDFLARE);
-  const env = { GITHUB_MIRROR_TOKEN: "github_pat_from_the_deploy", CLOUDFLARE_DEPLOY_TOKEN: "from-the-deploy" };
-  expect(await withCredentials(env, dir.credentials)).toEqual({ GITHUB_MIRROR_TOKEN: GITHUB, CLOUDFLARE_DEPLOY_TOKEN: CLOUDFLARE });
+  const env = { ANTHROPIC_API_KEY: "sk-ant-from-the-deploy", CLOUDFLARE_DEPLOY_TOKEN: "from-the-deploy" };
+  expect(await withCredentials(env, dir.credentials)).toEqual({ ANTHROPIC_API_KEY: "sk-ant-from-the-deploy", CLOUDFLARE_DEPLOY_TOKEN: CLOUDFLARE });
   const deployed = await dir.credentials.deployed(ada);
   expect(deployed.map((d) => [d.env, d.set])).toEqual([["SESSION_SECRET", true], ["FACTORY_KEY", false], ["GITHUB_CLIENT_SECRET", true], ["SNAPSHOT_TOKEN", false], ["DEPLOY_HOOK_SECRET", false]]);
   expect(deployed.find((d) => d.env == "FACTORY_KEY")!.standIn).toBe(true);
@@ -146,7 +143,7 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect((await fetch(`${origin}/admin/credentials`, { redirect: "manual" })).headers.get("location")).toBe("/admin/api-keys");
   // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
   expect(await (await fetch(`${origin}/admin`)).text()).not.toContain("li class=\"setting credential");
-  for (const name of ["anthropic", "openai", "github_mirror", "cloudflare_deploy"]) expect(html).toContain(`data-name="${name}"`);
+  for (const name of ["anthropic", "openai", "cloudflare_deploy"]) expect(html).toContain(`data-name="${name}"`);
   for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN", "DEPLOY_HOOK_SECRET"]) expect(html).toContain(`data-env="${env}"`);
   expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);
 });

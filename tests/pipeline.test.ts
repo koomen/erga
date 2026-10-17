@@ -615,9 +615,9 @@ describe("branches deploy themselves", () => {
     const mock = mockCloudflare();
     const C1 = "1".repeat(40), C2 = "2".repeat(40), C3 = "3".repeat(40);
     const v1 = { ...release, version: C1.slice(0, 12) }, v2 = { ...release, version: C2.slice(0, 12) }, v3 = { ...release, version: C3.slice(0, 12) };
-    const plan = { accountId: FLEET_ACCOUNT, workerName: "erga", subdomain: "ada-mock", app: { kind: "workers.dev" as const }, pages: { kind: "shared" as const }, admin: "Ada", githubClientId: "Iv1.mockgithubapp0", githubClientSecret: "mock-github-app-secret-0123456789abcdef0123" };
+    const plan = { accountId: FLEET_ACCOUNT, workerName: "erga", subdomain: "ada-mock", app: { kind: "workers.dev" as const }, pages: { kind: "shared" as const }, admin: "Ada" };
     const fork = { id: "fork0123456789ab", secret: "f".repeat(40) };
-    await runInstall(new Cloudflare("mock-token", mock.fetch), v1, plan, { sessionSecret: "s".repeat(40), controlSecret: "c".repeat(40), snapshotToken: MOCK_SNAPSHOT_TOKEN, fork, upstream: { origin: "https://ops.erga.test", clientId: "erga-client" }, site: mock.fetch, sleep: async () => {}, waitMs: 1000, report: () => {} });
+    await runInstall(new Cloudflare("mock-token", mock.fetch), v1, plan, { sessionSecret: "s".repeat(40), controlSecret: "c".repeat(40), snapshotToken: MOCK_SNAPSHOT_TOKEN, fork, upstream: { origin: "https://ops.erga.test", clientId: "erga-client", github: { clientId: "Iv1.mockgithubapp0", slug: "erga-editor" } }, site: mock.fetch, sleep: async () => {}, waitMs: 1000, report: () => {} });
     const bindings = (script: string) => bindingsOf(mock.state, script);
     expect(bindings("erga").ERGA_VERSION.text).toBe(v1.version);
     const secretsBefore = { ...mock.state.secrets["erga-control"] };
@@ -627,7 +627,7 @@ describe("branches deploy themselves", () => {
     await store.addTo("stable", v1.version, "pete");
     // The install's control Worker's settings, as the install left them (its fleet reads them), with its secrets.
     const b = bindings("erga-control"), secrets = mock.state.secrets["erga-control"];
-    const fleet = installFleet({ CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, UPSTREAM: b.UPSTREAM.text, INSTALL: b.INSTALL.text, ADMINS: b.ADMINS.text, APP_URL: b.APP_URL.text, GITHUB_CLIENT_ID: b.GITHUB_CLIENT_ID.text, CLOUDFLARE_OAUTH_CLIENT_ID: b.CLOUDFLARE_OAUTH_CLIENT_ID.text, SESSION_SECRET: secrets.SESSION_SECRET, GITHUB_CLIENT_SECRET: secrets.GITHUB_CLIENT_SECRET })!;
+    const fleet = installFleet({ CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, UPSTREAM: b.UPSTREAM.text, INSTALL: b.INSTALL.text, ADMINS: b.ADMINS.text, APP_URL: b.APP_URL.text, GITHUB_APP_CLIENT_ID: b.GITHUB_APP_CLIENT_ID.text, GITHUB_APP_SLUG: b.GITHUB_APP_SLUG.text, CLOUDFLARE_OAUTH_CLIENT_ID: b.CLOUDFLARE_OAUTH_CLIENT_ID.text, SESSION_SECRET: secrets.SESSION_SECRET })!;
     expect(fleet.names).toEqual(["production", "staging", "control"]);
     expect(fleet.specOf("staging")).toMatchObject({ branch: "staging", worker: "erga-staging", host: "erga-staging.ada-mock.workers.dev", snapshotFrom: "production" });
     // The fork's repository, as the deploys' object sees it: its branches' heads, and Update (which moves staging, and the hook deploys it).
@@ -645,7 +645,10 @@ describe("branches deploy themselves", () => {
     expect(sb.DEPLOY_TARGET.text).toBe("staging");
     expect(sb.SNAPSHOT_IMPORT.text).toBe("1");
     expect(sb.CONTROL).toEqual({ type: "service", name: "CONTROL", service: "erga-control", entrypoint: "App" });
-    expect(mock.state.secrets["erga-staging"]).toEqual({ SESSION_SECRET: `${secrets.SESSION_SECRET}.staging`, GITHUB_CLIENT_SECRET: secrets.GITHUB_CLIENT_SECRET, SNAPSHOT_TOKEN: secrets.SNAPSHOT_TOKEN });
+    expect(mock.state.secrets["erga-staging"]).toEqual({ SESSION_SECRET: `${secrets.SESSION_SECRET}.staging`, SNAPSHOT_TOKEN: secrets.SNAPSHOT_TOKEN });
+    // Staging signs people in with Erga's GitHub App through upstream, as production does.
+    expect(sb.GITHUB_CLIENT_ID.text).toBe("Iv1.mockgithubapp0");
+    expect(sb.SIGN_IN_RELAY.text).toBe("https://ops.erga.test");
     // Its own database, a copy of production's.
     expect(mock.state.databases.map((d) => d.name).sort()).toEqual(["erga", expect.stringMatching(/^erga-staging-/)]);
     const staging = status.targets[1];
@@ -684,7 +687,7 @@ describe("branches deploy themselves", () => {
     expect(mock.state.scripts["erga-control"].metadata.exports).toEqual({ Pipeline: { type: "durable-object", storage: "sqlite" }, SourceHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" } });
     // stable moves to v3, but the merge conflicts: nothing deploys, and the status says what to do.
     await store.addTo("stable", v3.version, "pete");
-    update = async () => ({ result: "conflicts", conflict: { branch: "upstream-merge/v0.3.0", version: "v0.3.0", target: C3, ours: C2, base: C2, files: [{ path: "a.txt", kind: "content" }], at: 0, by: "the system" } });
+    update = async () => ({ result: "conflicts", conflict: { kind: "upstream", branch: "upstream-merge/v0.3.0", version: "v0.3.0", target: C3, ours: C2, base: C2, files: [{ path: "a.txt", kind: "content" }], at: 0, by: "the system" } });
     before = uploads();
     await server.instance.alarm();
     await server.settle();
@@ -1076,7 +1079,7 @@ describe("the one-time setup", () => {
     const out = run.stdout.toString();
     expect(run.exitCode).toBe(0);
     expect(out).toContain("(the mock Cloudflare: nothing real)");
-    expect(out).toContain("Set: erga-control: SESSION_SECRET, GITHUB_CLIENT_SECRET, SNAPSHOT_TOKEN; erga: SNAPSHOT_TOKEN.");
+    expect(out).toContain("Set: erga-control: SESSION_SECRET, GITHUB_APP_CLIENT_SECRET, SNAPSHOT_TOKEN; erga: SNAPSHOT_TOKEN.");
     expect(out).toContain("Copy production's documents into it: done, 3 documents copied");
     expect(out).toContain("The grant: not connected. An admin clicks Connect Cloudflare on the Ops page (https://ops.erga.dev/), a consent in a popup; the deploys that waited run after that.");
     expect(out).not.toContain("CLOUDFLARE_DEPLOY_TOKEN");
@@ -1588,7 +1591,7 @@ describe("Erga's source on its own servers", () => {
     const meta = (t: Parameters<typeof workerMetadata>[1]) => workerMetadata(rel, t, { dbId: "db", assetsJwt: "jwt", pagesHost: null }).bindings as any[];
     expect(meta(targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT })).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
     expect(meta({ ...targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT }), artifacts: "erga" }).find((b) => b.name == "ARTIFACTS")).toEqual({ type: "artifacts", name: "ARTIFACTS", namespace: "erga" });
-    const plan = { accountId: FLEET_ACCOUNT, workerName: "erga", subdomain: "ada", createSubdomain: false, app: { kind: "workers.dev" as const }, pages: { kind: "shared" as const }, admin: "ada", githubClientId: "x", githubClientSecret: "y" } as any;
+    const plan = { accountId: FLEET_ACCOUNT, workerName: "erga", subdomain: "ada", createSubdomain: false, app: { kind: "workers.dev" as const }, pages: { kind: "shared" as const }, admin: "ada" } as any;
     expect(meta(targetOfPlan(plan, "s".repeat(32))).find((b) => b.name == "ARTIFACTS")).toBeUndefined();
   });
 

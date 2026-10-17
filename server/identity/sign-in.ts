@@ -1,10 +1,17 @@
 // Signing in with GitHub, and signing out; test people for the test suite.
 //
-// The GitHub OAuth app is the deploy's (Platform.signIn.app), or the one an
-// admin set on /admin/auth (settings.ts). New values set there while the app
-// in use works wait for a test sign-in: /auth/github?app=pending signs in
-// with them, and an admin's sign-in that works puts them in use (apps.ts, the
-// lockout rules). Everyone else keeps signing in with the values that work.
+// The GitHub app is the deploy's (Platform.signIn.app: an OAuth app on
+// erga.dev's app Workers; Erga's GitHub App on a control Worker, the same code
+// flow), or the one an admin set on /admin/auth (settings.ts). New values set
+// there while the app in use works wait for a test sign-in:
+// /auth/github?app=pending signs in with them, and an admin's sign-in that
+// works puts them in use (apps.ts, the lockout rules). Everyone else keeps
+// signing in with the values that work.
+//
+// An install's servers (Platform.signIn.relay) sign in with Erga's GitHub
+// App through erga.dev's callback, the App's only one: the state names this
+// origin, erga.dev trades the code for the token and sends the browser back
+// here with it sealed under the state's nonce (server/source/github.ts).
 //
 // A signed-in person can also mint a test token (/tokens): it signs in
 // throwaway test people (Ada, Bo...) who can open only test documents (ids
@@ -22,6 +29,10 @@ import type { Platform, Session } from "../platform.ts";
 import { cookieName, cookies } from "./cookies.ts";
 import { signInApp, testedSignIn } from "./settings.ts";
 import { b64, SESSION_COOKIE, sign, SIGNED_OUT, unb64, unsign } from "./session.ts";
+import { openRelay, randomNonce, relayNonce, relayState } from "../source/index.ts";
+
+/** GitHub's two origins from the deploy's one (the stand-in serves its API under /api). */
+const originsOf = (platform: Platform) => ({ www: platform.signIn.github, api: platform.signIn.github == "https://github.com" ? "https://api.github.com" : `${platform.signIn.github}/api` });
 
 const STATE = "erga_oauth";
 const DAY = 24 * 60 * 60;
@@ -48,15 +59,17 @@ export async function startSignIn(platform: Platform, request: Request): Promise
     return signIn(platform, request, { login, name: login }, next);
   }
   // A test sign-in with the values that wait on /admin/auth: the state says so, for the callback.
-  const testing = url.searchParams.get("app") == "pending";
+  const relay = platform.signIn.relay;
+  const testing = !relay && url.searchParams.get("app") == "pending";
   const app = await signInApp(platform, testing ? "pending" : "active");
   if (testing && !app) return nothingToTest();
   // No GitHub OAuth app yet (staging's, until an admin makes one): GitHub would answer a 404, so say so here instead.
   if (!app?.clientId) return noOAuthApp(url.origin);
-  const state = (testing ? TESTING : "") + b64(crypto.getRandomValues(new Uint8Array(18)));
-  const github = new URL("https://github.com/login/oauth/authorize");
+  // An install: the state names this origin, for erga.dev's callback to relay the answer here.
+  const state = relay ? relayState(url.origin, randomNonce()) : (testing ? TESTING : "") + b64(crypto.getRandomValues(new Uint8Array(18)));
+  const github = new URL(`${originsOf(platform).www}/login/oauth/authorize`);
   github.searchParams.set("client_id", app.clientId);
-  github.searchParams.set("redirect_uri", `${url.origin}/auth/github/callback`);
+  github.searchParams.set("redirect_uri", `${relay ?? url.origin}/auth/github/callback`);
   github.searchParams.set("scope", "read:user");
   github.searchParams.set("state", state);
   github.searchParams.set("allow_signup", "false");
@@ -87,11 +100,16 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
   if (!dev && !app?.clientId) return testing ? nothingToTest() : noOAuthApp(url.origin);
   if (!state || state != url.searchParams.get("state")) return page("Sign-in expired", "That sign-in link is stale. <a href=\"/\">Start again</a>.", 400);
 
-  const token = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: app?.clientId ?? platform.signIn.app.clientId, client_secret: app?.secret ?? platform.signIn.app.secret, code: url.searchParams.get("code"), redirect_uri: `${url.origin}/auth/github/callback` }),
-  }).then((r) => r.json() as Promise<{ access_token?: string; error?: string; error_description?: string }>);
+  const { www, api } = originsOf(platform);
+  // The token: relayed from erga.dev (an install: sealed under the state's nonce), or the code traded here.
+  const relayed = url.searchParams.get("relay");
+  const token = relayed
+    ? (await openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) => (o ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error } : { error: "relay", error_description: "the answer relayed from erga.dev didn't open: it was for another sign-in" })))
+    : await fetch(`${www}/login/oauth/access_token`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "erga.dev" },
+      body: JSON.stringify({ client_id: app?.clientId ?? platform.signIn.app.clientId, client_secret: app?.secret ?? platform.signIn.app.secret, code: url.searchParams.get("code"), redirect_uri: `${url.origin}/auth/github/callback` }),
+    }).then((r) => r.json() as Promise<{ access_token?: string; error?: string; error_description?: string }>);
   if (!token.access_token) {
     // GitHub's own reason (e.g. incorrect_client_credentials: a wrong GITHUB_CLIENT_SECRET) goes to the logs and the page.
     console.log(`GitHub sign-in failed: ${token.error}: ${token.error_description}`);
@@ -103,7 +121,7 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
     return page("Sign-in failed", `GitHub didn't let you in${why}. <a href="/">Try again</a>.`, 400);
   }
   // GitHub's access token reads the login, once, and is never stored.
-  const user = await fetch("https://api.github.com/user", {
+  const user = await fetch(`${api}/user`, {
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
   }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
   if (!user.login) return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);

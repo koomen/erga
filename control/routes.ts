@@ -12,7 +12,15 @@
 //   /api/deploys..., /api/events    the deploys' API and the event stream (server/deploys/api.ts)
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
 //   /git, /git/tree/...         Erga's source for anyone, read-only: branches, commits, files (server/source/public.ts)
-//   /auth/github[/callback], /auth/logout   signing in (this Worker's own GitHub app) and out
+//   /auth/github[/callback], /auth/logout   signing in (Erga's GitHub App: its user authorization) and out. The callback is the
+//                               App's one: an install's consent (its origin in the state) is relayed to it from here, and
+//                               Connect GitHub comes back to it too (installation_id)
+//   GET  /github/connect        Connect GitHub (admins; the Ops page opens it in a popup, ?popup=1): to the App's install page
+//                               on GitHub, where the person picks the account and the repositories. Back at the callback,
+//                               the one repository the App reaches is linked; several, or none: a pick page in the popup
+//   POST /github/connect/pick   the pick page's form: one of them, or a new repository Erga makes (the person's token)
+//   POST /github/webhook        GitHub's push events (signed with the webhook secret; on an install's control Worker, relayed
+//                               from erga.dev and signed with its fork secret's hash): the connected repository syncs in
 //   GET /api/health             {ok, worker: "control", version (the release), build (the version id)}: anyone
 //   /install                    the Cloudflare credential's own page, for a first install: its status, and Connect. Nothing
 //                               links to it as a fix: the Ops page's Cloudflare card connects in place (a popup)
@@ -39,13 +47,16 @@
 //                               fork's repository here, and the remote: { remote, token, expiresAt }
 //   POST /forks/<id>/builder/build|cancel   the same: a build of one of the fork's commits in this Worker's build container, its
 //                               output streamed back as the container sends it (control/builder/client.ts)
+//   POST /forks/<id>/github/token|uninstall   the same: { installation }: a GitHub installation token for the fork's connected
+//                               repository (the App's key is here), or the App uninstalled from its account
+//   POST /forks/<id>/hosts      the same: { hosts }: the install's hosts, where its consents may come back to
 //
 // Everything but sign-in, the health check, Git reads, the public source page and the stylesheet
 // needs an admin: a signed-in admin (this Worker's session), or an
 // admin-scope token made on the app. A broken app changes nothing here: the
 // admins and their tokens are read from production's database directly.
 
-import { authorizeUrl, CONTROL_OAUTH_SCOPES, exchangeCode, pkce, randomToken, type CredentialStatus } from "../deploy/credential.ts";
+import { authorizeUrl, CONTROL_OAUTH_SCOPES, exchangeCode, pkce, randomToken, sealKeyFrom, type CredentialStatus } from "../deploy/credential.ts";
 import { mockConsentPage } from "../deploy/page.ts";
 import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
 import { releasesDoor, type ReleaseStore } from "../deploy/releases.ts";
@@ -53,6 +64,8 @@ import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "../deploy/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
+import { open, seal, type Sealed } from "../deploy/seal.ts";
+import { createRepo, exchangeUserCode, GithubError, installationOf, installationRepos, installUrl, linkOf, openRelay, randomNonce, relayNonce, relayOrigin, relaySignature, relayState, sealRelay, userOf, verifyRelay, verifyWebhook, type GithubApp, type GithubRepo, type PushEvent, type UserToken } from "../server/source/index.ts";
 import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
@@ -72,8 +85,28 @@ export interface Control {
   hosts?: Record<"production" | "staging" | "control", string>;
   /** A downstream: its upstream's origin (the page names it). */
   upstream?: string;
-  /** erga.dev's control Worker: the forks' repositories and builds (cloudflare/pipeline.ts), for downstreams' control Workers. */
-  forks?: { access(id: string, secret: string, scope: "read" | "write"): Promise<{ remote: string; token: string; expiresAt: string } | null>; builder(id: string, secret: string, request: Request): Promise<Response> };
+  /** erga.dev's control Worker: the forks' repositories and builds (cloudflare/pipeline.ts), for downstreams' control Workers; and their GitHub installations. */
+  forks?: {
+    access(id: string, secret: string, scope: "read" | "write"): Promise<{ remote: string; token: string; expiresAt: string } | null>;
+    builder(id: string, secret: string, request: Request): Promise<Response>;
+    githubToken(id: string, secret: string, installation: number): Promise<{ token: string; expiresAt: number } | { error: string; status: number }>;
+    githubUninstall(id: string, secret: string, installation: number): Promise<{ ok: true } | { error: string; status: number }>;
+    hosts(id: string, secret: string, hosts: string[]): Promise<{ ok: true } | { error: string; status: number }>;
+    /** The consent relay saw an install's Worker connect an installation: the fork owns it. */
+    installationSeen(origin: string, installation: number): Promise<boolean>;
+    /** Whose an installation is: the install's control Worker, and its fork secret's hash (the relayed webhook's signature). */
+    ofInstallation(installation: number): Promise<{ control: string; secretHash: string } | null>;
+  };
+  /** Erga's GitHub App (cloudflare/github-app.ts): whole on erga.dev's control Worker (its secrets), the public parts on an install's; null where none is set. */
+  github: GithubApp | null;
+  /** An install's control Worker: its fork secret's hash, the key relayed webhooks are signed with. */
+  forkSecretHash?: string;
+  /** This Worker's sealing key (deploy/seal.ts): the person's GitHub token between the connect popup's pages (from its session secret unless given). */
+  sealKey?: string | Promise<string>;
+  /** Work after the response (the webhook's sync); unless given, it runs on its own. */
+  background?(work: Promise<unknown>): void;
+  /** How this Worker reaches the network (the tests' pretend servers); fetch unless given. */
+  net?: typeof fetch;
   /** The app's address (https://erga.dev): links, and where the stylesheet comes from. */
   app: string;
   /** The Ops page's shell, and its address: "/" here, /admin/ops where the app serves it (the default "/"). */
@@ -106,7 +139,7 @@ export const isControlPath = (path: string) =>
   path == "/" || OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
   || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install"
   || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/") || path == "/api/domains"
-  || path == "/deploy" || path.startsWith("/deploy/") || path.startsWith("/forks/");
+  || path == "/deploy" || path.startsWith("/deploy/") || path.startsWith("/forks/") || path == "/github/webhook" || path == "/github/connect" || path.startsWith("/github/connect/");
 
 /**
  * How the app's Worker answers `path`: "here", itself (the Ops page and its API where the control Worker is apart and
@@ -130,8 +163,9 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   const p = c.platform;
 
   if (path == "/auth/github") return startSignIn(p, request);
-  if (path == "/auth/github/callback") return finishSignIn(p, request);
+  if (path == "/auth/github/callback") return githubCallback(request, url, c);
   if (path == "/auth/logout") return signOut(p, request);
+  if (path == "/github/webhook" && method == "POST") return githubWebhook(request, url, c);
   if (path == "/api/health" && read) {
     // ?self=1: the pipeline's own check of this Worker after its self-deploy (deploy/control.ts): the version only, no call
     // into the deploys' object, which is the one running that check.
@@ -184,13 +218,14 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/" || OPS_PATHS.has(path)) {
     if (path != home && path != "/admin/ops") return new Response(null, { status: 302, headers: { Location: home } });
     // The Git address on the page is the control Worker's, wherever the page is.
-    return adminSourcePage({ session, admin: true, ready: !!p.source, origin: p.control?.url ?? url.origin, mirrorUrl: p.source?.mirrorUrl ?? "", worker: null, layout: c.layout, ...(c.hosts ? { hosts: c.hosts } : {}), ...(c.upstream ? { upstream: c.upstream } : {}) });
+    return adminSourcePage({ session, admin: true, ready: !!p.source, origin: p.control?.url ?? url.origin, layout: c.layout, ...(c.hosts ? { hosts: c.hosts } : {}), ...(c.upstream ? { upstream: c.upstream } : {}) });
   }
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
   if (path == "/api/domains") return domainRoutes(request, url, c, session);
   if (path == "/api/releases" && read) { const r = await c.deploys.releases(); return r ? json(r) : json({ error: "This server has no release store." }, 404); }
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
+  if (path == "/github/connect" || path == "/github/connect/pick") return githubConnectRoutes(request, url, c, session);
   return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">Ops</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
 }
 
@@ -217,7 +252,7 @@ async function domainRoutes(request: Request, url: URL, c: Control, session: Adm
 // ---------------------------------------------------------------- /forks: a downstream's repository and builds, here
 
 async function forkRoutes(request: Request, path: string, c: Control): Promise<Response> {
-  const m = /^\/forks\/([a-z0-9-]{4,40})\/(token|builder\/build|builder\/cancel)$/.exec(path);
+  const m = /^\/forks\/([a-z0-9-]{4,40})\/(token|builder\/build|builder\/cancel|github\/token|github\/uninstall|hosts)$/.exec(path);
   if (!m || request.method != "POST") return json({ error: "Not found" }, 404);
   if (!c.forks) return json({ error: "This control Worker hosts no forks: forks live at erga.dev's." }, 404);
   const secret = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
@@ -228,7 +263,235 @@ async function forkRoutes(request: Request, path: string, c: Control): Promise<R
     const access = await c.forks.access(id, secret, body.scope == "write" ? "write" : "read");
     return access ? json(access) : json({ error: "No such fork, or the secret is wrong." }, 403);
   }
+  if (what == "github/token" || what == "github/uninstall") {
+    const body = (await request.json().catch(() => ({}))) as { installation?: unknown };
+    const installation = Number(body.installation) || 0;
+    if (!installation) return json({ error: "Give the installation's id." }, 400);
+    const r = what == "github/token" ? await c.forks.githubToken(id, secret, installation) : await c.forks.githubUninstall(id, secret, installation);
+    return "error" in r ? json({ error: r.error }, r.status) : json(r);
+  }
+  if (what == "hosts") {
+    const body = (await request.json().catch(() => ({}))) as { hosts?: unknown };
+    const r = await c.forks.hosts(id, secret, Array.isArray(body.hosts) ? body.hosts.map(String) : []);
+    return "error" in r ? json({ error: r.error }, r.status) : json(r);
+  }
   return c.forks.builder(id, secret, request);
+}
+
+// ---------------------------------------------------------------- GitHub: the App's callback, Connect GitHub, the webhook
+
+const GITHUB_COOKIE = "erga_github";
+/** What the connect popup posts to the page that opened it (the Ops page, here or on the app), and on its BroadcastChannel. */
+export const GITHUB_MESSAGE = "erga-github";
+/** The consent in flight, in its cookie: the state, whether it runs in a popup; and, while the person picks a repository, the installation and their token (sealed). */
+interface GithubConsent { state: string; popup: boolean; installation?: number; token?: Sealed }
+const githubCookie = (value: string, maxAge: number) => `${GITHUB_COOKIE}=${value}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
+const readGithubConsent = (request: Request): GithubConsent | null => {
+  try { const c = JSON.parse(unb64u(cookieOf(request, GITHUB_COOKIE))) as GithubConsent; return c?.state ? c : null; } catch { return null; }
+};
+/** Where this repository lives, for the source object's calls (the control Worker's own origin, wherever the page is). */
+const sourceOrigin = (c: Control, url: URL) => c.platform.control?.url ?? url.origin;
+const netOf = (c: Control): typeof fetch => c.net ?? globalThis.fetch.bind(globalThis);
+const sealKeyOf = (c: Control) => c.sealKey ?? sealKeyFrom(c.platform.secret);
+const backgroundOf = (c: Control) => c.background ?? ((work: Promise<unknown>) => { work.catch((e) => console.log(`background: ${(e as Error).message}`)); });
+
+/**
+ * /auth/github/callback: the App's one callback, three things come to it. A consent an install's Worker started (the
+ * state names its origin; nothing of ours matches): the code traded here, the answer sealed and relayed there. Connect
+ * GitHub coming back (installation_id): the repository picked or made, and linked. Else a sign-in.
+ */
+async function githubCallback(request: Request, url: URL, c: Control): Promise<Response> {
+  const q = url.searchParams;
+  const state = q.get("state");
+  const consent = readGithubConsent(request);
+  const ours = !!consent && consent.state == state;
+  if (!ours && c.forks && c.github?.clientSecret) {
+    const to = relayOrigin(state);
+    if (to && to != url.origin) {
+      if (!(await c.deploys.isInstall(to))) return page("Not an install", `This consent names ${esc(to)}, which isn't a server installed from here.`, 400);
+      const installation = Number(q.get("installation_id")) || null;
+      const payload: { token?: string; error?: string } = q.get("error") ? { error: q.get("error") == "access_denied" ? "You didn't authorize Erga on GitHub, so nothing changed." : `GitHub didn't authorize Erga: ${q.get("error_description") || q.get("error")}` } : {};
+      if (!payload.error) {
+        const t = await exchangeUserCode(c.github, { code: q.get("code") ?? "", redirect: `${url.origin}/auth/github/callback` }, netOf(c)).catch((e: Error) => ({ error: e.message, error_description: e.message }) as UserToken);
+        if (t.access_token) payload.token = t.access_token;
+        else payload.error = `GitHub gave no token (${t.error_description || t.error || "no answer"}).`;
+      }
+      // The installation is the install's from now on: tokens for it, its webhooks relayed to its control Worker.
+      if (installation && payload.token) await c.forks.installationSeen(to, installation);
+      const back = new URL(`${to}/auth/github/callback`);
+      for (const k of ["state", "installation_id", "setup_action"]) if (q.get(k)) back.searchParams.set(k, q.get(k)!);
+      back.searchParams.set("relay", await sealRelay(relayNonce(state!), payload));
+      return new Response(null, { status: 302, headers: { Location: back.toString(), "Cache-Control": "no-store" } });
+    }
+  }
+  if (q.get("installation_id") || q.get("setup_action")) return githubConnectFinish(request, url, c, consent);
+  return finishSignIn(c.platform, request);
+}
+
+/** The end of Connect GitHub: the popup's last page tells the Ops page that opened it and closes; an error stays, with Try again. */
+function githubDone(o: { ok: true; repo: string; warning?: string | null } | { ok: false; error: string }, c: Control, url: URL, ...setCookies: string[]): Response {
+  const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
+  const origins = [...new Set([url.origin, c.app, ...Object.values(hosts).map((h) => `https://${h}`)])];
+  const message = JSON.stringify({ type: GITHUB_MESSAGE, ok: o.ok, ...(o.ok ? { repo: o.repo, ...(o.warning ? { warning: o.warning } : {}) } : { error: o.error }) }).replace(/</g, "\\u003c");
+  const text = o.ok ? `GitHub is connected: ${o.repo}.${o.warning ? ` ${o.warning}` : ""}` : `GitHub isn't connected: ${o.error}`;
+  const r = page(o.ok ? "GitHub connected" : "GitHub not connected", `${esc(text)} ${o.ok ? "You can close this window." : `<a href="/github/connect?popup=1">Try again</a>, or close this window.`}<script>
+const m = ${message};
+try { new BroadcastChannel(${JSON.stringify(GITHUB_MESSAGE)}).postMessage(m); } catch {}
+if (window.opener) for (const o of ${JSON.stringify(origins)}) try { window.opener.postMessage(m, o); } catch {}
+${o.ok && !o.warning ? "setTimeout(() => window.close(), 300);" : ""}
+</script>`, o.ok ? 200 : 400);
+  r.headers.set("Cache-Control", "no-store");
+  for (const x of [githubCookie("", 0), ...setCookies]) r.headers.append("Set-Cookie", x);
+  return r;
+}
+
+/** An admin's session on this Worker, for the connect pages (the cookie proves the popup started here; the session says who). */
+async function adminSession(request: Request, c: Control): Promise<AdminLayout["session"] | null> {
+  const session = await c.platform.sessionOf(request);
+  if (!session || session.test) return null;
+  const users = c.platform.directory.users;
+  return (await users.isAdmin(whoOf(session))) && (await users.actsAsAdmin(whoOf(session))) ? session : null;
+}
+
+/** Connect GitHub coming back from the App's install page: the person's token (relayed, or the code traded here), then the repository. */
+async function githubConnectFinish(request: Request, url: URL, c: Control, consent: GithubConsent | null): Promise<Response> {
+  const q = url.searchParams;
+  const app = c.github;
+  if (!app) return githubDone({ ok: false, error: "This server has no GitHub App set up." }, c, url);
+  if (!consent || consent.state != q.get("state")) return githubDone({ ok: false, error: "This didn't start here, or took more than ten minutes." }, c, url);
+  if (q.get("error")) return githubDone({ ok: false, error: q.get("error") == "access_denied" ? "You didn't authorize Erga on GitHub, so nothing changed." : `GitHub didn't authorize Erga: ${q.get("error_description") || q.get("error")}` }, c, url);
+  const session = await adminSession(request, c);
+  if (!session) return githubDone({ ok: false, error: "Sign in here as an admin first." }, c, url);
+  const installationId = Number(q.get("installation_id"));
+  if (!installationId) return githubDone({ ok: false, error: "GitHub sent no installation id." }, c, url);
+  let token: string | undefined;
+  const relayed = q.get("relay");
+  if (relayed) {
+    const o = await openRelay<{ token?: string; error?: string }>(relayNonce(consent.state), relayed);
+    if (!o) return githubDone({ ok: false, error: `The answer relayed from ${c.github?.www && c.oauth.relay ? c.oauth.relay.replace(/^https?:\/\//, "") : "upstream"} didn't open: it was for another consent.` }, c, url);
+    if (o.error) return githubDone({ ok: false, error: o.error }, c, url);
+    token = o.token;
+  } else {
+    if (!app.clientSecret) return githubDone({ ok: false, error: "This server can't trade GitHub's code for a token (no client secret), and no relay answered." }, c, url);
+    const t = await exchangeUserCode(app, { code: q.get("code") ?? "", redirect: `${url.origin}/auth/github/callback` }, netOf(c)).catch((e: Error) => ({ error: e.message }) as UserToken);
+    if (!t.access_token) return githubDone({ ok: false, error: `GitHub gave no token (${t.error_description || t.error || "no answer"}). The App must request user authorization during installation.` }, c, url);
+    token = t.access_token;
+  }
+  if (!token) return githubDone({ ok: false, error: "GitHub gave no token." }, c, url);
+  return githubPick(request, url, c, { token, installationId, by: session.login.toLowerCase(), state: consent.state, popup: consent.popup }, null);
+}
+
+/**
+ * The repository: the one the installation reaches when it is one; else the person picks one of them, or has Erga make
+ * one (the pick page, in the popup; the token sealed in the cookie meanwhile). Then the link, and the first sync.
+ */
+async function githubPick(request: Request, url: URL, c: Control, o: { token: string; installationId: number; by: string; state: string; popup: boolean }, choice: { repoId?: number; create?: { name: string; isPrivate: boolean } } | null): Promise<Response> {
+  const app = c.github!;
+  const net = netOf(c);
+  try {
+    const [installation, repos, me] = await Promise.all([installationOf(app, o.token, o.installationId, net), installationRepos(app, o.token, o.installationId, net), userOf(app, o.token, net)]);
+    if (!installation?.account) return githubDone({ ok: false, error: "GitHub doesn't list that installation for you: install the App on an account of yours." }, c, url);
+    let repo: GithubRepo | undefined;
+    let problem: string | null = null;
+    if (choice?.repoId) repo = repos.find((r) => r.id == choice.repoId);
+    else if (choice?.create) {
+      try { repo = await createRepo(app, o.token, { owner: installation.account, me: me.login ?? o.by, name: choice.create.name, isPrivate: choice.create.isPrivate, installationId: o.installationId, selection: installation.repository_selection ?? "selected" }, net); }
+      catch (e) { problem = (e as Error).message; }
+    } else if (repos.length == 1) repo = repos[0];
+    if (!repo) {
+      // The pick page: the repositories the installation reaches, or a new one; the token kept sealed in the cookie for the choice.
+      const consent: GithubConsent = { state: o.state, popup: o.popup, installation: o.installationId, token: await seal(o.token, await sealKeyOf(c)) };
+      return githubPickPage(c, { account: installation.account, repos, problem, state: o.state }, githubCookie(b64u(JSON.stringify(consent)), 600));
+    }
+    const link = linkOf(o.installationId, installation.account, repo, o.by);
+    const source = c.platform.source;
+    if (!source) return githubDone({ ok: false, error: "This server has no repository to sync." }, c, url);
+    const status = await source.object.connectGithub(sourceOrigin(c, url), link, byLine(o.by));
+    return githubDone({ ok: true, repo: repo.full_name, warning: status.error ? `The first sync had a problem: ${status.error}` : null }, c, url);
+  } catch (e) {
+    return githubDone({ ok: false, error: e instanceof GithubError ? e.message : `GitHub couldn't be reached: ${(e as Error).message}` }, c, url);
+  }
+}
+
+/** The pick page, in the popup: one of the installation's repositories, or a new one. */
+function githubPickPage(c: Control, o: { account: { login: string; type: string }; repos: GithubRepo[]; problem: string | null; state: string }, setCookie: string): Response {
+  const list = o.repos.length
+    ? `<p>The App reaches these repositories of <b>${esc(o.account.login)}</b>. Which one is Erga's?</p>
+    <form method="post" action="/github/connect/pick" class="pick"><input type="hidden" name="state" value="${esc(o.state)}">
+      ${o.repos.map((r, i) => `<label><input type="radio" name="repo" value="${r.id}"${i == 0 ? " checked" : ""}> ${esc(r.full_name)}${r.private ? " <span class=\"soft\">(private)</span>" : ""}</label>`).join("\n      ")}
+      <p><button type="submit" class="new">Use this repository</button></p>
+    </form>`
+    : `<p>The App reaches no repository of <b>${esc(o.account.login)}</b> yet.</p>`;
+  const make = `<form method="post" action="/github/connect/pick" class="pick"><input type="hidden" name="state" value="${esc(o.state)}">
+      <p>Or Erga makes a new one on <b>${esc(o.account.login)}</b>:</p>
+      <label>Name <input name="name" value="erga" required pattern="[A-Za-z0-9._-]{1,100}"></label>
+      <label><input type="checkbox" name="private" checked> Private</label>
+      <p><button type="submit" class="pill">Make it and use it</button></p>
+    </form>`;
+  const r = page("Connect GitHub", `<style>.pick label { display: block; margin: 6px 0; } .bad { color: #c2410c; } .pick input[name=name] { font: inherit; padding: 4px 8px; }</style>${o.problem ? `<p class="bad">${esc(o.problem)}</p>` : ""}${list}${make}`, o.problem ? 400 : 200);
+  r.headers.set("Cache-Control", "no-store");
+  r.headers.append("Set-Cookie", setCookie);
+  return r;
+}
+
+/** /github/connect (a GET: the Ops page opens it in a popup) and /github/connect/pick (the pick page's form), an admin's. */
+async function githubConnectRoutes(request: Request, url: URL, c: Control, session: AdminLayout["session"]): Promise<Response> {
+  const path = url.pathname.replace(/\/+$/, "");
+  const app = c.github;
+  if (!app) return githubDone({ ok: false, error: "This server has no GitHub App set up (GITHUB_APP_CLIENT_ID)." }, c, url);
+  if (path == "/github/connect" && request.method == "GET") {
+    const popup = url.searchParams.get("popup") == "1";
+    // An install's consent names this origin for erga.dev's callback (the App's one) to relay it here.
+    const state = c.oauth.relay ? relayState(url.origin, randomNonce()) : randomNonce();
+    const consent: GithubConsent = { state, popup };
+    return new Response(null, { status: 302, headers: { Location: installUrl(app, state), "Set-Cookie": githubCookie(b64u(JSON.stringify(consent)), 600), "Cache-Control": "no-store" } });
+  }
+  if (path == "/github/connect/pick" && request.method == "POST") {
+    if (request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+    const consent = readGithubConsent(request);
+    const form = await request.formData().catch(() => null);
+    if (!consent || !form || form.get("state") != consent.state || !consent.installation || !consent.token) return githubDone({ ok: false, error: "This didn't start here, or took more than ten minutes." }, c, url);
+    let token: string;
+    try { token = await open(consent.token, await sealKeyOf(c)); } catch { return githubDone({ ok: false, error: "The consent's token didn't open: start again." }, c, url); }
+    const repoId = Number(form.get("repo")) || 0;
+    const choice = repoId ? { repoId } : { create: { name: String(form.get("name") ?? "").trim(), isPrivate: !!form.get("private") } };
+    return githubPick(request, url, c, { token, installationId: consent.installation, by: session.login.toLowerCase(), state: consent.state, popup: consent.popup }, choice);
+  }
+  return json({ error: "Not found" }, 404);
+}
+
+/**
+ * POST /github/webhook: GitHub's push events, signed with the webhook secret (erga.dev's control Worker); or one relayed
+ * from erga.dev to an install's control Worker, signed with its fork secret's hash. A push on the connected repository
+ * syncs it in (in the background: GitHub wants its answer at once); one on an install's repository is relayed.
+ */
+async function githubWebhook(request: Request, url: URL, c: Control): Promise<Response> {
+  const body = new Uint8Array(await request.arrayBuffer());
+  const event = request.headers.get("x-github-event") ?? "";
+  const relayed = request.headers.get("x-erga-relay-signature");
+  if (relayed) {
+    if (!c.forkSecretHash || !(await verifyRelay(c.forkSecretHash, body, relayed))) return json({ error: "The relay's signature doesn't match." }, 401);
+  } else {
+    const secret = c.github?.webhookSecret;
+    if (!secret) return json({ error: "This server takes no webhooks from GitHub (no webhook secret)." }, 404);
+    if (!(await verifyWebhook(secret, body, request.headers.get("x-hub-signature-256")))) return json({ error: "The signature isn't the webhook secret's." }, 401);
+  }
+  if (event == "ping") return json({ ok: true, pong: true });
+  if (event != "push") return json({ ok: true, ignored: event || "no event" });
+  let payload: PushEvent;
+  try { payload = JSON.parse(new TextDecoder().decode(body)) as PushEvent; } catch { return json({ error: "The body isn't JSON." }, 400); }
+  const source = c.platform.source;
+  if (!source) return json({ ok: true, ignored: "this server has no repository" });
+  const origin = sourceOrigin(c, url);
+  backgroundOf(c)((async () => {
+    const status = await source.object.githubPushed(origin, payload);
+    if (status || relayed || !c.forks) return;
+    // Not ours: an install's, by its installation; relayed to its control Worker, signed with what both sides have.
+    const fork = payload.installation?.id ? await c.forks.ofInstallation(payload.installation.id) : null;
+    if (!fork) return;
+    await netOf(c)(`${fork.control}/github/webhook`, { method: "POST", headers: { "Content-Type": "application/json", "X-GitHub-Event": "push", "X-Erga-Relay-Signature": await relaySignature(fork.secretHash, body) }, body });
+  })().catch((e) => console.log(`github webhook (${payload.ref ?? "?"}): ${(e as Error).message}`)));
+  return json({ ok: true, accepted: payload.ref ?? null }, 202);
 }
 
 // ---------------------------------------------------------------- /install: the Cloudflare credential
@@ -236,18 +499,10 @@ async function forkRoutes(request: Request, path: string, c: Control): Promise<R
 const INSTALL_COOKIE = "erga_install";
 /** What the consent's popup posts to the page that opened it (the Ops page, here or on the app), and on CONSENT_CHANNEL. */
 export const CONSENT_MESSAGE = "erga-deploy-credential";
-/** An install's consent state: its control Worker's origin (base64url), a dot, a random part; relayOrigin reads the origin back. */
+/** An install's consent state: its control Worker's origin (base64url), a dot, a random part (server/source/github.ts relayState; relayOrigin reads the origin back). */
 const b64u = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s: string) => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
-const relayState = (origin: string, random: string) => `${b64u(origin)}.${random}`;
-export function relayOrigin(state: string | null): string | null {
-  const [head, rest] = (state ?? "").split(".");
-  if (!head || !rest) return null;
-  try {
-    const origin = atob(head.replace(/-/g, "+").replace(/_/g, "/"));
-    return /^https:\/\/[a-z0-9.-]+$/i.test(origin) ? origin : null;
-  } catch { return null; }
-}
+export { relayOrigin };
 const installCookie = (value: string, maxAge: number) => `${INSTALL_COOKIE}=${value}; Max-Age=${maxAge}; Path=/install; HttpOnly; Secure; SameSite=Lax`;
 const cookieOf = (request: Request, name: string) => request.headers.get("cookie")?.split(/;\s*/).map((c) => c.split("=")).find(([k]) => k == name)?.slice(1).join("=") ?? "";
 /** The consent in flight, in its cookie: the state, the PKCE verifier, and whether it runs in a popup. */

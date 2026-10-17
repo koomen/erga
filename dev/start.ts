@@ -89,6 +89,12 @@ if (!process.env.ERGA_BUILT) {
 }
 
 const secret = process.env.ERGA_LINK_SECRET || randomBytes(24).toString("hex");
+// The pretend GitHub App's key (dev/github-mock.ts checks the Worker's JWTs with its public half): new at each start.
+const githubKey = await (async () => {
+  const k = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+  const der = Buffer.from(await crypto.subtle.exportKey("pkcs8", k.privateKey)).toString("base64");
+  return `-----BEGIN PRIVATE KEY-----\n${der.match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----\n`;
+})();
 // No Web Storage in Node (Node 25+ warns when something reaches for it, and nothing here needs it).
 const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(ROOT, "node_modules/vite/bin/vite.js"), "dev", "--port", String(port), "--strictPort"], {
   cwd: ROOT,
@@ -103,8 +109,9 @@ const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(ROOT, "node
     ERGA_RELOAD: reload ? "1" : "",
     ERGA_CWD: process.cwd(),
     ERGA_PARENT: String(process.pid),
-    // Where the Worker finds the dev server's stand-ins for Artifacts and GitHub.
+    // Where the Worker finds the dev server's stand-ins for Artifacts and GitHub, and the pretend GitHub App's key.
     ERGA_DEV_ORIGIN: `http://127.0.0.1:${port}`,
+    ERGA_GITHUB_APP_KEY: githubKey,
     ...(inspector ? { ERGA_INSPECTOR_PORT: String(inspector) } : {}),
   },
 });

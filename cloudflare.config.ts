@@ -125,8 +125,18 @@ export default defineConfig(({ mode }) => ({
         // e2e/load-bench.ts --latency: each call to the database or a document waits this long first.
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
 
-        // Sign-in's settings, for the tests: a stand-in for github.com, and the other target's server.
-        ERGA_GITHUB_ORIGIN: bindings.text(process.env.ERGA_GITHUB_ORIGIN ?? ""),
+        // Sign-in's settings, for the tests: a stand-in for github.com (the dev server's pretend GitHub unless given), and the other target's server.
+        ERGA_GITHUB_ORIGIN: bindings.text(process.env.ERGA_GITHUB_ORIGIN ?? (process.env.ERGA_DEV_ORIGIN ? `${process.env.ERGA_DEV_ORIGIN}/__github` : "")),
+        // Erga's GitHub App, as the pretend GitHub knows it (dev/github-mock.ts, dev/vite-plugin.ts): the control routes the dev server
+        // serves sign in, connect and take the webhook with it. The key is made at each start (dev/start.ts).
+        GITHUB_APP_ID: bindings.text("1"),
+        GITHUB_APP_SLUG: bindings.text("erga-editor"),
+        GITHUB_APP_CLIENT_ID: bindings.text("Iv1.mockgithubapp0"),
+        GITHUB_APP_CLIENT_SECRET: bindings.text("mock-github-client-secret"),
+        GITHUB_APP_PRIVATE_KEY: bindings.text(process.env.ERGA_GITHUB_APP_KEY ?? ""),
+        GITHUB_WEBHOOK_SECRET: bindings.text("mock-webhook-secret"),
+        // A downstream dev server (ERGA_UPSTREAM): its fork's secret at upstream (tests set it; the webhook relay signs with its hash).
+        FORK_SECRET: bindings.text(process.env.ERGA_FORK_SECRET ?? ""),
         ERGA_PEER_ORIGIN: bindings.text(process.env.ERGA_PEER_ORIGIN ?? ""),
         // "1": /deploy and the branch deploys talk to a pretend Cloudflare, for their tests and for trying them safely.
         ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),

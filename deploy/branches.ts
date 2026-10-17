@@ -150,7 +150,7 @@ export interface Deps {
    * merges the channel's commit into staging (server/source/repo.ts) and so deploys it, through the hook; and the
    * branches' heads, for a target never deployed from here (staging, right after the install).
    */
-  upstream?: { channel(): Promise<ChannelFile>; update?(): Promise<UpdateResult | { error: string }>; heads?(): Promise<Record<string, string>> };
+  upstream?: { channel(): Promise<ChannelFile>; update?(): Promise<UpdateResult | { error: string }>; heads?(): Promise<Record<string, string>>; /** Its hosts told to upstream (after a domain changed): where its consents may come back to. */ hosts?(hosts: string[]): Promise<void> };
   /** Something about the store's channels changed ({type: "releases"} on /api/events). */
   releasesChanged?(): void;
   now?: () => number;
@@ -521,10 +521,19 @@ export class BranchDeploys {
       await cf.call("PUT", `/accounts/${acc}/workers/domains`, `put ${spec.worker} on ${host}`, { hostname: host, service: spec.worker, zone_id: zone.id, environment: "production" });
       console.log(`domain ${host} added to ${name} (${spec.worker}) by ${by}`);
       this.deps.logged?.({ type: "domains" });
-      return this.domains();
+      const view = await this.domains();
+      await this.tellHosts(view);
+      return view;
     } catch (e) {
       return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
     }
+  }
+
+  /** An install: every host its environments answer at, told to upstream (the GitHub consent relay sends people back only to one of them). */
+  private async tellHosts(view: DomainsView | { error: string }): Promise<void> {
+    if ("error" in view || !this.deps.upstream?.hosts) return;
+    const hosts = Object.values(view.targets).flat().map((d) => d.hostname);
+    await this.deps.upstream.hosts(hosts).catch((e: Error) => console.log(`upstream wasn't told the hosts: ${e.message}`));
   }
 
   /** A domain taken off an environment's Worker (never its own address: a deploy would put it back, and the health check goes there). */
@@ -543,7 +552,9 @@ export class BranchDeploys {
       await cf.call("DELETE", `/accounts/${acc}/workers/domains/${mine.id}`, `take ${spec.worker} off ${host}`);
       console.log(`domain ${host} removed from ${name} (${spec.worker}) by ${by}`);
       this.deps.logged?.({ type: "domains" });
-      return this.domains();
+      const view = await this.domains();
+      await this.tellHosts(view);
+      return view;
     } catch (e) {
       return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
     }

@@ -32,8 +32,8 @@ export interface Fleet {
 /** The settings an install's control Worker carries about itself (deploy/install.ts set them), which its upgrades send on; and its secrets staging is given. */
 export interface InstallEnv extends FleetEnv {
   UPSTREAM?: string; INSTALL?: string; CHANNEL?: string;
-  ADMINS?: string; APP_URL?: string; GITHUB_CLIENT_ID?: string; CLOUDFLARE_OAUTH_CLIENT_ID?: string;
-  SESSION_SECRET?: string; GITHUB_CLIENT_SECRET?: string;
+  ADMINS?: string; APP_URL?: string; GITHUB_APP_CLIENT_ID?: string; GITHUB_APP_SLUG?: string; CLOUDFLARE_OAUTH_CLIENT_ID?: string;
+  SESSION_SECRET?: string;
 }
 
 /** An install's fleet from its settings, or null where this isn't an install (no INSTALL). */
@@ -61,7 +61,7 @@ export function installFleet(env: InstallEnv): Fleet | null {
       const accountId = e.CLOUDFLARE_ACCOUNT_ID?.trim() || spec.accountId;
       // What the control Worker tells itself, sent again on each upgrade (a text setting goes with each upload).
       const controlVars = {
-        ADMINS: env.ADMINS ?? "", CLOUDFLARE_ACCOUNT_ID: accountId, APP_URL: env.APP_URL ?? `https://${hosts.production}`, GITHUB_CLIENT_ID: env.GITHUB_CLIENT_ID ?? "",
+        ADMINS: env.ADMINS ?? "", CLOUDFLARE_ACCOUNT_ID: accountId, APP_URL: env.APP_URL ?? `https://${hosts.production}`, GITHUB_APP_CLIENT_ID: env.GITHUB_APP_CLIENT_ID ?? "", GITHUB_APP_SLUG: env.GITHUB_APP_SLUG ?? "",
         CLOUDFLARE_OAUTH_CLIENT_ID: env.CLOUDFLARE_OAUTH_CLIENT_ID ?? "", UPSTREAM: upstream, INSTALL: env.INSTALL!, ...(env.CHANNEL?.trim() ? { CHANNEL: env.CHANNEL.trim() } : {}),
       };
       if (name == "control") {
@@ -71,11 +71,12 @@ export function installFleet(env: InstallEnv): Fleet | null {
           pages: { kind: "shared" }, vars: controlVars, secrets: {}, control: true, install: { vars: controlVars },
         };
       }
-      const appVars = { ADMINS: env.ADMINS ?? "", GITHUB_CLIENT_ID: env.GITHUB_CLIENT_ID ?? "", SERVER_CONFIG: "{}", CLOUDFLARE_OAUTH_CLIENT_ID: "", CONTROL_URL: `https://${hosts.control}` };
+      // Sign-in on the app Workers: Erga's GitHub App, through upstream's callback (the relay).
+      const appVars = { ADMINS: env.ADMINS ?? "", GITHUB_CLIENT_ID: env.GITHUB_APP_CLIENT_ID ?? "", SIGN_IN_RELAY: upstream, SERVER_CONFIG: "{}", CLOUDFLARE_OAUTH_CLIENT_ID: "", CONTROL_URL: `https://${hosts.control}` };
       if (name == "staging") {
         // Staging's secrets go with each deploy (the install made none for it): its own session key, derived from the
-        // control Worker's; the same GitHub App; the token the copy of production's data goes through.
-        const secrets = { ...(env.SESSION_SECRET ? { SESSION_SECRET: `${env.SESSION_SECRET}.staging` } : {}), ...(env.GITHUB_CLIENT_SECRET ? { GITHUB_CLIENT_SECRET: env.GITHUB_CLIENT_SECRET } : {}), ...(e.SNAPSHOT_TOKEN ? { SNAPSHOT_TOKEN: e.SNAPSHOT_TOKEN } : {}) };
+        // control Worker's, and the token the copy of production's data goes through (sign-in needs no secret: the relay).
+        const secrets = { ...(env.SESSION_SECRET ? { SESSION_SECRET: `${env.SESSION_SECRET}.staging` } : {}), ...(e.SNAPSHOT_TOKEN ? { SNAPSHOT_TOKEN: e.SNAPSHOT_TOKEN } : {}) };
         return {
           ...base(accountId), label: "staging", workerName: spec.staging.worker, databaseName: spec.staging.database, app: spec.staging.app, pages: spec.staging.pages,
           vars: { ...appVars, DEPLOY_TARGET: "staging", SNAPSHOT_IMPORT: "1" }, secrets, services,

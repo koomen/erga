@@ -20,7 +20,7 @@ describe("a downstream of erga.dev", () => {
   const file = (dir: string, name: string, content: string) => writeFileSync(join(dir, name), content);
   const commit = async (dir: string, message: string) => { await must(dir, "add", "."); await must(dir, "commit", "-qm", message); return must(dir, "rev-parse", "HEAD"); };
   beforeAll(async () => {
-    f = startFixture({ upstream: true, mirror: false });
+    f = startFixture({ upstream: true });
     // Upstream: three commits on main, the first release tagged. The downstream: a fork at that point (main and staging).
     up = scratch();
     await must(up, "init", "-q", "-b", "main");
@@ -43,7 +43,8 @@ describe("a downstream of erga.dev", () => {
 
   test("the position: level with upstream's release, nothing of its own", async () => {
     const view = await f.repo.branches();
-    expect(view.upstream).toMatchObject({ origin: "https://ops.erga.test", channel: "stable", release: { tag: "v0.1.0" }, behind: 0, own: 0, error: null, conflict: null });
+    expect(view.upstream).toMatchObject({ origin: "https://ops.erga.test", channel: "stable", release: { tag: "v0.1.0" }, behind: 0, own: 0, error: null });
+    expect(view.conflict).toBeNull();
     expect(view.upstream!.main).toBe(await must(up, "rev-parse", "main"));
     expect(view.upstream!.target).toBe(view.upstream!.release!.commit);
     expect(view.upstream!.version).toBe("v0.1.0");
@@ -116,7 +117,7 @@ describe("a downstream of erga.dev", () => {
     expect(r).toMatchObject({ result: "conflicts", conflict: { branch: "upstream-merge/v0.4.0", version: "v0.4.0", target: seventh, ours, files: [{ path: "a.txt", kind: "content" }], by: "ada" } });
     expect(f.moves.at(-1)!.new).toBe(ours);
     const view = await f.repo.branches();
-    expect(view.upstream!.conflict).toMatchObject({ branch: "upstream-merge/v0.4.0" });
+    expect(view.conflict).toMatchObject({ kind: "upstream", branch: "upstream-merge/v0.4.0" });
     expect(view.branches.find((b) => b.name == "staging")!.commit).toBe(ours);
     // The branch, from a checkout: the merge with Git's markers.
     await must(down, "fetch", "-q", "erga", "upstream-merge/v0.4.0");
@@ -140,7 +141,8 @@ describe("a downstream of erga.dev", () => {
     // The branch is gone, and so is the conflict.
     expect(await must(down, "ls-remote", "--heads", f.erga)).not.toContain("upstream-merge/");
     const after = await f.repo.branches();
-    expect(after.upstream).toMatchObject({ behind: 0, conflict: null });
+    expect(after.upstream).toMatchObject({ behind: 0 });
+    expect(after.conflict).toBeNull();
   });
 
   test("a person's way out: the merge made in a checkout and pushed to staging ends the conflict", async () => {
@@ -155,7 +157,7 @@ describe("a downstream of erga.dev", () => {
     // A push to the merge branch is refused, with the way out.
     const pushed = await git(down, "push", "erga", "HEAD:upstream-merge/v0.5.0");
     expect(pushed.ok).toBe(false);
-    expect(pushed.err).toContain("merge upstream in your checkout and push the result to staging");
+    expect(pushed.err).toContain("merge in your checkout and push the result to staging");
     // In the checkout: merge upstream's commit (the tracking branch has it), resolve, push staging.
     await must(down, "fetch", "-q", "erga", "erga-upstream/main");
     expect(await must(down, "rev-parse", "FETCH_HEAD")).toBe(eighth);
@@ -167,7 +169,8 @@ describe("a downstream of erga.dev", () => {
     expect((await git(down, "push", "erga", "HEAD:staging")).ok).toBe(true);
     await f.settle();
     const view = await f.repo.branches();
-    expect(view.upstream).toMatchObject({ behind: 0, conflict: null });
+    expect(view.upstream).toMatchObject({ behind: 0 });
+    expect(view.conflict).toBeNull();
     expect(await must(down, "ls-remote", "--heads", f.erga)).not.toContain("upstream-merge/");
     // Abandon, when asked: the branch goes, staging stays.
     file(up, "a.txt", "uno\ndos\ntres\nfour\nfive\nsix\nseven\neight\nnine\n");
@@ -177,7 +180,7 @@ describe("a downstream of erga.dev", () => {
     expect(await f.repo.update(ada)).toMatchObject({ result: "conflicts" });
     const staging = (await f.repo.branches()).branches.find((b) => b.name == "staging")!.commit;
     await f.repo.abandonUpdate();
-    expect((await f.repo.branches()).upstream).toMatchObject({ behind: 1, conflict: null });
+    expect(await f.repo.branches()).toMatchObject({ upstream: { behind: 1 }, conflict: null });
     expect((await f.repo.branches()).branches.find((b) => b.name == "staging")!.commit).toBe(staging);
     expect(await must(down, "ls-remote", "--heads", f.erga)).not.toContain("upstream-merge/");
   });

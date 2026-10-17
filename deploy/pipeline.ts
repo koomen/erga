@@ -209,9 +209,6 @@ export interface DeployPlan {
   /** The GitHub login deploying it: the new server's bootstrap admin (ADMINS). */
   admin: string;
   adminName?: string;
-  /** The new server's GitHub OAuth app, for signing in. */
-  githubClientId: string;
-  githubClientSecret: string;
   /** A release of the store to install (12 hex digits), in place of stable's latest (trying edge, or an older one). */
   version?: string;
   /** Turns the agent on; optional. */
@@ -243,8 +240,6 @@ export function checkPlan(p: DeployPlan): string | null {
   }
   if (!/^[A-Za-z0-9-]{1,39}$/.test(p.admin)) return "Sign in to Erga with GitHub first.";
   if (p.version != null && p.version != "" && !/^[0-9a-f]{12}$/.test(p.version)) return "A release's version is 12 hex digits, as the store lists it.";
-  if (!/^[A-Za-z0-9._-]{8,64}$/.test(p.githubClientId.trim())) return "Make the GitHub App with the button, or paste a GitHub OAuth app's Client ID.";
-  if (p.githubClientSecret.trim().length < 20) return "Paste your GitHub OAuth app's client secret (generate one on the app's page).";
   if (p.anthropicKey && !p.anthropicKey.trim().startsWith("sk-")) return "An Anthropic API key starts with sk-; leave it empty to deploy without the agent.";
   return null;
 }
@@ -451,21 +446,26 @@ export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain"
 export const targetPagesShown = (t: Pick<Target, "pages" | "workerName" | "subdomain">) =>
   t.pages.kind == "zone" ? `*.${t.pages.domain ?? t.pages.zoneName}` : targetSharedPagesHost(t);
 
+/** How a new server's people sign in: Erga's GitHub App (its client id), through erga.dev's callback (the relay: server/source/github.ts). */
+export interface SignInVia { clientId: string; relay: string }
+
 /** The /deploy page's plan as a pipeline target: a new server in someone's own account, them its admin, its own secrets. */
-export function targetOfPlan(plan: DeployPlan, sessionSecret: string): Target {
+export function targetOfPlan(plan: DeployPlan, sessionSecret: string, signIn?: SignInVia): Target {
   return {
     label: plan.accountId, accountId: plan.accountId, workerName: plan.workerName, databaseName: DB_NAME,
     subdomain: plan.subdomain, createSubdomain: plan.createSubdomain, app: plan.app, pages: plan.pages,
     vars: {
       ADMINS: plan.admin.toLowerCase(),
-      GITHUB_CLIENT_ID: plan.githubClientId.trim(),
+      // Sign-in: Erga's GitHub App, through erga.dev (no app of the install's own, nothing pasted).
+      GITHUB_CLIENT_ID: signIn?.clientId ?? "",
+      SIGN_IN_RELAY: signIn?.relay ?? "",
       SERVER_CONFIG: "{}",
       // erga.dev's own deploy page needs erga.dev's OAuth client; the new server has none (the token link still works).
       CLOUDFLARE_OAUTH_CLIENT_ID: "",
       // Not one of Erga's own branch-deploy targets.
       DEPLOY_TARGET: "",
     },
-    secrets: { SESSION_SECRET: sessionSecret, GITHUB_CLIENT_SECRET: plan.githubClientSecret.trim(), ...(plan.anthropicKey?.trim() ? { ANTHROPIC_API_KEY: plan.anthropicKey.trim() } : {}) },
+    secrets: { SESSION_SECRET: sessionSecret, ...(plan.anthropicKey?.trim() ? { ANTHROPIC_API_KEY: plan.anthropicKey.trim() } : {}) },
   };
 }
 

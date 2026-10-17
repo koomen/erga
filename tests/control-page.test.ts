@@ -7,7 +7,7 @@ import type { Session } from "../server/identity/index";
 
 test("the Ops page on the control Worker sets window.ergaView before its script reads it", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
-  const r = adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") });
+  const r = adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", layout: controlLayout("https://erga.test") });
   const html = await r.text();
   const set = html.indexOf("window.ergaView =");
   const read = html.indexOf("const pageView = window.ergaView");
@@ -18,7 +18,7 @@ test("the Ops page on the control Worker sets window.ergaView before its script 
 
 test("the Ops page's scripts parse, and each deploy column has a name and its host", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
-  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
+  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", layout: controlLayout("https://erga.test") }).text();
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/g)].filter((m) => !/type="(module|application\/json)"/.test(m[1])).map((m) => m[2]);
   expect(scripts.length).toBeGreaterThan(0);
   // A raw newline in a string (a "\n" not escaped in the template) stops the whole page: no rows, no deploys.
@@ -29,7 +29,7 @@ test("the Ops page's scripts parse, and each deploy column has a name and its ho
 
 test("the Git instructions come before the git log", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
-  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
+  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", layout: controlLayout("https://erga.test") }).text();
   expect(html).toContain("git remote add erga https://ops.erga.test/git/erga.git");
   expect(html.indexOf('id="clone"')).toBeGreaterThan(0);
   expect(html.indexOf('id="clone"')).toBeLessThan(html.indexOf('id="grid"'));
@@ -37,7 +37,7 @@ test("the Git instructions come before the git log", async () => {
 
 test("the Ops page asks for the log and statuses at once, and its live updates hold no HTTP connection", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
-  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
+  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", layout: controlLayout("https://erga.test") }).text();
   // An EventSource holds one of the browser's six HTTP/1.1 connections to the host while the page is open: a few admin
   // tabs, and the page's own requests wait minutes. The events come over a WebSocket.
   expect(html).not.toContain("new EventSource");
@@ -52,7 +52,7 @@ test("the Ops page asks for the log and statuses at once, and its live updates h
 
 test("the sidebar has one Ops link, in place of Source and Cloudflare: here on the control Worker, marked on its pages", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
-  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", mirrorUrl: "", worker: null, layout: controlLayout("https://erga.test") }).text();
+  const html = await adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", layout: controlLayout("https://erga.test") }).text();
   const side = /<nav class="admin-side"[\s\S]*?<\/nav>/.exec(html)![0];
   const labels = [...side.matchAll(/<span class="label">([^<]+)<\/span>/g)].map((m) => m[1]);
   expect(labels).toContain("Ops");
