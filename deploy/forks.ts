@@ -25,8 +25,12 @@ export const forkRepo = (id: string) => `fork-${id}`;
 /** A fork's id: lowercase letters and digits, as the install makes one. */
 export const isForkId = (s: string) => /^[a-z0-9]{8,40}$/.test(s);
 
-/** A fork as erga.dev keeps it: its id, its secret's hash (never the secret), the commit it was seeded at, who made it. */
-export interface ForkRecord { id: string; secretHash: string; commit: string; by: string; at: number }
+/**
+ * A fork as erga.dev keeps it: its id, its secret's hash (never the secret), the commit it was seeded at, who made it;
+ * the GitHub App's installations its person connected through erga.dev's relay (their tokens are minted for it alone),
+ * and the hosts its Workers answer at (the consent relay sends a person back only to one of those).
+ */
+export interface ForkRecord { id: string; secretHash: string; commit: string; by: string; at: number; installations?: number[]; hosts?: string[] }
 
 export async function hashSecret(secret: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret)))].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -41,6 +45,25 @@ export async function forkRemote(fork: ForkAccess, scope: "read" | "write", net:
   const body = (await r.json().catch(() => ({}))) as { remote?: string; token?: string; expiresAt?: string; error?: string };
   if (!r.ok || !body.remote || !body.token) throw new Error(`${fork.upstream} gave no token for the fork's repository: ${body.error ?? `HTTP ${r.status}`}`);
   return { url: body.remote, token: body.token, expiresAt: body.expiresAt ?? new Date(Date.now() + 3600_000).toISOString(), headers: { Authorization: `Bearer ${body.token}` } };
+}
+
+/** A GitHub installation token for the downstream's connected repository, minted at upstream (the App's key is there): POST /forks/<id>/github/token. */
+export async function forkGithubToken(fork: ForkAccess, installationId: number, net: Fetch = globalThis.fetch.bind(globalThis)): Promise<{ token: string; expiresAt: number }> {
+  const r = await net(`${fork.upstream}/forks/${fork.id}/github/token`, { method: "POST", headers: { Authorization: `Bearer ${fork.secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ installation: installationId }) });
+  const body = (await r.json().catch(() => ({}))) as { token?: string; expiresAt?: number; error?: string };
+  if (!r.ok || !body.token) throw new Error(body.error ?? `${fork.upstream} gave no GitHub token (HTTP ${r.status}).`);
+  return { token: body.token, expiresAt: body.expiresAt ?? Date.now() + 3600_000 };
+}
+
+/** The App uninstalled from the downstream's account, through upstream. */
+export async function forkGithubUninstall(fork: ForkAccess, installationId: number, net: Fetch = globalThis.fetch.bind(globalThis)): Promise<void> {
+  await net(`${fork.upstream}/forks/${fork.id}/github/uninstall`, { method: "POST", headers: { Authorization: `Bearer ${fork.secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ installation: installationId }) });
+}
+
+/** The downstream's hosts, told to upstream (after a domain is added or removed): where its consents may come back to. */
+export async function forkHosts(fork: ForkAccess, hosts: string[], net: Fetch = globalThis.fetch.bind(globalThis)): Promise<void> {
+  const r = await net(`${fork.upstream}/forks/${fork.id}/hosts`, { method: "POST", headers: { Authorization: `Bearer ${fork.secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ hosts }) });
+  if (!r.ok) throw new Error(`${fork.upstream} didn't take the hosts (HTTP ${r.status}).`);
 }
 
 /**

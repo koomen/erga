@@ -18,6 +18,9 @@
 //                              served here in local development
 //   /__erga/...                the dev server's (dev.ts)
 
+import { githubAppOf } from "./github-app";
+import { sealKeyFrom } from "../deploy/credential";
+import { hashSecret } from "../deploy/forks";
 import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
 import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
@@ -48,7 +51,10 @@ export default {
     const { value: answer, timing } = await tallied(() => handle(request, p, async (request, url) => {
       const path = url.pathname;
       if (isDeploysPath(path)) return deploysDoor(request, env, p);
-      const where = appAnswer(path, { control: !!env.CONTROL, controlUrl: !!env.CONTROL_URL, pipeline: !!env.PIPELINE });
+      // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; here only in local
+      // development, where this Worker serves the control routes too. A sign-in's callback stays the app's.
+      const githubApp = path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"));
+      const where = githubApp ? (env.PIPELINE ? "here" : env.CONTROL_URL ? "there" : null) : appAnswer(path, { control: !!env.CONTROL, controlUrl: !!env.CONTROL_URL, pipeline: !!env.PIPELINE });
       if (where == "there") {
         // Apart: there. A page goes by a redirect, and so does Git: a Git client follows the redirect of its first request
         // (info/refs) and carries on at the new address, so a checkout whose origin is this host keeps pushing (it says
@@ -78,7 +84,16 @@ export default {
           ...(env.PIPELINE && !env.UPSTREAM?.trim() ? { forks: {
             access: (id: string, secret: string, scope: "read" | "write") => env.PIPELINE!.getByName("deploys").forkAccess(id, secret, scope),
             builder: async (id: string, secret: string, request: Request) => { const u = new URL(request.url); return env.PIPELINE!.getByName("deploys").forkBuild(id, secret, u.pathname.endsWith("/cancel") ? "cancel" : "build", u.searchParams.get("id") ?? "", await request.text()); },
+            githubToken: (id: string, secret: string, installation: number) => env.PIPELINE!.getByName("deploys").forkGithubToken(id, secret, installation),
+            githubUninstall: (id: string, secret: string, installation: number) => env.PIPELINE!.getByName("deploys").forkGithubUninstall(id, secret, installation),
+            hosts: (id: string, secret: string, hosts: string[]) => env.PIPELINE!.getByName("deploys").forkHosts(id, secret, hosts),
+            installationSeen: (origin: string, installation: number) => env.PIPELINE!.getByName("deploys").installationSeen(origin, installation),
+            ofInstallation: (installation: number) => env.PIPELINE!.getByName("deploys").forkOfInstallation(installation),
           } } : {}),
+          // A downstream dev server: relayed webhooks are signed with its fork secret's hash.
+          ...(env.UPSTREAM?.trim() && env.FORK_SECRET ? { forkSecretHash: await hashSecret(env.FORK_SECRET) } : {}),
+          // Erga's GitHub App (the pretend GitHub's, in local development), the consent's sealing key, and the webhook's background work.
+          github: githubAppOf(env), sealKey: sealKeyFrom(env.SESSION_SECRET), background: (work: Promise<unknown>) => ctx.waitUntil(work), net: globalThis.fetch.bind(globalThis),
           // The deploy page (installs), in local development only: on erga.dev it's the control Worker's.
           ...(env.PIPELINE ? { deploy: (request: Request) => deployDoor(request, { env, platform: p, oauthCallback: "/install/callback" }) } : {}),
           // Under the mock, the mock fleet's account, as the deploys' object has it (cloudflare/pipeline.ts).

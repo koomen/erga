@@ -29,9 +29,9 @@ beforeAll(async () => {
 
 const plan = (over: Partial<DeployPlan> = {}): DeployPlan => ({
   accountId: ACC, workerName: "erga", subdomain: "ada-mock", app: { kind: "workers.dev" }, pages: { kind: "shared" },
-  admin: "Ada", githubClientId: "Iv1.mockgithubapp0", githubClientSecret: "mock-github-app-secret-0123456789abcdef0123", ...over,
+  admin: "Ada", ...over,
 });
-const UPSTREAM = { origin: "https://ops.erga.test", clientId: "erga-client" };
+const UPSTREAM = { origin: "https://ops.erga.test", clientId: "erga-client", github: { clientId: "Iv1.mockgithubapp0", slug: "erga-editor" } };
 const FORK = { id: "fork0123456789ab", secret: "fork-secret-0123456789abcdef0123456789abcdef" };
 
 async function install(p: DeployPlan, mock = mockCloudflare()) {
@@ -79,8 +79,14 @@ describe("an install", () => {
     expect(cb.DEPLOYS.class_name).toBe("Deployer");
     expect(cb.ADMINS.text).toBe("ada");
     expect(cb.APP_URL.text).toBe("https://erga.ada-mock.workers.dev");
-    expect(cb.GITHUB_CLIENT_ID.text).toBe("Iv1.mockgithubapp0");
-    expect(cb.GITHUB_CLIENT_SECRET.type).toBe("secret_text");
+    // Sign-in and Connect GitHub: Erga's GitHub App, through upstream (no app of the install's own, no secret).
+    expect(cb.GITHUB_APP_CLIENT_ID.text).toBe("Iv1.mockgithubapp0");
+    expect(cb.GITHUB_APP_SLUG.text).toBe("erga-editor");
+    expect(cb.GITHUB_CLIENT_SECRET).toBeUndefined();
+    const appb = bindingsOf(state, "erga");
+    expect(appb.GITHUB_CLIENT_ID.text).toBe("Iv1.mockgithubapp0");
+    expect(appb.SIGN_IN_RELAY.text).toBe("https://ops.erga.test");
+    expect(appb.GITHUB_CLIENT_SECRET).toBeUndefined();
     expect(cb.SESSION_SECRET.type).toBe("secret_text");
     // Its way to its fork at upstream, and the token staging's copies of production's data go through: secrets, on it and on production.
     expect(cb.FORK_SECRET.type).toBe("secret_text");

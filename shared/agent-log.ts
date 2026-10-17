@@ -22,12 +22,13 @@ export type LogItem =
  * by the agent (a Cloudflare consent, which opens in a popup). The tool's own code makes it (its result's
  * `details.offer`), never the model's text.
  */
-export interface Offer { kind: "connect-cloudflare"; label: string; url: string }
+/** A consent the agent can't give but can offer: a button under the tool's result in the panel, which opens the consent in a popup. */
+export interface Offer { kind: "connect-cloudflare" | "connect-github"; label: string; url: string }
 
 /** The offer in a tool's result, if it has one. */
 export function offerOf(result: unknown): Offer | undefined {
   const o = (result as { details?: { offer?: Offer } } | null)?.details?.offer;
-  return o && o.kind == "connect-cloudflare" && typeof o.url == "string" && typeof o.label == "string" ? { kind: o.kind, label: o.label, url: o.url } : undefined;
+  return o && (o.kind == "connect-cloudflare" || o.kind == "connect-github") && typeof o.url == "string" && typeof o.label == "string" ? { kind: o.kind, label: o.label, url: o.url } : undefined;
 }
 
 export type LogEvent =

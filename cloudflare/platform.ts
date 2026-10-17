@@ -56,7 +56,11 @@ function controlSource(control: Service<App>): SourceService {
     object: {
       advertise: (origin) => control.advertise(origin),
       branches: (origin) => control.branches(origin),
-      mirrorNow: (origin, by) => control.mirrorNow(origin, by),
+      githubStatus: (origin) => control.githubStatus(origin),
+      syncGithub: (origin, by) => control.syncGithub(origin, by),
+      connectGithub: (origin, link, by) => control.connectGithub(origin, link, by),
+      disconnectGithub: (origin) => control.disconnectGithub(origin),
+      githubPushed: (origin, event) => control.githubPushed(origin, event),
       files: (origin, commit) => control.files(origin, commit),
       read: (origin, q) => control.read(origin, q),
       merge: (origin, who, commit) => control.merge(origin, who, commit),
@@ -68,7 +72,6 @@ function controlSource(control: Service<App>): SourceService {
       fetch: async () => new Response("Pushes go to the control Worker's Git endpoint.", { status: 404 }),
     },
     remote: async () => null,
-    mirrorUrl: "",
   };
 }
 
@@ -129,6 +132,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     signIn: {
       app: { clientId: env.GITHUB_CLIENT_ID?.trim() ?? "", secret: env.GITHUB_CLIENT_SECRET?.trim() ?? "" },
       github: standIn(env.ERGA_GITHUB_ORIGIN) ?? "https://github.com",
+      relay: env.SIGN_IN_RELAY?.trim().replace(/\/+$/, "") || null,
       devLogin: env.DEV_LOGIN?.trim() || null,
       encryptionKey: factoryKey(env),
     },

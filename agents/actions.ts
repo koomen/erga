@@ -76,15 +76,22 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin/ops: the dashboard of source and deploys
   { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "list_source" },
   { route: "GET /git/tree/<ref>/<path>", domain: "admin", action: "Read a folder or a file of Erga's source (the public page, for anyone)", tool: "read_source" },
-  { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Ops)", tool: "list_branches" },
+  { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main, GitHub's status and any merge waiting on conflicts (Ops)", tool: "list_branches" },
   { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Ops)", tool: "deploy_production" },
-  { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Ops)", tool: "sync_mirror" },
+  // GitHub (server/source/github.ts; control/routes.ts): Erga's GitHub App, connected to one repository. Connect is a consent on
+  // GitHub's install page, in a popup; the agent reads the state, syncs, disconnects, and offers the button.
+  { route: "GET /api/source/github", domain: "admin", action: "Read the GitHub connection: the repository, the sync's state and its error (Ops, the GitHub card)", tool: "github_status" },
+  { route: "POST /api/source/github/sync", domain: "admin", action: "Sync with GitHub now (Ops, the GitHub card)", tool: "sync_github" },
+  { route: "POST /api/source/github/disconnect", domain: "admin", action: "Disconnect GitHub: forget the repository, uninstall the App (Ops, the GitHub card)", tool: "disconnect_github" },
+  { route: "GET /github/connect", domain: "none", action: "Connect GitHub: the App's install page on GitHub, in a popup (Ops, the GitHub card; the button under the agent's github_status)", exempt: "a secret: the consent gives Erga's GitHub App access to the person's repositories, only on GitHub's own page in their browser, never in a conversation (the agent offers the button)" },
+  { route: "POST /github/connect/pick", domain: "none", action: "Pick the repository, or have Erga make one, in the popup after GitHub's install page", exempt: "the consent's own pages: it acts with the person's GitHub token, which only the popup holds" },
+  { route: "POST /github/webhook", domain: "none", action: "GitHub tells Erga of a push (the App's webhook): the repository syncs in", exempt: "server to server: GitHub's, signed with the webhook secret (or relayed from erga.dev, signed with the fork's secret)" },
   { route: "POST /api/source/release", domain: "admin", action: "Cut a release: a version tag on main's head (Ops)", tool: "cut_release" },
   // A downstream (an Erga on its own domain): its position against erga.dev, and Update from erga.dev (server/source/repo.ts).
   { route: "POST /api/source/update", domain: "admin", action: "Update from erga.dev: upstream's release merged into staging (Ops)", tool: "update_from_upstream" },
-  { route: "POST /api/source/update/resolve", domain: "admin", action: "Resolve one conflicted file of the waiting upstream merge (the agent's way out of a conflict)", tool: "resolve_upstream_file" },
-  { route: "POST /api/source/update/finish", domain: "admin", action: "Finish the resolved upstream merge: staging moves (Ops)", tool: "finish_upstream_merge" },
-  { route: "POST /api/source/update/abandon", domain: "admin", action: "Drop the waiting upstream merge and its branch (Ops)", tool: "abandon_upstream_merge" },
+  { route: "POST /api/source/update/resolve", domain: "admin", action: "Resolve one conflicted file of the merge waiting on conflicts, from upstream or from GitHub (the agent's way out of a conflict)", tool: "resolve_conflict_file" },
+  { route: "POST /api/source/update/finish", domain: "admin", action: "Finish the resolved merge: staging moves (Ops)", tool: "finish_waiting_merge" },
+  { route: "POST /api/source/update/abandon", domain: "admin", action: "Drop the waiting merge and its branch (Ops)", tool: "drop_waiting_merge" },
   { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Ops)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Ops)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Ops)", tool: "deploy_log" },
@@ -98,6 +105,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // A downstream's control Worker, with its fork's secret (control/routes.ts): its repository's token, and builds of its commits.
   { route: "POST /forks/<id>/token", domain: "none", action: "A downstream's control Worker gets a token for its fork's repository", exempt: "server to server, with the fork's secret" },
   { route: "POST /forks/<id>/builder/build|cancel", domain: "none", action: "A downstream's control Worker has one of its commits built here", exempt: "server to server, with the fork's secret" },
+  { route: "POST /forks/<id>/github/token|uninstall", domain: "none", action: "A downstream's control Worker gets a GitHub installation token for its connected repository, or has the App uninstalled", exempt: "server to server, with the fork's secret" },
+  { route: "POST /forks/<id>/hosts", domain: "none", action: "A downstream's control Worker tells erga.dev its hosts (its domains changed)", exempt: "server to server, with the fork's secret" },
   // The release store (control/routes.ts, deploy/releases.ts): the channels edge and stable.
   { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Ops page marks them on the log)", tool: "list_releases" },
   { route: "GET /api/releases", domain: "admin", action: "Read both channels (Ops)", tool: "list_releases" },
@@ -141,8 +150,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
 
   // ------------------------------------------------------------ /deploy: Erga on your own Cloudflare account (the control Worker's page)
   { route: "GET /deploy/auth/cloudflare", domain: "none", action: "Authorize with Cloudflare: consent on Cloudflare's own page, in the browser (/deploy)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },
-  { route: "GET /deploy/github/start", domain: "none", action: "Make the GitHub App on GitHub (the manifest flow, /deploy)", exempt: `${SECRET}: GitHub hands the App's secret to the session, through the browser` },
-  { route: "GET /deploy/github/callback", domain: "none", action: "Back from GitHub with the App made (/deploy)", exempt: `${SECRET}: GitHub hands the App's secret to the session, through the browser` },
   { route: "POST /deploy/api/connect", domain: "admin", action: "Connect a Cloudflare account with an API token (/deploy)", exempt: SECRET },
   { route: "GET /deploy/api/session", domain: "admin", action: "Read the deploy's progress (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "POST /deploy/api/account", domain: "admin", action: "Pick a Cloudflare account (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },

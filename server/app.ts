@@ -84,6 +84,8 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (isPagesSite(url, p) && request.headers.get("service-worker") == "script") return new Response("A document's page can't register a service worker.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   if (isPagesSite(url, p)) return assets ? p.assets(request) : frontDoor(request, p);
   if (path == "/auth/github") return startSignIn(p, request);
+  // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; local development serves it here (`outside`).
+  if (path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"))) return (await outside(request, url)) ?? finishSignIn(p, request);
   if (path == "/auth/github/callback") return finishSignIn(p, request);
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/auth/test") return testSignIn(p, request);

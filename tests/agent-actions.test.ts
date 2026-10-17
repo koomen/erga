@@ -114,7 +114,7 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
 });
 
 test("the known gaps are closed: production's deploy, the dashboard, keys and tokens", () => {
-  for (const t of ["deploy_production", "sync_mirror", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
+  for (const t of ["deploy_production", "github_status", "sync_github", "disconnect_github", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
     "clear_api_key", "list_agent_tokens", "revoke_agent_token", "get_sign_in_status", "clear_sign_in_app"]) expect(ADMIN).toContain(t);
   // Share with agent makes agent tokens now (list_agent_tokens, revoke_agent_token): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);

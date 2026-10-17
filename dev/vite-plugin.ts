@@ -19,7 +19,8 @@
 //
 //   POST /__erga/open    path=<file or folder>: links it for whoever's signed in and goes to it
 //   POST /__erga/flush   ?link=<secret>: every linked document writes what it holds to disk now (dev/start.ts, before stopping)
-//   /__artifacts/..., /__github/...   stand-ins for Cloudflare Artifacts and GitHub, real Git:
+//   /__artifacts/..., /__github/...   stand-ins for Cloudflare Artifacts and GitHub, real Git (and the pretend GitHub's
+//                                     sign-in, App install page and API: github-mock.ts):
 //                        where Erga's own repository and its mirror are, locally
 
 import { spawn } from "node:child_process";
@@ -34,6 +35,7 @@ import type { Plugin } from "vite";
 import { ALPHABET } from "../server/directory/index.ts";
 import { ignored } from "../document/content.ts";
 import { gitServers } from "./git-server.ts";
+import { mockGithub } from "./github-mock.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
 
@@ -107,9 +109,18 @@ export function ergaDev(opts: DevOptions): Plugin {
         return l;
       };
 
+      // The pretend GitHub (github-mock.ts): Erga's App as the dev Worker knows it (cloudflare.config.ts), its callback and
+      // webhook on this server. The person at the browser is the dev login.
+      const devOrigin = process.env.ERGA_DEV_ORIGIN || "http://127.0.0.1";
+      const github = mockGithub({
+        app: { slug: "erga-editor", clientId: "Iv1.mockgithubapp0", clientSecret: "mock-github-client-secret", webhookSecret: "mock-webhook-secret", ...(process.env.ERGA_GITHUB_APP_KEY ? { privateKey: process.env.ERGA_GITHUB_APP_KEY } : {}) },
+        origin: devOrigin, callback: `${devOrigin}/auth/github/callback`, webhook: `${devOrigin}/github/webhook`,
+        user: process.env.ERGA_GITHUB_USER || "ada", repos: (process.env.ERGA_GITHUB_REPOS || "").split(",").filter(Boolean),
+      });
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
         if (req.method == "POST" && url.pathname == "/__erga/open") return void open(req, res, url).catch(next);
+        if (url.pathname.startsWith("/__github/") && !/^\/__github\/[^/]+\/[^/]+\.git(\/|$)/.test(url.pathname)) return void pretendGithub(req, res, url).catch(next);
         if (url.pathname.startsWith("/__artifacts/") || url.pathname.startsWith("/__github/")) return void git(req, res, url).catch(next);
         if (req.method == "POST" && url.pathname == "/__erga/flush" && url.searchParams.get("link") == opts.secret) {
           return void Promise.all([...mirrors.values()].map((m) => m.flush())).then(() => res.end("ok"), next);
@@ -117,13 +128,25 @@ export function ergaDev(opts: DevOptions): Plugin {
         next();
       });
 
-      /** The stand-ins for Artifacts and GitHub: real `git http-backend` on bare repositories in the state directory. */
+      /** The stand-ins for Artifacts and GitHub: real `git http-backend` on bare repositories in the state directory. A push to the pretend GitHub sends its webhook. */
       async function git(req: IncomingMessage, res: ServerResponse, url: URL) {
         const body = new Uint8Array(Buffer.from(await readBytes(req)));
         const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : v]));
-        const r = await gitServers(opts.stateDir, opts.secret, { method: req.method ?? "GET", path: url.pathname, query: url.search.slice(1), headers, body });
+        const r = await gitServers(opts.stateDir, opts.secret, { method: req.method ?? "GET", path: url.pathname, query: url.search.slice(1), headers, body }, { githubToken: github.gitTokenOk });
         if (!r) return void res.writeHead(404).end("Not found");
         res.writeHead(r.status, r.headers).end(Buffer.from(r.body));
+        const pushed = /^\/__github\/([^/]+)\/([^/]+)\.git\/git-receive-pack$/.exec(url.pathname);
+        if (pushed && r.status == 200) github.pushed(pushed[1], pushed[2], body).catch((e) => log(`pretend GitHub's webhook: ${(e as Error).message}`));
+      }
+      /** The pretend GitHub's pages and API (github-mock.ts), on this server. */
+      async function pretendGithub(req: IncomingMessage, res: ServerResponse, url: URL) {
+        const body = req.method == "GET" || req.method == "HEAD" ? undefined : new Uint8Array(Buffer.from(await readBytes(req)));
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(req.headers)) if (v) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+        // The request's own origin (localhost or 127.0.0.1, as the browser has it): the App's callback is put there.
+        const r = await github.fetch(new Request(`http://${req.headers.host || new URL(devOrigin).host}${url.pathname}${url.search}`, { method: req.method ?? "GET", headers, ...(body ? { body: body as BodyInit } : {}) }));
+        if (!r) return void res.writeHead(404).end("Not found");
+        res.writeHead(r.status, Object.fromEntries(r.headers)).end(Buffer.from(await r.arrayBuffer()));
       }
 
       /** The local database brought up to date, which linking needs: set once the server's listening. */

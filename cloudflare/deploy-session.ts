@@ -6,8 +6,7 @@
 // as the install takes: it's deleted when the install succeeds, when they
 // forget it, and two hours after they connected at the latest. It's never
 // logged, and never goes to D1. A token from Cloudflare's OAuth is also
-// revoked at the end. The GitHub App the manifest flow made for the install
-// (its client secret) is kept the same way, until the install is done.
+// revoked at the end.
 //
 // Every call names who's asking (the front door's signed-in login), and only
 // the person who connected may use the session. The install itself runs here
@@ -21,6 +20,7 @@ import {
 } from "../deploy/pipeline";
 import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf, type Installed } from "../deploy/install";
 import { hashSecret } from "../deploy/forks";
+import { githubAppOf } from "./github-app";
 import { mockCloudflare, type MockState } from "../deploy/mock-cloudflare";
 import { open, randomSecret, seal, type Sealed } from "../deploy/seal";
 import type { Env } from "./env";
@@ -31,9 +31,7 @@ const SESSION = "session", RUN = "run";
 const forkId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
 const LIFETIME_MS = 2 * 60 * 60 * 1000;
 
-/** The GitHub App the manifest flow made for this install (cloudflare/deploy-routes.ts): its secret sealed as the token is. */
-export interface GithubApp { name: string; clientId: string; url: string; sealed: Sealed }
-interface Session { owner: string; via: "oauth" | "token"; created: number; sealed: Sealed | null; accounts: { id: string; name: string }[]; github?: GithubApp }
+interface Session { owner: string; via: "oauth" | "token"; created: number; sealed: Sealed | null; accounts: { id: string; name: string }[] }
 
 export type StepState = { id: string; title: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail?: string };
 export interface RunState {
@@ -88,22 +86,13 @@ export class Deployer extends DurableObject<Env> {
     } catch (e) { return { ok: false, error: message(e) }; }
   }
 
-  /** What the page needs to pick up where it was: connected or not, the GitHub App made, and the install's progress. */
-  async info(owner: string): Promise<{ connected: boolean; via?: string; accounts?: { id: string; name: string }[]; expires?: number; githubApp?: { name: string; clientId: string; url: string }; run: RunState | null }> {
+  /** What the page needs to pick up where it was: connected or not, and the install's progress. */
+  async info(owner: string): Promise<{ connected: boolean; via?: string; accounts?: { id: string; name: string }[]; expires?: number; run: RunState | null }> {
     const session = await this.session(owner);
     const stored = await this.ctx.storage.get<RunState & { owner?: string }>(RUN);
     const run = stored && stored.owner == owner.toLowerCase() ? (({ owner: _, ...r }) => r)(stored) : null;
     if (!session) return { connected: false, run };
-    const githubApp = session.github ? { name: session.github.name, clientId: session.github.clientId, url: session.github.url } : undefined;
-    return { connected: !!session.sealed, via: session.via, accounts: session.accounts, expires: session.created + LIFETIME_MS, ...(githubApp ? { githubApp } : {}), run };
-  }
-
-  /** The GitHub App the manifest flow made: kept with the session, its secret sealed with the browser's key. */
-  async setGithubApp(owner: string, key: string, app: { name: string; clientId: string; secret: string; url: string }): Promise<Answer<{}>> {
-    const session = await this.session(owner);
-    if (!session) return { ok: false, error: "Connect your Cloudflare account first." };
-    await this.ctx.storage.put(SESSION, { ...session, github: { name: app.name, clientId: app.clientId, url: app.url, sealed: await seal(app.secret, key) } } satisfies Session);
-    return { ok: true };
+    return { connected: !!session.sealed, via: session.via, accounts: session.accounts, expires: session.created + LIFETIME_MS, run };
   }
 
   /** An account's workers.dev subdomain and its domains (zones). */
@@ -181,11 +170,10 @@ export class Deployer extends DurableObject<Env> {
     const t = await this.token(owner, key);
     if ("error" in t) return { ok: false, error: t.error };
     if (!t.session.accounts.some((a) => a.id == plan.accountId)) return { ok: false, error: "Choose one of your accounts." };
-    // The GitHub App the manifest flow made, unless the page pasted an OAuth app's values.
-    if (!plan.githubClientId?.trim() && t.session.github) {
-      try { plan = { ...plan, githubClientId: t.session.github.clientId, githubClientSecret: await open(t.session.github.sealed, key) }; } catch { return { ok: false, error: "This browser's install session doesn't match: connect your Cloudflare account again." }; }
-    }
     plan = { ...plan, admin: owner };
+    // Sign-in and Connect GitHub on the new server: Erga's GitHub App, through this control Worker (the relay).
+    const github = githubAppOf(this.env);
+    if (!github) return { ok: false, error: "This server has no GitHub App set up (GITHUB_APP_CLIENT_ID): an install can't sign people in." };
     const wrong = checkPlan(plan);
     if (wrong) return { ok: false, error: wrong };
     let got: Awaited<ReturnType<Deployer["release"]>>;
@@ -211,7 +199,7 @@ export class Deployer extends DurableObject<Env> {
         if (!made.ok) throw new DeployError(`The install's repository (a fork of Erga's) couldn't be made: ${made.error}`);
         run.result = await runInstall(new Cloudflare(t.token, net), release, plan, {
           sessionSecret: randomSecret(), controlSecret: randomSecret(), snapshotToken: randomSecret(), fork,
-          upstream: { origin, clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : "") },
+          upstream: { origin, clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : ""), github: { clientId: github.clientId, slug: github.slug } },
           site: net,
           report: (id, status, detail) => {
             const step = run.steps.find((s) => s.id == id)!;
@@ -221,11 +209,11 @@ export class Deployer extends DurableObject<Env> {
           },
         });
         run.status = "done";
-        // Done with the token: forget it, and give back what Cloudflare's OAuth gave. The GitHub App's secret goes with it.
+        // Done with the token: forget it, and give back what Cloudflare's OAuth gave.
         if (t.session.via == "oauth") await net(OAUTH.revoke, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: t.token, client_id: this.env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock" }) }).catch(() => {});
-        await this.ctx.storage.put(SESSION, { ...t.session, sealed: null, github: undefined });
+        await this.ctx.storage.put(SESSION, { ...t.session, sealed: null });
         // Upstream remembers the install: its control Worker may consent through the relay (control/routes.ts), and the Ops page lists it.
-        await this.env.PIPELINE?.getByName("deploys").registerInstall({ control: run.result.control, app: run.result.url, accountId: plan.accountId, by: owner.toLowerCase(), at: Date.now(), version: release.version, fork: fork.id }).catch((e) => console.log(`the install wasn't registered: ${message(e)}`));
+        await this.env.PIPELINE?.getByName("deploys").registerInstall({ control: run.result.control, app: run.result.url, staging: run.result.staging, accountId: plan.accountId, by: owner.toLowerCase(), at: Date.now(), version: release.version, fork: fork.id }).catch((e) => console.log(`the install wasn't registered: ${message(e)}`));
       } catch (e) {
         run.status = "failed";
         const step = run.steps.find((s) => s.status == "running");

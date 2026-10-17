@@ -38,6 +38,8 @@ const appsOf = (platform: SignInPlatform) => new AuthApps(platform.own, platform
 // One per isolate: a page that opens often asks GitHub at most once a minute for the same values.
 let checks: { origin: string; check: (v: AppValues) => Promise<AppCheck> } | null = null;
 const checkOf = (platform: SignInPlatform) => {
+  // An install's server signs in with Erga's GitHub App through erga.dev: nothing to check here, and nothing to paste.
+  if (platform.signIn.relay) return async (): Promise<AppCheck> => ({ state: "working", summary: `Sign-in uses Erga's GitHub App, through ${platform.signIn.relay}.`, reasons: [], at: Date.now() });
   const origin = platform.signIn.github;
   if (checks?.origin != origin) checks = { origin, check: cachedCheck((v) => checkGithubApp(v, { origin })) };
   return checks.check;

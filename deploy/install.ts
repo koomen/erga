@@ -11,7 +11,8 @@
 //                          repository: a fork of erga.dev's, kept at erga.dev (its Artifacts, one repo per
 //                          install, reached with the install's FORK_SECRET: cloudflare/pipeline.ts, the forks)
 //                          and built there (erga.dev's build container, over the same secret). It reads the
-//                          app's database (who is an admin), signs admins in with the same GitHub App, and
+//                          app's database (who is an admin), signs admins in with Erga's GitHub App (through
+//                          erga.dev's callback, the App's one: server/source/github.ts), and
 //                          deploys its environments from its own branches, as erga.dev's does, once an admin
 //                          consents at its /install (the UPSTREAM, INSTALL and FORK_SECRET settings).
 //
@@ -91,17 +92,19 @@ export function installSpecOf(plan: DeployPlan, fork: string): InstallSpec {
 }
 
 export interface Upstream {
-  /** erga.dev's control Worker (https://ops.erga.dev): the release store, and the consent relay. */
+  /** erga.dev's control Worker (https://ops.erga.dev): the release store, and the consent relays (Cloudflare's, GitHub's). */
   origin: string;
-  /** Erga's OAuth client, which the install's control Worker consents through (the relay). */
+  /** Erga's OAuth client on Cloudflare, which the install's control Worker consents through (the relay). */
   clientId: string;
+  /** Erga's GitHub App (its client id and slug): the install's sign-in and Connect GitHub, through erga.dev. */
+  github: { clientId: string; slug: string };
 }
 
 export interface Installed { url: string; pages: string; database: string; worker: string; control: string; staging: string }
 
 /** The app's target: /deploy's, plus the control Worker beside it (its service binding and address), and the token staging's copies go through. */
-export function installAppTarget(plan: DeployPlan, sessionSecret: string, controlHost: string, snapshotToken?: string): Target {
-  const t = targetOfPlan(plan, sessionSecret);
+export function installAppTarget(plan: DeployPlan, sessionSecret: string, controlHost: string, upstream: Upstream, snapshotToken?: string): Target {
+  const t = targetOfPlan(plan, sessionSecret, { clientId: upstream.github.clientId, relay: upstream.origin });
   return { ...t, vars: { ...t.vars, CONTROL_URL: `https://${controlHost}` }, secrets: { ...t.secrets, ...(snapshotToken ? { SNAPSHOT_TOKEN: snapshotToken } : {}) }, services: { CONTROL: { service: INSTALL_CONTROL_WORKER, entrypoint: CONTROL_ENTRYPOINT } } };
 }
 
@@ -120,7 +123,7 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   const site = o.site ?? globalThis.fetch;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const controlHost = controlHostOf(plan);
-  const app = installAppTarget(plan, o.sessionSecret, controlHost, o.snapshotToken);
+  const app = installAppTarget(plan, o.sessionSecret, controlHost, o.upstream, o.snapshotToken);
   const appHost = targetHost(app);
   const acc = `/accounts/${plan.accountId}`;
   const carry: Carry = {};
@@ -137,11 +140,11 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   const spec = installSpecOf(plan, o.fork.id);
   const vars = {
     ADMINS: plan.admin.toLowerCase(), CLOUDFLARE_ACCOUNT_ID: plan.accountId, APP_URL: `https://${appHost}`,
-    GITHUB_CLIENT_ID: plan.githubClientId.trim(), CLOUDFLARE_OAUTH_CLIENT_ID: o.upstream.clientId,
+    GITHUB_APP_CLIENT_ID: o.upstream.github.clientId, GITHUB_APP_SLUG: o.upstream.github.slug, CLOUDFLARE_OAUTH_CLIENT_ID: o.upstream.clientId,
     UPSTREAM: o.upstream.origin, INSTALL: JSON.stringify(spec),
   };
   const form = new FormData();
-  form.set("metadata", JSON.stringify(installControlMetadata(release, { accountId: plan.accountId, dbId: carry.dbId!, vars, secrets: { SESSION_SECRET: o.controlSecret, GITHUB_CLIENT_SECRET: plan.githubClientSecret.trim(), SNAPSHOT_TOKEN: o.snapshotToken, FORK_SECRET: o.fork.secret } })));
+  form.set("metadata", JSON.stringify(installControlMetadata(release, { accountId: plan.accountId, dbId: carry.dbId!, vars, secrets: { SESSION_SECRET: o.controlSecret, SNAPSHOT_TOKEN: o.snapshotToken, FORK_SECRET: o.fork.secret } })));
   for (const [name, bytes] of Object.entries(release.control!.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
   await cf.call("PUT", `${acc}/workers/scripts/${INSTALL_CONTROL_WORKER}`, "upload the control Worker", form);
   if (plan.app.kind == "workers.dev") {

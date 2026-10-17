@@ -7,7 +7,7 @@
 // (`sourceTools`: list, read, search and the git log, at a branch or commit)
 // in the server's copy of its repository. And the Source
 // page's (`dashboardTools`): staging and main, production's deploy (main
-// moved to staging), the mirror, the deploys and their logs, the homepage's
+// moved to staging), GitHub, the deploys and their logs, the homepage's
 // deploy, and the admin's own agent tokens. One session per admin, in the
 // AdminAgent Durable Object, so it keeps working when
 // the tab closes.
@@ -46,7 +46,10 @@ export interface DashboardOps {
   branches(): Promise<object>;
   /** main to staging's head (or to that staging commit): production deploys it. */
   release(commit?: string): Promise<object>;
-  mirror(): Promise<object>;
+  /** GitHub: the repository connected and the sync's status (with Connect GitHub, a button in the panel, when none is); a sync now; disconnected. */
+  githubStatus(): Promise<object>;
+  syncGithub(): Promise<object>;
+  disconnectGithub(): Promise<object>;
   deploys(history: number): Promise<object>;
   /** The control Worker's Cloudflare credential; when it isn't connected, with the Connect Cloudflare offer (a button in the panel). */
   credential(): Promise<object>;
@@ -64,11 +67,12 @@ export interface DashboardOps {
   domains(): Promise<object>;
   addDomain(target: string, hostname: string): Promise<object>;
   removeDomain(target: string, hostname: string): Promise<object>;
-  /** A downstream: Update from upstream (erga.dev) into staging; one conflicted file of a waiting merge resolved; the merge finished; or dropped. */
+  /** A downstream: Update from upstream (erga.dev) into staging. */
   updateFromUpstream(): Promise<object>;
-  resolveUpstreamFile(path: string, content: string | null): Promise<object>;
-  finishUpstreamMerge(): Promise<object>;
-  abandonUpstreamMerge(): Promise<object>;
+  /** The merge waiting on conflicts (from upstream, or from GitHub): one file resolved; the merge finished; or dropped. */
+  resolveConflictFile(path: string, content: string | null): Promise<object>;
+  finishWaitingMerge(): Promise<object>;
+  dropWaitingMerge(): Promise<object>;
   /** The homepage (the landing_document setting) deployed again, as Redeploy in the editor's settings does. */
   deployHome(): Promise<object>;
   agentTokens(): Promise<object[]>;
@@ -81,7 +85,7 @@ const text = toolResult;
 const times = (o: object) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v == "number" && v > 1e12 ? new Date(v).toISOString() : v]));
 
 /**
- * The dashboard tools: the source and deploys dashboard on /admin/ops (staging and main, the mirror, every
+ * The dashboard tools: the source and deploys dashboard on /admin/ops (staging and main, GitHub, every
  * target's deploys and their logs, a redeploy, main moved to staging: production) and the admin's own agent tokens
  * (/settings: read and revoke; made, and an agent's request approved, only there). They act as the admin: the
  * change log and the deploys' triggers name them. `guard` checks first, as for the other tools.
@@ -93,13 +97,17 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
   });
   const TARGET = Type.String({ description: "The deploy target: staging or production (list_deploys lists them)" });
   return [
-    tool("list_branches", "Read staging and main", "The source dashboard's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), and the GitHub mirror's status.",
+    tool("list_branches", "Read staging and main", "The source dashboard's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), GitHub's status (github), and the merge waiting on conflicts, if one (conflict: from upstream or from GitHub).",
       Type.Object({}), () => ops.branches()),
     tool("deploy_production", "Deploy production", "Moves main forward to staging's head (or to an earlier staging commit), as the dashboard's merge to main does: production deploys it. main only follows staging. The change log (/admin/changes) says who did it, with the commits it released. Use it only when the admin asks in this conversation to release or deploy production.",
       Type.Object({ commit: Type.Optional(Type.String({ description: "A staging commit's sha, to release up to it only (default: staging's head)" })) }),
       (a) => ops.release(typeof a.commit == "string" && a.commit.trim() ? a.commit.trim() : undefined)),
-    tool("sync_mirror", "Update the GitHub mirror", "Brings the GitHub mirror up to date now, as the dashboard's sync button does (it also follows by itself). Answers the mirror's status.",
-      Type.Object({}), () => ops.mirror()),
+    tool("github_status", "Read the GitHub connection", "GitHub, as the Ops page's GitHub card shows it: the repository connected (link: the installation of Erga's GitHub App, the repository, who connected it), the sync's state, when it last ran and for whom, and what stopped it (error). After each push or merge here, staging, main and the release tags go to GitHub; a push there comes back in (staging fast-forwards, or gets a merge commit; main only to a commit of staging). When nothing is connected, a Connect GitHub button shows under this call in the admin's panel: the App's install page on GitHub, in a popup, where they pick the account and the repository. Tell them to click it. You can't consent for them, and there's no token to ask for.",
+      Type.Object({}), () => ops.githubStatus()),
+    tool("sync_github", "Sync with GitHub now", "Syncs with GitHub now, as Sync now on the Ops page's GitHub card does: what GitHub's staging and main have comes in, and what they lack goes out. Answers GitHub's status; a problem is in error, in words (a GitHub main that isn't a commit of staging, a merge that conflicts and waits on github-merge/<commit>: then resolve_conflict_file and finish_waiting_merge).",
+      Type.Object({}), () => ops.syncGithub()),
+    tool("disconnect_github", "Disconnect GitHub", "Forgets the repository connected on GitHub and uninstalls Erga's GitHub App from that account, as Disconnect on the Ops page's GitHub card does. The repository on GitHub stays as it is; nothing syncs until the admin connects GitHub again (a consent of their own). Only when the admin asks in this conversation to disconnect GitHub.",
+      Type.Object({}), () => ops.disconnectGithub()),
     tool("list_deploys", "Read the deploys", "Every deploy target (staging, production): what it runs, its deploy now (state, commit, steps) and its last deploys, newest first (history: how many, default 5, at most 50).",
       Type.Object({ history: Type.Optional(Type.Integer({ description: "How many past deploys of each target (default 5)" })) }),
       (a) => ops.deploys(Math.max(0, Math.min(50, a.history == null ? 5 : Number(a.history) || 0)))),
@@ -134,15 +142,15 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
     tool("remove_domain", "Remove a domain from an environment", "Takes a hostname off an environment's Worker (never its own address), as the × on the Ops page does. Only when the admin asks in this conversation.",
       Type.Object({ target: Type.String({ description: "The environment: production, staging or control" }), hostname: Type.String({ description: "The hostname to remove" }) }),
       (a) => ops.removeDomain(String(a.target ?? ""), String(a.hostname ?? ""))),
-    tool("update_from_upstream", "Update from erga.dev", "On an Erga installed on its own domain (a downstream of erga.dev): brings erga.dev's newest release (the channel this install follows: stable, or edge for main's head) into staging, as Update from erga.dev on the Ops page does. A fast-forward when this install has no commits of its own past it; else a merge commit. When files conflict, staging stays and the answer lists the files: the merge waits on the branch upstream-merge/<version>. Then read each file with read_source (ref: that branch), decide the resolution, write it with resolve_upstream_file, and finish_upstream_merge. Production follows only through deploy_production. Only when the admin asks in this conversation to update, upgrade or pull from erga.dev (list_branches shows upstream: how far behind, and any merge waiting).",
+    tool("update_from_upstream", "Update from erga.dev", "On an Erga installed on its own domain (a downstream of erga.dev): brings erga.dev's newest release (the channel this install follows: stable, or edge for main's head) into staging, as Update from erga.dev on the Ops page does. A fast-forward when this install has no commits of its own past it; else a merge commit. When files conflict, staging stays and the answer lists the files: the merge waits on the branch upstream-merge/<version>. Then read each file with read_source (ref: that branch), decide the resolution, write it with resolve_conflict_file, and finish_waiting_merge. Production follows only through deploy_production. Only when the admin asks in this conversation to update, upgrade or pull from erga.dev (list_branches shows upstream: how far behind, and conflict: any merge waiting).",
       Type.Object({}), () => ops.updateFromUpstream()),
-    tool("resolve_upstream_file", "Resolve a conflicted file", "Writes one file of the waiting upstream merge (update_from_upstream's conflicts), resolved: the whole file's content, with no conflict markers left (<<<<<<<, =======, >>>>>>>); null deletes the file. Read it first with read_source at the merge branch, keep both sides' intent, and keep what this install changed on purpose. Answers the files that still carry markers.",
+    tool("resolve_conflict_file", "Resolve a conflicted file", "Writes one file of the merge waiting on conflicts (update_from_upstream's, on upstream-merge/<version>; or GitHub's, on github-merge/<commit>: list_branches shows it as conflict), resolved: the whole file's content, with no conflict markers left (<<<<<<<, =======, >>>>>>>); null deletes the file. Read it first with read_source at the merge branch, keep both sides' intent, and keep what this server changed on purpose. Answers the files that still carry markers.",
       Type.Object({ path: Type.String({ description: "The file's path, as the conflict lists it" }), content: Type.Union([Type.String(), Type.Null()], { description: "The resolved file, whole; null to delete the file" }) }),
-      (a) => ops.resolveUpstreamFile(String(a.path ?? ""), typeof a.content == "string" ? a.content : null)),
-    tool("finish_upstream_merge", "Finish the upstream merge", "Finishes the waiting upstream merge once every conflicted file is resolved: one merge commit moves staging (staging deploys it), and the merge branch goes. Refused while a file still carries markers, or when staging moved since (then update_from_upstream again).",
-      Type.Object({}), () => ops.finishUpstreamMerge()),
-    tool("abandon_upstream_merge", "Drop the upstream merge", "Drops the waiting upstream merge and its branch; staging stays as it is. Only when the admin asks for it.",
-      Type.Object({}), () => ops.abandonUpstreamMerge()),
+      (a) => ops.resolveConflictFile(String(a.path ?? ""), typeof a.content == "string" ? a.content : null)),
+    tool("finish_waiting_merge", "Finish the waiting merge", "Finishes the merge waiting on conflicts once every conflicted file is resolved: one merge commit moves staging (staging deploys it; GitHub gets it too), and the merge branch goes. Refused while a file still carries markers, or when staging moved since (then update_from_upstream, or sync_github, again).",
+      Type.Object({}), () => ops.finishWaitingMerge()),
+    tool("drop_waiting_merge", "Drop the waiting merge", "Drops the merge waiting on conflicts and its branch; staging stays as it is. Only when the admin asks for it.",
+      Type.Object({}), () => ops.dropWaitingMerge()),
     tool("deploy_homepage", "Redeploy the homepage", "Deploys the homepage (the document the landing_document setting names, which set_setting changes) again now, as Redeploy in that document's settings does in the editor.",
       Type.Object({}), () => ops.deployHome()),
     tool("list_agent_tokens", "Read your agent tokens", "Your own agent tokens (/settings): id, label, kind (share: a share button's: the editor's, scope documents, or Share with agent's on the admin pages, scope admin), scope (document, documents or admin), when made, when it ends and when last used. Never a token itself: a token is made, or an agent's request for one approved, only on /settings.",
@@ -229,7 +237,9 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   clear_sign_in_app: ["Clearing the sign-in values of", "Cleared the sign-in values of"],
   list_branches: ["Reading staging and main", "Read staging and main"],
   deploy_production: ["Deploying production", "Deployed production"],
-  sync_mirror: ["Updating the mirror", "Updated the mirror"],
+  github_status: ["Reading the GitHub connection", "Read the GitHub connection"],
+  sync_github: ["Syncing with GitHub", "Synced with GitHub"],
+  disconnect_github: ["Disconnecting GitHub", "Disconnected GitHub"],
   list_deploys: ["Reading the deploys", "Read the deploys"],
   deploy_credential: ["Reading the deploy credential", "Read the deploy credential"],
   disconnect_deploy_credential: ["Disconnecting the deploy credential", "Disconnected the deploy credential"],
@@ -242,9 +252,9 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   add_domain: ["Adding the domain", "Added the domain"],
   remove_domain: ["Removing the domain", "Removed the domain"],
   update_from_upstream: ["Updating from erga.dev", "Updated from erga.dev"],
-  resolve_upstream_file: ["Resolving", "Resolved"],
-  finish_upstream_merge: ["Finishing the upstream merge", "Finished the upstream merge"],
-  abandon_upstream_merge: ["Dropping the upstream merge", "Dropped the upstream merge"],
+  resolve_conflict_file: ["Resolving", "Resolved"],
+  finish_waiting_merge: ["Finishing the waiting merge", "Finished the waiting merge"],
+  drop_waiting_merge: ["Dropping the waiting merge", "Dropped the waiting merge"],
   deploy_homepage: ["Redeploying the homepage", "Redeployed the homepage"],
   list_agent_tokens: ["Reading your agent tokens", "Read your agent tokens"],
   revoke_agent_token: ["Revoking the agent token", "Revoked the agent token"],
@@ -288,9 +298,16 @@ For the server (the admin pages, /admin), you act as ${owner}, with their admin 
 For staging, production and access (the Ops page, /admin/ops, and /settings):
 
 - list_branches reads staging and main: their heads, latest commits, what main doesn't
-  have yet, and the GitHub mirror. deploy_production moves main to staging's head (or
-  to an earlier staging commit): production deploys it, and the change log names
-  ${owner}. sync_mirror updates the GitHub mirror now.
+  have yet, GitHub's status, and any merge waiting on conflicts. deploy_production moves
+  main to staging's head (or to an earlier staging commit): production deploys it, and
+  the change log names ${owner}.
+- github_status reads the GitHub connection (the repository connected, the sync, its
+  error); sync_github syncs now; disconnect_github forgets the repository. Connecting is
+  a consent on GitHub's own page: when nothing is connected, a Connect GitHub button
+  shows under github_status in this panel. Tell ${owner} to click it; never ask for a token.
+- A merge waiting on conflicts (from erga.dev's Update, or from a push on GitHub):
+  read each file at its branch with read_source, write the resolution with
+  resolve_conflict_file, then finish_waiting_merge; or drop_waiting_merge.
 - list_deploys reads each target's deploys (staging, production); deploy_log reads a
   deploy's log; redeploy deploys a target's branch again; rollback puts the version before its live deploy back. deploy_homepage deploys the
   homepage again.
@@ -374,7 +391,7 @@ function about(name: string, args: unknown): string | null {
   if (name == "clear_api_key" && typeof a.name == "string") return a.name;
   if (name == "clear_sign_in_app") return `${a.server == "other" ? "the other server" : "this server"}${a.what == "pending" ? " (pending)" : ""}`;
   if (name == "deploy_production") return typeof a.commit == "string" && a.commit ? `main to ${a.commit.slice(0, 10)}` : "main to staging";
-  if (name == "resolve_upstream_file" && typeof a.path == "string") return a.path;
+  if (name == "resolve_conflict_file" && typeof a.path == "string") return a.path;
   if ((name == "add_domain" || name == "remove_domain") && typeof a.hostname == "string") return `${a.hostname} (${a.target})`;
   if (/^revoke_/.test(name) && typeof a.id == "string") return a.id;
   if (typeof a.login == "string") return a.login;
@@ -539,9 +556,10 @@ For example:
 
 **Erga's source and deploys** (the Ops page, ${o.origin}/admin/ops):
 
-    GET   ${api}/source/branches                  staging and main: each head and its recent commits, and the GitHub mirror
+    GET   ${api}/source/branches                  staging and main: each head and its recent commits, GitHub's status, any merge waiting
     POST  ${api}/source/merge                     {from: "staging", to: "main", commit?}: main moves to staging: production deploys it
-    POST  ${api}/source/mirror                    update the GitHub mirror now
+    GET   ${api}/source/github                    the GitHub connection: the repository, the sync's state and its last error
+    POST  ${api}/source/github/sync               sync with GitHub now
     GET   ${api}/deploys[?history=N]              every deploy target's status, and its last N deploys
     GET   ${api}/deploys/<name>/history           a target's past deploys
     GET   ${api}/deploys/<name>/log[?deploy=<id>] a deploy's log

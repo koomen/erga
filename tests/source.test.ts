@@ -1,7 +1,7 @@
 // Erga's own repository without the Worker: Git's formats against
-// real git, then pushes, fast-forward rules, merges and the GitHub mirror,
+// real git, then pushes, fast-forward rules, merges and the sync with GitHub,
 // with the real git CLI against Erga's endpoint in front of pretend
-// Artifacts and GitHub.
+// Artifacts and GitHub (tests/source-github.test.ts has the sync whole).
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 
@@ -111,8 +111,8 @@ describe("Git's formats", () => {
 });
 
 describe("Erga's Git endpoint", () => {
-  let f: Fixture, src: string;
-  beforeAll(async () => { f = startFixture(); src = await seedRepo(); });
+  let f: Fixture, src: string, github: string;
+  beforeAll(async () => { f = startFixture({ repos: ["ada/erga"] }); await f.connectGithub("ada/erga"); github = f.githubRepo("ada/erga"); src = await seedRepo(); });
   afterAll(() => f.stop());
 
   test("a push seeds main and staging; a clone gets them back", async () => {
@@ -126,9 +126,9 @@ describe("Erga's Git endpoint", () => {
     expect(await must(join(c, "copy"), "ls-remote", "origin")).not.toContain("erga-incoming");
     expect(f.moves.map((m) => m.branch).sort()).toEqual(["main", "staging"]);
     await f.settle();
-    // The mirror has both.
-    expect(await must(src, "ls-remote", f.github)).toContain("refs/heads/staging");
-    expect(f.repo.mirrorStatus().error).toBeNull();
+    // GitHub has both.
+    expect(await must(src, "ls-remote", github)).toContain("refs/heads/staging");
+    expect(f.repo.githubStatus().error).toBeNull();
   });
 
   test("main only follows staging; staging always keeps what main has", async () => {
@@ -187,27 +187,27 @@ describe("Erga's Git endpoint", () => {
     expect(await must(join(c, "copy"), "log", "-1", "--format=%s", "origin/main")).toBe("Eighth, amended");
   });
 
-  test("the mirror catches up, and a diverged GitHub main stops it without blocking pushes", async () => {
+  test("GitHub keeps up; a GitHub main moved to a commit staging doesn't have is refused, said in the status, and staging still syncs", async () => {
     await f.settle();
     const c = scratch();
     await must(c, "clone", "-q", f.erga, "copy");
     const w = join(c, "copy");
-    expect((await must(w, "ls-remote", f.github, "main")).split("\t")[0]).toBe(await must(w, "rev-parse", "origin/main"));
-    expect(f.repo.mirrorStatus().lastPushAt).toBeGreaterThan(0);
-    // Someone pushes to GitHub's main directly.
+    expect((await must(w, "ls-remote", github, "main")).split("\t")[0]).toBe(await must(w, "rev-parse", "origin/main"));
+    expect(f.repo.githubStatus().lastSyncAt).toBeGreaterThan(0);
+    // Someone pushes to GitHub's main directly, a commit staging doesn't have.
     await must(w, "checkout", "-q", "-B", "gh", "origin/main");
     writeFileSync(join(w, "gh.txt"), "only on GitHub\n");
     await must(w, "add", "."); await must(w, "commit", "-qm", "GitHub only");
-    await must(w, "push", "-q", f.github, "gh:main");
-    // A push to Erga's main still lands; the mirror says what's wrong.
+    await must(w, "push", "-q", github, "gh:main");
+    // A push to Erga's main still lands; the sync says what's wrong.
     await must(w, "checkout", "-q", "-B", "main", "origin/main");
     writeFileSync(join(w, "e.txt"), "e\n");
     await must(w, "add", "."); await must(w, "commit", "-qm", "Ninth");
     expect((await git(w, "push", "origin", "HEAD:staging", "HEAD:main")).ok).toBe(true);
     await f.settle();
-    expect(f.repo.mirrorStatus().error).toContain("GitHub's main has commits Erga doesn't");
-    // Staging still mirrors.
-    expect((await must(w, "ls-remote", f.github, "staging")).split("\t")[0]).toBe((await must(w, "ls-remote", "origin", "staging")).split("\t")[0]);
+    expect(f.repo.githubStatus().error).toMatch(/GitHub's main is at [0-9a-f]{7}, which isn't a commit of staging/);
+    // Staging still syncs.
+    expect((await must(w, "ls-remote", github, "refs/heads/staging")).split("\t")[0]).toBe((await must(w, "ls-remote", "origin", "refs/heads/staging")).split("\t")[0]);
   });
 
   test("the Ops page's view: the latest commits, and which main has", async () => {
@@ -274,9 +274,9 @@ describe("Erga's Git endpoint", () => {
     const view = await f.repo.branches();
     expect(view.tags.map((t) => t.name)).toEqual(["v1.0.1", "v1.0.0", "v0.1.0"]);
     expect(view.release).toBe("v1.0.1");
-    // Every release went to the repository's listeners, and to the mirror.
+    // Every release went to the repository's listeners, and to GitHub.
     await f.settle();
-    const mirrored = await must(src, "ls-remote", "--tags", f.github);
+    const mirrored = await must(src, "ls-remote", "--tags", github);
     for (const t of ["v0.1.0", "v1.0.0", "v1.0.1"]) expect(mirrored).toContain(`refs/tags/${t}`);
     expect(mirrored).not.toContain("v1.0.2");
   });

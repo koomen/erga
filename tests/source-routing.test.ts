@@ -31,7 +31,7 @@ describe("the Ops page, served by the app", () => {
   const platform = {
     sessionOf: async () => session,
     directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } },
-    source: { mirrorUrl: "" },
+    source: {},
     control: { url: "https://ops.erga.test" },
   } as unknown as Platform;
   const control = (releases: unknown): Control => ({

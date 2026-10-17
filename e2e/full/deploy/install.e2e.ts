@@ -1,11 +1,11 @@
-// /deploy, the install page, end to end against the pretend Cloudflare and GitHub (ERGA_DEPLOY_MOCK): Authorize with
-// Cloudflare (the consent through /install/callback), where it goes, the GitHub App made by the manifest flow, the
-// install itself (the app and its control Worker), and what the page says at the end.
+// /deploy, the install page, end to end against the pretend Cloudflare (ERGA_DEPLOY_MOCK): Authorize with Cloudflare
+// (the consent through /install/callback), where it goes, sign-in and the agent (nothing to make or paste: Erga's GitHub
+// App, through this server), the install itself (the app and its control Worker), and what the page says at the end.
 import { expect, servers, test } from "../../fixtures";
 
 const own = () => servers.of("deploy-install", { env: { ERGA_DEPLOY_MOCK: "1" } });
 await own();
-test("an install from the page: consent, the GitHub App, both Workers, and the next step", { timeout: 90_000 }, async ({ tab }) => {
+test("an install from the page: consent, where, the agent, both Workers, and the next step", { timeout: 90_000 }, async ({ tab }) => {
   const server = await own(), { page } = tab;
   const text = (sel: string) => page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
   await page.goto(`${server.root}/deploy`);
@@ -18,14 +18,12 @@ test("an install from the page: consent, the GitHub App, both Workers, and the n
   // Where: workers.dev and the shared pages host, as offered.
   await expect.poll(() => page.evaluate(() => document.getElementById("s-where")!.className)).toContain("current");
   await page.click("#where-next");
-  await expect.poll(() => text("#sum-where")).toContain("erga.ada-mock.workers.dev · pages on erga-pages.ada-mock.workers.dev · control at erga-control.ada-mock.workers.dev");
-  // The GitHub App: off to the pretend GitHub and back, made.
-  expect(await page.getAttribute("#gh-make", "href")).toBe("/deploy/github/start?app=erga.ada-mock.workers.dev&ops=erga-control.ada-mock.workers.dev&staging=erga-staging.ada-mock.workers.dev");
-  await page.click("#gh-make");
-  await expect.poll(() => text("#gh-made"), { timeout: 15_000 }).toContain("Made: Erga at erga.ada-mock.workers.dev (Iv1.mockgithubapp0)");
-  expect(await text("#sum-where")).toContain("control at erga-control.ada-mock.workers.dev");
-  await page.click("#github-next");
-  await expect.poll(() => text("#review")).toContain("GitHub App Erga at erga.ada-mock.workers.dev");
+  await expect.poll(() => text("#sum-where")).toContain("erga.ada-mock.workers.dev · pages on erga-pages.ada-mock.workers.dev · control at erga-control.ada-mock.workers.dev · staging at erga-staging.ada-mock.workers.dev");
+  // Sign-in needs nothing (Erga's GitHub App); the agent's key is optional.
+  await expect.poll(() => page.evaluate(() => document.getElementById("s-agent")!.className)).toContain("current");
+  expect(await text("#s-agent")).toContain("through Erga's own GitHub App");
+  await page.click("#agent-next");
+  await expect.poll(() => text("#review")).toContain("GitHub, through Erga's GitHub App");
   expect(await text("#review")).toContain("https://erga-control.ada-mock.workers.dev");
   // Install: every step, then the live box with the next step (the control Worker's consent).
   await page.click("#go");
@@ -33,12 +31,18 @@ test("an install from the page: consent, the GitHub App, both Workers, and the n
   const steps = await page.evaluate(() => [...document.querySelectorAll("#progress li")].map((li) => `${li.getAttribute("data-id")}:${li.className}`));
   expect(steps).toEqual(["account:done", "database:done", "migrations:done", "control:done", "assets:done", "worker:done", "address:done", "pages:done", "live:done", "control-live:done"]);
   expect(await text("#live")).toContain("erga-control.ada-mock.workers.dev/install");
-  // What the pretend Cloudflare was asked for: both Workers, the control Worker told its upstream and its target.
+  // What the pretend Cloudflare was asked for: both Workers; the control Worker told its upstream, its target and Erga's GitHub App;
+  // the app told to sign people in through upstream.
   const state = await (await fetch(`${server.root}/deploy/api/mock`, { headers: { cookie: (await page.context().cookies()).map((c) => `${c.name}=${c.value}`).join("; ") } })).json() as { scripts: Record<string, { metadata: { bindings: { name: string; text?: string; service?: string }[] } }> };
   expect(Object.keys(state.scripts).sort()).toEqual(["erga", "erga-control", "erga-pages"]);
   const control = Object.fromEntries(state.scripts["erga-control"].metadata.bindings.map((b) => [b.name, b]));
   expect(control.UPSTREAM.text).toBe(server.root);
-  expect(control.GITHUB_CLIENT_ID.text).toBe("Iv1.mockgithubapp0");
+  expect(control.GITHUB_APP_CLIENT_ID.text).toBe("Iv1.mockgithubapp0");
+  expect(control.GITHUB_APP_SLUG.text).toBe("erga-editor");
+  expect(control.GITHUB_CLIENT_SECRET).toBeUndefined();
   expect(JSON.parse(control.INSTALL.text!).control.host).toBe("erga-control.ada-mock.workers.dev");
-  expect(Object.fromEntries(state.scripts.erga.metadata.bindings.map((b) => [b.name, b])).CONTROL.service).toBe("erga-control");
+  const app = Object.fromEntries(state.scripts.erga.metadata.bindings.map((b) => [b.name, b]));
+  expect(app.CONTROL.service).toBe("erga-control");
+  expect(app.GITHUB_CLIENT_ID.text).toBe("Iv1.mockgithubapp0");
+  expect(app.SIGN_IN_RELAY.text).toBe(server.root);
 });

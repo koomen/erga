@@ -1,7 +1,6 @@
 // The deploy page, /deploy (on the control Worker): connect Cloudflare,
 // choose where the new Erga goes (and buy a domain, if you like, after seeing
-// the price), make its GitHub App in one click (or paste an OAuth app's
-// values), install, and watch each step: the app, and its control Worker
+// the price), and
 // beside it, which keeps it up to date. One page; its script asks
 // /deploy/api/* and redraws.
 
@@ -146,24 +145,14 @@ export function deployPage(c: DeployPageConfig): string {
         <p class="row"><button class="new" id="where-next">Continue</button></p>
       </div>
     </li>
-    <li class="step later" id="s-github" data-step="github">
-      <h2>Signing in with GitHub <a class="change" href="#" data-goto="github" hidden>Change</a></h2>
-      <p class="summary" id="sum-github"></p>
+    <li class="step later" id="s-agent" data-step="agent">
+      <h2>Sign-in and the agent <a class="change" href="#" data-goto="agent" hidden>Change</a></h2>
+      <p class="summary" id="sum-agent"></p>
       <div class="body">
-        <p>People sign in to your Erga with GitHub, through a GitHub App of your own. Erga makes it for you: one click on GitHub (Create GitHub App), and you're back here. Nothing to paste.</p>
-        <p class="row"><a class="new" id="gh-make" href="/deploy/github/start">Make the GitHub App on GitHub ↗</a><span class="muted" id="gh-made"></span></p>
-        <details id="gh-paste"><summary>Or use a GitHub OAuth app you make yourself</summary>
-        <p class="muted">Make one at <a id="gh-new" href="https://github.com/settings/applications/new" target="_blank" rel="noopener">New OAuth app on GitHub ↗</a> with:</p>
-        <div class="copy"><span>Application name</span><code id="gh-name">Erga</code><button class="pill small" data-copy="gh-name">Copy</button></div>
-        <div class="copy"><span>Homepage URL</span><code id="gh-home"></code><button class="pill small" data-copy="gh-home">Copy</button></div>
-        <div class="copy"><span>Callback URL</span><code id="gh-callback"></code><button class="pill small" data-copy="gh-callback">Copy</button></div>
-        <p class="muted">An OAuth app has one callback URL, the app's: its admins then reach the control Worker with an admin token, not by signing in there. Register it, copy its Client ID, press "Generate a new client secret" and copy that.</p>
-        <label class="field">Client ID<input class="input mono" id="gh-id" autocomplete="off" spellcheck="false"></label>
-        <label class="field">Client secret<input class="input mono" id="gh-secret" type="password" autocomplete="off" spellcheck="false"></label>
-        </details>
+        <p>People sign in to your Erga with GitHub, through Erga's own GitHub App (erga.dev relays the sign-in to your server). Nothing to make, nothing to paste. On its Ops page you can connect a GitHub repository of yours the same way.</p>
         <label class="field">Anthropic API key (optional: turns on the agent in the editor; add it later as a secret if you like)<input class="input mono" id="anthropic" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"></label>
-        <p class="error" id="github-error"></p>
-        <p class="row"><button class="new" id="github-next">Continue</button></p>
+        <p class="error" id="agent-error"></p>
+        <p class="row"><button class="new" id="agent-next">Continue</button></p>
       </div>
     </li>
     <li class="step later" id="s-deploy" data-step="deploy">
@@ -220,7 +209,7 @@ const SCRIPT = `
 const C = __CONFIG__;
 const $ = (id) => document.getElementById(id);
 const S = { info: null, accounts: [], account: null, sub: null, createSub: false, zones: [], plan: null, step: "connect", polling: false };
-const order = ["connect", "where", "github", "deploy"];
+const order = ["connect", "where", "agent", "deploy"];
 
 async function api(path, body) {
   const r = await fetch("/deploy/api/" + path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
@@ -271,16 +260,11 @@ async function loaded(info) {
   $("account-field").hidden = S.accounts.length < 2;
   await chooseAccount(S.accounts[0] && S.accounts[0].id);
   if (info.run) return showRun(info.run);
-  // Back from GitHub (the App made): where it goes was chosen before leaving, and is kept in this tab.
+  // Where it goes, chosen before (a reload): kept in this tab.
   let kept = null;
   try { kept = JSON.parse(sessionStorage.getItem("erga-install-where") || "null"); } catch {}
-  if (kept && kept.accountId == S.account) { S.where = kept; whereChosen(kept); if (info.githubApp) { githubMade(info.githubApp); go("github"); return; } go("github"); return; }
+  if (kept && kept.accountId == S.account) { S.where = kept; whereChosen(kept); go("agent"); return; }
   go("where");
-}
-function githubMade(app) {
-  S.githubApp = app;
-  $("gh-made").textContent = "Made: " + app.name + " (" + app.clientId + ")";
-  $("gh-make").textContent = "Make another GitHub App ↗";
 }
 $("account").addEventListener("change", (e) => chooseAccount(e.target.value));
 async function chooseAccount(id) {
@@ -333,7 +317,7 @@ $("where-next").addEventListener("click", () => {
   S.where = w;
   try { sessionStorage.setItem("erga-install-where", JSON.stringify(w)); } catch {}
   whereChosen(w);
-  go("github");
+  go("agent");
 });
 /** The control Worker's address beside the app's (deploy/install.ts, controlHostOf): shown before the install. */
 function controlHost(w) {
@@ -350,13 +334,7 @@ function stagingHost(w) {
   const parts = host.split("."); return parts[0] + "-staging." + parts.slice(1).join(".");
 }
 function whereChosen(w) {
-  $("sum-where").textContent = appUrl(w) + " · pages on " + pagesAt(w) + " · control at " + controlHost(w);
-  const home = appUrl(w);
-  $("gh-home").textContent = home; $("gh-callback").textContent = home + "/auth/github/callback";
-  const gh = new URL("https://github.com/settings/applications/new");
-  gh.searchParams.set("oauth_application[name]", "Erga"); gh.searchParams.set("oauth_application[url]", home); gh.searchParams.set("oauth_application[callback_url]", home + "/auth/github/callback");
-  $("gh-new").href = gh.toString();
-  $("gh-make").href = "/deploy/github/start?app=" + encodeURIComponent(home.replace("https://", "")) + "&ops=" + encodeURIComponent(controlHost(w)) + "&staging=" + encodeURIComponent(stagingHost(w));
+  $("sum-where").textContent = appUrl(w) + " · pages on " + pagesAt(w) + " · control at " + controlHost(w) + " · staging at " + stagingHost(w);
 }
 
 // Buying a domain: search, see the price, confirm it, buy.
@@ -402,16 +380,12 @@ $("buy-go").addEventListener("click", async () => {
   busy($("buy-go"), false); $("buy-cancel").disabled = false;
 });
 
-$("github-next").addEventListener("click", () => {
-  say("github-error");
-  const id = $("gh-id").value.trim(), secret = $("gh-secret").value.trim(), key = $("anthropic").value.trim();
-  const pasted = !!(id || secret);
-  if (pasted && !/^[A-Za-z0-9._-]{8,64}$/.test(id)) return say("github-error", "Paste your GitHub OAuth app's Client ID.");
-  if (pasted && secret.length < 20) return say("github-error", "Paste the client secret (press “Generate a new client secret” on the app's page).");
-  if (!pasted && !S.githubApp) return say("github-error", "Make the GitHub App with the button (or paste an OAuth app's Client ID and secret).");
-  if (key && !key.startsWith("sk-")) return say("github-error", "An Anthropic API key starts with sk-; leave it empty to go without the agent.");
-  const signIn = pasted ? "GitHub OAuth app " + id : "GitHub App " + S.githubApp.name;
-  $("sum-github").textContent = signIn + (key ? ", with the agent" : ", without the agent");
+$("agent-next").addEventListener("click", () => {
+  say("agent-error");
+  const key = $("anthropic").value.trim();
+  if (key && !key.startsWith("sk-")) return say("agent-error", "An Anthropic API key starts with sk-; leave it empty to go without the agent.");
+  const signIn = "GitHub, through Erga's GitHub App";
+  $("sum-agent").textContent = "Sign-in with " + signIn + (key ? ", with the agent" : ", without the agent");
   const w = S.where;
   $("review").innerHTML = [
     ["Account", (S.accounts.find((a) => a.id == w.accountId) || {}).name],
@@ -430,7 +404,7 @@ $("github-next").addEventListener("click", () => {
 
 $("go").addEventListener("click", async () => {
   say("deploy-error");
-  const plan = { ...S.where, admin: C.login, githubClientId: $("gh-id").value.trim(), githubClientSecret: $("gh-secret").value.trim(), anthropicKey: $("anthropic").value.trim() || undefined, ...(new URLSearchParams(location.search).get("version") ? { version: new URLSearchParams(location.search).get("version") } : {}) };
+  const plan = { ...S.where, admin: C.login, anthropicKey: $("anthropic").value.trim() || undefined, ...(new URLSearchParams(location.search).get("version") ? { version: new URLSearchParams(location.search).get("version") } : {}) };
   S.plan = plan;
   busy($("go"), true, "Starting…");
   try { const r = await api("start", { plan }); showRun(r.run); } catch (e) { say("deploy-error", e.message); }
@@ -446,7 +420,7 @@ const ICONS = { done: "✓", skipped: "–", failed: "!", running: "", pending: 
 function showRun(run) {
   S.info = { ...(S.info || {}), run };
   go("deploy");
-  for (const s of ["connect", "where", "github"]) if (!$("sum-" + s).textContent) $("sum-" + s).textContent = s == "where" ? run.summary.app + " · pages on " + run.summary.pages : "Done";
+  for (const s of ["connect", "where", "agent"]) if (!$("sum-" + s).textContent) $("sum-" + s).textContent = s == "where" ? run.summary.app + " · pages on " + run.summary.pages : "Done";
   $("review-box").hidden = true; $("run-box").hidden = false;
   $("progress").innerHTML = run.steps.map((s) => '<li class="' + s.status + '" data-id="' + s.id + '"><span class="icon">' + ICONS[s.status] + "</span><span>" + esc(s.title) + "</span>" + (s.detail ? '<span class="detail">' + esc(s.detail) + "</span>" : "") + "</li>").join("");
   say("run-error", run.status == "failed" ? run.error : "");

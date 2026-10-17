@@ -4,13 +4,13 @@
 // server/source/routes.ts.
 
 import { tar, type SourceService } from "../server/source/index.ts";
-import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
+import { artifactsRemote, hasSource } from "./artifacts";
 import type { Env } from "./env";
 
 /** Erga's repository, as the app reaches it; null on a server with no repository. */
 export function sourceService(env: Env): SourceService | null {
   if (!hasSource(env) || !env.SOURCE) return null;
-  return { object: env.SOURCE.getByName("erga"), remote: (scope, origin) => artifactsRemote(env, scope, origin), mirrorUrl: githubUrl(env) };
+  return { object: env.SOURCE.getByName("erga"), remote: (scope, origin) => artifactsRemote(env, scope, origin) };
 }
 
 /**

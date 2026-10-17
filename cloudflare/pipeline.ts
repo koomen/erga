@@ -30,13 +30,15 @@ import { containerBuilder } from "../control/builder/client";
 import { builderFetch } from "../control/builder/worker";
 import type { Env } from "./env";
 import { artifactsRemoteFor, forkOf, hasSource } from "./artifacts";
+import { githubAppOf } from "./github-app";
+import { GithubError, installationToken, uninstall } from "../server/source/index.ts";
 import { SYSTEM } from "../shared/attribution";
 import { sourceForBuild } from "./source";
 
 export type RelayEvent = { type: string } & Record<string, unknown>;
 
 /** An install made from this control Worker's /deploy: where its control Worker and app are, whose account, who did it, which release, its fork's id. */
-export interface InstallRecord { control: string; app: string; accountId: string; by: string; at: number; version: string; fork?: string }
+export interface InstallRecord { control: string; app: string; staging?: string; accountId: string; by: string; at: number; version: string; fork?: string }
 
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
@@ -164,8 +166,16 @@ export class Pipeline extends DurableObject<Env> {
     await this.ctx.storage.put("installs", list.slice(0, 200));
     this.publish({ type: "installs" });
   }
-  /** Whether `origin` (https://ops.example.com) is an install's control Worker made from here. */
-  async isInstall(origin: string): Promise<boolean> { return (await this.installs()).some((x) => x.control == origin); }
+  /** Whether `origin` (https://ops.example.com) is one of an install's Workers made from here (its control Worker, the app, staging, or a domain it added since). */
+  async isInstall(origin: string): Promise<boolean> { return !!(await this.installOf(origin)); }
+  private async installOf(origin: string): Promise<InstallRecord | null> {
+    const installs = await this.installs();
+    const direct = installs.find((x) => x.control == origin || x.app == origin || x.staging == origin);
+    if (direct) return direct;
+    const host = origin.replace(/^https:\/\//, "");
+    const fork = (await this.forks()).find((f) => f.hosts?.includes(host));
+    return fork ? installs.find((x) => x.fork == fork.id) ?? null : null;
+  }
 
   // ---- the forks (deploy/forks.ts): each install's repository here, in Erga's Artifacts namespace, and its builds in this Worker's container.
   private async forks(): Promise<ForkRecord[]> { return (await this.ctx.storage.get<ForkRecord[]>("forks")) ?? []; }
@@ -205,6 +215,52 @@ export class Pipeline extends DurableObject<Env> {
     } catch (e) {
       return { ok: false, error: e instanceof DeployError ? e.message : `The fork couldn't be made: ${(e as Error).message}` };
     }
+  }
+  private async saveFork(fork: ForkRecord): Promise<void> {
+    await this.ctx.storage.put("forks", (await this.forks()).map((f) => (f.id == fork.id ? fork : f)));
+  }
+  /**
+   * The GitHub App's consent relay saw an install's Worker (`origin`) connect installation `installationId`: the fork
+   * owns it from now on (tokens are minted for it, its webhooks relayed to the install's control Worker).
+   */
+  async installationSeen(origin: string, installationId: number): Promise<boolean> {
+    const install = await this.installOf(origin);
+    const fork = install?.fork ? (await this.forks()).find((f) => f.id == install.fork) : null;
+    if (!fork) return false;
+    if (!fork.installations?.includes(installationId)) await this.saveFork({ ...fork, installations: [...(fork.installations ?? []), installationId] });
+    return true;
+  }
+  /** A GitHub installation token for an install's connected repository (its secret checked; the installation must be its own). */
+  async forkGithubToken(id: string, secret: string, installationId: number): Promise<{ token: string; expiresAt: number } | { error: string; status: number }> {
+    const fork = await this.forkOf(id, secret);
+    if (!fork) return { error: "No such fork, or the secret is wrong.", status: 403 };
+    if (!fork.installations?.includes(installationId)) return { error: "That GitHub installation isn't this install's: connect GitHub from its Ops page.", status: 403 };
+    const app = githubAppOf(this.env);
+    if (!app?.privateKey) return { error: "This control Worker has no GitHub App key.", status: 503 };
+    try { return await installationToken(app, installationId); } catch (e) { return { error: (e as Error).message, status: e instanceof GithubError ? e.status : 502 }; }
+  }
+  async forkGithubUninstall(id: string, secret: string, installationId: number): Promise<{ ok: true } | { error: string; status: number }> {
+    const fork = await this.forkOf(id, secret);
+    if (!fork) return { error: "No such fork, or the secret is wrong.", status: 403 };
+    if (!fork.installations?.includes(installationId)) return { error: "That GitHub installation isn't this install's.", status: 403 };
+    const app = githubAppOf(this.env);
+    if (app?.privateKey) await uninstall(app, installationId).catch(() => {});
+    await this.saveFork({ ...fork, installations: fork.installations.filter((i) => i != installationId) });
+    return { ok: true };
+  }
+  /** An install's hosts, as it tells them (its domains changed): where its consents may come back to. */
+  async forkHosts(id: string, secret: string, hosts: string[]): Promise<{ ok: true } | { error: string; status: number }> {
+    const fork = await this.forkOf(id, secret);
+    if (!fork) return { error: "No such fork, or the secret is wrong.", status: 403 };
+    const clean = [...new Set(hosts.map((h) => String(h).trim().toLowerCase()).filter((h) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(h)))].slice(0, 50);
+    await this.saveFork({ ...fork, hosts: clean });
+    return { ok: true };
+  }
+  /** Whose a GitHub installation is (the webhook's relay): the install's control Worker, and its fork secret's hash (the relay's signature key). */
+  async forkOfInstallation(installationId: number): Promise<{ control: string; secretHash: string } | null> {
+    const fork = (await this.forks()).find((f) => f.installations?.includes(installationId));
+    const install = fork && (await this.installs()).find((x) => x.fork == fork.id);
+    return fork && install ? { control: install.control, secretHash: fork.secretHash } : null;
   }
   /** A fork's repository, for its control Worker (its secret checked): the remote and a token of `scope`. */
   async forkAccess(id: string, secret: string, scope: "read" | "write"): Promise<{ remote: string; token: string; expiresAt: string } | null> {

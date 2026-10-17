@@ -1,17 +1,21 @@
 // Erga's repository's Durable Object: one, "erga", where every push and
-// merge happens one at a time, with the commit index and the mirror's status
-// in its SQLite: the Cloudflare side of server/source/repo.ts. The routes
-// (server/source/routes.ts) check who's asking and hand it the request.
+// merge happens one at a time, with the commit index, the GitHub link and the
+// sync's status in its SQLite: the Cloudflare side of server/source/repo.ts.
+// The routes (server/source/routes.ts) check who's asking and hand it the
+// request.
 //
 // Calls name the address the request came to (`origin`), which local
-// development's stand-ins for Artifacts and GitHub live at.
+// development's stand-ins for Artifacts and GitHub live at. GitHub's
+// installation tokens come from the App's key here (erga.dev's control
+// Worker), or from erga.dev over the fork's secret (an install's).
 
 import { DurableObject } from "cloudflare:workers";
 import { deployHook, publishEvent, releaseHook } from "../../deploy/hook";
 import { byLine } from "../../shared/attribution";
-import { SourceError, SourceRepo, ZERO, type Actor, type Released, type SourceAnswer, type SourceObject, type SourceRead, type UpdateResult, type UpstreamSource } from "../../server/source/index.ts";
-import { artifactsRemote, githubRemote } from "../artifacts";
-import { directoryOf, keptKeys } from "../d1";
+import { SourceError, SourceRepo, ZERO, type Actor, type GithubLink, type GithubStatus, type PushEvent, type Released, type SourceAnswer, type SourceObject, type SourceRead, type UpdateResult, type UpstreamSource } from "../../server/source/index.ts";
+import { artifactsRemote, forkOf } from "../artifacts";
+import { githubAppOf, githubTokenFor, githubUninstallFor } from "../github-app";
+import { directoryOf } from "../d1";
 import type { Env } from "../env";
 
 export class SourceHost extends DurableObject<Env> implements SourceObject {
@@ -21,8 +25,7 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const sql = ctx.storage.sql;
-    // The mirror's token: the one an admin stored on /admin/api-keys, else the Worker secret.
-    const keys = keptKeys(ctx, env);
+    const app = githubAppOf(env), fork = forkOf(env);
     this.repo = new SourceRepo({
       db: { exec: <T>(q: string, ...params: (string | number | null)[]) => sql.exec(q, ...params).toArray() as T[] },
       artifacts: async () => {
@@ -36,7 +39,8 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
         if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
         return r;
       },
-      github: () => githubRemote(keys(), this.origin),
+      // GitHub's tokens: minted here with the App's key (erga.dev), or at upstream over the fork's secret (an install).
+      ...(app || fork ? { githubToken: (id: number) => githubTokenFor(env, id), githubUninstall: (id: number) => githubUninstallFor(env, id) } : {}),
       moved: (m) => {
         ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
         ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${byLine(m.by, m.via)}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
@@ -78,9 +82,15 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
 
   advertise(origin: string) { return this.at(origin).advertise(); }
   branches(origin: string) { return this.at(origin).branches(); }
-  /** `by`: who asked. */
-  mirrorNow(origin: string, by?: string) { return this.at(origin).mirror(by); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
+  // GitHub (server/source/routes.ts, control/routes.ts): the status, a sync now, connected, disconnected, a push there.
+  async githubStatus(origin: string): Promise<GithubStatus> { return this.at(origin).githubStatus(); }
+  syncGithub(origin: string, by: string) { return this.at(origin).syncGithub(by); }
+  connectGithub(origin: string, link: GithubLink, by: string) { return this.at(origin).connectGithub(link, by); }
+  async disconnectGithub(origin: string): Promise<{ ok: true } | { error: string; status: number }> {
+    try { await this.at(origin).disconnectGithub(); return { ok: true }; } catch (e) { return SourceHost.failed(e, "Disconnecting GitHub"); }
+  }
+  async githubPushed(origin: string, event: PushEvent): Promise<GithubStatus | null> { return this.at(origin).githubPushed(event); }
 
   /** A read of the source, as the deploy pipeline asks for a commit's migrations: the answer, or { error }. */
   async read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }> {
