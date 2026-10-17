@@ -144,7 +144,7 @@ export class SiteDeploys implements SiteObject {
       const [site, doc] = await Promise.all([dir.sites.get(docId), dir.get(docId)]);
       if (!site || !doc) return { ok: false, error: "The document has no site any more." };
       const token = await dir.cloudflare.token(site.login, this.deps.oauth);
-      if (!token) return { ok: false, error: `${site.login}'s Cloudflare connection is gone. ${site.login} must connect Cloudflare again (Custom domain, in the document's settings).` };
+      if (!token) return { ok: false, error: `${site.login}'s Cloudflare connection is gone: ${site.login} connects Cloudflare again.` };
       const published = await this.deps.published(docId);
       if (!published) return { ok: false, error: "The document has no published version yet." };
       const files = await siteFiles(published.index, published.files, doc.title);

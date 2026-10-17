@@ -14,13 +14,17 @@
 //   /git, /git/tree/...         Erga's source for anyone, read-only: branches, commits, files (server/source/public.ts)
 //   /auth/github[/callback], /auth/logout   signing in (this Worker's own GitHub app) and out
 //   GET /api/health             {ok, worker: "control", version (the release), build (the version id)}: anyone
-//   /install                    the Cloudflare credential (Ops links to it): its status, and Connect (a consent in the browser: deploy/credential.ts)
-//   POST /install/start         to Cloudflare's consent page (PKCE; the state and verifier in a short cookie). On an install's
+//   /install                    the Cloudflare credential's own page, for a first install: its status, and Connect. Nothing
+//                               links to it as a fix: the Ops page's Cloudflare card connects in place (a popup)
+//   GET|POST /install/start     to Cloudflare's consent page (PKCE; the state, the verifier and ?popup=1 in a short cookie). The
+//                               Ops page opens it in a popup, here or from the app (another origin: a GET). On an install's
 //                               control Worker, through erga.dev's callback (below): the one registered on Erga's OAuth client
-//   GET  /install/callback      back from it: the code exchanged, the grant kept, checked with one read. Also the deploy page's
-//                               return (cloudflare/deploy-routes.ts, its cookie says so), and the relay: a consent an install's
-//                               control Worker started (its origin in the state, one erga.dev made) is sent on to it, code and all
-//   POST /install/disconnect    the grant revoked and forgotten
+//   GET  /install/callback      back from it: the code exchanged, the grant kept, checked with one read, the deploys that
+//                               waited for it started. In a popup, a page that tells the Ops page that opened it (postMessage
+//                               to Erga's own origins, a BroadcastChannel here) and closes; else back to /install. Also the
+//                               deploy page's return (cloudflare/deploy-routes.ts, its cookie says so), and the relay: a
+//                               consent an install's control Worker started comes back here and goes on to it
+//   POST /install/disconnect    the grant revoked and forgotten (the Ops page's card: POST /api/deploys/credential/disconnect)
 //   GET  /api/install           the credential's status, as JSON
 //   /deploy, /deploy/...        install Erga in your own Cloudflare account (cloudflare/deploy-routes.ts); not on an install's
 //                               control Worker
@@ -45,6 +49,7 @@ import { authorizeUrl, CONTROL_OAUTH_SCOPES, exchangeCode, pkce, randomToken, ty
 import { mockConsentPage } from "../deploy/page.ts";
 import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
 import { releasesDoor, type ReleaseStore } from "../deploy/releases.ts";
+import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "../deploy/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
@@ -229,8 +234,11 @@ async function forkRoutes(request: Request, path: string, c: Control): Promise<R
 // ---------------------------------------------------------------- /install: the Cloudflare credential
 
 const INSTALL_COOKIE = "erga_install";
+/** What the consent's popup posts to the page that opened it (the Ops page, here or on the app), and on CONSENT_CHANNEL. */
+export const CONSENT_MESSAGE = "erga-deploy-credential";
 /** An install's consent state: its control Worker's origin (base64url), a dot, a random part; relayOrigin reads the origin back. */
 const b64u = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64u = (s: string) => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
 const relayState = (origin: string, random: string) => `${b64u(origin)}.${random}`;
 export function relayOrigin(state: string | null): string | null {
   const [head, rest] = (state ?? "").split(".");
@@ -242,6 +250,13 @@ export function relayOrigin(state: string | null): string | null {
 }
 const installCookie = (value: string, maxAge: number) => `${INSTALL_COOKIE}=${value}; Max-Age=${maxAge}; Path=/install; HttpOnly; Secure; SameSite=Lax`;
 const cookieOf = (request: Request, name: string) => request.headers.get("cookie")?.split(/;\s*/).map((c) => c.split("=")).find(([k]) => k == name)?.slice(1).join("=") ?? "";
+/** The consent in flight, in its cookie: the state, the PKCE verifier, and whether it runs in a popup. */
+interface Consent { state: string; verifier: string; popup: boolean }
+const readConsent = (request: Request): Consent | null => {
+  try { const c = JSON.parse(unb64u(cookieOf(request, INSTALL_COOKIE))) as Consent; return c?.state && c.verifier ? c : null; } catch { return null; }
+};
+/** What a consent came to: connected (with what its first read said), or why not. */
+type Outcome = { ok: true; check?: string; missing?: string; norefresh?: boolean } | { ok: false; error: string } | { ok: true; disconnected: true };
 
 async function installRoutes(request: Request, url: URL, c: Control, session: AdminLayout["session"]): Promise<Response> {
   const login = session.login;
@@ -249,43 +264,82 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   const method = request.method;
   // The consent comes back to this Worker's callback, or, on an install's control Worker, through erga.dev's (the relay).
   const redirect = `${c.oauth.relay ?? url.origin}/install/callback`;
-  const back = (q: Record<string, string>, ...setCookies: string[]) => {
-    const headers = new Headers({ Location: `/install?${new URLSearchParams(q)}`, "Cache-Control": "no-store" });
-    for (const x of setCookies) headers.append("Set-Cookie", x);
-    return new Response(null, { status: 302, headers });
+  /** The end of a consent: in a popup, a page that tells the page that opened it and closes; else /install, which says it. */
+  const done = (o: Outcome, popup: boolean, ...setCookies: string[]) => {
+    const r = popup ? consentPopupPage(o, c, url) : new Response(null, { status: 302, headers: { Location: `/install?${new URLSearchParams(outcomeQuery(o))}` } });
+    r.headers.set("Cache-Control", "no-store");
+    for (const x of setCookies) r.headers.append("Set-Cookie", x);
+    return r;
   };
   if (path == "/api/install" && (method == "GET" || method == "HEAD")) return json(await c.deploys.credentialStatus());
   if (path == "/install" && (method == "GET" || method == "HEAD")) {
     return c.layout({ title: "Cloudflare", here: "ops", session, style: INSTALL_STYLE, body: installBody(await c.deploys.credentialStatus(), c, url, c.page ?? "/") });
   }
   if (method == "POST" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
-  if (path == "/install/start" && method == "POST") {
-    if (!c.oauth.clientId && !c.oauth.mock) return back({ error: "This control Worker has no OAuth client yet. Put its client id in control/wrangler.jsonc (CLOUDFLARE_OAUTH_CLIENT_ID) and deploy it." });
+  // Connect Cloudflare: a GET too, so the Ops page (here, or on the app, another origin) opens it in a popup
+  // (?popup=1). The consent itself is the admin's, on Cloudflare's page; the code goes back only with this browser's
+  // cookie (the PKCE verifier).
+  if (path == "/install/start" && (method == "POST" || method == "GET")) {
+    const popup = url.searchParams.get("popup") == "1";
+    if (!c.oauth.clientId && !c.oauth.mock) return done({ ok: false, error: "This control Worker has no OAuth client yet: CLOUDFLARE_OAUTH_CLIENT_ID in control/wrangler.jsonc is empty." }, popup);
     const state = c.oauth.relay ? relayState(url.origin, randomToken(16)) : randomToken(16), { verifier, challenge } = await pkce();
     const to = authorizeUrl({ ...(c.oauth.mock ? { authorize: `${url.origin}/install/mock/consent` } : {}), clientId: c.oauth.clientId || "mock", redirect, state, challenge });
-    return new Response(null, { status: 302, headers: { Location: to, "Set-Cookie": installCookie(`${state}.${verifier}`, 600), "Cache-Control": "no-store" } });
+    const consent: Consent = { state, verifier, popup };
+    return new Response(null, { status: 302, headers: { Location: to, "Set-Cookie": installCookie(b64u(JSON.stringify(consent)), 600), "Cache-Control": "no-store" } });
   }
   if (path == "/install/mock/consent" && c.oauth.mock) return mockConsentPage(url);
   if (path == "/install/callback" && method == "GET") {
-    // The cookie: the state, a dot, the verifier (an install's state has a dot of its own: split at the last one).
-    const kept = cookieOf(request, INSTALL_COOKIE), cut = kept.lastIndexOf(".");
-    const state = cut > 0 ? kept.slice(0, cut) : "", verifier = cut > 0 ? kept.slice(cut + 1) : "";
+    const consent = readConsent(request), popup = !!consent?.popup;
     const clear = installCookie("", 0);
-    if (url.searchParams.get("error")) return back({ error: `Cloudflare did not authorize Erga: ${url.searchParams.get("error_description") || url.searchParams.get("error")}` }, clear);
-    if (!state || !verifier || url.searchParams.get("state") != state) return back({ error: "This consent did not start here, or took more than ten minutes. Try again." }, clear);
+    if (url.searchParams.get("error")) {
+      const why = url.searchParams.get("error_description") || url.searchParams.get("error");
+      return done({ ok: false, error: url.searchParams.get("error") == "access_denied" ? "You didn't authorize Erga on Cloudflare, so nothing changed." : `Cloudflare didn't authorize Erga: ${why}` }, popup, clear);
+    }
+    if (!consent || url.searchParams.get("state") != consent.state) return done({ ok: false, error: "This consent didn't start here, or took more than ten minutes. Try again." }, popup, clear);
     try {
-      const answer = await exchangeCode(c.oauth.net, { code: url.searchParams.get("code") ?? "", redirect, verifier, client: { id: c.oauth.clientId || "mock", ...(c.oauth.secret ? { secret: c.oauth.secret } : {}) } });
-      if (!answer.access_token) return back({ error: `Cloudflare gave no token: ${answer.error ?? "no answer"}${answer.error_description ? ` (${answer.error_description})` : ""}.` }, clear);
+      const answer = await exchangeCode(c.oauth.net, { code: url.searchParams.get("code") ?? "", redirect, verifier: consent.verifier, client: { id: c.oauth.clientId || "mock", ...(c.oauth.secret ? { secret: c.oauth.secret } : {}) } });
+      if (!answer.access_token) return done({ ok: false, error: `Cloudflare gave no token: ${answer.error ?? "no answer"}${answer.error_description ? ` (${answer.error_description})` : ""}.` }, popup, clear);
       const token = await c.deploys.connectCredential(answer, login);
       // One read with it, so the page says at once whether the grant reaches this Worker.
       const check = await new Cloudflare(token, c.oauth.net).call<{ compatibility_date?: string }>("GET", `/accounts/${c.oauth.accountId}/workers/scripts/${c.oauth.worker}/settings`, `read ${c.oauth.worker}'s settings`)
         .then(() => "", (e: Error) => e.message);
       const missing = CONTROL_OAUTH_SCOPES.split(" ").filter((s) => s != "offline_access" && answer.scope && !answer.scope.split(/\s+/).includes(s));
-      return back({ ok: "1", ...(check ? { check } : {}), ...(missing.length ? { missing: missing.join(" ") } : {}), ...(answer.refresh_token ? {} : { norefresh: "1" }) }, clear);
-    } catch (e) { return back({ error: (e as Error).message }, clear); }
+      return done({ ok: true, ...(check ? { check } : {}), ...(missing.length ? { missing: missing.join(" ") } : {}), ...(answer.refresh_token ? {} : { norefresh: true }) }, popup, clear);
+    } catch (e) { return done({ ok: false, error: (e as Error).message }, popup, clear); }
   }
-  if (path == "/install/disconnect" && method == "POST") { await c.deploys.disconnectCredential(); return back({ disconnected: "1" }); }
+  if (path == "/install/disconnect" && method == "POST") { await c.deploys.disconnectCredential(); return done({ ok: true, disconnected: true }, false); }
   return json({ error: "Not found" }, 404);
+}
+
+const outcomeQuery = (o: Outcome): Record<string, string> =>
+  !o.ok ? { error: o.error } : "disconnected" in o ? { disconnected: "1" } : { ok: "1", ...(o.check ? { check: o.check } : {}), ...(o.missing ? { missing: o.missing } : {}), ...(o.norefresh ? { norefresh: "1" } : {}) };
+
+/** What a consent's warnings say: the same words on /install and in the Ops page's card. */
+export function consentWarnings(o: Outcome): string[] {
+  if (!o.ok || "disconnected" in o) return [];
+  return [
+    ...(o.check ? [`Connected, but the first read with the grant failed: ${o.check}`] : []),
+    ...(o.missing ? [`Cloudflare granted fewer scopes than Erga asks for: ${o.missing} ${o.missing.includes(" ") ? "are" : "is"} missing, and deploys that need ${o.missing.includes(" ") ? "them" : "it"} will fail. Erga's OAuth client on Cloudflare must allow ${o.missing.includes(" ") ? "them" : "it"}.`] : []),
+    ...(o.norefresh ? ["Cloudflare gave no refresh token, so the grant ends in an hour. Erga's OAuth client on Cloudflare must have the Refresh Token grant."] : []),
+  ];
+}
+
+/**
+ * The consent's last page, in its popup: it tells the Ops page that opened it (this origin, or the app's: a
+ * postMessage to each of Erga's own origins, and a BroadcastChannel here) and closes. Nothing secret is in it.
+ */
+function consentPopupPage(o: Outcome, c: Control, url: URL): Response {
+  const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
+  const origins = [...new Set([url.origin, c.app, ...Object.values(hosts).map((h) => `https://${h}`)])];
+  const warnings = consentWarnings(o);
+  const message = JSON.stringify({ type: CONSENT_MESSAGE, ok: o.ok, ...(o.ok ? {} : { error: o.error }), warnings }).replace(/</g, "\\u003c");
+  const text = o.ok ? `Cloudflare is connected.${warnings.length ? ` ${warnings.join(" ")}` : ""}` : `Cloudflare isn't connected: ${o.error}`;
+  return page(o.ok ? "Cloudflare connected" : "Cloudflare not connected", `${esc(text)} You can close this window.<script>
+const m = ${message};
+try { new BroadcastChannel(${JSON.stringify(CONSENT_MESSAGE)}).postMessage(m); } catch {}
+if (window.opener) for (const o of ${JSON.stringify(origins)}) try { window.opener.postMessage(m, o); } catch {}
+${o.ok && !warnings.length ? "setTimeout(() => window.close(), 300);" : ""}
+</script>`, o.ok ? 200 : 400);
 }
 
 const INSTALL_STYLE = `
@@ -318,9 +372,9 @@ function installBody(s: CredentialStatus, c: Control, url: URL, ops: string): st
   const note = (kind: "ok" | "bad", text: string) => `<p class="msg ${kind}">${text}</p>`;
   const notes: string[] = [];
   if (q.get("ok")) {
-    notes.push(q.get("check") ? note("bad", `Connected, but the first read with the grant failed: ${esc(q.get("check")!)}`) : note("ok", `Connected. The grant reads ${esc(c.oauth.worker)}'s settings: it works.`));
-    if (q.get("missing")) notes.push(note("bad", `Cloudflare granted fewer scopes than asked: missing ${esc(q.get("missing")!)}. Deploys that need them will fail. Add them to the OAuth client and connect again.`));
-    if (q.get("norefresh")) notes.push(note("bad", "Cloudflare gave no refresh token, so the grant ends in an hour. Turn on the Refresh Token grant on the OAuth client and connect again."));
+    const warnings = consentWarnings({ ok: true, ...(q.get("check") ? { check: q.get("check")! } : {}), ...(q.get("missing") ? { missing: q.get("missing")! } : {}), ...(q.get("norefresh") ? { norefresh: true } : {}) });
+    if (!q.get("check")) notes.push(note("ok", `Connected. The grant reads ${esc(c.oauth.worker)}'s settings: it works.`));
+    for (const w of warnings) notes.push(note("bad", esc(w)));
   }
   if (q.get("error")) notes.push(note("bad", esc(q.get("error")!)));
   if (q.get("disconnected")) notes.push(note("ok", "Disconnected. The grant is revoked. Nothing deploys until an admin connects again."));

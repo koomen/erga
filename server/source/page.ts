@@ -6,8 +6,14 @@
 //
 // Status, at the top: one card for each environment (production, staging,
 // the control Worker): its state, when, the commit that is live, and its
-// latest deploy's log. And the control Worker's Cloudflare credential, with a
-// link to /install, where an admin connects or disconnects it.
+// latest deploy's log, and Retry when its deploy failed. And the control
+// Worker's Cloudflare credential, fixed in place: when it is missing or
+// Cloudflare refused it, the card shows Cloudflare's own words and Connect
+// Cloudflare, a consent in a popup (control/routes.ts, /install/start?popup=1:
+// on the control Worker's origin, which may not be this page's). The popup
+// tells this page when it's done, and the event stream says so too; the
+// deploys that waited for the credential go by themselves. Disconnect
+// (POST /api/deploys/credential/disconnect) revokes it. No link elsewhere.
 //
 // Git Repository, below: how to clone and push, the GitHub mirror, Merge
 // and Cut release, then the git log:
@@ -120,6 +126,16 @@ const SOURCE_STYLE = `
   .env-log { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
   .env-log:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
   .env-log[hidden] { display: none; }
+  .env-retry { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--bad); border-radius: 6px; background: var(--bg); color: var(--bad); font: 550 12px var(--font-text); cursor: pointer; }
+  .env-retry + .env-log { margin-left: 0; }
+  .env-retry[hidden], .cf-connect[hidden] { display: none; }
+  .env-retry:hover { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+  .env.cloudflare .env-more { gap: 8px; }
+  .env.cloudflare .cf-connect { height: 28px; }
+  .env.cloudflare .cf-connect + .env-log { margin-left: 0; }
+  .cf-why, .cf-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--soft); overflow-wrap: anywhere; }
+  .cf-why { color: var(--fg); }
+  .cf-note.bad { color: var(--bad); }
   .repo-note { margin: -4px 0 14px; font-size: 13.5px; color: var(--soft); }
   .repo-note a { color: inherit; }
   .repo-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin: 0 0 14px; }
@@ -291,14 +307,14 @@ function sourceMarkup(c: SourcePageConfig): string {
   const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
   const upstreamName = c.upstream ? esc(c.upstream.replace(/^https?:\/\//, "").replace(/^ops\./, "")) : "erga.dev";
   const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Loading"><b>${label}</b><span class="host">${esc(host)}</span><span class="st"><i></i><span>…</span></span></button></div>`;
-  const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${esc(host)}" target="_blank" rel="noopener">${esc(host)}</a></div><span class="st"><i></i><span>…</span></span><span class="env-more"><code class="env-commit"></code><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span><div class="env-domains" id="domains-${name}" hidden></div></div>`;
+  const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${esc(host)}" target="_blank" rel="noopener">${esc(host)}</a></div><span class="st"><i></i><span>…</span></span><span class="env-more"><code class="env-commit"></code><button class="env-retry" type="button" data-retry="${name}" hidden title="Deploys this environment's branch head again">Retry</button><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span><div class="env-domains" id="domains-${name}" hidden></div></div>`;
   return `
   <section class="ops-section" id="status" aria-labelledby="status-head">
     <h2 id="status-head">Status</h2>
     <h3>Environments</h3>
     <div class="envs">${env("production", "Production", hosts.production)}${env("staging", "Staging", hosts.staging)}${env("control", "Control", hosts.control)}</div>
     <h3>Cloudflare</h3>
-    <div class="env cloudflare" id="env-cloudflare"><div class="env-top"><b>Deploy credential</b><a class="host" href="/install">Manage</a></div><span class="st"><i></i><span id="cloudflare-state">…</span></span></div>
+    <div class="env cloudflare" id="env-cloudflare" data-connect="${esc(`${c.origin}/install/start?popup=1`)}"><div class="env-top"><b>Deploy credential</b></div><span class="st"><i></i><span id="cloudflare-state">…</span></span><p class="cf-why" id="cloudflare-why" hidden></p><span class="env-more"><button class="new cf-connect" type="button" id="cloudflare-connect" hidden>Connect Cloudflare</button><button class="env-log" type="button" id="cloudflare-disconnect" hidden title="Revokes the grant on Cloudflare. Nothing deploys until an admin connects again.">Disconnect</button></span><p class="cf-note" id="cloudflare-note" role="status" hidden></p></div>
   </section>
   <section class="ops-section" id="repo" aria-labelledby="repo-head">
   <div class="pane-head">
@@ -591,7 +607,14 @@ const SOURCE_SCRIPT = `
   }
   const domDlg = document.getElementById("domain-dlg");
   document.getElementById("status").addEventListener("click", async (e) => {
-    const add = e.target.closest("button[data-add]"), rm = e.target.closest("button[data-remove]");
+    const add = e.target.closest("button[data-add]"), rm = e.target.closest("button[data-remove]"), retry = e.target.closest("button[data-retry]");
+    if (retry) {
+      retry.disabled = true;
+      const r = await fetch("/api/deploys/" + retry.dataset.retry, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+      const body = r ? await r.json().catch(() => ({})) : {};
+      if (!r || !r.ok) { retry.disabled = false; retry.title = body.error || "Couldn't start the deploy."; retry.textContent = "Retry (failed)"; }
+      await loadDeploys();
+    }
     if (add) {
       domDlg.dataset.target = add.dataset.add;
       document.getElementById("domain-env").textContent = add.dataset.add;
@@ -643,19 +666,73 @@ const SOURCE_SCRIPT = `
     err.textContent = m.error || "";
   }
 
+  // The control Worker's Cloudflare credential, fixed here: Connect Cloudflare opens the consent in a popup, on the
+  // control Worker's origin (data-connect). The popup posts its outcome back (and the event stream says the
+  // credential changed); this page never leaves.
+  const cf = document.getElementById("env-cloudflare"), cfNote = document.getElementById("cloudflare-note");
+  const consentOrigin = new URL(cf.dataset.connect, location.href).origin;
+  let consentAsked = false;
+  const note = (text, bad) => { cfNote.hidden = !text; cfNote.textContent = text || ""; cfNote.className = "cf-note" + (bad ? " bad" : ""); };
+  document.getElementById("cloudflare-connect").addEventListener("click", () => {
+    const w = window.open(cf.dataset.connect, "erga-cloudflare-consent", "popup,width=600,height=760");
+    if (!w) { note("The browser blocked the Cloudflare window. Allow pop-ups for this page, then click Connect Cloudflare again.", true); return; }
+    consentAsked = true;
+    note("Waiting for Cloudflare: finish the consent in the window that opened.");
+  });
+  function consented(m) {
+    consentAsked = false;
+    if (m.ok) note(["Connected." + (m.warnings && m.warnings.length ? "" : " A deploy that waited goes now; Retry starts one that failed.")].concat(m.warnings || []).join(" "), !!(m.warnings && m.warnings.length));
+    else note(m.error || "Cloudflare didn't connect.", true);
+    loadDeploys();
+  }
+  window.addEventListener("message", (e) => {
+    if (!e.data || e.data.type != "erga-deploy-credential" || (e.origin != consentOrigin && e.origin != location.origin)) return;
+    consented(e.data);
+  }, { signal: pageView.signal });
+  try { const bc = new BroadcastChannel("erga-deploy-credential"); bc.onmessage = (e) => { if (e.data && e.data.type == "erga-deploy-credential") consented(e.data); }; pageView.onLeave(() => bc.close()); } catch {}
+  document.getElementById("cloudflare-disconnect").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.dataset.armed != "1") { btn.dataset.armed = "1"; btn.textContent = "Click again to disconnect"; setTimeout(() => { if (btn.dataset.armed == "1") { btn.dataset.armed = ""; btn.textContent = "Disconnect"; } }, 8000); return; }
+    btn.dataset.armed = ""; btn.textContent = "Disconnect"; btn.disabled = true;
+    const r = await fetch("/api/deploys/credential/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    btn.disabled = false;
+    note(r && r.ok ? "Disconnected: the grant is revoked." : body.error || "Couldn't disconnect.", !(r && r.ok));
+    loadDeploys();
+  });
+  function renderCredential() {
+    const cred = deploys && deploys.credential;
+    cf.className = "env cloudflare " + (!cred ? "" : cred.connected ? "deployed" : "failed");
+    document.getElementById("cloudflare-state").textContent = !cred ? (deploysKnown ? "unknown" : "…") : cred.connected ? "connected" + (cred.by ? " by " + cred.by : "") : "Nothing deploys: " + (cred.by ? "Cloudflare refused the grant." : "not connected.");
+    // Cloudflare's own words: its answer to the last refresh, or why there's none.
+    const why = document.getElementById("cloudflare-why");
+    why.hidden = !cred || cred.connected;
+    why.textContent = !cred || cred.connected ? "" : cred.error ? "Cloudflare said: " + cred.error : cred.problem || "";
+    const connect = document.getElementById("cloudflare-connect");
+    connect.hidden = !cred || cred.connected;
+    connect.textContent = cred && cred.by ? "Connect Cloudflare again" : "Connect Cloudflare";
+    document.getElementById("cloudflare-disconnect").hidden = !cred || !cred.connected;
+    // Connected while the popup was out (the event stream heard it first, or the popup couldn't reach this page).
+    if (cred && cred.connected && consentAsked) consented({ ok: true });
+  }
+
   function renderTargets() {
     // Status: the control Worker's Cloudflare credential (an admin's OAuth grant), and each environment's state.
-    const cred = deploys && deploys.credential, cf = document.getElementById("env-cloudflare");
-    cf.className = "env cloudflare " + (!cred ? "" : cred.connected ? "deployed" : "failed");
-    document.getElementById("cloudflare-state").textContent = !cred ? (deploysKnown ? "unknown" : "…") : cred.connected ? "connected" + (cred.by ? " by " + cred.by : "") : "Nothing deploys: " + (cred.problem || "not connected.");
+    renderCredential();
     for (const n of TARGETS) {
       const e = document.getElementById("env-" + n), t = targetOf(n);
-      e.className = "env " + (t ? t.state : "");
-      const what = !t ? (deploysKnown ? "not set up" : "…") : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
+      // A deploy that waits (for the credential): the target says so, with Cloudflare's reason in its tooltip.
+      const waits = !!(t && t.pending && !running(t.state) && t.error);
+      e.className = "env " + (t ? (waits ? "failed" : t.state) : "");
+      const what = !t ? (deploysKnown ? "not set up" : "…") : waits ? "waiting to deploy " + t.pending.slice(0, 7) : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
       e.querySelector(".st span").textContent = what + (t?.at ? " · " + ago(t.at) : "");
       e.querySelector(".st").title = t?.error || "";
       e.querySelector(".env-commit").textContent = t?.deployed ? t.deployed.slice(0, 7) : "";
       e.querySelector(".env-log").hidden = !t;
+      // Retry: a failed deploy, or one that waits while nothing stops it now.
+      const retry = e.querySelector(".env-retry");
+      retry.hidden = !t || !(t.state == "failed" || (waits && deploys.credential && deploys.credential.connected));
+      if (retry.hidden) retry.disabled = false;
       // The environment's own address, as the deploys know it (a fork's are its own, not erga.dev's).
       if (t?.host) { const a = e.querySelector(".env-top .host"); a.textContent = t.host; a.href = "https://" + t.host; const h = document.querySelector("#target-" + n + " .host"); if (h) h.textContent = t.host; }
     }

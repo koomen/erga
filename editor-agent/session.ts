@@ -42,7 +42,7 @@ import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, val
 import { fileRefs, messageContent, type Attachment } from "../shared/attach";
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
-import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
+import { emptyLog, offerOf, reduce, type Log, type LogEvent } from "../shared/agent-log";
 import { CUT, Checkpoints, restoredLog, sendLate, type ChatStore } from "../agents/checkpoint";
 import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { CONSOLE_LEVELS, describeAct, describeConsole, describeEvents, describeNetwork, describeTab, parseSince, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
@@ -1014,6 +1014,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
           status: e.isError ? "error" : "done",
           detail: e.isError ? resultText(e.result).slice(0, 400) : undefined,
           image: e.isError ? undefined : resultImage(e.result),
+          offer: e.isError ? undefined : offerOf(e.result),
         });
         break;
       case "agent_start": busy.agent = true; syncBusy("thinking"); emit({ t: "busy", busy: true }); break;

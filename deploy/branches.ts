@@ -45,7 +45,7 @@
 // id, commit, times, state, what started it) and its whole log, the last
 // HISTORY_KEEP of each target, in the same storage.
 
-import { ALL_STEPS, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, Unhealthy, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
+import { ALL_STEPS, API, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, Unhealthy, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { sourceFor, type Source } from "./source";
 import { CONTROL, CONTROL_ENTRYPOINT, PRODUCTION, TARGETS, type DeployName, type TargetSpec } from "./targets";
 import { controlTarget } from "./control";
@@ -220,8 +220,19 @@ export class BranchDeploys {
   private specOf(name: DeployName) { return this.fleet.specOf(name); }
   private targetFor(name: DeployName, fresh?: Fresh): Target { return this.fleet.targetFor(name, this.deps.env, fresh); }
 
-  /** Cloudflare's API with the credential's token, fresh (refreshed when it's about to expire; a DeployError says why not). */
-  private async cf(): Promise<Cloudflare> { return new Cloudflare(await this.deps.credential.token(), this.deps.net); }
+  /**
+   * Cloudflare's API with the credential's token, fresh (refreshed when it's about to expire; a DeployError says why not).
+   * A 401 from the API tells the credential, so the next deploy's refresh says whether the grant is revoked.
+   */
+  private async cf(): Promise<Cloudflare> {
+    const credential = this.deps.credential, net = this.deps.net;
+    const watched: Fetch = async (input, init) => {
+      const r = await net(input, init);
+      if (r.status == 401 && String(input instanceof Request ? input.url : input).startsWith(API)) await credential.refused?.().catch(() => {});
+      return r;
+    };
+    return new Cloudflare(await credential.token(), watched);
+  }
 
   /** The credential, as GET /api/deploys and /install show it. */
   credential(): Promise<CredentialStatus> { return this.deps.credential.status(); }
@@ -438,7 +449,7 @@ export class BranchDeploys {
       status.update = r.result == "up-to-date" ? `${file.latest}: staging has it`
         : r.result == "conflicts" ? `${r.conflict.version}: the merge conflicts in ${r.conflict.files.length} file${r.conflict.files.length == 1 ? "" : "s"} (${r.conflict.files.map((f) => f.path).join(", ")})`
         : `${r.version} ${r.result == "fast-forward" ? "fast-forwarded" : "merged"} into staging (${r.brought} commit${r.brought == 1 ? "" : "s"})`;
-      if (r.result == "conflicts") status.error = `Update from ${up.origin} stopped: ${status.update}. Resolve it on the Ops page (your admin agent can), or merge in a checkout and push staging.`;
+      if (r.result == "conflicts") status.error = `Update from ${up.origin} stopped: ${status.update}. Resolve the files it lists (your admin agent can), or merge in a checkout and push staging.`;
       await this.deps.storage.put("upstream", status);
       this.deps.changed();
     } catch (e) {
@@ -636,15 +647,17 @@ export class BranchDeploys {
     const wrong = await this.notReady(name);
     // A fresh copy asked for stays asked for when a newer commit takes the waiting one's place.
     const was = await this.queue(name);
-    const fresh = !wrong && (!!o.fresh || (!!was.pending && !!was.fresh));
-    await this.setQueue(name, { head: commit, pending: wrong ? null : commit, trigger: wrong ? null : trigger, attempt: null, fresh: fresh || null });
+    const fresh = !!o.fresh || (!!was.pending && !!was.fresh);
+    // Kept waiting when it can't deploy now (no credential): it deploys once the reason is gone (`ready`), and the target
+    // says why it waits. (It used to be dropped, with a log line only: on 2026-10-15 two pushes to staging never deployed.)
+    await this.setQueue(name, { head: commit, pending: commit, trigger, attempt: null, fresh: fresh || null });
     // The running deploy's own record, if it's this target's (so its next save doesn't undo this one's).
     const cur = this.current?.name == name ? this.current : null;
     const s = cur?.s ?? await this.load(name);
     this.line(s, why);
     if (wrong) {
-      s.status = { ...s.status, commit, at: this.now(), error: null };
-      this.line(s, wrong);
+      s.status = { ...s.status, commit, at: this.now(), error: `${commit.slice(0, 12)} waits to deploy. ${wrong.replace(/^Nothing is deployed: /, "")}` };
+      this.line(s, `waits: ${wrong}`);
       await this.save(s);
       return;
     }
@@ -654,6 +667,18 @@ export class BranchDeploys {
       cur.abort.abort(new Superseded(commit, trigger));
     }
     await this.save(s);
+    await this.deps.schedule(0);
+  }
+
+  /** The reason deploys waited may be gone (Cloudflare connected again): the waiting ones deploy now. */
+  async ready(): Promise<void> {
+    for (const name of this.fleet.names) {
+      const s = await this.load(name);
+      if (!s.status.pending || s.run) continue;
+      const wrong = await this.notReady(name);
+      if (wrong) continue;
+      if (s.status.error?.includes(" waits to deploy. ")) { s.status = { ...s.status, error: null }; this.line(s, "the deploy that waited goes now"); await this.save(s); }
+    }
     await this.deps.schedule(0);
   }
 

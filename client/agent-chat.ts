@@ -6,7 +6,7 @@
 // "Not sent" and a way to try again). The styles are style.css's (.agent-log,
 // .msg-*), so both panels look the same.
 
-import { emptyLog, reduce, type Log, type LogEvent, type LogItem } from "../shared/agent-log";
+import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type Offer } from "../shared/agent-log";
 import type { FileRef } from "../shared/attach";
 import { fileChip } from "./attach-ui";
 
@@ -38,6 +38,41 @@ export interface Chat {
   pin(): void;
   /** A message just sent (with what's attached): shown dimmed until the host echoes it; `fail` says it wasn't sent, with Try again. */
   pending(text: string, files?: FileRef[]): { fail(reason: string, retry: () => void): void };
+}
+
+/**
+ * A tool's offer, as a button under its call: Connect Cloudflare opens the consent in a popup (the control Worker's
+ * /install/start, or the person's own /auth/cloudflare/start), and says how it ended when the popup tells this page.
+ * Only those two addresses: the tool's code makes the offer, but the panel trusts nothing else.
+ */
+function offerButton(offer: Offer): HTMLElement | null {
+  let url: URL;
+  try { url = new URL(offer.url, location.href); } catch { return null; }
+  if (!/^https?:$/.test(url.protocol) || !["/install/start", "/auth/cloudflare/start"].includes(url.pathname) || url.searchParams.get("popup") != "1") return null;
+  const wrap = document.createElement("span");
+  wrap.className = "offer";
+  const button = Object.assign(document.createElement("button"), { type: "button", className: "offer-button", textContent: offer.label });
+  const note = Object.assign(document.createElement("span"), { className: "offer-note" });
+  note.setAttribute("role", "status");
+  const ended = (m: { ok?: boolean; error?: string }) => {
+    note.textContent = m.ok ? "Connected." : `Not connected: ${m.error ?? "Cloudflare didn't say why"}`;
+    if (m.ok) button.disabled = true;
+  };
+  const onMessage = (e: MessageEvent) => {
+    const m = e.data as { type?: string; ok?: boolean; error?: string } | null;
+    if (!m || (m.type != "erga-deploy-credential" && m.type != "erga-cloudflare") || (e.origin != url.origin && e.origin != location.origin)) return;
+    window.removeEventListener("message", onMessage);
+    ended(m);
+  };
+  button.addEventListener("click", () => {
+    const w = window.open(url.href, "erga-cloudflare-consent", "popup,width=600,height=760");
+    if (!w) { note.textContent = "The browser blocked the Cloudflare window. Allow pop-ups for this page, then click again."; return; }
+    note.textContent = "Waiting for Cloudflare: finish the consent in the window that opened.";
+    window.addEventListener("message", onMessage);
+    try { const bc = new BroadcastChannel(url.pathname == "/install/start" ? "erga-deploy-credential" : "erga-cloudflare"); bc.onmessage = (e) => { bc.close(); onMessage(new MessageEvent("message", { data: e.data, origin: location.origin })); }; } catch { /* no BroadcastChannel */ }
+  });
+  wrap.append(button, note);
+  return wrap;
 }
 
 export function chat(opts: ChatOptions): Chat {
@@ -78,6 +113,7 @@ export function chat(opts: ChatOptions): Chat {
       } else {
         el.classList.add(item.status);
         el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${escapeHtml(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${escapeHtml(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;
+        if (item.status == "done" && item.offer) { const b = offerButton(item.offer); if (b) el.append(b); }
       }
     }
     return el;

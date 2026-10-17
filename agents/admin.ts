@@ -35,9 +35,9 @@ import * as Redacted from "effect/Redacted";
 import { Type } from "typebox";
 import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "../editor-agent/session";
 import { fileRefs, messageContent, type Attachment } from "../shared/attach";
-import { emptyLog, reduce, type Log, type LogEvent } from "../shared/agent-log";
+import { emptyLog, offerOf, reduce, type Log, type LogEvent, type Offer } from "../shared/agent-log";
 import { agentName } from "../document/content";
-import { runServerTool, SERVER_TOOLS, type ToolWho } from "./tools";
+import { runServerTool, SERVER_TOOLS, toolResult, type ToolWho } from "./tools";
 import { Checkpoints, restoredLog, sendLate, type ChatStore, type StoredChat } from "./checkpoint";
 import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../server/source/index.ts";
 
@@ -48,6 +48,10 @@ export interface DashboardOps {
   release(commit?: string): Promise<object>;
   mirror(): Promise<object>;
   deploys(history: number): Promise<object>;
+  /** The control Worker's Cloudflare credential; when it isn't connected, with the Connect Cloudflare offer (a button in the panel). */
+  credential(): Promise<object>;
+  /** The credential revoked and forgotten. */
+  disconnectCredential(): Promise<object>;
   deployLog(target: string, deploy?: string): Promise<object | null>;
   redeploy(target: string, fresh?: boolean): Promise<object>;
   /** Back to the Worker version before the target's live deploy (its restore point). */
@@ -71,7 +75,7 @@ export interface DashboardOps {
   revokeAgentToken(id: string): Promise<boolean>;
 }
 
-const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v == "string" ? v : JSON.stringify(v, null, 2) }], details: {} });
+const text = toolResult;
 
 /** Times (ms since the epoch) as ISO strings, for the model. */
 const times = (o: object) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v == "number" && v > 1e12 ? new Date(v).toISOString() : v]));
@@ -99,6 +103,10 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
     tool("list_deploys", "Read the deploys", "Every deploy target (staging, production): what it runs, its deploy now (state, commit, steps) and its last deploys, newest first (history: how many, default 5, at most 50).",
       Type.Object({ history: Type.Optional(Type.Integer({ description: "How many past deploys of each target (default 5)" })) }),
       (a) => ops.deploys(Math.max(0, Math.min(50, a.history == null ? 5 : Number(a.history) || 0)))),
+    tool("deploy_credential", "Read the deploy credential", "The control Worker's Cloudflare credential, which every deploy uses: connected or not, who connected it, and when it doesn't work, Cloudflare's own words (error: its answer to the last refresh). An expired access token refreshes by itself; only a refused or missing grant stops the deploys, and then the deploys that wait go by themselves once it's connected again. When it isn't connected, a Connect Cloudflare button shows under this call in the admin's panel: Cloudflare's consent, in a popup, on the page they're on. Tell them to click it. You can't consent for them, and there's no token to ask for.",
+      Type.Object({}), () => ops.credential()),
+    tool("disconnect_deploy_credential", "Disconnect the deploy credential", "Revokes the control Worker's Cloudflare grant on Cloudflare and forgets it, as Disconnect on the Ops page's Cloudflare card does: nothing deploys until the admin connects Cloudflare again (a consent of their own). Only when the admin asks in this conversation to disconnect or revoke it.",
+      Type.Object({}), () => ops.disconnectCredential()),
     tool("deploy_log", "Read a deploy's log", "A deploy's log, as the dashboard shows it: the target's latest deploy, or the one named. The last 200 lines unless you ask for more (up to 1000).",
       Type.Object({ target: TARGET, deploy: Type.Optional(Type.String({ description: "The deploy's id (list_deploys); default: the latest" })), lines: Type.Optional(Type.Integer({ description: "How many lines, the last (default 200)" })) }),
       async (a) => {
@@ -223,6 +231,8 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   deploy_production: ["Deploying production", "Deployed production"],
   sync_mirror: ["Updating the mirror", "Updated the mirror"],
   list_deploys: ["Reading the deploys", "Read the deploys"],
+  deploy_credential: ["Reading the deploy credential", "Read the deploy credential"],
+  disconnect_deploy_credential: ["Disconnecting the deploy credential", "Disconnected the deploy credential"],
   deploy_log: ["Reading the deploy log of", "Read the deploy log of"],
   redeploy: ["Redeploying", "Redeployed"],
   rollback: ["Rolling back", "Rolled back"],
@@ -284,6 +294,13 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
 - list_deploys reads each target's deploys (staging, production); deploy_log reads a
   deploy's log; redeploy deploys a target's branch again; rollback puts the version before its live deploy back. deploy_homepage deploys the
   homepage again.
+- deploy_credential reads the Cloudflare credential every deploy uses. When it isn't
+  connected (or Cloudflare refused it), say so in Cloudflare's own words, and tell
+  ${owner} to click Connect Cloudflare: the button shows under that call in this panel,
+  and on the Ops page's Cloudflare card. It opens Cloudflare's consent in a popup, and
+  the deploys that waited go by themselves after it. Never send ${owner} to another page
+  (/install) for it, and never try to consent yourself. disconnect_deploy_credential
+  revokes it, only when ${owner} asks.
 - cut_release cuts a release: a version tag (vX.Y.Z, the next patch version by default) on
   main's head, with notes. list_branches shows the release tags; list_releases reads the
   store's channels: edge (each commit of main, deployed and healthy) and stable (the newest
@@ -414,7 +431,7 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
       }
       case "tool_execution_start": emit({ t: "tool", id: e.toolCallId, name: e.toolName, path: about(e.toolName, e.args), status: "running" }); break;
       case "tool_execution_end":
-        emit({ t: "tool", id: e.toolCallId, name: e.toolName, path: null, status: e.isError ? "error" : "done", detail: e.isError ? resultText(e.result).slice(0, 400) : undefined, image: e.isError ? undefined : resultImage(e.result) });
+        emit({ t: "tool", id: e.toolCallId, name: e.toolName, path: null, status: e.isError ? "error" : "done", detail: e.isError ? resultText(e.result).slice(0, 400) : undefined, image: e.isError ? undefined : resultImage(e.result), offer: e.isError ? undefined : offerOf(e.result) });
         break;
       case "agent_start": emit({ t: "busy", busy: true }); break;
       case "agent_end": emit({ t: "busy", busy: false }); sendLate(agent, failed); break;

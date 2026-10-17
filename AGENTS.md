@@ -16,8 +16,10 @@ there, and Git says so once).
 Production (erga.dev) deploys when `main` moves to a staging commit: Merge
 on https://ops.erga.dev/, the admin agent's `deploy_production`, the API, or
 a push to `main`. The control Worker deploys with an OAuth grant an admin
-gave once at https://ops.erga.dev/install (no API token anywhere); if that
-page says "Not connected", nothing deploys until an admin consents again.
+gave once (no API token anywhere). When Cloudflare refuses it, the Ops
+page's Cloudflare card says so in Cloudflare's words, with Connect
+Cloudflare (a consent in a popup); the deploys that waited go after it.
+Errors are fixed where they show: never send a person to another page.
 After production, the control Worker deploys itself from
 the same commit (`deploy/control.ts`): a change under `control/` reaches
 ops.erga.dev when it reaches `main`. Each deploy checks the target's health

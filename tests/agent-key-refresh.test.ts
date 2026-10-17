@@ -82,7 +82,7 @@ test("a document is open; an admin stores a key, replaces it, clears it: each re
     // No key yet: the panel says so, and what to do.
     let st = await doc.state();
     expect(st.body.enabled).toBe(false);
-    expect(st.body.reason).toContain("/admin/api-keys");
+    expect(st.body.reason).toContain("an admin pastes the Anthropic API key in the admin agent's panel");
     expect((await doc.prompt("hello")).body.reason).toContain("ANTHROPIC_API_KEY is not set");
 
     // The admin stores a key: the same open document's next turn uses it, with no reload.

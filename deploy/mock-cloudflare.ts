@@ -91,6 +91,10 @@ export interface MockState {
   refreshTokens: string[];
   oauthGrants: number;
   oauthExpiresIn?: number;
+  /** The next refresh answers this status (a 429, a 503) and nothing else, once. */
+  oauthRefreshStatus?: number;
+  /** Access tokens the API refuses (401), as a grant revoked on the dashboard: the refresh tells. */
+  refusedTokens?: string[];
   /** What a consent grants when set (fewer scopes than asked: a client that lost one); else MOCK_OAUTH_SCOPES. */
   oauthScopes?: string;
   /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
@@ -682,11 +686,16 @@ export function mockCloudflare(opts: {
       const form = new URLSearchParams(await req.text());
       const grant = (scope: string) => { const refresh = `mock-refresh-${hex(8)}`; state.refreshTokens.push(refresh); state.oauthGrants++; return Response.json({ access_token: `mock-oauth-${hex(8)}`, token_type: "bearer", expires_in: state.oauthExpiresIn ?? 3600, refresh_token: refresh, scope }); };
       if (form.get("grant_type") == "refresh_token") {
+        // A test's 429 (Cloudflare's rate limit): once, then the refresh goes as usual.
+        if (state.oauthRefreshStatus) { const status = state.oauthRefreshStatus; state.oauthRefreshStatus = undefined; return Response.json({ error: "rate_limited" }, { status }); }
         const old = form.get("refresh_token") ?? "";
         if (!state.refreshTokens.includes(old)) return Response.json({ error: "invalid_grant", error_description: "refresh token revoked or unknown" }, { status: 400 });
         state.refreshTokens = state.refreshTokens.filter((t) => t != old);
         return grant(form.get("scope") || MOCK_OAUTH_SCOPES);
       }
+      // mock-code-dead (the tests'): a grant whose access token has expired and whose refresh token Cloudflare no longer
+      // takes, as one revoked on the dashboard is: its first use refreshes, and the refresh is refused.
+      if (form.get("code") == "mock-code-dead" && form.get("code_verifier")) return Response.json({ access_token: `mock-oauth-${hex(8)}`, token_type: "bearer", expires_in: 0, refresh_token: `mock-refresh-dead-${hex(8)}`, scope: state.oauthScopes || MOCK_OAUTH_SCOPES });
       if (form.get("code") != "mock-code" || !form.get("code_verifier")) return Response.json({ error: "invalid_grant" }, { status: 400 });
       return grant(state.oauthScopes || form.get("scope") || MOCK_OAUTH_SCOPES);
     }
@@ -707,7 +716,7 @@ export function mockCloudflare(opts: {
       const token = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
       const upload = path.startsWith("/accounts/") && path.includes("/workers/assets/upload");
       state.calls.push(`${req.method} ${path}`);
-      if (!upload && !token.startsWith("mock-")) return fail(401, 1000, "Invalid API Token");
+      if (!upload && (!token.startsWith("mock-") || state.refusedTokens?.includes(token))) return fail(401, 1000, "Invalid API Token");
       if (token == "mock-slow") await new Promise((r) => setTimeout(r, 150));
       return api(req, path, upload ? subFor ?? "" : token);
     }

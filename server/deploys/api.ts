@@ -9,6 +9,8 @@
 //                                       fresh copy of production's data, in place of its frozen copy
 //   POST /api/deploys/<name>/rollback   admins: put back the Worker version from before the target's live deploy (its restore
 //                                       point: seconds, no build; the database keeps its schema)
+//   POST /api/deploys/credential/disconnect   admins: the control Worker's Cloudflare grant revoked and forgotten (the
+//                                       Ops page's Cloudflare card; Connect is a consent in a popup: control/routes.ts)
 //   GET  /api/deploys/<name>/history[?limit=N]
 //                                       admins: the last N deploys (default 20, at most 100)
 //                                       {target, deploys: [{id, commit, state, started, ended, trigger, error, live, ...}]}
@@ -83,6 +85,11 @@ export async function deploysApi(request: Request, session: Session, deploys: De
     if (!ownForm()) return json({ error: "Forbidden" }, 403);
     const r = await deploys.rollback(rollbackOf, `rollback by ${by}`);
     return r.ok ? json({ ok: true, target: r.status }) : json({ ok: false, error: r.error }, (r as { status?: number }).status ?? 400);
+  }
+  if (path == "/api/deploys/credential/disconnect" && method == "POST") {
+    if (!ownForm()) return json({ error: "Forbidden" }, 403);
+    await deploys.disconnectCredential();
+    return json({ ok: true, credential: await deploys.credentialStatus() });
   }
   const [, name] = /^\/api\/deploys\/([a-z]+)$/.exec(path) ?? [];
   if (name && method == "POST") {

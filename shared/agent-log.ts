@@ -14,14 +14,27 @@ export type LogItem =
   | { kind: "user"; text: string; files?: FileRef[] }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
-  | { kind: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external" }
+  | { kind: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external"; offer?: Offer }
   | { kind: "error"; text: string };
+
+/**
+ * A button a tool's result puts under its call in the panel: what only the person may do, on this same page, offered
+ * by the agent (a Cloudflare consent, which opens in a popup). The tool's own code makes it (its result's
+ * `details.offer`), never the model's text.
+ */
+export interface Offer { kind: "connect-cloudflare"; label: string; url: string }
+
+/** The offer in a tool's result, if it has one. */
+export function offerOf(result: unknown): Offer | undefined {
+  const o = (result as { details?: { offer?: Offer } } | null)?.details?.offer;
+  return o && o.kind == "connect-cloudflare" && typeof o.url == "string" && typeof o.label == "string" ? { kind: o.kind, label: o.label, url: o.url } : undefined;
+}
 
 export type LogEvent =
   | { t: "user"; text: string; files?: FileRef[] }
   | { t: "text"; delta: string }
   | { t: "thinking"; delta: string }
-  | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external" }
+  | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external"; offer?: Offer }
   | { t: "error"; text: string }
   | { t: "busy"; busy: boolean }
   /** How many of the agent's changes "Undo the agent's change" can take back. */
@@ -48,7 +61,7 @@ export function reduce(log: Log, ev: LogEvent): number {
       return items.length - 1;
     case "tool": {
       const i = items.findIndex((x) => x.kind == "tool" && x.id == ev.id);
-      const item: LogItem = { kind: "tool", id: ev.id, name: ev.name, path: ev.path, status: ev.status, detail: ev.detail, image: ev.image, via: ev.via };
+      const item: LogItem = { kind: "tool", id: ev.id, name: ev.name, path: ev.path, status: ev.status, detail: ev.detail, image: ev.image, via: ev.via, ...(ev.offer ? { offer: ev.offer } : {}) };
       if (i >= 0) { items[i] = item; return i; }
       items.push(item);
       return items.length - 1;

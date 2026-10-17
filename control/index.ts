@@ -54,6 +54,10 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
   redeployWith(name: string, trigger: string, o: { fresh?: boolean }) { return this.deploys.redeployWith(name, trigger, o); }
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
+  // The Cloudflare credential: its status, and Disconnect (the Ops page's card, the admin agent). Connect is a consent in
+  // the browser, on this Worker's own origin (/install/start).
+  credentialStatus() { return this.deploys.credentialStatus(); }
+  disconnectCredential() { return this.deploys.disconnectCredential(); }
   // Each environment's domains.
   domains() { return this.deploys.domains(); }
   addDomain(name: string, hostname: string, by: string) { return this.deploys.addDomain(name, hostname, by); }

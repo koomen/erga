@@ -132,11 +132,15 @@ export class Pipeline extends DurableObject<Env> {
   status(history = 0): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[]; credential: CredentialStatus }> { return this.deploys.status({ history }); }
   // The Cloudflare credential (deploy/credential.ts): its status, a consent's grant kept, and forgotten (control/routes.ts, /install).
   credentialStatus(): Promise<CredentialStatus> { return this.deploys.credential(); }
-  connectCredential(answer: TokenAnswer, by: string): Promise<string> {
+  async connectCredential(answer: TokenAnswer, by: string): Promise<string> {
     if (!(this.credential instanceof OAuthCredential)) throw new Error("This server deploys with a fixed token: there's nothing to connect.");
-    return this.credential.connect(answer, by);
+    const token = await this.credential.connect(answer, by);
+    // The deploys that waited for it go now; the Ops page hears of the new credential at once.
+    await this.deploys.ready();
+    this.publish({ type: "deploys" });
+    return token;
   }
-  async disconnectCredential(): Promise<void> { if (this.credential instanceof OAuthCredential) await this.credential.disconnect(); }
+  async disconnectCredential(): Promise<void> { if (this.credential instanceof OAuthCredential) await this.credential.disconnect(); this.publish({ type: "deploys" }); }
   logOf(name: string, deployId?: string): Promise<DeployLog | null> { return this.deploys.logOf(name, deployId); }
   historyOf(name: string, limit?: number): Promise<DeployRecord[] | null> { return this.deploys.historyOf(name, limit); }
   hook(branch: string, commit: string, trigger?: string): Promise<void> { return this.deploys.hook(branch, commit, trigger); }

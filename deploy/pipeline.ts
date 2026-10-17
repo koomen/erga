@@ -80,10 +80,10 @@ export class Cloudflare {
 export function explain(what: string, status: number, errors: { code: number; message: string }[]): string {
   const said = errors.map((e) => (e.code ? `${e.message} [code ${e.code}]` : e.message)).filter(Boolean).join("; ");
   if (status == 401 || errors.some((e) => e.code == 1000 || e.code == 9109 || e.code == 6003)) {
-    return `Cloudflare didn't accept the token when we tried to ${what}: it may be mistyped, expired or revoked. Connect again with a new one.${said ? ` (Cloudflare said: ${said})` : ""}`;
+    return `Cloudflare didn't accept Erga's credential when it tried to ${what}: the grant may be expired or revoked.${said ? ` (Cloudflare said: ${said})` : ""}`;
   }
   if (status == 403 || errors.some((e) => e.code == 10000 || e.code == 9103)) {
-    return `The token isn't allowed to ${what}. Make a new token with the link on this page (it has every permission the deploy needs), or add the missing permission to yours.${said ? ` (Cloudflare said: ${said})` : ""}`;
+    return `Erga's credential isn't allowed to ${what}: the consent didn't grant that permission.${said ? ` (Cloudflare said: ${said})` : ""}`;
   }
   if (status == 429) return `Cloudflare asked us to slow down while we tried to ${what}. Wait a minute and try again.${said ? ` (Cloudflare said: ${said})` : ""}`;
   if (status >= 500) return `Cloudflare had a problem on its side while we tried to ${what}${said ? ` (Cloudflare said: ${said})` : ` (it answered ${status})`}. Try again in a few minutes.`;

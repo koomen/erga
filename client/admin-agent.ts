@@ -76,6 +76,7 @@ const att = attachments({ pane: $("agent"), form: $("agent-form"), input, hint: 
 
 function showHint(text: string, sticky = false) {
   clearTimeout(hintTimer);
+  delete hint.dataset.off;
   hint.textContent = text;
   hint.hidden = false;
   hint.classList.toggle("sticky", sticky);
@@ -102,8 +103,38 @@ function renderBusy() {
   send.title = why ?? (stop ? "Stop the agent" : log.busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
   $("agent-fab").classList.toggle("busy", log.busy);
   input.placeholder = off ? "The agent is off" : log.busy ? "Add to what the agent is doing…" : "Ask the agent…";
-  if (off) showHint(off, true);
+  // (Drawn again only when it changed: the key field below it keeps what's typed.)
+  if (off) { if (hint.dataset.off != off || hint.hidden) { showHint(off, true); hint.dataset.off = off; } keyField(); }
   else if (hint.classList.contains("sticky")) hideHint();
+}
+
+/**
+ * The agent is off for want of an Anthropic API key (none, or one this server can't open): the admin pastes it here,
+ * in the panel, and the agent starts. The key goes to POST /admin/credentials, as on the API keys page; never into
+ * the conversation.
+ */
+function keyField() {
+  if (!off || !/Anthropic API key/.test(off) || hint.querySelector("form")) return;
+  const form = document.createElement("form");
+  form.className = "agent-key";
+  const field = Object.assign(document.createElement("input"), { type: "password", name: "value", placeholder: "sk-ant-…", autocomplete: "off", required: true });
+  field.setAttribute("aria-label", "Anthropic API key");
+  const save = Object.assign(document.createElement("button"), { type: "submit", textContent: "Save key" });
+  const said = Object.assign(document.createElement("span"), { className: "agent-key-said" });
+  form.append(field, save, said);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    save.disabled = true;
+    said.textContent = "Saving…";
+    const r = await fetch(`/admin/credentials${location.search}`, { method: "POST", body: new URLSearchParams({ name: "anthropic", value: field.value }) }).catch(() => null);
+    const body = r ? ((await r.json().catch(() => null)) as { error?: string } | null) : null;
+    save.disabled = false;
+    if (!r?.ok) { said.textContent = body?.error ?? "Couldn't save it."; return; }
+    field.value = "";
+    said.textContent = "Saved. Starting the agent…";
+    void load();
+  });
+  hint.append(form);
 }
 
 /** What the admin has open, so "this page" means something to the agent. */

@@ -87,11 +87,11 @@ export class SiteError extends Error {
 
 interface GrantRow { grant: string; accounts: string; updated: number }
 
-/** What a person's grant says about itself in its messages: what to do is theirs, in the document's settings. */
+/** What a person's grant says about itself in its messages: what to do is theirs, with Connect Cloudflare where it shows. */
 const WORDS = (login: string) => ({
   subject: `${login}'s Cloudflare connection`,
-  fix: `${login} connects Cloudflare again (a document's settings, Custom domain, or /settings)`,
-  none: `${login} hasn't connected Cloudflare: connect it in a document's settings, under Custom domain.`,
+  fix: `${login} connects Cloudflare again`,
+  none: `${login} hasn't connected Cloudflare.`,
 });
 
 export class CloudflareGrants {

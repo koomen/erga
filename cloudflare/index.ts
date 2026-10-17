@@ -21,7 +21,7 @@
 import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
 import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
-import { mockCloudflare } from "../deploy/mock-cloudflare";
+import { FLEET_ACCOUNT, mockCloudflare } from "../deploy/mock-cloudflare";
 import { releaseStoreOf } from "./releases";
 import { CONTROL } from "../deploy/targets";
 import type { DeploysObject } from "../server/deploys/api";
@@ -81,7 +81,8 @@ export default {
           } } : {}),
           // The deploy page (installs), in local development only: on erga.dev it's the control Worker's.
           ...(env.PIPELINE ? { deploy: (request: Request) => deployDoor(request, { env, platform: p, oauthCallback: "/install/callback" }) } : {}),
-          oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
+          // Under the mock, the mock fleet's account, as the deploys' object has it (cloudflare/pipeline.ts).
+          oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: mock ? FLEET_ACCOUNT : env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
         });
       }
       return devRoutes(request, env, p, url);

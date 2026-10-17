@@ -172,8 +172,8 @@ describe("deploying", () => {
   });
 
   test("says what went wrong, plainly", async () => {
-    await expect(run("not-a-mock-token", plan())).rejects.toThrow(/didn't accept the token when we tried to read your account/);
-    await expect(run("mock-noperm", plan())).rejects.toThrow(/isn't allowed to list your D1 databases\. Make a new token with the link.*Authentication error \[code 10000\]/);
+    await expect(run("not-a-mock-token", plan())).rejects.toThrow(/didn't accept Erga's credential when it tried to read your account/);
+    await expect(run("mock-noperm", plan())).rejects.toThrow(/isn't allowed to list your D1 databases: the consent didn't grant that permission\..*Authentication error \[code 10000\]/);
     await expect(run("mock-fail-assets", plan())).rejects.toThrow(/Cloudflare had a problem on its side while we tried to start uploading the editor's files \(Cloudflare said: An unknown error has occurred \[code 10013\]\)/);
     await expect(run("mock-token", plan({ subdomain: "someone-else" }))).rejects.toThrow(/Your workers.dev subdomain is ada-mock/);
   });

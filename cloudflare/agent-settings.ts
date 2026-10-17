@@ -11,7 +11,7 @@ import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
 /** What the agent pane says when the stored key doesn't open on this server. */
-export const UNREADABLE_KEY = "the Anthropic API key stored on /admin/api-keys doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin must paste the key again on /admin/api-keys";
+export const UNREADABLE_KEY = "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again in the admin agent's panel";
 
 export const agentSettings = (env: Env) => agentSettingsFrom(env, env.DB ? directoryOf(env).credentials : null);
 

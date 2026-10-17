@@ -185,7 +185,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     sites: true,
     label: "Custom domain",
     activity: "checking the custom domain",
-    description: "Whether a document is published at a domain of the person's own (served from their Cloudflare account), and how its deploys are going: its address, the version that's live, a deploy that's scheduled, running or failed (and why). Also whether the person has connected Cloudflare, and the domains (zones) their connection reaches, to choose a hostname from. Connecting is a consent in the person's own browser (Connect Cloudflare, under Custom domain in the document's settings, or on /settings): you can't do it, and there's no token to ask for.",
+    description: "Whether a document is published at a domain of the person's own (served from their Cloudflare account), and how its deploys are going: its address, the version that's live, a deploy that's scheduled, running or failed (and why). Also whether the person has connected Cloudflare, and the domains (zones) their connection reaches, to choose a hostname from. Connecting is a consent in the person's own browser: when they aren't connected, a Connect Cloudflare button shows under this call in their panel (Cloudflare's consent, in a popup, on the page they're on). Tell them to click it. You can't consent for them, and there's no token to ask for.",
     parameters: Type.Object({ document: DOCUMENT }),
     run: async (args, ctx) => {
       const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "open");
@@ -195,7 +195,9 @@ export const SERVER_TOOLS: ServerToolDef[] = [
       return {
         document: described(doc, ctx), site: site ? { ...siteView(site), deploy: await ops.status(doc.id) } : null,
         cloudflare: connection.connected ? { connected: true, accounts: connection.accounts.map((a) => a.name), ...(zones && "zones" in zones ? { domains: zones.zones.map((z) => z.name) } : { error: zones?.error }) }
-          : { connected: false, connect: "The person clicks Connect Cloudflare under Custom domain in the document's settings (the gear), and allows Erga on Cloudflare's page.", ...(connection.error ? { error: connection.error } : {}) },
+          : { connected: false, connect: "A Connect Cloudflare button shows under this call in the person's panel: they click it, and allow Erga on Cloudflare's page, in a popup.", ...(connection.error ? { error: connection.error } : {}) },
+        // The button: the person's own consent, on the page they're on (server/sites/connect.ts).
+        ...(connection.connected ? {} : { offer: { kind: "connect-cloudflare", label: connection.updated != null ? "Connect Cloudflare again" : "Connect Cloudflare", url: "/auth/cloudflare/start?popup=1" } }),
       };
     },
   },
@@ -466,9 +468,15 @@ export async function agentToolsFor(ctx: ToolWho): Promise<AgentTool[]> {
     parameters: t.parameters,
     execute: async (_id, params) => {
       const out = await runServerTool(t, params as Record<string, unknown>, ctx).catch((e: unknown) => { throw new Error(e instanceof Error ? e.message : String(e)); });
-      return { content: [{ type: "text" as const, text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }], details: {} };
+      return toolResult(out);
     },
   }));
+}
+
+/** A tool's answer as pi takes it: the text for the model; an `offer` in it (a button for the person) goes to the panel too. */
+export function toolResult(out: unknown) {
+  const offer = out && typeof out == "object" && "offer" in out ? (out as { offer: unknown }).offer : undefined;
+  return { content: [{ type: "text" as const, text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }], details: offer ? { offer } : {} };
 }
 
 /** What the editor's agent is doing while one runs. */
