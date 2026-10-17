@@ -1748,11 +1748,20 @@ export class PageEditor {
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u)) return false;
     const src = this.state.doc.toString();
+    if (this.kind == "md" && u.tag != "pre") {
+      // A line break inside a paragraph and the indent around it are one space on the page: they go together.
+      const brk = forward ? /^[ \t]*\n[ \t]*/.exec(src.slice(pos, u.contentTo)) : /\n[ \t]*$/.exec(src.slice(u.contentFrom, pos));
+      if (brk) {
+        const from = forward ? pos : pos - brk[0].length;
+        this.dispatch({ changes: { from, to: from + brk[0].length }, selection: { anchor: from }, userEvent: forward ? "delete.forward" : "delete.backward", scrollIntoView: true });
+        return true;
+      }
+    }
     if (this.kind == "md" && !forward && deleteMarkupBackward(this.target())) return true;
     // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
     const blank = this.kind == "html" && !!placeholderBr(src, u);
-    if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id);
-    if (forward && (blank || pos >= M.textEnd(u))) return this.join(u.id, u.id + 1);
+    if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id, pos, false);
+    if (forward && (blank || pos >= M.textEnd(u))) return this.join(u.id, u.id + 1, pos, true);
     // One grapheme within the unit's text, skipping inline tag boundaries.
     let i = M.runAt(u, pos, !forward);
     if (i < 0) return false;
@@ -1778,41 +1787,46 @@ export class PageEditor {
   }
 
   /**
-   * Joins two units: `next` goes, and its content moves to the end of `prev`,
-   * which keeps its own tag. The caret goes to the join.
+   * Backspace at the start of a unit, or Delete at the end of the one before
+   * (the caret at `pos`): `next` goes, and its content moves to the end of
+   * `prev`, which keeps its own tag. The caret goes to the join. A rule
+   * between them goes first, and the next key joins. Where the two can't
+   * join (a table's edge, a picture or a widget between), the caret goes to
+   * the other unit: the end of `prev`, or the start of `next`.
    */
-  private join(prevId: number, nextId: number): boolean {
+  private join(prevId: number, nextId: number, pos: number, forward: boolean): boolean {
     const prev = this.units[prevId], next = this.units[nextId];
     if (!prev || !next) return false;
     const src = this.state.doc.toString();
-    if (this.kind == "html") {
-      const changes = this.joinHtml(src, prev, next);
-      if (!changes) return false;
-      const set = this.state.changes(changes);
-      this.dispatch({ changes: set, selection: { anchor: set.mapPos(changes.at, -1) }, userEvent: "delete.backward", scrollIntoView: true });
+    const changes = this.kind == "html" ? this.joinHtml(src, prev, next, pos) : this.joinMd(src, prev, next, pos);
+    if (!changes) {
+      this.dispatch({ selection: { anchor: forward ? M.textStart(next) : M.textEnd(prev) }, userEvent: "select", scrollIntoView: true });
       return true;
     }
-    // Markdown: the blank line (or list, quote or heading marker) between the blocks.
-    const from = prev.contentTo, to = next.contentFrom;
-    if (from >= to) return false;
-    const between = src.slice(from, to);
-    if (!/^[\s>*+#-]*(\d+[.)])?\s*$/.test(between) || /^\s*([-*_])(\s*\1){2,}\s*$/m.test(between)) return false;
-    this.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: "delete.backward", scrollIntoView: true });
+    const set = this.state.changes(changes);
+    this.dispatch({ changes: set, selection: { anchor: set.mapPos(changes.at, -1) }, userEvent: forward ? "delete.forward" : "delete.backward", scrollIntoView: true });
     return true;
   }
 
   /**
-   * The changes that join two HTML units, or null if they can't be: they are
-   * table cells, or something other than the tags of the blocks around them
-   * lies between them (a picture, a widget). `next`'s element goes, with any
-   * element around it that it leaves empty (a list of one item, say), and its
-   * content goes after `prev`'s text. `at` is the join, before the changes.
+   * The changes that join two HTML units, or null if they can't be (M.gap):
+   * `next`'s element goes, with any element around it that it leaves empty
+   * (a list of one item, say), and its content goes after `prev`'s text. With
+   * a rule between, only the rule goes. `at` is where the caret goes, before
+   * the changes.
    */
-  private joinHtml(src: string, prev: M.Unit, next: M.Unit): (({ from: number; to?: number; insert?: string })[] & { at: number }) | null {
-    if (prev.to > next.from || !next.node || !this.verify(prev) || !this.verify(next)) return null;
+  private joinHtml(src: string, prev: M.Unit, next: M.Unit, pos: number): (({ from: number; to?: number; insert?: string })[] & { at: number }) | null {
+    if (!next.node || !this.verify(prev) || !this.verify(next)) return null;
     if (/^(td|th|caption)$/.test(prev.tag) || /^(td|th|caption)$/.test(next.tag)) return null;
-    const between = src.slice(prev.to, next.from);
-    if (!/^(\s|<\/?(ul|ol|li|dl|dt|dd|blockquote|div|section|article|aside|header|footer|main|nav|figure|details|menu)(\s[^>]*)?>)*$/i.test(between) || /data-erga-noedit/i.test(between)) return null;
+    const between = M.gap(src, prev, next);
+    if (between.kind == "apart") return null;
+    if (between.kind == "rule") {
+      // The rule, with the spaces and line break before it.
+      let from = between.from;
+      while (from > prev.to && /[ \t]/.test(src[from - 1])) from--;
+      if (src[from - 1] == "\n") from--;
+      return Object.assign([{ from, to: between.to }], { at: pos });
+    }
     // The element that goes: next's, or the one around it that holds nothing else, but not one around prev too.
     let gone: M.ElementNode = next.node;
     for (let up = gone.parent; up?.parent && up.from >= prev.to; up = up.parent) {
@@ -1821,9 +1835,13 @@ export class PageEditor {
       gone = up;
     }
     const pre = prev.tag == "pre" || next.tag == "pre";
-    // The join: after prev's text, before the spaces and line breaks the page doesn't show.
+    const br = placeholderBr(src, prev);
+    // The join: after prev's text, before the spaces and line breaks the page doesn't show, and before a <br> that ends it.
     let at = prev.contentTo;
-    if (!pre) while (at > prev.contentFrom && /\s/.test(src[at - 1])) at--;
+    const back = () => { if (!pre) while (at > prev.contentFrom && /\s/.test(src[at - 1])) at--; };
+    back();
+    const lastBr = /<br\s*\/?>$/i.exec(src.slice(prev.contentFrom, at));
+    if (lastBr && !br) { at -= lastBr[0].length; back(); }
     let moved = "";
     if (contentIn(src, next, next.contentFrom, next.contentTo)) {
       moved = src.slice(next.contentFrom, next.contentTo);
@@ -1833,11 +1851,47 @@ export class PageEditor {
     let goFrom = gone.from;
     while (goFrom > prev.to && /\s/.test(src[goFrom - 1])) goFrom--;
     const changes: { from: number; to?: number; insert?: string }[] = [];
-    const br = placeholderBr(src, prev);
     // Two blank blocks: one <br> stays, to keep the one left a line high.
     if (!moved && !br && placeholderBr(src, next) && !contentIn(src, prev, prev.contentFrom, prev.contentTo)) moved = "<br>";
     if (br && moved && br.to <= at) changes.push(br);
     changes.push({ from: at, insert: moved }, { from: goFrom, to: gone.to });
+    return Object.assign(changes, { at });
+  }
+
+  /**
+   * The same in Markdown: the marks between the blocks go (blank lines, a
+   * list's, a quote's or a heading's marks, a task's box). A block whose
+   * marks end it (a setext heading's underline, a code block's fence) keeps
+   * them, and `next`'s text moves in before them. Null where the blocks
+   * can't join: a table, HTML or other text between them.
+   */
+  private joinMd(src: string, prev: M.Unit, next: M.Unit, pos: number): (({ from: number; to?: number; insert?: string })[] & { at: number }) | null {
+    if (prev.contentTo >= next.contentFrom) return null;
+    const fence = /^\n[ ]{0,3}(`{3,}|~{3,})[ \t]*(?=\n|$)/;
+    const between = src.slice(prev.contentTo, next.contentFrom);
+    const end = HEADING.test(prev.tag) ? /^\n[ ]{0,3}(=+|-+)[ \t]*(?=\n|$)/.exec(between) : prev.tag == "pre" ? fence.exec(between) : null;
+    const close = end ? end[0].length : 0;
+    let marks = between.slice(close), nextClose = 0;
+    if (next.tag == "pre") {
+      const open = /\n[ ]{0,3}(`{3,}|~{3,})[^\n]*\n$/.exec(marks), shut = fence.exec(src.slice(next.contentTo));
+      if (!open || !shut) return null;
+      marks = marks.slice(0, open.index) + "\n";
+      nextClose = shut[0].length;
+    }
+    const rule = /^[ ]{0,3}([-*_])([ \t]*\1){2,}[ \t]*$/m.exec(marks);
+    if (rule) {
+      // The rule's line, and a blank line after it.
+      const from = prev.contentTo + close + rule.index;
+      let to = from + rule[0].length;
+      if (src[to] == "\n") to++;
+      if (src[to] == "\n" && src[from - 2] == "\n") to++;
+      return Object.assign([{ from, to }], { at: pos });
+    }
+    if (!/^[\s>*+#-]*(\d+[.)])?[ \t]*(\[[ xX]\][ \t]*)?$/.test(marks)) return null;
+    const at = prev.contentTo;
+    if (close) return Object.assign([{ from: at, insert: src.slice(next.contentFrom, next.contentTo) }, { from: at + close, to: next.contentTo + nextClose }], { at });
+    const changes = [{ from: at, to: next.contentFrom }];
+    if (nextClose) changes.push({ from: next.contentTo, to: next.contentTo + nextClose });
     return Object.assign(changes, { at });
   }
 

@@ -234,7 +234,8 @@ class Renderer {
       const marker = n.getChild("TaskMarker");
       if (marker) {
         const checked = /x/i.test(this.slice(marker));
-        prefix = `<input type="checkbox" disabled${checked ? " checked" : ""}> `;
+        // No space after the box: a text node the source doesn't have would lock the item (the editor's verify).
+        prefix = `<input type="checkbox" disabled${checked ? " checked" : ""} style="margin: 0 0.5em 0 0">`;
         from = this.abs(marker.to);
         while (from < to && this.src[from] == " ") from++;
         children = n.children.filter((c) => c.name != "TaskMarker");

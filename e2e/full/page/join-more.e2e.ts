@@ -33,7 +33,7 @@ test("a list with nothing left goes, typing goes in at the join and reaches the 
   await expect.poll(async () => (await ed.source()) == original && (await ed.count("li")) == 2).toBe(true);
 });
 
-test("in the first block Backspace does nothing, and with a picture between, nothing either", async ({ tab }) => {
+test("in the first block Backspace does nothing; with a picture between, it puts the caret at the end of the block before", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "join");
   const original = await ed.source();
   await backspaceAt(ed, "h1", false);
@@ -41,6 +41,7 @@ test("in the first block Backspace does nothing, and with a picture between, not
   expect((await ed.selection()).head).toBe(original.indexOf("Joining blocks</h1>"));
   await backspaceAt(ed, "#cap", false);
   expect(await ed.source()).toBe(original);
+  expect((await ed.selection()).head).toBe(original.indexOf("A quote</p>") + "A quote".length);
 });
 
 test("Delete at the end of a block joins the next one to it", async ({ tab }) => {
