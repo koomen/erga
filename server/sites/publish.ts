@@ -16,9 +16,8 @@
 // The grant (a consent in the browser, connect.ts) asks for SITE_OAUTH_SCOPES
 // only, a part of the scopes Erga's OAuth client allows.
 //
-// An HTML page goes up as it is; a Markdown page goes up as HTML (the
-// editor's own renderer, in a plain readable page). The page is also
-// index.html, so the site's root shows it.
+// The files go up as they are. The document's page is also index.html, so
+// the site's root shows it.
 
 import { Cloudflare, DeployError, explain, uploadAssets, type Fetch } from "../../deploy/pipeline.ts";
 import type { Directory } from "../directory/index.ts";
@@ -85,63 +84,13 @@ export async function listZones(token: string, net: Fetch, accounts: CfAccount[]
 // ------------------------------------------------------------------ the files
 
 /** The site's files, by path ("/index.html"), from the published version's. */
-export async function siteFiles(index: string, files: Record<string, string | Uint8Array>, title: string): Promise<Record<string, Uint8Array>> {
+export function siteFiles(index: string, files: Record<string, string | Uint8Array>): Record<string, Uint8Array> {
   const out: Record<string, Uint8Array> = {};
-  const bytes = (v: string | Uint8Array) => (typeof v == "string" ? new TextEncoder().encode(v) : v);
-  const text = (v: string | Uint8Array) => (typeof v == "string" ? v : new TextDecoder().decode(v));
-  let render: ((src: string, title: string) => string) | null = null;
-  for (const [path, value] of Object.entries(files)) {
-    if (path.endsWith(".md")) {
-      render ??= await markdownPage();
-      out[`/${path.slice(0, -3)}.html`] = bytes(render(text(value), path == index ? title : pageTitle(text(value)) ?? title));
-    } else out[`/${path}`] = bytes(value);
-  }
-  const page = `/${index.replace(/\.md$/, ".html")}`;
+  for (const [path, value] of Object.entries(files)) out[`/${path}`] = typeof value == "string" ? new TextEncoder().encode(value) : value;
+  const page = `/${index}`;
   if (!out[page]) throw new SiteError(`The document's page (${index}) isn't in its published version.`);
   if (page != "/index.html") out["/index.html"] = out[page];
   return out;
-}
-
-const pageTitle = (src: string) => /^#{1,6}[ \t]+(.+?)[ \t#]*$/m.exec(src)?.[1]?.replace(/[*_`]/g, "") ?? null;
-const escHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-
-/** A Markdown page as a plain, readable HTML page: the editor's own renderer, loaded only when a site has one. */
-async function markdownPage(): Promise<(src: string, title: string) => string> {
-  const { analyzeMarkdown } = await import("../../client/markdown.ts");
-  return (src, title) => {
-    const body = analyzeMarkdown(src).html.replace(/ data-erga-id="\d+"/g, "").replace(/ class="erga-empty"/g, "");
-    return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escHtml(title)}</title>
-<style>
-:root { color-scheme: light dark; --fg: #1d2129; --soft: #5b6472; --rule: #e3e6ea; --code: #f3f4f6; --link: #1f5f8b; }
-@media (prefers-color-scheme: dark) { :root { --fg: #e6e9ee; --soft: #9aa3b0; --rule: #2b313a; --code: #1b2027; --link: #7fb6e0; } }
-body { margin: 0; color: var(--fg); background: Canvas; font: 18px/1.65 Charter, "Iowan Old Style", Georgia, serif; }
-main { max-width: 40rem; margin: 0 auto; padding: 12vh 22px 20vh; }
-h1, h2, h3, h4 { font-family: system-ui, sans-serif; line-height: 1.25; letter-spacing: -0.01em; }
-h1 { font-size: 2.1rem; margin: 0 0 1.2rem; }
-a { color: var(--link); }
-code, pre { font: 0.86em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); border-radius: 6px; }
-code { padding: 0.1em 0.35em; }
-pre { padding: 14px 16px; overflow-x: auto; }
-pre code { padding: 0; background: none; }
-blockquote { margin: 1.2rem 0; padding: 0 1rem; border-left: 3px solid var(--rule); color: var(--soft); }
-hr { border: 0; border-top: 1px solid var(--rule); margin: 2.4rem 0; }
-table { border-collapse: collapse; } td, th { border: 1px solid var(--rule); padding: 6px 10px; }
-img { max-width: 100%; }
-</style>
-</head>
-<body>
-<main>
-${body}
-</main>
-</body>
-</html>
-`;
-  };
 }
 
 // ------------------------------------------------------------------ deploying

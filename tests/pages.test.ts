@@ -22,7 +22,7 @@ test("an address is <path>.html, then <path>/index.html; never with a slash adde
   expect(resolvePage(has, "blog")).toEqual({ file: "blog/index.html", canonical: "blog" });
   expect(resolvePage(has, "blog/")).toEqual({ file: "blog/index.html", canonical: "blog" });
   expect(resolvePage(has, "blog/post")).toEqual({ file: "blog/post.html", canonical: "blog/post" });
-  expect(resolvePage(has, "notes")).toEqual({ file: "notes/index.md", canonical: "notes" });
+  expect(resolvePage(has, "notes")).toBeNull();
   expect(resolvePage(has, "deep/a/b")).toEqual({ file: "deep/a/b.html", canonical: "deep/a/b" });
   // A page by its file's name is that page, at its own address.
   expect(resolvePage(has, "blog/post.html")).toEqual({ file: "blog/post.html", canonical: "blog/post" });
@@ -40,18 +40,15 @@ test("an address is <path>.html, then <path>/index.html; never with a slash adde
   expect(resolvePage(has, "blog")).toEqual({ file: "blog.html", canonical: "blog" });
   expect(resolvePage(has, "blog/index")).toEqual({ file: "blog/index.html", canonical: "blog/index" });
   expect(resolvePage(has, "blog/post")).toEqual({ file: "blog/post.html", canonical: "blog/post" });
-  // An index.md document's own page.
-  expect(resolvePage((p) => p == "index.md", "", "index.md")).toEqual({ file: "index.md", canonical: "" });
   expect(resolvePage(has, "caf%C3%A9")).toBeNull();
   expect(resolvePage((p) => p == "café.html", "caf%C3%A9")).toEqual({ file: "café.html", canonical: "café" });
 });
 
 test("a page's address", () => {
   expect(pageAddress("index.html")).toBe("");
-  expect(pageAddress("index.md")).toBe("");
   expect(pageAddress("about.html")).toBe("about");
   expect(pageAddress("blog/index.html")).toBe("blog");
-  expect(pageAddress("blog/post.md")).toBe("blog/post");
+  expect(pageAddress("blog/post.html")).toBe("blog/post");
   expect(pageUrl("/ada/site", "index.html")).toBe("/ada/site");
   expect(pageUrl("/ada/site", "blog/index.html")).toBe("/ada/site/blog");
   expect(pageUrl("/ada/site", "blog/my post.html")).toBe("/ada/site/blog/my%20post");
@@ -128,7 +125,7 @@ const withRoom = (m: ReturnType<typeof memoryStore>, f: (room: Room) => Promise<
   })).pipe(Effect.provide(m.layer)));
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const opts = { index: "index.html", newPage: (p: string) => `<h1>New ${p}</h1>` };
+const opts = { index: "index.html", newPage: "<h1>New</h1>" };
 const op = (room: Room, o: unknown) => runTreeOp(room, o, opts);
 const tree = (room: Room) => treeEntries(room.paths(), room.folderPaths()).map((e) => `${e.path}${e.type == "folder" ? "/" : e.type == "page" ? "" : "*"}`);
 
@@ -145,12 +142,12 @@ test("tree operations change storage and the room together, and everyone hears",
     room.onTree(() => heard++);
 
     expect(await op(room, { op: "new_page", path: "blog/index" })).toEqual({ op: "new_page", path: "blog/index.html" });
-    expect(m.text("blog/index.html")).toBe("<h1>New blog/index.html</h1>");
+    expect(m.text("blog/index.html")).toBe("<h1>New</h1>");
     await op(room, { op: "new_page", path: "blog/post.html" });
     await op(room, { op: "new_folder", path: "blog/drafts/old" });
     await tick();
     expect(heard).toBeGreaterThan(0);
-    expect(files(doc).get("blog/post.html")?.toString()).toBe("<h1>New blog/post.html</h1>");
+    expect(files(doc).get("blog/post.html")?.toString()).toBe("<h1>New</h1>");
     expect(m.folders.has("blog/drafts/old") && m.folders.has("blog/drafts")).toBe(true);
 
     // Refused, saying why.
@@ -162,7 +159,7 @@ test("tree operations change storage and the room together, and everyone hears",
     await refused({ op: "new_page", path: "blog/post.html" }, 409, /already a file/);
     await refused({ op: "new_folder", path: "blog" }, 409, /already a folder/);
     await refused({ op: "new_page", path: "style.css/x.html" }, 409, /is a file/);
-    await refused({ op: "new_page", path: "notes.txt" }, 400, /\.html or \.md/);
+    await refused({ op: "new_page", path: "notes.txt" }, 400, /an \.html file/);
     await refused({ op: "new_page", path: "../up.html" }, 400, /leaves the document/);
     await refused({ op: "new_folder", path: "api" }, 400, /own addresses/);
     await refused({ op: "delete", path: "index.html" }, 400, /own page/);
@@ -178,11 +175,11 @@ test("tree operations change storage and the room together, and everyone hears",
     files(doc).get("blog/post.html")!.insert(0, "<!-- edited -->");
     await tick();
     expect(await op(room, { op: "move", from: "blog/post.html", to: "blog/hello" })).toEqual({ op: "move", from: "blog/post.html", to: "blog/hello.html" });
-    expect(m.text("blog/hello.html")).toBe("<!-- edited --><h1>New blog/post.html</h1>");
+    expect(m.text("blog/hello.html")).toBe("<!-- edited --><h1>New</h1>");
     expect(m.text("blog/post.html")).toBeNull();
     await tick();
     expect(files(doc).has("blog/post.html")).toBe(false);
-    expect(files(doc).get("blog/hello.html")?.toString()).toBe("<!-- edited --><h1>New blog/post.html</h1>");
+    expect(files(doc).get("blog/hello.html")?.toString()).toBe("<!-- edited --><h1>New</h1>");
 
     // A folder moves with everything in it: pages, images, empty folders.
     await op(room, { op: "move", from: "img", to: "blog/img" });
@@ -219,9 +216,9 @@ test("a file a participant deletes from the room is deleted from storage too", a
 });
 
 test("a single file opened on its own has no tree to change", async () => {
-  const m = memoryStore({ "notes.md": "# Notes" });
+  const m = memoryStore({ "notes.html": "<h1>Notes</h1>" });
   await withRoom(m, async (room) => {
-    const e = await runTreeOp(room, { op: "new_page", path: "x.md" }, { index: "notes.md", only: "notes.md" }).catch((err) => err);
+    const e = await runTreeOp(room, { op: "new_page", path: "x.html" }, { index: "notes.html", only: "notes.html" }).catch((err) => err);
     expect(e).toBeInstanceOf(TreeError);
     expect(e.status).toBe(403);
   });

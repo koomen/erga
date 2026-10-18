@@ -44,7 +44,7 @@ export async function openEditor(tab: Tab, server: Server, fixture: string, opts
   const page = tab.page;
   tab.strict = !opts.allowErrors;
   const { dir, address } = await server.fixture(fixture);
-  const file = join(dir, opts.file ?? (fixture == "md" ? "index.md" : "index.html"));
+  const file = join(dir, opts.file ?? "index.html");
   const timescale = opts.timescale ?? TIMESCALE;
   // In the tab itself only: the page editor's frame and the page have their own origins.
   await page.addInitScript(({ timescale, agent }) => {

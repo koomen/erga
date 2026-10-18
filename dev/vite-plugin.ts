@@ -230,7 +230,7 @@ interface Resolved {
   shown: string;
 }
 
-/** A file (an .html or .md page, on its own) or a folder with an index.html or index.md. */
+/** A file (an .html page, on its own) or a folder with an index.html. */
 export async function resolveTarget(asked: string, cwd: string): Promise<Resolved> {
   if (!asked) throw new Error("Name a file or folder.");
   const expanded = asked == "~" || asked.startsWith("~/") ? join(homedir(), asked.slice(1)) : asked;
@@ -238,12 +238,12 @@ export async function resolveTarget(asked: string, cwd: string): Promise<Resolve
   const info = await stat(abs);
   let folder = abs, index: string | undefined, only = false;
   if (info.isDirectory()) {
-    for (const name of ["index.html", "index.htm", "index.md"]) {
+    for (const name of ["index.html", "index.htm"]) {
       if (await stat(join(abs, name)).then((s) => s.isFile(), () => false)) { index = name; break; }
     }
-    if (!index) throw new Error(`${asked}: no index.html or index.md here`);
+    if (!index) throw new Error(`${asked}: no index.html here`);
   } else {
-    if (![".html", ".htm", ".md"].includes(extname(abs).toLowerCase())) throw new Error(`${asked}: open an .html or .md file, or a folder with an index`);
+    if (![".html", ".htm"].includes(extname(abs).toLowerCase())) throw new Error(`${asked}: open an .html file, or a folder with an index.html`);
     folder = dirname(abs);
     index = basename(abs);
     only = true;

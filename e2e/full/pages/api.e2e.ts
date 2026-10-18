@@ -40,7 +40,7 @@ test("tree operations refuse what they can't do, saying why", async () => {
     [{ op: "new_page", path: "blog/post.html" }, 409, /already a file/],
     [{ op: "new_folder", path: "blog" }, 409, /already a folder/],
     [{ op: "new_folder", path: "api" }, 400, /own addresses/],
-    [{ op: "new_page", path: "notes.txt" }, 400, /\.html or \.md/],
+    [{ op: "new_page", path: "notes.txt" }, 400, /an \.html file/],
     [{ op: "new_page", path: "a<b>.html" }, 400, /can't contain/],
     [{ op: "delete", path: "index.html" }, 400, /own page/],
     [{ op: "move", from: "index.html", to: "home.html" }, 400, /own page/],

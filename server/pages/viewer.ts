@@ -96,7 +96,7 @@ export const NAV_SCRIPT = `(() => {
   const pages = new URL(frame.src || frame.dataset.src, location.href).origin;
   const meta = (name) => document.querySelector('meta[name="' + name + '"]');
   const suffix = (file) => {
-    let s = file.replace(/\\.(html|md)$/i, "");
+    let s = file.replace(/\\.html$/i, "");
     s = s == "index" ? "" : s.replace(/\\/index$/, "");
     return s ? "/" + s.split("/").map(encodeURIComponent).join("/") : "";
   };
@@ -105,7 +105,7 @@ export const NAV_SCRIPT = `(() => {
     if (e.source != frame.contentWindow || e.origin != pages || e.data?.type != "erga-nav") return;
     // A page's path in the document; "" for the document's own.
     const path = e.data.path;
-    if (typeof path != "string" || (path && !/\\.(html|md)$/i.test(path)) || path.length > 1000 || (path && path.split("/").some((p) => !p || p == ".." || p.startsWith(".")))) return;
+    if (typeof path != "string" || (path && !/\\.html$/i.test(path)) || path.length > 1000 || (path && path.split("/").some((p) => !p || p == ".." || p.startsWith(".")))) return;
     let m = meta("erga-page");
     if (!m) { m = document.head.appendChild(document.createElement("meta")); m.name = "erga-page"; m.content = ""; }
     if (m.content == path || (!path && !suffix(m.content))) return;

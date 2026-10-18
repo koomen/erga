@@ -35,7 +35,6 @@ export interface HostOptions {
     readonly name: string;
     /** The document's path inside its folder. */
     readonly path: string;
-    readonly kind: "html" | "md";
     /** Where the folder is, as the caller describes it (a directory, a URL). */
     readonly dir: string;
   };
@@ -70,8 +69,8 @@ export interface HostOptions {
   readonly turnEnded?: () => Promise<string | null> | void;
   /** The document's versions and publishing, for the agents' tools. */
   readonly versions?: VersionsAccess;
-  /** A new page's text, by its path; a plain one if not given. */
-  readonly newPage?: (path: string) => string;
+  /** A new page's text; a plain one if not given. */
+  readonly newPage?: string;
   /**
    * Where a person's conversation with the agent here is kept, step by step
    * (their own object, never the document: cloudflare/objects/person-agent.ts),
@@ -265,7 +264,7 @@ export function makeHost(opts: HostOptions) {
     let s = sessions.get(user.id);
     if (!s) {
       s = settings().then((cfg) => startSession({
-        cfg: "missing" in cfg ? null : cfg, room, owner: user, docName: doc.name, kind: doc.kind, only: opts.only,
+        cfg: "missing" in cfg ? null : cfg, room, owner: user, docName: doc.name, only: opts.only,
         canEdit: () => opts.canEdit?.(user) ?? true,
         view: view(user.id),
         naming: namingAs(user),
@@ -333,7 +332,7 @@ export function makeHost(opts: HostOptions) {
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
     .handle("info", () => Person.use((user) => Effect.gen(function* () {
       const docName = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
-      return { name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
+      return { name: doc.name, path: doc.path, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
     })))
     .handle("name", () => Person.use((user) => {
       const n = namingAs(user);
@@ -383,7 +382,7 @@ export function makeHost(opts: HostOptions) {
       const s = yield* extSession;
       const base = opts.baseUrl(yield* HttpServerRequest.HttpServerRequest);
       const name = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
-      return externalGuide({ docName: name?.title ?? doc.path, kind: doc.kind, owner: user.name, base, tools: s.tools() });
+      return externalGuide({ docName: name?.title ?? doc.path, owner: user.name, base, tools: s.tools() });
     }))
     .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
     .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
@@ -406,7 +405,7 @@ export function makeHost(opts: HostOptions) {
   /** The tree, each page with its title (its first heading, else its <title>) when it has one. */
   const entries = () => treeEntries(room.paths(), room.folderPaths()).map((e) => {
     const text = e.type == "page" ? room.text(e.path) : null;
-    const title = text != null ? titleOf(text, e.path) : null;
+    const title = text != null ? titleOf(text) : null;
     return title ? { ...e, title } : e;
   });
   const routes: Array<HttpRouter.Route<unknown>> = [
@@ -540,7 +539,7 @@ export type TreeDone = TreeOp;
  * holds). The document's own page can't be moved or deleted. Throws a
  * TreeError saying what's wrong.
  */
-export async function runTreeOp(room: Room, raw: unknown, o: { index: string; only?: string; newPage?: (path: string) => string }): Promise<TreeDone> {
+export async function runTreeOp(room: Room, raw: unknown, o: { index: string; only?: string; newPage?: string }): Promise<TreeDone> {
   if (!raw || typeof raw != "object" || Array.isArray(raw)) throw new TreeError('Send the operation as JSON: {"op": "new_page" | "new_folder" | "move" | "delete", ...}.');
   const op = raw as Record<string, unknown>;
   if (o.only != null) throw new TreeError(`This document is the single file ${o.only}, opened from disk on its own: it can't hold other files or folders.`, 403);
@@ -555,12 +554,12 @@ export async function runTreeOp(room: Room, raw: unknown, o: { index: string; on
     case "new_page": {
       let path = cleanTreePath(op.path);
       if (!isPage(path)) {
-        if (/\.[^./]+$/.test(path)) throw new TreeError(`A page is an .html or .md file, not ${path}.`);
-        path += o.index.endsWith(".md") ? ".md" : ".html";
+        if (/\.[^./]+$/.test(path)) throw new TreeError(`A page is an .html file, not ${path}.`);
+        path += ".html";
       }
       checkNewName(path, "page");
       free(path);
-      await run(room.create(path, (o.newPage ?? plainPage)(path)));
+      await run(room.create(path, o.newPage ?? PLAIN_PAGE));
       return { op: "new_page", path };
     }
     case "new_folder": {
@@ -598,4 +597,4 @@ export async function runTreeOp(room: Room, raw: unknown, o: { index: string; on
 }
 
 /** A new page when there's no template: a heading to start from. */
-const plainPage = (path: string) => path.endsWith(".md") ? "# Untitled\n\nStart writing here.\n" : "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Untitled</title>\n</head>\n<body>\n<h1>Untitled</h1>\n<p>Start writing here.</p>\n</body>\n</html>\n";
+const PLAIN_PAGE = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Untitled</title>\n</head>\n<body>\n<h1>Untitled</h1>\n<p>Start writing here.</p>\n</body>\n</html>\n";

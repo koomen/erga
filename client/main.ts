@@ -2,17 +2,16 @@
 // cloudflare/document-object.ts) as one participant among others, renders the document in the
 // page editor, sends every edit to the room as you type and applies everyone
 // else's (people and their agents) as they land, shows who's here and where
-// their carets are, and offers the same quiet chrome as the Markdown editor:
+// their carets are, and offers quiet chrome:
 // shortcuts and a toggle to the source, which shares the document state and
 // undo history. It also hosts the agent panel (⌘J): your agent runs in the
 // host, its conversation is yours alone (your other tabs show it too), and
 // its edits arrive through the room like anyone's.
 
-import { EditorState, Compartment, StateEffect, StateField, Transaction, type ChangeSet, type Extension } from "@codemirror/state";
+import { EditorState, StateEffect, StateField, Transaction, type ChangeSet, type Extension } from "@codemirror/state";
 import { EditorView, keymap, drawSelection, highlightSpecialChars, Decoration, WidgetType, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { html } from "@codemirror/lang-html";
 import { tags as t } from "@lezer/highlight";
 import { ms, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
@@ -98,7 +97,7 @@ interface EditorKept {
   path: string;
   selection: { anchor: number; head: number };
   scroll: number;
-  mode: "text" | "md" | "html";
+  mode: "text" | "html";
   pages: boolean;
   settings: boolean;
   help: boolean;
@@ -143,8 +142,8 @@ type TreeModule = { mountTree: typeof mountTree };
   // ---------------------------------------------------------------- colours
 
   // There is no dark mode: the documents shown here are rendered as their
-  // authors made them, and most don't support one. The shell and the Markdown
-  // template are always light (data-theme="light" pins style.css). The
+  // authors made them, and most don't support one. The shell is always
+  // light (data-theme="light" pins style.css). The
   // floating cards are the editor's light cards, or its dark ones on a dark
   // page: never a colour of the page's. The header's text and
   // icons turn light on a dark page too.
@@ -164,7 +163,7 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!info) return;
     const first = !backdropSeen;
     backdropSeen = true;
-    const color = b.color && CSS.supports("color", b.color) ? b.color : info.kind == "md" ? "" : "#ffffff";
+    const color = b.color && CSS.supports("color", b.color) ? b.color : "#ffffff";
     const root = document.documentElement.style;
     if (color) root.setProperty("--page-bg", color); else root.removeProperty("--page-bg");
     const rgb = (color || getComputedStyle(document.documentElement).getPropertyValue("--bg")).match(/[\d.]+/g)?.map(Number);
@@ -207,7 +206,7 @@ type TreeModule = { mountTree: typeof mountTree };
   // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
   // (Another page opened in place, while editing, changes it: swapPage.)
   let pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || info.path;
-  info = { ...info, path: pagePath, name: pagePath, kind: pagePath.endsWith(".md") ? "md" : "html" };
+  info = { ...info, path: pagePath, name: pagePath };
   /** A page's address (the editor's, while editing), given its path in the document; the root page's for null. */
   const addressOf = (path: string | null) => {
     const doc = docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
@@ -304,20 +303,10 @@ type TreeModule = { mountTree: typeof mountTree };
     window.ergaShell?.ready();
     return;
   }
-  const markdownHead = `<link rel="stylesheet" href="/fonts/inter.css"><link rel="stylesheet" href="/style.css"><style>
-    body { padding: 0; }
-    .prose { padding-top: 12vh; padding-bottom: 40vh; }
-    .prose li > p { margin: 0; }
-    .prose ul.loose li > p { margin: 0 0 0.6em; }
-    .prose [data-erga-id]:empty::before, .prose .erga-empty:empty::before { content: ""; }
-  </style><script>document.documentElement.setAttribute("data-theme", "light")</script>`;
-
   // One CodeMirror state serves both the page editor and the source view, so
   // the undo history is shared and either view's edits land in the same file.
-  // Two looks for the source views. Markdown reads like the page: its text
-  // font, wrapped, in a column as wide as the page's own text (--md-col, set
-  // when the view opens). HTML reads like code: smaller monospace, a fixed
-  // left margin, no right margin and no wrapping; long lines scroll sideways.
+  // The source view reads like code: smaller monospace, a fixed left margin,
+  // no right margin and no wrapping; long lines scroll sideways.
   const baseTheme = EditorView.theme({
     "&": { backgroundColor: "transparent", color: "var(--fg)", height: "100%" },
     ".cm-content": { caretColor: "var(--fg)" },
@@ -327,42 +316,28 @@ type TreeModule = { mountTree: typeof mountTree };
     "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection)" },
     ".cm-line": { padding: "0" },
   });
-  const markdownLook: Extension = [baseTheme, EditorView.lineWrapping, EditorView.theme({
-    "&": { fontSize: "var(--text-size)" },
-    ".cm-scroller": { fontFamily: "var(--font-text)", lineHeight: "1.7", padding: "14vh max(20px, calc((100% - var(--md-col, 40rem)) / 2)) 45vh" },
-  })];
   const htmlLook: Extension = [baseTheme, EditorView.theme({
     "&": { fontSize: "13px" },
     ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6", padding: "max(64px, 9vh) 0 40vh 56px" },
     ".cm-content": { paddingRight: "24px" },
   })];
-  const look = new Compartment();
-  /** The page's text column (as the frame measured it), so the Markdown view can match it. */
-  function setColumn(w: number) {
-    $("source").style.setProperty("--md-col", w > 200 ? `${Math.round(w)}px` : "40rem");
-  }
   const sourceHighlight = HighlightStyle.define([
-    { tag: t.heading, fontWeight: "650", color: "var(--fg-strong)" },
-    { tag: t.strong, fontWeight: "650" },
-    { tag: t.emphasis, fontStyle: "italic" },
     { tag: [t.processingInstruction, t.meta, t.punctuation, t.angleBracket, t.documentMeta], color: "var(--mark)" },
     { tag: [t.tagName, t.attributeName], color: "var(--soft)" },
     { tag: [t.string, t.attributeValue, t.url, t.link], color: "var(--soft)" },
-    { tag: t.monospace, color: "var(--fg)", fontFamily: "var(--font-mono)", fontSize: "0.88em" },
     { tag: t.comment, color: "var(--mark)", fontStyle: "italic" },
   ]);
   // The source view's state: the frame hands over its own (undo history and
   // all) when the view opens, and takes it back when it closes.
-  // (Of the page's kind: another page, opened in place (swapPage), may be the other.)
-  const sourceExtensions = (kind: "md" | "html"): Extension => [
+  const sourceExtensions: Extension = [
       peersField,
       history(),
-      kind == "md" ? markdown({ base: markdownLanguage }) : html(),
+      html(),
       drawSelection(),
       highlightSpecialChars(),
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
       syntaxHighlighting(sourceHighlight),
-      look.of(kind == "md" ? markdownLook : htmlLook),
+      htmlLook,
       // The source view's own edits go to the room; edits from the room come in marked "external".
       EditorView.updateListener.of((u) => {
         for (const tr of u.transactions) {
@@ -1151,13 +1126,11 @@ Once you've read the guide, await further instructions.`;
   const page = new RemotePage({
     frame,
     origin: new URL(pagesUrl, location.href).origin,
-    kind: info.kind,
     dir: dirOf(pagePath),
     text: initialText,
-    markdownHead,
     self,
     tracking: settings.track,
-    extensions: sourceExtensions(info.kind),
+    extensions: sourceExtensions,
     ...(back && back.path == pagePath ? { selection: back.selection, scroll: back.scroll } : {}),
     onLocal(changes) {
       collab.push(changes);
@@ -1313,9 +1286,9 @@ Once you've read the guide, await further instructions.`;
   // ---------------------------------------------------------------- views
 
   // Two views of the document: the page itself, and the file's source (its
-  // HTML or Markdown), editable, with the page's state and undo history.
+  // HTML), editable, with the page's state and undo history.
   // ⌘⇧P goes between them.
-  type Mode = "text" | "md" | "html";
+  type Mode = "text" | "html";
   let mode: Mode = "text";
   let sourceView: EditorView | null = null;
 
@@ -1325,7 +1298,6 @@ Once you've read the guide, await further instructions.`;
     switching = switching.then(() => switchMode(next));
   }
   async function switchMode(next: Mode) {
-    if (next != "text") next = info!.kind;
     if (next == mode) return;
     // Leave the current view; the source view hands the state back to the page.
     if (sourceView) {
@@ -1335,7 +1307,7 @@ Once you've read the guide, await further instructions.`;
       page.attach(st);
     }
     let handed: EditorState | null = null;
-    if (next != "text") { handed = (await page.detach()).state; setColumn(page.column); }
+    if (next != "text") handed = (await page.detach()).state;
     mode = next;
     if (next == "text") {
       $("source").hidden = true;
@@ -1351,7 +1323,7 @@ Once you've read the guide, await further instructions.`;
     queueFmt();
   }
   /** ⌘⇧P: between the page and the file's own source. */
-  const toggleSource = (force?: boolean) => setMode((typeof force == "boolean" ? force : mode == "text") ? info!.kind : "text");
+  const toggleSource = (force?: boolean) => setMode((typeof force == "boolean" ? force : mode == "text") ? "html" : "text");
 
   // ---------------------------------------------------------------- view_page
 
@@ -2009,8 +1981,8 @@ Once you've read the guide, await further instructions.`;
     const text = collab.setPath(path);
     if (text == null) { goTo(addressOf(path)); return; }
     pagePath = path;
-    info = { ...info!, path, name: path, kind: path.endsWith(".md") ? "md" : "html" };
-    page.load({ kind: info.kind, dir: dirOf(path), text, extensions: sourceExtensions(info.kind) });
+    info = { ...info!, path, name: path };
+    page.load({ dir: dirOf(path), text, extensions: sourceExtensions });
     // What was said of the last page was of it alone.
     shownProblems.clear();
     problemQueue.length = 0;

@@ -1,7 +1,7 @@
 // What a new document can start from: the templates the + button offers
 // (the viewer's, the homepage's and the editor's), and /new?template=<id>
 // makes. One registry, so a new template is one entry in TEMPLATES (its
-// starting files in assets/templates/<name>/, index.html or index.md and text files
+// starting files in assets/templates/<name>/, index.html and text files
 // beside it, which the Worker reads as text). No server code: the editor's
 // bundle reads it too.
 
@@ -17,7 +17,7 @@ export interface Template {
   description: string;
   /**
    * The starting document: a folder of the repo, assets/templates/<name>, copied
-   * whole (text files only), whose page is its index.html (or index.md).
+   * whole (text files only), whose page is its index.html.
    */
   files: `assets/templates/${string}`;
 }

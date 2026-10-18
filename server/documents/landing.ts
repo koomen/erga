@@ -66,7 +66,7 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     const config = platform.directory.config;
     const project = platform.landing;
     if (config.isLocked("landing_document") || !project?.owner) return null;
-    const index = project.files["index.html"] != null ? "index.html" : project.files["index.md"] != null ? "index.md" : null;
+    const index = project.files["index.html"] != null ? "index.html" : null;
     if (!index) return null;
     // Read afresh (settings are remembered a few seconds): another isolate may have seeded it just now.
     const live = async (stored: string | null) => {

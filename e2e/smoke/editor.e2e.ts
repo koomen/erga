@@ -38,15 +38,6 @@ test("an edit made to the file on disk reaches the open page", async ({ tab }) =
   await expect.poll(() => ed.textOf("figcaption")).toBe("Where the leads went.");
 });
 
-test("a Markdown page renders, and a heading edit lands in its source line and on disk", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "md");
-  expect(await ed.textOf("#erga-article")).not.toContain("title:");
-  await ed.clickEnd("h1");
-  await ed.type(" 2026");
-  await expect.poll(() => ed.source()).toContain("\n# Field notes 2026\n");
-  await expect.poll(() => ed.disk()).toContain("# Field notes 2026");
-});
-
 test("two tabs on one document: typing in one shows in the other, without a reload", async ({ tab }) => {
   const a = await openEditor(tab, await servers.main(), "page");
   const page = await tab.page.context().newPage();

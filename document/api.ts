@@ -84,7 +84,6 @@ export const DocInfo = Schema.Struct({
   name: Schema.String,
   /** The document's path inside its folder. */
   path: Schema.String,
-  kind: Schema.Literals(["html", "md"]),
   dir: Schema.String,
   /** Who's asking: the signed-in person (in local development, ?user= may say someone else). */
   user: Schema.String,

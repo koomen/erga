@@ -8,7 +8,7 @@
 import { EditorState, Transaction, type ChangeSet, type Extension } from "@codemirror/state";
 import { historyField } from "@codemirror/commands";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
-import type { InlineStyle, Kind, MarkAuthor, PageProblem, Peer } from "./editor";
+import type { InlineStyle, MarkAuthor, PageProblem, Peer } from "./editor";
 import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { changesBetween } from "../document/merge";
@@ -18,11 +18,9 @@ export interface RemotePageConfig {
   frame: HTMLIFrameElement;
   /** The frame's origin: messages from anywhere else are ignored. */
   origin: string;
-  kind: Kind;
   /** The folder the page is in, inside the document ("" at its root): where its relative links and assets resolve. */
   dir?: string;
   text: string;
-  markdownHead: string;
   self: MarkAuthor;
   tracking: boolean;
   /** The extensions of the shell's own state (the source view's), for states that come back from the frame. */
@@ -51,12 +49,11 @@ export interface RemotePageConfig {
   onOpen?: (path: string) => void;
 }
 
-const EMPTY: Snapshot = { title: "", column: 0, canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, link: null } };
+const EMPTY: Snapshot = { title: "", canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, link: null } };
 
 export class RemotePage {
   /** The text and the page's selection, as the shell (and the room) has them. */
   state: EditorState;
-  kind: Kind;
   private readonly frame: HTMLIFrameElement;
   private readonly authority = new Authority();
   private snapshot: Snapshot = EMPTY;
@@ -71,7 +68,6 @@ export class RemotePage {
   private waiting = new Map<number, (m: FromFrame) => void>();
 
   constructor(private readonly config: RemotePageConfig) {
-    this.kind = config.kind;
     this.frame = config.frame;
     this.tracking = config.tracking;
     const sel = config.selection && selectionFrom(config.selection.anchor, config.selection.head, config.text.length);
@@ -97,10 +93,8 @@ export class RemotePage {
    * is its text from now on, and the frame's (it renders it from its top, with an undo history of its own). Its numbering
    * moves on by one, so an edit of the last page still on its way from the frame never fits the new one.
    */
-  load(page: { kind: Kind; dir: string; text: string; extensions: Extension }): void {
+  load(page: { dir: string; text: string; extensions: Extension }): void {
     const c = this.config;
-    this.kind = page.kind;
-    c.kind = page.kind;
     c.dir = page.dir;
     c.extensions = page.extensions;
     c.scroll = undefined;
@@ -110,7 +104,7 @@ export class RemotePage {
     this.detached = false;
     // What was queued for the last page is of no use; a frame not up yet starts on the new one (its init).
     this.queue = [];
-    if (this.ready) this.post({ type: "page", kind: page.kind, dir: page.dir, state: this.state.toJSON(), version: this.authority.version });
+    if (this.ready) this.post({ type: "page", dir: page.dir, state: this.state.toJSON(), version: this.authority.version });
   }
 
   // ------------------------------------------------------------ messages
@@ -137,7 +131,7 @@ export class RemotePage {
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
-        this.post({ type: "init", kind: this.kind, dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}), ...(this.zoom != 1 ? { zoom: this.zoom } : {}) });
+        this.post({ type: "init", dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}), ...(this.zoom != 1 ? { zoom: this.zoom } : {}) });
         // Only the first frame: one that loads again later starts where it renders.
         c.scroll = undefined;
         // A focus asked for before the frame was up only if the frame still has it: focus moved on since (the pages
@@ -273,8 +267,6 @@ export class RemotePage {
     return true;
   }
   title(): string { return this.snapshot.title; }
-  /** The width of the page's text column. */
-  get column(): number { return this.snapshot.column; }
   /** Where the page is scrolled to, as it last said. */
   get scrollY(): number { const y = Number(this.snapshot.scrollY); return Number.isFinite(y) && y > 0 ? y : 0; }
   render(): void { this.post({ type: "render" }); }
@@ -337,7 +329,7 @@ export class RemotePage {
 
 function isSnapshot(s: unknown): s is Snapshot {
   const v = s as Snapshot;
-  return !!v && typeof v.title == "string" && Number.isFinite(v.column) && typeof v.canPause == "boolean" && typeof v.paused == "boolean" && !!v.fmt && typeof v.fmt.has == "object"
+  return !!v && typeof v.title == "string" && typeof v.canPause == "boolean" && typeof v.paused == "boolean" && !!v.fmt && typeof v.fmt.has == "object"
     && (v.fmt.rect == null || ["left", "top", "width", "bottom"].every((k) => Number.isFinite((v.fmt.rect as Record<string, number>)[k])))
     && (v.fmt.blocker == null || typeof v.fmt.blocker == "string") && (v.fmt.link == null || typeof v.fmt.link == "string");
 }

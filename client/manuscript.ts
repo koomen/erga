@@ -47,11 +47,8 @@ export interface Unit {
   contentTo: number;
   /** Text nodes in DOM order. */
   runs: TextRun[];
-  /** The source-tree element (HTML documents), for inline-stack queries. */
-  node?: ElementNode;
-  /** Rendered HTML of the element (Markdown documents render units themselves). */
-  outerHtml?: string;
-  innerHtml?: string;
+  /** The source-tree element, for inline-stack queries. */
+  node: ElementNode;
 }
 
 export interface ElementNode {
@@ -553,7 +550,7 @@ export type Gap = { kind: "join" } | { kind: "rule"; from: number; to: number } 
  * nothing else that shows. "apart": text, a picture, a widget, a locked part, or a table's edge.
  */
 export function gap(src: string, a: Unit, b: Unit): Gap {
-  if (!a.node || !b.node || a.to > b.from) return { kind: "apart" };
+  if (a.to > b.from) return { kind: "apart" };
   let root = a.node;
   while (root.parent) root = root.parent;
   const from = a.to, to = b.from;

@@ -62,7 +62,7 @@ test("a page without a head, a body or a title still gets them where they belong
   expect(r2.after).toBe("</html>");
 });
 
-test("a <base> moves where its URLs resolve; a Markdown page can't be served directly", async () => {
+test("a <base> moves where its URLs resolve; a page that isn't HTML can't be served directly", async () => {
   const r = await render(`<!doctype html><head><base href="img/"></head><body><img src="bg.png"><img src="../style.css"></body>`);
   expect(r.before).toContain('src="/_home/g1/img/bg.png"');
   expect(r.before).toContain('src="/_home/g1/style.css"');

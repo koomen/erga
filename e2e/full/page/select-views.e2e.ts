@@ -1,6 +1,6 @@
-// Selecting across lines in the HTML view, and across blocks in Markdown ("Selecting across paragraphs").
+// Selecting across lines in the HTML view ("Selecting across paragraphs").
 import { expect, servers, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { openEditor } from "../../editor";
 
 await servers.main();
 
@@ -17,13 +17,4 @@ test("the HTML view selects across lines with a drag, and Backspace deletes them
   expect(((await ed.eval<string>(`getSelection().toString()`)).match(/\n/g) ?? []).length).toBeGreaterThanOrEqual(2);
   await ed.press("Backspace");
   await expect.poll(() => ed.source()).not.toContain("<h1>Launch notes</h1>");
-});
-
-test("Markdown: a drag from the heading into the list, and Delete leaves one line of Markdown", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "md");
-  const m1 = await ed.charAt("h1", 5), m2 = await ed.charAt("li", 6);
-  await ed.drag(m1.x, m1.y, m2.x, m2.y);
-  expect(await ed.frame<string>(`${F}.getSelection().toString()`)).toMatch(/^ notes[\s\S]*Things to do[\s\S]*Water $/);
-  await ed.press("Delete");
-  await expect.poll(() => ed.source()).toContain("\n# Fieldthe plants\n- Call");
 });

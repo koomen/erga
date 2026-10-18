@@ -106,12 +106,12 @@ export const TOOLS: ServerTool[] = [
   {
     name: "create_document",
     wide: true,
-    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page, a template (template: ${TEMPLATES.map((t) => t.id).join(", ")}, or "landing" for a copy of the server's front page) or a copy of another document you may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
+    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html, plus its styles, scripts and images), and it stays. Without files it's a blank page, a template (template: ${TEMPLATES.map((t) => t.id).join(", ")}, or "landing" for a copy of the server's front page) or a copy of another document you may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
     parameters: {
       type: "object",
       properties: {
         files: FILES_ARG,
-        index: str("The page, if it isn't index.html or index.md: an .html or .md file among the files."),
+        index: str("The page, if it isn't index.html: an .html file among the files."),
         title: str("Its title (else the page's first heading)."),
         slug: str("Its address after /<owner>/ (letters, digits and dashes; else made from the title). Taken already, it gets -2, -3..."),
         template: { type: "string", enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"], description: "Without files: a blank page (blank or page, the default), another template, or a copy of the server's front page (landing)." },
@@ -336,12 +336,12 @@ function addFile(out: Record<string, string | Uint8Array>, rel: string, data: st
   if (Object.keys(out).length > MAX_FILES) throw new ToolError(`That's more than ${MAX_FILES} files.`, 413);
 }
 
-/** The document's page among the files: the one named, else index.html, else index.md. */
+/** The document's page among the files: the one named, else index.html. */
 function pageOf(files: Record<string, unknown>, named: unknown): string {
   if (named != null && typeof named != "string") throw new ToolError("index must be a path.");
-  const index = named ? cleanPath(named) : "index.html" in files ? "index.html" : "index.md" in files ? "index.md" : null;
-  if (!index) throw new ToolError(`There's no page: include index.html or index.md, or name the page with "index". The files: ${Object.keys(files).slice(0, 20).join(", ")}.`);
-  if (!/\.(html?|md)$/i.test(index)) throw new ToolError(`The page must be an .html or .md file, not ${index}.`);
+  const index = named ? cleanPath(named) : "index.html" in files ? "index.html" : null;
+  if (!index) throw new ToolError(`There's no page: include index.html, or name the page with "index". The files: ${Object.keys(files).slice(0, 20).join(", ")}.`);
+  if (!/\.html?$/i.test(index)) throw new ToolError(`The page must be an .html file, not ${index}.`);
   if (!(index in files)) throw new ToolError(`${index} isn't among the files.`);
   return index;
 }
@@ -514,7 +514,7 @@ async function publish(request: Request, ctx: ToolContext): Promise<object> {
     const content = await runTool("update_files", { replace: true, ...args }, ctx);
     return { updated: true, ...JSON.parse((content[0] as { text: string }).text) };
   }
-  if (!args.files || !Object.keys(args.files as object).length) throw new ToolError("No files: send at least the page (index.html or index.md).");
+  if (!args.files || !Object.keys(args.files as object).length) throw new ToolError("No files: send at least the page (index.html).");
   const content = await runTool("create_document", args, ctx);
   return { created: true, ...JSON.parse((content[0] as { text: string }).text) };
 }
@@ -900,7 +900,7 @@ export function guide(origin: string, session: ToolContext["session"] | null, ad
   return `# Erga
 
 > Erga (${origin}) is a multiplayer page editor: people and their agents edit
-> HTML and Markdown documents together, in place, on the rendered page. Each
+> HTML pages together, in place, on the rendered page. Each
 > document is a folder of files (its pages, styles, scripts, images), at
 > ${origin}/<owner>/<slug>: index.html is that address, and every other page
 > is at its path without .html (blog/post.html at /<owner>/<slug>/blog/post,
@@ -971,7 +971,7 @@ answers) with the same tools. In Claude Code:
 ## Publishing a folder (a static site) as a document
 
 To put a local static web app or page on Erga, send its folder: it needs an
-index.html (or index.md) at the top. From the folder (the build output, if it
+index.html at the top. From the folder (the build output, if it
 has one):
 
     args=(); while IFS= read -r f; do args+=(-F "\${f#./}=@\$f"); done < <(find . -type f ! -path '*/.*' ! -path '*/node_modules/*')
@@ -989,7 +989,7 @@ too), on an origin of its own; relative links between its files work.
 
 ## Working in a document
 
-A document is a folder of files. Pages are its .html (or .md) files
+A document is a folder of files. Pages are its .html files
 (index.html is the home page); everything else (CSS, JS, images, fonts) is
 shared assets. Users see pages; you see files: the document tools see the
 whole document as one file system, rooted at its folder.

@@ -103,7 +103,7 @@ export function readFixture(name: string): Record<string, string> {
   return out;
 }
 
-const indexOf = (files: Record<string, string>) => ["index.html", "index.htm", "index.md"].find((n) => n in files) ?? Object.keys(files)[0];
+const indexOf = (files: Record<string, string>) => ["index.html", "index.htm"].find((n) => n in files) ?? Object.keys(files)[0];
 
 export function makeDoc(base: string, headers: Record<string, string>, fixture: Record<string, string>, extra: Partial<Doc> & { dispose(): Promise<void> }, perUser: Record<string, Record<string, string>> = {}): Doc {
   const doc: Doc = {

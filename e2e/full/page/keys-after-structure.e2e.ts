@@ -55,27 +55,3 @@ test("HTML: Shift+Tab takes a nested item out, and typing at once goes at the st
   await expect.poll(() => ed.source()).toMatch(/<li>YA <strong>new<\/strong> editor<\/li>/);
   await expect.poll(() => ed.count("li li")).toBe(0);
 });
-
-test("Markdown: Tab nests an item, and typing at once goes at the start of its text", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "md");
-  await ed.clickEnd("li:last-child p");
-  await ed.press("Home");
-  await burst(ed, "Tab", "X");
-  await expect.poll(() => ed.source()).toContain("- Water the plants\n  - XCall *Sam* back\n");
-});
-
-test("Markdown: Enter after an item, then typing at once makes the next item", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "md");
-  await ed.clickEnd("li:last-child p");
-  await burst(ed, "Enter", "Write it down");
-  await expect.poll(() => ed.source()).toContain("- Call *Sam* back\n- Write it down\n");
-});
-
-test("Markdown: Backspace takes an item's marker off, a second joins it to the heading, and typing at once goes in at the join", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "md");
-  await ed.clickEnd("li:first-child");
-  await ed.press("Home");
-  await burst(ed, "Backspace", "");
-  await burst(ed, "Backspace", "+");
-  await expect.poll(() => ed.source()).toContain("## Things to do+Water the plants\n- Call");
-});

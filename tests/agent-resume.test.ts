@@ -61,7 +61,7 @@ async function openDocument(data: Map<string, Uint8Array>, store: ChatStore, run
   };
   const host = makeHost({
     room, files, agent: { apiKey: Redacted.make(""), model: "script", effort: "medium" },
-    doc: { name: "index.html", path: "index.html", kind: "html", dir: "ada" },
+    doc: { name: "index.html", path: "index.html", dir: "ada" },
     personOf: () => ({ id: "ada", name: "Ada" }),
     agentOf: () => null,
     baseUrl: () => "",

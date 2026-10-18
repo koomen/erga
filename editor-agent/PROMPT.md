@@ -2,8 +2,8 @@
 
 Rules for an agent creating or editing an Erga document so that people
 can keep editing it by hand in the page editor. A document is a folder of
-files (or, opened from disk, a single file). Pages are its `.html` (or `.md`)
-files: `index.html` is the home page, and every other page has its own
+files (or, opened from disk, a single file). Pages are its `.html` files:
+`index.html` is the home page, and every other page has its own
 address (`blog/post.html` at `/<owner>/<slug>/blog/post`, `blog/index.html`
 at `/<owner>/<slug>/blog`). Everything else (CSS, JS, images, fonts, data)
 is shared assets, which any page may use. Users see pages; you see files.
@@ -294,16 +294,3 @@ A tree of views with custom edits:
 ```
 
 `e2e/fixtures/custom-edits/index.html` is a fuller example.
-
-## Markdown documents
-
-- CommonMark with GitHub's extensions (tables, task lists, strikethrough).
-  Headings, paragraphs, list items, quotes, table cells and fenced code are
-  all editable.
-- A raw HTML block is rendered as it is and is never editable, so it is the
-  way to fence off generated or fixed content in Markdown. (Inline HTML
-  inside a paragraph stays editable, and `data-erga-noedit` has no effect
-  there.)
-- Prefer Markdown syntax to inline HTML for styling (`**bold**`, `*italic*`,
-  `` `code` ``, `[text](url)`), since that is what the editor writes back
-  when someone styles text by hand.

@@ -18,7 +18,7 @@
 // Worker's code changes or the server restarts, for working
 // locally with someone watching.
 //
-// A folder (with index.html or index.md) or a single .html or .md file
+// A folder (with index.html) or a single .html file
 // named here is linked to one of your documents and edited where it is:
 // edits are written back to it, and changes made to it on disk (another
 // editor, git) show up in the page as they happen. A single

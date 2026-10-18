@@ -56,7 +56,7 @@ async function openDocument(settings: Parameters<typeof makeHost>[0]["agent"]) {
   const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(Layer.merge(Layer.succeed(FileStore, files), StateStore.none)), Scope.provide(scope)));
   const host = makeHost({
     room, files, agent: settings,
-    doc: { name: "index.html", path: "index.html", kind: "html", dir: "ada" },
+    doc: { name: "index.html", path: "index.html", dir: "ada" },
     personOf: () => ({ id: "ada", name: "Ada" }),
     agentOf: () => null,
     baseUrl: () => "",
