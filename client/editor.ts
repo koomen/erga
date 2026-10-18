@@ -1531,6 +1531,8 @@ export class PageEditor {
     const sel = this.currentSelection();
     const u = sel ? M.unitAt(this.units, sel.from) : null;
     if (u && u.tag != "pre") text = text.replace(/\s*\n\s*/g, " ");
+    // A URL pasted over selected text links the text (as the style bar's link does); where it can't, the URL replaces it.
+    if (sel && !sel.empty && u && u.tag != "pre" && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink(text.trim()) == null) return;
     this.insertText(text, null, "input.paste");
   }
 
