@@ -2,16 +2,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, settle, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { openEditor } from "../../editor";
 
 await servers.main();
 
-test("with the system in dark mode, the Markdown page and the shell stay light, and there is no theme toggle", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "md");
+test("with the system in dark mode, the shell stays light, and there is no theme toggle", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
   await tab.page.emulateMedia({ colorScheme: "dark" });
   await settle(tab.page);
   await settle(tab.page);
-  expect(await ed.frame<string>(`getComputedStyle(${F}.body).backgroundColor`)).toBe("rgb(255, 255, 255)");
   expect(await ed.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`)).toBe("rgb(255, 255, 255)");
   expect(await ed.eval<boolean>(`!!document.getElementById("btn-theme")`)).toBe(false);
 });

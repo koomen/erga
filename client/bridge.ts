@@ -19,23 +19,19 @@
 
 import { ChangeSet, EditorSelection, type EditorState, type Extension } from "@codemirror/state";
 import { history } from "@codemirror/commands";
-import { markdownLanguage } from "@codemirror/lang-markdown";
-import { LanguageSupport } from "@codemirror/language";
-import type { InlineStyle, Kind, MarkAuthor, Peer } from "./editor";
+import type { InlineStyle, MarkAuthor, Peer } from "./editor";
 import type { ViewRequest, ViewResult } from "../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { zoomKey, type ZoomBy } from "./zoom";
 
 /**
  * What the frame's editor state needs: the history (undo, shared with the
- * source view) and, for a Markdown file, the Markdown language, whose tree its
- * commands read (Enter and Backspace in lists and quotes). Nothing else of the
- * languages: the frame has no CodeMirror view to highlight, and an HTML file's
- * page is parsed by the page editor itself, so leaving out the
+ * source view). No language: the frame has no CodeMirror view to highlight,
+ * and the page is parsed by the page editor itself, so leaving out the
  * HTML language (with its CSS and JavaScript) keeps frame.js a third smaller
- * and spares a parse on every edit. The source view, in the shell, has both.
+ * and spares a parse on every edit. The source view, in the shell, has it.
  */
-export const docExtensions = (kind: Kind): Extension[] => [history(), kind == "md" ? new LanguageSupport(markdownLanguage) : []];
+export const docExtensions: Extension[] = [history()];
 
 /** The parts of a keydown the shell's shortcuts look at. */
 export interface Keys { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }
@@ -67,8 +63,6 @@ export interface Fmt {
 /** The page's state, as the shell shows it in its own controls. */
 export interface Snapshot {
   title: string;
-  /** The width of the page's text column, so the Markdown views can match it. */
-  column: number;
   canPause: boolean;
   paused: boolean;
   /** The page zooms itself (window.ergaZoom: a canvas's camera), so the editor's zoom goes to it. */
@@ -84,7 +78,7 @@ export interface Backdrop { color: string; image: string }
 /** Shell → frame. */
 export type ToFrame =
   /** `scroll`: where to scroll the page once it first renders (the page reloaded for a new release kept it: live.ts). */
-  | { type: "init"; kind: Kind; dir?: string; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number; zoom?: number }
+  | { type: "init"; dir?: string; state: unknown; version: number; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number; zoom?: number }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }
@@ -104,7 +98,7 @@ export type ToFrame =
   /** Back from the source view: the state to carry on from. */
   | { type: "attach"; state: unknown; version: number }
   /** Another of the document's pages in this one's place (the shell went to it): its kind, folder and state. */
-  | { type: "page"; kind: Kind; dir: string; state: unknown; version: number }
+  | { type: "page"; dir: string; state: unknown; version: number }
   | { type: "style"; id: number; op: "toggle"; style: InlineStyle }
   | { type: "style"; id: number; op: "clear" }
   | { type: "style"; id: number; op: "link"; url: string }

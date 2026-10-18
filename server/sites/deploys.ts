@@ -147,7 +147,7 @@ export class SiteDeploys implements SiteObject {
       if (!token) return { ok: false, error: `${site.login}'s Cloudflare connection is gone: ${site.login} connects Cloudflare again.` };
       const published = await this.deps.published(docId);
       if (!published) return { ok: false, error: "The document has no published version yet." };
-      const files = await siteFiles(published.index, published.files, doc.title);
+      const files = siteFiles(published.index, published.files);
       await deploySite(siteCloudflare(token, this.deps.net(token)), site, files, `${this.s.origin ?? ""}/${doc.owner}/${doc.slug}`);
       return { ok: true, version: published.version };
     } catch (e) {

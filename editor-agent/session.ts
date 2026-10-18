@@ -99,12 +99,12 @@ export function beyondPrompt(owner: string, names: string[]): string {
   return lines.length ? `\n${lines.join("\n")}` : "";
 }
 
-const systemPrompt = (docName: string, kind: "html" | "md", owner: string, single = false, beyond: string[] = []) => `
+const systemPrompt = (docName: string, owner: string, single = false, beyond: string[] = []) => `
 You are ${agentName(owner)}, embedded in Erga's page editor. ${owner} has this
 document open: they see one of its pages rendered live, and edit its text in place.
 Other people may have the same document open and be editing it too, each with their own
 agent; you work for ${owner} only. ${single
-  ? `The document is that one file, ${docName} (${kind == "md" ? "Markdown" : "HTML"}), opened from disk on its own: you may read and
+  ? `The document is that one file, ${docName} (HTML), opened from disk on its own: you may read and
 change it, but you can't make other files.`
   : `${FILES_PROMPT}
 
@@ -176,7 +176,7 @@ ${DOCUMENT_RULES}
 `.trim();
 
 /** What a document is, to an agent: one folder of files (users see pages, agents see files), for both agents' prompts. */
-const FILES_PROMPT = `A document is a folder of files. Pages are its .html (or .md) files (index.html is
+const FILES_PROMPT = `A document is a folder of files. Pages are its .html files (index.html is
 the home page); everything else (CSS, JS, images, fonts, data) is shared assets. Users
 see pages; you see files: your tools see the whole document as one file system, rooted
 at the document's folder (paths relative to it), with every page's files, the shared
@@ -184,8 +184,8 @@ assets and the folders, whichever page is open. You may read and change any text
 in it.`;
 
 /** How a document's pages and addresses go together, for both agents' prompts. */
-const PAGES_PROMPT = `index.html at the root (or index.md) is the document's own page, at
-/<owner>/<slug>; every other .html or .md file is a page of its own, at its path without
+const PAGES_PROMPT = `index.html at the root is the document's own page, at
+/<owner>/<slug>; every other .html file is a page of its own, at its path without
 the extension: about.html is /<owner>/<slug>/about, blog/post.html is
 /<owner>/<slug>/blog/post, and blog/index.html is /<owner>/<slug>/blog (blog.html, if
 there is one, wins over blog/index.html). Link pages to each other with relative links
@@ -309,7 +309,7 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "find",
       label: "Find files",
-      description: "Find files anywhere in the document by glob pattern, e.g. \"**/*.css\", \"*.html\" (top level) or \"posts/**/*.md\".",
+      description: "Find files anywhere in the document by glob pattern, e.g. \"**/*.css\", \"*.html\" (top level) or \"posts/**/*.html\".",
       parameters: Type.Object({ pattern: Type.String({ description: "Glob pattern" }) }),
       execute: async (_id, p: { pattern: string }) => {
         const re = globToRegExp(p.pattern);
@@ -659,7 +659,7 @@ function treeTools(tree: (op: TreeOp) => Promise<void>, open?: (path: string) =>
       }),
       execute: async (_id, p: { path: string; open?: boolean }) => {
         await tree({ op: "new_page", path: p.path });
-        const file = /\.(html|md)$/i.test(p.path) ? p.path : `${p.path}.html`;
+        const file = /\.html$/i.test(p.path) ? p.path : `${p.path}.html`;
         const made = `Made ${file} from the template.`;
         if (!p.open || !open) return text(made);
         return text(`${made} ${(await open(file)).message}`);
@@ -704,7 +704,7 @@ function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Prom
     {
       name: "list_pages",
       label: "List pages",
-      description: "List the document's pages, as its users see them in the page tree: each page's file, title and address, by folder (folders end in /). Pages are the .html and .md files; index.html is the home page. The other files (CSS, JS, images...) are shared assets, which users don't see in the tree: ls and find list those.",
+      description: "List the document's pages, as its users see them in the page tree: each page's file, title and address, by folder (folders end in /). Pages are the .html files; index.html is the home page. The other files (CSS, JS, images...) are shared assets, which users don't see in the tree: ls and find list those.",
       parameters: Type.Object({}),
       execute: async () => {
         const t = await pages();
@@ -712,7 +712,7 @@ function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Prom
           const depth = e.path.split("/").length - 1, pad = "  ".repeat(depth);
           if (e.type == "folder") return `${pad}${e.path}/`;
           const rest = pageAddress(e.path);
-          return `${pad}${e.path}  "${e.title ?? "(untitled)"}"  ${t.address}${rest ? `/${rest}` : ""}${e.path == "index.html" || e.path == "index.md" ? "  (home page)" : ""}`;
+          return `${pad}${e.path}  "${e.title ?? "(untitled)"}"  ${t.address}${rest ? `/${rest}` : ""}${e.path == "index.html" ? "  (home page)" : ""}`;
         });
         const n = t.entries.filter((e) => e.type == "page").length, assets = t.entries.filter((e) => e.type == "file").length;
         return text(`${n} page(s) and ${assets} other file(s) (shared assets).\n\n${lines.join("\n")}`);
@@ -825,7 +825,6 @@ export interface SessionOptions {
   /** The person this session works for. */
   owner: { id: string; name: string };
   docName: string;
-  kind: "html" | "md";
   /** A document that's a single file opened from disk: its path (the agent can't make other files). */
   only?: string;
   /** Whether the owner may edit (an agent acts with its user's permissions). */
@@ -951,7 +950,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   // The tools beyond the document, as the owner may use them now (none if they can't be had).
   const beyond = async () => (await opts.serverTools?.().catch((e: unknown) => { console.log(`server tools for ${owner.id}: ${e}`); return null; })) ?? [];
   let starting = false;
-  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, opts.kind, owner.name, opts.only != null, more.map((t) => t.name));
+  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, owner.name, opts.only != null, more.map((t) => t.name));
   /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
   let agent: PiAgent | null = null;
   /** The model's messages while it has no model side yet (the agent off): the stored ones, until a reset. */
@@ -1138,7 +1137,7 @@ const EXTERNAL_IDLE_MS = 8_000;
  * The guide an external agent reads first (GET /api/ext): how to call the
  * tools, what they are, and the same working rules the embedded agent follows.
  */
-export function externalGuide(o: { docName: string; kind: "html" | "md"; owner: string; base: string; tools: ToolSpec[] }): string {
+export function externalGuide(o: { docName: string; owner: string; base: string; tools: ToolSpec[] }): string {
   const origin = /^https?:\/\/[^/]+/.exec(o.base)?.[0] ?? "";
   const tools = o.tools.map((t) => `### ${t.name}\n\n${t.description}\n\nArguments (JSON Schema):\n\n\`\`\`json\n${JSON.stringify(t.parameters, null, 2)}\n\`\`\``).join("\n\n");
   return `# Editing "${o.docName}" in Erga

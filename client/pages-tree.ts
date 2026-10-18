@@ -8,7 +8,7 @@
 //
 // index.html is the home page; the others sit under it. People think in
 // pages, not files: a document has pages, and the tree shows only its pages
-// (HTML and Markdown files) and the folders that hold them (or nothing yet).
+// (HTML files) and the folders that hold them (or nothing yet).
 // The document's stylesheets, scripts, fonts and images are shared assets,
 // out of sight, as are folders holding only those; the API lists them, and
 // agents see them (to an agent a document is one folder of files). A page shows by its
@@ -80,8 +80,8 @@ export interface TreeHandle {
 }
 
 const ROOT = "index.html";
-/** A page's file: .html (or .htm), or .md (the server counts those as pages too). */
-const PAGE_EXT = /\.(html?|md)$/i;
+/** A page's file: .html (or .htm). */
+const PAGE_EXT = /\.html?$/i;
 const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const nameOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);

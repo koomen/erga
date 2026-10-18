@@ -11,7 +11,7 @@ import { avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFi
 export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
   const files = platform.templates[template.files.slice("assets/templates/".length)];
   if (!files) return null;
-  const index = files["index.html"] != null ? "index.html" : files["index.md"] != null ? "index.md" : null;
+  const index = files["index.html"] != null ? "index.html" : null;
   return index ? { files: { ...files }, index } : null;
 }
 
@@ -89,7 +89,7 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const pageText = typeof page == "string" ? page : page ? new TextDecoder().decode(page) : "";
   const { doc, added } = await platform.directory.add({
     id, owner,
-    ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText, index) ?? UNTITLED }),
+    ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
     ...(opts.test ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
     created, expires, test: opts.test,
     ...(opts.published ? { modified: created } : {}),

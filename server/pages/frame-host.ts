@@ -60,7 +60,7 @@ export const HOST_SCRIPT = `(function () {
       if (p.indexOf(DOC) != 0) return;
       // pub/ itself is the document's own page ("").
       var path = decodeURIComponent(p.slice(DOC.length));
-      if (path && !/\\.(html|md)$/i.test(path)) return;
+      if (path && !/\\.html$/i.test(path)) return;
       src = p;
       parent.postMessage({ type: "erga-nav", path: path }, SHELL);
     } catch (e) {}

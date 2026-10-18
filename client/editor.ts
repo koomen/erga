@@ -1,8 +1,8 @@
-// The page editor: the rendered page is the editing surface. The document's
-// source (HTML or Markdown) is the model, an EditorState with the same change
-// sets and undo history as the Markdown editor. The page is rendered in an
-// iframe; its manuscript elements are found by the deterministic analysis in
-// manuscript.ts / markdown.ts, which gives every text node a source range.
+// The page editor: the rendered page is the editing surface. The page's HTML
+// source is the model, an EditorState with the same change sets and undo
+// history as the source view. The page is rendered in an iframe; its
+// manuscript elements are found by the deterministic analysis in
+// manuscript.ts, which gives every text node a source range.
 //
 // Two regimes. Each manuscript unit is its own contenteditable host: click
 // into one and it behaves like an editor (caret, selection, typing), and the
@@ -18,19 +18,13 @@
 
 import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode, findClusterBreak, type ChangeSet, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
-import { insertNewlineContinueMarkup, deleteMarkupBackward } from "@codemirror/lang-markdown";
-import { syntaxTree } from "@codemirror/language";
-import type { SyntaxNode } from "@lezer/common";
 import * as M from "./manuscript";
-import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
 import { changesBetween } from "../document/merge";
 import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
 import { watchMoves } from "./moves";
 import { TEXT_GUARD, listenAsEditor } from "./text-guard";
 import { LIVE_WATCH } from "./live-page";
-
-export type Kind = "html" | "md";
 
 export interface PageUpdate {
   state: EditorState;
@@ -94,12 +88,9 @@ export interface Peer {
 
 export interface PageEditorConfig {
   frame: HTMLIFrameElement;
-  kind: Kind;
   state: EditorState;
   /** Where the document's relative URLs resolve, e.g. "/doc/". */
   base: string;
-  /** Extra <head> HTML for Markdown documents (the article template's styles). */
-  markdownHead?: string;
   onUpdate?: (u: PageUpdate) => void;
   /** Unhandled keydowns inside the page (for app-level shortcuts). */
   onKey?: (e: KeyboardEvent) => boolean;
@@ -124,29 +115,13 @@ export interface PageEditorConfig {
 export type InlineStyle = "strong" | "em" | "code";
 
 const STYLE_TAGS: Record<InlineStyle, string[]> = { strong: ["strong", "b"], em: ["em", "i"], code: ["code"] };
-const STYLE_MARKS: Record<InlineStyle, string> = { strong: "**", em: "*", code: "`" };
 /** Inline elements that only style text, which clearing formatting takes off. */
 const FORMAT_TAGS = new Set(["strong", "b", "em", "i", "code", "a", "u", "s", "strike", "del", "ins", "mark", "small", "sub", "sup", "kbd"]);
-/** Markdown's styled spans, each between a pair of marks. */
-const MD_STYLED = new Set(["Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode"]);
 
 interface Analysis { units: M.Unit[]; html: string }
 
 /** Where the reader is in the page (see viewNow): the text on the window's top line, the first block in it, the scroll. */
 interface View { text: { pos: number; top: number } | null; block: { pos: number; top: number } | null; x: number; y: number }
-
-/** A Markdown page's HTML with its units cut out: what's left is the blocks around them. Empty for HTML pages, whose units don't carry their HTML. */
-function skeletonOf(a: Analysis): string {
-  let out = "", at = 0;
-  for (const u of a.units) {
-    if (!u.outerHtml) return "";
-    const i = a.html.indexOf(u.outerHtml, at);
-    if (i < 0) return "";
-    out += a.html.slice(at, i) + "\u0000";
-    at = i + u.outerHtml.length;
-  }
-  return out + a.html.slice(at);
-}
 
 /** Inline elements a copy keeps (see clipboard), by the name it writes them with; the rest give only their text. */
 const COPY_TAGS: Record<string, string> = { strong: "strong", b: "strong", em: "em", i: "em", code: "code", a: "a", sub: "sub", sup: "sup", s: "s", del: "s", strike: "s", br: "br" };
@@ -400,7 +375,6 @@ function describeProblem(raw: RawProblem, base: string): PageProblem | null {
 
 export class PageEditor {
   state: EditorState;
-  kind: Kind;
   private frame: HTMLIFrameElement;
   private units: M.Unit[] = [];
   private els: (Element | undefined)[] = [];
@@ -424,8 +398,6 @@ export class PageEditor {
   private next: HTMLIFrameElement | null = null;
   /** Where the reader was in the page a render replaces: the block at the top of the window, and how far down it was. */
   private view: View | null = null;
-  /** A Markdown page's blocks around its units (lists and their nesting, quotes), as last rendered: when they change, patching the units isn't enough. */
-  private skeleton = "";
   /** The HTML the page on screen shows (rendered from, then patched to): what a morph starts from. */
   private domHtml = "";
   /** The last patch left a change outside the text blocks off the page: only a render shows it (see `stale`). */
@@ -480,7 +452,6 @@ export class PageEditor {
 
   constructor(readonly config: PageEditorConfig) {
     this.state = config.state;
-    this.kind = config.kind;
     this.frame = config.frame;
     if (config.onUpdate) this.listeners.push(config.onUpdate);
     this.render();
@@ -499,13 +470,8 @@ export class PageEditor {
   };
 
   private analyze(src: string): Analysis {
-    if (this.kind == "html") {
-      const a = M.analyzeHtml(src, this.decoder);
-      return { units: a.units, html: this.injectHead(M.stamp(src, a.units)) };
-    }
-    const a = analyzeMarkdown(src, this.state.selection.main.head);
-    const head = `<base href="${this.config.base}">${PROBLEM_WATCH}${LIVE_WATCH}<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${this.config.markdownHead ?? ""}<style>${PAGE_STYLE}</style>`;
-    return { units: a.units, html: `<!doctype html><html><head>${head}</head><body><article class="prose" id="erga-article">${a.html}</article></body></html>` };
+    const a = M.analyzeHtml(src, this.decoder);
+    return { units: a.units, html: this.injectHead(M.stamp(src, a.units)) };
   }
 
   private injectHead(html: string): string {
@@ -559,7 +525,6 @@ export class PageEditor {
     const src = this.state.doc.toString();
     const a = this.analyze(src);
     this.units = a.units;
-    this.skeleton = skeletonOf(a);
     this.domHtml = a.html;
     this.unshown = false;
     const onLoad = () => {
@@ -616,11 +581,10 @@ export class PageEditor {
 
   /**
    * Another page in this one's place (the shell went to another of the document's pages): its state (with an undo
-   * history of its own), its kind and its folder (`base`, as in the config). It renders as any render does, out of sight
+   * history of its own) and its folder (`base`, as in the config). It renders as any render does, out of sight
    * until it has loaded, so the last page shows until then; but from its top, and with none of the last page's marks.
    */
-  open(state: EditorState, kind: Kind, base: string): void {
-    this.kind = kind;
+  open(state: EditorState, base: string): void {
     this.config.base = base;
     this.state = state;
     this.marks = [];
@@ -756,7 +720,6 @@ export class PageEditor {
     };
     if (performance.now() - this.lastGesture > ms(GESTURE_MS)) return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
     if (win != this.frame.contentWindow || this.rendering) return refuse("the page is being rendered again; try once more");
-    if (this.kind != "html") return refuse("only HTML pages can have custom edits");
     if (!Array.isArray(ops)) return refuse("apply takes a list of custom edits");
     // A fresh analysis: its units match the page's data-erga-id numbers, and their elements are in one parse of the source as it is.
     const src = this.state.doc.toString(), fresh = M.analyzeHtml(src, this.decoder);
@@ -1494,10 +1457,10 @@ export class PageEditor {
       // An empty block: what the browser put there is all new, and takes the place of a placeholder <br>.
       const text = norm(nodes.map((n) => n.nodeValue!).join(""));
       if (!text) return;
-      const src = this.state.doc.toString(), br = this.kind == "html" ? placeholderBr(src, u) : null;
+      const src = this.state.doc.toString(), br = placeholderBr(src, u);
       const head = this.state.selection.main.head;
       const at = br ? br.from : head >= u.contentFrom && head <= u.contentTo ? head : u.contentFrom;
-      const insert = this.escape(u, at, text);
+      const insert = M.escapeHtmlText(text);
       this.dispatch({ changes: { from: at, to: br ? br.to : at, insert }, selection: { anchor: at + insert.length }, userEvent });
       return;
     }
@@ -1519,7 +1482,7 @@ export class PageEditor {
     const diff = findDiff(norm(before), after, hintK);
     if (!diff) { this.syncDOMSelection(true); return; }
     const from = toPos(diff.from), to = toPos(diff.toA);
-    const insert = this.escape(u, from, after.slice(diff.from, diff.toB));
+    const insert = M.escapeHtmlText(after.slice(diff.from, diff.toB));
     this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
   }
 
@@ -1617,7 +1580,7 @@ export class PageEditor {
     let tr = spec instanceof Transaction ? spec : this.state.update(spec);
     // An id is unique in the page: an element an edit here adds (Enter, a custom edit) loses an id the page has already.
     // Edits from elsewhere (the source, an agent, the disk) and undo (a Transaction) stay as they are.
-    if (!(spec instanceof Transaction) && this.kind == "html" && tr.docChanged && !tr.isUserEvent("external")) {
+    if (!(spec instanceof Transaction) && tr.docChanged && !tr.isUserEvent("external")) {
       const added: [number, number][] = [];
       tr.changes.iterChangedRanges((_fromA, _toA, from, to) => { if (to > from) added.push([from, to]); });
       const drops = M.duplicateIds(tr.newDoc.toString(), added);
@@ -1647,15 +1610,6 @@ export class PageEditor {
     else if (r.bottom > win.innerHeight - margin) win.scrollBy(0, r.bottom - (win.innerHeight - margin));
   }
 
-  /** Text typed into the source at `pos`, escaped for the format. */
-  private escape(u: M.Unit, pos: number, text: string): string {
-    if (this.kind == "html") return u.tag == "pre" || u.tag == "textarea" ? M.escapeHtmlText(text) : M.escapeHtmlText(text);
-    if (u.tag == "pre") return text;
-    const src = this.state.doc.toString();
-    const lineStart = src.lastIndexOf("\n", pos - 1) + 1 == pos || pos == u.contentFrom;
-    return escapeMarkdownText(text, lineStart, u.tag == "td" || u.tag == "th");
-  }
-
   private editableAt(u: M.Unit, pos: number): boolean {
     const i = M.runAt(u, pos);
     return i < 0 || u.runs[i].editable;
@@ -1677,8 +1631,8 @@ export class PageEditor {
    * that is a splice; across units the inline elements open at each end are
    * closed and reopened so the joined paragraph stays well-formed, and it
    * keeps the first unit's element (a heading joined with a paragraph stays
-   * a heading). The join only happens when nothing but whitespace (in
-   * Markdown, block marks) separates the units; otherwise the units in
+   * a heading). The join only happens when nothing but whitespace
+   * separates the units; otherwise the units in
    * between go, and the two at the ends keep what's outside the range.
    */
   replaceRange(from: number, to: number, text: string, userEvent: string): boolean {
@@ -1686,7 +1640,7 @@ export class PageEditor {
     if (!a || !b || !this.verify(a) || (a != b && !this.verify(b))) return false;
     if (!this.editableAt(a, from) || (text && !this.editableAt(a, from))) return false;
     const src = this.state.doc.toString();
-    const insert = text ? this.escape(a, from, text) : "";
+    const insert = text ? M.escapeHtmlText(text) : "";
     if (a == b) {
       // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
       const drops = insert ? this.placeholderDrops(src, [a], from, to, true) : [];
@@ -1695,9 +1649,7 @@ export class PageEditor {
     }
     // Across units.
     const between = this.units.slice(a.id, b.id + 1);
-    const joinable = this.kind == "md"
-      ? a.tag != "pre" && b.tag != "pre" && between.every((u, i) => i == 0 || /^[\s>*+#-]*(\d+[.)])?\s*$/.test(src.slice(between[i - 1].contentTo, u.contentFrom)))
-      : between.every((u, i) => i == 0 || M.adjacent(src, between[i - 1], u));
+    const joinable = between.every((u, i) => i == 0 || M.adjacent(src, between[i - 1], u));
     if (!joinable) {
       // The text inside the two end units goes, and so do the paragraphs,
       // headings and list items in between; other units (a table's cells, a
@@ -1706,7 +1658,7 @@ export class PageEditor {
       let last = M.textEnd(a);
       for (const u of between.slice(1, -1)) {
         if (u.from < last || u.to > M.textStart(b)) continue;
-        if (this.kind == "md" || !WHOLE_BLOCKS.test(u.tag)) { changes.push({ from: u.contentFrom, to: u.contentTo, insert: "" }); last = u.contentTo; continue; }
+        if (!WHOLE_BLOCKS.test(u.tag)) { changes.push({ from: u.contentFrom, to: u.contentTo, insert: "" }); last = u.contentTo; continue; }
         // The whole element, with the indent and line break before it.
         const indent = /\n[ \t]*$/.exec(src.slice(last, u.from));
         changes.push({ from: indent ? u.from - indent[0].length : u.from, to: u.to, insert: "" });
@@ -1714,10 +1666,6 @@ export class PageEditor {
       }
       changes.push({ from: M.textStart(b), to, insert: "" });
       this.dispatch({ changes, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true });
-      return true;
-    }
-    if (this.kind == "md") {
-      this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true });
       return true;
     }
     const head = M.closeTags(M.inlineStackAt(src, a, from));
@@ -1737,7 +1685,6 @@ export class PageEditor {
    * block gets content (`hasContent`), all go; else all but the first.
    */
   private placeholderDrops(src: string, units: M.Unit[], from: number, to: number, hasContent: boolean): { from: number; to: number }[] {
-    if (this.kind != "html") return [];
     const left = units.map((u) => placeholderBr(src, u)).filter((br) => br && (br.to <= from || br.from >= to)) as { from: number; to: number }[];
     return hasContent ? left : left.slice(1);
   }
@@ -1750,18 +1697,8 @@ export class PageEditor {
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u)) return false;
     const src = this.state.doc.toString();
-    if (this.kind == "md" && u.tag != "pre") {
-      // A line break inside a paragraph and the indent around it are one space on the page: they go together.
-      const brk = forward ? /^[ \t]*\n[ \t]*/.exec(src.slice(pos, u.contentTo)) : /\n[ \t]*$/.exec(src.slice(u.contentFrom, pos));
-      if (brk) {
-        const from = forward ? pos : pos - brk[0].length;
-        this.dispatch({ changes: { from, to: from + brk[0].length }, selection: { anchor: from }, userEvent: forward ? "delete.forward" : "delete.backward", scrollIntoView: true });
-        return true;
-      }
-    }
-    if (this.kind == "md" && !forward && deleteMarkupBackward(this.target())) return true;
     // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
-    const blank = this.kind == "html" && !!placeholderBr(src, u);
+    const blank = !!placeholderBr(src, u);
     if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id, pos, false);
     if (forward && (blank || pos >= M.textEnd(u))) return this.join(u.id, u.id + 1, pos, true);
     // One grapheme within the unit's text, skipping inline tag boundaries.
@@ -1783,7 +1720,6 @@ export class PageEditor {
     const other = findClusterBreak(run.text, k, forward);
     const from = M.runPos(run, Math.min(k, other)), to = M.runPos(run, Math.max(k, other));
     if (from == to) return false;
-    void src;
     this.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: forward ? "delete.forward" : "delete.backward", scrollIntoView: true });
     return true;
   }
@@ -1800,7 +1736,7 @@ export class PageEditor {
     const prev = this.units[prevId], next = this.units[nextId];
     if (!prev || !next) return false;
     const src = this.state.doc.toString();
-    const changes = this.kind == "html" ? this.joinHtml(src, prev, next, pos) : this.joinMd(src, prev, next, pos);
+    const changes = this.joinHtml(src, prev, next, pos);
     if (!changes) {
       this.dispatch({ selection: { anchor: forward ? M.textStart(next) : M.textEnd(prev) }, userEvent: "select", scrollIntoView: true });
       return true;
@@ -1818,7 +1754,7 @@ export class PageEditor {
    * the changes.
    */
   private joinHtml(src: string, prev: M.Unit, next: M.Unit, pos: number): (({ from: number; to?: number; insert?: string })[] & { at: number }) | null {
-    if (!next.node || !this.verify(prev) || !this.verify(next)) return null;
+    if (!this.verify(prev) || !this.verify(next)) return null;
     if (/^(td|th|caption)$/.test(prev.tag) || /^(td|th|caption)$/.test(next.tag)) return null;
     const between = M.gap(src, prev, next);
     if (between.kind == "apart") return null;
@@ -1860,43 +1796,6 @@ export class PageEditor {
     return Object.assign(changes, { at });
   }
 
-  /**
-   * The same in Markdown: the marks between the blocks go (blank lines, a
-   * list's, a quote's or a heading's marks, a task's box). A block whose
-   * marks end it (a setext heading's underline, a code block's fence) keeps
-   * them, and `next`'s text moves in before them. Null where the blocks
-   * can't join: a table, HTML or other text between them.
-   */
-  private joinMd(src: string, prev: M.Unit, next: M.Unit, pos: number): (({ from: number; to?: number; insert?: string })[] & { at: number }) | null {
-    if (prev.contentTo >= next.contentFrom) return null;
-    const fence = /^\n[ ]{0,3}(`{3,}|~{3,})[ \t]*(?=\n|$)/;
-    const between = src.slice(prev.contentTo, next.contentFrom);
-    const end = HEADING.test(prev.tag) ? /^\n[ ]{0,3}(=+|-+)[ \t]*(?=\n|$)/.exec(between) : prev.tag == "pre" ? fence.exec(between) : null;
-    const close = end ? end[0].length : 0;
-    let marks = between.slice(close), nextClose = 0;
-    if (next.tag == "pre") {
-      const open = /\n[ ]{0,3}(`{3,}|~{3,})[^\n]*\n$/.exec(marks), shut = fence.exec(src.slice(next.contentTo));
-      if (!open || !shut) return null;
-      marks = marks.slice(0, open.index) + "\n";
-      nextClose = shut[0].length;
-    }
-    const rule = /^[ ]{0,3}([-*_])([ \t]*\1){2,}[ \t]*$/m.exec(marks);
-    if (rule) {
-      // The rule's line, and a blank line after it.
-      const from = prev.contentTo + close + rule.index;
-      let to = from + rule[0].length;
-      if (src[to] == "\n") to++;
-      if (src[to] == "\n" && src[from - 2] == "\n") to++;
-      return Object.assign([{ from, to }], { at: pos });
-    }
-    if (!/^[\s>*+#-]*(\d+[.)])?[ \t]*(\[[ xX]\][ \t]*)?$/.test(marks)) return null;
-    const at = prev.contentTo;
-    if (close) return Object.assign([{ from: at, insert: src.slice(next.contentFrom, next.contentTo) }, { from: at + close, to: next.contentTo + nextClose }], { at });
-    const changes = [{ from: at, to: next.contentFrom }];
-    if (nextClose) changes.push({ from: next.contentTo, to: next.contentTo + nextClose });
-    return Object.assign(changes, { at });
-  }
-
   /** Enter: split the block (Shift: a line break). */
   private enter(shift: boolean): boolean {
     const sel = this.currentSelection();
@@ -1908,28 +1807,9 @@ export class PageEditor {
     const insertAt = (insert: string, caret: number) =>
       this.dispatch({ changes: { from: pos, insert }, selection: { anchor: caret }, userEvent: "input", scrollIntoView: true });
     if (u.tag == "pre") { insertAt("\n", pos + 1); return true; }
-    if (this.kind == "md") {
-      if (shift) { insertAt("  \n", pos + 3); return true; }
-      if (u.tag == "td" || u.tag == "th") return false;
-      // In a quote, a new paragraph needs a blank quoted line between.
-      const lineStart = src.lastIndexOf("\n", pos - 1) + 1;
-      const quote = /^(\s*>\s?)+/.exec(src.slice(lineStart, pos));
-      if (quote && !/^(\s*>\s?)+\s*([-+*]|\d+[.)])\s/.test(src.slice(lineStart, pos))) {
-        const prefix = quote[0];
-        const insert = "\n" + prefix.trimEnd() + "\n" + prefix;
-        this.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + insert.length }, userEvent: "input", scrollIntoView: true });
-        return true;
-      }
-      if (insertNewlineContinueMarkup(this.target())) return true;
-      // Drop trailing spaces before the break, like the Markdown command does.
-      let from = pos;
-      while (from > u.contentFrom && src[from - 1] == " ") from--;
-      this.dispatch({ changes: { from, to: pos, insert: "\n\n" }, selection: { anchor: from + 2 }, userEvent: "input", scrollIntoView: true });
-      return true;
-    }
     if (shift || !BLOCK_SPLIT.has(u.tag)) { insertAt("<br>", pos + 4); return true; }
     // Enter in an empty last list item leaves the list: the item becomes a paragraph after it.
-    const list = u.node?.parent;
+    const list = u.node.parent;
     if (u.tag == "li" && list && (list.tag == "ul" || list.tag == "ol") && !/\S/.test(textIn([u], u.contentFrom, u.contentTo))
       && !list.children.some((c) => c.kind == "element" && c.from > u.from)) {
       const indent = M.lineIndent(src, list.from);
@@ -1968,69 +1848,18 @@ export class PageEditor {
    * moves one level in, under the item before it; Shift+Tab moves it one
    * level out, after the item it was under. Elsewhere, Tab is the browser's,
    * as before. An item that can't move (the first in its list, or one at the
-   * top level) still takes the key, so the caret stays put.
+   * top level) still takes the key, so the caret stays put. An item with a
+   * list nested in it keeps its own text in a <p>
+   * (`<li><p>text</p><ul>…</ul></li>`): text beside a list isn't a unit, and
+   * couldn't be edited. Taking the last item out of a nested list takes the
+   * <p> off again.
    */
   private indentItem(out: boolean): boolean {
     const sel = this.currentSelection();
     if (!sel.empty) return false;
-    return this.kind == "md" ? this.indentMdItem(sel.head, out) : this.indentHtmlItem(sel.head, out);
-  }
-
-  private indentMdItem(pos: number, out: boolean): boolean {
-    const doc = this.state.doc;
-    // A caret in the line's indentation counts as at the item's start.
-    const caretLine = doc.lineAt(pos), at = Math.max(pos, caretLine.from + /^[\s>]*/.exec(caretLine.text)![0].length);
-    let item: SyntaxNode | null = syntaxTree(this.state).resolveInner(at, 1);
-    while (item && item.name != "ListItem") item = item.parent;
-    const mark = item?.getChild("ListMark");
-    if (!item || !mark) return false;
-    const line = doc.lineAt(item.from);
-    const start = mark.to + /^[ \t]*/.exec(doc.sliceString(mark.to, line.to))![0].length;
-    if (pos < line.from || pos > start) return false;
-    const col = (p: number) => p - doc.lineAt(p).from;
-    // The item's lines, each past what comes before its indentation (a quote's "> ").
-    const last = doc.lineAt(Math.max(item.from, item.to - (doc.sliceString(item.to - 1, item.to) == "\n" ? 1 : 0))).number;
-    const lines: { from: number; text: string }[] = [];
-    for (let n = line.number; n <= last; n++) {
-      const l = doc.line(n), quote = /^(?:[ \t]*>[ \t]?)*/.exec(l.text)![0];
-      lines.push({ from: l.from + quote.length, text: l.text.slice(quote.length) });
-    }
-    let changes: { from: number; to?: number; insert?: string }[];
-    if (!out) {
-      // In by as much as the item before it indents its text: then it's nested in that item.
-      const prev = item.prevSibling, prevMark = prev?.name == "ListItem" ? prev.getChild("ListMark") : null;
-      if (!prevMark) return true;
-      const gap = /^[ \t]*/.exec(doc.sliceString(prevMark.to, doc.lineAt(prevMark.to).to))![0].length;
-      const by = col(prevMark.to) + Math.max(1, gap) - col(mark.from);
-      if (by <= 0) return true;
-      changes = lines.filter((l) => /\S/.test(l.text)).map((l) => ({ from: l.from, insert: " ".repeat(by) }));
-    } else {
-      // Out to the column of the item it's nested in.
-      const parent = item.parent?.parent, parentMark = parent?.name == "ListItem" ? parent.getChild("ListMark") : null;
-      if (!parentMark) return true;
-      const by = col(mark.from) - col(parentMark.from);
-      if (by <= 0) return true;
-      changes = lines.map((l) => {
-        let w = 0, k = 0;
-        while (k < l.text.length && w < by && (l.text[k] == " " || l.text[k] == "\t")) { w += l.text[k] == "\t" ? 4 - (w % 4) : 1; k++; }
-        return { from: l.from, to: l.from + k };
-      }).filter((c) => c.to > c.from);
-    }
-    const set = this.state.changes(changes);
-    this.dispatch({ changes: set, selection: { anchor: set.mapPos(start, 1) }, userEvent: out ? "delete.dedent" : "input.indent", scrollIntoView: true });
-    return true;
-  }
-
-  /**
-   * The same in HTML. An item with a list nested in it keeps its own text in
-   * a <p> (`<li><p>text</p><ul>…</ul></li>`, as Markdown renders it): text
-   * beside a list isn't a unit, and couldn't be edited. Taking the last item
-   * out of a nested list takes the <p> off again.
-   */
-  private indentHtmlItem(pos: number, out: boolean): boolean {
-    const u = M.unitAt(this.units, pos);
-    const n = u?.node;
-    if (!u || !n || !this.verify(u) || pos < u.contentFrom || pos > M.textStart(u)) return false;
+    const pos = sel.head, u = M.unitAt(this.units, pos);
+    if (!u || !this.verify(u) || pos < u.contentFrom || pos > M.textStart(u)) return false;
+    const n = u.node;
     const elements = (e: M.ElementNode) => e.children.filter((c): c is M.ElementNode => c.kind == "element");
     const isList = (e: M.ElementNode | null | undefined): e is M.ElementNode => e?.tag == "ul" || e?.tag == "ol";
     const item = n.tag == "li" ? n : n.parent?.tag == "li" && elements(n.parent)[0] == n ? n.parent : null;
@@ -2135,18 +1964,13 @@ export class PageEditor {
   hasStyle(style: InlineStyle): boolean {
     const { segments } = this.styleSegments();
     if (!segments.length) return false;
-    const src = this.state.doc.toString();
-    if (this.kind == "md") {
-      const m = STYLE_MARKS[style];
-      return segments.every((g) => src.slice(g.from - m.length, g.from) == m && src.slice(g.to, g.to + m.length) == m && (style != "em" || (src[g.from - 2] != "*" && src[g.to + 1] != "*")));
-    }
     return segments.every((g) => !!this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to));
   }
 
   /**
    * Bold, italic or code on the selection: removes the style if all of the
    * selection has it, else adds it to every stretch of text in the selection.
-   * In HTML, removing it from part of an element splits the element. Returns
+   * Removing it from part of an element splits the element. Returns
    * null when done, or why it couldn't be done.
    */
   toggleStyle(style: InlineStyle): string | null {
@@ -2156,13 +1980,7 @@ export class PageEditor {
     const sel = this.state.selection.main;
     const changes: { from: number; to?: number; insert?: string }[] = [];
     const remove = this.hasStyle(style);
-    if (this.kind == "md") {
-      const m = STYLE_MARKS[style];
-      for (const g of segments) {
-        if (remove) changes.push({ from: g.from - m.length, to: g.from }, { from: g.to, to: g.to + m.length });
-        else changes.push({ from: g.from, insert: m }, { from: g.to, insert: m });
-      }
-    } else if (remove) {
+    if (remove) {
       // Group the stretches by the element that styles them, then take each element off them.
       const byEl = new Map<M.ElementNode, { from: number; to: number }>();
       for (const g of segments) {
@@ -2211,17 +2029,15 @@ export class PageEditor {
       const r = spans.get(g.u);
       spans.set(g.u, r ? { from: Math.min(r.from, g.from), to: Math.max(r.to, g.to) } : { from: g.from, to: g.to });
     }
-    const { changes, inserts } = this.kind == "md" ? this.clearMarkdown(src, spans) : this.clearHtml(src, spans);
+    const { changes, inserts } = this.clearHtml(src, spans);
     // Tags closed at one place close innermost first; tags reopened open outermost first.
     inserts.sort((a, b) => a.at - b.at || a.order - b.order);
     const all = [...changes, ...inserts.map((x) => ({ from: x.at, insert: x.insert }))];
     if (!all.length) return null;
     const set = this.state.changes(all);
-    if (this.kind == "html") {
-      const after = set.apply(this.state.doc).toString();
-      for (const u of spans.keys()) {
-        if (!M.balanced(after, set.mapPos(u.from, -1), set.mapPos(u.to, 1))) return "That selection crosses other markup; select text inside it, or around all of it.";
-      }
+    const after = set.apply(this.state.doc).toString();
+    for (const u of spans.keys()) {
+      if (!M.balanced(after, set.mapPos(u.from, -1), set.mapPos(u.to, 1))) return "That selection crosses other markup; select text inside it, or around all of it.";
     }
     this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
     return null;
@@ -2246,52 +2062,10 @@ export class PageEditor {
           walk(c, depth + 1);
         }
       };
-      if (u.node) walk(u.node, 0);
+      walk(u.node, 0);
       if (/^h[1-6]$/.test(u.tag) && /^<h[1-6]/i.test(src.slice(u.openFrom, u.openFrom + 3)) && /^<\/h[1-6]/i.test(src.slice(u.contentTo, u.contentTo + 4))) {
         changes.push({ from: u.openFrom + 1, to: u.openFrom + 3, insert: "p" }, { from: u.contentTo + 2, to: u.contentTo + 4, insert: "p" });
       }
-    }
-    return { changes, inserts };
-  }
-
-  private clearMarkdown(src: string, spans: Map<M.Unit, { from: number; to: number }>) {
-    const changes: { from: number; to: number; insert?: string }[] = [];
-    const inserts: { at: number; insert: string; order: number }[] = [];
-    const { tree, offset } = parseMarkdown(src);
-    const hasText = (from: number, to: number) => /[^\s*_~`]/.test(src.slice(from, to));
-    const headings = new Set<number>();
-    for (const { from, to } of spans.values()) {
-      const walk = (n: MdNode, depth: number) => {
-        for (const c of n.children) {
-          const cFrom = c.from + offset, cTo = c.to + offset;
-          if (cTo <= from || cFrom >= to) continue;
-          const marks = c.children.filter((k) => k.name.endsWith("Mark")).map((k) => ({ from: k.from + offset, to: k.to + offset }));
-          if (MD_STYLED.has(c.name) && marks.length >= 2) {
-            const open = marks[0], close = marks[marks.length - 1], mark = src.slice(open.from, open.to);
-            let s = Math.max(from, open.to), e = Math.min(to, close.from);
-            // A mark can't sit against a space on its inner side, so a split closes before the spaces and reopens after them.
-            if (hasText(open.to, s)) { while (/\s/.test(src[s - 1])) s--; inserts.push({ at: s, insert: mark, order: -depth }); }
-            else changes.push(open);
-            if (hasText(e, close.from)) { while (/\s/.test(src[e])) e++; inserts.push({ at: e, insert: mark, order: depth }); }
-            else changes.push(close);
-          } else if (c.name == "Link" && marks.length >= 2) {
-            // [text](url) becomes text.
-            changes.push(marks[0], { from: marks[1].from, to: cTo });
-          } else if (/^ATXHeading/.test(c.name) && !headings.has(cFrom)) {
-            headings.add(cFrom);
-            const lead = marks[0];
-            if (lead) { let end = lead.to; while (src[end] == " " || src[end] == "\t") end++; changes.push({ from: lead.from, to: end }); }
-            const trail = marks.length > 1 ? marks[marks.length - 1] : null;
-            if (trail) { let start = trail.from; while (start > lead.to && /[ \t]/.test(src[start - 1])) start--; changes.push({ from: start, to: trail.to }); }
-          } else if (/^SetextHeading/.test(c.name) && !headings.has(cFrom) && marks.length) {
-            headings.add(cFrom);
-            const line = marks[marks.length - 1];
-            changes.push({ from: src.lastIndexOf("\n", line.from - 1), to: line.to });
-          }
-          walk(c, depth + 1);
-        }
-      };
-      walk(tree, 0);
     }
     return { changes, inserts };
   }
@@ -2301,11 +2075,6 @@ export class PageEditor {
     const sel = this.state.selection.main;
     const u = M.unitAt(this.units, sel.from);
     if (!u) return null;
-    if (this.kind == "md") {
-      const src = this.state.doc.toString();
-      const m = /^\]\(([^)\s]*)\)/.exec(src.slice(sel.to));
-      return m && src[sel.from - 1] == "[" ? m[1] : null;
-    }
     const el = this.enclosing(u, ["a"], sel.from, sel.to);
     if (!el) return null;
     return /href\s*=\s*"([^"]*)"|href\s*=\s*'([^']*)'/i.exec(this.state.doc.sliceString(el.from, el.openTo))?.slice(1).find((x) => x != null) ?? "";
@@ -2320,22 +2089,15 @@ export class PageEditor {
     const src = this.state.doc.toString();
     const sel = this.state.selection.main;
     let changes: { from: number; to?: number; insert?: string }[];
-    if (this.kind == "md") {
-      const linked = src[first.from - 1] == "[" && /^\]\([^)]*\)/.exec(src.slice(last.to));
-      if (linked) changes = [{ from: first.from - 1, to: first.from }, { from: last.to, to: last.to + linked[0].length, insert: url ? `](${url})` : "" }];
-      else if (!url) return null;
-      else changes = [{ from: first.from, insert: "[" }, { from: last.to, insert: `](${url})` }];
-    } else {
-      const el = this.enclosing(first.u, ["a"], first.from, last.to);
-      const href = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-      if (el) {
-        const open = src.slice(el.from, el.openTo);
-        changes = url ? [{ from: el.from, to: el.openTo, insert: /href\s*=/i.test(open) ? open.replace(/href\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/i, `href="${href}"`) : `<a href="${href}">` }]
-          : [{ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to }];
-      } else if (!url) return null;
-      else if (!M.balanced(src, first.from, last.to)) return "That selection crosses other styling; select text inside it, or around all of it.";
-      else changes = [{ from: first.from, insert: `<a href="${href}">` }, { from: last.to, insert: "</a>" }];
-    }
+    const el = this.enclosing(first.u, ["a"], first.from, last.to);
+    const href = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    if (el) {
+      const open = src.slice(el.from, el.openTo);
+      changes = url ? [{ from: el.from, to: el.openTo, insert: /href\s*=/i.test(open) ? open.replace(/href\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/i, `href="${href}"`) : `<a href="${href}">` }]
+        : [{ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to }];
+    } else if (!url) return null;
+    else if (!M.balanced(src, first.from, last.to)) return "That selection crosses other styling; select text inside it, or around all of it.";
+    else changes = [{ from: first.from, insert: `<a href="${href}">` }, { from: last.to, insert: "</a>" }];
     const set = this.state.changes(changes);
     this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
     return null;
@@ -2352,9 +2114,8 @@ export class PageEditor {
   /**
    * Markdown at the start of a paragraph: `# ` to `###### ` makes a heading
    * (or changes a heading's level), `- ` / `* ` a bullet list, `1. ` a
-   * numbered list, `> ` a quote. In an HTML file the paragraph's element is
-   * replaced; in Markdown the marks become real. Its own undo step, like the
-   * inline shortcuts.
+   * numbered list, `> ` a quote. The paragraph's element is replaced. Its own
+   * undo step, like the inline shortcuts.
    */
   private blockRule(pos: number): void {
     const u = M.unitAt(this.units, pos);
@@ -2367,33 +2128,24 @@ export class PageEditor {
     const heading = /^h[1-6]$/.test(u.tag);
     if (u.tag != "p" && !(heading && kind == "heading")) return;
     const src = this.state.doc.toString();
-    let change: { from: number; to: number; insert: string }, caret: number;
-    if (this.kind == "md") {
-      if (heading) return;
-      const insert = kind == "heading" ? mark + " " : kind == "ul" ? "- " : kind == "quote" ? "> " : mark + " ";
-      change = { from: u.contentFrom, to: pos, insert };
-      caret = u.contentFrom + insert.length;
-    } else {
-      const rest = src.slice(pos, u.contentTo);
-      const indent = M.lineIndent(src, u.from);
-      let open: string, close: string;
-      if (kind == "heading") { open = `<h${mark.length}>`; close = `</h${mark.length}>`; }
-      else if (kind == "quote") { open = `<blockquote>\n${indent}  <p>`; close = `</p>\n${indent}</blockquote>`; }
-      else {
-        const list = kind == "ol" ? "ol" : "ul";
-        const start = kind == "ol" && parseInt(mark) != 1 ? ` start="${parseInt(mark)}"` : "";
-        open = `<${list}${start}>\n${indent}  <li>`; close = `</li>\n${indent}</${list}>`;
-      }
-      change = { from: u.from, to: u.to, insert: open + rest + close };
-      caret = u.from + open.length;
+    const rest = src.slice(pos, u.contentTo);
+    const indent = M.lineIndent(src, u.from);
+    let open: string, close: string;
+    if (kind == "heading") { open = `<h${mark.length}>`; close = `</h${mark.length}>`; }
+    else if (kind == "quote") { open = `<blockquote>\n${indent}  <p>`; close = `</p>\n${indent}</blockquote>`; }
+    else {
+      const list = kind == "ol" ? "ol" : "ul";
+      const start = kind == "ol" && parseInt(mark) != 1 ? ` start="${parseInt(mark)}"` : "";
+      open = `<${list}${start}>\n${indent}  <li>`; close = `</li>\n${indent}</${list}>`;
     }
+    const change = { from: u.from, to: u.to, insert: open + rest + close }, caret = u.from + open.length;
     this.dispatch({ changes: change, selection: { anchor: caret }, annotations: isolateHistory.of("full"), userEvent: "input.format", scrollIntoView: true });
   }
 
   /**
    * Markdown as you type: closing `**bold**`, `*italic*`, `_italic_` or
-   * `` `code` `` turns the text into that style and the marks disappear
-   * (in Markdown source they become real marks; in HTML, tags). It is its own
+   * `` `code` `` turns the text into that style: the marks become tags in
+   * the HTML. It is its own
    * undo step, so ⌘Z brings back the literal characters.
    */
   private inputRule(pos: number): void {
@@ -2403,7 +2155,7 @@ export class PageEditor {
     if (i < 0 || !u.runs[i].editable) return;
     const run = u.runs[i], before = run.text.slice(0, M.runOffset(run, pos));
     const src = this.state.doc.toString();
-    if (this.kind == "html" && M.inlineStackAt(src, u, pos).some((t) => t.tag == "code")) return;
+    if (M.inlineStackAt(src, u, pos).some((t) => t.tag == "code")) return;
     const rules: [RegExp, InlineStyle, number][] = [
       [/(^|[^*\\])\*\*(?=\S)([^*]*?\S)\*\*$/, "strong", 2],
       [/(^|[^_\\\p{L}\p{N}])__(?=\S)([^_]*?\S)__$/u, "strong", 2],
@@ -2418,9 +2170,7 @@ export class PageEditor {
       const from = M.runPos(run, open);
       const inner = src.slice(M.runPos(run, open + n), M.runPos(run, open + n + m[2].length));
       const tag = STYLE_TAGS[style][0];
-      const insert = this.kind == "md"
-        ? (style == "code" ? `\`${m[2]}\`` : `${STYLE_MARKS[style]}${inner}${STYLE_MARKS[style]}`)
-        : `<${tag}>${inner}</${tag}>`;
+      const insert = `<${tag}>${inner}</${tag}>`;
       this.dispatch({ changes: { from, to: pos, insert }, selection: { anchor: from + insert.length }, annotations: isolateHistory.of("full"), userEvent: "input.format" });
       return;
     }
@@ -2782,7 +2532,7 @@ export class PageEditor {
     if (!this.tracking) this.paintMarks();
   }
 
-  /** What CodeMirror's state commands (undo, the Markdown commands) dispatch through. */
+  /** What CodeMirror's state commands (undo, redo) dispatch through. */
   private target() {
     return { state: this.state, dispatch: (tr: Transaction) => this.dispatch(tr) };
   }
@@ -2791,7 +2541,6 @@ export class PageEditor {
 
   private shape(u: M.Unit, src: string): string {
     // Markup only: text between (or outside) tags removed.
-    if (this.kind == "md") return u.tag + "|" + (u.innerHtml ?? "").replace(/[^<>]+(?=<|$)/g, "");
     let out = "", pos = u.contentFrom;
     for (const r of u.runs) { out += src.slice(pos, r.from); pos = r.to; }
     return u.tag + "|" + out + src.slice(pos, u.contentTo);
@@ -2842,9 +2591,7 @@ export class PageEditor {
       if (nu && nu.tag == old.tag && !matched.has(nu.id)) matched.set(nu.id, { el, old });
     }
     this.units = newUnits;
-    const skeleton = skeletonOf(a), reshaped = skeleton != this.skeleton;
-    this.skeleton = skeleton;
-    const structural = reshaped || matched.size != newUnits.length || matched.size != oldUnits.length;
+    const structural = matched.size != newUnits.length || matched.size != oldUnits.length;
     // Something outside the text blocks changed (a list, a diagram, a style): patching the blocks doesn't show it.
     const outside = skeletonOfSource(oldSrc, oldUnits) != skeletonOfSource(src, newUnits);
     const fromHtml = this.domHtml;
@@ -2868,17 +2615,7 @@ export class PageEditor {
         this.updateEmpty(changed);
         return true;
       }
-      if (this.kind == "md") {
-        const article = this.doc.getElementById("erga-article");
-        if (!article) throw new Error("no article");
-        article.innerHTML = a.html;
-        this.domHtml = a.html;
-        this.collectEls();
-        for (const el of this.els) if (el) this.prepareUnit(el);
-        this.updateEmpty();
-        return true;
-      }
-      // HTML: patch matched units, build the new ones, drop the rest. A new
+      // Patch matched units, build the new ones, drop the rest. A new
       // unit is built with the largest new element around it (a paragraph
       // turned into a list brings its <ul>), placed next to its nearest
       // sibling already on the page.
@@ -2891,9 +2628,9 @@ export class PageEditor {
       tr.changes.iterChangedRanges((_fa, _ta, fromB, toB) => inserted.push([fromB, toB]));
       const isNew = (n: M.ElementNode) => inserted.some(([f, t]) => f <= n.from && n.to <= t);
       const unitOfNode = new Map<M.ElementNode, M.Unit>();
-      for (const u of newUnits) if (u.node) unitOfNode.set(u.node, u);
+      for (const u of newUnits) unitOfNode.set(u.node, u);
       for (const u of newUnits) {
-        if (els[u.id] || !u.node) continue;
+        if (els[u.id]) continue;
         let top = u.node;
         if (isNew(top)) while (top.parent && top.parent.parent && isNew(top.parent)) top = top.parent;
         const group = newUnits.filter((w) => !els[w.id] && w.from >= top.from && w.to <= top.to);
@@ -3015,7 +2752,7 @@ export class PageEditor {
         return changed;
       }
     }
-    el.innerHTML = this.kind == "md" ? u.innerHtml ?? "" : src.slice(u.contentFrom, u.contentTo);
+    el.innerHTML = src.slice(u.contentFrom, u.contentTo);
     this.prepareUnit(el);
     // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
     const nodes = this.textNodes(el);

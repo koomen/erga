@@ -92,9 +92,6 @@ export interface DocumentDeps {
 
 const { file: FILE, dir: DIR, meta: INFO, state: STATE } = KEYS;
 
-/** A new Markdown page (a document whose page is index.md). */
-const plainMarkdown = "# Untitled\n\nStart writing here.\n";
-
 const HOUR = 60 * 60 * 1000;
 
 /**
@@ -278,7 +275,7 @@ export class Document {
     const text = await this.pageText(info);
     const { doc } = await this.directory.add({
       id: info.id, owner: info.owner,
-      title: (text && titleOf(text, info.index)) || UNTITLED,
+      title: (text && titleOf(text)) || UNTITLED,
       // A test document's address stays its id (the suite addresses it so); one on disk is its folder's or file's name.
       ...(info.test ? { slug: info.id, slugSet: true } : info.disk ? { slug: info.disk.slug, slugSet: true } : {}),
       created: info.created, modified: info.modified ?? null,
@@ -349,7 +346,7 @@ export class Document {
     const text = await this.pageText(info);
     const r = await this.directory.edited(info.id, {
       modified: info.modified ?? null,
-      pageTitle: text != null ? titleOf(text, info.index) : null,
+      pageTitle: text != null ? titleOf(text) : null,
     });
     if (r?.renamed) (await this.open)?.renamed(nameOf(r.doc));
   }
@@ -846,10 +843,9 @@ export class Document {
     const agent = info.test
       ? { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" }
       : () => this.deps.agentSettings();
-    const template = this.deps.pageTemplate;
     const host = makeHost({
       room, files, agent,
-      doc: { name: info.index, path: info.index, kind: info.index.endsWith(".md") ? "md" : "html", dir: info.disk?.path ?? info.owner },
+      doc: { name: info.index, path: info.index, dir: info.disk?.path ?? info.owner },
       only: info.disk?.only ? info.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
       // The front door sets x-erga-agent only on a request whose agent token it checked.
@@ -880,7 +876,7 @@ export class Document {
         restore: (ref, by, path) => this.restore(ref, by, path),
       },
       // A new page in its file tree starts as a new document does.
-      newPage: template ? (path) => (path.endsWith(".md") ? plainMarkdown : template) : undefined,
+      newPage: this.deps.pageTemplate,
       chats: this.deps.chats && ((person) => this.deps.chats!(person, info.id)),
       chatMeta: { doc: info.id },
     });
@@ -890,7 +886,7 @@ export class Document {
       const a = authorOf(room.doc, tr);
       this.noteEdit(a ? (a.kind == "disk" ? (info.disk ? "on disk" : this.publisher ?? "files published") : editorOf(a)) : null);
     });
-    const naming = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? "", info.index));
+    const naming = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
 
     const opened: Opened = {
       broadcast: host.broadcast,

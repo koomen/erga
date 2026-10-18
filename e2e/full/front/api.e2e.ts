@@ -94,10 +94,10 @@ test("/mcp serves the same tools as a stateless MCP server: initialize, a notifi
   const listed = (m.body?.result?.tools ?? []) as { name: string; inputSchema: { required?: string[] } }[];
   expect(listed.map((x) => x.name)).toContain("create_document");
   expect(listed.find((x) => x.name == "edit")?.inputSchema.required).toContain("document");
-  m = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "create_document", arguments: { title: "Made over MCP", files: { "index.md": "# Made over MCP\n\nHello." } } } });
+  m = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "create_document", arguments: { title: "Made over MCP", files: { "index.html": "<h1>Made over MCP</h1>\n<p>Hello.</p>" } } } });
   const made = JSON.parse(m.body?.result?.content?.[0]?.text ?? "{}") as { id: string; address: string };
   expect(made.address).toBe(`/${p.login}/made-over-mcp`);
-  expect(await (await p.get(`/d/${made.id}/doc/index.md`)).text()).toContain("Hello.");
+  expect(await (await p.get(`/d/${made.id}/doc/index.html`)).text()).toContain("Hello.");
   m = await mcp({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "delete_document", arguments: { document: "/nobody/nothing" } } });
   expect(m.body?.result?.isError).toBe(true);
   expect((await fetch(`${p.base}/mcp`, { method: "POST", body: "{}" })).status).toBe(401);

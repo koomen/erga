@@ -1,7 +1,7 @@
 # Erga
 
-Erga is a multiplayer page editor: people and their agents edit an HTML or
-Markdown page together, in place, on the rendered page. It runs on
+Erga is a multiplayer page editor: people and their agents edit an HTML
+page together, in place, on the rendered page. It runs on
 Cloudflare at erga.dev.
 
     bun install

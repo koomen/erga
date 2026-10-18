@@ -16,10 +16,3 @@ test("on an HTML page, text pasted over a selection replaces it; a URL pasted ov
   await paste(ed, " https://example.com/a?b=1&c=2 ");
   await expect.poll(() => ed.source()).toContain(`<h1><a href="https://example.com/a?b=1&amp;c=2">Launch</a> notes</h1>`);
 });
-
-test("on a Markdown page, a URL pasted over selected text links it", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "md");
-  await ed.selectChars("h1", 5);
-  await paste(ed, "https://example.com");
-  await expect.poll(() => ed.source()).toContain("\n# [Field](https://example.com) notes\n");
-});

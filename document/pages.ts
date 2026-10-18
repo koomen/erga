@@ -1,15 +1,15 @@
 // A document's file tree: its pages, other files and folders, and how
-// addresses map to pages. A document is a folder; index.html (or index.md)
-// at its root is the document's own page, and any other .html or .md file in
-// it is a page too, with an address of its own under the document's:
+// addresses map to pages. A document is a folder; index.html at its root is
+// the document's own page, and any other .html file in it is a page too, with
+// an address of its own under the document's:
 //
 //   index.html            /<owner>/<slug>
 //   about.html            /<owner>/<slug>/about
 //   blog/index.html       /<owner>/<slug>/blog
 //   blog/post.html        /<owner>/<slug>/blog/post
 //
-// An address resolves to <path>.html first, then <path>/index.html (and .md
-// for each), so blog.html wins over blog/index.html. No address ends in a
+// An address resolves to <path>.html first, then <path>/index.html, so
+// blog.html wins over blog/index.html. No address ends in a
 // slash, and none is added: the page renders in a frame at its file's own
 // path, so its relative links and assets resolve as they would on disk.
 // The editor for a page is its address with #edit, which only the browser
@@ -19,7 +19,7 @@
 // door (server/documents/front-door.ts: which page an address is) and the browser (the editor and
 // the tree's UI), so it holds only plain functions and the operations' shape.
 
-/** One entry in the tree: a page (.html or .md), any other file, or a folder. */
+/** One entry in the tree: a page (.html), any other file, or a folder. */
 export interface TreeEntry { path: string; type: "page" | "file" | "folder"; /** A page's title, when it has one (the API adds it). */ title?: string }
 
 /** What can be done to the tree (POST /api/docs/<id>/tree): rename is a move. */
@@ -34,8 +34,8 @@ export class TreeError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }
 
-const PAGE = /\.(html|md)$/i;
-/** Whether a file is a page: .html or .md. */
+const PAGE = /\.html$/i;
+/** Whether a file is a page: .html. */
 export const isPage = (path: string) => PAGE.test(path);
 
 /** Paths a document never holds or serves: dotfiles and node_modules (document/content.ts says the same). */
@@ -140,8 +140,7 @@ export const pageUrl = (docAddress: string, file: string) => {
 /**
  * Which page an address under the document is (its path after
  * /<owner>/<slug>, slashes at either end ignored): <path>.html, then
- * <path>.md, then <path>/index.html, then <path>/index.md; the root page
- * for none. An address naming a page file itself ("blog.html",
+ * <path>/index.html; the root page for none. An address naming a page file itself ("blog.html",
  * "blog/index") is that page too, and `canonical` says the address it's
  * really at. Null if there's no such page.
  */
@@ -153,8 +152,8 @@ export function resolvePage(has: (path: string) => boolean, address: string, ind
   rest = parts.join("/");
   /** The page an address is by the rule above (no file names). */
   const byRule = (r: string): string | null => {
-    if (!r) return has(index) ? index : has("index.html") ? "index.html" : has("index.md") ? "index.md" : null;
-    for (const c of [`${r}.html`, `${r}.md`, `${r}/index.html`, `${r}/index.md`]) if (has(c)) return c;
+    if (!r) return has(index) ? index : has("index.html") ? "index.html" : null;
+    for (const c of [`${r}.html`, `${r}/index.html`]) if (has(c)) return c;
     return null;
   };
   let file = byRule(rest);
@@ -162,7 +161,7 @@ export function resolvePage(has: (path: string) => boolean, address: string, ind
   if (!file && isPage(rest) && has(rest)) file = rest;
   if (!file && (rest == "index" || rest.endsWith("/index"))) {
     const dir = rest.slice(0, -"index".length);
-    file = [`${dir}index.html`, `${dir}index.md`].find(has) ?? null;
+    file = has(`${dir}index.html`) ? `${dir}index.html` : null;
   }
   if (!file) return null;
   // Its own address, unless that's another page's (blog/index.html when there's a blog.html): then the one asked for.
@@ -172,14 +171,10 @@ export function resolvePage(has: (path: string) => boolean, address: string, ind
 
 /**
  * A page's title, as the list shows it: its first top-level heading (what
- * people edit on the page), else an HTML page's <title>. Null if it has neither.
+ * people edit on the page), else its <title>. Null if it has neither.
  */
-export function titleOf(text: string, path: string): string | null {
+export function titleOf(text: string): string | null {
   const clean = (s: string) => decodeEntities(s.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim().slice(0, 120) || null;
-  if (path.endsWith(".md")) {
-    const heading = /^#{1,6}[ \t]+(.+?)[ \t#]*$/m.exec(text);
-    return heading ? clean(heading[1].replace(/[*_`]/g, "")) : null;
-  }
   const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text), title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
   return (h1 && clean(h1[1])) || (title && clean(title[1])) || null;
 }

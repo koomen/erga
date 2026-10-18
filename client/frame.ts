@@ -81,7 +81,6 @@ function setZoom(level: number) {
   zoom = next;
   zoomStyle.textContent = zoom == 1 ? "" : `#page, #view { width: ${100 / zoom}%; height: ${100 / zoom}%; transform: scale(${zoom}); transform-origin: 0 0; }`;
   if (win && el && at) win.scrollTo(win.scrollX, at * el.scrollHeight);
-  remeasure = true;
   queueSnapshot();
 }
 // The zoom gestures in this frame's own document (while the page renders afresh); the page's are caught in watchPage.
@@ -140,7 +139,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       relay.reset(m.version);
       detached = false;
       restoreScroll = null;
-      page.open(stateFrom(m.state, m.kind), m.kind, setBase(m.dir));
+      page.open(stateFrom(m.state), setBase(m.dir));
       page.hold(false);
       return;
     }
@@ -164,7 +163,7 @@ window.addEventListener("message", (e: MessageEvent) => {
 });
 post({ type: "ready" });
 
-const stateFrom = (json: unknown, kind = page!.kind) => EditorState.fromJSON(json, { extensions: docExtensions(kind) }, { history: historyField });
+const stateFrom = (json: unknown) => EditorState.fromJSON(json, { extensions: docExtensions }, { history: historyField });
 /**
  * The page's own folder (`dir`, in the document), so its relative links and assets resolve as they would on disk:
  * the editor's base for it, which is this page's <base> too (server/pages/frame-host.ts set it to the document's folder): Chrome's preload
@@ -199,14 +198,12 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     setTimeout(again, 100);
   }
   relay = new Relay(m.version, (version, changes) => post({ type: "push", version, changes: changes.toJSON() }));
-  const state = EditorState.fromJSON(m.state, { extensions: docExtensions(m.kind) }, { history: historyField });
+  const state = stateFrom(m.state);
   const base = setBase(m.dir);
   page = new PageEditor({
     frame,
-    kind: m.kind,
     state,
     base,
-    markdownHead: m.markdownHead,
     self: m.self,
     onUpdate(u) {
       if (u.changes && !u.remote && !detached) relay!.local(u.changes);
@@ -246,20 +243,17 @@ function sendSelection() {
 }
 
 /** What the shell's controls show, at most once a frame. */
-let snapshotQueued = false, renderedSince = false, column = 0, remeasure = true;
+let snapshotQueued = false, renderedSince = false;
 function queueSnapshot(rendered = false) {
   renderedSince ||= rendered;
-  remeasure ||= rendered;
   if (snapshotQueued) return;
   snapshotQueued = true;
   requestAnimationFrame(() => {
     snapshotQueued = false;
     if (!page) return;
     const rect = page.selectionRect();
-    if (remeasure) { column = measureColumn(); remeasure = false; }
     const snapshot: Snapshot = {
       title: page.title(),
-      column,
       canPause: page.canPause,
       paused: page.isPaused,
       zoomsItself: typeof (cur().contentWindow as (Window & { ergaZoom?: unknown }) | null)?.ergaZoom == "function",
@@ -283,17 +277,6 @@ function detach(id: number) {
   detached = true;
   page.hold(true);
   post({ type: "detached", id, state: stateJSON(page.state, historyField), version: relay.version });
-}
-
-/** The page's text column, so the source view can match it. */
-function measureColumn(): number {
-  const d = cur().contentDocument, win = cur().contentWindow;
-  let left = Infinity, right = -Infinity;
-  for (const el of d?.querySelectorAll("[data-erga-id]") ?? []) {
-    const r = el.getBoundingClientRect();
-    if (r.width > 0 && r.width < (win?.innerWidth ?? 1e9)) { left = Math.min(left, r.left); right = Math.max(right, r.right); }
-  }
-  return right - left;
 }
 
 /** Tells the shell what happens in the page that its controls follow: pointers, keys, focus, the selection moving. */
@@ -327,7 +310,7 @@ function watchPage() {
     post({ type: "open", path });
   });
 }
-window.addEventListener("resize", () => { remeasure = true; queueSnapshot(); });
+window.addEventListener("resize", () => queueSnapshot());
 // While the page renders afresh, keys land on this frame's own document: the shell's shortcuts still reach it.
 window.addEventListener("keydown", (e) => {
   if (!isAppShortcut(e, isMac)) return;

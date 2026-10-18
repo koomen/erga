@@ -63,17 +63,6 @@ test("edits on disk above and below the view, to the text, the structure and the
   expect(await ed.count(".erga-locked"), "every block still edits").toBe(0);
 });
 
-test("edits on disk above the view of a Markdown page, new paragraphs, a list and a heading: the view doesn't move and the page isn't rendered again", async ({ tab }) => {
-  await tab.page.setViewportSize({ width: 1280, height: 800 });
-  const ed = await openEditor(tab, await servers.script(), "long-md", { file: "index.md" });
-  const anchor = await ed.frame<string>(`[...${F}.querySelectorAll("[data-erga-id]")][24].textContent.slice(0, 40)`);
-  const reading = await watch(ed, anchor);
-  ed.write(ed.disk().replace("## Section 2\n", "A new paragraph from elsewhere.\n\n- One\n- Two\n\n### A new heading\n\n## Section 2\n").replace(/(## Section 1\n\n[^\n]*)\./, `$1.${LONG}`));
-  await until(() => ed.frame<boolean>(`${F}.querySelectorAll("li").length == 2 && !!${F}.querySelector("h3")`), 5000, "the list and the heading show");
-  await ed.settle();
-  still(await reading(), false);
-});
-
 test("while you type in one paragraph, a list arrives above it: the caret stays, and your typing goes on where it was", async ({ tab }) => {
   await tab.page.setViewportSize({ width: 1280, height: 800 });
   const ed = await openEditor(tab, await servers.script(), "long");

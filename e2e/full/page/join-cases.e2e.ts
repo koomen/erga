@@ -153,43 +153,6 @@ for (const [what, a, b] of NO_JOIN) {
   });
 }
 
-// The document editor: Markdown.
-const MD: [string, string, string, number][] = [
-  ["a paragraph after a setext heading, which stays a heading", "Setext title", "after the setext heading", 1],
-  ["a task list item, after its marks go", "a task", "another task", 2],
-  ["a paragraph after a code block", "some code", "after the code", 1],
-  ["a paragraph that starts in bold", "Before bold", "Bold at the start", 1],
-  ["a paragraph that starts with a link", "Before a link", "A link at the start", 1],
-];
-
-for (const [what, a, b, presses] of MD) {
-  for (const key of ["Backspace", "Delete"] as const) {
-    test(`Markdown, ${key}: ${what} joins, the caret at the join, and undo splits it again`, async ({ tab }) => {
-      const ed = await openEditor(tab, await servers.main(), "join-cases-md", { file: "index.md" });
-      await joins(ed, a, b, key, key == "Delete" ? 1 : presses);
-      if (a == "Setext title") {
-        await caretAt(ed, b, false);
-        await ed.press(key);
-        await expect.poll(() => ed.frame<string>(`${block(a)}.tagName`)).toBe("H1");
-      }
-    });
-  }
-}
-
-test("Markdown: a rule between goes with the first Backspace, and the next joins", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "join-cases-md", { file: "index.md" });
-  await caretAt(ed, "after the rule", false);
-  await ed.press("Backspace");
-  await expect.poll(() => ed.source()).not.toContain("\n---\n");
-  await ed.press("ControlOrMeta+z");
-  await joins(ed, "Before a rule", "after the rule", "Backspace", 2);
-});
-
-test("Markdown: after a table, Backspace puts the caret at the end of the last cell, and Delete there at the start of the next block", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "join-cases-md", { file: "index.md" });
-  await moves(ed, "Math", "After the table");
-});
-
 test("a canvas: a frame's text joins its heading, and the next frame's heading joins the text of the frame before", async ({ tab }) => {
   const made = await newDoc(await servers.main(), "canvas");
   await openTab(tab, `${made.address}#edit`, { width: 1100, height: 720 });
