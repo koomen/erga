@@ -10,9 +10,9 @@
 //   assets/logo/erga-ink.svg    the wordmark in dark ink, for light backgrounds
 //   assets/logo/erga-light.svg  the wordmark in light ink, for dark backgrounds
 //   assets/logo/favicon.svg     a typed "e" in dark ink on a white rounded square
-//   assets/logo/logo.ts         the wordmark sized for the header and the favicon as a
-//                        data: URL, for the pages (server/pages/viewer.ts, client/editor.html, assets/landing/)
-// and puts the wordmark and the favicon into client/editor.html and assets/landing/index.html,
+//   assets/logo/logo.ts         the wordmark sized for the header, the favicon as a data: URL, and the "e"
+//                        alone (MARK: the agent's button), for the pages (server/pages/viewer.ts, server/admin/layout.ts)
+// and puts the wordmark, the favicon and the mark into client/editor.html and assets/landing/index.html,
 // which can't import logo.ts. It does not write assets/logo/logo.png (the 512 px PNG served at /logo.png):
 // that is erga-ink.svg at 368 px wide, centred on white, captured in a browser; make it again the same way after a change. No dependencies: the script reads the TrueType
 // tables it needs (cmap, hmtx, loca, glyf) itself.
@@ -23,7 +23,7 @@ const WORD = "erga";
 /** The header's wordmark: its x-height, in CSS pixels (the letters sit on the breadcrumbs' baseline, the g below it). */
 const HEADER_X_HEIGHT = 9.4;
 const INK = "#1c1c1f", LIGHT = "#f4f4f5";
-const here = import.meta.dir, root = join(here, "..");
+const here = import.meta.dir, root = join(here, "..", "..");
 
 const font = readFileSync(join(import.meta.dir, "SpecialElite-Regular.ttf"));
 const v = new DataView(font.buffer, font.byteOffset, font.byteLength);
@@ -160,6 +160,11 @@ const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${ex} ${ey} ${
 writeFileSync(join(here, "favicon.svg"), favicon + "\n");
 const faviconUrl = `data:image/svg+xml,${encodeURIComponent(favicon)}`;
 
+// The mark: the "e" alone in the text colour, centred in a square with a little room, for a round button (the agent's).
+const markSide = Math.round(Math.max(e.w, e.h) * 1.08);
+const mx = Math.round(e.x - (markSide - e.w) / 2), my = Math.round(e.y - (markSide - e.h) / 2);
+const mark = `<svg class="erga-mark" viewBox="${mx} ${my} ${markSide} ${markSide}" aria-hidden="true"><path fill="currentColor" d="${e.d}"/></svg>`;
+
 // In the header: px per font unit from the x-height, and the g's descent below the baseline (vertical-align) as the box's foot.
 const xHeight = -set("x").y - Math.round(upm * 0.02);
 const k = HEADER_X_HEIGHT / xHeight;
@@ -176,6 +181,9 @@ export const FAVICON = ${JSON.stringify(faviconUrl)};
 
 /** The <link> for it, for a page's head. */
 export const FAVICON_LINK = \`<link rel="icon" type="image/svg+xml" href="\${FAVICON}">\`;
+
+/** Erga's "e" alone, in the text colour, in a square: the agent's button. */
+export const MARK = ${JSON.stringify(mark)};
 `);
 
 /** Puts the logo into a page that can't import logo.ts: in place of what \`find\` matches there (the last one made). */
@@ -187,6 +195,7 @@ function put(file: string, find: RegExp, html: string) {
 const made = /<svg [^>]*class="wordmark"[\s\S]*?<\/svg>/;
 put("client/editor.html", /<link rel="icon"[^>]*>/, `<link rel="icon" type="image/svg+xml" href="${faviconUrl}">`);
 put("client/editor.html", made, header);
+put("client/editor.html", /<svg class="erga-mark"[\s\S]*?<\/svg>/, mark);
 put("assets/landing/index.html", made, wordmark("currentColor", ` class="wordmark"`));
 
 console.log(`erga: viewBox ${viewBox}, ${word.d.length} bytes of path; header ${px(word.w)}×${px(word.h)} px; favicon ${favicon.length} bytes`);
