@@ -71,8 +71,8 @@ const commit = `${git("rev-parse", "--short", "HEAD")}${git("status", "--porcela
 
 // The editor's files, built once, as the e2e suite builds them (e2e.config.ts).
 if (!process.env.ERGA_BUILT) {
-  log("building the editor (client/build.sh)...");
-  if (spawnSync(join(ROOT, "client/build.sh"), { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 }).status != 0) throw new Error("client/build.sh failed");
+  log("building the editor (client/build.ts)...");
+  if (spawnSync("bun", ["client/build.ts"], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 }).status != 0) throw new Error("client/build.ts failed");
 }
 log("starting the dev server...");
 const server: Server = await startServer({ processEnv: LATENCY ? { ERGA_REMOTE_LATENCY_MS: String(LATENCY) } : {} });
