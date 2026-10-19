@@ -49,7 +49,7 @@ test("copy and paste of a block with an id: the original keeps its id, and the p
   const before = await ids(ed);
   await ed.selectAllOf("#linked");
   await copyTo(ed, "copy", ".other");
-  await expect.poll(() => ed.source()).toContain(`<p class="other">Another block.See the target block above.</p>`);
+  await expect.poll(() => ed.source()).toContain(`<p class="other">Another block.See <a href="#target">the target block</a> above.</p>`);
   expect(await ids(ed)).toEqual(before);
 });
 
