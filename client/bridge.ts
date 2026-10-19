@@ -19,7 +19,7 @@
 
 import { ChangeSet, EditorSelection, type EditorState, type Extension } from "@codemirror/state";
 import { history } from "@codemirror/commands";
-import type { InlineStyle, MarkAuthor, Peer } from "./editor";
+import type { InlineStyle, LinkEdit, LinkInfo, MarkAuthor, Peer } from "./editor";
 import type { ViewRequest, ViewResult } from "../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { zoomKey, type ZoomBy } from "./zoom";
@@ -57,7 +57,10 @@ export interface Fmt {
   /** Why styles can't apply here, if they can't. */
   blocker: string | null;
   has: Record<InlineStyle, boolean>;
-  link: string | null;
+  /** The selection's text (its start: for a new link's text). */
+  text: string;
+  /** The link the selection or the caret is in (the caret's shows the link bar). */
+  link: LinkInfo | null;
 }
 
 /** The page's state, as the shell shows it in its own controls. */
@@ -101,7 +104,7 @@ export type ToFrame =
   | { type: "page"; dir: string; state: unknown; version: number }
   | { type: "style"; id: number; op: "toggle"; style: InlineStyle }
   | { type: "style"; id: number; op: "clear" }
-  | { type: "style"; id: number; op: "link"; url: string }
+  | { type: "style"; id: number; op: "link"; edit: LinkEdit }
   | { type: "capture"; id: number; req: ViewRequest; text?: string }
   /** The agent's request to the live page (shared/live-page.ts). */
   | { type: "live"; id: number; req: LiveRequest }

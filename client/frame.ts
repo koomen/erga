@@ -8,7 +8,7 @@
 import { ChangeSet, EditorState } from "@codemirror/state";
 import { historyField } from "@codemirror/commands";
 import { domToPng } from "modern-screenshot";
-import { PageEditor } from "./editor";
+import { PageEditor, type LinkInfo } from "./editor";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
@@ -72,6 +72,8 @@ let zoom = 1;
 const zoomStyle = document.createElement("style");
 document.head.append(zoomStyle);
 const z = (n: number) => n * zoom;
+/** The link for the shell's link bar, its rectangle in the shell's coordinates. */
+const linkIn = (l: LinkInfo | null): LinkInfo | null => l && { ...l, rect: l.rect && { left: z(l.rect.left), top: z(l.rect.top), width: z(l.rect.width), bottom: z(l.rect.bottom) } };
 function setZoom(level: number) {
   const next = clampZoom(level);
   if (next == zoom) return;
@@ -150,7 +152,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       page.hold(false);
       return;
     case "style": {
-      const why = m.op == "toggle" ? page.toggleStyle(m.style) : m.op == "clear" ? page.clearStyles() : page.setLink(m.url);
+      const why = m.op == "toggle" ? page.toggleStyle(m.style) : m.op == "clear" ? page.clearStyles() : page.setLink(m.edit);
       post({ type: "styled", id: m.id, why });
       queueSnapshot();
       return;
@@ -261,7 +263,8 @@ function queueSnapshot(rendered = false) {
         rect: rect && { left: z(rect.left), top: z(rect.top), width: z(rect.width), bottom: z(rect.bottom) },
         blocker: page.styleBlocker(),
         has: { strong: page.hasStyle("strong"), em: page.hasStyle("em"), code: page.hasStyle("code") },
-        link: page.linkAt(),
+        text: rect ? page.selectedText().slice(0, 500) : "",
+        link: linkIn(page.linkAt()),
       },
       scrollY: Math.round(cur().contentWindow?.scrollY ?? 0),
     };

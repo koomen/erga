@@ -115,6 +115,19 @@ export interface PageEditorConfig {
 export type InlineStyle = "strong" | "em" | "code";
 
 const STYLE_TAGS: Record<InlineStyle, string[]> = { strong: ["strong", "b"], em: ["em", "i"], code: ["code"] };
+
+/** The link the link bar shows: its address, its text, whether it opens in this tab, and its rectangle in the frame. */
+export interface LinkInfo {
+  href: string;
+  text: string;
+  self: boolean;
+  rect: { left: number; top: number; width: number; bottom: number } | null;
+}
+/**
+ * A change to a link (setLink): an empty url takes it off; text and self, when given, replace its own. `at` is the
+ * selection the link bar opened on, which the change applies to even if the caret has moved since (a click elsewhere).
+ */
+export interface LinkEdit { url: string; text?: string; self?: boolean; at?: { anchor: number; head: number } }
 /** Inline elements that only style text, which clearing formatting takes off. */
 const FORMAT_TAGS = new Set(["strong", "b", "em", "i", "code", "a", "u", "s", "strike", "del", "ins", "mark", "small", "sub", "sup", "kbd"]);
 
@@ -345,6 +358,38 @@ function textIn(units: M.Unit[], from: number, to: number): string {
     if (unitText) out += (out ? " " : "") + unitText;
   }
   return out;
+}
+
+/** A link (the innermost) that starts or ends at `pos`: a caret just before its <a> or just after its </a>. */
+function linkEnding(u: M.Unit, pos: number): M.ElementNode | null {
+  let found: M.ElementNode | null = null;
+  const walk = (node: M.ElementNode) => {
+    for (const c of node.children) {
+      if (c.kind != "element" || c.selfClosing || c.to < pos || c.from > pos) continue;
+      if (c.tag == "a" && (c.from == pos || c.to == pos)) found = c;
+      else if (c.from < pos && pos < c.to) walk(c);
+    }
+  };
+  walk(u.node);
+  return found;
+}
+
+const decodeAttr = (v: string) => v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+const escapeAttr = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+const attrPattern = (name: string) => new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]*)`, "i");
+
+/** An attribute's value in an opening tag, decoded; null without it. */
+function attrOf(open: string, name: string): string | null {
+  const m = attrPattern(name).exec(open);
+  return m ? decodeAttr(m[1].replace(/^(["'])(.*)\1$/s, "$2")) : null;
+}
+
+/** An opening tag with an attribute set to an (escaped) value, or taken off for null. */
+function setAttr(open: string, name: string, value: string | null): string {
+  const re = attrPattern(name);
+  if (value == null) return open.replace(re, "");
+  if (re.test(open)) return open.replace(re, ` ${name}="${value}"`);
+  return open.replace(/\s*\/?>$/, (end) => ` ${name}="${value}"${end.trim()}`);
 }
 
 type RawProblem = { kind: "resource"; tag: string; url: string } | { kind: "script"; message: string; file: string; line: number };
@@ -1495,7 +1540,7 @@ export class PageEditor {
     const u = sel ? M.unitAt(this.units, sel.from) : null;
     if (u && u.tag != "pre") text = text.replace(/\s*\n\s*/g, " ");
     // A URL pasted over selected text links the text (as the style bar's link does); where it can't, the URL replaces it.
-    if (sel && !sel.empty && u && u.tag != "pre" && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink(text.trim()) == null) return;
+    if (sel && !sel.empty && u && u.tag != "pre" && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink({ url: text.trim() }) == null) return;
     this.insertText(text, null, "input.paste");
   }
 
@@ -1620,7 +1665,8 @@ export class PageEditor {
     // The browser's target range is a DOM caret; if it's the same spot as the model's, the model's wins (see sameSpot).
     if (range && range.from == range.to && this.sameSpot(EditorSelection.cursor(range.from), sel)) range = null;
     const from = range ? range.from : sel.from, to = range ? range.to : sel.to;
-    const done = this.replaceRange(from, to, text, userEvent);
+    const done = (from == to && (userEvent == "input.type" || userEvent == "input.paste") && this.typeAtLinkEdge(from, text, userEvent))
+      || this.replaceRange(from, to, text, userEvent);
     if (done && userEvent == "input.type" && (text == "*" || text == "_" || text == "`")) this.inputRule(this.state.selection.main.head);
     if (done && userEvent == "input.type" && text == " ") this.blockRule(this.state.selection.main.head);
     return done;
@@ -2070,37 +2116,140 @@ export class PageEditor {
     return { changes, inserts };
   }
 
-  /** The link the selection is in, if any (for the toolbar). */
-  linkAt(): string | null {
+  /**
+   * The link the link bar is for: the one around the selection or, for a
+   * caret, the one it's in or at either end of (where typing goes into it,
+   * see typeAtLinkEdge).
+   */
+  private currentLink(): { u: M.Unit; el: M.ElementNode } | null {
     const sel = this.state.selection.main;
-    const u = M.unitAt(this.units, sel.from);
-    if (!u) return null;
-    const el = this.enclosing(u, ["a"], sel.from, sel.to);
-    if (!el) return null;
-    return /href\s*=\s*"([^"]*)"|href\s*=\s*'([^']*)'/i.exec(this.state.doc.sliceString(el.from, el.openTo))?.slice(1).find((x) => x != null) ?? "";
+    if (sel.empty) {
+      const u = M.unitAt(this.units, sel.from);
+      const el = u && (this.enclosing(u, ["a"], sel.from, sel.from) ?? linkEnding(u, sel.from));
+      return u && el ? { u, el } : null;
+    }
+    // The selection's text, without the spaces at its ends.
+    const { segments } = this.styleSegments();
+    const first = segments[0], last = segments[segments.length - 1];
+    if (!first || first.u != last.u) return null;
+    const el = this.enclosing(first.u, ["a"], first.from, last.to);
+    return el ? { u: first.u, el } : null;
   }
 
-  /** Links the selection to a URL, or unlinks it when the URL is empty. Returns null when done, or why not. */
-  setLink(url: string): string | null {
-    const { segments, why } = this.styleSegments();
-    if (why) return why;
-    const first = segments[0], last = segments[segments.length - 1];
-    if (first.u != last.u) return "A link can't span paragraphs; select text within one.";
+  /** The link the selection or caret is in, if any (for the link bar): its address, text and rectangle in the frame. */
+  linkAt(): LinkInfo | null {
+    const at = this.currentLink();
+    if (!at) return null;
+    const { u, el } = at;
+    const open = this.state.doc.sliceString(el.from, el.openTo);
+    let rect: DOMRect | null = null;
+    const a = this.domAtPos(el.openTo, 1), b = this.domAtPos(el.closeFrom, -1);
+    if (a && b && this.doc) {
+      const r = this.doc.createRange();
+      try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); rect = r.getBoundingClientRect(); } catch { /* the page is rendering */ }
+    }
+    return {
+      href: attrOf(open, "href") ?? "",
+      text: textIn([u], el.openTo, el.closeFrom),
+      self: (attrOf(open, "target") ?? "").toLowerCase() == "_self",
+      rect: rect && (rect.width || rect.height) ? { left: rect.left, top: rect.top, width: rect.width, bottom: rect.bottom } : null,
+    };
+  }
+
+  /**
+   * Links the selection, or changes the link the caret or selection is in:
+   * its address, its text (when given and different) and whether it opens
+   * in this tab (`target="_self"`; without one, a reader's click opens a new
+   * tab). An empty address takes the link off and keeps its text. Returns
+   * null when done, or why not.
+   */
+  setLink(edit: LinkEdit): string | null {
+    let moved: SelectionRange | null = null;
+    if (edit.at) {
+      const now = this.currentSelection(), clamp = (n: number) => Math.max(0, Math.min(this.state.doc.length, n));
+      if (now.anchor != edit.at.anchor || now.head != edit.at.head) {
+        moved = now;
+        this.dispatch({ selection: EditorSelection.single(clamp(edit.at.anchor), clamp(edit.at.head)), userEvent: "select" });
+      }
+    }
+    const done = this.applyLink(edit);
+    // The caret stays where it went.
+    if (moved) {
+      const map = (n: number) => done.changes ? done.changes.mapPos(n) : n;
+      this.dispatch({ selection: EditorSelection.single(map(moved.anchor), map(moved.head)), userEvent: "select" });
+    }
+    return done.why;
+  }
+
+  private applyLink(edit: LinkEdit): { why: string | null; changes?: ChangeSet } {
+    const sel = this.currentSelection();
     const src = this.state.doc.toString();
-    const sel = this.state.selection.main;
-    let changes: { from: number; to?: number; insert?: string }[];
-    const el = this.enclosing(first.u, ["a"], first.from, last.to);
-    const href = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-    if (el) {
-      const open = src.slice(el.from, el.openTo);
-      changes = url ? [{ from: el.from, to: el.openTo, insert: /href\s*=/i.test(open) ? open.replace(/href\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/i, `href="${href}"`) : `<a href="${href}">` }]
-        : [{ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to }];
-    } else if (!url) return null;
-    else if (!M.balanced(src, first.from, last.to)) return "That selection crosses other styling; select text inside it, or around all of it.";
-    else changes = [{ from: first.from, insert: `<a href="${href}">` }, { from: last.to, insert: "</a>" }];
+    const href = escapeAttr(edit.url);
+    const at = this.currentLink();
+    const changes: { from: number; to?: number; insert?: string }[] = [];
+    let textFrom: number, textTo: number;
+    if (at) {
+      const { u, el } = at;
+      if (!this.verify(u)) return { why: "That text is made by the page's script, so it can't be linked here." };
+      if (!edit.url) changes.push({ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to });
+      else {
+        let open = setAttr(src.slice(el.from, el.openTo), "href", href);
+        if (edit.self != null) open = setAttr(open, "target", edit.self ? "_self" : null);
+        changes.push({ from: el.from, to: el.openTo, insert: open });
+      }
+      [textFrom, textTo] = [el.openTo, el.closeFrom];
+    } else {
+      const { segments, why } = this.styleSegments();
+      if (why) return { why };
+      const first = segments[0], last = segments[segments.length - 1];
+      if (first.u != last.u) return { why: "A link can't span paragraphs; select text within one." };
+      if (!edit.url) return { why: null };
+      if (!M.balanced(src, first.from, last.to)) return { why: "That selection crosses other styling; select text inside it, or around all of it." };
+      changes.push({ from: first.from, insert: `<a href="${href}"${edit.self ? ' target="_self"' : ""}>` }, { from: last.to, insert: "</a>" });
+      [textFrom, textTo] = [first.from, last.to];
+    }
+    // New text replaces the link's (and any styling inside it).
+    const text = edit.text?.replace(/\s+/g, " ").trim();
+    const retext = !!edit.url && !!text && text != textIn(this.units, textFrom, textTo);
+    if (retext) changes.push({ from: textFrom, to: textTo, insert: M.escapeHtmlText(text) });
     const set = this.state.changes(changes);
-    this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
-    return null;
+    // A caret stays where it was, or goes to the end of new text; a selection covers the link's text.
+    const selection = sel.empty
+      ? EditorSelection.cursor(retext ? set.mapPos(textTo, 1) : set.mapPos(sel.head, 1))
+      : EditorSelection.single(set.mapPos(retext ? textFrom : sel.from, 1), set.mapPos(retext ? textTo : sel.to, -1));
+    this.dispatch({ changes: set, selection, userEvent: "input.format" });
+    return { why: null, changes: set };
+  }
+
+  /**
+   * Text typed or pasted at a caret at either end of a link: the part next
+   * to the link goes into it, and from a space on it's plain text. So a
+   * space at a link's end ends the link, and one at its start goes before
+   * it. Returns false where the caret isn't at a link's end.
+   */
+  private typeAtLinkEdge(pos: number, text: string, userEvent: string): boolean {
+    const u = M.unitAt(this.units, pos);
+    if (!u || u.tag == "pre" || !this.verify(u) || !this.editableAt(u, pos)) return false;
+    const el = this.enclosing(u, ["a"], pos, pos) ?? linkEnding(u, pos);
+    if (!el) return false;
+    const end = pos == el.closeFrom || pos == el.to, start = pos == el.from || pos == el.openTo;
+    if (!end && !start) return false;
+    const join = end ? /^\S*/.exec(text)![0] : /\S*$/.exec(text)![0];
+    const plain = end ? text.slice(join.length) : text.slice(0, text.length - join.length);
+    const [inside, outside] = end ? [el.closeFrom, el.to] : [el.openTo, el.from];
+    const changes = [];
+    if (plain) changes.push({ from: outside, insert: M.escapeHtmlText(plain) });
+    if (join) changes.push({ from: inside, insert: M.escapeHtmlText(join) });
+    const set = this.state.changes(changes);
+    const caret = set.mapPos(end ? (plain ? outside : inside) : (join ? inside : outside), 1);
+    this.dispatch({ changes: set, selection: { anchor: caret }, userEvent, scrollIntoView: true });
+    return true;
+  }
+
+  /** The selection's text, with its whitespace as one space. */
+  selectedText(): string {
+    const sel = this.state.selection.main;
+    return textIn(this.units, sel.from, sel.to).replace(/\s+/g, " ").trim();
   }
 
   /** The selection's rectangle in the frame's coordinates, if there is a non-empty one in the page. */
