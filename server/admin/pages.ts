@@ -26,7 +26,7 @@
 // GitHub accepts them, and with the lockout rules server/auth.ts gives.
 //
 // Every page has the layout every admin page shares: the
-// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Source.
+// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Ops.
 //
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
 // the message the directory gave, for a person to act on) and come only from
@@ -37,9 +37,10 @@
 // and the last admin, who can't be demoted or removed at all.
 
 import { type ConfigEntry, ConfigError, type CredentialEntry, CredentialError, type DeploySecretEntry, NotAllowed, type ServerRole, type SettingChange, type Settings, type SettingsVersion, type User } from "../directory/index.ts";
-import { esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
+import { avatarUrl, esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
+import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { byLine, VIA } from "../../shared/attribution.ts";
+import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { adminResponse } from "./layout.ts";
 import { authOps, AuthError, ScopeError, type AuthStatus, type CheckState, type OtherStatus } from "../identity/index.ts";
 
@@ -258,9 +259,16 @@ const CHANGES = 50;
  * acted through an agent or the factory, "via …" beside it. Never the agent alone.
  */
 function byHtml(by: string, via?: string | null): string {
-  if (!via) return `<span class="who"><span class="by">${esc(byLine(by))}</span></span>`;
-  const chip = viaChip(via);
-  return `<span class="who"><span class="by">${esc(byLine(by))}</span> <span class="via" data-via="${esc(via)}" title="${esc(chip.title)}">${esc(chip.text)}</span></span>`;
+  const chip = via ? viaChip(via) : null;
+  return `<span class="who">${avatarHtml(by)}<span class="by">${esc(byLine(by))}</span>${chip ? ` <span class="via" data-via="${esc(via!)}" title="${esc(chip.title)}">${esc(chip.text)}</span>` : ""}</span>`;
+}
+
+/** A person's GitHub picture, on their initial in their colour (shown if the picture doesn't load); the system has a dot. */
+function avatarHtml(by: string): string {
+  if (!by || by == SYSTEM) return `<span class="avatar system" aria-hidden="true">•</span>`;
+  const login = by.toLowerCase();
+  const pic = login.startsWith("test-") ? "" : `<img src="${esc(avatarUrl(login))}" alt="" loading="lazy" draggable="false" onerror="this.remove()">`;
+  return `<span class="avatar" style="--c: ${colorFor(login)}" aria-hidden="true">${esc(login[0]?.toUpperCase() ?? "?")}${pic}</span>`;
 }
 
 /** A via as a short chip, with more on hover: "admin agent", "token" (its name on hover), "factory #12". */
@@ -317,7 +325,7 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
   };
   const what = v.changes.map((c) => c.task || c.release || c.stagingOverride || c.user || c.token || c.signIn ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
-    <time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>${byHtml(v.by, v.via)}<ul class="what">${what}</ul>
+    ${byHtml(v.by, v.via)}<ul class="what">${what}</ul><time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>
   </li>`;
 }
 
@@ -801,21 +809,24 @@ async function changesPage(platform: Platform, session: Session, before?: number
   const older = last && last.n > 1 && history.versions.length == CHANGES;
   const style = `
   .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
-  /* One line each: when, who (and how), what, in columns as wide as their widest entry; when narrow, what goes on the next line. */
-  .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, max-content) minmax(0, 1fr); column-gap: 14px; }
-  .changes > li.change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: baseline; padding: 3px 2px; border-top: 1px solid var(--rule); font-size: 13px; line-height: 1.5; }
-  .changes > li.change > time { margin: 0; font-size: inherit; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
-  .changes .who { display: flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 22em; white-space: nowrap; }
-  .changes .who .by { color: var(--fg); flex: none; }
-  .changes .who .via { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 6px; }
-  @media (max-width: 640px) {
-    .changes { grid-template-columns: max-content minmax(0, 1fr); }
-    .changes .what { grid-column: 1 / -1; }
+  /* One row each, across the page: who (their avatar, and how), what changed (each change on its own line, in full), when. */
+  .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; }
+  .changes > li.change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: start; padding: 12px 4px; border-top: 1px solid var(--rule); font-size: 13.5px; line-height: 1.55; }
+  .changes > li.change:hover { background: color-mix(in srgb, var(--chrome) 5%, transparent); }
+  .changes > li.change > time { margin: 0; padding-top: 2px; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; text-align: right; }
+  .changes .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .changes .who .by { color: var(--fg-strong); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .changes .who .via { flex: none; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
+  .changes .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
+    background: var(--c, var(--chrome)); color: #fff; font: 600 12.5px var(--font-text); }
+  .changes .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .changes .avatar.system { background: color-mix(in srgb, var(--chrome) 25%, transparent); color: var(--soft); }
+  .changes .what { list-style: none; margin: 0; padding: 4px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .changes .what > li { overflow-wrap: anywhere; }
+  @media (max-width: 720px) {
+    .changes { grid-template-columns: minmax(0, 1fr) max-content; }
+    .changes .what { grid-column: 1 / -1; grid-row: 2; padding: 6px 0 0 38px; }
   }
-  /* What changed: the rest of the line, or the whole next one when it's narrow; one line, its full text on hover. */
-  .changes .what { list-style: none; margin: 0; padding: 0; min-width: 0; }
-  .changes .what > li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .changes .what > li:has(details[open]) { white-space: normal; }
   .changes .key { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); margin-right: 4px; }
   .changes .was { font-feature-settings: "tnum"; }
   .changes .to { color: var(--soft); margin: 0 3px; }
@@ -829,7 +840,7 @@ async function changesPage(platform: Platform, session: Session, before?: number
   .changes details summary { display: inline; color: var(--soft); cursor: pointer; }
   .changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
 `;
-  return adminResponse({ session, title: "Change log", here: "changes", style, body: `
+  return adminResponse({ session, title: "Change log", here: "changes", wide: true, style, body: `
   <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
   ${history.versions.length ? `<ol class="changes">
 ${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
@@ -837,7 +848,5 @@ ${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
   ${before || older ? `<p class="changes-more">${before ? `<a href="${esc(link("/admin/changes", session))}">Newest</a>` : ""}${before && older ? " · " : ""}${older ? `<a href="${esc(link(`/admin/changes?before=${last!.n}`, session))}">Older changes</a>` : ""}</p>` : ""}
 <script>
   ${TIMES_SCRIPT}
-  // Each change is one line: its full text on hover.
-  for (const li of document.querySelectorAll(".changes .what > li")) li.title = li.textContent.replace(/\\s+/g, " ").trim();
 </script>` });
 }
