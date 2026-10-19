@@ -1,8 +1,9 @@
 // The live page, for the agents (shared/live-page.ts): a document with audio,
-// opened in the editor. With agent control off, the agent's page_click is
-// refused; the person turns it on with a real click; the agent clicks play
-// through the editor's handlers, and reads the media's state, the console
-// (a repeated warning collapses into one line), the requests and the events.
+// opened in the editor. The agent may always act on it there: the page's
+// frame has autoplay (never full screen), and once the person has clicked in
+// the tab, the agent clicks play through the editor's handlers, and reads the
+// media's state, the console (a repeated warning collapses into one line),
+// the requests and the events.
 import { expect, servers, test, until } from "../../fixtures";
 import { person, tools } from "../versions/versions";
 
@@ -36,7 +37,7 @@ document.getElementById("play").addEventListener("click", () => {
 </html>
 `;
 
-test("the agent reads the live page and, once the person allows it, clicks play: the audio plays, and the console and requests say so", { timeout: 60_000 }, async ({ tab }) => {
+test("the agent reads the live page and clicks play: the audio plays, and the console and requests say so", { timeout: 60_000 }, async ({ tab }) => {
   const server = await servers.script();
   const owner = await person(server, "tester");
   const token = await owner.token("Live page test");
@@ -49,37 +50,29 @@ test("the agent reads the live page and, once the person allows it, clicks play:
   await p.goto(`${server.root}${doc.address}#edit`);
   await until(() => p.evaluate(() => ["erga-editor-ready", "erga-editing", "erga-listening"].every((c) => document.body.classList.contains(c))).catch(() => false), 15_000, "the editor is ready");
 
-  // Read-only tools work with agent control off: the console, with the page's 1000 warnings as one line.
+  // The console, with the page's 1000 warnings as one line.
   const consoled = await until(async () => { const r = await tool("page_console", { level: ["warn"], pattern: "AudioContext" }); return r.ok && /×1000/.test(r.text) ? r : null; }, 10_000, "the console's warnings");
   expect(consoled!.text).toMatch(/\[×1000, [\d:.]+–[\d:.]+\] warn \(page\): The AudioContext was not allowed to start/);
-  // The page's media and permissions, without code: control off, so the page's frame may not autoplay.
-  const before = await tool("page_inspect", {});
-  expect(before.ok).toBe(true);
-  const factsBefore = JSON.parse(before.text.slice(0, before.text.lastIndexOf("\n"))) as { frame: string; allow?: string; autoplay?: { allowsFeature: boolean }; media?: { element: string; paused: boolean; type: unknown; readyState: string }[] }[];
-  const pageBefore = factsBefore.find((f) => f.frame == "page")!;
-  expect(pageBefore.allow).toBe("autoplay 'none'; fullscreen 'none'");
-  expect(pageBefore.autoplay?.allowsFeature).toBe(false);
-  expect(pageBefore.media?.[0]).toMatchObject({ element: "<audio#track>", paused: true });
-  expect(factsBefore[0]).toMatchObject({ frame: "the editor (the tab itself)", editorFrame: { allow: "autoplay; fullscreen" } });
+  // The page's media and permissions, without code: its frame may autoplay, and never go full screen.
+  type Facts = { frame: string; allow?: string; autoplay?: { allowsFeature: boolean; fullscreen?: boolean }; media?: { element: string; paused: boolean; type: unknown; readyState: string }[]; editorFrame?: { allow: string } }[];
+  const facts = await until(async () => {
+    const r = await tool("page_inspect", {});
+    const f = r.ok ? JSON.parse(r.text.slice(0, r.text.lastIndexOf("\n"))) as Facts : null;
+    return f?.find((x) => x.frame == "page")?.media?.[0]?.readyState.startsWith("4") ? f : null;
+  }, 10_000, "the page's audio loads", async () => (await tool("page_inspect", {})).text);
+  const pageFacts = facts!.find((f) => f.frame == "page")!;
+  expect(pageFacts.allow).toBe("autoplay; fullscreen 'none'");
+  expect(pageFacts.autoplay).toMatchObject({ allowsFeature: true, fullscreen: false });
+  expect(pageFacts.media?.[0]).toMatchObject({ element: "<audio#track>", paused: true });
+  expect(facts![0]).toMatchObject({ frame: "the editor (the tab itself)", editorFrame: { allow: "autoplay" } });
   // The tab shows the person a line each time the agent inspects their page.
   await until(() => p.evaluate(() => document.getElementById("agent-live-text")?.textContent ?? ""), 3000, "the line in the tab").then((t) => expect(t).toMatch(/The agent read the page's media and permissions/));
+  // Nothing in the agent's panel to switch on.
+  expect(await p.locator("#agent-control").count()).toBe(0);
 
-  // page_click needs the person's switch.
-  const refused = await tool("page_click", { selector: "#play" });
-  expect(refused.ok).toBe(false);
-  expect(refused.text).toMatch(/Allow the agent to control this page/);
-
-  // The person turns it on: a real click (it gives the tab user activation). The page renders again with autoplay allowed.
-  if (await p.locator("#agent-control").isHidden()) await p.locator("#agent-fab").click();
-  await p.locator("#agent-control").click();
-  await expect.poll(() => p.evaluate(() => (document.getElementById("agent-control") as HTMLInputElement).checked)).toBe(true);
-  await expect.poll(() => p.evaluate(() => document.getElementById("agent-live")!.hidden ? "" : document.getElementById("agent-live-text")!.textContent)).toBe("The agent can control this page");
-  const allowed = await until(async () => {
-    const r = await tool("page_inspect", {});
-    const f = r.ok ? (JSON.parse(r.text.slice(0, r.text.lastIndexOf("\n"))) as { frame: string; allow?: string; autoplay?: { allowsFeature: boolean; mediaelement: string }; media?: { readyState: string }[] }[]).find((x) => x.frame == "page") : null;
-    return f?.allow == "autoplay; fullscreen" && f.autoplay?.allowsFeature && f.media?.[0]?.readyState.startsWith("4") ? f : null;
-  }, 10_000, "the page renders again, with autoplay delegated, and its audio loads", async () => (await tool("page_inspect", {})).text);
-  expect(allowed!.autoplay?.allowsFeature).toBe(true);
+  // The person clicks into the agent's box, to ask: a real click in the tab (the user activation the page's media may play on).
+  if (await p.locator("#agent-input").isHidden()) await p.locator("#agent-fab").click();
+  await p.locator("#agent-input").click();
 
   // The agent clicks play, through the editor's handlers: untrusted, so no activation of its own, but the audio plays.
   const clicked = await tool("page_click", { selector: "#play" });
@@ -125,8 +118,4 @@ test("the agent reads the live page and, once the person allows it, clicks play:
   }, 10_000, "the embedded agent's turn");
   expect(log!.items.find((i) => i.name == "page_console")?.status).toBe("done");
 
-  // One click turns control off; page_click is refused again.
-  await p.locator("#agent-live-off").click();
-  await expect.poll(() => p.evaluate(() => (document.getElementById("agent-control") as HTMLInputElement).checked)).toBe(false);
-  expect((await tool("page_click", { selector: "#play" })).ok).toBe(false);
 });

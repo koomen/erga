@@ -36,12 +36,12 @@ const SELF = (document.currentScript as HTMLScriptElement | null)?.src || `${loc
 const live = new LivePage(BASE, SELF);
 live.watchEditor(window);
 /**
- * What the page's frame may do beyond its sandbox: nothing, unless the person turned on agent control in this tab.
- * Then its media may play (and go full screen) once the person has clicked in the tab, even when the click that
- * starts it is the agent's (which the browser never counts as the person's): the shell's frame delegates the
- * same two (editor.html), and the person's click on the switch is a real one.
+ * What the page's frame may do beyond its sandbox: autoplay, and only that. Its media may play once the person has
+ * clicked anywhere in the tab, even when the click that starts it is the agent's page_click (which the browser never
+ * counts as the person's): the shell's frame delegates it too (server/pages/viewer.ts). Never full screen: the agent
+ * can't use it (it needs a real click in the page), and a page in full screen could pass for Erga.
  */
-const ALLOW = { off: "autoplay 'none'; fullscreen 'none'", on: "autoplay; fullscreen" };
+const EDITOR_PAGE_ALLOW = "autoplay; fullscreen 'none'";
 
 // The page itself: scripts, forms and the rest, as on any web page. It's on
 // this origin, which holds nothing but this document. It starts out of sight,
@@ -51,7 +51,7 @@ const frame = document.createElement("iframe");
 frame.id = "page";
 frame.title = "Document";
 frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-modals allow-popups");
-frame.setAttribute("allow", ALLOW.off);
+frame.setAttribute("allow", EDITOR_PAGE_ALLOW);
 document.body.append(frame);
 // Your caret on the page, wider than the browser's own; in the frame of each render too (onUpdate).
 drawCaret(frame);
@@ -97,13 +97,6 @@ window.addEventListener("message", (e: MessageEvent) => {
   if (m.type == "live") {
     const answer = page ? live.answer(m.req).catch((e: Error) => ({ error: `The page couldn't answer: ${e.message}` })) : Promise.resolve({ error: "The editor hasn't started in this tab yet." });
     answer.then((result) => post({ type: "lived", id: m.id, result }));
-    return;
-  }
-  if (m.type == "control") {
-    live.control = !!m.on;
-    const allow = m.on ? ALLOW.on : ALLOW.off;
-    // An iframe takes a new allow when it next loads: the page renders again (a render's frame copies this one's).
-    if (cur().getAttribute("allow") != allow) { cur().setAttribute("allow", allow); frame.setAttribute("allow", allow); page?.render(); }
     return;
   }
   if (!page || !relay) return;

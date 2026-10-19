@@ -4,7 +4,7 @@
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { crumbsFont, esc, link, viewCrumbs } from "./chrome.ts";
-import { HOST_VERSION, PAGE_ALLOW, PAGE_SANDBOX } from "./frame-host.ts";
+import { EDITOR_ALLOW, HOST_VERSION, PAGE_ALLOW, PAGE_SANDBOX } from "./frame-host.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
 /** The viewer's Clone button (a copy of your own, at `href`): also the homepage's. */
@@ -725,11 +725,10 @@ export function viewerPage(o: { title: string; docId: string; origin: string; ho
   // (EDITING_HEAD, EDITING_BODY), the frame starts on its half of the editor at once (&edit=1), and the editor's files are
   // fetched as the page parses, rather than one after another once its script runs (EDIT_BOOT).
   const opening = o.editable ? `<script>${EDITING_HEAD}</script>` : "";
-  // For someone who may edit, it may pass autoplay and fullscreen on: only the editor's frame gives them to the page, and
-  // only while the person has agent control on (client/frame.ts); the plain page never gets them (PAGE_ALLOW). For anyone
-  // else the frame has neither: the page's script can act as the frame's host page (its origin), so what the frame may
-  // do, the page may.
-  const frame = `<iframe id="frame" class="erga-view" ${o.editable ? "data-src" : "src"}="${esc(src)}" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${o.editable ? "autoplay; fullscreen" : PAGE_ALLOW}"></iframe>`;
+  // For someone who may edit, it passes autoplay on, for the editor's page (client/frame.ts): the agent's page_click
+  // gives no activation of its own, so the page's media plays on the tab's. For anyone else, nothing: the page's script
+  // can act as the frame's host page (its origin), so what the frame may do, the page may. Full screen for no one.
+  const frame = `<iframe id="frame" class="erga-view" ${o.editable ? "data-src" : "src"}="${esc(src)}" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${o.editable ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
   // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
   // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT).
   const backdrop = `<script>${BAND_HEAD}ergaBand(${JSON.stringify(o.docId)});</script>`;

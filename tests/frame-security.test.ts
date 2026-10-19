@@ -3,7 +3,7 @@
 
 import { expect, test } from "bun:test";
 import { viewerPage } from "../server/pages/viewer.ts";
-import { PAGE_ALLOW, PAGE_SANDBOX } from "../server/pages/frame-host.ts";
+import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "../server/pages/frame-host.ts";
 import { FIX_REPORTED, pageReport } from "../shared/page-report.ts";
 
 const frameOf = async (editable: boolean) => {
@@ -11,10 +11,11 @@ const frameOf = async (editable: boolean) => {
   return /<iframe id="frame"[^>]*>/.exec(html)![0];
 };
 
-test("someone who may only view gets a frame without autoplay or full screen; an editor's frame passes them on to the editor", async () => {
+test("someone who may only view gets a frame without autoplay or full screen; an editor's frame passes autoplay on, never full screen", async () => {
   const viewer = await frameOf(false), editor = await frameOf(true);
   expect(viewer).toContain(`allow="${PAGE_ALLOW}"`);
-  expect(editor).toContain(`allow="autoplay; fullscreen"`);
+  expect(editor).toContain(`allow="${EDITOR_ALLOW}"`);
+  expect(editor, "no full screen").not.toMatch(/allow="[^"]*fullscreen(?! 'none')/);
   for (const f of [viewer, editor]) {
     expect(f).toContain(`sandbox="${PAGE_SANDBOX}"`);
     expect(f, "never the tab itself").not.toMatch(/allow-top-navigation|allow-popups-to-escape-sandbox/);

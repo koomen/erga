@@ -138,7 +138,7 @@ export interface ViewResult {
   error?: string;
   /** evaluate's result as JSON text, cut to EVAL_MAX_JSON characters ("undefined" when there is none). */
   value?: string;
-  /** A live request: this tab couldn't (agent control off, no editor), so another tab's answer comes first. */
+  /** A live request: this tab couldn't (no editor yet), so another tab's answer comes first. */
   declined?: boolean;
   /** A live request: 2 from the focused tab, 1 a visible one, 0 one in the background. */
   rank?: number;

@@ -170,8 +170,6 @@ export class LivePage {
   private frames: Watched[] = [];
   /** Frames inside the page on another origin: the answers name them, as out of reach. */
   private foreign = new Set<string>();
-  /** Whether the person has turned on agent control in this tab (the shell says). */
-  control = false;
   private pageWin: LiveWindow | null = null;
 
   /** `editorScript`: the editor's own script's address (frame.js), how a stack shows the editor's code. */
@@ -290,10 +288,7 @@ export class LivePage {
       }
       case "events": return { events: queryEvents(this.events.all(), req) };
       case "inspect": return { inspect: await this.inspect(req) };
-      case "click": case "key": {
-        if (!this.control) return { error: "The person hasn't turned on \"Allow the agent to control this page\" in this tab. Ask them to turn it on (in the agent panel), then try again." };
-        return await this.act(req);
-      }
+      case "click": case "key": return await this.act(req);
     }
   }
 
