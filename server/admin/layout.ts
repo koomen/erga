@@ -30,6 +30,7 @@
 
 import { appPage, crumbs as trail, esc, ICON, link, page } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
+import { MARK } from "../../assets/logo/logo.ts";
 
 export type AdminSection = "settings" | "keys" | "auth" | "changes" | "users" | "ops";
 
@@ -69,7 +70,6 @@ export interface AdminLayout {
 }
 
 /** The agent's panel: the editor's markup, with a button that collapses it. admin-agent.js runs it. */
-const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5Z"/><path d="M18.5 15.5c.2 1.6 1 2.4 2.5 2.5-1.5.2-2.3 1-2.5 2.5-.2-1.5-1-2.3-2.5-2.5 1.5-.1 2.3-.9 2.5-2.5Z"/></svg>`;
 const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent" id="agent" aria-label="Agent"><div class="agent-card">
     <div class="agent-head">
       <span class="title">Agent</span><span class="model" id="agent-model"></span>
@@ -88,7 +88,7 @@ const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent
       <button type="submit" class="agent-send" id="agent-send">Send</button>
     </form>
   </div></aside></div>
-<button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${AGENT_ICON}</button>`;
+<button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${MARK}</button>`;
 
 export const LAYOUT_STYLE = `
   /* The header: the breadcrumbs upper left; Share with agent left of the account corner upper right. */
@@ -152,7 +152,7 @@ export const LAYOUT_STYLE = `
   .agent-right .admin-fab { left: auto; right: max(16px, env(safe-area-inset-right)); }
   .admin-fab:hover { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.06); }
   .admin-fab:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
-  .admin-fab svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .admin-fab svg { width: 22px; height: 22px; }
   .admin-fab.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: admin-agent-spin 0.9s linear infinite; }
   @keyframes admin-agent-spin { to { transform: rotate(360deg); } }
   .agent-closed .admin-fab { opacity: 1; pointer-events: auto; transition: opacity 200ms ease 220ms, box-shadow 200ms ease; }
