@@ -35,7 +35,7 @@ import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "./zoom";
 import { liveWatch } from "./live-page";
-import { ConsoleLog, actsOnPage, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
+import { ConsoleLog, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
 import { FIX_REPORTED, pageReport } from "../shared/page-report";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -1451,50 +1451,33 @@ Once you've read the guide, await further instructions.`;
   // The agent's page_console, page_network, page_events, page_inspect, page_click and page_key: the page as it runs
   // in this tab (live-page.ts, in the frame). Every tab of the person's answers; the host takes the focused one's,
   // else a visible one's. page_inspect, page_click and page_key show a line here each time, so the person sees what
-  // the agent does in their page; page_click and page_key work only while the person has agent control on.
-  let agentControl = false;
-  const controlBox = $("agent-control") as HTMLInputElement;
+  // the agent does in their page.
   const liveBar = $("agent-live");
   const liveText = $("agent-live-text");
   let liveTimer = 0;
-  /** The bar over the page: on while agent control is, and the agent's last action there for a moment. */
+  /** The bar over the page: the agent's last action there, for a moment. */
   function renderLiveBar(line?: string) {
     clearTimeout(liveTimer);
-    liveText.textContent = line ?? (agentControl ? "The agent can control this page" : "");
-    liveBar.classList.toggle("control", agentControl);
-    $("agent-live-off").hidden = !agentControl;
-    liveBar.hidden = !line && !agentControl;
+    liveText.textContent = line ?? "";
+    liveBar.hidden = !line;
     if (line) liveTimer = window.setTimeout(() => renderLiveBar(), ms(4000));
   }
-  function setAgentControl(on: boolean) {
-    agentControl = on;
-    controlBox.checked = on;
-    page.setControl(on);
-    renderLiveBar();
-  }
-  // A real click, so this tab has the person's activation from it: their page's media may play after the agent's click.
-  controlBox.addEventListener("change", () => setAgentControl(controlBox.checked));
-  $("agent-live-off").addEventListener("click", () => setAgentControl(false));
   const lineFor = (req: LiveRequest) => req.kind == "click" ? `The agent clicked ${req.selector ?? `the point (${req.x}, ${req.y})`}`
     : req.kind == "key" ? `The agent pressed ${req.key}${req.selector ? ` on ${req.selector}` : ""}`
     : req.kind == "inspect" ? (req.expression ? `The agent inspected the page: ${req.expression.replace(/\s+/g, " ").slice(0, 80)}` : "The agent read the page's media and permissions")
     : "";
   async function answerLive(id: string, req: LiveRequest) {
-    const tab = { page: pagePath, visible: document.visibilityState == "visible", focused: document.hasFocus(), control: agentControl };
-    let result: LiveResult;
-    if (actsOnPage(req) && !agentControl) result = { error: "The person hasn't turned on \"Allow the agent to control this page\" in this tab. Ask them to turn it on (in the agent panel), then try again." };
-    else {
-      if (shownInTab(req)) renderLiveBar(lineFor(req));
-      result = await page.live(req, (req.kind == "inspect" ? 20_000 : 8_000));
-      if (req.kind == "console" && result.console) {
-        // The page's entries and this window's, together.
-        const r = queryConsole([...result.console.entries, ...queryConsole(shellConsole.entries(), { ...req, limit: 200 }).entries], req);
-        result.console = { entries: r.entries, matched: Math.max(r.matched, result.console.matched), total: result.console.total + shellConsole.total, dropped: result.console.dropped + shellConsole.dropped };
-      }
-      if (req.kind == "inspect" && Array.isArray(result.inspect?.facts)) {
-        const ua = (navigator as Navigator & { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation;
-        result.inspect!.facts = [{ frame: "the editor (the tab itself)", url: location.origin, userActivation: ua ? { isActive: ua.isActive, hasBeenActive: ua.hasBeenActive } : "not supported here", editorFrame: { sandbox: frame.getAttribute("sandbox"), allow: frame.getAttribute("allow") } }, ...result.inspect!.facts as unknown[]];
-      }
+    const tab = { page: pagePath, visible: document.visibilityState == "visible", focused: document.hasFocus() };
+    if (shownInTab(req)) renderLiveBar(lineFor(req));
+    const result: LiveResult = await page.live(req, (req.kind == "inspect" ? 20_000 : 8_000));
+    if (req.kind == "console" && result.console) {
+      // The page's entries and this window's, together.
+      const r = queryConsole([...result.console.entries, ...queryConsole(shellConsole.entries(), { ...req, limit: 200 }).entries], req);
+      result.console = { entries: r.entries, matched: Math.max(r.matched, result.console.matched), total: result.console.total + shellConsole.total, dropped: result.console.dropped + shellConsole.dropped };
+    }
+    if (req.kind == "inspect" && Array.isArray(result.inspect?.facts)) {
+      const ua = (navigator as Navigator & { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation;
+      result.inspect!.facts = [{ frame: "the editor (the tab itself)", url: location.origin, userActivation: ua ? { isActive: ua.isActive, hasBeenActive: ua.hasBeenActive } : "not supported here", editorFrame: { sandbox: frame.getAttribute("sandbox"), allow: frame.getAttribute("allow") } }, ...result.inspect!.facts as unknown[]];
     }
     const declined = result.error != null;
     const rank = tab.focused ? 2 : tab.visible ? 1 : 0;

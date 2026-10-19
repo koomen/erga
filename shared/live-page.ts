@@ -11,8 +11,7 @@
 //
 // page_console, page_network and page_events read them; page_inspect reads the
 // page itself; page_click and page_key act on it, through the editor's own
-// handlers, only while the person has turned on "Allow the agent to control
-// this page" in that tab. The host asks the person's tabs over the same path
+// handlers. The host asks the person's tabs over the same path
 // view_page uses (POST /api/agent/view): a ViewRequest with `live`.
 //
 // Pure: the logs and the words for the agent are here, tested in tests/live-page.test.ts;
@@ -302,7 +301,7 @@ export const clock = (ms: number) => new Date(ms).toISOString().slice(11, 23);
 /** What a tab answers: the request's result (by kind), where it came from, or why it couldn't. */
 export interface LiveResult {
   /** Which page the tab has open, and whether it's in sight and focused. */
-  tab?: { page: string; visible: boolean; focused: boolean; control: boolean };
+  tab?: { page: string; visible: boolean; focused: boolean };
   console?: { entries: ConsoleEntry[]; matched: number; total: number; dropped: number };
   network?: { entries: NetworkEntry[]; matched: number; dropped: number; note?: string };
   events?: { entries: EventEntry[]; matched: number };
@@ -387,4 +386,4 @@ export function describeAct(kind: "click" | "key", a: ActResult): string {
 }
 
 /** Where the answer came from, in words: which page, and the tab's state. */
-export const describeTab = (t: LiveResult["tab"]) => t ? `(From ${t.page} in the person's ${t.focused ? "focused" : t.visible ? "visible" : "background"} tab; agent control is ${t.control ? "on" : "off"} there.)` : "";
+export const describeTab = (t: LiveResult["tab"]) => t ? `(From ${t.page} in the person's ${t.focused ? "focused" : t.visible ? "visible" : "background"} tab.)` : "";

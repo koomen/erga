@@ -26,10 +26,15 @@ const versionOf = (text: string) => {
 export const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
 
 /**
- * What a document's page as it renders (#view) may do beyond its sandbox: nothing (the editor's frame passes autoplay
- * and fullscreen on to the editable page only while the person has agent control on, client/frame.ts).
+ * What a document's page as it renders (#view) may do beyond its sandbox: nothing. It's what a viewer's frame gets.
  */
 export const PAGE_ALLOW = "autoplay 'none'; fullscreen 'none'";
+
+/**
+ * What an editor's frame may pass on to the editable page (client/frame.ts): autoplay, for the agent's page_click
+ * (it gives no activation of its own, so the page's media plays on the tab's). Never full screen.
+ */
+export const EDITOR_ALLOW = "autoplay";
 
 /** Where the frame's host page shows the page as it renders from: what viewers see, which the document serves at pub/. */
 export const VIEW_FILES = "pub";
