@@ -122,7 +122,7 @@ export default defineConfig(({ mode }) => ({
         // When versions are cut: how long edits pause first, and the longest burst one version holds.
         ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
-        // e2e/load-bench.ts --latency: each call to the database or a document waits this long first.
+        // e2e/bench/run.ts --latency: each call to the database or a document waits this long first.
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
 
         // Sign-in's settings, for the tests: a stand-in for github.com (the dev server's pretend GitHub unless given), and the other target's server.
