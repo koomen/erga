@@ -27,3 +27,6 @@ deploy/builder/deps/
 # The end-to-end tests: their report, traces and screenshots (e2e.config.ts)
 .e2e/
 .e2e-alone/
+
+# The load benchmark's results (e2e/bench/run.ts)
+.bench/
