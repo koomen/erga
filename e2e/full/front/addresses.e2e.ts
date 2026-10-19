@@ -22,7 +22,7 @@ test("the canonical address is the viewer (the page, Edit, Clone, a way back to 
   expect(html).toContain("<title>Untitled</title>");
   expect(html).toContain('if (location.hash == "#edit") {\n  document.body.classList.add("erga-editing");');
   // The editor's code isn't in the viewer's page.
-  expect(html).not.toContain('/page.js"></script>');
+  expect(html).not.toMatch(/<script[^>]* src="[^"]*\/_erga\/main-/);
 });
 
 test("no /edit route: after an address it is a page called edit (none here: a 404); an address with no document is a 404; the host answers under every address", async () => {

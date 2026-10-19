@@ -5,14 +5,13 @@
 // agent's screenshots. Everything else is the shell's, which it
 // reaches only by message, and only the shell may command it.
 
-import { ChangeSet, EditorState } from "@codemirror/state";
-import { historyField } from "@codemirror/commands";
-import { domToPng } from "modern-screenshot";
+import { ChangeSet, EditorState, type Extension } from "@codemirror/state";
+import { history, historyField } from "@codemirror/commands";
 import { PageEditor, type LinkInfo } from "./editor";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
-import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
+import { Relay, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { catchZoomGestures, clampZoom } from "./zoom";
 import { evaluateIn } from "./evaluate";
 import { LivePage } from "./live-page";
@@ -21,6 +20,16 @@ import { evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, typ
 declare global {
   interface Window { ergaFrame?: unknown; __ergaTimescale?: number; ergaHost?: { ready(): void; changed?(): void } }
 }
+
+/**
+ * What the frame's editor state needs: the history (undo, shared with the
+ * source view). No language: the frame has no CodeMirror view to highlight
+ * (its build has an inert stand-in for the view's module: client/frame-view.ts),
+ * and the page is parsed by the page editor itself. The source view, in the
+ * shell, has the HTML language. (Here, not in bridge.ts: the shell's main
+ * script imports bridge.ts, and @codemirror/commands would bring the view.)
+ */
+const docExtensions: Extension[] = [history()];
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 /** The shell's origin (erga.dev): the only one this frame takes orders from, or sends to. */
@@ -31,8 +40,8 @@ const BASE = location.pathname.replace(/\/?$/, "/") + "doc/";
 const post = (m: FromFrame) => window.parent.postMessage(m, SHELL);
 
 // The live page, for the agent's page_console, page_network, page_events, page_inspect, page_click and page_key
-// (live-page.ts). A stack frame of this script is the editor's code.
-const SELF = (document.currentScript as HTMLScriptElement | null)?.src || `${location.origin}/frame.js`;
+// (live-page.ts). A stack frame of a script from where this one is (the app's /_erga/: this module and its chunks) is the editor's code.
+const SELF = new URL(".", import.meta.url).href;
 const live = new LivePage(BASE, SELF);
 live.watchEditor(window);
 /**
@@ -445,6 +454,8 @@ async function captureView(req: ViewRequest, text?: string): Promise<ViewResult>
     if (unread.length) notes.push(`The picture may show fallback fonts where the page uses fonts from ${unread.join(", ")}: that stylesheet can't be read from the page (no CORS), so its fonts can't go into the picture.`);
     const fonts = renderedFonts(d, target);
     // An element is drawn at its own size, without the margins around it (they'd shift it inside the image).
+    // (The screenshots' code loads the first time the agent asks for one.)
+    const { domToPng } = await import("modern-screenshot");
     const url = await domToPng(target, target == d.documentElement ? { width: w, height: h, backgroundColor: bg, scale: 1 } : { backgroundColor: bg, scale: 1, style: { margin: "0" } });
     return {
       png: url.slice(url.indexOf(",") + 1), width: w, height: h, errors: win?.__ergaErrors ?? [],

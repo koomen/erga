@@ -76,13 +76,16 @@ test("another Worker module changes (cloudflare/index.ts: Vite reloads the Worke
   await reloads(tab.page, () => edit("cloudflare/index.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`), "true");
 });
 
+/** The editor's stylesheet as the server names it now (each build's has its own address: client/build.ts). */
+const styleUrl = async () => `${root}${((await (await fetch(`${root}/api/release`)).json()) as { files: Record<string, string> }).files["style.css"]}`;
+
 // The editor's files are rebuilt before the tab reloads.
 test("the editor's own files change (client/style.css: they're rebuilt): the page reloads, with them, and they're what's served", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
   const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;
   await reloads(tab.page, () => edit("client/style.css", "\n", `\n.${rule} { color: red; }\n`), hasRule(rule));
-  expect(await (await fetch(`${root}/style.css`)).text()).toContain(`.${rule}`);
+  expect(await (await fetch(await styleUrl())).text()).toContain(`.${rule}`);
 });
 
 // Both at once, as an agent's edit often is: the restart and the rebuild end in one good page, never an error page.
@@ -92,7 +95,7 @@ test("the front door and the editor's files change together: the page comes back
   const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;
   await reloads(tab.page, () => { edit("server/pages/chrome.ts", TITLE, "<title>${esc(title)} · Erga, together</title>"); edit("client/style.css", "\n", `\n.${rule} { color: red; }\n`); }, `document.title == "Documents · Erga, together"`);
   // The server has done both (restarted, rebuilt), and whatever reload that set off, the tab is on the good page, with both.
-  await until(async () => (await (await fetch(`${root}/style.css`)).text()).includes(`.${rule}`), 30_000, "the rebuilt files are served");
+  await until(async () => (await (await fetch(await styleUrl())).text()).includes(`.${rule}`), 30_000, "the rebuilt files are served");
   await until(() => tab.page.evaluate(`document.readyState == "complete" && document.title == "Documents · Erga, together" && ${hasRule(rule)}`).catch(() => false), 30_000, "the tab is on the good page, with both changes");
   withoutOutage(tab.errors);
 });

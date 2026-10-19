@@ -48,7 +48,7 @@ if (args.includes("--help") || args.includes("-h")) {
 const URL_FILE = join(ROOT, ".dev-url");
 if (args.includes("--print-url")) {
   const url = existsSync(URL_FILE) ? readFileSync(URL_FILE, "utf8").trim() : "";
-  if (url && await fetch(`${url}/style.css`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false)) { console.log(url); process.exit(0); }
+  if (url && await fetch(`${url}/logo.png`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false)) { console.log(url); process.exit(0); }
   console.error("No server is running in this checkout: bun start");
   process.exit(1);
 }
@@ -66,7 +66,7 @@ try { deployedSettings(deployed()); } catch (e) { console.error(`deploy/locked-s
 const ownState = !process.env.ERGA_STATE_DIR;
 if (ownState && existsSync(URL_FILE)) {
   const url = readFileSync(URL_FILE, "utf8").trim();
-  if (await fetch(`${url}/style.css`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false)) {
+  if (await fetch(`${url}/logo.png`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false)) {
     console.error(`This checkout's server is already running at ${url}`);
     process.exit(2);
   }
@@ -84,7 +84,7 @@ if (!process.env.ERGA_ENV_DIR) ensureDevVars(join(ROOT, ".dev.vars"));
 
 // Tests build the editor once for all the servers they start (ERGA_BUILT).
 if (!process.env.ERGA_BUILT) {
-  const built = Bun.spawnSync([join(ROOT, "client/build.sh")], { cwd: ROOT, stdout: "ignore", stderr: "inherit" });
+  const built = Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT, stdout: "ignore", stderr: "inherit" });
   if (built.exitCode != 0) process.exit(built.exitCode ?? 1);
 }
 
@@ -120,7 +120,7 @@ const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(ROOT, "node
 const url = `http://localhost:${port}`;
 (async () => {
   while (vite.exitCode == null) {
-    if (await fetch(`http://127.0.0.1:${port}/style.css`).then((r) => r.ok, () => false)) {
+    if (await fetch(`http://127.0.0.1:${port}/logo.png`).then((r) => r.ok, () => false)) {
       if (ownState) writeFileSync(URL_FILE, url + "\n");
       console.log(`\n  Erga is running at ${url}${ownState ? " (in .dev-url)" : ""}\n`);
       return;

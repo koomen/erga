@@ -13,7 +13,7 @@
 //    so they come back after a restart.
 //   - The editor's own files: page.js and frame.js are built by bun
 //     and served from .build/, so a change to client/,
-//     client/editor.html, client/style.css or client/fonts/ runs client/build.sh again.
+//     client/editor.html, client/style.css or client/fonts/ runs client/build.ts again.
 //
 // Its routes, before the Worker's:
 //
@@ -68,7 +68,7 @@ export function ergaDev(opts: DevOptions): Plugin {
     apply: "serve",
     // The Worker's code changed (any environment but the browser's): Vite reloads it, then the tabs reload.
     hotUpdate({ file }) {
-      // The editor's own sources reload the tabs once client/build.sh has rebuilt them (watchEditor), not before.
+      // The editor's own sources reload the tabs once client/build.ts has rebuilt them (watchEditor), not before.
       const editor = ["client/", "shared/", "document/"].some((p) => file.startsWith(join(ROOT, p)));
       if (live && !editor && this.environment.name != "client") live.reload(`${file.startsWith(ROOT + sep) ? file.slice(ROOT.length + 1) : file} changed`);
     },
@@ -453,7 +453,7 @@ function watchEditor(log: (line: string) => void, built: () => void): () => void
     timer = undefined;
     if (running) { again = true; return; }
     running = true;
-    const p = spawn(join(ROOT, "client/build.sh"), { cwd: ROOT, stdio: ["ignore", "ignore", "pipe"] });
+    const p = spawn("bun", [join(ROOT, "client/build.ts")], { cwd: ROOT, stdio: ["ignore", "ignore", "pipe"] });
     let err = "";
     p.stderr.on("data", (c) => { err += c; });
     p.on("close", (code) => {
@@ -475,7 +475,7 @@ function watchEditor(log: (line: string) => void, built: () => void): () => void
 /** Waits for the Worker to answer (it starts a moment after the server listens). */
 async function workerReady(base: string): Promise<void> {
   for (let i = 0; i < 200; i++) {
-    try { if ((await fetch(`${base}/style.css`)).ok) return; } catch { /* not yet */ }
+    try { if ((await fetch(`${base}/logo.png`)).ok) return; } catch { /* not yet */ }
     await new Promise((r) => setTimeout(r, 50));
   }
 }

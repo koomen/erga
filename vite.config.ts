@@ -16,7 +16,7 @@ const stateDir = resolve(process.env.ERGA_STATE_DIR || ".cloudflare/state");
 process.env.ERGA_LINK_SECRET ||= randomBytes(24).toString("hex");
 
 export default defineConfig({
-  // The editor's own files, gathered by client/build.sh: they're the Worker's static assets.
+  // The editor's own files, gathered by client/build.ts: they're the Worker's static assets.
   publicDir: process.env.ERGA_BUILD_DIR || ".build",
   // Tests point these elsewhere: their own .dev.vars, and a cache of their own so servers started at once don't trip on each other.
   // The cache is the checkout's own, not node_modules/.vite: a worktree's node_modules may be a link to another checkout's.

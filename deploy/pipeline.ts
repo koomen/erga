@@ -99,7 +99,7 @@ export interface BuiltWorker {
   name: string;
   compatibilityDate: string;
   compatibilityFlags?: string[];
-  assets?: { htmlHandling?: string; notFoundHandling?: string; runWorkerFirst?: boolean };
+  assets?: { htmlHandling?: string; notFoundHandling?: string; runWorkerFirst?: boolean | string[] };
   observability?: { enabled?: boolean; logs?: { enabled?: boolean; invocationLogs?: boolean } };
   env: Record<string, BuiltBinding>;
   exports?: Record<string, { type: string; storage?: string; state?: string }>;
@@ -661,8 +661,9 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     // The static assets: the manifest, then each bucket Cloudflare asks for.
     async assets() {
       const rel = needRelease();
-      (carry as Carry & { assetsJwt?: string }).assetsJwt = await uploadAssets(cf, acc, target.workerName, rel.assets);
-      return `${Object.keys(rel.assets).length} files`;
+      const files = servedAssets(rel);
+      (carry as Carry & { assetsJwt?: string }).assetsJwt = await uploadAssets(cf, acc, target.workerName, files);
+      return `${Object.keys(files).length} files`;
     },
 
     // The Worker: modules, bindings (from the build's config, made the target's own), secrets, its Durable Objects.
@@ -744,7 +745,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
           }
           if (v) seen = v;
         } else {
-          const r = await site(`https://${host}/style.css`).catch(() => null);
+          const r = await site(`https://${host}/logo.png`).catch(() => null);
           if (r?.ok) break;
         }
         if (Date.now() > until) throw new DeployError(`The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`);
@@ -798,6 +799,12 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
 /** The shared pages host's Worker: every request to the app, as it came (the app tells pages requests by their host, PAGES_HOST). */
 export const PAGES_PROXY = `export default { fetch: (request, env) => env.APP.fetch(request) };\n`;
 
+/** The build's file of headers for its static assets (Cloudflare's _headers): it goes in the Worker's config, not among the files. */
+export const HEADERS_FILE = "/_headers";
+
+/** The static assets as uploaded: all of the release's but its _headers. */
+export const servedAssets = (release: Release) => Object.fromEntries(Object.entries(release.assets).filter(([p]) => p != HEADERS_FILE));
+
 /**
  * The Worker's upload metadata: the build's bindings (cloudflare.config.ts
  * as `cf build` wrote it), each made the target's own: its database, its
@@ -844,7 +851,11 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     ...(target.keepSecrets ? { keep_bindings: ["secret_text", "secret_key"] } : {}),
     assets: {
       jwt: o.assetsJwt,
-      config: { html_handling: w.assets?.htmlHandling ?? "auto-trailing-slash", not_found_handling: w.assets?.notFoundHandling ?? "none", run_worker_first: w.assets?.runWorkerFirst ?? false },
+      config: {
+        html_handling: w.assets?.htmlHandling ?? "auto-trailing-slash", not_found_handling: w.assets?.notFoundHandling ?? "none", run_worker_first: w.assets?.runWorkerFirst ?? false,
+        // The headers Cloudflare gives the files it serves without the Worker (the build's _headers, client/build.ts).
+        ...(release.assets[HEADERS_FILE] ? { _headers: new TextDecoder().decode(release.assets[HEADERS_FILE]) } : {}),
+      },
     },
     observability: { enabled: !!w.observability?.enabled, logs: { enabled: !!w.observability?.logs?.enabled, invocation_logs: !!w.observability?.logs?.invocationLogs } },
     ...(Object.keys(exports).length ? { exports } : {}),

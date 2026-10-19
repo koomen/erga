@@ -2,14 +2,14 @@
 // serving documents' pages on erga-pages.dev, one Durable Object per
 // document, the directory of documents in D1
 // (server/directory/, its tables in server/migrations/), and the editor's own files as
-// static assets (built into .build/ by client/build.sh). In local development (`bun
+// static assets (built into .build/ by client/build.ts). In local development (`bun
 // start`, dev/start.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
 import * as entrypoint from "./cloudflare/index.ts" with { type: "cf-worker" };
 // In development the entry adds the control Worker's objects, which the app hosts only there (cloudflare/dev-entry.ts).
 import * as devEntrypoint from "./cloudflare/dev-entry.ts" with { type: "cf-worker" };
 // The server settings the deploy fixes (locks): deploy/locked-settings.ts, with ERGA_SERVER_CONFIG
-// (JSON, from the environment) over them. client/build.sh and dev/start.ts check them first (`bun deploy/locked-settings.ts`).
+// (JSON, from the environment) over them. client/build.ts and dev/start.ts check them first (`bun deploy/locked-settings.ts`).
 import { deployed } from "./deploy/locked-settings.ts";
 import { localAgentKey } from "./dev/agent-key.ts";
 import { readFileSync } from "node:fs";
@@ -37,8 +37,15 @@ export default defineConfig(({ mode }) => ({
     // Logs and exceptions, queryable afterwards (cf observability telemetry query).
     observability: { enabled: true, logs: { enabled: true, invocationLogs: true } },
     // The Worker decides everything (view mode at /, documents under
-    // /<owner>/<id>) and asks for the editor's files when it needs them.
-    assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
+    // /<owner>/<id>) and asks for the editor's files when it needs them; but for
+    // the editor's hashed files (/_erga/..., client/build.ts), which Cloudflare
+    // serves as they are, with the headers of the build's _headers (a year in the
+    // browser's cache, and to any origin): they are public code, which staging's
+    // admins-only guard lets anyone have too (server/identity/admins-only.ts). In
+    // local development the Worker runs first for them as well, and adds the same
+    // headers (server/pages/assets.ts).
+    // (/_erga/ is shared/assets.ts's ASSET_PREFIX, written out: the dev server can't load a module this file imports into the Worker too.)
+    assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: mode == "development" ? true : ["/*", "!/_erga/*"] },
     exports: {
       // Each document (cloudflare/document-object.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),

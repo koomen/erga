@@ -11,7 +11,7 @@
 //     says where to fetch from, and Git checks every object it fetches against
 //     its id, so a commit's id names its tree exactly, whatever remote it came
 //     from. The container's environment is the image's (no target's vars or
-//     secrets: build.ts runs client/build.sh and `cf build` with the same fixed env
+//     secrets: build.ts runs client/build.ts and `cf build` with the same fixed env
 //     for every commit; ERGA_SERVER_CONFIG empty, the Artifacts namespace from
 //     the commit's own deploy/targets.json). `cf build` writes production's
 //     names (cloudflare.config.ts) whichever server asked.
