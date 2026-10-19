@@ -16,7 +16,7 @@
 // resort. IME composition is the one case where the browser edits the DOM
 // first; the text is read back into the model when it ends.
 
-import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode, findClusterBreak, type ChangeSet, type TransactionSpec } from "@codemirror/state";
+import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode, findClusterBreak, type ChangeSet, type Text as Source, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
 import * as M from "./manuscript";
 import * as C from "./clipboard";
@@ -283,6 +283,25 @@ function skeletonOfSource(src: string, units: M.Unit[]): string {
   return (out + src.slice(pos)).replace(/\s+/g, " ").replace(/\u0000( ?\u0000)+/g, "\u0000");
 }
 
+/** A unit's positions and text as they are now (patching moves the live ones: see M.editRuns). */
+const copyUnit = (u: M.Unit): M.Unit => ({ ...u, runs: u.runs.map((r) => ({ ...r })) });
+
+/** Copies of the units a change takes text from, in the text before it: all that marksFor reads of the old units. */
+function touched(units: M.Unit[], changes: ChangeSet): M.Unit[] {
+  const out = new Set<M.Unit>();
+  changes.iterChangedRanges((fromA, toA) => { if (toA > fromA) for (const u of unitsIn(units, fromA, toA)) out.add(u); });
+  return [...out].map(copyUnit);
+}
+
+/** The units that overlap [from, to] (content, ends included), in order. */
+function unitsIn(units: M.Unit[], from: number, to: number): M.Unit[] {
+  let lo = 0, hi = units.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (units[mid].contentTo < from) lo = mid + 1; else hi = mid; }
+  const out: M.Unit[] = [];
+  for (let i = lo; i < units.length && units[i].contentFrom <= to; i++) out.push(units[i]);
+  return out;
+}
+
 /** How many characters `drops` take out of the source before `pos`. */
 const dropped = (drops: { from: number; to: number }[], pos: number) => drops.reduce((n, d) => n + (d.to <= pos ? d.to - d.from : 0), 0);
 
@@ -317,8 +336,7 @@ function contentIn(src: string, u: M.Unit, from: number, to: number): boolean {
 /** The rendered text of [from, to) of the source, as the units hold it (markup contributes nothing). */
 function textIn(units: M.Unit[], from: number, to: number): string {
   let out = "";
-  for (const u of units) {
-    if (u.contentTo < from || u.contentFrom > to) continue;
+  for (const u of unitsIn(units, from, to)) {
     let unitText = "";
     for (const r of u.runs) {
       const s = Math.max(from, r.from), e = Math.min(to, r.to);
@@ -412,8 +430,14 @@ export class PageEditor {
   private next: HTMLIFrameElement | null = null;
   /** Where the reader was in the page a render replaces: the block at the top of the window, and how far down it was. */
   private view: View | null = null;
-  /** The HTML the page on screen shows (rendered from, then patched to): what a morph starts from. */
-  private domHtml = "";
+  /**
+   * What the page on screen shows (rendered from, then patched to), for a morph to start from: its HTML, or, after
+   * a patch of the page's text alone, the source, whose HTML is worked out only when a morph needs it (see
+   * domHtml). Empty when the page matches no HTML (see patch).
+   */
+  private domFrom: string | Source = "";
+  /** The source as a string, for the text it was made from (see `src`). */
+  private srcOf: { doc: Source; src: string } | null = null;
   /** The last patch left a change outside the text blocks off the page: only a render shows it (see `stale`). */
   private unshown = false;
   /** Source ranges to flash once the render in flight is done. */
@@ -471,6 +495,32 @@ export class PageEditor {
     this.render();
   }
 
+  /**
+   * The source as a string. A full copy of a large document on every key
+   * costs more than the key's own work, so the string is kept, and an edit
+   * made here splices it (carrySrc) rather than copying the text again.
+   */
+  private get src(): string {
+    const doc = this.state.doc;
+    if (this.srcOf?.doc !== doc) this.srcOf = { doc, src: doc.toString() };
+    return this.srcOf.src;
+  }
+
+  /** Splices the kept source string (see `src`) from `from` to `to`, the text after `changes`. */
+  private carrySrc(changes: ChangeSet, from: Source, to: Source): void {
+    if (this.srcOf?.doc !== from || from === to) return;
+    let src = "", pos = 0;
+    const old = this.srcOf.src;
+    changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => { src += old.slice(pos, fromA) + inserted.toString(); pos = toA; });
+    this.srcOf = { doc: to, src: src + old.slice(pos) };
+  }
+
+  /** The HTML the page on screen shows, or "" if it matches none (see domFrom). */
+  private domHtml(): string {
+    if (typeof this.domFrom != "string") this.domFrom = this.analyze(this.domFrom.toString()).html;
+    return this.domFrom;
+  }
+
   // ------------------------------------------------------------ analysis
 
   private decoder: M.EntityDecoder = (ref) => {
@@ -500,7 +550,7 @@ export class PageEditor {
   }
 
   /** The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture). */
-  renderedHtml(src = this.state.doc.toString()): string { return this.analyze(src).html; }
+  renderedHtml(src = this.src): string { return this.analyze(src).html; }
 
   /** The page's title: its <title>, else its first heading. */
   title(): string {
@@ -536,10 +586,10 @@ export class PageEditor {
     // Keys from now until the new page loads wait for it: a page between two documents takes none (Chrome drops them).
     if (hadFocus) this.focusSink();
     this.unbind();
-    const src = this.state.doc.toString();
+    const src = this.src;
     const a = this.analyze(src);
     this.units = a.units;
-    this.domHtml = a.html;
+    this.domFrom = a.html;
     this.unshown = false;
     const onLoad = () => {
       if (token != this.renderToken) return;
@@ -561,7 +611,7 @@ export class PageEditor {
       this.updateEmpty();
       if (old) this.show(old);
       // Edits that arrived while the page loaded (someone else typing) are patched in now.
-      const now = this.state.doc.toString();
+      const now = this.src;
       if (now != src) { const changes = changesBetween(src, now); this.keepView(() => this.applyChanges({ changes }, this.units, src), changes); }
       // Start with the caret in the manuscript, like a document that opens ready to type.
       const head = this.state.selection.main.head;
@@ -655,11 +705,12 @@ export class PageEditor {
    * there, and how far down the window that character's line is. Null where
    * no text is (a picture, a widget).
    */
-  private topText(): { pos: number; top: number } | null {
+  private topText(start = this.firstShown()): { pos: number; top: number } | null {
     const doc = this.doc as (Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }) | null;
     const win = this.frame.contentWindow;
     if (!doc || !win) return null;
-    for (const el of this.els) {
+    for (let i = start; i < this.els.length; i++) {
+      const el = this.els[i];
       if (!el) continue;
       const r = el.getBoundingClientRect();
       if (r.bottom <= 0 || !r.height) continue;
@@ -674,6 +725,29 @@ export class PageEditor {
       return pos == null || top == null ? null : { pos, top };
     }
     return null;
+  }
+
+  /**
+   * Where to look for the first block that shows in the window: the blocks
+   * before it end above the window. The blocks go down the page in order, so
+   * a binary search finds it, reading a few blocks' places rather than every
+   * block above the window's.
+   */
+  private firstShown(): number {
+    const els = this.els;
+    /** Whether the first block with a height at or after `i` ends above the window (none: false). */
+    const above = (i: number) => {
+      for (; i < els.length; i++) {
+        const el = els[i];
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        if (r.height) return r.bottom <= 0;
+      }
+      return false;
+    };
+    let lo = 0, hi = els.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (above(mid)) lo = mid + 1; else hi = mid; }
+    return lo;
   }
 
   /** How far down the window the character at a source position is (its own box, so a line break doesn't blur it). */
@@ -736,7 +810,7 @@ export class PageEditor {
     if (win != this.frame.contentWindow || this.rendering) return refuse("the page is being rendered again; try once more");
     if (!Array.isArray(ops)) return refuse("apply takes a list of custom edits");
     // A fresh analysis: its units match the page's data-erga-id numbers, and their elements are in one parse of the source as it is.
-    const src = this.state.doc.toString(), fresh = M.analyzeHtml(src, this.decoder);
+    const src = this.src, fresh = M.analyzeHtml(src, this.decoder);
     let root = fresh.units[0]?.node ?? M.parseHtml(src);
     while (root.parent) root = root.parent;
     const isEl = (x: unknown): x is Element => !!x && (x as Node).nodeType == 1;
@@ -758,7 +832,7 @@ export class PageEditor {
     if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
     // The page's controls are usually in what changed, so the page no longer matches what it was rendered from and the
     // change can't be morphed in: the page then renders afresh (in place, at the same text), its script drawing them again.
-    if (this.stale || !this.domHtml) this.render();
+    if (this.stale || !this.domFrom) this.render();
     this.focus();
     return { ok: true };
   }
@@ -841,8 +915,7 @@ export class PageEditor {
   }
 
   private updateEmpty(changed?: Set<number>): void {
-    for (const u of this.units) {
-      if (changed && !changed.has(u.id)) continue;
+    for (const u of changed ? [...changed].map((id) => this.units[id]) : this.units) {
       const el = this.els[u.id];
       if (!el) continue;
       const empty = !u.runs.some((r) => r.editable && /\S/.test(r.text)) && !el.querySelector("img,svg,video,canvas,input");
@@ -1363,7 +1436,7 @@ export class PageEditor {
     if (!sel.empty) return false;
     const u = M.unitAt(this.units, sel.head);
     if (!u) return false;
-    const src = this.state.doc.toString();
+    const src = this.src;
     // The caret positions of a unit's text are the browser's; it stops at the ends of the text the page shows (M.textEnd).
     const first = (x: M.Unit) => M.textStart(x), last = (x: M.Unit) => M.textEnd(x);
     const go = (pos: number) => { this.dispatch({ selection: { anchor: pos }, userEvent: "select", scrollIntoView: true }); return true; };
@@ -1471,7 +1544,7 @@ export class PageEditor {
       // An empty block: what the browser put there is all new, and takes the place of a placeholder <br>.
       const text = norm(nodes.map((n) => n.nodeValue!).join(""));
       if (!text) return;
-      const src = this.state.doc.toString(), br = placeholderBr(src, u);
+      const src = this.src, br = placeholderBr(src, u);
       const head = this.state.selection.main.head;
       const at = br ? br.from : head >= u.contentFrom && head <= u.contentTo ? head : u.contentFrom;
       const insert = M.escapeHtmlText(text);
@@ -1680,10 +1753,12 @@ export class PageEditor {
     if (!(spec instanceof Transaction) && tr.docChanged && !tr.isUserEvent("external")) {
       const added: [number, number][] = [];
       tr.changes.iterChangedRanges((_fromA, _toA, from, to) => { if (to > from) added.push([from, to]); });
-      const drops = M.duplicateIds(tr.newDoc.toString(), added);
+      // (Typed text has no id: the whole text is read only when what was added could hold one.)
+      const drops = added.some(([from, to]) => M.ID_ATTR.test(tr.newDoc.sliceString(from, to))) ? M.duplicateIds(tr.newDoc.toString(), added) : [];
       if (drops.length) tr = this.state.update(spec, { changes: drops, sequential: true });
     }
-    const oldUnits = this.units, oldSrc = this.state.doc.toString();
+    const oldUnits = this.units, oldSrc = this.src;
+    this.carrySrc(tr.changes, tr.startState.doc, tr.newDoc);
     this.state = tr.state;
     if (tr.docChanged) {
       this.mapMarks(tr.changes);
@@ -1744,7 +1819,7 @@ export class PageEditor {
     const a = M.unitAt(this.units, from), b = M.unitAt(this.units, to);
     if (!a || !b || !this.verify(a) || (a != b && !this.verify(b))) return null;
     if (!this.editableAt(a, from) || (text && !this.editableAt(a, from))) return null;
-    const src = this.state.doc.toString();
+    const src = this.src;
     const insert = text ? M.escapeHtmlText(text) : "";
     if (a == b) {
       // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
@@ -1798,7 +1873,7 @@ export class PageEditor {
     const pos = sel.from;
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u)) return false;
-    const src = this.state.doc.toString();
+    const src = this.src;
     // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
     const blank = !!placeholderBr(src, u);
     if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id, pos, false);
@@ -1837,7 +1912,7 @@ export class PageEditor {
   private join(prevId: number, nextId: number, pos: number, forward: boolean): boolean {
     const prev = this.units[prevId], next = this.units[nextId];
     if (!prev || !next) return false;
-    const src = this.state.doc.toString();
+    const src = this.src;
     const changes = this.joinHtml(src, prev, next, pos);
     if (!changes) {
       this.dispatch({ selection: { anchor: forward ? M.textStart(next) : M.textEnd(prev) }, userEvent: "select", scrollIntoView: true });
@@ -1905,7 +1980,7 @@ export class PageEditor {
     const pos = this.state.selection.main.from;
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u) || !this.editableAt(u, pos)) return false;
-    const src = this.state.doc.toString();
+    const src = this.src;
     const insertAt = (insert: string, caret: number) =>
       this.dispatch({ changes: { from: pos, insert }, selection: { anchor: caret }, userEvent: "input", scrollIntoView: true });
     if (u.tag == "pre") { insertAt("\n", pos + 1); return true; }
@@ -1967,7 +2042,7 @@ export class PageEditor {
     const item = n.tag == "li" ? n : n.parent?.tag == "li" && elements(n.parent)[0] == n ? n.parent : null;
     const list = item?.parent;
     if (!item || !isList(list)) return false;
-    const src = this.state.doc.toString();
+    const src = this.src;
     const closed = (e: M.ElementNode) => !e.selfClosing && src.startsWith("</", e.closeFrom);
     if (![item, list].every(closed)) return false;
     // Source slices, with a mark where the caret is, to find it again in the new source.
@@ -2031,8 +2106,7 @@ export class PageEditor {
     if (sel.empty) return { segments: [], why: "Select some text to style first." };
     const segments: { u: M.Unit; from: number; to: number }[] = [];
     let why: string | null = null;
-    for (const u of this.units) {
-      if (u.contentTo < sel.from || u.contentFrom > sel.to) continue;
+    for (const u of unitsIn(this.units, sel.from, sel.to)) {
       if (u.tag == "pre") { why = "Text in a code block can't be styled."; continue; }
       if (!this.verify(u)) { why = "That text is made by the page's script, so it can't be styled here."; continue; }
       for (const r of u.runs) {
@@ -2078,7 +2152,7 @@ export class PageEditor {
   toggleStyle(style: InlineStyle): string | null {
     const { segments, why } = this.styleSegments();
     if (why) return why;
-    const src = this.state.doc.toString();
+    const src = this.src;
     const sel = this.state.selection.main;
     const changes: { from: number; to?: number; insert?: string }[] = [];
     const remove = this.hasStyle(style);
@@ -2123,7 +2197,7 @@ export class PageEditor {
   clearStyles(): string | null {
     const { segments, why } = this.styleSegments();
     if (why) return why;
-    const src = this.state.doc.toString();
+    const src = this.src;
     const sel = this.state.selection.main;
     // The selection within each paragraph it touches.
     const spans = new Map<M.Unit, { from: number; to: number }>();
@@ -2239,7 +2313,7 @@ export class PageEditor {
 
   private applyLink(edit: LinkEdit): { why: string | null; changes?: ChangeSet } {
     const sel = this.currentSelection();
-    const src = this.state.doc.toString();
+    const src = this.src;
     const href = escapeAttr(edit.url);
     const at = this.currentLink();
     const changes: { from: number; to?: number; insert?: string }[] = [];
@@ -2332,7 +2406,7 @@ export class PageEditor {
     const kind = mark[0] == "#" ? "heading" : mark == ">" ? "quote" : /\d/.test(mark) ? "ol" : "ul";
     const heading = /^h[1-6]$/.test(u.tag);
     if (u.tag != "p" && !(heading && kind == "heading")) return;
-    const src = this.state.doc.toString();
+    const src = this.src;
     const rest = src.slice(pos, u.contentTo);
     const indent = M.lineIndent(src, u.from);
     let open: string, close: string;
@@ -2359,7 +2433,7 @@ export class PageEditor {
     const i = M.runAt(u, pos, true);
     if (i < 0 || !u.runs[i].editable) return;
     const run = u.runs[i], before = run.text.slice(0, M.runOffset(run, pos));
-    const src = this.state.doc.toString();
+    const src = this.src;
     if (M.inlineStackAt(src, u, pos).some((t) => t.tag == "code")) return;
     const rules: [RegExp, InlineStyle, number][] = [
       [/(^|[^*\\])\*\*(?=\S)([^*]*?\S)\*\*$/, "strong", 2],
@@ -2410,7 +2484,7 @@ export class PageEditor {
 
   /** Replaces the whole document (an edit made on disk); not undoable. */
   replaceAll(text: string): void {
-    if (text == this.state.doc.toString()) return;
+    if (text == this.src) return;
     this.dispatch({ changes: { from: 0, to: this.state.doc.length, insert: text }, annotations: noHistory(), userEvent: "external" });
   }
 
@@ -2425,7 +2499,10 @@ export class PageEditor {
   applyExternal(changes: ChangeSet, author: MarkAuthor | null = null): void {
     if (changes.empty) return;
     const tr = this.state.update({ changes, annotations: noHistory(), userEvent: "external" });
-    const oldUnits = this.units, oldSrc = this.state.doc.toString();
+    const oldSrc = this.src;
+    // Patching may move the units in place (see M.editRuns): the marks read the text the change took from a copy.
+    const oldUnits = this.units, gone = touched(oldUnits, changes);
+    this.carrySrc(changes, tr.startState.doc, tr.newDoc);
     this.state = tr.state;
     this.mapMarks(changes);
     this.recordAuthorship(changes, author);
@@ -2436,7 +2513,7 @@ export class PageEditor {
     this.notify({ docChanged: true, selectionSet: false, rendered: false, changes, remote: true });
     if (this.staleSince == null && this.unshown) this.staleSince = oldSrc;
     // The view stays where the reader put it: a change off screen is marked, not followed (reveal finds a peer on request).
-    const found = marksFor(changes, oldUnits, this.units, 0, author);
+    const found = marksFor(changes, gone, this.units, 0, author);
     if (!this.tracking) {
       this.marks.push(...found.marks);
       this.startFade();
@@ -2460,7 +2537,7 @@ export class PageEditor {
   setTracking(on: boolean): void {
     if (on == !!this.tracking) return;
     this.marks = [];
-    this.tracking = on ? { baseline: this.state.doc.toString(), units: this.units, adds: [], dels: [] } : null;
+    this.tracking = on ? { baseline: this.src, units: this.units.map(copyUnit), adds: [], dels: [] } : null;
     this.paintMarks();
   }
 
@@ -2520,7 +2597,7 @@ export class PageEditor {
     requestAnimationFrame(() => {
       this.diffQueued = false;
       if (!this.tracking) return;
-      this.marks = marksFor(changesBetween(this.tracking.baseline, this.state.doc.toString()), this.tracking.units, this.units, 0).marks;
+      this.marks = marksFor(changesBetween(this.tracking.baseline, this.src), this.tracking.units, this.units, 0).marks;
       for (const m of this.marks) m.author = this.trackedAuthor(m);
       this.paintMarks();
     });
@@ -2598,8 +2675,7 @@ export class PageEditor {
   /** DOM ranges over the page text of source [from, to), one per text node it touches. */
   private rangesIn(from: number, to: number): Range[] {
     const out: Range[] = [];
-    for (const u of this.units) {
-      if (u.contentTo < from || u.contentFrom > to) continue;
+    for (const u of unitsIn(this.units, from, to)) {
       const el = this.els[u.id];
       if (!el) continue;
       const nodes = this.textNodes(el);
@@ -2718,11 +2794,12 @@ export class PageEditor {
    */
   setState(state: EditorState): void {
     if (state == this.state) return;
-    const oldSrc = this.state.doc.toString(), oldUnits = this.units, src = state.doc.toString();
+    const oldSrc = this.src, oldUnits = this.units, src = state.doc.toString();
     const changes = src != oldSrc ? changesBetween(oldSrc, src) : null;
     // A click on the page after it was handed over (it shows again before the shell's message comes) put the caret: it stands.
     const clicked = this.holding && this.pointerSeq != this.heldPointer && this.doc && !this.rendering ? this.readSelection() : null;
     this.state = clicked ? state.update({ selection: changes ? clicked.map(changes) : clicked, annotations: noHistory() }).state : state;
+    this.srcOf = { doc: this.state.doc, src };
     if (this.tracking) this.queueDiff();
     else this.marks = [];
     if (!this.doc || this.rendering) { this.render(); return; }
@@ -2762,10 +2839,13 @@ export class PageEditor {
    * either has to show without a full render.
    */
   private recheck(changes: ChangeSet): void {
-    const ranges: [number, number][] = [];
-    changes.iterChangedRanges((_fa, _ta, fromB, toB) => ranges.push([fromB, toB]));
-    for (const u of this.units) {
-      if (!ranges.some(([f, t]) => f <= u.to && t >= u.from)) continue;
+    const units = new Set<M.Unit>();
+    changes.iterChangedRanges((_fa, _ta, f, t) => {
+      let lo = 0, hi = this.units.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (this.units[mid].to < f) lo = mid + 1; else hi = mid; }
+      for (let i = lo; i < this.units.length && this.units[i].from <= t; i++) units.add(this.units[i]);
+    });
+    for (const u of [...units].sort((a, b) => a.id - b.id)) {
       const el = this.els[u.id];
       if (!el) continue;
       if (el.classList.contains("erga-locked")) {
@@ -2780,7 +2860,8 @@ export class PageEditor {
   /** Patches the DOM to the new source; false if it had to render the page afresh instead. */
   private patch(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): boolean {
     if (!this.doc) return false;
-    const src = this.state.doc.toString();
+    const src = this.src;
+    if (oldUnits == this.units && this.patchText(tr.changes, oldSrc, src)) return true;
     const a = this.analyze(src);
     const newUnits = a.units;
     const byStart = new Map<number, M.Unit>();
@@ -2799,8 +2880,8 @@ export class PageEditor {
     const structural = matched.size != newUnits.length || matched.size != oldUnits.length;
     // Something outside the text blocks changed (a list, a diagram, a style): patching the blocks doesn't show it.
     const outside = skeletonOfSource(oldSrc, oldUnits) != skeletonOfSource(src, newUnits);
-    const fromHtml = this.domHtml;
-    this.domHtml = a.html;
+    const fromHtml = this.domHtml();
+    this.domFrom = a.html;
     this.unshown = false;
     const changed = new Set<number>();
     try {
@@ -2809,7 +2890,7 @@ export class PageEditor {
       this.unshown = outside;
       // The page is what a.html says only where the blocks are, after a structural patch (it inserts no whitespace) or
       // a change outside them it couldn't show: no morph starts from it until a render.
-      if (outside || structural) this.domHtml = "";
+      if (outside || structural) this.domFrom = "";
       if (!structural) {
         this.els = [];
         for (const u of newUnits) {
@@ -2871,6 +2952,27 @@ export class PageEditor {
     }
   }
 
+  /**
+   * The patch for a change to the text of text blocks alone (typing,
+   * deleting): the analysis is brought up to date in place (M.editRuns), not
+   * done again, and only the blocks whose text changed are touched. False,
+   * with nothing changed, for any other change: patch does it whole.
+   */
+  private patchText(changes: ChangeSet, oldSrc: string, src: string): boolean {
+    const splices: M.Splice[] = [];
+    changes.iterChanges((fromA, toA, fromB, toB) => splices.push({ from: fromA, to: toA, length: toB - fromB }));
+    // Every block it changes is on the page (else the whole patch finds where it goes).
+    for (const s of splices) { const u = M.unitAt(this.units, s.from); if (!u || !this.els[u.id]) return false; }
+    const changed = M.editRuns(this.units, oldSrc, src, splices, this.decoder);
+    if (!changed) return false;
+    this.unshown = false;
+    // The page is what the source renders to again; its HTML is worked out if a morph needs it.
+    this.domFrom = this.state.doc;
+    for (const id of changed) this.patchRuns(this.els[id]!, this.units[id], src);
+    this.updateEmpty(changed);
+    return true;
+  }
+
   /** Brings the page to `to` in place; false if it can't (a script changed, or the page's own script built that part). */
   private morph(from: string, to: string): boolean {
     const doc = this.doc;
@@ -2913,9 +3015,11 @@ export class PageEditor {
     if (!win || !root || this.rendering || win.scrollY <= 0) { change(); return; }
     // First the text on the top line, by its source position (a long paragraph that starts above the window, edited
     // up there, keeps the line you're reading still); else the first block that's still there.
-    const text = this.topText();
+    const start = this.firstShown();
+    const text = this.topText(start);
     const held: { el: Element; top: number }[] = [];
-    for (const el of this.els) {
+    for (let i = start; i < this.els.length; i++) {
+      const el = this.els[i];
       if (!el) continue;
       const r = el.getBoundingClientRect();
       if (r.bottom <= 0 || !r.height) continue;
@@ -2963,15 +3067,22 @@ export class PageEditor {
 
   /** Patches one unit's element; returns true if anything changed. */
   private patchUnit(el: Element, old: M.Unit, oldSrc: string, u: M.Unit, src: string): boolean {
-    if (this.shape(old, oldSrc) == this.shape(u, src)) {
-      const nodes = this.textNodes(el);
-      if (nodes.length == u.runs.length) {
-        const texts = this.domTexts(u, src);
-        let changed = false;
-        nodes.forEach((n, i) => { if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) { n.nodeValue = texts[i]; changed = true; } });
-        return changed;
-      }
-    }
+    if (this.shape(old, oldSrc) == this.shape(u, src)) return this.patchRuns(el, u, src);
+    return this.rebuildUnit(el, u, src);
+  }
+
+  /** Patches the text of a unit's element whose markup is as it was; returns true if anything changed. */
+  private patchRuns(el: Element, u: M.Unit, src: string): boolean {
+    const nodes = this.textNodes(el);
+    if (nodes.length != u.runs.length) return this.rebuildUnit(el, u, src);
+    const texts = this.domTexts(u, src);
+    let changed = false;
+    nodes.forEach((n, i) => { if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) { n.nodeValue = texts[i]; changed = true; } });
+    return changed;
+  }
+
+  /** Builds a unit's element's content afresh from the source. */
+  private rebuildUnit(el: Element, u: M.Unit, src: string): boolean {
     el.innerHTML = src.slice(u.contentFrom, u.contentTo);
     this.prepareUnit(el);
     // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
