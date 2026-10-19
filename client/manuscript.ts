@@ -508,25 +508,41 @@ export function runAt(unit: Unit, pos: number, preferBefore = false): number {
   return after >= 0 ? after : before;
 }
 
-/** First source position of non-whitespace text in the unit, or contentFrom. */
-export function textStart(unit: Unit): number {
-  for (const r of unit.runs) {
-    if (!r.editable) continue;
-    const m = /\S/.exec(r.text);
-    if (m) return runPos(r, m.index);
+/**
+ * Whitespace at the ends of a unit's text: the source's formatting when it
+ * holds a line break or a tab. The page collapses it, so it holds no caret.
+ * A run of spaces only is text someone typed: the editor shows it
+ * (client/editor.ts, balanceWhitespace), and the caret stops in it.
+ */
+const FORMATTING = /[\t\n\r\f]/;
+/** Characters the page can collapse; U+00A0 is not one. */
+const COLLAPSIBLE = /^[ \t\n\r\f]$/;
+
+/** One end of a unit's text (see FORMATTING), or `fallback` if it has none. */
+function textEdge(unit: Unit, fromEnd: boolean, fallback: number): number {
+  const runs = unit.runs.filter((r) => r.editable && r.text.length);
+  if (fromEnd) runs.reverse();
+  let space = "";
+  for (const r of runs) {
+    const chars = Array.from({ length: r.text.length }, (_, i) => i);
+    if (fromEnd) chars.reverse();
+    const k = chars.find((i) => !COLLAPSIBLE.test(r.text[i]));
+    if (k == null) { space += r.text; continue; }
+    space += fromEnd ? r.text.slice(k + 1) : r.text.slice(0, k);
+    if (space && !FORMATTING.test(space)) return fromEnd ? runPos(runs[0], runs[0].text.length) : runPos(runs[0], 0);
+    return runPos(r, fromEnd ? k + 1 : k);
   }
-  return unit.contentFrom;
+  return space && !FORMATTING.test(space) ? runPos(runs[0], fromEnd ? runs[0].text.length : 0) : fallback;
 }
 
-/** Position just after the last non-whitespace text in the unit, or contentTo. */
+/** The first caret position in the unit's text (see FORMATTING), or contentFrom. */
+export function textStart(unit: Unit): number {
+  return textEdge(unit, false, unit.contentFrom);
+}
+
+/** The last caret position in the unit's text (see FORMATTING), or contentTo. */
 export function textEnd(unit: Unit): number {
-  for (let i = unit.runs.length - 1; i >= 0; i--) {
-    const r = unit.runs[i];
-    if (!r.editable) continue;
-    const m = /\S\s*$/.exec(r.text);
-    if (m) return runPos(r, m.index + 1);
-  }
-  return unit.contentTo;
+  return textEdge(unit, true, unit.contentTo);
 }
 
 /** A table's structure: a join never takes text into a table or out of one. */

@@ -167,6 +167,8 @@ function findDiff(a: string, b: string, preferredPos: number): { from: number; t
   }
   return { from, toA, toB };
 }
+/** Inline content the caret stops before and after, as at a character. */
+const STOPS = /<(img|svg|video|audio|canvas|input|iframe|object|embed|picture|math|button|select|textarea)\b/i;
 const BLOCK_SPLIT = new Set(["p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt", "blockquote", "figcaption", "section", "article", "aside", "header", "footer", "nav", "main", "address", "summary", "span", "label", "legend"]);
 const HEADING = /^h[1-6]$/;
 /** Units a paste of several paragraphs splits (pasteBlocks); into others, they go as lines. */
@@ -181,19 +183,22 @@ const norm = (s: string) => s.replace(/\u00a0/g, " ");
 const same = (a: string, b: string) => a == b || norm(a) == norm(b);
 
 /**
- * How a unit's text is written into the DOM. Under normal white-space a
- * space at the end of a block, or the second of two spaces, collapses, and
- * the caret has no visible place after it. Browsers solve this in their own
- * editing by storing such spaces as U+00A0; we do the same, in the DOM only.
- * Whitespace next to a newline is the page's pretty-printing and is left
- * alone, so it still collapses to one space as the page intends.
+ * How a line of a unit's text (up to a <br> or the unit's end) is written
+ * into the DOM. Every space someone can type shows, so the caret can stop
+ * after each one: under normal white-space a space at the start or the end
+ * of a line, or the second of two spaces, collapses, and the caret has no
+ * visible place after it. Browsers solve this in their own editing by
+ * storing such spaces as U+00A0; we do the same, in the DOM only.
+ * Whitespace with a line break or a tab in it is the page's formatting and
+ * is left alone, so it collapses as the page intends, and holds no caret
+ * (M.textStart, M.textEnd).
  */
 function balanceWhitespace(text: string): string {
   let out = text.replace(/(?<![\s]) {2,}(?![\s])/g, (run) => run.replace(/ ( )/g, " \u00a0"));
   const lead = /^\s+/.exec(out);
-  if (lead && lead[0].includes(" ")) out = out.replace(" ", "\u00a0");
+  if (lead && /^[ \u00a0]+$/.test(lead[0])) out = out.replace(" ", "\u00a0");
   const trail = /\s+$/.exec(out);
-  if (trail && trail[0].includes(" ")) {
+  if (trail && /^[ \u00a0]+$/.test(trail[0]) && trail[0].includes(" ")) {
     const i = out.lastIndexOf(" ");
     out = out.slice(0, i) + "\u00a0" + out.slice(i + 1);
   }
@@ -557,7 +562,7 @@ export class PageEditor {
       for (const el of this.els) if (el) this.prepareUnit(el);
       // Verified, never guessed: a unit whose DOM text doesn't match the
       // source is locked now, not when someone tries to type into it.
-      for (const u of this.units) this.verify(u);
+      for (const u of this.units) if (this.verify(u)) this.showSpaces(u, src);
       this.updateEmpty();
       if (old) this.show(old);
       // Edits that arrived while the page loaded (someone else typing) are patched in now.
@@ -1364,13 +1369,13 @@ export class PageEditor {
     const u = M.unitAt(this.units, sel.head);
     if (!u) return false;
     const src = this.state.doc.toString();
-    const first = (x: M.Unit) => (x.runs.length ? x.runs[0].from : x.contentFrom);
-    const last = (x: M.Unit) => (x.runs.length ? x.runs[x.runs.length - 1].to : x.contentTo);
-    const blank = (a: number, b: number) => /^\s*$/.test(src.slice(Math.min(a, b), Math.max(a, b)));
+    // The caret positions of a unit's text are the browser's; it stops at the ends of the text the page shows (M.textEnd).
+    const first = (x: M.Unit) => M.textStart(x), last = (x: M.Unit) => M.textEnd(x);
     const go = (pos: number) => { this.dispatch({ selection: { anchor: pos }, userEvent: "select", scrollIntoView: true }); return true; };
     if (e.key == "ArrowRight" || e.key == "ArrowLeft") {
       const forward = e.key == "ArrowRight";
-      if (!blank(sel.head, forward ? last(u) : first(u))) return false;
+      const edge = forward ? sel.head >= last(u) && !STOPS.test(src.slice(sel.head, u.contentTo)) : sel.head <= first(u) && !STOPS.test(src.slice(u.contentFrom, sel.head));
+      if (!edge) return false;
       const next = this.units[u.id + (forward ? 1 : -1)];
       if (!next) return false;
       return go(forward ? first(next) : last(next));
@@ -2862,6 +2867,7 @@ export class PageEditor {
       for (const el of oldEls) if (el && !keep.has(el)) el.remove();
       this.els = els;
       for (const u of newUnits) els[u.id]!.setAttribute("data-erga-id", String(u.id));
+      for (const u of newUnits) this.showSpaces(u, src);
       this.updateEmpty();
       return true;
     } catch {
@@ -2894,7 +2900,7 @@ export class PageEditor {
       if (!el) continue;
       if (el.classList.contains("erga-locked")) { el.classList.remove("erga-locked"); this.lockReasons.delete(el); }
       this.prepareUnit(el);
-      this.verify(u);
+      if (this.verify(u)) this.showSpaces(u, to);
     }
     this.updateEmpty();
     return true;
@@ -2937,13 +2943,27 @@ export class PageEditor {
     }
   }
 
-  /** The unit's run texts as the DOM should hold them (see balanceWhitespace). */
-  private domTexts(u: M.Unit): string[] {
-    const whole = balanceWhitespace(u.runs.map((r) => r.text).join(""));
+  /** The unit's run texts as the DOM should hold them: each line, up to a <br>, on its own (see balanceWhitespace). */
+  private domTexts(u: M.Unit, src: string): string[] {
     const out: string[] = [];
-    let pos = 0;
-    for (const r of u.runs) { out.push(whole.slice(pos, pos + r.text.length)); pos += r.text.length; }
+    let line: M.TextRun[] = [];
+    const flush = () => {
+      const whole = balanceWhitespace(line.map((r) => r.text).join(""));
+      let pos = 0;
+      for (const r of line) { out.push(whole.slice(pos, pos + r.text.length)); pos += r.text.length; }
+      line = [];
+    };
+    u.runs.forEach((r, i) => { if (i && /<br\b/i.test(src.slice(u.runs[i - 1].to, r.from))) flush(); line.push(r); });
+    flush();
     return out;
+  }
+
+  /** Writes a verified unit's spaces into its DOM as they show while editing (see balanceWhitespace). */
+  private showSpaces(u: M.Unit, src: string): void {
+    const el = this.els[u.id];
+    if (!el || el.classList.contains("erga-locked")) return;
+    const nodes = this.textNodes(el);
+    if (nodes.length == u.runs.length) this.domTexts(u, src).forEach((t, i) => { if (nodes[i].nodeValue != t && same(nodes[i].nodeValue!, t)) nodes[i].nodeValue = t; });
   }
 
   /** Patches one unit's element; returns true if anything changed. */
@@ -2951,7 +2971,7 @@ export class PageEditor {
     if (this.shape(old, oldSrc) == this.shape(u, src)) {
       const nodes = this.textNodes(el);
       if (nodes.length == u.runs.length) {
-        const texts = this.domTexts(u);
+        const texts = this.domTexts(u, src);
         let changed = false;
         nodes.forEach((n, i) => { if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) { n.nodeValue = texts[i]; changed = true; } });
         return changed;
@@ -2961,7 +2981,7 @@ export class PageEditor {
     this.prepareUnit(el);
     // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
     const nodes = this.textNodes(el);
-    if (nodes.length == u.runs.length) this.domTexts(u).forEach((t, i) => { if (nodes[i].nodeValue != t) nodes[i].nodeValue = t; });
+    if (nodes.length == u.runs.length) this.domTexts(u, src).forEach((t, i) => { if (nodes[i].nodeValue != t) nodes[i].nodeValue = t; });
     return true;
   }
 }
