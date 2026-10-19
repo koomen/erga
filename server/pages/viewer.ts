@@ -116,6 +116,14 @@ export const NAV_SCRIPT = `(() => {
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", here + location.search + "#edit");
   });
+  // A link its author set to open in this tab (target="_self", frame-host.ts) that leaves the document: the whole
+  // tab goes there, on the reader's click only.
+  addEventListener("message", (e) => {
+    if (e.source != frame.contentWindow || e.origin != pages || e.data?.type != "erga-go") return;
+    const url = String(e.data.url ?? "");
+    if (!/^https?:\\/\\//i.test(url) || url.length > 4000 || navigator.userActivation?.isActive === false) return;
+    location.assign(url);
+  });
 })();`;
 
 /**

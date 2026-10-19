@@ -90,6 +90,18 @@ export const HOST_SCRIPT = `(function () {
         var k = scale(f);
         pointer = { x: e.clientX * k, y: e.clientY * k };
       }, { capture: true, passive: true });
+      // A reader's click on a link that leaves the document opens a new tab, unless the link names its own target. One its
+      // author set to open in this tab (target="_self") takes the whole tab (the shell does it: viewer.ts), not this frame.
+      // Only in the page as it renders (#view): the editor's page (#page) follows no link.
+      d.addEventListener("click", function (e) {
+        if (f.id != "view" || e.defaultPrevented || e.button != 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+        if (!a || a.hasAttribute("download") || !/^https?:$/.test(a.protocol)) return;
+        if (a.origin == location.origin && a.pathname.indexOf(DOC) == 0) return;
+        var t = (a.getAttribute("target") || "").toLowerCase();
+        if (!t) { a.target = "_blank"; if (!a.rel) a.rel = "noopener"; }
+        else if (t == "_self") { e.preventDefault(); parent.postMessage({ type: "erga-go", url: a.href }, SHELL); }
+      });
       d.addEventListener("pointerdown", function (e) {
         if (e.pointerType != "mouse" && f.classList.contains("on")) parent.postMessage({ type: "erga-pointer", x: e.clientX * scale(f), y: e.clientY * scale(f), tap: true }, SHELL);
       }, { capture: true, passive: true });

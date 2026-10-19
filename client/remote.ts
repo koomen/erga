@@ -8,7 +8,7 @@
 import { EditorState, Transaction, type ChangeSet, type Extension } from "@codemirror/state";
 import { historyField } from "@codemirror/commands";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
-import type { InlineStyle, MarkAuthor, PageProblem, Peer } from "./editor";
+import type { InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "./editor";
 import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { changesBetween } from "../document/merge";
@@ -49,7 +49,7 @@ export interface RemotePageConfig {
   onOpen?: (path: string) => void;
 }
 
-const EMPTY: Snapshot = { title: "", canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, link: null } };
+const EMPTY: Snapshot = { title: "", canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, text: "", link: null } };
 
 export class RemotePage {
   /** The text and the page's selection, as the shell (and the room) has them. */
@@ -286,11 +286,12 @@ export class RemotePage {
   selectionRect() { return this.snapshot.fmt.rect; }
   styleBlocker(): string | null { return this.snapshot.fmt.blocker; }
   hasStyle(style: InlineStyle): boolean { return this.snapshot.fmt.has[style]; }
-  linkAt(): string | null { return this.snapshot.fmt.link; }
+  linkAt(): LinkInfo | null { return this.snapshot.fmt.link; }
+  selectedText(): string { return this.snapshot.fmt.text; }
   toggleStyle(style: InlineStyle) { return this.style({ op: "toggle", style }); }
   clearStyles() { return this.style({ op: "clear" }); }
-  setLink(url: string) { return this.style({ op: "link", url }); }
-  private async style(op: { op: "toggle"; style: InlineStyle } | { op: "clear" } | { op: "link"; url: string }): Promise<string | null> {
+  setLink(edit: LinkEdit) { return this.style({ op: "link", edit }); }
+  private async style(op: { op: "toggle"; style: InlineStyle } | { op: "clear" } | { op: "link"; edit: LinkEdit }): Promise<string | null> {
     const reply = await this.request<Extract<FromFrame, { type: "styled" }>>({ type: "style", id: this.nextId++, ...op } as ToFrame & { id: number }, 3000);
     return reply && typeof reply.why == "string" ? reply.why.slice(0, 500) : null;
   }
@@ -329,8 +330,10 @@ export class RemotePage {
 
 function isSnapshot(s: unknown): s is Snapshot {
   const v = s as Snapshot;
+  const isRect = (r: unknown) => r == null || ["left", "top", "width", "bottom"].every((k) => Number.isFinite((r as Record<string, number>)[k]));
+  const l = v?.fmt?.link;
   return !!v && typeof v.title == "string" && typeof v.canPause == "boolean" && typeof v.paused == "boolean" && !!v.fmt && typeof v.fmt.has == "object"
-    && (v.fmt.rect == null || ["left", "top", "width", "bottom"].every((k) => Number.isFinite((v.fmt.rect as Record<string, number>)[k])))
-    && (v.fmt.blocker == null || typeof v.fmt.blocker == "string") && (v.fmt.link == null || typeof v.fmt.link == "string");
+    && isRect(v.fmt.rect) && typeof v.fmt.text == "string" && (v.fmt.blocker == null || typeof v.fmt.blocker == "string")
+    && (l == null || (typeof l.href == "string" && typeof l.text == "string" && typeof l.self == "boolean" && isRect(l.rect)));
 }
 

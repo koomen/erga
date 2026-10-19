@@ -231,7 +231,7 @@
 
     /* The style bar floats over a selection in the page. */
     .fmt {
-      position: fixed; z-index: 30; display: flex; align-items: center; gap: 2px; padding: 4px;
+      position: fixed; z-index: 30; padding: 4px;
       background: var(--bg); border: 1px solid var(--panel-border); border-radius: 10px; box-shadow: var(--shadow);
       transform: translate(-50%, calc(-100% - 8px)); transition: opacity 120ms ease;
       font: 13px/1 var(--font-text); color: var(--fg);
@@ -247,12 +247,46 @@
     .fmt button[aria-disabled="true"] { opacity: 0.35; cursor: not-allowed; }
     .fmt button b { font-weight: 700; font-size: 14px; }
     .fmt button i { font-family: Georgia, serif; font-size: 15px; }
-    .fmt button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-    .fmt .sep { width: 1px; height: 16px; background: var(--rule); margin: 0 2px; }
-    .fmt input { width: 220px; height: 28px; border: 0; outline: none; background: transparent; color: var(--fg); font: 13px var(--font-text); padding: 0 6px; }
-    .fmt.linking button:not(.keep) { display: none; }
+    .fmt svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .fmt .sep { width: 1px; height: 16px; background: var(--rule); margin: 0 2px; flex: none; }
+    .fmt button { flex: none; }
+    .fmt button[hidden] { display: none; }
+    .fmt button:focus-visible { outline: 2px solid var(--caret); outline-offset: -2px; }
+    /* Two panes, the style buttons and the link's: one shows. Between them both float, centred on the edge next to
+       the text, while the bar's box grows or shrinks around them; the link icon goes from its button to its row. */
+    .fmt-panes { position: relative; }
+    .fmt-pane { display: flex; align-items: center; gap: 2px; }
+    .fmt-pane[hidden] { display: none; }
+    .fmt.morphing .fmt-panes { overflow: hidden; transition: width var(--morph-ms) var(--ease), height var(--morph-ms) var(--ease); }
+    .fmt.morphing .fmt-pane { display: flex; position: absolute; left: 50%; bottom: 0; translate: -50% 0; }
+    .fmt.morphing.below .fmt-pane { bottom: auto; top: 0; }
+    .fmt.morphing .fmt-pane.out { opacity: 0; scale: 0.96; transition: opacity calc(var(--morph-ms) * 0.5) ease, scale var(--morph-ms) var(--ease); pointer-events: none; }
+    .fmt.morphing .fmt-pane.in { animation: fmt-pane-in var(--morph-ms) var(--ease) both; animation-delay: calc(var(--morph-ms) * 0.25); }
+    @keyframes fmt-pane-in { from { opacity: 0; scale: 0.97; } }
+    .fmt.appear { animation: fmt-appear 140ms ease both; }
+    @keyframes fmt-appear { from { opacity: 0; } }
+    :root { --morph-ms: 240ms; }
+    /* The link pane: its text and close; its address, open and remove; where it opens. */
+    .fmt-link { flex-direction: column; align-items: stretch; gap: 0; width: 300px; }
+    .fmt-row { display: flex; align-items: center; gap: 2px; height: 32px; }
+    .fmt-row + .fmt-row { border-top: 1px solid var(--rule); }
+    .fmt-lead { width: 30px; height: 28px; display: grid; place-items: center; color: var(--chrome); flex: none; }
+    .fmt-lead.t { font: 600 13px var(--font-text); letter-spacing: -0.02em; }
+    .fmt-row input { flex: 1; min-width: 0; height: 28px; border: 0; outline: none; background: transparent; color: var(--fg); font: 13px var(--font-text); padding: 0 6px 0 2px; }
+    .fmt-row input::placeholder { color: var(--chrome); }
+    .fmt-row input[type=url] { color: var(--link); }
+    .fmt button.fmt-x { color: var(--chrome); }
+    .fmt button.fmt-x:hover { color: var(--chrome-hover); }
+    .fmt button.fmt-tab { width: 100%; height: 28px; display: flex; align-items: center; justify-content: flex-start; gap: 2px; padding: 0 6px 0 0; }
+    .fmt-tab .fmt-label { flex: 1; text-align: left; color: var(--soft); }
+    .fmt-switch { width: 28px; height: 16px; border-radius: 999px; background: var(--rule); position: relative; flex: none; transition: background 140ms ease; }
+    .fmt-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: translate 160ms var(--ease); }
+    .fmt-tab[aria-checked="true"] .fmt-switch { background: var(--caret); }
+    .fmt-tab[aria-checked="true"] .fmt-switch::after { translate: 12px 0; }
     @media (prefers-reduced-motion: reduce) {
       :root { --agent-ms: 1ms; }
+      .fmt.morphing .fmt-panes { transition: none; }
+      .fmt.morphing .fmt-pane.in { animation: fmt-appear 120ms ease both; }
     }
     /* The agent panel's insides (its head, the conversation, the box) are style.css's: the admin pages' panel has them too. */
 
@@ -424,7 +458,10 @@
       .naming-input, .naming-addr { font-size: 16px; }
       .avatar::after { content: ""; position: absolute; inset: -8px -3px; }
       .fmt button { width: 38px; height: 36px; }
-      .fmt input, .agent-compose textarea { font-size: 16px; }
+      .fmt-row { height: 40px; }
+      .fmt button.fmt-tab { height: 36px; }
+      .fmt-link { width: min(340px, calc(100vw - 48px)); }
+      .fmt-row input, .agent-compose textarea { font-size: 16px; }
     }
 
     /* Other people's carets in the source view. */
@@ -593,6 +630,8 @@
   </div></aside>
 
   <div id="fmt" class="fmt" hidden role="toolbar" aria-label="Text style">
+    <div class="fmt-panes" id="fmt-panes">
+    <div class="fmt-pane" id="fmt-style">
     <button type="button" data-style="strong" aria-label="Bold (⌘B)" title="Bold  ⌘B"><b>B</b></button>
     <button type="button" data-style="em" aria-label="Italic (⌘I)" title="Italic  ⌘I"><i>I</i></button>
     <button type="button" data-style="code" aria-label="Code (⌘E)" title="Code  ⌘E"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 7.5-4.5 4.5 4.5 4.5M15.5 7.5l4.5 4.5-4.5 4.5"/></svg></button>
@@ -600,7 +639,28 @@
     <button type="button" data-act="link" aria-label="Link (⌘K)" title="Link  ⌘K"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg></button>
     <span class="sep" aria-hidden="true"></span>
     <button type="button" data-act="clear" aria-label="Clear formatting (⌘\)" title="Clear formatting  ⌘\"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5.5h11M11 5.5v13"/><path d="m15 14.5 5 5M20 14.5l-5 5"/></svg></button>
-    <input id="fmt-link" type="url" placeholder="Paste a link, Enter to apply" aria-label="Link address" hidden>
+    </div>
+    <div class="fmt-pane fmt-link" id="fmt-link" role="group" aria-label="Link" hidden>
+      <div class="fmt-row">
+        <span class="fmt-lead t" aria-hidden="true">Aa</span>
+        <input id="fmt-link-text" type="text" aria-label="Link text" placeholder="Text" autocomplete="off">
+        <button type="button" class="fmt-x" data-link="close" aria-label="Close the link bar (Esc)" title="Close  Esc"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
+      </div>
+      <div class="fmt-row">
+        <span class="fmt-lead" id="fmt-link-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg></span>
+        <input id="fmt-link-url" type="url" aria-label="Link address" placeholder="Paste a link, Enter to apply" spellcheck="false" autocomplete="off">
+        <button type="button" data-link="open" aria-label="Open the link in a new tab" title="Open link in a new tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8"/><path d="M17 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h4"/></svg></button>
+        <button type="button" data-link="remove" aria-label="Remove the link" title="Remove link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 8 16a3 3 0 0 1-4.24-4.24L5.5 10"/><path d="M14.5 9.5 16 8a3 3 0 0 1 4.24 4.24L18.5 14"/><path d="M4 4l16 16"/></svg></button>
+      </div>
+      <div class="fmt-row">
+        <button type="button" class="fmt-tab" data-link="tab" role="switch" aria-checked="true">
+          <span class="fmt-lead" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 9h16"/></svg></span>
+          <span class="fmt-label">Opens in a new tab</span>
+          <span class="fmt-switch" aria-hidden="true"></span>
+        </button>
+      </div>
+    </div>
+    </div>
   </div>
 
   <div id="toast" class="toast" aria-hidden="true"></div>
