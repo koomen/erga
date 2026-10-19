@@ -1,5 +1,6 @@
 // A document's page runs on the document's own origin, whose files
 // open only with the editor's token, and loads fast: files checked by ETag, the frame's host page kept by version.
+import { createHash } from "node:crypto";
 import { request } from "node:http";
 import { expect, test } from "../../fixtures";
 import { person, servers, type Person } from "./front";
@@ -65,10 +66,26 @@ test("doc/ is the page; a file has an ETag, is checked each time, and is a 304 w
   expect(editor).toContain('f.src = f.dataset.src + (location.hash == "#edit" ? "&edit=1"');
   const host = await pagesFetch(src);
   expect(host.headers.get("cache-control") ?? "").toMatch(/max-age=\d+/);
-  expect(await host.text()).toContain(`<base href="${at.pathname}doc/">`);
+  const hostPage = await host.text();
+  expect(hostPage).toContain(`<base href="${at.pathname}doc/">`);
+  // The editor's half loads from the app's origin (one address for every document), each script with its integrity.
+  const frame = JSON.parse(/<script type="application\/json" id="erga-frame">(.*?)<\/script>/.exec(hostPage)?.[1] ?? "null") as { src: string; integrity: string; map: Record<string, string> };
+  expect(frame.src).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
+  expect(frame.integrity).toMatch(/^sha384-/);
+  expect(hostPage).toContain('<script type="importmap">');
+  expect(frame.map[frame.src]).toBe(frame.integrity);
+  // There: kept a year, and loadable from the document's origin (CORS), as the bytes the integrity names.
+  const script = await fetch(frame.src, { headers: { Origin: at.origin } });
+  expect(script.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+  expect(script.headers.get("access-control-allow-origin")).toBe("*");
+  const digest = createHash("sha384").update(new Uint8Array(await script.arrayBuffer())).digest("base64");
+  expect(`sha384-${digest}`).toBe(frame.integrity);
+  // A file that isn't there is never kept.
+  expect((await fetch(`${p.origin}/_erga/frame-none.js`)).headers.get("cache-control")).toBe("no-store");
   expect((await pagesFetch(src.replace(/([?&])v=[^&]+/, "$1v=old"))).headers.get("cache-control")).toBe("no-cache");
   expect(editor).toContain('if (location.hash == "#edit") {');
-  for (const f of ["/editor.html", "/page.js"]) expect(editor).toContain(`["${f}", `);
+  expect(editor).toMatch(/\["\/_erga\/editor-[a-z0-9]+\.html","fetch"\]/);
+  expect(editor).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js","modulepreload"\]/);
   expect(editor).toContain('rel: "preload"');
   expect((await pagesFetch(url)).headers.get("server-timing") ?? "").toContain("worker;dur=");
 });

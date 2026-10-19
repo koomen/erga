@@ -30,8 +30,9 @@
 //   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; server/admin/agent.ts)
 //                              Every /admin page has the same layout, and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own door.
-//   /page.js, /style.css, ...  the editor's own files (static assets); /logo.png, Erga's logo
-//   GET /api/release           the build of each of them: open pages follow a redeploy with it,
+//   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
+//                              on Cloudflare served without the Worker, kept for a year); /logo.png, Erga's logo
+//   GET /api/release           which of them this release has: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
 //
 // The routes that run only on Cloudflare (branch deploys and /deploy, the dev
@@ -47,7 +48,7 @@ import { frontDoor, isPagesSite } from "./documents/index.ts";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
 import { adminsOnlyGate, finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
-import { accountOf, OWN_ACCOUNT, withAccount } from "./pages/index.ts";
+import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
 import { cloudflareAuth, siteApi } from "./sites/index.ts";
 
@@ -57,6 +58,8 @@ export type Outside = (request: Request, url: URL) => Promise<Response | null>;
 /** The app's answer to a request: the route table, then what every page of the site's own gets (the account corner, live.js). */
 export async function handle(request: Request, platform: Platform, outside: Outside): Promise<Response> {
   const url = new URL(request.url);
+  // The editor's files' addresses, for the pages below to name (pages/assets.ts).
+  if (!isAsset(url.pathname)) await loadAssets(platform, url);
   const response = await route(request, platform, url, outside);
   // Every page of the site's own has who you are in its upper right; a document's pages origin never does.
   if (response.status == 101 || isPagesSite(url, platform)) return response;
@@ -68,7 +71,7 @@ export async function handle(request: Request, platform: Platform, outside: Outs
     return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
   }, url.pathname + url.search);
   // And every page of the site's own follows a redeploy; not the editor's own files (editor.html is a part of a page).
-  return own || isAsset(url.pathname) || url.pathname == "/editor.html" ? page : withLive(page, request);
+  return own || isAsset(url.pathname) ? page : withLive(page, request);
 }
 
 async function route(request: Request, p: Platform, url: URL, outside: Outside): Promise<Response> {
@@ -82,7 +85,8 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   // No service workers there: one would outlive the page that registered it, in the browser of whoever viewed it, and
   // answer for the document's files (or, at /, for the frame's host page) after its authors had changed them.
   if (isPagesSite(url, p) && request.headers.get("service-worker") == "script") return new Response("A document's page can't register a service worker.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  if (isPagesSite(url, p)) return assets ? p.assets(request) : frontDoor(request, p);
+  // (Not the editor's files: the frame loads them from the app's origin, one address for every document: frame-host.ts.)
+  if (isPagesSite(url, p)) return frontDoor(request, p);
   if (path == "/auth/github") return startSignIn(p, request);
   // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; local development serves it here (`outside`).
   if (path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"))) return (await outside(request, url)) ?? finishSignIn(p, request);
@@ -90,8 +94,8 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/auth/test") return testSignIn(p, request);
   if (path.startsWith("/auth/cloudflare/")) return cloudflareAuth(request, p);
-  // The editor's controls and styles, which a document's page adds to itself to go into the editor.
-  if (assets || path == "/editor.html") return p.assets(request);
+  // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
+  if (assets) return isAssetPath(path) ? serveAsset(request, p) : p.assets(request);
   // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
   // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
   if (path == "/git" || path.startsWith("/git/")) return (await outside(request, url)) ?? frontDoor(request, p);
@@ -129,7 +133,7 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   // Each admin's agent, its conversation and panel: before the server's API, which has the rest of /api/.
   if (isAdminAgentPath(path)) return adminAgentApi(request, p, url);
   // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
-  if (path == "/api/release" && read) return releaseApi(p, url);
+  if (path == "/api/release" && read) return releaseApi(p);
   // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
   if (path == "/api/admin/guide") return adminGuideApi(request, p, url);
   // The server's API for agents, and people's agent tokens.
@@ -138,10 +142,9 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   return frontDoor(request, p);
 }
 
-/** The editor's own files, and Erga's logo (static assets, client/build.sh). */
-const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/logo.png"]);
-const isAsset = (path: string) => ASSET_FILES.has(path) || path.startsWith("/fonts/");
+/** The editor's own files (hashed, under /_erga/), and Erga's logo (static assets, client/build.ts). */
+const isAsset = (path: string) => isAssetPath(path) || path == "/logo.png";
 
 /** A path that may be one of the homepage's files at the root: /<name>.<ext> or /<folder>/<name>.<ext>, but none of the app's own. */
-const APP_FILES = new Set(["/page.js", "/frame.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/logo.png", "/editor.html", "/llms.txt"]);
-const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !path.startsWith("/fonts/") && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);
+const APP_FILES = new Set(["/logo.png", "/llms.txt"]);
+const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !isAssetPath(path) && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);

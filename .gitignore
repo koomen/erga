@@ -10,7 +10,7 @@ node_modules
 .cloudflare/
 # A running dev server's address (dev/start.ts)
 .dev-url
-# The client's build (client/build.sh) and the release in it (deploy/release.ts)
+# The client's build (client/build.ts) and the release in it (deploy/release.ts)
 .build/
 .dev.vars
 .dev.vars.*

@@ -36,7 +36,7 @@
 //   GET  /api/install           the credential's status, as JSON
 //   /deploy, /deploy/...        install Erga in your own Cloudflare account (cloudflare/deploy-routes.ts); not on an install's
 //                               control Worker
-//   /style.css, /fonts/...      the app's stylesheet and fonts, fetched from the app (the page is the app's markup)
+//   (the pages here are the app's markup, and name the app's own stylesheet and typeface, at the app's origin: control/index.ts)
 //   GET  /releases, /releases/<channel>.json, /releases/<version>/...
 //                               the release store, for anyone (deploy/releases.ts): the channels, and each release's files
 //   GET  /api/releases          admins: both channels (the Ops page marks edge's latest and stable's tag on the log)
@@ -174,8 +174,8 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
     try { await c.deploys.status(0); } catch (e) { return json({ ok: false, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: false, ms: Date.now() - started, error: (e as Error).message } } }, 503); }
     return json({ ok: true, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: true, ms: Date.now() - started } } });
   }
-  // The app's own files, for the page: fetched from the app (it serves them as static assets).
-  if (read && (path == "/style.css" || path.startsWith("/fonts/") || path.startsWith("/favicon"))) {
+  // The app's favicon, for the page: fetched from the app.
+  if (read && path.startsWith("/favicon")) {
     const r = await fetch(`${c.app}${path}`).catch(() => null);
     return r ?? new Response("The app didn't answer", { status: 502 });
   }

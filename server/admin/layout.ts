@@ -28,7 +28,7 @@
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in server/app.ts; and each page's own door).
 
-import { appPage, crumbs as trail, esc, ICON, link, page } from "../pages/index.ts";
+import { appPage, crumbs as trail, esc, ICON, link, page, scriptTag } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { MARK } from "../../assets/logo/logo.ts";
 
@@ -257,9 +257,9 @@ ${o.body}
 </div>
 ${SIDEBAR_SCRIPT}
 ${AGENT_SCRIPT}
-<script src="/admin-share.js" defer></script>
-<script src="/admin-agent.js" defer></script>
-<script src="/admin-nav.js" defer></script>`, false);
+${scriptTag("admin-share.js")}
+${scriptTag("admin-agent.js")}
+${scriptTag("admin-nav.js")}`, false);
 }
 
 /** adminLayout as a response. */
