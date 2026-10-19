@@ -4,7 +4,7 @@
 
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import { fileStoreOf, KEYS, kvOf, MemoryStorage, stateStoreOf, writeText } from "../document/storage";
+import { fileStoreOf, KEYS, kvOf, MemoryStorage } from "../document/storage";
 
 test("get, put and delete, one key or many; list in key order, by prefix, after a key, at most a limit", async () => {
   const s = new MemoryStorage();
@@ -38,21 +38,15 @@ test("the alarm wakes once it is due; set again, only the last one counts", asyn
   expect(await s.getAlarm()).toBeNull();
 });
 
-test("files, folders and the room's state go through the storage; a text written twice is one edit", async () => {
+test("files and folders go through the storage, each change noted", async () => {
   const s = new MemoryStorage();
-  const edits: string[] = [];
   let touched = 0;
-  const files = fileStoreOf(s, {
-    edited: async (path, text) => { if ((await writeText(s, path, text)).changed) edits.push(path); },
-    touch: async () => { touched++; },
-  });
+  const files = fileStoreOf(s, { touch: async () => { touched++; } });
   const run = <A, E>(e: Effect.Effect<A, E>) => Effect.runPromise(e);
-  await run(files.write("index.html", "<h1>Hi</h1>"));
   await run(files.write("index.html", "<h1>Hi</h1>"));
   await run(files.write("notes/a.md", "# A"));
   await run(files.writeBytes!("img/logo.png", new Uint8Array([1, 2, 3])));
   await run(files.mkdir!("drafts/old"));
-  expect(edits).toEqual(["index.html", "notes/a.md"]);
   expect(await run(files.list)).toEqual(["img/logo.png", "index.html", "notes/a.md"]);
   expect(await run(files.folders!)).toEqual(["drafts", "drafts/old"]);
   expect(new TextDecoder().decode((await run(files.read("index.html")))!)).toBe("<h1>Hi</h1>");
@@ -62,14 +56,8 @@ test("files, folders and the room's state go through the storage; a text written
   expect(await run(files.folders!)).toEqual([]);
   await run(files.remove!("notes/a.md"));
   expect(await run(files.list)).toEqual(["img/logo.png", "index.html"]);
-  // writeBytes, mkdir, rmdir and remove each count as a change to the document.
-  expect(touched).toBe(4);
-
-  const state = stateStoreOf(s);
-  expect(await run(state.load)).toBeNull();
-  await run(state.save(new Uint8Array([9])));
-  expect(await run(state.load)).toEqual(new Uint8Array([9]));
-  expect(await s.get(KEYS.state)).toEqual(new Uint8Array([9]));
+  // Two writes, writeBytes, mkdir, rmdir and remove each count as a change to the document.
+  expect(touched).toBe(6);
 
   const kv = kvOf(s);
   await kv.put({ "v:1": { n: 1 }, "v:2": { n: 2 } });
