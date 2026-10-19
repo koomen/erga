@@ -161,13 +161,20 @@ export class Collab {
   /** The room's current text of the document (to check the editor agrees). */
   current(): string { return this.text?.toString() ?? ""; }
 
+  /** The length of the room's current text (a check that costs nothing, before the whole text is compared). */
+  currentLength(): number { return this.text?.length ?? 0; }
+
   /** Publishes where this tab's caret is (null when it isn't in the document). */
   setCursor(anchor: number | null, head: number | null): void {
     const t = this.text, aw = this.provider.awareness;
     const prev = aw.getLocalState() ?? {};
     if (!t || anchor == null) { if (prev.cursor) aw.setLocalStateField("cursor", null); return; }
     const rel = (i: number) => Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(t, i));
-    aw.setLocalStateField("cursor", { path: this.opts.path, anchor: rel(anchor), head: head == null || head == anchor ? null : rel(head) });
+    const cursor = { path: this.opts.path, anchor: rel(anchor), head: head == null || head == anchor ? null : rel(head) };
+    // A caret is a place in the text (relative to the character after it), so typing doesn't move it: nothing to
+    // send then. (Awareness sends every set, the same or not.)
+    if (prev.cursor && JSON.stringify(prev.cursor) == JSON.stringify(cursor)) return;
+    aw.setLocalStateField("cursor", cursor);
   }
 
   /**
