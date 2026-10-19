@@ -488,8 +488,13 @@ export function makeHost(opts: HostOptions) {
      * caller adds the WebSockets and the editor's files.
      */
     handler: (request: Request) => web.handler(request),
-    /** Releases the handler (when the document closes). */
-    dispose: web.dispose,
+    /** Releases the handler and the agents' sessions (when the document closes). */
+    dispose: async () => {
+      for (const s of sessions.values()) s.then((session) => session.close(), () => {});
+      sessions.clear();
+      tabs.clear();
+      await web.dispose();
+    },
     /** A tab joins its person's event channel; returns the leave function. */
     addTab: (user: string, send: (msg: unknown) => void) => {
       const tab: Tab = { user, send };

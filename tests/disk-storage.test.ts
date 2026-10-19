@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { DiskLink } from "../dev/disk-storage";
 import type { FromDisk, ToDisk } from "../dev/mirror";
-import { fileStoreOf, MemoryStorage, writeText } from "../document/storage";
+import { fileStoreOf, MemoryStorage } from "../document/storage";
 
 /** A fake dev server: a folder in memory on the other end of the socket. */
 function folder(files: Record<string, string> = {}, dirs: string[] = []) {
@@ -102,25 +102,20 @@ test("a single file linked on its own: it is the one file; another path stays of
   expect(f.disk.has("beside.md")).toBe(false);
   expect(await s.delete("files/other.md")).toBe(false);
   expect(f.disk.has("other.md")).toBe(true);
-  expect((await writeText(s, "notes.md", "# Notes, edited")).changed).toBe(true);
+  await s.put("files/notes.md", new TextEncoder().encode("# Notes, edited"));
   expect(f.text("notes.md")).toBe("# Notes, edited");
-  expect((await writeText(s, "notes.md", "# Notes, edited")).changed).toBe(false);
 });
 
-test("the room's file store over it reads, writes and removes on the folder, and says when a text changed", async () => {
+test("the room's file store over it reads, writes and removes on the folder, and notes each change", async () => {
   const f = folder({ "index.html": "<h1>One</h1>" }, []);
   const link = new DiskLink({ changed: () => {}, connected: () => {}, flush: async () => {} });
   link.accept(f.socket as unknown as WebSocket);
   const s = link.storage(new MemoryStorage(), null);
-  const edits: string[] = [];
   let touched = 0;
-  const files = fileStoreOf(s, { edited: async (path, text) => { if ((await writeText(s, path, text)).changed) edits.push(path); }, touch: async () => { touched++; } });
+  const files = fileStoreOf(s, { touch: async () => { touched++; } });
   expect(await Effect.runPromise(files.list)).toEqual(["index.html"]);
   await Effect.runPromise(files.write("index.html", "<h1>Two</h1>"));
   expect(f.text("index.html")).toBe("<h1>Two</h1>");
-  expect(edits).toEqual(["index.html"]);
-  await Effect.runPromise(files.write("index.html", "<h1>Two</h1>"));
-  expect(edits).toEqual(["index.html"]);
   await Effect.runPromise(files.mkdir("a/b"));
   expect([...f.folders]).toEqual(["a", "a/b"]);
   await Effect.runPromise(files.writeBytes("a/b/x.bin", new Uint8Array([1, 2])));
@@ -131,5 +126,6 @@ test("the room's file store over it reads, writes and removes on the folder, and
   expect(f.folders.has("a")).toBe(false);
   await Effect.runPromise(files.remove("index.html"));
   expect(f.disk.size).toBe(0);
-  expect(touched).toBe(4);
+  // write, mkdir, writeBytes, rmdir and remove each count as a change to the document.
+  expect(touched).toBe(5);
 });

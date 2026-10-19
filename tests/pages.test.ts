@@ -102,7 +102,7 @@ test("a redirect to a page's file is relative, keeping what's before the documen
 function memoryStore(init: Record<string, string>, dirs: string[] = []) {
   const data = new Map(Object.entries(init).map(([k, v]) => [k, new TextEncoder().encode(v)]));
   const folderSet = new Set(dirs);
-  const layer = Layer.merge(Layer.succeed(FileStore, {
+  const layer = StateStore.none.pipe(Layer.provideMerge(Layer.succeed(FileStore, {
     list: Effect.sync(() => [...data.keys()]),
     read: (p) => Effect.sync(() => data.get(p) ?? null),
     write: (p, text) => Effect.sync(() => { data.set(p, new TextEncoder().encode(text)); }),
@@ -114,7 +114,7 @@ function memoryStore(init: Record<string, string>, dirs: string[] = []) {
       for (const d of [...folderSet]) if (d == p || d.startsWith(p + "/")) folderSet.delete(d);
       for (const f of [...data.keys()]) if (f.startsWith(p + "/")) data.delete(f);
     }),
-  }), StateStore.none);
+  })));
   return { layer, data, folders: folderSet, text: (p: string) => data.has(p) ? new TextDecoder().decode(data.get(p)) : null };
 }
 

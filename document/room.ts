@@ -3,21 +3,29 @@
 // WebSocket, agent sessions in process (`joinLocal`), and both speak the
 // same Yjs sync and awareness protocol, so the room can't tell them apart.
 //
-// While it's open the room is the source of truth. It writes each text file
-// back to storage 400ms after the last edit to it, so publishing, the CLI
-// and git still see ordinary files, and edits that arrive as files (an
-// editor, git) are merged in as ordinary edits:
-// diffed word by word against the last version both sides agreed on and
-// rebased over the room's edits since. Writes and merges
-// take turns on one queue, so neither can slip between the other's read and
-// write.
+// While it's open the room is the source of truth. Its history is a journal
+// (`StateStore`): each write appends the Yjs update made since the one
+// before (400ms after the edits that make it), and now and then the whole
+// state becomes one snapshot in place of the log. A room opens from that
+// journal alone: the snapshot and the log after it, one read of storage.
 //
-// The room also keeps its Yjs state (`StateStore`), saved with every write.
+// The files are a view of the room, written from it, so publishing, the CLI
+// and git still see ordinary files. Over a journal they're written lazily
+// (each at most every `fileDelay`, 2 seconds, and all of them as the room
+// closes), and the journal names the files storage doesn't have yet, so a
+// room stopped before writing them writes them as it opens again. Edits that
+// arrive as files (an editor, git) are merged in as ordinary edits: diffed
+// word by word against the last version both sides agreed on and rebased
+// over the room's edits since. Writes and merges take turns on one queue, so
+// neither can slip between the other's read and write.
+//
 // A restarted room picks up the same history, so tabs that stayed open
 // reconnect and merge as if nothing happened. Without it (the state lost),
 // the room starts a new *epoch* from the files: a tab still holding the old
 // history would merge two unrelated histories and double the document, so
-// the room refuses it (`connect` returns null) and the tab reloads.
+// the room refuses it (`connect` returns null) and the tab reloads. A store
+// whose files change while the room is closed (a folder on disk) says so:
+// the room then reads every file as it opens, and merges what changed.
 //
 // Platform-neutral on purpose: storage is the small `FileStore` and
 // `StateStore` services and connections are `send` callbacks, so the same
@@ -72,13 +80,55 @@ export class FileStore extends Context.Service<FileStore, {
   readonly rmdir?: (path: string) => Effect.Effect<void, StoreError>;
 }>()("erga/FileStore") {}
 
-/** Where the room keeps its Yjs state between runs: a cache file here, Durable Object storage when hosted. */
+/** What a room saved: its history (a snapshot, then the updates after it, in order). */
+export interface Saved {
+  updates: Uint8Array[];
+  /** Storage's files may differ from the history (changed while the room was closed): read and merge each one. */
+  reconcile: boolean;
+  /** Files whose latest text storage doesn't have yet: the room writes them. */
+  unwritten: string[];
+}
+
+/** One write: the Yjs update since the last one, the text files written with it, and the files deleted. */
+export interface Commit {
+  update: Uint8Array | null;
+  write: [path: string, text: string][];
+  remove: string[];
+  /** Files whose latest text storage still lacks after this commit (written later). */
+  unwritten: string[];
+}
+
+/**
+ * How the room keeps its history between runs (the journal in a Durable
+ * Object's storage, document/storage.ts), and writes its files with it.
+ */
 export class StateStore extends Context.Service<StateStore, {
-  readonly load: Effect.Effect<Uint8Array | null, StoreError>;
-  readonly save: (state: Uint8Array) => Effect.Effect<void, StoreError>;
+  /** The saved history, or null if there's none. */
+  readonly load: Effect.Effect<Saved | null, StoreError>;
+  /** Writes one commit: in one transaction where storage has them. */
+  readonly commit: (c: Commit) => Effect.Effect<void, StoreError>;
+  /**
+   * Makes the whole state (`state()`, asked only if needed) the snapshot in
+   * place of the log, if `when` calls for it: "log" when the log is long,
+   * "cut" (a version) when it's long for the snapshot, "always". Whether it did.
+   */
+  readonly compact: (state: () => Uint8Array, when: "log" | "cut" | "always") => Effect.Effect<boolean, StoreError>;
+  /** Its files may be written after the journal (lazily): it keeps the history, and nothing else changes them. */
+  readonly lazyFiles: boolean;
 }>()("erga/StateStore") {
-  /** No saved state: every run starts a new epoch from the files. */
-  static readonly none = Layer.succeed(StateStore, { load: Effect.succeed(null), save: () => Effect.void });
+  /** No saved history: every run starts a new epoch from the files, written through the FileStore at every write. */
+  static readonly none = Layer.effect(StateStore, Effect.gen(function* () {
+    const files = yield* FileStore;
+    return StateStore.of({
+      load: Effect.succeed(null),
+      commit: (c) => Effect.gen(function* () {
+        for (const [path, text] of c.write) yield* files.write(path, text);
+        if (files.remove) for (const path of c.remove) yield* files.remove(path);
+      }),
+      compact: () => Effect.succeed(false),
+      lazyFiles: false,
+    });
+  }));
 }
 
 const MSG_SYNC = 0, MSG_AWARENESS = 1, MSG_QUERY_AWARENESS = 3;
@@ -95,11 +145,18 @@ export interface Connection {
 export type PushResult = { ok: true; etag: string } | { ok: false; etag: string | null; reason: "stale" | "binary" };
 
 export class Room {
-  readonly doc = new Y.Doc();
-  readonly awareness = new awarenessProtocol.Awareness(this.doc);
+  readonly awareness: awarenessProtocol.Awareness;
   /** Each text file as storage last had it: the base for merging edits made there. */
   private stored = new Map<string, string>();
+  /** Files edited since the last write. */
   private dirty = new Set<string>();
+  /** Files whose text storage doesn't have yet (written lazily), and since when. */
+  private unwritten = new Set<string>();
+  private unwrittenSince = 0;
+  /** Files deleted in the room that storage may still have. */
+  private removals = new Set<string>();
+  /** The Yjs updates made since the last write, for the journal. */
+  private unsaved: Uint8Array[] = [];
   /** Open while there are edits to write: the writer waits on it. */
   private pending = Latch.makeUnsafe(false);
   /** Writes and merges, one at a time. */
@@ -110,21 +167,34 @@ export class Room {
   /** Who hears that the tree changed (a file or folder added, removed or moved). */
   private treeListeners = new Set<() => void>();
   private treeQueued = false;
+  /** How long a file's text may wait to be written: no wait without a journal. */
+  readonly fileDelay: number;
 
-  private constructor(private store: FileStore["Service"], private state: StateStore["Service"], private log: (line: string) => void, readonly writeDelay: number) {
+  private constructor(readonly doc: Y.Doc, private store: FileStore["Service"], private state: StateStore["Service"], private log: (line: string) => void, readonly writeDelay: number, fileDelay: number) {
+    this.awareness = new awarenessProtocol.Awareness(doc);
     // The room itself is not a visible participant.
     this.awareness.setLocalState(null);
+    this.fileDelay = state.lazyFiles ? fileDelay : 0;
   }
 
   /**
    * Opens the room on its storage, for as long as the scope lasts.
-   * `writeDelay`: how long after the last edit to a file it's written (400ms
-   * unless a test wants it sooner).
+   * `writeDelay`: how long after an edit it's written to the journal (400ms
+   * unless a test wants it sooner); `fileDelay`: how long a file's text may
+   * wait to be written (2 seconds, or `writeDelay` if that's longer).
    */
-  static make(opts: { log?: (line: string) => void; writeDelay?: number } = {}): Effect.Effect<Room, StoreError, FileStore | StateStore | Scope.Scope> {
+  static make(opts: { log?: (line: string) => void; writeDelay?: number; fileDelay?: number } = {}): Effect.Effect<Room, StoreError, FileStore | StateStore | Scope.Scope> {
     return Effect.gen(function* () {
-      const room = new Room(yield* FileStore, yield* StateStore, opts.log ?? (() => {}), opts.writeDelay ?? 400);
-      yield* room.restore();
+      const store = yield* FileStore, state = yield* StateStore;
+      const log = opts.log ?? (() => {});
+      const writeDelay = opts.writeDelay ?? 400;
+      // A history that fails to load fails the open (the next request tries again): it's never written over.
+      const saved = yield* state.load;
+      const doc = saved && saved.updates.length ? docOf(saved.updates, log) : null;
+      const room = new Room(doc ?? new Y.Doc(), store, state, log, writeDelay, Math.max(writeDelay, opts.fileDelay ?? 2000));
+      // Every change from here on goes to the journal with the next write.
+      room.doc.on("update", (update: Uint8Array) => { room.unsaved.push(update); room.pending.openUnsafe(); });
+      yield* room.restore(!doc || saved!.reconcile, saved?.unwritten ?? []);
       room.doc.on("update", (update: Uint8Array, origin: unknown) => room.broadcast(syncUpdate(update), origin));
       room.doc.on("afterTransaction", (tr: Y.Transaction) => room.noteDirty(tr));
       // The tree changed: files or folders came or went (a file's text changing isn't one).
@@ -138,11 +208,13 @@ export class Room {
         room.broadcast(awarenessMessage(room.awareness, [...added, ...updated, ...removed]), origin);
       });
       // The writer: once there's something to write, wait out the delay
-      // (edits made meanwhile ride along), then write it all.
+      // (edits made meanwhile ride along), then write it; files not yet
+      // written wake it when they're due.
       yield* Effect.forkScoped(Effect.forever(Effect.gen(function* () {
-        yield* room.pending.await;
+        if (room.unwritten.size) yield* Effect.raceFirst(room.pending.await, Effect.sleep(Math.max(0, room.unwrittenSince + room.fileDelay - Date.now())));
+        else yield* room.pending.await;
         yield* Effect.sleep(room.writeDelay);
-        yield* room.flush;
+        yield* Semaphore.withPermit(room.turn, room.write(false));
       })));
       // Closing: everything not yet written goes to storage.
       yield* Effect.addFinalizer(() => room.flush.pipe(Effect.andThen(Effect.sync(() => room.awareness.destroy()))));
@@ -150,19 +222,43 @@ export class Room {
     });
   }
 
+  /**
+   * One change by the room itself (a file taken from storage, the tree):
+   * the first one says who the room is, so its edits are attributed ("On
+   * disk"). A room that changes nothing adds nothing to the history.
+   */
+  private act(f: () => void, _origin?: unknown): void {
+    this.doc.transact(() => {
+      if (!this.introduced) { this.introduced = true; introduce(this.doc, this.me); }
+      f();
+    }, this);
+  }
+  private introduced = false;
+
   /** The room's epoch: which history it holds (see the top of this file). */
   get epoch(): string { return roomInfo(this.doc).get("epoch") as string; }
 
   /**
-   * Loads the saved state if there is one, then reconciles it with storage:
-   * files changed while the room was closed come in as edits on top.
-   * Without saved state, a new epoch starts from the files.
+   * Takes the saved history as what storage's files hold (each file its
+   * text, but those the journal names as unwritten, which are written
+   * soon), or, with `reconcile`, reads every file and merges in what
+   * changed while the room was closed; without a history, a new epoch
+   * starts from the files, and the history starts over as one snapshot.
    */
-  private restore(): Effect.Effect<void, StoreError> {
+  private restore(reconcile: boolean, unwritten: string[]): Effect.Effect<void, StoreError> {
     const self = this;
     return Effect.gen(function* () {
-      const saved = yield* Effect.orElseSucceed(self.state.load, () => null);
-      self.reopen(saved);
+      if (!roomInfo(self.doc).get("epoch")) self.act(() => roomInfo(self.doc).set("epoch", crypto.randomUUID()), self);
+      if (!reconcile) {
+        const behind = new Set(unwritten);
+        for (const [path, t] of files(self.doc)) {
+          if (behind.has(path)) self.unwritten.add(path);
+          else self.stored.set(path, t.toString());
+        }
+        // Due at once: storage has an older text of these.
+        if (self.unwritten.size) { self.unwrittenSince = 1; self.pending.openUnsafe(); }
+        return;
+      }
       const paths = new Set(yield* self.store.list);
       for (const path of paths) {
         const bytes = yield* self.store.read(path);
@@ -170,46 +266,37 @@ export class Room {
       }
       self.forgetMissing(paths);
       yield* self.syncFolders;
-      yield* self.saveState;
+      self.unsaved = [];
+      yield* Effect.catch(self.state.compact(() => Y.encodeStateAsUpdate(self.doc), "always"), (e) => Effect.sync(() => {
+        self.log(`  could not save the room's state: ${e.message}`);
+        // The next write takes it all instead.
+        self.unsaved.push(Y.encodeStateAsUpdate(self.doc));
+        self.pending.openUnsafe();
+      }));
     });
-  }
-
-  /** Takes the saved state if it loads whole, and makes sure the room has an epoch. */
-  private reopen(saved: Uint8Array | null): void {
-    if (saved) {
-      // Tried on a scratch doc first: a state that doesn't load whole is no base.
-      try {
-        const probe = new Y.Doc();
-        Y.applyUpdate(probe, saved);
-        if (roomInfo(probe).get("epoch")) Y.applyUpdate(this.doc, saved, this);
-        else this.log("  saved room state has no epoch; starting afresh");
-      } catch (e) { this.log(`  saved room state unreadable, starting afresh: ${(e as Error).message}`); }
-    }
-    if (!roomInfo(this.doc).get("epoch")) this.doc.transact(() => roomInfo(this.doc).set("epoch", crypto.randomUUID()), this);
-    introduce(this.doc, this.me);
   }
 
   /** Brings one file from storage into the restored room. */
   private reconcile(path: string, bytes: Uint8Array): void {
     const text = this.asText(path, bytes);
     const t = files(this.doc).get(path);
-    if (text == null) { this.doc.transact(() => assets(this.doc).set(path, digest(bytes)), this); return; }
+    if (text == null) { this.act(() => assets(this.doc).set(path, digest(bytes)), this); return; }
     this.stored.set(path, text);
     if (!t) {
-      this.doc.transact(() => { const nt = new Y.Text(); nt.insert(0, text); files(this.doc).set(path, nt); }, this);
+      this.act(() => { const nt = new Y.Text(); nt.insert(0, text); files(this.doc).set(path, nt); }, this);
     } else if (t.toString() != text) {
-      // Changed in storage while the room was closed. The state is saved
-      // with every write, so the two agree unless someone else changed the
-      // file since: their version wins, applied as an edit (the history
-      // stays, so open tabs still merge).
+      // Changed in storage while the room was closed (on disk). The room
+      // writes its files with its history, so the two agree unless someone
+      // else changed the file since: their version wins, applied as an edit
+      // (the history stays, so open tabs still merge).
       this.mergeText(t, t.toString(), text);
     }
   }
 
   /** Files deleted while the room was closed. */
   private forgetMissing(paths: Set<string>): void {
-    for (const path of [...files(this.doc).keys()]) if (!paths.has(path)) this.doc.transact(() => files(this.doc).delete(path), this);
-    for (const path of [...assets(this.doc).keys()]) if (!paths.has(path)) this.doc.transact(() => assets(this.doc).delete(path), this);
+    for (const path of [...files(this.doc).keys()]) if (!paths.has(path)) this.act(() => files(this.doc).delete(path), this);
+    for (const path of [...assets(this.doc).keys()]) if (!paths.has(path)) this.act(() => assets(this.doc).delete(path), this);
   }
 
   private asText(path: string, bytes: Uint8Array): string | null {
@@ -312,42 +399,77 @@ export class Room {
     this.pending.openUnsafe();
   }
 
-  /** Writes every file that changed since storage last saw it, then the room's state. */
+  /** Writes everything: the journal, and every file whose text storage doesn't have yet. */
   get flush(): Effect.Effect<void> {
+    return Semaphore.withPermit(this.turn, this.write(true));
+  }
+
+  /**
+   * One write (inside the queue): the updates since the last one go to the
+   * journal, with the files that are due (all of them with `all`, else
+   * once they've waited `fileDelay`) and the files deleted, in one commit.
+   * Then, if the log has grown long, it becomes a snapshot.
+   */
+  private write(all: boolean): Effect.Effect<void> {
     return Effect.suspend(() => {
       this.pending.closeUnsafe();
-      const paths = [...this.dirty];
+      const now = Date.now();
+      // Files edited now start to wait, unless others already do (they're written together).
+      if (this.dirty.size && !this.unwritten.size) this.unwrittenSince = now;
+      for (const path of this.dirty) this.unwritten.add(path);
       this.dirty.clear();
-      const write = (path: string) => {
+      const due = all || now - this.unwrittenSince >= this.fileDelay;
+      const write: [string, string][] = [], remove = new Set(this.removals), later: string[] = [];
+      for (const path of this.unwritten) {
         const text = this.text(path);
         // Deleted in the room by a participant (an agent's undo taking back a file it made): storage follows.
-        if (text == null && this.stored.has(path) && !assets(this.doc).has(path) && this.store.remove) {
-          return this.store.remove(path).pipe(
-            Effect.map(() => { this.stored.delete(path); }),
-            Effect.catch((e) => Effect.sync(() => this.log(`  could not delete ${path}: ${e.message}`))),
-          );
-        }
-        if (text == null || text == this.stored.get(path)) return Effect.void;
-        return this.store.write(path, text).pipe(
-          Effect.map(() => { this.stored.set(path, text); }),
-          Effect.catch((e) => Effect.sync(() => { this.log(`  could not write ${path}: ${e.message}`); this.markDirty(path); })),
-        );
-      };
-      return Semaphore.withPermit(this.turn, Effect.forEach(paths, write, { discard: true }).pipe(Effect.andThen(this.saveState)));
+        if (text == null) { if (!assets(this.doc).has(path)) remove.add(path); continue; }
+        if (text == this.stored.get(path)) continue;
+        if (due) { write.push([path, text]); remove.delete(path); } else later.push(path);
+      }
+      const updates = this.unsaved;
+      if (!updates.length && !write.length && !remove.size && later.length == this.unwritten.size) return Effect.void;
+      this.unsaved = [];
+      const removals = [...this.removals];
+      this.removals.clear();
+      const update = updates.length == 0 ? null : updates.length == 1 ? updates[0] : Y.mergeUpdates(updates);
+      const wasUnwritten = [...this.unwritten];
+      this.unwritten = new Set(later);
+      // Due `fileDelay` after the first of them waited.
+      if (!later.length) this.unwrittenSince = 0;
+      return this.state.commit({ update, write, remove: [...remove], unwritten: later }).pipe(
+        Effect.map(() => {
+          for (const [path, text] of write) this.stored.set(path, text);
+          for (const path of remove) this.stored.delete(path);
+        }),
+        Effect.andThen(Effect.catch(this.state.compact(() => Y.encodeStateAsUpdate(this.doc), "log"), (e) => Effect.sync(() => this.log(`  could not compact the room's history: ${e.message}`)))),
+        Effect.catch((e) => Effect.sync(() => {
+          // Tried again with the next write: nothing is lost.
+          this.log(`  could not write the room's edits: ${e.message}`);
+          this.unsaved = [...updates, ...this.unsaved];
+          for (const path of wasUnwritten) this.unwritten.add(path);
+          for (const path of removals) this.removals.add(path);
+          this.pending.openUnsafe();
+        })),
+      );
     });
   }
 
-  private get saveState(): Effect.Effect<void> {
-    return Effect.suspend(() => this.state.save(Y.encodeStateAsUpdate(this.doc))).pipe(
-      Effect.catch((e) => Effect.sync(() => this.log(`  could not save the room's state: ${e.message}`))),
-    );
+  /**
+   * At a version: writes what's left, and makes the history one snapshot
+   * if its log has grown long against the snapshot (document.ts cuts one).
+   */
+  get settle(): Effect.Effect<void> {
+    return Semaphore.withPermit(this.turn, this.write(true).pipe(
+      Effect.andThen(Effect.catch(Effect.suspend(() => this.state.compact(() => Y.encodeStateAsUpdate(this.doc), "cut")), (e) => Effect.sync(() => this.log(`  could not compact the room's history: ${e.message}`)))),
+    ));
   }
 
   /** Applies storage's change (from `base` to `incoming`) on top of the room's text. */
   private mergeText(t: Y.Text, base: string, incoming: string): void {
     const changes = rebase(base, t.toString(), incoming);
     if (changes.empty) return;
-    this.doc.transact(() => {
+    this.act(() => {
       const { inserted, deleted } = applyChanges(t, changes);
       if (deleted && !inserted) stamp(this.doc, this.me);
     }, this);
@@ -375,11 +497,27 @@ export class Room {
       const before = yield* self.store.read(path);
       const current = before ? digest(before) : null;
       if (ifMatch != null && ifMatch != current) return { ok: false, etag: current, reason: "stale" } as const;
-      yield* self.store.write(path, text);
       const bytes = new TextEncoder().encode(text);
-      self.take(path, bytes);
+      if (current == digest(bytes) && self.text(path) == text) return { ok: true, etag: current } as const;
+      // The file was made from what storage holds: the room's edits since (not written yet) stay, merged with it.
+      const base = before && self.asText(path, before);
+      if (base != null) self.stored.set(path, base);
+      self.takeText(path, text);
+      yield* self.write(true);
       return { ok: true, etag: digest(bytes) } as const;
     }));
+  }
+
+  /**
+   * A text arriving whole that storage doesn't have yet (a push, a new
+   * page, a moved file): merged in as storage's would be, and written with
+   * the next write, in the same commit as the change to the history.
+   */
+  private takeText(path: string, text: string): void {
+    this.take(path, new TextEncoder().encode(text));
+    this.stored.delete(path);
+    this.removals.delete(path);
+    this.dirty.add(path);
   }
 
   /** Takes storage's version of a file into the room (inside the queue). */
@@ -387,20 +525,20 @@ export class Room {
     const t = files(this.doc).get(path);
     if (!bytes) {
       // Deleted (or renamed away). Text the room has unsaved edits to stays.
-      if (t && t.toString() == this.stored.get(path)) this.doc.transact(() => files(this.doc).delete(path), this);
-      if (assets(this.doc).has(path)) this.doc.transact(() => assets(this.doc).delete(path), this);
+      if (t && t.toString() == this.stored.get(path)) this.act(() => files(this.doc).delete(path), this);
+      if (assets(this.doc).has(path)) this.act(() => assets(this.doc).delete(path), this);
       this.stored.delete(path);
       return;
     }
     const text = this.asText(path, bytes);
     if (text == null) {
       const h = digest(bytes);
-      if (assets(this.doc).get(path) != h) this.doc.transact(() => assets(this.doc).set(path, h), this);
+      if (assets(this.doc).get(path) != h) this.act(() => assets(this.doc).set(path, h), this);
       return;
     }
     if (!t) {
       this.stored.set(path, text);
-      this.doc.transact(() => { const nt = new Y.Text(); nt.insert(0, text); files(this.doc).set(path, nt); }, this);
+      this.act(() => { const nt = new Y.Text(); nt.insert(0, text); files(this.doc).set(path, nt); }, this);
       this.log(`  new file: ${path}`);
       return;
     }
@@ -457,7 +595,7 @@ export class Room {
       if (!self.store.folders) return;
       const stored = new Set(yield* self.store.folders);
       const map = folders(self.doc);
-      self.doc.transact(() => {
+      self.act(() => {
         for (const d of stored) if (!map.has(d)) map.set(d, true);
         for (const d of [...map.keys()]) if (!stored.has(d)) map.delete(d);
       }, self);
@@ -475,16 +613,16 @@ export class Room {
       const map = folders(self.doc);
       const all = path.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
       if (self.store.mkdir) yield* self.store.mkdir(path);
-      self.doc.transact(() => { for (const d of all) if (!map.has(d)) map.set(d, true); }, self);
+      self.act(() => { for (const d of all) if (!map.has(d)) map.set(d, true); }, self);
     });
   }
 
   /** A new text file (a page from the template): written, and in the room. */
   create(path: string, text: string): Effect.Effect<void, StoreError> {
     const self = this;
-    return Semaphore.withPermit(this.turn, Effect.gen(function* () {
-      yield* self.store.write(path, text);
-      self.take(path, new TextEncoder().encode(text));
+    return Semaphore.withPermit(this.turn, Effect.suspend(() => {
+      self.takeText(path, text);
+      return self.write(true);
     }));
   }
 
@@ -493,27 +631,36 @@ export class Room {
     const self = this;
     return Semaphore.withPermit(this.turn, Effect.gen(function* () {
       if (files(self.doc).has(path) || assets(self.doc).has(path)) {
-        yield* self.removeFile(path);
+        self.removeFile(path);
         // The folder it was in stays, as a folder on disk would, even if that was its last file.
         if (path.includes("/")) yield* self.makeFolder(path.slice(0, path.lastIndexOf("/")));
-        return;
+        return yield* self.write(true);
       }
       const inside = `${path}/`;
-      for (const p of self.paths()) if (p.startsWith(inside)) yield* self.removeFile(p);
+      for (const p of self.paths()) if (p.startsWith(inside)) self.removeFile(p);
+      yield* self.write(true);
       if (self.store.rmdir) yield* self.store.rmdir(path);
       const map = folders(self.doc);
-      self.doc.transact(() => { for (const d of [...map.keys()]) if (d == path || d.startsWith(inside)) map.delete(d); }, self);
+      self.act(() => { for (const d of [...map.keys()]) if (d == path || d.startsWith(inside)) map.delete(d); }, self);
     }));
   }
 
-  private removeFile(path: string): Effect.Effect<void, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      if (self.store.remove) yield* self.store.remove(path);
-      self.stored.delete(path);
-      self.dirty.delete(path);
-      self.doc.transact(() => { files(self.doc).delete(path); assets(self.doc).delete(path); }, self);
-    });
+  /** Deletes one file (a publish that removes it); nothing if the room has no such file. */
+  removeOne(path: string): Effect.Effect<boolean> {
+    return Semaphore.withPermit(this.turn, Effect.suspend(() => {
+      if (!files(this.doc).has(path) && !assets(this.doc).has(path)) return Effect.succeed(false);
+      this.removeFile(path);
+      return Effect.as(this.write(true), true);
+    }));
+  }
+
+  /** Takes a file out of the room; storage deletes it with the next write. */
+  private removeFile(path: string): void {
+    this.stored.delete(path);
+    this.dirty.delete(path);
+    this.unwritten.delete(path);
+    this.removals.add(path);
+    this.act(() => { files(this.doc).delete(path); assets(this.doc).delete(path); }, this);
   }
 
   /**
@@ -527,9 +674,9 @@ export class Room {
       const map = folders(self.doc);
       if (files(self.doc).has(from) || assets(self.doc).has(from)) {
         yield* self.copyFile(from, to);
-        yield* self.removeFile(from);
+        self.removeFile(from);
         if (from.includes("/")) yield* self.makeFolder(from.slice(0, from.lastIndexOf("/")));
-        return;
+        return yield* self.write(true);
       }
       const inside = `${from}/`;
       // The folder itself, then every folder and file inside it, each at its new place.
@@ -537,10 +684,11 @@ export class Room {
       for (const d of [...map.keys()]) if (d.startsWith(inside)) yield* self.makeFolder(to + d.slice(from.length));
       for (const p of self.paths()) if (p.startsWith(inside)) {
         yield* self.copyFile(p, to + p.slice(from.length));
-        yield* self.removeFile(p);
+        self.removeFile(p);
       }
+      yield* self.write(true);
       if (self.store.rmdir) yield* self.store.rmdir(from);
-      self.doc.transact(() => { for (const d of [...map.keys()]) if (d == from || d.startsWith(inside)) map.delete(d); }, self);
+      self.act(() => { for (const d of [...map.keys()]) if (d == from || d.startsWith(inside)) map.delete(d); }, self);
     }));
   }
 
@@ -548,11 +696,7 @@ export class Room {
     const self = this;
     return Effect.gen(function* () {
       const text = self.text(from);
-      if (text != null) {
-        yield* self.store.write(to, text);
-        self.take(to, new TextEncoder().encode(text));
-        return;
-      }
+      if (text != null) return self.takeText(to, text);
       const bytes = yield* self.store.read(from);
       if (!bytes) return;
       if (!self.store.writeBytes) return yield* Effect.fail(new StoreError({ message: `${from} can't be moved here: only text files can` }));
@@ -563,6 +707,23 @@ export class Room {
 }
 
 interface AwarenessChange { added: number[]; updated: number[]; removed: number[] }
+
+/** The doc a saved history makes, or null if it doesn't load whole or has no epoch (a new one starts). */
+function docOf(updates: Uint8Array[], log: (line: string) => void): Y.Doc | null {
+  const doc = new Y.Doc();
+  try {
+    doc.transact(() => { for (const u of updates) Y.applyUpdate(doc, u); });
+  } catch (e) {
+    log(`  saved room state unreadable, starting afresh: ${(e as Error).message}`);
+    return null;
+  }
+  if (roomInfo(doc).get("epoch")) return doc;
+  log("  saved room state has no epoch; starting afresh");
+  return null;
+}
+
+/** Whether a room message is presence only (awareness): it changes nothing in the document. */
+export const isAwareness = (message: Uint8Array) => message.length > 0 && message[0] == MSG_AWARENESS;
 
 /** The files-map key a changed Y.Text lives under. */
 function pathOf(type: Y.AbstractType<any>): string | null {
