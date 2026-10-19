@@ -419,13 +419,16 @@ function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecode
   };
 }
 
+/** Whether text added to a page can carry an id (or an anchor's name), so duplicateIds has something to look for. */
+export const ID_ATTR = /\s(id|name)\s*=/i;
+
 /**
  * An id is unique in the page. `added` are the ranges of `src` an edit wrote; the answer is the ids (and an anchor's
  * name) of the elements it added that the page has already, each as a range to delete, with the space before it. An
  * element the edit didn't add keeps its id, and of two added ones, the first. A <template>'s content isn't in the page.
  */
 export function duplicateIds(src: string, added: [number, number][]): { from: number; to: number }[] {
-  if (!added.some(([from, to]) => /\s(id|name)\s*=/i.test(src.slice(from, to)))) return [];
+  if (!added.some(([from, to]) => ID_ATTR.test(src.slice(from, to)))) return [];
   const isAdded = (pos: number) => added.some(([from, to]) => pos >= from && pos < to);
   const all: ElementNode[] = [];
   const walk = (e: ElementNode) => {
@@ -447,6 +450,102 @@ export function duplicateIds(src: string, added: [number, number][]): { from: nu
     }
   }
   return drops;
+}
+
+// ------------------------------------------------------------------ incremental analysis
+
+/** A change to the source: [from, to) of the old text replaced by `length` characters. */
+export interface Splice { from: number; to: number; length: number }
+
+/**
+ * Brings an HTML analysis up to date, in place, with changes that edit only
+ * the text of text runs (typing, deleting, plain text pasted): the changed
+ * runs are decoded again, and every position after a change moves by its
+ * size, in the units, their runs and the source tree. The result is what
+ * analyzeHtml(newSrc) would return, at the cost of the changed runs and a
+ * shift of numbers (no parse, no string the size of the document).
+ *
+ * `splices` are in the old text's terms, in order, apart. Returns the ids of
+ * the units whose text changed, or null, with nothing changed, when a change
+ * can be more than text: it reaches outside a run or into markup, leaves a
+ * "<" in the run (a tag, a comment), empties the run, makes the run start
+ * or stop holding non-space text (which decides whether some elements are
+ * units), or edits the start of a <pre>'s first line (whose first newline
+ * the parser drops).
+ */
+export function editRuns(units: Unit[], oldSrc: string, newSrc: string, splices: Splice[], decode: EntityDecoder = basicDecoder): Set<number> | null {
+  if (!splices.length || newSrc.length - oldSrc.length != splices.reduce((n, s) => n + s.length - (s.to - s.from), 0)) return null;
+  type Hit = { unit: Unit; run: TextRun; dropNl: boolean };
+  const hits: Hit[] = [];
+  /** The start of the run each splice is in: an insertion there goes after what ends there. */
+  const runFrom: number[] = [];
+  for (const s of splices) {
+    const unit = unitAt(units, s.from);
+    if (!unit?.node) return null;
+    const run = unit.runs.find((r) => r.editable && r.from <= s.from && s.to <= r.to);
+    if (!run) return null;
+    const at = textParent(unit.node, run.from);
+    if (!at) return null;
+    const dropNl = (at.tag == "pre" || at.tag == "textarea" || at.tag == "listing") && run.from == at.openTo;
+    if (dropNl && s.from == run.from) return null;
+    runFrom.push(run.from);
+    if (hits.at(-1)?.run != run) hits.push({ unit, run, dropNl });
+  }
+  const minTo = splices[0].to;
+  /** Where a position of the old text is in the new one. */
+  const one = splices.length == 1 ? splices[0] : null, oneD = one ? one.length - (one.to - one.from) : 0, oneRun = runFrom[0];
+  const map = one ? (x: number) => x < minTo || (x == minTo && one.from == minTo && x == oneRun) ? x : x + oneD : (x: number) => {
+    if (x < minTo) return x;
+    let d = 0;
+    for (let i = 0; i < splices.length; i++) {
+      const s = splices[i];
+      if (x > s.to || (x == s.to && (s.to > s.from || x > runFrom[i]))) d += s.length - (s.to - s.from);
+      else break;
+    }
+    return x + d;
+  };
+  for (const { run } of hits) {
+    const raw = newSrc.slice(map(run.from), map(run.to));
+    if (!raw || raw.includes("<") || /\S/.test(raw) != /\S/.test(oldSrc.slice(run.from, run.to))) return null;
+  }
+
+  // From here on, in place.
+  let root = hits[0].unit.node!;
+  while (root.parent) root = root.parent;
+  const shift = (el: ElementNode) => {
+    el.from = map(el.from); el.openTo = map(el.openTo); el.closeFrom = map(el.closeFrom); el.to = map(el.to);
+    for (const c of el.children) {
+      if (c.to < minTo) continue;
+      if (c.kind == "text") { c.from = map(c.from); c.to = map(c.to); }
+      else shift(c);
+    }
+  };
+  shift(root);
+  let lo = 0, hi = units.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (units[mid].to < minTo) lo = mid + 1; else hi = mid; }
+  for (let i = lo; i < units.length; i++) {
+    const u = units[i];
+    u.from = map(u.from); u.to = map(u.to); u.openFrom = map(u.openFrom); u.openTo = map(u.openTo);
+    u.contentFrom = map(u.contentFrom); u.contentTo = map(u.contentTo);
+    for (const r of u.runs) if (r.to >= minTo) { r.from = map(r.from); r.to = map(r.to); }
+  }
+  const changed = new Set<number>();
+  for (const { unit, run, dropNl } of hits) {
+    const { text, map: m } = decodeText(newSrc, run.from, run.to, false, decode, dropNl);
+    run.text = text;
+    run.map = m;
+    changed.add(unit.id);
+  }
+  return changed;
+}
+
+/** The element whose text node starts at `pos`, inside `el`. */
+function textParent(el: ElementNode, pos: number): ElementNode | null {
+  for (const c of el.children) {
+    if (c.kind == "text") { if (c.from == pos) return el; continue; }
+    if (c.openTo <= pos && pos < c.closeFrom) return textParent(c, pos);
+  }
+  return null;
 }
 
 /** Inserts data-erga-id attributes into the units' open tags. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeHtml, stamp, runPos, runOffset, unitAt, inlineStackAt, closeTags, openTags, balanced, decodeText, basicDecoder, adjacent, textStart, textEnd, duplicateIds } from "../client/manuscript";
+import { analyzeHtml, stamp, runPos, runOffset, unitAt, inlineStackAt, closeTags, openTags, balanced, decodeText, basicDecoder, adjacent, textStart, textEnd, duplicateIds, editRuns, type ElementNode, type Splice, type Unit } from "../client/manuscript";
 
 const doc = `<!doctype html>
 <html>
@@ -172,5 +172,75 @@ describe("duplicateIds", () => {
   });
   test("an id in a template isn't in the page", () => {
     expect(drop(`<template><li id="t">x</li></template>[<li id="t">y</li>]`)).toBe(`<template><li id="t">x</li></template><li id="t">y</li>`);
+  });
+});
+
+describe("editRuns", () => {
+  /** A tree, or units, as plain data: what a fresh parse and an edited one must agree on. */
+  const plainTree = (el: ElementNode): unknown => ({ ...el, parent: null, children: el.children.map((c) => c.kind == "text" ? c : plainTree(c)) });
+  const plainUnits = (units: Unit[]) => units.map((u) => ({ ...u, node: undefined }));
+  const rootOf = (units: Unit[]) => { let n = units[0].node!; while (n.parent) n = n.parent; return n; };
+  type Edit = Splice & { insert: string };
+  const apply = (src: string, edits: Edit[]) => {
+    let out = "", pos = 0;
+    for (const s of edits) { out += src.slice(pos, s.from) + s.insert; pos = s.to; }
+    return out + src.slice(pos);
+  };
+  const edit = (from: number, to: number, insert: string): Edit => ({ from, to, length: insert.length, insert });
+  /** Edits `src`: true if editRuns took the edit, and then its analysis matches a fresh one; false if it left it alone. */
+  const check = (src: string, edits: Edit[]) => {
+    const a = analyzeHtml(src);
+    const next = apply(src, edits);
+    const changed = editRuns(a.units, src, next, edits);
+    if (!changed) {
+      expect(plainUnits(a.units)).toEqual(plainUnits(analyzeHtml(src).units));
+      return false;
+    }
+    const fresh = analyzeHtml(next);
+    expect(plainUnits(a.units)).toEqual(plainUnits(fresh.units));
+    expect(plainTree(rootOf(a.units))).toEqual(plainTree(fresh.tree));
+    return true;
+  };
+  const at = (needle: string, offset = 0) => doc.indexOf(needle) + offset;
+
+  test("typing, deleting and replacing text inside a run match a fresh parse", () => {
+    expect(check(doc, [edit(at("Hello", 5), at("Hello", 5), "!")])).toBe(true);
+    expect(check(doc, [edit(at("Hello"), at("Hello"), "Oh")])).toBe(true);
+    expect(check(doc, [edit(at("things"), at("things", 6), "stuff")])).toBe(true);
+    expect(check(doc, [edit(at("Nested", 1), at("Nested", 3), "")])).toBe(true);
+    expect(check(doc, [edit(at("one", 3), at("one", 3), " & 1")])).toBe(true);
+    expect(check(doc, [edit(at("cool", 4), at("cool", 4), "&amp;")])).toBe(true);
+    expect(check(doc, [edit(at("Sub", 3), at("Sub", 3), "x")])).toBe(true);
+    expect(check(doc, [edit(at("here&gt;", 8), at("here&gt;", 8), " ok")])).toBe(true);
+    // Right after an inline element's open tag: the text is the element's.
+    expect(check(doc, [edit(at("<em>", 4), at("<em>", 4), "x")])).toBe(true);
+  });
+  test("several changes at once", () => {
+    expect(check(doc, [edit(at("Hello", 5), at("Hello", 5), "!"), edit(at("things"), at("things", 6), "x"), edit(at("Para", 4), at("Para", 4), "abc")])).toBe(true);
+  });
+  test("a change that can be more than text is left to a fresh parse", () => {
+    expect(check(doc, [edit(at("Hello", 5), at("Hello", 5), "<b>")])).toBe(false);
+    expect(check(doc, [edit(at("Hello"), at("Hello", 5), "")])).toBe(false);
+    expect(check(doc, [edit(at("<em>", 1), at("<em>", 1), "x")])).toBe(false);
+    expect(check(doc, [edit(at("<pre>", 5), at("<pre>", 5), "x")])).toBe(false);
+    expect(check(`<p>a <b>x</b></p>`, [edit(3, 4, " ")])).toBe(false);
+    expect(check(`<div>a <b>x</b></div>`, [edit(6, 7, "")])).toBe(true);
+    expect(check(`<div> <b>x</b></div>`, [edit(5, 6, "")])).toBe(false);
+  });
+  test("random typing and deleting in a long page", () => {
+    let src = doc.repeat(3);
+    let seed = 7;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    let took = 0;
+    for (let k = 0; k < 300; k++) {
+      const runs = analyzeHtml(src).units.flatMap((u) => u.runs.filter((r) => r.editable));
+      const r = runs[rnd(runs.length)];
+      const from = r.from + rnd(r.to - r.from + 1);
+      const del = rnd(3) == 0 ? Math.min(r.to - from, rnd(3)) : 0;
+      const e = edit(from, from + del, ["a", " ", "&", "&amp;", "é", "\n", "x y", ";", "\r\n"][rnd(9)]);
+      if (check(src, [e])) took++;
+      src = apply(src, [e]);
+    }
+    expect(took).toBeGreaterThan(200);
   });
 });
