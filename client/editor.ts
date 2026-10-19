@@ -19,6 +19,7 @@
 import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode, findClusterBreak, type ChangeSet, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
 import * as M from "./manuscript";
+import * as C from "./clipboard";
 import { changesBetween } from "../document/merge";
 import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
@@ -136,40 +137,6 @@ interface Analysis { units: M.Unit[]; html: string }
 /** Where the reader is in the page (see viewNow): the text on the window's top line, the first block in it, the scroll. */
 interface View { text: { pos: number; top: number } | null; block: { pos: number; top: number } | null; x: number; y: number }
 
-/** Inline elements a copy keeps (see clipboard), by the name it writes them with; the rest give only their text. */
-const COPY_TAGS: Record<string, string> = { strong: "strong", b: "strong", em: "em", i: "em", code: "code", a: "a", sub: "sub", sup: "sup", s: "s", del: "s", strike: "s", br: "br" };
-
-/** A selected piece of one unit as plain text and as HTML with only COPY_TAGS, no attributes but a link's href. */
-function cleanInline(root: Node, pre: boolean): { html: string; text: string } {
-  let html = "", text = "";
-  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const walk = (n: Node) => {
-    if (n.nodeType == 3) {
-      const t = pre ? n.nodeValue! : n.nodeValue!.replace(/\s+/g, " ");
-      html += esc(t); text += t;
-      return;
-    }
-    if (n.nodeType == 1) {
-      const el = n as Element, name = el.localName;
-      // Widgets and text the page doesn't let you edit, the editor's own marks, and what isn't text.
-      if (el.getAttribute("contenteditable") == "false" || name.startsWith("erga-") || /^(script|style|svg|canvas|img|video|audio|iframe|button|input|select|textarea|template)$/.test(name)) return;
-      const tag = COPY_TAGS[name];
-      if (tag == "br") { html += "<br>"; text += "\n"; return; }
-      if (tag) {
-        const href = tag == "a" ? (el as HTMLAnchorElement).href : "";
-        html += tag == "a" ? (href ? `<a href="${href.replace(/"/g, "&quot;")}">` : "") : `<${tag}>`;
-        el.childNodes.forEach(walk);
-        html += tag == "a" ? (href ? "</a>" : "") : `</${tag}>`;
-        return;
-      }
-    }
-    n.childNodes.forEach(walk);
-  };
-  walk(root);
-  if (!pre) text = text.replace(/ *\n */g, "\n");
-  return { html, text };
-}
-
 /** Units that go whole when a selection across units is deleted (replaceRange). */
 const WHOLE_BLOCKS = /^(p|h[1-6]|li|pre|blockquote|figcaption|dt|dd)$/;
 
@@ -202,6 +169,8 @@ function findDiff(a: string, b: string, preferredPos: number): { from: number; t
 }
 const BLOCK_SPLIT = new Set(["p", "li", "div", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt", "blockquote", "figcaption", "section", "article", "aside", "header", "footer", "nav", "main", "address", "summary", "span", "label", "legend"]);
 const HEADING = /^h[1-6]$/;
+/** Units a paste of several paragraphs splits (pasteBlocks); into others, they go as lines. */
+const SPLITS = /^(p|div|h[1-6]|blockquote|section|article|aside|header|footer|main|address|dd|dt|figcaption)$/;
 
 /**
  * DOM text equals source text, taking the browser's no-break spaces as
@@ -1531,17 +1500,98 @@ export class PageEditor {
     this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
   }
 
+  /**
+   * Paste: the clipboard's text with its basic formatting (see clipboard.ts),
+   * as one step to undo. HTML when there is some, else plain text, where a
+   * blank line starts a paragraph and a line break is a line break. Into a
+   * code block, plain text as it is.
+   */
   private paste(e: ClipboardEvent): void {
     e.preventDefault();
-    let text = e.clipboardData?.getData("text/plain") ?? "";
-    if (!text) return;
-    text = text.replace(/\r\n?/g, "\n");
+    const data = e.clipboardData;
+    const text = (data?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n");
+    const html = data?.getData("text/html") ?? "";
     const sel = this.currentSelection();
     const u = sel ? M.unitAt(this.units, sel.from) : null;
-    if (u && u.tag != "pre") text = text.replace(/\s*\n\s*/g, " ");
+    if (u?.tag == "pre") { if (text) this.insertText(text, null, "input.paste"); return; }
     // A URL pasted over selected text links the text (as the style bar's link does); where it can't, the URL replaces it.
-    if (sel && !sel.empty && u && u.tag != "pre" && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink({ url: text.trim() }) == null) return;
-    this.insertText(text, null, "input.paste");
+    if (sel && !sel.empty && u && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink({ url: text.trim() }) == null) return;
+    let blocks = html ? C.fromHtml(html) : [];
+    if (!blocks.length) blocks = C.fromText(text);
+    if (!blocks.length) return;
+    const one = blocks.length == 1 && blocks[0].tag == "p" ? blocks[0] : null;
+    // Text alone, in one paragraph: as typed (it can extend a link at the caret).
+    if (one && !one.html.includes("<")) { this.insertText(one.text, null, "input.paste"); return; }
+    this.pasteBlocks(blocks);
+  }
+
+  /**
+   * Puts blocks at the selection, in place of the selected text. One
+   * paragraph goes into the block at the caret. More split that block at
+   * the caret: the first paragraph ends its first half, the last starts its
+   * second half, and the others go between as blocks of their own. In a
+   * list item, each paragraph is an item and a list's items join the list.
+   * In a block that can't split (a table cell), the paragraphs are lines.
+   */
+  private pasteBlocks(blocks: C.Block[]): void {
+    const sel = this.currentSelection();
+    let state = this.state, before: ChangeSet | null = null, units = this.units;
+    if (!sel.empty) {
+      const spec = this.replaceSpec(sel.from, sel.to, "", "input.paste");
+      if (!spec) return;
+      const tr = state.update(spec);
+      before = tr.changes;
+      state = tr.state;
+      units = M.analyzeHtml(state.doc.toString(), this.decoder).units;
+    } else {
+      const at = M.unitAt(units, sel.from);
+      if (!at || !this.verify(at) || !this.editableAt(at, sel.from)) return;
+    }
+    const pos = state.selection.main.from, src = state.doc.toString();
+    const u = M.unitAt(units, pos);
+    if (!u) return;
+    const stack = M.inlineStackAt(src, u, pos);
+    const indent = M.lineIndent(src, u.openFrom);
+    const inList = u.tag == "li" && (u.node.parent?.tag == "ul" || u.node.parent?.tag == "ol");
+    const pieces: { src: string; html: string | null }[] = inList
+      ? C.items(blocks).map((i) => ({ src: C.itemSource(i, indent), html: i.lists.length ? null : i.html }))
+      : blocks.map((b) => ({ src: C.toSource([b], indent), html: b.tag == "p" ? b.html : null }));
+    let insert: string, from: number, to: number, caret: number;
+    if (!inList && !SPLITS.test(u.tag) || (pieces.length == 1 && pieces[0].html != null)) {
+      // Into the block, inside the formatting at the caret; a link can't hold another.
+      let inner = pieces.length == 1 && pieces[0].html != null ? pieces[0].html : C.flatHtml(blocks).join("<br>");
+      if (stack.some((t) => t.tag == "a")) inner = inner.replace(/<\/?a\b[^>]*>/g, "");
+      ({ insert, from, to, caret } = { insert: inner, from: pos, to: pos, caret: inner.length });
+    } else {
+      const open = src.slice(u.openFrom, u.openTo), close = src.slice(u.contentTo, u.to), sep = "\n" + indent;
+      const hasHead = contentIn(src, u, u.contentFrom, pos), hasTail = contentIn(src, u, pos, u.contentTo);
+      const first = pieces[0].html, last = pieces.length > 1 ? pieces.at(-1)!.html : null;
+      const middle = pieces.slice(first != null ? 1 : 0, last != null ? -1 : undefined);
+      // The block's first half, ended with the first paragraph; it goes if it would be empty.
+      const head = hasHead || first != null ? (hasHead ? M.closeTags(stack) : "") + (first ?? "") + close : "";
+      from = hasHead ? pos : first != null ? u.contentFrom : u.from;
+      insert = head;
+      caret = 0;
+      for (const p of middle) {
+        insert += (insert ? sep : "") + p.src;
+        caret = insert.length - (/(\s*<\/[a-z0-9]+>)+\s*$/i.exec(p.src)?.[0].length ?? 0);
+      }
+      // The second half, started with the last paragraph.
+      if (hasTail || last != null) {
+        insert += (insert ? sep : "") + open + (last ?? "");
+        caret = insert.length;
+        insert += hasTail ? M.openTags(stack) : "";
+        to = hasTail ? pos : u.contentTo;
+      } else to = u.to;
+    }
+    const drops = from == pos && to == pos ? this.placeholderDrops(src, [u], pos, pos, true) : [];
+    const after = state.changes([{ from, to, insert }, ...drops]);
+    this.dispatch({
+      changes: before ? before.compose(after) : after,
+      selection: { anchor: after.mapPos(from, -1) + caret },
+      userEvent: "input.paste",
+      scrollIntoView: true,
+    });
   }
 
   private cut(e: ClipboardEvent): void {
@@ -1564,17 +1614,20 @@ export class PageEditor {
   /**
    * What a copy puts on the clipboard: the text of the units in the
    * selection, without the widgets and other page parts between them, nor
-   * anything in a unit that isn't editable text. The HTML is plain
-   * structure (paragraphs, headings, lists, bold, italic, code, links) with
-   * no classes or styles, so a paste elsewhere takes the text, not this
-   * page's fonts and colours.
+   * anything in a unit that isn't editable text, with the allow-list of
+   * clipboard.ts: paragraphs, headings, lists, quotes, code, bold, italic
+   * and links, with no classes or styles, so a paste elsewhere takes the
+   * text, not this page's fonts and colours. The plain text keeps the line
+   * breaks, and writes list items as "- " and "1. ".
    */
   private clipboard(): { text: string; html: string } | null {
     const doc = this.doc, sel = doc?.getSelection();
     if (!doc || !sel || sel.isCollapsed || !sel.rangeCount) return null;
     const range = sel.getRangeAt(0);
-    const blocks: { tag: string; list: string | null; html: string; text: string }[] = [];
+    const lines: C.Line[] = [];
     const taken: Element[] = [];
+    // Widgets and text the page doesn't let you edit, and the editor's own marks.
+    const skip = (el: Element) => el.getAttribute("contenteditable") == "false" || el.localName.startsWith("erga-") || el.hasAttribute("data-erga");
     for (const u of this.units) {
       const el = this.els[u.id];
       if (!el?.isConnected || !range.intersectsNode(el) || taken.some((t) => t.contains(el))) continue;
@@ -1584,23 +1637,22 @@ export class PageEditor {
       if (r.comparePoint(range.startContainer, range.startOffset) == 0) r.setStart(range.startContainer, range.startOffset);
       if (r.comparePoint(range.endContainer, range.endOffset) == 0) r.setEnd(range.endContainer, range.endOffset);
       const pre = u.tag == "pre";
-      const out = cleanInline(r.cloneContents(), pre);
+      const out = C.inline(r.cloneContents(), { pre, heading: HEADING.test(u.tag), skip });
       if (!out.text.trim()) continue;
-      const list = u.tag == "li" ? (el.parentElement?.localName == "ol" ? "ol" : "ul") : null;
-      blocks.push({ tag: u.tag, list, html: out.html, text: pre ? out.text : out.text.trim() });
+      // A list item, or the <p> that holds the text of an item with a list in it.
+      const item = u.tag == "li" ? el : el.parentElement?.localName == "li" && el.parentElement.firstElementChild == el ? el.parentElement : null;
+      const list: ("ul" | "ol")[] = [];
+      if (item) for (let p = item.parentElement; p && p != doc.body; p = p.parentElement) if (p.localName == "ul" || p.localName == "ol") list.unshift(p.localName);
+      const tag = item ? "li" : pre || HEADING.test(u.tag) ? (u.tag as C.Line["tag"]) : "p";
+      lines.push({ tag, list, quote: !!el.closest("blockquote"), html: out.html, text: pre ? out.text : out.text.trim() });
     }
-    if (!blocks.length) return null;
-    if (blocks.length == 1 && blocks[0].tag != "pre") return { text: blocks[0].text, html: blocks[0].html.trim() };
-    let html = "", text = "", open: string | null = null;
-    for (const [i, b] of blocks.entries()) {
-      if (open && b.list != open) { html += `</${open}>`; open = null; }
-      if (b.list && !open) { html += `<${b.list}>`; open = b.list; }
-      const tag = b.list ? "li" : /^(h[1-6]|pre|blockquote)$/.test(b.tag) ? b.tag : "p";
-      html += `<${tag}>${b.html.trim()}</${tag}>`;
-      text += (i == 0 ? "" : b.list && blocks[i - 1].list ? "\n" : "\n\n") + b.text;
-    }
-    if (open) html += `</${open}>`;
-    return { text, html };
+    if (!lines.length) return null;
+    if (lines.length == 1 && lines[0].tag != "pre") return { text: lines[0].text, html: lines[0].html };
+    // The shallowest item copied is at the top level.
+    const top = Math.min(...lines.filter((l) => l.tag == "li").map((l) => l.list.length));
+    for (const l of lines) if (l.tag == "li") l.list = l.list.slice(top - 1);
+    const blocks = C.nest(lines);
+    return { text: C.toText(blocks), html: C.toHtml(blocks) };
   }
 
   // ------------------------------------------------------------ editing
@@ -1682,16 +1734,22 @@ export class PageEditor {
    * between go, and the two at the ends keep what's outside the range.
    */
   replaceRange(from: number, to: number, text: string, userEvent: string): boolean {
+    const spec = this.replaceSpec(from, to, text, userEvent);
+    if (spec) this.dispatch(spec);
+    return !!spec;
+  }
+
+  /** The transaction replaceRange dispatches, or null if the range can't be replaced. */
+  private replaceSpec(from: number, to: number, text: string, userEvent: string): TransactionSpec | null {
     const a = M.unitAt(this.units, from), b = M.unitAt(this.units, to);
-    if (!a || !b || !this.verify(a) || (a != b && !this.verify(b))) return false;
-    if (!this.editableAt(a, from) || (text && !this.editableAt(a, from))) return false;
+    if (!a || !b || !this.verify(a) || (a != b && !this.verify(b))) return null;
+    if (!this.editableAt(a, from) || (text && !this.editableAt(a, from))) return null;
     const src = this.state.doc.toString();
     const insert = text ? M.escapeHtmlText(text) : "";
     if (a == b) {
       // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
       const drops = insert ? this.placeholderDrops(src, [a], from, to, true) : [];
-      this.dispatch({ changes: [{ from, to, insert }, ...drops], selection: { anchor: from + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true });
-      return true;
+      return { changes: [{ from, to, insert }, ...drops], selection: { anchor: from + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true };
     }
     // Across units.
     const between = this.units.slice(a.id, b.id + 1);
@@ -1711,8 +1769,7 @@ export class PageEditor {
         last = u.to;
       }
       changes.push({ from: M.textStart(b), to, insert: "" });
-      this.dispatch({ changes, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true });
-      return true;
+      return { changes, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true };
     }
     const head = M.closeTags(M.inlineStackAt(src, a, from));
     const kept = !!insert || contentIn(src, a, a.contentFrom, from) || contentIn(src, b, to, b.contentTo);
@@ -1720,8 +1777,7 @@ export class PageEditor {
     const changes = [{ from, to, insert: head + insert + M.openTags(M.inlineStackAt(src, b, to)) }, ...drops];
     // The joined unit is the first one's element: its close tag ends it.
     if (a.tag != b.tag) changes.push({ from: b.contentTo, to: b.to, insert: src.slice(a.contentTo, a.to) });
-    this.dispatch({ changes, selection: { anchor: from + head.length + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true });
-    return true;
+    return { changes, selection: { anchor: from + head.length + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true };
   }
 
   /**

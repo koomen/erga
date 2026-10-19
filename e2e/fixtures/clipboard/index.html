@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Clipboard</title>
+  <style>
+    body { font-family: Georgia, serif; color: #234; max-width: 40em; margin: 2em auto; }
+    .big { font-size: 22px; color: #a00; background: #ffd; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Clipboard</h1>
+    <p id="target">Before after.</p>
+    <p id="empty"><br></p>
+    <ul id="list">
+      <li>Alpha</li>
+      <li>Omega</li>
+    </ul>
+    <p id="rich" class="big">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p>
+    <ul id="nested">
+      <li><p>Top</p>
+        <ul>
+          <li>Inner</li>
+        </ul>
+      </li>
+      <li>Last</li>
+    </ul>
+    <ol id="numbered">
+      <li>One</li>
+      <li>Two</li>
+    </ol>
+    <table><tr><td id="cell">Cell</td></tr></table>
+  </main>
+</body>
+</html>
