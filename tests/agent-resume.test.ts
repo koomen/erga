@@ -54,7 +54,7 @@ async function openDocument(data: Map<string, Uint8Array>, store: ChatStore, run
     write: (p, text) => Effect.sync(() => { data.set(p, new TextEncoder().encode(text)); }),
   });
   const scope = Effect.runSync(Scope.make());
-  const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(Layer.merge(Layer.succeed(FileStore, files), StateStore.none)), Scope.provide(scope)));
+  const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(StateStore.none.pipe(Layer.provideMerge(Layer.succeed(FileStore, files)))), Scope.provide(scope)));
   const count: AgentTool = {
     name: "count", label: "Count", description: "Counts its runs.", parameters: Type.Object({}),
     execute: async () => { runs.n++; return { content: [{ type: "text", text: `run ${runs.n}` }], details: {} }; },

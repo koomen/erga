@@ -20,7 +20,7 @@ function memoryStore(init: Record<string, string>) {
     read: (p) => Effect.sync(() => data.get(p) ?? null),
     write: (p, text) => Effect.sync(() => { writes.push(p); data.set(p, new TextEncoder().encode(text)); }),
   });
-  return { layer: Layer.merge(files, StateStore.none), writes, get: (p: string) => new TextDecoder().decode(data.get(p)), set: (p: string, t: string) => data.set(p, new TextEncoder().encode(t)) };
+  return { layer: StateStore.none.pipe(Layer.provideMerge(files)), writes, get: (p: string) => new TextDecoder().decode(data.get(p)), set: (p: string, t: string) => data.set(p, new TextEncoder().encode(t)) };
 }
 
 /** Runs a test against a room on that storage, closed when the test ends. */

@@ -53,7 +53,7 @@ async function openDocument(settings: Parameters<typeof makeHost>[0]["agent"]) {
     write: (p, text) => Effect.sync(() => { data.set(p, new TextEncoder().encode(text)); }),
   });
   const scope = Effect.runSync(Scope.make());
-  const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(Layer.merge(Layer.succeed(FileStore, files), StateStore.none)), Scope.provide(scope)));
+  const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(StateStore.none.pipe(Layer.provideMerge(Layer.succeed(FileStore, files)))), Scope.provide(scope)));
   const host = makeHost({
     room, files, agent: settings,
     doc: { name: "index.html", path: "index.html", kind: "html", dir: "ada" },

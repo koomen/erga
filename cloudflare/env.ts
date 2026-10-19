@@ -155,4 +155,6 @@ export interface Env {
   /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; document/versions.ts). */
   ERGA_VERSION_IDLE_MS?: string;
   ERGA_VERSION_MAX_MS?: string;
+  /** Local development only: how long a document stays open with nothing done before it closes, so its object may sleep (document/document.ts). */
+  ERGA_ROOM_IDLE_MS?: string;
 }

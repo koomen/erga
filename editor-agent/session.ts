@@ -816,6 +816,8 @@ export interface AgentSession {
    */
   /** `via`: how the person acts through the outside agent (shared/attribution.ts: "a shared agent (label)"); its edits are theirs, via it. */
   runTool(name: string, args: unknown, via?: string): Promise<ToolContent[]>;
+  /** Leaves the room and stops its timers (the document closed: it starts again the next time it's needed). */
+  close(): void;
 }
 
 export interface SessionOptions {
@@ -874,7 +876,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
   awareness.setLocalState({ user: me, busy: false, activity: null, cursor: null });
-  joinLocal(opts.room, doc, awareness);
+  const leave = joinLocal(opts.room, doc, awareness);
   await new Promise((r) => setTimeout(r, 0)); // the in-process sync is microtasks: done by now
   introduce(doc, me);
 
@@ -1027,6 +1029,12 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   let making: Promise<void> | null = null;
 
   return {
+    close() {
+      agent?.abort();
+      if (busy.extTimer) clearTimeout(busy.extTimer);
+      leave();
+      awareness.destroy();
+    },
     get model() { return agent?.state.model.name ?? null; },
     get modelChoice() { return choice; },
     setModel(next) {

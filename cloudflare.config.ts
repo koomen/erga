@@ -122,6 +122,8 @@ export default defineConfig(({ mode }) => ({
         // When versions are cut: how long edits pause first, and the longest burst one version holds.
         ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
+        // How long a document stays open with nothing done before it closes and its object may sleep (tests shorten it).
+        ERGA_ROOM_IDLE_MS: bindings.text(process.env.ERGA_ROOM_IDLE_MS ?? ""),
         // e2e/load-bench.ts --latency: each call to the database or a document waits this long first.
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
 

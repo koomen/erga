@@ -49,7 +49,8 @@ export function hermetic(): boolean {
 }
 
 /** What a child process may see of this one's environment, plus `extra`. */
-const PASS = ["PATH", "E2E_TELEMETRY_DISABLED", "DO_NOT_TRACK", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME", "SHELL", "TERM", "XDG_CONFIG_HOME", "BUN_INSTALL_CACHE_DIR", "ERGA_CHROME_HOME", "ERGA_TEST_RUN", "CI"];
+/** (ERGA_ROOM_IDLE_MS: set, the dev servers close idle documents that soon, so the tests open and close them often.) */
+const PASS = ["PATH", "E2E_TELEMETRY_DISABLED", "DO_NOT_TRACK", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME", "SHELL", "TERM", "XDG_CONFIG_HOME", "BUN_INSTALL_CACHE_DIR", "ERGA_CHROME_HOME", "ERGA_TEST_RUN", "CI", "ERGA_ROOM_IDLE_MS"];
 
 export function cleanEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
   const env: Record<string, string> = { ...GIT };
