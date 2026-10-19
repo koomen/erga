@@ -39,7 +39,7 @@ beforeAll(async () => {
   const dir = join(ROOT, ".build/release");
   // Built here if missing, or from before the release carried the control Worker (deploy/release.ts).
   if (!existsSync(join(dir, "release.json")) || !JSON.parse(readFileSync(join(dir, "release.json"), "utf8")).control) {
-    if (!existsSync(join(ROOT, ".build/page.js"))) expect(Bun.spawnSync([join(ROOT, "client/build.sh")], { cwd: ROOT }).exitCode).toBe(0);
+    if (!existsSync(join(ROOT, ".build/manifest.json"))) expect(Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
   release = (await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null)))!;

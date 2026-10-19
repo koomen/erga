@@ -9,10 +9,12 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import {
-  assetHash, checkPlan, Cloudflare, deploy, DeployError, loadRelease, registerDomain, searchDomains, STEPS, tokenTemplateUrl,
+  assetHash, checkPlan, Cloudflare, deploy, DeployError, HEADERS_FILE, loadRelease, registerDomain, searchDomains, STEPS, tokenTemplateUrl,
   type DeployPlan, type Release,
 } from "../deploy/pipeline";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
+import { HEADERS } from "../client/build.ts";
+import { ASSET_PREFIX, type AssetManifest } from "../shared/assets.ts";
 import { open, seal } from "../deploy/seal";
 import { pagesHost, pagesOrigin, pagesToken } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
@@ -24,7 +26,7 @@ let release: Release;
 beforeAll(async () => {
   const dir = join(ROOT, ".build/release");
   if (!existsSync(join(dir, "release.json"))) {
-    if (!existsSync(join(ROOT, ".build/page.js"))) expect(Bun.spawnSync([join(ROOT, "client/build.sh")], { cwd: ROOT }).exitCode).toBe(0);
+    if (!existsSync(join(ROOT, ".build/manifest.json"))) expect(Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
   release = (await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null)))!;
@@ -48,8 +50,11 @@ describe("deploying", () => {
   test("the release is erga.dev's own build", () => {
     expect(release.worker.name).toBe("erga");
     expect(release.modules[release.mainModule]).toBeDefined();
-    expect(Object.keys(release.assets)).toContain("/page.js");
-    expect(Object.keys(release.assets)).toContain("/editor.html");
+    // The client's build (client/build.ts): its files by their hashes, the list of them, and their headers.
+    expect(Object.keys(release.assets)).toContain("/manifest.json");
+    expect(Object.keys(release.assets)).toContain(HEADERS_FILE);
+    const built = JSON.parse(new TextDecoder().decode(release.assets["/manifest.json"])) as AssetManifest;
+    for (const name of ["page.js", "frame.js", "editor.html", "style.css"]) expect(Object.keys(release.assets)).toContain(built.files[name]);
     expect(Object.keys(release.assets).some((p) => p.startsWith("/release"))).toBe(false);
     expect(Object.keys(release.migrations)[0]).toBe("0001_erga.sql");
   });
@@ -64,7 +69,8 @@ describe("deploying", () => {
     const [db] = state.databases;
     expect(db.name).toBe("erga");
     expect(db.migrations).toEqual(Object.keys(release.migrations).sort());
-    expect(Object.keys(state.assets.manifest).sort()).toEqual(Object.keys(release.assets).sort());
+    // Every file, but the headers, which go in the Worker's config.
+    expect(Object.keys(state.assets.manifest).sort()).toEqual(Object.keys(release.assets).filter((p) => p != HEADERS_FILE).sort());
     expect(new Set(state.assets.uploaded).size).toBe(new Set(Object.values(state.assets.manifest).map((f) => f.hash)).size);
 
     const worker = state.scripts.erga;
@@ -93,7 +99,8 @@ describe("deploying", () => {
     expect(worker.metadata.keep_bindings).toBeUndefined();
     expect(worker.metadata.migrations).toBeUndefined();
     expect(worker.tags).toEqual(["erga-deploy"]);
-    expect(worker.metadata.assets.config).toEqual({ html_handling: "none", not_found_handling: "none", run_worker_first: true });
+    // The Worker runs first for everything but the hashed files, which Cloudflare serves with the build's headers.
+    expect(worker.metadata.assets.config).toEqual({ html_handling: "none", not_found_handling: "none", run_worker_first: ["/*", `!${ASSET_PREFIX}*`], _headers: HEADERS });
     expect(worker.metadata.compatibility_flags).toContain("nodejs_compat");
 
     expect(state.scripts["erga-pages"].workersDev).toBe(true);

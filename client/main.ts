@@ -8,13 +8,10 @@
 // host, its conversation is yours alone (your other tabs show it too), and
 // its edits arrive through the room like anyone's.
 
-import { EditorState, StateEffect, StateField, Transaction, type ChangeSet, type Extension } from "@codemirror/state";
-import { EditorView, keymap, drawSelection, highlightSpecialChars, Decoration, WidgetType, type DecorationSet } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
-import { html } from "@codemirror/lang-html";
-import { tags as t } from "@lezer/highlight";
-import { ms, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
+import { Transaction, type ChangeSet, type EditorState } from "@codemirror/state";
+import type { EditorView } from "@codemirror/view";
+import type { InlineStyle, MarkAuthor, Peer } from "./editor";
+import { ms } from "./timescale";
 import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "./bridge";
 import { changesBetween } from "../document/merge";
@@ -48,46 +45,6 @@ liveWatch({ events: false, net: false, types: [] });
   if (kind == "console" && typeof c?.text == "string") shellConsole.add(c.level, c.text, "editor", c.at);
 });
 
-// Other people's carets and selections in the source view, as CodeMirror
-// decorations (the page draws its own, see PageEditor.setPeers).
-const setPeersEffect = StateEffect.define<Peer[]>();
-class PeerCaret extends WidgetType {
-  constructor(readonly peer: Peer) { super(); }
-  eq(other: PeerCaret) { return other.peer.name == this.peer.name && other.peer.color == this.peer.color && other.peer.activity == this.peer.activity; }
-  toDOM() {
-    const el = document.createElement("span");
-    el.className = "cm-peer" + (this.peer.agent ? " is-agent" : "");
-    el.style.setProperty("--c", this.peer.color);
-    const name = document.createElement("span");
-    name.className = "cm-peer-name";
-    name.textContent = this.peer.activity ? `${this.peer.name} · ${this.peer.activity}` : this.peer.name;
-    el.append(name);
-    return el;
-  }
-  ignoreEvent() { return true; }
-}
-const peersField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(deco, tr) {
-    deco = deco.map(tr.changes);
-    for (const e of tr.effects) {
-      if (!e.is(setPeersEffect)) continue;
-      const len = tr.state.doc.length, ranges = [];
-      for (const p of e.value) {
-        const at = Math.min(p.head ?? p.anchor, len);
-        if (p.head != null && p.head != p.anchor) {
-          const from = Math.min(p.anchor, p.head, len), to = Math.min(Math.max(p.anchor, p.head), len);
-          if (to > from) ranges.push(Decoration.mark({ attributes: { style: `background-color: color-mix(in srgb, ${p.color} 18%, transparent)` } }).range(from, to));
-        }
-        ranges.push(Decoration.widget({ widget: new PeerCaret(p), side: 1 }).range(at));
-      }
-      deco = Decoration.set(ranges, true);
-    }
-    return deco;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
-
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
@@ -108,7 +65,7 @@ interface EditorKept {
 }
 /**
  * The editor's look, kept across a reload for the document's page to open with from its first frame (server/pages/viewer.ts,
- * EDITING_HEAD): the window's size it was for, the classes on <html> and <body> that place things (of SHELL_HTML,
+ * editingHead): the window's size it was for, the classes on <html> and <body> that place things (of SHELL_HTML,
  * SHELL_BODY), <html>'s style (the layout's variables, layout.ts; the page's colour), and the controls this script fills
  * in as it starts (SHELL_PARTS, by id: the title, the pencil, the avatars), as they were, so none appears late and moves
  * the others. (Only those this script sets afresh as it starts, never adds to: not the agent's conversation.)
@@ -116,7 +73,7 @@ interface EditorKept {
 interface ShellKept { width: number; height: number; html: string[]; body: string[]; style: string; parts: Record<string, string> }
 const SHELL_HTML = ["page-dark", "page-light", "erga-faded"], SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
 const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent-model", "agent-input", "agent-voice", "agent-send"];
-/** pages-tree.js, once loaded (it sets window.ergaTree). */
+/** pages-tree.ts, once imported (a chunk of its own: pages-tree.js). */
 type TreeModule = { mountTree: typeof mountTree };
 
 
@@ -303,52 +260,25 @@ type TreeModule = { mountTree: typeof mountTree };
     window.ergaShell?.ready();
     return;
   }
-  // One CodeMirror state serves both the page editor and the source view, so
-  // the undo history is shared and either view's edits land in the same file.
-  // The source view reads like code: smaller monospace, a fixed left margin,
-  // no right margin and no wrapping; long lines scroll sideways.
-  const baseTheme = EditorView.theme({
-    "&": { backgroundColor: "transparent", color: "var(--fg)", height: "100%" },
-    ".cm-content": { caretColor: "var(--fg)" },
-    "&.cm-focused": { outline: "none" },
-    // As wide as the page's caret: 2px, more in large type.
-    ".cm-cursor, .cm-dropCursor": { borderLeft: "max(2px, 0.085em) solid var(--fg)" },
-    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection)" },
-    ".cm-line": { padding: "0" },
+  // One CodeMirror state serves both the page editor and the source view, so the undo history is shared and either
+  // view's edits land in the same file. The source view's code (source-view.ts: CodeMirror's view and the HTML
+  // language) loads the first time it opens. Its own edits go to the room.
+  let sourceCode: Promise<typeof import("./source-view")> | null = null;
+  let source: typeof import("./source-view") | null = null;
+  const loadSource = () => sourceCode ??= import("./source-view").then((m) => (source = m), (e) => {
+    sourceCode = null;
+    // A chunk that isn't there any more is a new release: the page asks the server, and reloads (live.ts).
+    live((l) => l.check("a request failed"));
+    throw e;
   });
-  const htmlLook: Extension = [baseTheme, EditorView.theme({
-    "&": { fontSize: "13px" },
-    ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6", padding: "max(64px, 9vh) 0 40vh 56px" },
-    ".cm-content": { paddingRight: "24px" },
-  })];
-  const sourceHighlight = HighlightStyle.define([
-    { tag: [t.processingInstruction, t.meta, t.punctuation, t.angleBracket, t.documentMeta], color: "var(--mark)" },
-    { tag: [t.tagName, t.attributeName], color: "var(--soft)" },
-    { tag: [t.string, t.attributeValue, t.url, t.link], color: "var(--soft)" },
-    { tag: t.comment, color: "var(--mark)", fontStyle: "italic" },
-  ]);
-  // The source view's state: the frame hands over its own (undo history and
-  // all) when the view opens, and takes it back when it closes.
-  const sourceExtensions: Extension = [
-      peersField,
-      history(),
-      html(),
-      drawSelection(),
-      highlightSpecialChars(),
-      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-      syntaxHighlighting(sourceHighlight),
-      htmlLook,
-      // The source view's own edits go to the room; edits from the room come in marked "external".
-      EditorView.updateListener.of((u) => {
-        for (const tr of u.transactions) {
-          if (!tr.docChanged || tr.isUserEvent("external")) continue;
-          collab.push(tr.changes);
-          page.recordAuthorship(tr.changes, self);
-          hideChrome();
-        }
-        if (u.docChanged || u.selectionSet) queueCursor();
-      }),
-  ];
+  const sourceHooks = {
+    edited(changes: ChangeSet) {
+      collab.push(changes);
+      page.recordAuthorship(changes, self);
+      hideChrome();
+    },
+    moved: () => queueCursor(),
+  };
   document.title = info.docName?.title ?? info.name;
 
   // ---------------------------------------------------------------- title and address
@@ -460,12 +390,12 @@ type TreeModule = { mountTree: typeof mountTree };
   // tab, as Documents does (the same key), so the next page shows it straight
   // away and reads it again behind.
   let treeScript: Promise<TreeModule> | null = null;
-  const loadTree = () => (window.ergaTree ? Promise.resolve(window.ergaTree) : (treeScript ??= new Promise<TreeModule>((resolve, reject) => {
-    const s = Object.assign(document.createElement("script"), { src: "/pages-tree.js" });
-    s.onload = () => (window.ergaTree ? resolve(window.ergaTree) : reject(new Error("no tree")));
-    s.onerror = () => { treeScript = null; s.remove(); reject(new Error("Couldn't load the pages: check your connection and try again.")); };
-    document.head.append(s);
-  })));
+  const loadTree = () => treeScript ??= import("./pages-tree").then((m): TreeModule => m, () => {
+    treeScript = null;
+    // (A chunk that isn't there any more is a new release: the page asks the server, and reloads: live.ts.)
+    live((l) => l.check("a request failed"));
+    throw new Error("Couldn't load the pages: check your connection and try again.");
+  });
   const keptKey = () => `erga:docs-tree:${docName!.id}`;
   const kept = () => { try { return JSON.parse(sessionStorage.getItem(keptKey()) || "null") as Parameters<typeof mountTree>[1]["initial"]; } catch { return null; } };
   const keep = (a: { entries: unknown[]; canEdit: boolean }) => { try { sessionStorage.setItem(keptKey(), JSON.stringify({ entries: a.entries, canEdit: a.canEdit })); } catch { /* private mode */ } };
@@ -722,7 +652,7 @@ type TreeModule = { mountTree: typeof mountTree };
       if (!at) continue;
       peers.push({ key: p.client, name: p.user.name, color: p.user.color, anchor: at.anchor, head: at.head, agent: false, activity: null });
     }
-    if (sourceView) sourceView.dispatch({ effects: setPeersEffect.of(peers) });
+    if (sourceView && source) sourceView.dispatch({ effects: source.setPeers.of(peers) });
     else page.setPeers(peers);
   }
   // This tab's caret, for everyone else. It stays where you left it when
@@ -1018,17 +948,16 @@ Once you've read the guide, await further instructions.`;
   const settingsBtn = $("btn-settings");
   let settingsLoading: Promise<Settings | null> | null = null;
   function loadSettings(): Promise<Settings | null> {
-    return settingsLoading ??= new Promise((resolve) => {
-      const s = Object.assign(document.createElement("script"), { src: "/settings.js" });
-      s.onload = () => {
-        docSettings = window.ergaSettings?.mount({
-          docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin,
-          onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); } },
-        }) ?? null;
-        resolve(docSettings);
-      };
-      s.onerror = () => { settingsLoading = null; s.remove(); resolve(null); };
-      document.head.append(s);
+    return settingsLoading ??= import("./settings").then(() => {
+      docSettings = window.ergaSettings?.mount({
+        docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin,
+        onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); } },
+      }) ?? null;
+      return docSettings;
+    }, () => {
+      settingsLoading = null;
+      live((l) => l.check("a request failed"));
+      return null;
     });
   }
   for (const type of ["pointerenter", "focus"]) settingsBtn.addEventListener(type, () => void loadSettings(), { once: true });
@@ -1130,7 +1059,6 @@ Once you've read the guide, await further instructions.`;
     text: initialText,
     self,
     tracking: settings.track,
-    extensions: sourceExtensions,
     ...(back && back.path == pagePath ? { selection: back.selection, scroll: back.scroll } : {}),
     onLocal(changes) {
       collab.push(changes);
@@ -1412,17 +1340,21 @@ Once you've read the guide, await further instructions.`;
       const st = sourceView.state;
       sourceView.destroy();
       sourceView = null;
-      page.attach(st);
+      page.attach(st, source!.sourceHistory);
     }
     let handed: EditorState | null = null;
-    if (next != "text") handed = (await page.detach()).state;
+    if (next != "text") {
+      let code: typeof import("./source-view");
+      try { code = await loadSource(); } catch { flash("Couldn't open the source: check your connection and try again.", 4000); return; }
+      handed = (await page.detach(code.sourceState(sourceHooks))).state;
+    }
     mode = next;
     if (next == "text") {
       $("source").hidden = true;
       document.body.classList.remove("source");
       page.focus();
     } else {
-      sourceView = new EditorView({ parent: $("source"), state: handed! });
+      sourceView = source!.openSource($("source"), handed!);
       $("source").hidden = false;
       document.body.classList.add("source");
       sourceView.focus();
@@ -2074,7 +2006,7 @@ Once you've read the guide, await further instructions.`;
     if (text == null) { goTo(addressOf(path)); return; }
     pagePath = path;
     info = { ...info!, path, name: path };
-    page.load({ dir: dirOf(path), text, extensions: sourceExtensions });
+    page.load({ dir: dirOf(path), text });
     // What was said of the last page was of it alone.
     shownProblems.clear();
     problemQueue.length = 0;

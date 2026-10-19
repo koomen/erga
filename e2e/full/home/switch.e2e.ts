@@ -83,7 +83,8 @@ test("the page's styles can't reach the controls, nor theirs the page; its files
   expect(css.headers.get("cache-control") ?? "").toMatch(/immutable/);
   expect(await css.text()).toContain("rgb(1, 2, 3)");
   expect(await (await get(server, "/data.json")).text()).toBe(`{"ok":"yes"}`);
-  expect(await (await get(server, "/style.css")).text()).toContain("--");
+  // (The app's own files are under /_erga/: a name at the root is the homepage's.)
+  expect(await (await get(server, "/style.css")).text()).toContain("rgb(1, 2, 3)");
   expect(iso.cookie).not.toContain("erga_session");
 });
 

@@ -17,7 +17,7 @@
 // reload. Anything that isn't an admin page of the layout (a redirect to sign
 // in, an error, another kind of answer) opens as a whole page instead.
 //
-// Built by client/build.sh to admin-nav.js.
+// Built by client/build.ts to admin-nav.js.
 
 interface View { signal: AbortSignal; onLeave(fn: () => void): void; leave(): void }
 declare global { interface Window { ergaView: View; ergaAdmin?: { go(url: string, opts?: { replace?: boolean }): Promise<void>; reload(): Promise<void> } } }

@@ -15,7 +15,7 @@
 // the panel's state, so a page paints it at once.
 //
 // Share with agent is in every admin page's header. Built
-// by client/build.sh to admin-agent.js.
+// by client/build.ts to admin-agent.js.
 
 import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "../shared/attach";

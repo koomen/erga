@@ -5,8 +5,7 @@
 // controls. Everything the frame sends is checked: the page itself could
 // have sent it.
 
-import { EditorState, Transaction, type ChangeSet, type Extension } from "@codemirror/state";
-import { historyField } from "@codemirror/commands";
+import { EditorState, Transaction, type ChangeSet, type Extension, type StateField } from "@codemirror/state";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
 import type { InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "./editor";
 import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
@@ -23,8 +22,6 @@ export interface RemotePageConfig {
   text: string;
   self: MarkAuthor;
   tracking: boolean;
-  /** The extensions of the shell's own state (the source view's), for states that come back from the frame. */
-  extensions: Extension;
   /** An edit made on the page, accepted: the shell's text has it now. */
   onLocal: (changes: ChangeSet) => void;
   /** The page's caret moved (the shell's state has the new selection). */
@@ -48,6 +45,9 @@ export interface RemotePageConfig {
   /** A link on the page to another of the document's pages was followed (its path in the document). */
   onOpen?: (path: string) => void;
 }
+
+/** What the source view's state is made with: its extensions, and the field its undo history is in. */
+export interface SourceState { extensions: Extension; history: StateField<unknown> }
 
 const EMPTY: Snapshot = { title: "", canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, text: "", link: null } };
 
@@ -93,10 +93,9 @@ export class RemotePage {
    * is its text from now on, and the frame's (it renders it from its top, with an undo history of its own). Its numbering
    * moves on by one, so an edit of the last page still on its way from the frame never fits the new one.
    */
-  load(page: { dir: string; text: string; extensions: Extension }): void {
+  load(page: { dir: string; text: string }): void {
     const c = this.config;
     c.dir = page.dir;
-    c.extensions = page.extensions;
     c.scroll = undefined;
     this.state = EditorState.create({ doc: page.text });
     this.authority.reset(this.authority.version + 1);
@@ -216,16 +215,17 @@ export class RemotePage {
 
   /**
    * Hands the text to the source view: the frame's state, undo history and
-   * all, once its edits are in. Until `attach`, the shell's text is the source view's.
+   * all, once its edits are in, made with the source view's extensions and its history's field (source-view.ts, which
+   * loads the first time the view opens). Until `attach`, the shell's text is the source view's.
    */
-  async detach(): Promise<{ state: EditorState }> {
+  async detach(source: SourceState): Promise<{ state: EditorState }> {
     const id = this.nextId++;
     const reply = await this.request<Extract<FromFrame, { type: "detached" }>>({ type: "detach", id }, 3000);
     this.detached = true;
-    const fallback = () => EditorState.create({ doc: this.state.doc, selection: this.state.selection, extensions: this.config.extensions });
+    const fallback = () => EditorState.create({ doc: this.state.doc, selection: this.state.selection, extensions: source.extensions });
     if (!reply) return { state: fallback() };
     let state: EditorState;
-    try { state = EditorState.fromJSON(reply.state, { extensions: this.config.extensions }, { history: historyField }); } catch { return { state: fallback() }; }
+    try { state = EditorState.fromJSON(reply.state, { extensions: source.extensions }, { history: source.history }); } catch { return { state: fallback() }; }
     // Anything the frame hadn't seen yet when it answered.
     const missed = typeof reply.version == "number" ? this.authority.since(reply.version) : null;
     if (missed) for (const changes of missed) {
@@ -239,12 +239,12 @@ export class RemotePage {
     return { state };
   }
 
-  /** Back from the source view: the page carries on from its state. */
-  attach(state: EditorState): void {
+  /** Back from the source view: the page carries on from its state (`history`: the field its undo history is in). */
+  attach(state: EditorState, history: StateField<unknown>): void {
     this.state = EditorState.create({ doc: state.doc, selection: state.selection });
     this.detached = false;
     this.authority.reset();
-    this.post({ type: "attach", state: stateJSON(state, historyField), version: this.authority.version });
+    this.post({ type: "attach", state: stateJSON(state, history), version: this.authority.version });
   }
 
   // ------------------------------------------------------------ the page

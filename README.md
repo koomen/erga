@@ -55,7 +55,7 @@ AGENTS.md has the rules for working on it.
     shared/       code the server and the browser bundles both use: agent-log.ts (the transcript), attach.ts (attached
                   files), attribution.ts (who did something, and how). The browser's bundles may have shared/, and of
                   document/ only content.ts, pages.ts, merge.ts and api.ts's types: tests/browser-imports.test.ts keeps it so
-    client/       the browser side: editor.html, style.css, fonts/, and the scripts build.sh bundles into .build/
+    client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
                   (main.ts the editor's shell, frame.ts the editor, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
                   (platform.ts), D1 (d1.ts), the Durable Objects (document-object.ts and objects/: each gives its logic
@@ -83,6 +83,6 @@ reads the Worker's bindings; `server/` and `document/` never import it. The conf
 there: `cloudflare.config.ts` (the Worker and its bindings),
 `vite.config.ts`, `e2e.config.ts`, `tsconfig.json`.
 
-Building: `bun run build` (client/build.sh) writes the client's files to
+Building: `bun run build` (client/build.ts) writes the client's files to
 `.build/`; `bun run release` (deploy/release.ts) adds the Worker's release to
 `.build/release/`. The builder container runs both in each commit it deploys.

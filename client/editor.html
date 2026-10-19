@@ -18,6 +18,8 @@
       } catch (e) {}
     })();
   </script>
+  <!-- The build (client/build.ts) puts this build's files here: the typeface's @font-face rules in the page itself,
+       the stylesheet and the script (below) at their hashed addresses. -->
   <link rel="stylesheet" href="/fonts/inter.css">
   <link rel="stylesheet" href="/style.css">
   <style>
@@ -289,7 +291,7 @@
     /* The editor's own page actions, between Clone and the pencil. While editing (and the editor is up), the group's column is
        its full width; else nothing. It eases between the two, and its actions keep to its left edge: as it narrows they all
        slide right into the pencil, New document and Clone with them, and each fades over its last 14px at the pencil's edge,
-       a line it vanishes at; as it widens they come out of the pencil. Leaving the editor, EDIT_BOOT holds the
+       a line it vanishes at; as it widens they come out of the pencil. Leaving the editor, editBoot holds the
        editor's row up while they go (erga-closing). Moving, it clips sideways only, so tooltips below still show; open and
        at rest (settled), nothing clips. The others here fade in and out with it, at the far left. */
     .edit-group { display: grid; grid-template-columns: 0fr; margin-left: -2px; transition: grid-template-columns 420ms var(--agent-ease), margin 420ms var(--agent-ease); }

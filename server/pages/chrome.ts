@@ -3,6 +3,7 @@
 
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
+import { fontTags, styleTag } from "./assets.ts";
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
 export const link = (path: string, session: Session | null) =>
@@ -112,8 +113,8 @@ export function crumbs(session: Session | null, trail: Crumb[], here = "span", h
  * The viewer's breadcrumbs (VIEW_STYLE), for someone signed in: Erga › Documents › the document, as the editor's
  *. The front page's are the wordmark alone; a test person's skip Documents, as they have none. An agent sees none.
  */
-/** The breadcrumbs' type (Inter, as the editor's), for a page that shows them (viewCrumbs) but has none of the app's style. */
-export const crumbsFont = (session: Session | null) => session && !session.agent ? `<link rel="stylesheet" href="/fonts/inter.css">` : "";
+/** The breadcrumbs' type (Inter, as the editor's), for a page that shows them (viewCrumbs) but has none of the app's style: its rules only, which wait for nothing. */
+export const crumbsFont = (session: Session | null) => session && !session.agent ? fontTags() : "";
 
 export function viewCrumbs(session: Session | null, title: string | null): string {
   if (!session || session.agent) return "";
@@ -153,8 +154,8 @@ export const appPage = (title: string, style: string, body: string, footer = tru
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · Erga</title>
 ${FAVICON_LINK}
-<link rel="stylesheet" href="/fonts/inter.css">
-<link rel="stylesheet" href="/style.css">
+${fontTags(true)}
+${styleTag()}
 <style>${APP_STYLE}${style}</style>
 ${body}
 ${footer ? siteFooter() : ""}
@@ -189,7 +190,7 @@ export const signInFirst = (next: string) => new Response(null, { status: 302, h
 /**
  * A small page for when there's nothing to show, or something about signing in goes wrong: the app's look (its type and
  * colours, light or dark with the system), a title and a few lines, in a column. It needs no session: the stylesheet and
- * the fonts are the site's own, and the control Worker serves them too.
+ * the typeface are the app's own files (pages/assets.ts), which the control Worker names at the app's origin.
  */
 export function page(title: string, html: string, status: number): Response {
   return new Response(appPage(title, PLAIN_STYLE, `<main class="plain"><h1>${title}</h1><p>${html}</p></main>`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });

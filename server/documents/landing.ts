@@ -11,7 +11,11 @@ import { startPage } from "../pages/index.ts";
 export async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
   const roleOf = (doc: DocRow) => (session ? platform.directory.access(whoOf(session), doc) : Promise.resolve(null));
   // The usual case, the setting's document there: whether it is (its host's page) and what they may do with it, at once.
-  const named = await platform.directory.landing();
+  let named = await platform.directory.landing();
+  // A seed in this isolate that has claimed the setting, but not yet moved its document to its address (seedLanding):
+  // its answer, at /<owner>/landing, rather than the document at its id.
+  const running = seeding.get(platform.directory);
+  if (named && running && named.slug == named.id) named = (await running) ?? named;
   if (named) {
     const [index, role] = await Promise.all([platform.docs.index(named), roleOf(named)]);
     if (index != null) return viewDocument(platform, request, { doc: named, index, role }, session, true);

@@ -17,21 +17,11 @@
 // and offers them again (`Relay`). The shell never transforms anything, and
 // both sides end up with the same text.
 
-import { ChangeSet, EditorSelection, type EditorState, type Extension } from "@codemirror/state";
-import { history } from "@codemirror/commands";
+import { ChangeSet, EditorSelection, type EditorState } from "@codemirror/state";
 import type { InlineStyle, LinkEdit, LinkInfo, MarkAuthor, Peer } from "./editor";
 import type { ViewRequest, ViewResult } from "../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { zoomKey, type ZoomBy } from "./zoom";
-
-/**
- * What the frame's editor state needs: the history (undo, shared with the
- * source view). No language: the frame has no CodeMirror view to highlight,
- * and the page is parsed by the page editor itself, so leaving out the
- * HTML language (with its CSS and JavaScript) keeps frame.js a third smaller
- * and spares a parse on every edit. The source view, in the shell, has it.
- */
-export const docExtensions: Extension[] = [history()];
 
 /** The parts of a keydown the shell's shortcuts look at. */
 export interface Keys { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }

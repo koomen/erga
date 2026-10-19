@@ -35,7 +35,7 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
   const auth: Record<string, string> = o.source.token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${btoa(`x:${o.source.token}`)}` } : {};
   o.log(`fetching ${o.commit.slice(0, 12)} from ${o.source.cloneUrl}`);
   await run(["git", "init", "-q"], { cwd: o.dir, env, log: o.log });
-  // Only the commit, not the branch's history: nothing in the build reads history (client/build.sh and client/build.sh run no git,
+  // Only the commit, not the branch's history: nothing in the build reads history (client/build.ts and client/build.ts run no git,
   // and deploy/release.ts stamps the version from WORKERS_CI_COMMIT_SHA). The cheapest fetch that has the commit:
   //   1. the commit by its id, depth 1 (Git's protocol v2 servers serve any commit a branch reaches);
   //   2. else the branch's head, depth 1 (a server that won't fetch by id: the head is the commit nearly always);

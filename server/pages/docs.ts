@@ -1,6 +1,7 @@
 // The documents list page (/docs): a person's documents, latest edit first.
 
 import type { Listed, Session } from "../platform.ts";
+import { asset } from "./assets.ts";
 import { appPage, crumbs, esc, ICON, link, TIMES_SCRIPT } from "./chrome.ts";
 
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
@@ -212,12 +213,10 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   // answer is kept for the tab: opened again, or on the next visit, its pages show straight away, and are read again behind.
   // Pages open in the editor for those who may edit, in the viewer otherwise. Which are open is remembered for the tab.
   let treeJs = null;
-  const loadTree = () => window.ergaTree ? Promise.resolve(window.ergaTree) : (treeJs ??= new Promise((ok, no) => {
-    const s = Object.assign(document.createElement("script"), { src: "/pages-tree.js" });
-    s.onload = () => window.ergaTree ? ok(window.ergaTree) : no(new Error("Couldn't load the pages."));
-    s.onerror = () => { treeJs = null; s.remove(); no(new Error("Couldn't load the pages: check your connection and try again.")); };
-    document.head.append(s);
-  }));
+  const loadTree = () => treeJs ??= import(${JSON.stringify(asset("pages-tree.js"))}).then(() => window.ergaTree, () => {
+    treeJs = null;
+    throw new Error("Couldn't load the pages: check your connection and try again.");
+  });
   (window.requestIdleCallback ?? setTimeout)(() => loadTree().catch(() => {}));
   const treeQuery = ${JSON.stringify(session.as ? `?user=${encodeURIComponent(session.as)}` : "")};
   // A tree read ahead of the click, handed to the tree for its first read (once), if it's still fresh.

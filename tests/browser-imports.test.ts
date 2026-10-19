@@ -1,4 +1,4 @@
-// The browser's bundles (client/build.sh's entries) import a few modules
+// The browser's bundles (client/build.ts's entries, and the chunks they import later) import a few modules
 // outside client/: shared/ and the document's content, pages, merge and
 // API types. Those must stay free of server and Cloudflare code: this test
 // follows every value import from the entries and fails on one that reaches
@@ -9,18 +9,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { expect, test } from "bun:test";
+import { ENTRIES as BUILT } from "../client/build.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
-const ENTRIES = ["main.ts", "frame.ts", "settings.ts", "pages-tree.ts", "admin-agent.ts", "admin-share.ts", "admin-nav.ts", "live.ts"].map((f) => `client/${f}`);
+const ENTRIES = Object.values(BUILT);
 /** Outside client/ and shared/, the files the browser may have. */
 const ALLOWED = new Set(["document/content.ts", "document/pages.ts", "document/merge.ts"]);
 
-/** The relative specifiers of a file's value imports (`import type` and `export type` left out). */
+/** The relative specifiers of a file's value imports (`import type` and `export type` left out), and of its import()s. */
 function valueImports(source: string): string[] {
   const out: string[] = [];
-  const re = /^\s*(import|export)\s+(type\s+)?([^;]*?)\s+from\s+["']([^"']+)["']|^\s*import\s+["']([^"']+)["']/gm;
+  const re = /^\s*(import|export)\s+(type\s+)?([^;]*?)\s+from\s+["']([^"']+)["']|^\s*import\s+["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gm;
   for (const m of source.matchAll(re)) {
-    const spec = m[4] ?? m[5];
+    const spec = m[4] ?? m[5] ?? m[6];
     if (!spec || !spec.startsWith(".")) continue;
     if (m[2]) continue;
     out.push(spec);

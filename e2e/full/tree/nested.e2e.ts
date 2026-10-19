@@ -43,7 +43,7 @@ test("at its own address in the viewer, which never loads pages-tree.js", async 
   await page.goto(at);
   await until(async () => (await inFrames(page, rendered(`document.querySelector("iframe.on")?.contentDocument`))).some(whole), 5000, "rendered whole in the viewer at its address");
   await until(() => page.evaluate(`document.readyState == "complete"`), 5000, "the viewer has loaded");
-  expect(await js(page, `!!window.ergaTree || !!document.querySelector('script[src="/pages-tree.js"]') || performance.getEntriesByType("resource").some((e) => e.name.includes("pages-tree.js"))`)).toBe(false);
+  expect(await js(page, `!!window.ergaTree || performance.getEntriesByType("resource").some((e) => e.name.includes("/_erga/pages-tree-"))`)).toBe(false);
 });
 
 test("in the editor at its address, which resolves its links from its folder", async ({ tab }) => {
