@@ -15,7 +15,8 @@
     "test:prod": "bun e2e/full/suite/prod.ts",
     "test:full": "bun e2e/run.ts --full",
     "test:e2e": "bun e2e/run.ts --e2e",
-    "test:browsers": "bunx @e2e-dev/web install chromium"
+    "test:browsers": "bunx @e2e-dev/web install chromium",
+    "bench": "bun e2e/bench/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",
