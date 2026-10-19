@@ -585,15 +585,21 @@ type TreeModule = { mountTree: typeof mountTree };
     }
     // The shell's copy of the text takes it either way; the page does when it isn't set aside for the source view.
     page.applyExternal(changes, markAuthor(author));
-    // The editor and the room must agree; if they ever don't, the room wins.
-    const want = collab.current(), have = currentState().doc.toString();
-    if (want != have) {
-      console.warn("page editor: out of step with the room; resyncing");
-      const fix = changesBetween(have, want);
-      if (sourceView) sourceView.dispatch({ changes: fix, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
-      page.applyExternal(fix, null);
-    }
+    // The editor and the room must agree; if they ever don't, the room wins. Their lengths at once; the whole texts
+    // once the changes stop for a moment (comparing them on every change someone types costs the document's length).
+    if (collab.currentLength() != currentState().doc.length) agree();
+    else { clearTimeout(agreeTimer); agreeTimer = window.setTimeout(agree, 250); }
     queuePeers();
+  }
+  let agreeTimer = 0;
+  function agree() {
+    clearTimeout(agreeTimer);
+    const want = collab.current(), have = currentState().doc.toString();
+    if (want == have) return;
+    console.warn("page editor: out of step with the room; resyncing");
+    const fix = changesBetween(have, want);
+    if (sourceView) sourceView.dispatch({ changes: fix, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
+    page.applyExternal(fix, null);
   }
 
   // Changes the editor can't make in place (another file in the folder: a
