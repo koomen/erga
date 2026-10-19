@@ -8,15 +8,17 @@
 // one (live-client.ts: `connection`). If a connection stays down for a while,
 // a small "Reconnecting…" note shows in a corner, and nothing else does.
 //
-// Then, the page's code. The server knows its release: build.json
-// lists the build of each of the editor's files, at GET /api/release; and each
+// Then, the page's code. The server knows its release: the address of each
+// of the editor's files, named by its content's hash (client/build.ts), at
+// GET /api/release; and each
 // page the Worker makes says which inline code it carries (its meta
 // erga-build, a digest of its inline scripts: server/live.ts), which a GET of
 // the page with X-Erga-Check: build answers in a header, without the page.
 // This page asks after a connection comes back, after a request fails as a
 // server going away fails, when the tab is shown again, and every
-// minute. If none of the files it uses changed, nothing happens. If only
-// style.css did, the page takes the new one in place. Otherwise it reloads
+// minute. If none of the files it uses changed (it has each at the address the
+// server names now), nothing happens. If only style.css did, the page takes
+// the new one in place. Otherwise it reloads
 // itself at a safe moment: not while you type, compose, drag or hold the
 // mouse button, once what it holds is on the server (each script's `flush`),
 // and at once if the tab is hidden. Before it reloads it keeps what it shows:
@@ -29,8 +31,10 @@
 
 import { RESTORE_KEY, restored, type Saved } from "./restore";
 import type { Live } from "./live-client";
+import { ASSET_PREFIX, stemOf } from "../shared/assets";
 
 declare global {
+  /** The editor's files a page uses that its elements don't name, by name ("frame.js": the address it loaded): the viewer's, once editing. */
   interface Window { ergaBuilt?: Record<string, string> }
 }
 
@@ -100,16 +104,19 @@ function showNote() {
 
 // ------------------------------------------------------------------ is this page current?
 
-/** Each file's build as this page has it: a bundle's own stamp, else what the server said when the page first used it. */
-const baseline: Record<string, string> = {};
-/** The files this page uses: its scripts and the editor's stylesheet, and the editor's page and frame once it's open. */
-function used(names: string[]): string[] {
-  const out = new Set<string>();
-  const name = (u: string | null) => { try { return u ? new URL(u, location.href).pathname.slice(1) : ""; } catch { return ""; } };
-  for (const s of document.querySelectorAll<HTMLScriptElement>("script[src]")) out.add(name(s.getAttribute("src")));
-  for (const l of document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')) if (new URL(l.href, location.href).origin == location.origin) out.add(name(l.getAttribute("href")));
-  if (document.getElementById("erga-editor")) { out.add("editor.html"); out.add("frame.js"); }
-  return names.filter((n) => out.has(n));
+/**
+ * The editor's files this page uses, as it has them: their addresses, by their stems ("/_erga/main": the same for every
+ * build of a file). Its scripts and stylesheets, and the editor's page and frame once it's open (window.ergaBuilt).
+ */
+function inUse(): Map<string, string> {
+  const out = new Map<string, string>();
+  const add = (u: string | null | undefined) => {
+    try { const path = u ? new URL(u, location.href).pathname : ""; if (path.startsWith(ASSET_PREFIX)) out.set(stemOf(path), path); } catch { /* not an address */ }
+  };
+  for (const s of document.querySelectorAll<HTMLScriptElement>("script[src]")) add(s.getAttribute("src"));
+  for (const l of document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')) add(l.getAttribute("href"));
+  for (const u of Object.values(window.ergaBuilt ?? {})) add(u);
+  return out;
 }
 
 let checking: Promise<void> | null = null, lastCheck = 0, failures = 0, retryTimer = 0;
@@ -157,9 +164,10 @@ async function run(why: string): Promise<void> {
   if (!r.ok) throw new Error(`release: ${r.status}`);
   const { files, version } = await r.json() as { files: Record<string, string>; version?: string };
   const changed: string[] = [];
-  for (const n of used(Object.keys(files))) {
-    const have = window.ergaBuilt?.[n] ?? (baseline[n] ??= files[n]);
-    if (files[n] && have != files[n]) changed.push(n);
+  const have = inUse();
+  for (const [n, url] of Object.entries(files)) {
+    const mine = have.get(stemOf(url));
+    if (mine && mine != url) changed.push(n);
   }
   // The page's own inline code: the same page, as the server makes it now. Asked only when the server is another release
   // than last time, or when something went wrong (a request failed, a connection broke), not as it loads (the server
@@ -179,17 +187,16 @@ async function run(why: string): Promise<void> {
   reloadSoon();
 }
 
-/** Only the stylesheet changed: the new one in place, the old one gone once it's in. */
-function restyle(build: string) {
+/** Only the stylesheet changed: the new one (at `url`) in place, the old one gone once it's in. */
+function restyle(url: string) {
   for (const old of document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')) {
     const u = new URL(old.href, location.href);
-    if (u.origin != location.origin || u.pathname != "/style.css") continue;
+    if (u.origin != location.origin || stemOf(u.pathname) != stemOf(url) || u.pathname == url) continue;
     const fresh = old.cloneNode() as HTMLLinkElement;
-    fresh.href = `/style.css?v=${build}`;
+    fresh.href = url;
     fresh.onload = () => old.remove();
     old.after(fresh);
   }
-  baseline["style.css"] = build;
 }
 
 // ------------------------------------------------------------------ reloading, at a safe moment

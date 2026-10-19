@@ -6,7 +6,7 @@
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./front-door.ts";
-import { esc, HOST_SCRIPT, HOST_STYLE, HOST_VERSION, PAGE_ALLOW, PAGE_SANDBOX, VIEW_FILES } from "../pages/index.ts";
+import { esc, frameHead, HOST_SCRIPT, HOST_STYLE, hostVersion, PAGE_ALLOW, PAGE_SANDBOX, VIEW_FILES } from "../pages/index.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -117,13 +117,13 @@ export async function pagesDoor(request: Request, url: URL, doc: { owner: string
     // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
     // resolves the document's files there from the start, even in Chrome's preload scanner, which otherwise asks for them here too.
     const html = `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(files)}"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
-<style>${HOST_STYLE}</style>
+<style>${HOST_STYLE}</style>${frameHead(shell)}
 </head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}" allow="${PAGE_ALLOW}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`;
     // Everything in it comes from its address (the token names the shell) and this code: with this code's version in the
     // address (?v=, as the document's page links it), the browser may keep it for the day the token stays the same; without,
     // it's checked with the server each time (answered 304 when unchanged).
     const etag = `"${b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(html)))).slice(0, 22)}"`;
-    const cache = url.searchParams.get("v") == HOST_VERSION ? `private, max-age=${DAY}` : "no-cache";
+    const cache = url.searchParams.get("v") == hostVersion() ? `private, max-age=${DAY}` : "no-cache";
     const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": cache, ETag: etag, "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" };
     if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
     return new Response(html, { headers });

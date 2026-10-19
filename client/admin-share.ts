@@ -5,7 +5,7 @@
 // agent reads the admin guide (/api/admin/guide) and can then do what the
 // admin can do on the admin pages, as their agent. The card shows the same
 // token each time until it's near its end; New token turns it off and makes
-// another. /tokens lists and revokes it with the rest. Built by client/build.sh to
+// another. /tokens lists and revokes it with the rest. Built by client/build.ts to
 // admin-share.js.
 
 import { shareWithAgent } from "./share-agent";

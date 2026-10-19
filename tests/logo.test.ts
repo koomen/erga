@@ -39,5 +39,5 @@ test("the PNG logo (public at /logo.png) is a square of 512 px", () => {
   expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   expect([view.getUint32(16), view.getUint32(20)]).toEqual([512, 512]);
-  expect(read("client/build.sh")).toContain("put assets/logo/logo.png logo.png");
+  expect(read("client/build.ts")).toContain(`place("logo.png", readFileSync(join(ROOT, "assets/logo/logo.png")))`);
 });

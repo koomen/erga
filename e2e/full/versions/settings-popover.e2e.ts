@@ -10,7 +10,7 @@ test("the settings' code loads only when the gear is reached for", async ({ tab 
   const doc = await draftDoc(server, "Lazy notes", 2);
   tab.strict = true;
   const s = await openDocEditor(tab.page, server, doc.address);
-  expect(await s.eval<boolean>(`!!window.ergaSettings || !!document.querySelector('script[src="/settings.js"]')`)).toBe(false);
+  expect(await s.eval<boolean>(`!!window.ergaSettings || performance.getEntriesByType("resource").some((e) => e.name.includes("/_erga/settings-"))`)).toBe(false);
   const gear = (await s.steadyRect("#btn-settings"))!;
   await tab.page.mouse.move(gear.x, gear.y);
   await expect.poll(() => s.eval<boolean>("!!window.ergaSettings")).toBe(true);

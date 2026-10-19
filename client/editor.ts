@@ -26,6 +26,7 @@ import { planCustomEdits, type CustomEdit } from "./custom-edits";
 import { watchMoves } from "./moves";
 import { TEXT_GUARD, listenAsEditor } from "./text-guard";
 import { LIVE_WATCH } from "./live-page";
+import { ms } from "./timescale";
 
 export interface PageUpdate {
   state: EditorState;
@@ -142,12 +143,6 @@ const WHOLE_BLOCKS = /^(p|h[1-6]|li|pre|blockquote|figcaption|dt|dd)$/;
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-/**
- * Scales the editor's timed behaviour (how long notes stay, how marks fade).
- * 1 for people; the tests set `window.__ergaTimescale` lower so they don't sit
- * through real seconds to check what happens after them.
- */
-export const ms = (n: number) => n * ((globalThis as { __ergaTimescale?: number }).__ergaTimescale ?? 1);
 const noHistory = () => Transaction.addToHistory.of(false);
 
 /** The changed region between two texts, placing an ambiguous edit at `preferredPos` (CodeMirror's findDiff). */

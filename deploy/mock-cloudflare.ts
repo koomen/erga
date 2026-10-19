@@ -39,7 +39,7 @@
 // Worker, and the source repo in Artifacts. D1's export and import work on
 // it (the SQL as text), secrets are kept per Worker (keep_bindings, the
 // secrets API), and each Worker answers as the real one would where the
-// pipeline needs it: /style.css, /api/deploys/version (its ERGA_VERSION) and
+// pipeline needs it: /logo.png, /api/deploys/version (its ERGA_VERSION) and
 // the snapshot endpoints (deploy/snapshot.ts, the real handler, over an
 // in-memory store of its documents). `failNext` makes the next call of a
 // step fail once (state.failNext = "worker"); `onUpload` hears of each
@@ -658,7 +658,7 @@ export function mockCloudflare(opts: {
     const own = await opts.sites?.(req, name);
     if (own) return own;
     const text = (n: string) => (s.metadata.bindings ?? []).find((b: any) => b.name == n && b.type == "plain_text")?.text as string | undefined;
-    if (url.pathname == "/style.css") return new Response("/* mock */", { headers: { "Content-Type": "text/css" } });
+    if (url.pathname == "/logo.png") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } });
     if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null, target: text("DEPLOY_TARGET") || null });
     // The app's health check: healthy, unless a test says this release isn't (state.unhealthy).
     if (url.pathname == "/api/health") {

@@ -24,7 +24,7 @@ async function accountMeta(platform: Platform, session: Session): Promise<string
  * it can't act as the people who view it), in a frame filling the window,
  * with the controls floating over its top corners. The page is the same in
  * both, and small: the document shows at once, and editing is loaded on top
- * of it (EDIT_BOOT) only when someone goes into it, by the pencil or at #edit,
+ * of it (editBoot) only when someone goes into it, by the pencil or at #edit,
  * without reloading or moving the document. Over the viewer, Clone (a copy of
  * your own) for anyone who may see it, and Edit for those who may edit it.
  * The front page is this, on the landing document.

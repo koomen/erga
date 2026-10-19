@@ -12,7 +12,7 @@
 //
 // cloudflare.config.ts hands them to the Worker as the SERVER_CONFIG
 // binding. `bun deploy/locked-settings.ts` checks them against SETTINGS (a key that
-// isn't one, or a value it won't take) and prints them; client/build.sh runs it
+// isn't one, or a value it won't take) and prints them; client/build.ts runs it
 // before every deploy and dev/start.ts before it starts, so a bad one fails there.
 //
 // Take a key out and deploy to hand it back to the admins: what they set

@@ -1,7 +1,19 @@
 // The frame's host page on a document's pages origin: a page that holds the document's
 // own page in an iframe and serves its files from the token's view of them. Served by
-// documents/pages-origin.ts; versioned by its own text (HOST_VERSION), so a change here
-// reaches every open viewer.
+// documents/pages-origin.ts; versioned by its own text and the editor's build
+// (hostVersion), so a change of either reaches every open viewer.
+//
+// The editor's half (frame.js) runs here, on the document's origin, but it loads
+// from the app's origin (the shell's: /_erga/, client/build.ts): one address for
+// every document, so the browser keeps one copy of it for them all. Its files
+// there are public and immutable, and served to any origin (CORS, _headers);
+// the host page names each script it may load with its integrity hash (an
+// import map, and the script's own attribute), so the browser runs only
+// this build's. Loading it gives the document no reach into the app's origin: a
+// script runs with the origin of the page that loads it, never of where it came
+// from, and it's fetched without credentials.
+
+import { asset, frameScripts } from "./assets.ts";
 
 
 export const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}html.wait iframe,html.placing iframe{visibility:hidden}";
@@ -50,6 +62,22 @@ export const VIEW_FILES = "pub";
  */
 export const HOST_SCRIPT = `(function () {
   var SHELL = document.querySelector('meta[name="erga-shell"]').content, want = "view", loading = false;
+  // The editor's half (frameHead): its script, the chunks it imports first and their integrity, from the shell's origin.
+  var FRAME = JSON.parse(document.getElementById("erga-frame").textContent);
+  function load(rel, href) {
+    var l = document.createElement("link");
+    l.rel = rel; l.href = href; l.crossOrigin = "anonymous";
+    if (rel == "modulepreload" && FRAME.map[href]) l.integrity = FRAME.map[href];
+    document.head.append(l);
+  }
+  function loadEditor() {
+    loading = true;
+    for (var i = 0; i < FRAME.preload.length; i++) load("modulepreload", FRAME.preload[i]);
+    var s = document.createElement("script");
+    s.type = "module"; s.crossOrigin = "anonymous"; s.src = FRAME.src;
+    if (FRAME.integrity) s.integrity = FRAME.integrity;
+    document.body.append(s);
+  }
   var view = document.getElementById("view"), src = view ? view.getAttribute("src") : "";
   var page = function () { return document.getElementById("page"); };
   // The page stops dead at its top and bottom, without the bounce that would show what's behind it (and pass on to the controls).
@@ -332,7 +360,7 @@ export const HOST_SCRIPT = `(function () {
     if (type == "erga-band-ok") reveal();
     else if (type == "erga-edit") {
       want = "edit";
-      if (!loading) { loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
+      if (!loading) loadEditor();
       else if (page() && page().dataset.ready) show(page());
     } else if (type == "erga-view" && src) {
       want = "view";
@@ -347,12 +375,27 @@ export const HOST_SCRIPT = `(function () {
     } else if (type == "erga-step") step(e.data);
     else if (type == "erga-step-image") stepImage(e.data);
     else if (type == "erga-prefetch") {
-      var l = document.createElement("link"); l.rel = "prefetch"; l.href = "/frame.js"; document.head.append(l);
+      if (!loading) { load("prefetch", FRAME.src); for (var i = 0; i < FRAME.preload.length; i++) load("prefetch", FRAME.preload[i]); }
     }
   });
   // Opened in the editor (?edit=1): its half starts loading now, without waiting to be asked.
-  if (/[?&]edit=1(&|$)/.test(location.search)) { want = "edit"; loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
+  if (/[?&]edit=1(&|$)/.test(location.search)) { want = "edit"; loadEditor(); }
   parent.postMessage({ type: "erga-host" }, SHELL);
 })();`;
 
-export const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + PAGE_ALLOW + HOST_SCRIPT + VIEW_FILES);
+const HOST_TEXT = HOST_STYLE + PAGE_SANDBOX + PAGE_ALLOW + HOST_SCRIPT + VIEW_FILES;
+
+/** The frame's host page's version: its code's, and the editor's build's (frame.js's address names it). */
+export const hostVersion = () => versionOf(HOST_TEXT + asset("frame.js"));
+
+/**
+ * What the host page's <head> says of the editor's half, at the app's origin `shell`: the integrity of every script it
+ * may load (an import map, which the browser checks each module against), and the script and the chunks it imports
+ * first, for HOST_SCRIPT to load (with ?edit=1 at once, else when the shell asks).
+ */
+export function frameHead(shell: string): string {
+  const f = frameScripts(shell);
+  // (As JSON in a script element: nothing in it may close the element.)
+  const json = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
+  return `<script type="importmap">${json({ imports: {}, integrity: f.map })}</script><script type="application/json" id="erga-frame">${json({ src: f.src, integrity: f.integrity, preload: f.preload, map: f.map })}</script>`;
+}

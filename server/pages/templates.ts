@@ -5,6 +5,8 @@
 // beside it, which the Worker reads as text). No server code: the editor's
 // bundle reads it too.
 
+import { asset } from "./assets.ts";
+
 /** A template: what the picker shows, and the files a new document starts with. */
 export interface Template {
   /** Its name in /new?template=<id>: lowercase letters, digits and dashes. Never changes once it's out (links name it). */
@@ -73,7 +75,7 @@ export function newDocMenu(href: (path: string) => string, signedIn: boolean): s
   const rows = pickerRows().map((r) => "group" in r
     ? `<div class="erga-new-group" role="group" aria-label="${esc(r.group)}"><p class="erga-new-group-name">${esc(r.group)}</p>${r.templates.length ? r.templates.map(item).join("") : `<p class="erga-new-empty">No templates here yet.</p>`}</div>`
     : item(r.template));
-  return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" hidden><p class="erga-new-title">New document</p>${rows.join("")}${signedIn ? "" : `<p class="erga-new-note">You sign in first, then Erga makes the document.</p>`}</div>`;
+  return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" data-fonts="${esc(asset("inter.css"))}" hidden><p class="erga-new-title">New document</p>${rows.join("")}${signedIn ? "" : `<p class="erga-new-note">You sign in first, then Erga makes the document.</p>`}</div>`;
 }
 
 export const NEW_DOC_STYLE = `<style>
@@ -118,10 +120,11 @@ export const NEW_DOC_SCRIPT = `window.ergaNewDoc = function (root) {
   if (!menu) return;
   let btn = null;
   const items = () => [...menu.querySelectorAll("a")];
-  // The app's typeface, on a page that hasn't it (the viewer, the homepage): fetched as the pointer or focus comes to a + button.
+  // The app's typeface, on a page that hasn't it (the viewer, the homepage, signed out): its rules (the menu names them) fetched
+  // as the pointer or focus comes to a + button. A page with them has them as #erga-fonts (server/pages/assets.ts).
   const font = () => {
-    if (document.querySelector('link[rel="stylesheet"][href="/fonts/inter.css"]')) return;
-    document.head.append(Object.assign(document.createElement("link"), { rel: "stylesheet", href: "/fonts/inter.css" }));
+    if (document.getElementById("erga-fonts") || !menu.dataset.fonts) return;
+    document.head.append(Object.assign(document.createElement("link"), { rel: "stylesheet", href: menu.dataset.fonts, id: "erga-fonts" }));
   };
   for (const type of ["pointerover", "focusin"]) root.addEventListener(type, (e) => { if (e.target.closest && e.target.closest(".erga-new-btn")) font(); });
   const show = (b) => {

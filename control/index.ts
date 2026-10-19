@@ -26,6 +26,7 @@ import { controlLayout, controlRoutes } from "./routes";
 import { githubAppOf } from "../cloudflare/github-app";
 import { sealKeyFrom } from "../deploy/credential";
 import { hashSecret } from "../deploy/forks";
+import { remoteAssets } from "../server/pages/index.ts";
 
 export { Builder } from "./builder/worker";
 export { Pipeline } from "../cloudflare/pipeline";
@@ -78,6 +79,8 @@ export class App extends WorkerEntrypoint<ControlEnv> {
 
 export default {
   async fetch(request: Request, env: ControlEnv, ctx: ExecutionContext): Promise<Response> {
+    // The app's files' addresses, which the pages here name (server/pages/assets.ts): the app's stylesheet and typeface.
+    await remoteAssets(env.APP_URL);
     const platform = controlPlatform(env, ctx);
     const upstream = env.UPSTREAM?.trim().replace(/\/+$/, "") || null;
     const fleet = installFleet(env);

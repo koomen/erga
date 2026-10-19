@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "client/build.sh",
+    "build": "bun client/build.ts",
     "start": "bun dev/start.ts",
     "test": "bun e2e/run.ts",
     "typecheck": "node -e \"import('vite').then((v) => v.resolveConfig({}, 'serve'))\" && tsc -p . && tsc -p cloudflare",
