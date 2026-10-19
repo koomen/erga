@@ -15,14 +15,20 @@
 // only those may call the external agent's tools (/api/ext), as the person
 // the token stands for, who may do what they last could.
 //
-// Storage keys: `info` (what the document is), `files/<path>` (a file's
-// bytes), `folders/<path>` (a folder made as one, empty ones too),
-// `room-state` (the room's Yjs state), and the versions' (versions.ts).
+// Storage keys: `info` (what the document is, read once and kept in
+// memory), `files/<path>` (a file's bytes), `folders/<path>` (a folder made
+// as one, empty ones too), `room/...` (the room's journal: storage.ts), and
+// the versions' (versions.ts).
+//
+// Opening it is reading its journal (one read): its files are a view the
+// room writes, never read back as it opens. With no edit, request or agent
+// at work for `closeIdleMs`, it closes again (its room writes everything
+// first), so its object can sleep while tabs stay connected (tabs.ts).
 //
 // In local development a document can be a file or folder on disk
 // (`link`). Its files then stay there: the room's storage is the folder
-// itself, reached through the adapter's disk link, and only the room's Yjs
-// state is kept here. A single file on its own (`only`) is the only file
+// itself, reached through the adapter's disk link, and only the room's
+// journal is kept here. A single file on its own (`only`) is the only file
 // such a document has.
 
 import * as Effect from "effect/Effect";
@@ -31,12 +37,12 @@ import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
-import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow } from "../server/directory/index.ts";
+import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow, type Naming, type Who } from "../server/directory/index.ts";
 import type { SiteRow } from "../server/sites/index.ts";
 import { cleanRel, docFile, makeHost, relativeUrl } from "./host.ts";
 import { resolvePage, titleOf } from "./pages.ts";
 import { FileStore, Room, StateStore, type Connection } from "./room.ts";
-import { fileStoreOf, KEYS, kvOf, stateStoreOf, writeText, type Storage } from "./storage.ts";
+import { fileStoreOf, KEYS, kvOf, stateStoreOf, type Storage } from "./storage.ts";
 import { VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
@@ -49,7 +55,13 @@ import type { ChatStore } from "../agents/checkpoint.ts";
  * it's a test document, when a file last changed (never, if unset), where it
  * is on disk (local development), and the published version in "manual" mode.
  */
-export interface DocumentInfo { id: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk; published?: { n: number } }
+export interface DocumentInfo {
+  id: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk; published?: { n: number };
+  /** Its title and address as the directory last said (D1 is the truth; every rename passes here). */
+  name?: DocName;
+  /** It has edits no version holds yet: it cuts one as it opens. */
+  uncut?: boolean;
+}
 
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
 export interface OnDisk { path: string; slug: string; only?: boolean }
@@ -63,8 +75,13 @@ export type AgentSettings = AgentConfig | { readonly missing: string };
 export interface DocumentDeps {
   storage: Storage;
   directory: Directory;
-  /** Who has the document open (the adapter's sockets): how many, and closing them all. */
-  tabs: { count(): number; closeAll(code: number, reason: string): void };
+  /**
+   * Who has the document open (the adapter's sockets): how many, and closing
+   * them all. `attach`: the document opened (again) while sockets wait, so
+   * they join it (after a sleep, sockets outlive the open document);
+   * `detach`: it closed, and they wait for the next open.
+   */
+  tabs: { count(): number; closeAll(code: number, reason: string): void; attach?(opened: Opened): void; detach?(): void };
   /** The agent's settings as they are now: the key an admin stored, else the Worker's. */
   agentSettings: () => Promise<AgentSettings>;
   /** The tools beyond the document a person's agent may use now (sharing, the documents list, an admin's settings and users). */
@@ -77,8 +94,14 @@ export interface DocumentDeps {
   siteChanged: (docId: string) => Promise<void>;
   /** Local development: this document's storage with its files on disk (dev/disk-storage.ts), for a document that is one. */
   disk?: { storage: (only: string | null) => Storage };
-  /** When versions are cut: how long edits pause first, and the longest burst one version holds; the room's write delay. */
-  timing: { idleMs: number; maxMs: number; writeDelay?: number };
+  /**
+   * When versions are cut: how long edits pause first, and the longest burst
+   * one version holds; the room's write delay and file delay (room.ts);
+   * `closeIdleMs`: how long the document stays open with nothing done (no
+   * edit, no request, nothing to cut) before it closes, so its object can
+   * sleep while tabs stay connected (never, if unset).
+   */
+  timing: { idleMs: number; maxMs: number; writeDelay?: number; fileDelay?: number; closeIdleMs?: number };
   /** Work that outlives the request (a version's description, telling the homepage). */
   background: (work: Promise<unknown>) => void;
   log: (line: string) => void;
@@ -90,7 +113,7 @@ export interface DocumentDeps {
   chats?: (person: Person, docId: string) => ChatStore;
 }
 
-const { file: FILE, dir: DIR, meta: INFO, state: STATE } = KEYS;
+const { file: FILE, meta: INFO } = KEYS;
 
 const HOUR = 60 * 60 * 1000;
 
@@ -131,6 +154,16 @@ export class Document {
    * at their latest request.
    */
   private editors = new Map<string, boolean>();
+  /** What the document is, as storage has it (read once; undefined: not read yet, null: no document). */
+  private info: DocumentInfo | null | undefined = undefined;
+  /** Whether the unedited document's alarm is known to be gone (an edited one never goes). */
+  private kept = false;
+  /** The room closing (idle): opening it again waits for its last writes. */
+  private closing: Promise<void> = Promise.resolve();
+  /** Requests and calls under way: the document doesn't close under them. */
+  private busy = 0;
+  private lastActive = 0;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private deps: DocumentDeps) {
     this.storage = deps.storage;
@@ -141,6 +174,87 @@ export class Document {
   private get maxMs() { return this.deps.timing.maxMs; }
   private get directory() { return this.deps.directory; }
 
+  /** What the document is: from memory once read. */
+  private async readInfo(): Promise<DocumentInfo | null> {
+    if (this.info === undefined) this.info = (await this.storage.get<DocumentInfo>(INFO)) ?? null;
+    return this.info;
+  }
+
+  private saveInfo(info: DocumentInfo): Promise<void> {
+    this.info = info;
+    return this.storage.put(INFO, info);
+  }
+
+  /** Storage was emptied or replaced: what was read of it is forgotten. */
+  private forgetStorage(): void {
+    this.info = undefined;
+    this.kept = false;
+    this.pub = undefined;
+    this.versions = new Versions(kvOf(this.storage));
+  }
+
+  /** The document, opened if it isn't (null if there's no such document). */
+  private async room(): Promise<Opened | null> {
+    const open = (this.open ??= this.load());
+    // One that failed to open (storage failed) is tried again with the next request.
+    const opened = await open.catch((e) => { if (this.open === open) this.open = null; throw e; });
+    if (!opened) { if (this.open === open) this.open = null; }
+    else this.activity();
+    return opened;
+  }
+
+  /** Runs `work` with the document held open: it doesn't close for being idle meanwhile. */
+  async hold<T>(work: () => Promise<T>): Promise<T> {
+    this.busy++;
+    try { return await work(); } finally { this.busy--; this.activity(); }
+  }
+
+  /**
+   * Something happened (an edit, a request, a tab's message): the document
+   * stays open at least `closeIdleMs` from now. Presence alone (carets
+   * moving) doesn't count, so tabs left open let it close.
+   */
+  activity(): void {
+    const ms = this.deps.timing.closeIdleMs;
+    if (!ms) return;
+    this.lastActive = Date.now();
+    if (!this.idleTimer) this.idleTimer = setTimeout(() => { this.idleTimer = null; void this.closeIfIdle(); }, ms);
+  }
+
+  /**
+   * Closes the document once nothing has happened for `closeIdleMs`, every
+   * edit is written and in a version, and no agent is at work: its room
+   * writes what it holds and its timers stop, so the object can sleep. Tabs
+   * stay connected; the next edit or request opens it again, from storage.
+   */
+  private async closeIfIdle(): Promise<void> {
+    const ms = this.deps.timing.closeIdleMs!;
+    await this.cutting;
+    const opened = this.opened;
+    if (!opened || this.info?.disk || this.idleTimer) return;
+    const wait = this.lastActive + ms - Date.now();
+    if (wait > 0 || this.busy > 0 || this.pending.dirty || this.agentWorking()) {
+      this.idleTimer = setTimeout(() => { this.idleTimer = null; void this.closeIfIdle(); }, wait > 0 ? wait : Math.min(ms, 1000));
+      return;
+    }
+    this.open = null;
+    this.opened = null;
+    this.editing = 0;
+    this.deps.tabs.detach?.();
+    this.closing = opened.close().catch((e) => this.deps.log(`couldn't close the room: ${e}`));
+    await this.closing;
+  }
+
+  /** Whether the document is open now (its room loaded). */
+  isOpen(): boolean {
+    return this.opened != null;
+  }
+
+  /** Opens the document if it isn't (a tab's message after a sleep): null if there's no such document. */
+  reopen(): Promise<Opened | null> {
+    return this.room();
+  }
+
   /**
    * Creates the document, whose row the front door has just added to the
    * directory, from a template's files; false if it already exists. Unless
@@ -148,11 +262,12 @@ export class Document {
    * after it's made, or sooner when local development asks, to test it).
    */
   async create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
-    if (await this.storage.get<DocumentInfo>(INFO)) return false;
+    if (await this.readInfo()) return false;
     const encoder = new TextEncoder();
-    for (const [path, data] of Object.entries(files)) await this.storage.put(FILE + path, typeof data == "string" ? encoder.encode(data) : data);
+    const entries = Object.entries(files).map(([path, data]) => [FILE + path, typeof data == "string" ? encoder.encode(data) : data] as const);
+    for (let i = 0; i < entries.length; i += 128) await this.storage.put(Object.fromEntries(entries.slice(i, i + 128)));
     const info: DocumentInfo = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
-    await this.storage.put(INFO, info);
+    await this.saveInfo(info);
     if (!info.test && opts.expires != null) await this.storage.setAlarm(opts.expires);
     // Its first version: the files it starts from.
     const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
@@ -168,8 +283,8 @@ export class Document {
    * deleting it leaves them as they are.
    */
   async link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
-    await this.storage.put(INFO, info ? { ...info, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
+    const info = await this.readInfo();
+    await this.saveInfo(info ? { ...info, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
     await this.storage.deleteAlarm();
     return (await this.addRow())!;
   }
@@ -184,14 +299,16 @@ export class Document {
    * version records it ("ada", "ada, via a shared agent (CI)": byLine).
    */
   async publish(files: Record<string, string | Uint8Array>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
-    const opened = await (this.open ??= this.load());
-    if (!opened) { this.open = null; throw new Error("There's no such document."); }
-    this.publisher = by ?? null;
-    try { return await this.publishNow(opened, files, remove); } finally { this.publisher = null; }
+    return this.hold(async () => {
+      const opened = await this.room();
+      if (!opened) throw new Error("There's no such document.");
+      this.publisher = by ?? null;
+      try { return await this.publishNow(opened, files, remove); } finally { this.publisher = null; }
+    });
   }
 
   private async publishNow(opened: Opened, files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
-    const info = (await this.storage.get<DocumentInfo>(INFO))!;
+    const info = (await this.readInfo())!;
     const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     // Edits not yet written land first, so a published file replaces what's there now rather than merging with it.
@@ -214,25 +331,23 @@ export class Document {
     for (const path of remove) {
       if (path == info.index) { out.refused.push({ path, why: "it's the document's page" }); continue; }
       if (info.disk) { out.refused.push({ path, why: "files on disk aren't deleted this way" }); continue; }
-      if (!(await this.storage.get(FILE + path))) continue;
-      await this.storage.delete(FILE + path);
-      await Effect.runPromise(opened.room.fileChanged(path));
-      out.removed.push(path);
+      if (await Effect.runPromise(opened.room.removeOne(path))) out.removed.push(path);
     }
-    if (out.written.length || out.removed.length) await this.touch();
+    // In the history now, with the files (an image's bytes went straight to storage).
+    if (out.written.length || out.removed.length) await Promise.all([Effect.runPromise(opened.room.flush), this.touch()]);
     return out;
   }
 
   /** Every file the document holds (the room's view: text files and others). */
   async paths(): Promise<string[]> {
-    const opened = await (this.open ??= this.load());
+    const opened = await this.room();
     if (!opened) { this.open = null; return []; }
     return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
   }
 
   /** The document's page, or null if there's no such document. */
   async index(): Promise<string | null> {
-    return (await this.storage.get<DocumentInfo>(INFO))?.index ?? null;
+    return (await this.readInfo())?.index ?? null;
   }
 
   /**
@@ -241,11 +356,11 @@ export class Document {
    * Null if there's no such document.
    */
   async snapshot(opts: { published?: boolean } = {}): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     // Someone who may only view it, in "manual" mode, copies what they see: the published version.
     const v = opts.published && info?.published ? await this.versions.get(info.published.n) : null;
     if (v) return { index: v.index, files: Object.fromEntries(await this.versions.files(v)) };
-    const opened = info && await (this.open ??= this.load());
+    const opened = info && await this.room();
     if (!info || !opened) { if (!opened) this.open = null; return null; }
     const files: Record<string, string | Uint8Array> = {};
     for (const path of await this.paths()) {
@@ -258,7 +373,7 @@ export class Document {
 
   /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
   async delete(): Promise<boolean> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     if (!info) return false;
     await this.destroy(info);
     return true;
@@ -270,7 +385,7 @@ export class Document {
    * whoever local development lets in). Null if there's no such document.
    */
   private async addRow(): Promise<DocRow | null> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     if (!info) return null;
     const text = await this.pageText(info);
     const { doc } = await this.directory.add({
@@ -292,7 +407,7 @@ export class Document {
    * someone about to type. If delete_docs_after_hours is now never, it stays.
    */
   async wake(): Promise<void> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     if (!info) return;
     const next = afterUnedited(info, this.deps.tabs.count() > 0, Date.now());
     if (next == "keep") return;
@@ -319,10 +434,10 @@ export class Document {
     this.open = null;
     this.opened = null;
     await opened?.close();
+    await this.closing;
     await this.storage.deleteAlarm();
     await this.storage.deleteAll();
-    this.versions = new Versions(kvOf(this.storage));
-    this.pub = undefined;
+    this.forgetStorage();
     // If it had a site on its person's Cloudflare account, the site comes down too.
     const site = await this.directory.sites.get(info.id).catch(() => null);
     if (site) {
@@ -341,14 +456,26 @@ export class Document {
    * slug the title). Every open tab hears of a new title or address.
    */
   private async syncDirectory(): Promise<void> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     if (!info) return;
     const text = await this.pageText(info);
     const r = await this.directory.edited(info.id, {
       modified: info.modified ?? null,
       pageTitle: text != null ? titleOf(text) : null,
     });
+    if (r) await this.rememberName(nameOf(r.doc));
     if (r?.renamed) (await this.open)?.renamed(nameOf(r.doc));
+  }
+
+  /**
+   * The document's title and address as the directory last said (D1 stays
+   * the truth: every rename goes through this document, which keeps what
+   * the directory answers), so opening it asks the directory nothing.
+   */
+  private async rememberName(name: DocName): Promise<DocName> {
+    const info = await this.readInfo();
+    if (info && JSON.stringify(info.name) != JSON.stringify(name)) await this.saveInfo({ ...info, name });
+    return name;
   }
 
   /** A message for everyone who has the document open (the homepage's deploy status). Opens nothing. */
@@ -357,32 +484,31 @@ export class Document {
   }
 
   /**
-   * The page's text: from storage, or for a document on disk from its room
+   * The page's text: from the room while it's open (storage has it a little
+   * later), else from storage; for a document on disk only from its room
    * (once it's open; never waited for, since opening waits for the dev
    * server, which may be linking it just then).
    */
   private async pageText(info: DocumentInfo): Promise<string | null> {
-    if (info.disk) return this.opened?.room.text(info.index) ?? null;
+    const open = this.opened?.room.text(info.index);
+    if (open != null || info.disk) return open ?? null;
+    await this.closing;
     const bytes = await this.storage.get<Uint8Array>(FILE + info.index);
     return bytes ? new TextDecoder().decode(bytes) : null;
   }
 
   /**
-   * The room writes a file only when its text changed (its own seeding and
-   * people merely looking never do), so a write that changes what storage
-   * holds is an edit: by a person, an agent or a publish.
+   * A file changed: the document has been edited, so it stays (and its row
+   * says when). Only its record is written (in the same transaction as the
+   * files, when the room writes them), and its alarm deleted once.
    */
-  private async edited(storage: Storage, path: string, text: string): Promise<void> {
-    if ((await writeText(storage, path, text)).changed) await this.touch();
-  }
-
-  /** A file changed: the document has been edited, so it stays (and its row says when). */
   private async touch(): Promise<void> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     if (!info) return;
     info.modified = Date.now();
-    await this.storage.put(INFO, info);
-    if (!info.test) await this.storage.deleteAlarm();
+    const writes = [this.saveInfo(info)];
+    if (!info.test && !this.kept) { this.kept = true; writes.push(this.storage.deleteAlarm()); }
+    await Promise.all(writes);
     // At most every DIRECTORY_EVERY_MS, however fast the edits come; the last always lands.
     this.sync ??= throttle(() => this.syncDirectory().catch((e) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`)), DIRECTORY_EVERY_MS);
     this.sync();
@@ -390,17 +516,17 @@ export class Document {
 
   /** Where its files are, for a document on disk (local development); null for any other. */
   async diskPath(): Promise<string | null> {
-    return (await this.storage.get<DocumentInfo>(INFO))?.disk?.path ?? null;
+    return (await this.readInfo())?.disk?.path ?? null;
   }
 
   /** Whether it is a document on disk. */
   async onDisk(): Promise<boolean> {
-    return !!(await this.storage.get<DocumentInfo>(INFO))?.disk;
+    return !!(await this.readInfo())?.disk;
   }
 
   /** Whether the document exists. */
   async exists(): Promise<boolean> {
-    return (await this.storage.get<DocumentInfo>(INFO)) != null;
+    return (await this.readInfo()) != null;
   }
 
   /** A file on disk changed (the dev server says which): the room takes it. */
@@ -428,6 +554,8 @@ export class Document {
    */
   async exportStorage(id: string, page: Page): Promise<DocSnapshot | null> {
     if (page.after == null && (await this.storage.get(INFO)) == null) return null;
+    // An open room writes its files first, so the copy has them as they are (else it writes them as it opens there).
+    if (page.after == null) await this.flush().catch(() => {});
     const storage = this.storage;
     return exportPage(id, page, await storage.getAlarm(), (after, limit) => storage.list(after == null ? { limit } : { startAfter: after, limit }));
   }
@@ -449,6 +577,7 @@ export class Document {
     const keys = Object.keys(entries);
     for (let i = 0; i < keys.length; i += 100) await this.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
     if (snap.alarm != null) await this.storage.setAlarm(snap.alarm);
+    this.forgetStorage();
   }
 
   /** Empties it (staging only: a document production no longer has). The directory row is already gone with the old database. */
@@ -456,6 +585,7 @@ export class Document {
     await this.closeForSnapshot();
     await this.storage.deleteAlarm();
     await this.storage.deleteAll();
+    this.forgetStorage();
   }
 
   private async closeForSnapshot(): Promise<void> {
@@ -464,6 +594,7 @@ export class Document {
     this.open = null;
     this.opened = null;
     await opened?.close().catch(() => {});
+    await this.closing;
   }
 
   /**
@@ -479,13 +610,17 @@ export class Document {
       asked.pathname = "/doc/" + asked.pathname.slice("/pub/".length);
       request = new Request(asked, request);
     }
-    // Someone viewing it: its files straight from storage while the room isn't open, without opening it.
+    // Someone viewing it: its files straight from storage while the room isn't open, without opening it
+    // (once a room closing a moment ago has written them).
+    await this.closing;
     const stored = this.opened || this.open ? null : await this.storedFile(request);
     if (stored) return stored;
-    const opened = await this.admit(request);
-    // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
-    if (!opened) return new Response("No such document", { status: 404 });
-    return opened.handler(request);
+    return this.hold(async () => {
+      const opened = await this.admit(request);
+      // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
+      if (!opened) return new Response("No such document", { status: 404 });
+      return opened.handler(request);
+    });
   }
 
   /**
@@ -494,7 +629,7 @@ export class Document {
    * before it accepts a WebSocket.
    */
   async admit(request: Request): Promise<Opened | null> {
-    const opened = await (this.open ??= this.load());
+    const opened = await this.room();
     if (!opened) { this.open = null; return null; }
     if (request.headers.has("x-erga-person")) this.editors.set(personOf(request.headers).id, request.headers.get("x-erga-access") == "edit");
     return opened;
@@ -506,8 +641,8 @@ export class Document {
    * what they may do is what the directory says now.
    */
   async resumeAgent(person: Person): Promise<void> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
-    const opened = info && await (this.open ??= this.load());
+    const info = await this.readInfo();
+    const opened = info && await this.room();
     if (!info || !opened) { if (!opened) this.open = null; return; }
     if (!this.editors.has(person.id)) {
       const test = person.id.startsWith("test-");
@@ -556,12 +691,15 @@ export class Document {
   private async storedFile(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
     if ((request.method != "GET" && request.method != "HEAD") || !url.pathname.startsWith("/doc/") || request.headers.get("upgrade")) return null;
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     if (!info || info.disk) return null;
     // doc/ itself is its page (the viewer's frame asks for it so, server/pages/frame-host.ts, not knowing its name).
     const rel = url.pathname == "/doc/" ? info.index : cleanRel(url.pathname.slice("/doc/".length));
     if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    const bytes = await this.storage.get<Uint8Array>(FILE + rel);
+    // The file, and the files whose latest text storage doesn't have yet (the room stopped before writing them): one read.
+    const got = await this.storage.get<unknown>([FILE + rel, KEYS.unwritten]);
+    if ((got.get(KEYS.unwritten) as string[] | undefined)?.includes(rel)) return null;
+    const bytes = got.get(FILE + rel) as Uint8Array | undefined;
     if (!bytes) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const r = docFile(rel, bytes, request.headers.get("if-none-match"), request.headers.get("range"), "stored");
     return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers } });
@@ -596,7 +734,7 @@ export class Document {
 
   /** The published version's number in "manual" mode; null in "latest". */
   private async publishedNumber(): Promise<number | null> {
-    if (this.pub === undefined) this.pub = (await this.storage.get<DocumentInfo>(INFO))?.published?.n ?? null;
+    if (this.pub === undefined) this.pub = (await this.readInfo())?.published?.n ?? null;
     return this.pub;
   }
 
@@ -621,15 +759,26 @@ export class Document {
   private noteEdit(author: string | null): void {
     const p = this.pending;
     p.dirty = true;
+    this.activity();
     if (author) p.authors.add(author);
     if (!p.since) {
       p.since = Date.now();
+      // Stored, so a document stopped before it cut the version cuts it as it opens again.
+      void this.markUncut(true);
       const burst = () => { p.max = this.agentWorking() ? setTimeout(burst, this.idleMs) : null; if (!p.max) void this.cutSoon("burst"); };
       p.max = setTimeout(burst, this.maxMs);
     }
     if (p.idle) clearTimeout(p.idle);
     const idle = () => { p.idle = this.agentWorking() ? setTimeout(idle, this.idleMs) : null; if (!p.idle) void this.cutSoon("idle"); };
     p.idle = setTimeout(idle, this.idleMs);
+  }
+
+  /** Notes in its record whether it has edits no version holds yet (only when that changes). */
+  private async markUncut(uncut: boolean): Promise<void> {
+    const info = await this.readInfo();
+    if (!info || !!info.uncut == uncut) return;
+    const { uncut: _, ...rest } = info;
+    await this.saveInfo(uncut ? { ...rest, uncut } : rest).catch((e) => this.deps.log(`couldn't note the edits: ${e}`));
   }
 
   /** Whether any agent in the room is in the middle of a turn (its busy flag, on awareness). */
@@ -663,10 +812,13 @@ export class Document {
     // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
     await new Promise((r) => setTimeout(r, 0));
     const opened = this.opened;
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     if (!opened || !info) return null;
     const { authors } = this.clearPending();
     const r = await this.versions.cut(await opened.current(), info.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null), opened.room.folderPaths());
+    if (!this.pending.dirty) await this.markUncut(false);
+    // At a version, a long log becomes a snapshot: the next open reads less.
+    await Effect.runPromise(opened.room.settle);
     if (!r) return null;
     opened.broadcast({ type: "versions" });
     if (!info.published) this.firePublished(info);
@@ -704,11 +856,11 @@ export class Document {
 
   /** Opens the document and waits for any cut under way (the first, when it opens, makes sure there is a version). */
   private async ready(): Promise<{ opened: Opened; info: DocumentInfo } | null> {
-    const opened = await (this.open ??= this.load());
+    const opened = await this.room();
     if (!opened) { this.open = null; return null; }
     await this.cutting;
     if ((await this.versions.head()) == 0) await this.cutSoon("first");
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    const info = await this.readInfo();
     return info ? { opened, info } : null;
   }
 
@@ -751,7 +903,7 @@ export class Document {
     // Edits not yet in a version become one: publishing the current version means up to the keystroke.
     const before = await this.versions.head();
     await this.cutSoon("publish");
-    const info = (await this.storage.get<DocumentInfo>(INFO))!;
+    const info = (await this.readInfo())!;
     if (req.mode == "latest") delete info.published;
     else {
       const head = await this.versions.head();
@@ -761,7 +913,7 @@ export class Document {
       if (n == null || n > head || !(await this.versions.get(n))) return { ok: false, status: 404, error: `There's no version ${req.versionId} of this document: its versions are v1 to v${head}.` };
       info.published = { n };
     }
-    await this.storage.put(INFO, info);
+    await this.saveInfo(info);
     this.pub = info.published?.n ?? null;
     r.opened.broadcast({ type: "versions" });
     this.firePublished(info);
@@ -823,21 +975,24 @@ export class Document {
 
   /** Opens the room on this document's storage, for as long as the document lives. */
   private async load(): Promise<Opened | null> {
-    const info = await this.storage.get<DocumentInfo>(INFO);
+    // Closed for being idle a moment ago: its last writes land first.
+    await this.closing;
+    const info = await this.readInfo();
     if (!info) return null;
     // A document on disk has its files there, and the rest of its storage here.
     const storage = info.disk && this.deps.disk ? this.deps.disk.storage(info.disk.only ? info.index : null) : this.storage;
-    const files = fileStoreOf(storage, { edited: (path, text) => this.edited(storage, path, text), touch: () => this.touch() });
-    const state = stateStoreOf(this.storage);
+    const files = fileStoreOf(storage, { touch: () => this.touch() });
+    // Its history, with its files written in the same transaction (and its record, as touch notes the edit).
+    // On disk the files change while it's closed, so it reads them all as it opens.
+    const state = stateStoreOf(storage, { reconcile: !!info.disk, edited: () => this.touch() });
 
-    // The room's scope lasts as long as the document: a Durable Object is evicted only when
-    // idle, by which time the room's writes (400ms behind the last edit) are in.
+    // The room's scope lasts until the document closes (idle, deleted, replaced): closing it writes what's left.
     const scope = Effect.runSync(Scope.make());
-    const room = await Effect.runPromise(Room.make({ log: this.deps.log, writeDelay: this.deps.timing.writeDelay }).pipe(
+    const room = await Effect.runPromise(Room.make({ log: this.deps.log, writeDelay: this.deps.timing.writeDelay, fileDelay: this.deps.timing.fileDelay }).pipe(
       Effect.provideService(FileStore, files),
       Effect.provideService(StateStore, state),
       Scope.provide(scope),
-    ));
+    )).catch(async (e) => { await Effect.runPromise(Scope.close(scope, Exit.void)); throw e; });
     // A test document's agent is the scripted one: free, and the same every run.
     // Others read the key at each turn (one row of D1), so a key an admin stores, replaces or clears reaches an open document's agent.
     const agent = info.test
@@ -886,7 +1041,15 @@ export class Document {
       const a = authorOf(room.doc, tr);
       this.noteEdit(a ? (a.kind == "disk" ? (info.disk ? "on disk" : this.publisher ?? "files published") : editorOf(a)) : null);
     });
-    const naming = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
+    // Its name from its record once the directory has said it; a rename goes to the directory, and what it answers is kept.
+    const named = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
+    const naming = (who: Who): Naming => {
+      const n = named(who);
+      return {
+        get: async () => (await this.readInfo())?.name ?? this.rememberName(await n.get()),
+        set: async (patch) => this.rememberName(await n.set(patch)),
+      };
+    };
 
     const opened: Opened = {
       broadcast: host.broadcast,
@@ -916,8 +1079,11 @@ export class Document {
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)).then(host.dispose),
     };
     this.opened = opened;
-    // A version of what it holds, if that isn't the latest one (or there's none yet).
-    void this.cutSoon("open");
+    // A version of what it holds, if it stopped with edits no version has (or there's none yet).
+    if (info.uncut || (await this.versions.head()) == 0) void this.cutSoon("open");
+    // Tabs connected while it was closed join it now.
+    this.deps.tabs.attach?.(opened);
+    this.activity();
     // Now with its title, for one on disk.
     if (info.disk) this.syncDirectory().catch((e) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`));
     return opened;

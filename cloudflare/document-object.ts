@@ -1,15 +1,23 @@
 // One document, as a Durable Object (on erga.dev, and in local development
 // alike): the Cloudflare side of document/document.ts. It gives the
 // Document its storage, the server around it (the directory in D1, the
-// other objects, the agent's settings), takes its WebSockets (a Durable
-// Object accepts them its own way), wakes it for its alarm, and forwards
-// the calls the rest of the Worker makes (RPC).
+// other objects, the agent's settings), takes its WebSockets, wakes it for
+// its alarm, and forwards the calls the rest of the Worker makes (RPC).
+//
+// Tabs' sockets use the hibernation API (ctx.acceptWebSocket): the object
+// sleeps while they're idle and wakes for their next message, and each
+// socket keeps what it is in its attachment. document/tabs.ts joins them to
+// the document whenever it opens; the document closes itself when nothing
+// has happened for a while (ERGA_ROOM_IDLE_MS, a minute), so nothing keeps
+// the object awake while tabs only sit open.
 //
 // The dev server's link to a document on disk (/api/mirror) is here too:
 // the files then stay on disk, reached over that WebSocket (dev/disk-storage.ts).
+// It's an ordinary socket: a document on disk never sleeps.
 
 import { DurableObject } from "cloudflare:workers";
 import { Document, personOf, type DocumentDeps, type OnDisk } from "../document/document";
+import { Tabs, type Tab } from "../document/tabs";
 import type { DocRow } from "../server/directory/index.ts";
 import { agentToolsFor } from "../agents/tools";
 import { VIA } from "../shared/attribution";
@@ -27,8 +35,8 @@ const TEMPLATE = Object.values(import.meta.glob("../assets/templates/doc/index.h
 const AVATARS = "https://avatars.githubusercontent.com";
 
 export class DocumentObject extends DurableObject<Env> {
-  /** Every WebSocket open on this document: someone has it open while there are any. */
-  private sockets = new Set<WebSocket>();
+  /** The dev server's sockets (ordinary ones): a document on disk. */
+  private mirrors = new Set<WebSocket>();
   /** A document on disk: its files, through the dev server. */
   private disk = new DiskLink({
     changed: (path) => { this.document.diskChanged(path).catch((e) => console.log(`couldn't take ${path} from disk: ${e}`)); },
@@ -37,6 +45,13 @@ export class DocumentObject extends DurableObject<Env> {
     flush: async () => { await new Promise((r) => setTimeout(r, 100)); await this.document.flush(); },
   });
   private document = new Document(this.deps());
+  /** The tabs' sockets, joined to the document whenever it's open. */
+  private tabs = new Tabs<WebSocket>({
+    document: () => this.document,
+    sockets: () => this.ctx.getWebSockets(),
+    tabOf: (ws) => (ws.deserializeAttachment() as Tab | null) ?? null,
+    keep: (ws, tab) => ws.serializeAttachment(tab),
+  });
 
   private deps(): DocumentDeps {
     const env = this.env;
@@ -44,8 +59,14 @@ export class DocumentObject extends DurableObject<Env> {
       storage: this.ctx.storage,
       directory: directoryOf(env),
       tabs: {
-        count: () => this.sockets.size,
-        closeAll: (code, reason) => { for (const socket of this.sockets) { try { socket.close(code, reason); } catch { /* already closed */ } } this.sockets.clear(); },
+        count: () => this.ctx.getWebSockets().length + this.mirrors.size,
+        closeAll: (code, reason) => {
+          for (const socket of [...this.ctx.getWebSockets(), ...this.mirrors]) { try { socket.close(code, reason); } catch { /* already closed */ } }
+          this.mirrors.clear();
+          this.tabs.detachAll();
+        },
+        attach: (opened) => this.tabs.attachAll(opened),
+        detach: () => this.tabs.detachAll(),
       },
       agentSettings: () => platform(env).agentSettings(),
       // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
@@ -57,7 +78,12 @@ export class DocumentObject extends DurableObject<Env> {
       },
       siteChanged: (docId) => siteChanged(env, docId),
       disk: { storage: (only) => this.disk.storage(this.ctx.storage, only) },
-      timing: { idleMs: Number(env.ERGA_VERSION_IDLE_MS) || 30_000, maxMs: Number(env.ERGA_VERSION_MAX_MS) || 5 * 60_000, writeDelay: Number(env.ERGA_WRITE_DELAY_MS) || undefined },
+      timing: {
+        idleMs: Number(env.ERGA_VERSION_IDLE_MS) || 30_000,
+        maxMs: Number(env.ERGA_VERSION_MAX_MS) || 5 * 60_000,
+        writeDelay: Number(env.ERGA_WRITE_DELAY_MS) || undefined,
+        closeIdleMs: Number(env.ERGA_ROOM_IDLE_MS) || 60_000,
+      },
       background: (work) => this.ctx.waitUntil(work),
       log: (line) => console.log(line),
       pageTemplate: TEMPLATE || undefined,
@@ -75,24 +101,25 @@ export class DocumentObject extends DurableObject<Env> {
 
   create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> { return this.document.create(owner, id, files, index, opts); }
   link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> { return this.document.link(owner, id, index, disk); }
+  // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
   publish(files: Record<string, string | Uint8Array>, remove: string[], by?: string) { return this.document.publish(files, remove, by); }
-  paths(): Promise<string[]> { return this.document.paths(); }
+  paths(): Promise<string[]> { return this.document.hold(() => this.document.paths()); }
   index(): Promise<string | null> { return this.document.index(); }
-  snapshot(opts: { published?: boolean } = {}) { return this.document.snapshot(opts); }
+  snapshot(opts: { published?: boolean } = {}) { return this.document.hold(() => this.document.snapshot(opts)); }
   delete(): Promise<boolean> { return this.document.delete(); }
   /** A message for everyone who has the document open (the homepage's deploy status, home.ts). Opens nothing. */
-  async notify(msg: unknown): Promise<void> { this.document.notify(msg); }
+  async notify(msg: unknown): Promise<void> { this.tabs.notify(msg); }
   diskPath(): Promise<string | null> { return this.document.diskPath(); }
   exists(): Promise<boolean> { return this.document.exists(); }
   exportStorage(id: string, page: Page): Promise<DocSnapshot | null> { return this.document.exportStorage(id, page); }
   importStorage(snap: DocSnapshot): Promise<void> { return this.document.importStorage(snap); }
   wipeStorage(): Promise<void> { return this.document.wipeStorage(); }
-  versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> { return this.document.versionsState(opts); }
-  setPublished(req: PublishRequest): Promise<PublishResult> { return this.document.setPublished(req); }
-  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.restore(ref, by, path); }
-  publishedFiles() { return this.document.publishedFiles(); }
+  versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> { return this.document.hold(() => this.document.versionsState(opts)); }
+  setPublished(req: PublishRequest): Promise<PublishResult> { return this.document.hold(() => this.document.setPublished(req)); }
+  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.hold(() => this.document.restore(ref, by, path)); }
+  publishedFiles() { return this.document.hold(() => this.document.publishedFiles()); }
   /** A person's agent run that a restart cut off goes on (their object's alarm asks). */
-  resumeAgent(person: { id: string; name: string }): Promise<void> { return this.document.resumeAgent(person); }
+  resumeAgent(person: { id: string; name: string }): Promise<void> { return this.document.hold(() => this.document.resumeAgent(person)); }
 
   /** Its unedited time is up (document.wake says what then). */
   async alarm(): Promise<void> {
@@ -104,34 +131,38 @@ export class DocumentObject extends DurableObject<Env> {
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (url.pathname == "/api/mirror") return this.mirror(request);
     if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return this.document.handle(request);
+    const room = url.pathname.startsWith("/api/room");
+    if (!room && url.pathname != "/api/events") return new Response("Not found", { status: 404 });
     const opened = await this.document.admit(request);
     if (!opened) return new Response("No such document", { status: 404 });
-    const editing = request.headers.get("x-erga-access") == "edit";
+    const tab: Tab = room
+      ? { id: crypto.randomUUID(), kind: "room", readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null }
+      : { id: crypto.randomUUID(), kind: "events", person: personOf(request.headers) };
     const [client, server] = Object.values(new WebSocketPair());
-    if (url.pathname.startsWith("/api/room")) {
+    // A tab holding another epoch's history is refused, never merged (on a socket of its own, closed at once).
+    if (tab.kind == "room" && tab.epoch && tab.epoch != opened.room.epoch) {
       server.accept();
-      this.track(server);
-      // Binary frames as ArrayBuffers: with this compatibility date they'd otherwise arrive as Blobs.
-      server.binaryType = "arraybuffer";
-      const joined = this.document.joinRoom(opened, { epoch: url.searchParams.get("epoch"), readOnly: !editing, send: (m) => { try { server.send(m); } catch { /* already closed */ } } });
-      // A tab holding another epoch's history is refused, never merged.
-      if (!joined) server.close(4409, "stale epoch");
-      else {
-        server.addEventListener("message", (e) => { if (!joined.receive(bytesOf(e.data))) server.close(4400, "malformed message"); });
-        server.addEventListener("close", joined.left);
-        server.addEventListener("error", joined.left);
-      }
+      server.close(4409, "stale epoch");
       return new Response(null, { status: 101, webSocket: client });
     }
-    if (url.pathname == "/api/events") {
-      server.accept();
-      this.track(server);
-      const leave = this.document.joinEvents(opened, personOf(request.headers), (msg) => { try { server.send(JSON.stringify(msg)); } catch { /* already closed */ } });
-      server.addEventListener("close", leave);
-      server.addEventListener("error", leave);
-      return new Response(null, { status: 101, webSocket: client });
-    }
-    return new Response("Not found", { status: 404 });
+    this.ctx.acceptWebSocket(server, [tab.kind]);
+    server.serializeAttachment(tab);
+    if (!this.tabs.join(server, opened, tab)) server.close(4409, "stale epoch");
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** A tab's message (it may wake the object: the document then opens again from storage). */
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    await this.tabs.message(ws, bytesOf(message));
+  }
+
+  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    this.tabs.closed(ws);
+    try { ws.close(code, reason); } catch { /* already closed, or a code that can't be sent back */ }
+  }
+
+  async webSocketError(ws: WebSocket): Promise<void> {
+    this.tabs.closed(ws);
   }
 
   /** The dev server's socket to the files of a document on disk (the front door checked its secret; so does this). */
@@ -142,16 +173,12 @@ export class DocumentObject extends DurableObject<Env> {
     }
     const [client, server] = Object.values(new WebSocketPair());
     server.accept();
-    this.track(server);
+    this.mirrors.add(server);
+    const gone = () => this.mirrors.delete(server);
+    server.addEventListener("close", gone);
+    server.addEventListener("error", gone);
     this.disk.accept(server);
     return new Response(null, { status: 101, webSocket: client });
-  }
-
-  private track(socket: WebSocket): void {
-    this.sockets.add(socket);
-    const gone = () => this.sockets.delete(socket);
-    socket.addEventListener("close", gone);
-    socket.addEventListener("error", gone);
   }
 }
 
