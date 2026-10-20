@@ -15,14 +15,14 @@ import { ms } from "./timescale";
 import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "./bridge";
 import { changesBetween } from "../document/merge";
-import { Collab, type Presence } from "./collab";
+import { Collab, type Presence, type SocketEvent } from "./collab";
 import { colorFor, files, type Author } from "../document/content";
 import type { mountTree, TreeHandle } from "./pages-tree";
 import { type Log, type LogEvent, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { chat, escapeHtml } from "./agent-chat";
 import { fileRefs, type Attachment } from "../shared/attach";
 import { attachments } from "./attach-ui";
-import type { AgentState, DocInfo, DocName, ModelState } from "../document/api";
+import type { AgentState, DocInfo, DocName, Hello, ModelState } from "../document/api";
 import { BASE } from "./base";
 import { shareWithAgent } from "./share-agent";
 import type { Settings } from "./settings";
@@ -47,7 +47,7 @@ liveWatch({ events: false, net: false, types: [] });
 });
 
 declare global {
-  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
+  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean } }
 }
 /** What the editor keeps of itself across a reload for a new release. */
 interface EditorKept {
@@ -79,6 +79,9 @@ type TreeModule = { mountTree: typeof mountTree };
 
 
 (async () => {
+  // The start, step by step, as performance marks (erga:main, erga:hello, erga:synced, erga:frame-asked; the frame's
+  // erga:frame-js, erga:init, erga:rendered): DevTools' Performance panel and a script can read where the time went.
+  performance.mark("erga:main");
   const $ = (id: string) => document.getElementById(id)!;
 
   const KEYS = { settings: "erga:settings:v1" };
@@ -145,14 +148,30 @@ type TreeModule = { mountTree: typeof mountTree };
   let info: DocInfo | null = null;
   // What this page kept of itself before it reloaded for a new release, if it did.
   const back = restoredFor<EditorKept>("editor");
+
+  // The document's socket (collab.ts), open since the page began (server/pages/viewer.ts): the room, and this person's
+  // events. Its first message says who this tab is and what the document is called (the hello), then comes the room's
+  // whole text. Presence, connection news and events before the shell is set up are picked up once it is (`started`).
+  let started = false;
+  const pending: SocketEvent[] = [];
+  const collab: Collab = new Collab({
+    onEvent: (msg) => { if (started) socketEvent(msg); else pending.push(msg); },
+    onRemote: (changes, author) => applyRemote(changes, author),
+    // Another page of the document is no part of this one (a page frames another only rarely): its edits leave this one be.
+    onFiles: (paths) => { if (paths.some((p) => !/\.(html?|md)$/i.test(p))) needRefresh(); },
+    onPresence: () => { if (started) presenceChanged(); },
+    onStatus: (connected) => { if (started) connectionChanged(connected); },
+    onStale: () => {
+      const w = $("welcome");
+      w.hidden = false;
+      w.classList.add("blocking");
+      w.innerHTML = `<div><p>This page is out of date: the editor's host restarted without its saved history, so edits from this tab can't be merged safely.</p><p><button type="button" id="stale-reload">Reload</button></p></div>`;
+      $("stale-reload").addEventListener("click", () => location.reload());
+    },
+  }, asked ? { user: asked } : {});
   try {
-    // The page asked for it already, as editing started, if it's for this same address.
-    const early = window.ergaDocInfo;
-    window.ergaDocInfo = undefined;
-    const url = `${BASE}/api/doc${as}`;
-    const res = early?.url == url ? await early.response : await fetch(url);
-    if (!res.ok) throw new Error(await res.text());
-    info = (await res.json()) as DocInfo;
+    info = (await Promise.race([collab.hello, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the room didn't answer")), 8000))])).info;
+    performance.mark("erga:hello");
   } catch (e) {
     $("welcome").hidden = false;
     $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open one from <a href="/docs">your documents</a>.</p></div>`;
@@ -233,28 +252,12 @@ type TreeModule = { mountTree: typeof mountTree };
   /** The document's settings, once the gear has loaded them (loadSettings). */
   let docSettings: Settings | null = null;
 
-  // Join the room and wait for the document's text. Presence and connection
-  // news before the shell is set up is picked up once it is (`started`).
-  let started = false;
-  const collab: Collab = new Collab({
-    me,
-    path: info.path,
-    onRemote: (changes, author) => applyRemote(changes, author),
-    // Another page of the document is no part of this one (a page frames another only rarely): its edits leave this one be.
-    onFiles: (paths) => { if (paths.some((p) => !/\.(html?|md)$/i.test(p))) needRefresh(); },
-    onPresence: () => { if (started) presenceChanged(); },
-    onStatus: (connected) => { if (started) connectionChanged(connected); },
-    onStale: () => {
-      const w = $("welcome");
-      w.hidden = false;
-      w.classList.add("blocking");
-      w.innerHTML = `<div><p>This page is out of date: the editor's host restarted without its saved history, so edits from this tab can't be merged safely.</p><p><button type="button" id="stale-reload">Reload</button></p></div>`;
-      $("stale-reload").addEventListener("click", () => location.reload());
-    },
-  }, asked ? { user: asked } : {});
+  // Into the room as who this tab is, and the document's text (on its way already, or here).
+  collab.join(me, info.path);
   let initialText: string;
   try {
     initialText = await collab.ready();
+    performance.mark("erga:synced");
   } catch (e) {
     $("welcome").hidden = false;
     $("welcome").innerHTML = `<div><p>Couldn't join the document: ${(e as Error).message}.</p><p>Is the server still running?</p></div>`;
@@ -286,7 +289,7 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // The document's title, top left after the Documents link, and its address
   // in the address bar. Whoever renames it (anyone, any agent, or the title
-  // following its first heading), every tab hears of it on the event channel
+  // following its first heading), every tab hears of it on its socket
   // and follows: the title changes, and the address becomes the new one
   // (replaceState: the old one still leads here). The editor itself talks to
   // the host at /d/<id> (BASE), which a rename never changes.
@@ -323,11 +326,6 @@ type TreeModule = { mountTree: typeof mountTree };
     return at;
   }
   if (info.docName) showName(info.docName);
-  /** Asks for the name again (when the event channel connects: a rename may have gone by while it was down). */
-  function refreshName() {
-    if (!docName) return;
-    fetch(api("/api/name")).then((r) => (r.ok ? r.json() : null)).then((n: DocName | null) => { if (n) showName(n); }, () => {});
-  }
   const slugify = (s: string) => s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
   let slugTouched = false;
   const sayNaming = (text: string, error = false) => { namingStatus.textContent = text; namingStatus.classList.toggle("error", error); };
@@ -494,6 +492,8 @@ type TreeModule = { mountTree: typeof mountTree };
   let connected = true, offlineTimer = 0, saidOffline = false;
   const OFFLINE_NOTE_MS = 20_000;
   function connectionChanged(now: boolean) {
+    // (The body's erga-listening class: this tab hears its agent, and open_page counts it. Set by the hello: socketEvent.)
+    if (!now) document.body.classList.remove("erga-listening");
     if (now == connected) return;
     connected = now;
     live((l) => l.connection("room", now));
@@ -577,35 +577,33 @@ type TreeModule = { mountTree: typeof mountTree };
   }
   refreshPill.addEventListener("click", refreshPage);
 
-  // Your agent's events and its requests to look at the page come to your
-  // tabs only, over a WebSocket: an EventSource would hold one of the
-  // browser's six connections to the host per tab, and with a few tabs open
-  // every later request (sending a message) would queue forever.
-  let eventTries = 0;
-  function listen() {
-    const events = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${api("/api/events")}`);
-    events.onmessage = (ev) => {
-      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string; path?: string } = {};
-      try { msg = JSON.parse(String(ev.data)); } catch { return; }
-      if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
-      else if (msg.type == "model") renderModel(msg as unknown as ModelState);
-      else if (msg.type == "view" && msg.id && msg.req?.live) answerLive(msg.id, msg.req.live);
-      else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
-      else if (msg.type == "name" && msg.name) showName(msg.name);
-      else if (msg.type == "versions" || msg.type == "home" || msg.type == "site") docSettings?.event(msg.type);
-      else if (msg.type == "tree") treeChanged(msg);
-      // Your agent (or an external one, as you) opened another page: go there (open_page).
-      else if (msg.type == "open" && msg.path && msg.path != info!.path) openPage(msg.path);
-    };
-    // Events sent while the channel was down are gone; catch up from the transcript.
-    // A rename missed meanwhile (or before it first opened) is caught up the same way.
-    // The body's erga-listening class: the channel is up, so this tab hears its agent (and open_page counts it). Tests wait on it.
-    events.onopen = () => { eventTries = 0; live((l) => l.connection("events", true)); document.body.classList.add("erga-listening"); if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); docSettings?.event("site"); } opened = true; refreshName(); stillHere(); };
-    // Down (the server restarted, a redeploy): again, a little later each time it fails.
-    events.onclose = () => { live((l) => l.connection("events", false)); document.body.classList.remove("erga-listening"); setTimeout(listen, backoff(eventTries++)); };
+  // Your agent's events and its requests to look at the page come to your tabs only, on the document's socket (as
+  // text, beside the room's messages: collab.ts). Events sent while it was down are gone: each time it's back (or the
+  // document opens for it again), the host says hello afresh, with the document's name and tree, and then the agent's
+  // state with its transcript, which this catches up from.
+  let greeted = false;
+  function socketEvent(m: SocketEvent) {
+    const msg = m as { type: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string; path?: string; state?: AgentState };
+    if (msg.type == "hello") {
+      const h = m as Hello;
+      // The body's erga-listening class: this tab hears its agent (and open_page counts it). Tests wait on it.
+      document.body.classList.add("erga-listening");
+      if (h.info.docName && docName) showName(h.info.docName);
+      if (greeted) { docSettings?.event("versions"); docSettings?.event("home"); docSettings?.event("site"); }
+      greeted = true;
+      stillHere(h.tree);
+    }
+    else if (msg.type == "agent-state" && msg.state) agentState(msg.state);
+    else if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
+    else if (msg.type == "model") renderModel(msg as unknown as ModelState);
+    else if (msg.type == "view" && msg.id && msg.req?.live) answerLive(msg.id, msg.req.live);
+    else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
+    else if (msg.type == "name" && msg.name) showName(msg.name);
+    else if (msg.type == "versions" || msg.type == "home" || msg.type == "site") docSettings?.event(msg.type);
+    else if (msg.type == "tree") treeChanged(msg);
+    // Your agent (or an external one, as you) opened another page: go there (open_page).
+    else if (msg.type == "open" && msg.path && msg.path != info!.path) openPage(msg.path);
   }
-  let opened = false;
-  listen();
 
   // The document's file tree changed (anyone's doing: document/pages.ts). Whatever shows the tree hears it as an
   // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
@@ -617,12 +615,11 @@ type TreeModule = { mountTree: typeof mountTree };
     else if (msg.deleted && under(msg.deleted)) goTo(addressOf(null), true);
   }
   /**
-   * Whether this page is still there, once the event channel is up (a move or delete may have gone by while
-   * it wasn't): if it moved, to where it went (the host remembers the latest moves); if it's gone, to the first page.
+   * Whether this page is still there, by the tree the hello brings (a move or delete may have gone by while the
+   * socket was down): if it moved, to where it went (the host remembers the latest moves); if it's gone, to the first page.
    */
-  async function stillHere() {
-    const t = await fetch(api("/api/tree")).then((r) => r.ok ? r.json() as Promise<{ entries: { path: string }[]; moved?: { from: string; to: string }[] }> : null, () => null);
-    if (!t || t.entries.some((e) => e.path == pagePath)) return;
+  function stillHere(t: Hello["tree"]) {
+    if (t.entries.some((e) => e.path == pagePath)) return;
     let at = pagePath;
     for (const m of t.moved ?? []) if (at == m.from || at.startsWith(`${m.from}/`)) at = m.to + at.slice(m.from.length);
     goTo(addressOf(t.entries.some((e) => e.path == at) ? at : null), true);
@@ -1116,6 +1113,7 @@ Once you've read the guide, await further instructions.`;
     onZoom: (by) => zoomPage(by),
   });
   page.start();
+  performance.mark("erga:frame-asked");
 
   // ---------------------------------------------------------------- zoom
 
@@ -1761,29 +1759,14 @@ Once you've read the guide, await further instructions.`;
     });
     agentModel.append(sel);
   }
-  let agentTries = 0, agentRetry = 0;
-  function loadAgent() {
-    clearTimeout(agentRetry);
-    fetch(api("/api/agent")).then((r) => {
-      if (!r.ok) throw Object.assign(new Error(r.status == 404 ? "this server doesn't have the agent" : `the host answered ${r.status}`), { again: transient(r) });
-      return r.json();
-    }, (e: Error) => { throw Object.assign(e, { again: transient(e) }); }).then((a: AgentState) => {
-      agentTries = 0;
-      agentOff = a.enabled ? null : `The agent is off: ${a.reason ?? "the host did not start it"}.`;
-      renderModel(a.enabled ? a : null);
-      if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; setAgentBusy(a.log.busy || busyAgents().length > 0); }
-      renderLog();
-      renderUndo();
-    }).catch((e: Error & { again?: boolean }) => {
-      // The host restarting (a redeploy): ask again shortly, as the agent was, rather than call it off.
-      if (e.again && agentTries < 8) { agentRetry = window.setTimeout(loadAgent, backoff(agentTries++)); return; }
-      agentOff = `The agent is off: ${e.message}.`;
-      renderModel(null);
-      renderLog();
-      renderUndo();
-    });
+  /** The agent's state and its transcript, as the host sends it after each hello (document.ts, joinRoom). */
+  function agentState(a: AgentState) {
+    agentOff = a.enabled ? null : `The agent is off: ${a.reason ?? "the host did not start it"}.`;
+    renderModel(a.enabled ? a : null);
+    if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; setAgentBusy(a.log.busy || busyAgents().length > 0); }
+    renderLog();
+    renderUndo();
   }
-  loadAgent();
 
   // ---------------------------------------------------------------- shortcuts & wiring
 
@@ -2047,6 +2030,9 @@ Once you've read the guide, await further instructions.`;
 
   started = true;
   presenceChanged();
+  connectionChanged(collab.connected);
+  // What came on the socket while the shell was being set up (its hello, the agent's state), in order.
+  for (const m of pending.splice(0)) socketEvent(m);
   window.ergaPage = { page, collab, toggleSource, captureView, agentContext: editorContext, setEditing, get pagePath() { return pagePath; }, openPage, get state() { return currentState(); } };
   window.ergaShell?.ready();
 })();

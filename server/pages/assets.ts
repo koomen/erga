@@ -71,6 +71,9 @@ export function fontTags(preload = false): string {
   return `${preload ? `<link rel="preload" as="font" type="font/woff2" crossorigin href="${origin}${manifest.fonts.preload}">` : ""}<style id="erga-fonts">${css}</style>`;
 }
 
+/** The editor's shell (client/editor.html, as the build split it): its styles and its controls, for a document's page. */
+export const editorShell = () => manifest?.shell ?? { style: "", body: "" };
+
 /** The app's stylesheet. */
 export const styleTag = () => `<link rel="stylesheet" href="${asset("style.css")}">`;
 

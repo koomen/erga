@@ -7,7 +7,10 @@
 //      goes on, half before the answer comes back, and half each way for each
 //      WebSocket message. The first request to each host in a browser profile
 //      also pays `handshake` round trips (TCP and TLS), and so does each
-//      WebSocket. reset() starts a new profile: no connection is open.
+//      WebSocket. A WebSocket's upgrade is answered once the server has
+//      answered it (the server's work is inside the round trip, as on the
+//      internet), and what the server sends at once comes back with that
+//      answer. reset() starts a new profile: no connection is open.
 //   3. It records each request: when it started and ended, its bytes over the
 //      wire (compressed body and headers), and what the browser asked for
 //      (sec-fetch-dest: a document, a frame, a script...). A request the browser
@@ -42,6 +45,8 @@ export interface Proxy {
 
 const now = () => performance.timeOrigin + performance.now();
 const sleep = (ms: number) => (ms > 0 ? Bun.sleep(ms) : Promise.resolve());
+/** A WebSocket through the proxy: the server's end (open before the browser's is), what it sent before the browser's end was up, and that end. */
+type Socket = { hit: Hit; up: WebSocket; early: (string | ArrayBuffer)[]; queue: (string | Buffer)[]; client?: import("bun").ServerWebSocket<Socket> };
 const COMPRESS = /^(text\/|application\/(javascript|json|xml|wasm)|image\/svg)/;
 
 export async function startProxy(target: string, opts: { rtt: number; handshake: number }): Promise<Proxy> {
@@ -58,7 +63,7 @@ export async function startProxy(target: string, opts: { rtt: number; handshake:
   };
   const headerBytes = (h: Headers) => { let n = 17; h.forEach((v, k) => { n += k.length + v.length + 4; }); return n + 2; };
 
-  const server = Bun.serve<{ url: string; headers: Record<string, string>; hit: Hit; up?: WebSocket; queue: (string | Buffer)[] }>({
+  const server = Bun.serve<Socket>({
     hostname: "127.0.0.1", port,
     idleTimeout: 0,
     async fetch(req, srv) {
@@ -68,12 +73,26 @@ export async function startProxy(target: string, opts: { rtt: number; handshake:
       const hit: Hit = { url: `${url.protocol}//${host}${url.pathname}${url.search}`, dest: req.headers.get("sec-fetch-dest") ?? "", status: 0, start: now(), end: 0, bytes: 0 };
       hits.push(hit);
       if (req.headers.get("upgrade")?.toLowerCase() == "websocket") {
+        // The way there (with the connection's handshake), the server's own upgrade (what it does before it answers
+        // counts, as it would), then the way back: the 101 and whatever the server sends at once come back together.
         hit.dest = "websocket";
-        await sleep(delayFor(host, true) + opts.rtt / 2);
+        await sleep(delayFor(host, true));
         const headers: Record<string, string> = {};
         for (const k of ["host", "origin", "cookie", "user-agent", "sec-websocket-protocol"]) { const v = req.headers.get(k); if (v) headers[k] = v; }
-        hit.status = 101; hit.end = now();
-        return srv.upgrade(req, { data: { url: there.replace(/^http/, "ws"), headers, hit, queue: [] } }) ? undefined : new Response("no upgrade", { status: 400 });
+        const up = new WebSocket(there.replace(/^http/, "ws"), { headers, protocols: headers["sec-websocket-protocol"]?.split(",").map((p) => p.trim()) } as any);
+        up.binaryType = "arraybuffer";
+        const data: Socket = { hit, up, early: [], queue: [] };
+        up.onmessage = (e) => {
+          const m = e.data as string | ArrayBuffer;
+          hit.bytes += typeof m == "string" ? m.length : m.byteLength;
+          setTimeout(() => { if (data.client) { try { data.client.send(m as any); } catch { /* closed */ } } else data.early.push(m); }, opts.rtt / 2);
+        };
+        const opened = await new Promise<boolean>((done) => { up.onopen = () => done(true); up.onerror = up.onclose = () => done(false); });
+        await sleep(opts.rtt / 2);
+        hit.end = now();
+        if (!opened) { hit.status = 502; return new Response("the server refused the WebSocket", { status: 502 }); }
+        hit.status = 101;
+        return srv.upgrade(req, { data }) ? undefined : new Response("no upgrade", { status: 400 });
       }
       await sleep(delayFor(host, false));
       const headers = new Headers(req.headers);
@@ -122,19 +141,12 @@ export async function startProxy(target: string, opts: { rtt: number; handshake:
     },
     websocket: {
       open(ws) {
-        const d = ws.data;
-        const protocols = d.headers["sec-websocket-protocol"]?.split(",").map((p) => p.trim());
-        // Bun's WebSocket takes headers: the browser's Host, Origin and cookies go on as they came.
-        const up = new WebSocket(d.url, { headers: d.headers, protocols } as any);
-        up.binaryType = "arraybuffer";
-        d.up = up;
-        up.onopen = () => { for (const m of d.queue.splice(0)) up.send(m as any); };
-        up.onmessage = (e) => {
-          const m = e.data as string | ArrayBuffer;
-          d.hit.bytes += typeof m == "string" ? m.length : m.byteLength;
-          setTimeout(() => { try { ws.send(m as any); } catch { /* closed */ } }, opts.rtt / 2);
-        };
-        up.onclose = (e) => setTimeout(() => { try { ws.close(e.code >= 4000 || e.code == 1000 ? e.code : 1000, e.reason); } catch { /* closed */ } }, opts.rtt / 2);
+        const d = ws.data, up = d.up;
+        d.client = ws;
+        for (const m of d.early.splice(0)) ws.send(m as any);
+        const closed = (code: number, reason: string) => setTimeout(() => { try { ws.close(code >= 4000 || code == 1000 ? code : 1000, reason); } catch { /* closed */ } }, opts.rtt / 2);
+        if (up.readyState >= WebSocket.CLOSING) { closed(1000, ""); return; }
+        up.onclose = (e) => closed(e.code, e.reason);
         up.onerror = () => { try { ws.close(1011, "upstream failed"); } catch { /* closed */ } };
       },
       message(ws, m) {

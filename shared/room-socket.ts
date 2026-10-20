@@ -1,0 +1,30 @@
+// How a tab starts on its document, and what it says on its socket besides
+// the room's Yjs messages and the person's events: shared by the host
+// (document/host.ts, document/tabs.ts) and the browser (client/collab.ts).
+//
+// A tab starts with one request on the connection it has already (GET
+// /d/<id>/api/start: its hello and the room's whole state, START below), and
+// opens its socket (/d/<id>/api/room?events=1) at the same time; a new
+// socket costs a connection of its own, so the editor doesn't wait for it.
+// Once the state is in, the tab asks the socket for what changed since
+// (sync step 1), and edits made meanwhile go over it as soon as it's open.
+
+import * as encoding from "lib0/encoding";
+import * as decoding from "lib0/decoding";
+
+/** A text frame a tab sends to see that its idle socket is alive; the host answers PONG (the Durable Object without waking: setWebSocketAutoResponse). */
+export const PING = "ping", PONG = "pong";
+
+/** GET /api/start's answer: the hello (JSON), then the room's state (a Yjs update). */
+export function encodeStart(hello: unknown, state: Uint8Array): Uint8Array {
+  const e = encoding.createEncoder();
+  encoding.writeVarString(e, JSON.stringify(hello));
+  encoding.writeVarUint8Array(e, state);
+  return encoding.toUint8Array(e);
+}
+
+export function decodeStart<H>(bytes: Uint8Array): { hello: H; state: Uint8Array } {
+  const d = decoding.createDecoder(bytes);
+  const hello = JSON.parse(decoding.readVarString(d)) as H;
+  return { hello, state: decoding.readVarUint8Array(d) };
+}

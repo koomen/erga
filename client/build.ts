@@ -146,6 +146,8 @@ async function build(): Promise<void> {
   swap(`<link rel="stylesheet" href="/fonts/inter.css">`, `<style id="erga-fonts">${fontCss}</style>`);
   swap(`<link rel="stylesheet" href="/style.css">`, `<link rel="stylesheet" href="${files["style.css"]}">`);
   swap(`<script src="/page.js"></script>`, `<script type="module" src="${files["page.js"]}"></script>`);
+  // (Not fetched by any page: the server puts the shell into the document's page, below. Its address names this build of
+  // the shell, which live.ts compares with the server's.)
   files["editor.html"] = put(`editor-${hashOf(enc(editor))}.html`, enc(editor));
 
   const manifest: AssetManifest = {
@@ -154,6 +156,7 @@ async function build(): Promise<void> {
     frame: closure(files["frame.js"], true),
     integrity: Object.fromEntries([...made].filter(([u]) => u.endsWith(".js")).sort(([a], [b]) => a.localeCompare(b)).map(([u, b]) => [u, integrityOf(b)])),
     fonts: { css: fontCss, preload: latin },
+    shell: editorShell(editor, new TextDecoder().decode(style)),
   };
 
   // Into place: the files, then the manifest that names them, then what neither this build nor the last one names.
@@ -177,6 +180,22 @@ async function build(): Promise<void> {
   const first = [...new Set([files["page.js"], ...deps["page.js"], files["frame.js"], ...deps["frame.js"]])];
   console.log(`built ${made.size} files: page.js ${size(files["page.js"])} bytes (+${deps["page.js"].length} chunks), frame.js ${size(files["frame.js"])} bytes (+${deps["frame.js"].length} chunks); the editor's scripts before it takes input: ${first.reduce((n, u) => n + size(u), 0)} bytes`);
   if (process.argv.includes("--sizes")) sizes(manifest, made);
+}
+
+/**
+ * The editor's shell as the server puts it into a document's page (server/pages/viewer.ts): its styles as one sheet
+ * (the stylesheet's rules, then the page's own), and its controls (the page's body without the frame, which the
+ * viewer has, and without the scripts). No file to fetch and no stylesheet to wait for.
+ */
+export function editorShell(editor: string, styleCss: string): { style: string; body: string } {
+  const head = editor.slice(0, editor.indexOf("</head>")), body = /<body[^>]*>([\s\S]*)<\/body>/.exec(editor)?.[1];
+  if (body == null) throw new Error("client/editor.html has no <body>");
+  const own = [...head.matchAll(/<style(?![^>]*id="erga-fonts")[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
+  const css = [styleCss, ...own].join("\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\n\s+/g, "\n");
+  if (/<\/style/i.test(css)) throw new Error("the editor's styles hold </style>");
+  const controls = body.replace(/<iframe id="frame"[^>]*><\/iframe>/, "").replace(/<script\b[\s\S]*?<\/script>/g, "").replace(/<!--[\s\S]*?-->/g, "").trim();
+  if (/<\/template/i.test(controls)) throw new Error("the editor's controls hold </template>");
+  return { style: css, body: controls };
 }
 
 /** Every file a manifest names. */

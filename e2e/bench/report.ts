@@ -8,12 +8,13 @@ export interface Results {
   /** For each case ("small viewer cold"): the median of each number, and every run. */
   loads: Record<string, { median: Partial<Load>; runs: Load[] }>;
   /** For each document: key press to paint, ms, every key of every run. */
-  keys: Record<string, { median: number; p95: number; max: number; n: number; lost: number; samples: number[] }>;
+  keys: Record<string, { median: number; p95: number; max: number; work?: number; n: number; lost: number; samples: number[] }>;
 }
 
 export const LOAD_METRICS = ["visible", "editable", "saved", "ttfb", "fcp", "load", "reqs", "kB", "docs", "docChain", "chain", "ws"] as const;
 type Metric = (typeof LOAD_METRICS)[number];
-const KEY_METRICS = ["median", "p95", "max", "lost"] as const;
+/** `work`: the median from a key press to the change in the page, before the frame that paints it. */
+const KEY_METRICS = ["median", "p95", "max", "work", "lost"] as const;
 
 export const median = (xs: number[]) => {
   const v = xs.filter(Number.isFinite).sort((a, b) => a - b);
@@ -35,7 +36,7 @@ export function summarize(meta: Results["meta"], loads: Record<string, Load[]>, 
   }
   for (const [name, runs] of Object.entries(keys)) {
     const s = runs.flatMap((r) => r.samples);
-    out.keys[name] = { median: median(s), p95: percentile(s, 95), max: Math.max(...s), n: s.length, lost: runs.reduce((n, r) => n + r.lost, 0), samples: s };
+    out.keys[name] = { median: median(s), p95: percentile(s, 95), max: Math.max(...s), work: median(runs.flatMap((r) => r.work ?? [])), n: s.length, lost: runs.reduce((n, r) => n + r.lost, 0), samples: s };
   }
   return out;
 }

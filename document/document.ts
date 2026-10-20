@@ -46,6 +46,7 @@ import * as Y from "yjs";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow, type Naming, type Role, type Who } from "../server/directory/index.ts";
 import type { SiteRow } from "../server/sites/index.ts";
 import { cleanRel, docFile, makeHost, relativeUrl } from "./host.ts";
+import type { AgentState, Hello } from "./api.ts";
 import { resolvePage, titleOf } from "./pages.ts";
 import { digest, FileStore, Room, StateStore, type Connection } from "./room.ts";
 import { fileStoreOf, KEYS, kvOf, stateStoreOf, type Storage } from "./storage.ts";
@@ -733,9 +734,21 @@ export class Document {
    * refused, never merged). Someone who may only view joins read-only: they
    * see every edit, and theirs go nowhere.
    */
-  joinRoom(opened: Opened, o: { epoch: string | null; readOnly: boolean; send: (m: Uint8Array) => void }): { receive: (data: Uint8Array) => boolean; left: () => void } | null {
+  joinRoom(opened: Opened, o: { epoch: string | null; readOnly: boolean; send: (m: Uint8Array | string) => void; events?: Person | null }): { receive: (data: Uint8Array) => boolean; left: () => void } | null {
+    if (o.epoch && o.epoch != opened.room.epoch) return null;
+    // A tab that hears events (an editor's) first hears what it needs to start: the document's details as its person
+    // sees them, and its tree (host.ts, hello); then, once their agent's session is up, its state. Its person's
+    // events (their agent's, a rename, the tree changing) come over the same socket, as text.
+    const person = o.events;
+    const json = (msg: unknown) => o.send(JSON.stringify(msg));
+    let tab: (() => void) | null = null;
+    if (person) {
+      void opened.hello(person, !o.readOnly).then(json, (e: unknown) => this.deps.log(`couldn't greet ${person.id}'s tab: ${e}`));
+      tab = opened.addTab(person.id, json);
+      void opened.agentState(person).then((state) => json({ type: "agent-state", state }), () => {});
+    }
     const conn: Connection | null = opened.room.connect(o.send, { epoch: o.epoch, readOnly: o.readOnly });
-    if (!conn) return null;
+    if (!conn) { tab?.(); return null; }
     // When the last person who may edit leaves, what they did is a version.
     let gone = false;
     if (!o.readOnly) this.editing++;
@@ -745,14 +758,10 @@ export class Document {
         if (gone) return;
         gone = true;
         conn.close();
+        tab?.();
         if (!o.readOnly && --this.editing == 0) void this.cutSoon("left");
       },
     };
-  }
-
-  /** A tab joins its person's event channel (the agent's events, the versions' changes); returns the leave function. */
-  joinEvents(opened: Opened, person: Person, send: (msg: unknown) => void): () => void {
-    return opened.addTab(person.id, send);
   }
 
   /**
@@ -1342,6 +1351,8 @@ export class Document {
       renamed: host.renamed,
       notify: host.notify,
       addTab: host.addTab,
+      hello: host.hello,
+      agentState: host.agentState,
       resumeAgent: host.resumeAgent,
       room,
       // Back in touch with disk: every file there, and every one the room holds, is looked at again.
@@ -1373,6 +1384,10 @@ export interface Opened {
   handler: (request: Request) => Promise<Response>;
   /** A tab joins its person's event channel; returns the leave function. */
   addTab: (user: string, send: (msg: unknown) => void) => () => void;
+  /** What a tab hears first ({ type: "hello" }): the document's details as the person sees them, and its tree. */
+  hello: (person: Person, canEdit: boolean) => Promise<Hello>;
+  /** The person's agent: on or off, its model and its conversation (as GET /api/agent answers). */
+  agentState: (person: Person) => Promise<AgentState>;
   room: Room;
   catchUp: () => Promise<void>;
   /** Tells every open tab the document's new title and address. */

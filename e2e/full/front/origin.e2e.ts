@@ -63,7 +63,7 @@ test("doc/ is the page; a file has an ETag, is checked each time, and is a 304 w
   expect(await again.text()).toBe("");
   const src = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(editor)?.[1]?.replace(/&amp;/g, "&") ?? "";
   expect(src).toMatch(/[?&]v=[a-z0-9]+/);
-  expect(editor).toContain('f.src = f.dataset.src + "&edit=1"');
+  expect(editor).toContain('f.src = inline.dataset.src + "&edit=1"');
   const host = await pagesFetch(src);
   expect(host.headers.get("cache-control") ?? "").toMatch(/max-age=\d+/);
   const hostPage = await host.text();
@@ -84,9 +84,13 @@ test("doc/ is the page; a file has an ETag, is checked each time, and is a 304 w
   expect((await fetch(`${p.origin}/_erga/frame-none.js`)).headers.get("cache-control")).toBe("no-store");
   expect((await pagesFetch(src.replace(/([?&])v=[^&]+/, "$1v=old"))).headers.get("cache-control")).toBe("no-cache");
   expect(editor).toContain('if (location.hash == "#edit") {');
-  expect(editor).toMatch(/\["\/_erga\/editor-[a-z0-9]+\.html","fetch"\]/);
-  expect(editor).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js","modulepreload"\]/);
-  expect(editor).toContain('rel: "preload"');
+  // The editor's shell is in the page (no page of its own to fetch); its script and chunks are preloaded, and its start
+  // and socket asked for, as the page parses.
+  expect(editor).toContain('<template id="erga-shell"><style>');
+  expect(editor).not.toMatch(/\/_erga\/editor-[a-z0-9]+\.html","fetch"/);
+  expect(editor).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js"(,"\/_erga\/chunk-[a-z0-9]+\.js")*\]/);
+  expect(editor).toContain('rel: "modulepreload"');
+  expect(editor).toContain('"/api/start"');
   expect((await pagesFetch(url)).headers.get("server-timing") ?? "").toContain("worker;dur=");
 });
 

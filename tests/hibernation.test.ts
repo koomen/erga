@@ -16,6 +16,7 @@ import { Document, type DocumentDeps } from "../document/document";
 import { MemoryStorage } from "../document/storage";
 import { Tabs, type Tab, type TabSocket } from "../document/tabs";
 import { files } from "../document/content";
+import { decodeStart } from "../shared/room-socket";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
@@ -84,13 +85,13 @@ class World {
     this.tabs = new Tabs<FakeTab>({ document: () => this.document, sockets: () => [...this.sockets], tabOf: (s) => s.tab, keep: (s, tab) => { s.tab = tab; } });
   }
 
-  /** A tab connects (the fetch that upgrades): the document opens, the tab joins and asks for what it lacks. */
-  async connect(kind: "room" | "events" = "room"): Promise<FakeTab> {
+  /** A tab connects (the fetch that upgrades): the document opens, the tab joins and asks for what it lacks. `events`: an editor's tab, which hears events too. */
+  async connect(events = false): Promise<FakeTab> {
     const opened = (await this.document.admit(new Request("http://doc/api/room", { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-access": "edit" } })))!;
-    const tab = new FakeTab(this, kind == "room" ? { id: crypto.randomUUID(), kind, readOnly: false, epoch: null } : { id: crypto.randomUUID(), kind, person: { id: "ada", name: "Ada" } });
+    const tab = new FakeTab(this, { id: crypto.randomUUID(), readOnly: false, epoch: null, person: { id: "ada", name: "Ada" }, events });
     this.sockets.add(tab);
     expect(this.tabs.join(tab, opened, tab.tab)).toBe(true);
-    if (kind == "room") this.deliver(tab, syncMessage((e) => sync.writeSyncStep1(e, tab.doc)));
+    this.deliver(tab, syncMessage((e) => sync.writeSyncStep1(e, tab.doc)));
     await this.settle();
     return tab;
   }
@@ -123,13 +124,25 @@ const awareness = (bytes: number[]) => { const e = encoding.createEncoder(); enc
 test("idle, the document closes and tabs stay; presence passes between them without opening it; an edit wakes it, in a new object too", async () => {
   const w = await made();
   const a = await w.connect(), b = await w.connect();
-  const events = await w.connect("events");
+  const events = await w.connect(true);
   expect(a.text()).toBe("<p>Hi</p>");
   a.type(3, "one ");
   await w.settle();
   expect(b.text()).toBe("<p>one Hi</p>");
   // Each tab now holds this history: it's kept with its socket.
-  expect(a.tab.kind == "room" && a.tab.epoch).toBeTruthy();
+  expect(a.tab.epoch).toBeTruthy();
+  // An editor's tab hears first who it is and what the document holds, then its agent's state.
+  expect(events.events[0]).toMatchObject({ type: "hello", info: { userId: "ada", path: "index.html" }, tree: { entries: [{ path: "index.html" }] } });
+  expect(events.events.some((e) => (e as { type: string }).type == "agent-state")).toBe(true);
+  // Its hello names the room's history, which the tab's start (GET /api/start) must be of.
+  expect((events.events[0] as { epoch: string }).epoch).toBe(a.tab.epoch!);
+  // The start: the same hello and the room's whole state, in one answer.
+  const started = await w.document.handle(new Request("http://doc/api/start", { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) } }));
+  const { hello, state } = decodeStart<{ type: string; epoch: string }>(new Uint8Array(await started.arrayBuffer()));
+  expect(hello).toMatchObject({ type: "hello", epoch: a.tab.epoch! });
+  const fresh = new Y.Doc();
+  Y.applyUpdate(fresh, state);
+  expect(files(fresh).get("index.html")?.toString()).toBe("<p>one Hi</p>");
 
   // Nothing happens: a version is cut, then the document closes. The tabs stay connected.
   await sleep(250);
@@ -174,7 +187,7 @@ test("a tab holding another history (the document's was lost) is closed as the d
   expect(w.document.isOpen()).toBe(false);
   w.boot();
   // As if B's history were another epoch's.
-  if (b.tab.kind == "room") b.tab = { ...b.tab, epoch: "another-epoch" };
+  b.tab = { ...b.tab, epoch: "another-epoch" };
   a.type(3, "x");
   await w.settle();
   expect(b.closed).toBe(4409);

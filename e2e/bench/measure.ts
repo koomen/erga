@@ -56,6 +56,8 @@ export interface Load {
 export interface Keys {
   /** ms from each key press to the paint that shows its character. */
   samples: number[];
+  /** ms from each key press to the change in the page (the editor's work, without the wait for the next frame). */
+  work: number[];
   /** Keys whose character didn't show within 2 s. */
   lost: number;
 }
@@ -65,7 +67,7 @@ type Report =
   | { kind: "fcp"; t: number; origin: number }
   | { kind: "load"; t: number; ttfb: number; origin: number }
   | { kind: "visible"; t: number }
-  | { kind: "text"; len: number; t: number }
+  | { kind: "text"; len: number; t: number; dom: number }
   | { kind: "key"; key: string; t: number };
 
 /** Runs in every frame before its own scripts. Reports through the binding __benchReport. */
@@ -95,7 +97,8 @@ const PROBE = (LINE: string) => {
     const len = p.textContent!.length;
     if (len == last) return;
     last = len;
-    afterPaint((t) => send({ kind: "text", len, t }));
+    const dom = wall(performance.now());
+    afterPaint((t) => send({ kind: "text", len, t, dom }));
   };
   new MutationObserver(check).observe(document, { subtree: true, childList: true, characterData: true });
   addEventListener("keydown", (e) => { const k = e as KeyboardEvent; if (k.isTrusted && k.key.length == 1) send({ kind: "key", key: k.key, t: wall(k.timeStamp) }); }, true);
@@ -244,21 +247,24 @@ export async function keystrokes(tab: Tab, docs: Docs, id: string, n: number, ga
   if (!(await clickLineEnd(page))) throw new Error("no line to type in");
   await sleep(300);
   tab.reports = [];
+  // Each gap a little longer than asked, by a random part of a frame: a gap that is a whole number of frames (100 ms
+  // is six at 60 Hz) would press every key of a run at the same point of the frame, and a run's numbers would say more
+  // about that point than about the editor.
   for (let i = 0; i < n; i++) {
     const t = now();
     await page.keyboard.type("abcdefghijklmnopqrstuvwxyz"[i % 26]);
-    await sleep(Math.max(0, gapMs - (now() - t)));
+    await sleep(Math.max(0, gapMs + Math.random() * 1000 / 60 - (now() - t)));
   }
   const until = now() + 2000;
   while (now() < until && !tab.reports.some((r) => r.kind == "text" && r.len >= start + n)) await sleep(20);
   const keys = tab.reports.filter((r) => r.kind == "key") as Extract<Report, { kind: "key" }>[];
   const texts = tab.reports.filter((r) => r.kind == "text") as Extract<Report, { kind: "text" }>[];
-  const samples: number[] = [];
+  const samples: number[] = [], work: number[] = [];
   let lost = n - keys.length;
   keys.forEach((k, i) => {
     const shown = texts.find((r) => r.len >= start + i + 1 && r.t >= k.t);
-    if (shown) samples.push(Math.round((shown.t - k.t) * 10) / 10);
+    if (shown) { samples.push(Math.round((shown.t - k.t) * 10) / 10); work.push(Math.round((shown.dom - k.t) * 10) / 10); }
     else lost++;
   });
-  return { samples, lost };
+  return { samples, work, lost };
 }

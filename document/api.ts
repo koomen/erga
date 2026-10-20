@@ -11,7 +11,8 @@
 // The share button's /api/share isn't here either: tokens are the front
 // door's, which answers it before it reaches a document.
 //
-// Not here: the WebSockets (/api/room, /api/events), the files (the editor's
+// Not here: the WebSocket (/api/room: the room, and with ?events=1 the person's events), the editor's start (/api/start:
+// binary, shared/room-socket.ts), the files (the editor's
 // own, and the document's under /doc/), and /api/stored, which moves raw
 // bytes with ETags. Those stay plain routes in document/host.ts and cloudflare/document-object.ts.
 
@@ -120,6 +121,19 @@ export const AgentState = Schema.Union([
 ]);
 export type AgentState = typeof AgentState.Type;
 
+/**
+ * The start of GET /api/start's answer, and the first message on a tab's socket (/api/room?events=1, a text frame),
+ * again each time the document opens for it: the document's details as its person sees them, and its tree as GET
+ * /api/tree gives it (with the latest moves, for a page that moved while the tab wasn't connected).
+ */
+export interface Hello {
+  type: "hello";
+  info: DocInfo;
+  tree: { entries: { path: string; type: string; title?: string }[]; canEdit: boolean; moved: { from: string; to: string }[] };
+  /** The room's history (document/room.ts): a tab that started from another's must not merge into this one. */
+  epoch: string;
+}
+
 /** One of the agent's tools, as an external agent sees it (parameters are JSON Schema). */
 const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String, parameters: Schema.Unknown });
 
@@ -133,7 +147,7 @@ export const Api = HttpApi.make("erga")
     /**
      * Renames it: a title, a slug, or both; an empty one (or null) goes back to
      * following (the title the page's first heading, the slug the title).
-     * Every open tab hears of it ({ type: "name" } on /api/events).
+     * Every open tab hears of it ({ type: "name" } on its socket, /api/room?events=1).
      */
     .add(HttpApiEndpoint.post("rename", "/api/name", {
       payload: Schema.Struct({ title: Schema.optional(Schema.NullOr(Schema.String)), slug: Schema.optional(Schema.NullOr(Schema.String)) }),

@@ -6,7 +6,7 @@ browserTest("e2e/full/suite/browser-restart.e2e.ts", "a tab rides out a server r
   const d = await ctx.doc();
   const a = await openAs(tab, ctx, d, "Ada"), b = await openAs(tab, ctx, d, "Bo");
   await d.restart!("graceful", async () => {
-    await until(() => a.eval<boolean>("!ergaPage.collab.provider.wsconnected"), 5000, "Ada's tab notices the server is gone");
+    await until(() => a.eval<boolean>("!ergaPage.collab.connected"), 5000, "Ada's tab notices the server is gone");
     await a.clickEnd("h1");
     await a.type(" offline");
   });
