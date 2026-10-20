@@ -34,6 +34,7 @@ import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type Zoom
 import { liveWatch } from "./live-page";
 import { ConsoleLog, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
 import { FIX_REPORTED, pageReport } from "../shared/page-report";
+import { fastClick } from "../shared/fast-click";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -1886,6 +1887,9 @@ Once you've read the guide, await further instructions.`;
   });
   syncPause();
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
+  // The controls act as the press starts (shared/fast-click.ts): the top bar's, the title, the agent's open and close,
+  // the text style bar (all but its link that opens a new tab) and Refresh. The agent's undo and reset keep their click.
+  fastClick(document, `.chrome-top button, #doc-title, #agent-fab, #agent-close, #fmt button:not([data-link="open"]), #refresh-pill`);
   document.addEventListener("mousedown", (e) => {
     if (!help.hidden && !help.contains(e.target as Node)) toggleHelp(false);
     if (!sharing.hidden && !sharing.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleSharing(false);

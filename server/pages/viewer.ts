@@ -41,7 +41,7 @@ export const RESTORE_KEY = "erga:live:restore";
  * fetched), its stylesheet, its script and the chunks that script imports first (page.js, a module). The typeface's
  * rules are in its page (client/build.ts).
  */
-const editorFiles = () => JSON.stringify([[asset("editor.html"), "fetch"], [asset("style.css"), "style"], ...assetScripts("page.js").map((u) => [u, "modulepreload"])]);
+export const editorFiles = () => JSON.stringify([[asset("editor.html"), "fetch"], [asset("style.css"), "style"], ...assetScripts("page.js").map((u) => [u, "modulepreload"])]);
 
 export const editingHead = () => `if (location.hash == "#edit") {
   for (const [href, as] of ${editorFiles()}) {
