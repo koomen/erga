@@ -1,6 +1,6 @@
 // One load of a document, in a real browser, and what it costs: how soon the
-// document shows, how soon the editor takes a typed character, how soon the
-// server stores it, and the requests on the way. Also the time from a key
+// document shows, how soon the editor takes a typed character, how soon a
+// second editor sees it, and the requests on the way. Also the time from a key
 // press to the character on screen.
 //
 // Every signal is something a person sees, not a frame's address or an
@@ -14,13 +14,25 @@
 //              changed the line on screen. The bench tries each 25 ms from the
 //              start of the load, so this is when the editor first takes input
 //              (25 ms late at most)
-//   saved      the server stores the page with that "q" (it writes the room's
-//              text to storage a moment after the last edit: 400 ms now)
+//   synced     a second editor sees the "q": the room's state, as GET
+//              /d/<id>/api/start gives it to an editor that opens now, has
+//              the line with it. The bench asks each 15 ms, straight to the
+//              server (not through the proxy): the time the edit reached the
+//              room, at most about 15 ms late
+//   stored     the page's file in storage has the "q" (GET /api/stored). Not
+//              what a person waits for: the room writes the edit to its
+//              journal 400 ms after it (durable then), and copies its text to
+//              the file lazily, about 2.8 s after the edit (document/room.ts:
+//              `writeDelay`, then `fileDelay`)
+//
+// No number says when the edit is durable (in the room's journal): nothing
+// outside the Durable Object can see the journal. It is `synced` + 400 ms
+// at most (`writeDelay`).
 //
 // A script in every frame (PROBE) reports paints, key presses and changes of
 // the line's text to the bench. Times are ms from the start of the
-// navigation (the top page's performance.timeOrigin); `saved` is on the
-// bench's clock, from just before the navigation.
+// navigation (the top page's performance.timeOrigin); `synced` and `stored`
+// are on the bench's clock, put on the same scale.
 
 import type { BrowserContext, Page } from "playwright-core";
 import { LINE, lineLength, type Docs } from "./docs";
@@ -37,8 +49,10 @@ export interface Load {
   load: number;
   /** The editor took a typed character (editor loads only). */
   editable?: number;
-  /** The server stored the typed character (editor loads only). */
-  saved?: number;
+  /** A second editor sees the typed character: it is in the room (editor loads only). */
+  synced?: number;
+  /** The page's file in storage has the typed character (editor loads only; written lazily). */
+  stored?: number;
   /** Requests that reached the network (the cache answered the rest), WebSockets included. */
   reqs: number;
   /** kB over the wire, compressed. */
@@ -154,12 +168,12 @@ async function clickLineEnd(page: Page): Promise<boolean> {
 /**
  * Loads `url` in the tab and measures it. `edit`: the editor's address; the
  * bench types "q" at the end of the typing line until the line shows it, then
- * waits for the server to store it.
+ * waits for the room to have it (`synced`), then for its file (`stored`).
  */
 export async function load(tab: Tab, proxy: Proxy, docs: Docs, doc: { id: string; url: string }, opts: { edit: boolean }): Promise<Load & { requests: Hit[] }> {
   const { page } = tab;
-  // The line's length now, as the server stores it (an earlier load may have typed in it).
-  const before = lineLength(await docs.stored(doc.id));
+  // The line's length now, in the room (an earlier load may have typed in it).
+  const before = opts.edit ? lineLength(await docs.live(doc.id)) : -1;
   tab.reports = [];
   const first = proxy.hits.length;
   const startNode = now();
@@ -172,7 +186,7 @@ export async function load(tab: Tab, proxy: Proxy, docs: Docs, doc: { id: string
   /** A report from this load's top page. */
   const top = (r: { origin: number }) => r.origin == origin();
 
-  let editable: number | undefined, saved: number | undefined;
+  let editable: number | undefined, synced: number | undefined, stored: number | undefined;
   if (opts.edit) {
     // Click and type until the line changes on screen: a try each 25 ms at most.
     let changed: Extract<Report, { kind: "text" }> | undefined, tries = 0;
@@ -185,11 +199,20 @@ export async function load(tab: Tab, proxy: Proxy, docs: Docs, doc: { id: string
     if (process.env.BENCH_DEBUG) console.error(`  ${doc.url}: ${tries} tries`);
     while (!origin() && now() < deadline) await sleep(10);
     editable = changed.t - origin()!;
-    // Stored on the server: the line with at least one more "q".
+    // In the room: the line with at least one more "q", as a second editor would get it.
+    let len: number;
     for (;;) {
-      if (lineLength(await docs.stored(doc.id)) > before) { saved = now() - startNode; break; }
-      if (now() > deadline) throw new Error(`${doc.url}: the server didn't store the typed character within 60 s`);
-      await sleep(15);
+      const t = now();
+      if ((len = lineLength(await docs.live(doc.id))) > before) { synced = now() - origin()!; break; }
+      if (now() > deadline) throw new Error(`${doc.url}: the room didn't get the typed character within 60 s`);
+      await sleep(Math.max(1, 15 - (now() - t)));
+    }
+    // In the page's file: at least what the room had then.
+    for (;;) {
+      const t = now();
+      if (lineLength(await docs.stored(doc.id)) >= len) { stored = now() - origin()!; break; }
+      if (now() > deadline) throw new Error(`${doc.url}: the server didn't write the typed character to the file within 60 s`);
+      await sleep(Math.max(1, 15 - (now() - t)));
     }
   }
   while (!(find("visible") || find("text")) && now() < deadline) await sleep(10);
@@ -215,7 +238,7 @@ export async function load(tab: Tab, proxy: Proxy, docs: Docs, doc: { id: string
   const loaded = find("load", top);
   return {
     ttfb: at(loaded?.ttfb), fcp: at(find("fcp", top)?.t), visible: at(visibleAt), load: at(loaded?.t),
-    ...(opts.edit ? { editable: Math.round(editable!), saved: Math.round(saved!) } : {}),
+    ...(opts.edit ? { editable: Math.round(editable!), synced: Math.round(synced!), stored: Math.round(stored!) } : {}),
     reqs: hits.length,
     kB: Math.round(hits.reduce((n, h) => n + h.bytes, 0) / 102.4) / 10,
     docs: hits.filter(isDoc).length,
@@ -243,7 +266,7 @@ function longestChain(hits: Hit[]): number {
  */
 export async function keystrokes(tab: Tab, docs: Docs, id: string, n: number, gapMs: number): Promise<Keys> {
   const { page } = tab;
-  const start = lineLength(await docs.stored(id));
+  const start = lineLength(await docs.live(id));
   if (!(await clickLineEnd(page))) throw new Error("no line to type in");
   await sleep(300);
   tab.reports = [];

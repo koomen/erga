@@ -11,8 +11,16 @@ export interface Results {
   keys: Record<string, { median: number; p95: number; max: number; work?: number; n: number; lost: number; samples: number[] }>;
 }
 
-export const LOAD_METRICS = ["visible", "editable", "saved", "ttfb", "fcp", "load", "reqs", "kB", "docs", "docChain", "chain", "ws"] as const;
+export const LOAD_METRICS = ["visible", "editable", "synced", "stored", "ttfb", "fcp", "load", "reqs", "kB", "docs", "docChain", "chain", "ws"] as const;
 type Metric = (typeof LOAD_METRICS)[number];
+/**
+ * Numbers an earlier results file may have that this bench no longer
+ * measures, and why: --compare shows them as gone, with no change against a
+ * new number (they measure something else).
+ */
+const RETIRED: Record<string, string> = {
+  saved: "the page's file had the typed character, from just before the navigation; now `stored` (from the navigation, and the file is written lazily) and `synced`",
+};
 /** `work`: the median from a key press to the change in the page, before the frame that paints it. */
 const KEY_METRICS = ["median", "p95", "max", "work", "lost"] as const;
 
@@ -41,7 +49,7 @@ export function summarize(meta: Results["meta"], loads: Record<string, Load[]>, 
   return out;
 }
 
-const HEAD: Record<Metric, string> = { visible: "visible", editable: "editable", saved: "saved", ttfb: "ttfb", fcp: "fcp", load: "load", reqs: "reqs", kB: "kB", docs: "docs", docChain: "docChain", chain: "chain", ws: "ws" };
+const HEAD: Record<Metric, string> = { visible: "visible", editable: "editable", synced: "synced", stored: "stored", ttfb: "ttfb", fcp: "fcp", load: "load", reqs: "reqs", kB: "kB", docs: "docs", docChain: "docChain", chain: "chain", ws: "ws" };
 const cell = (v: number | undefined) => (v == null || !Number.isFinite(v) ? "-" : String(Math.round(v * 10) / 10));
 
 /** The tables: loads (medians of the runs) and key presses (every key of every run). */
@@ -50,6 +58,7 @@ export function table(r: Results): string {
   const lines = [
     `${m.server}, ${m.commit}, median of ${m.runs} runs; network ${m.rttMs} ms round trip (+${m.handshakeRtts} for each new connection), server ${m.serverLatencyMs} ms to the database and each document`,
     "Times in ms from the start of the navigation; kB over the wire, compressed.",
+    "synced: a second editor sees the typed character (it is in the room); stored: the page's file has it (written lazily, about 2.8 s after an edit).",
     "",
     "case".padEnd(20) + LOAD_METRICS.map((k) => HEAD[k].padStart(9)).join(""),
   ];
@@ -68,14 +77,21 @@ export function compare(before: Results, after: Results): string {
     return `${cell(a)} -> ${cell(b)} (${d > 0 ? "+" : ""}${cell(d)}${a ? `, ${pct > 0 ? "+" : ""}${pct}%` : ""})`;
   };
   for (const name of new Set([...Object.keys(before.loads), ...Object.keys(after.loads)])) {
-    const a = before.loads[name]?.median ?? {}, b = after.loads[name]?.median ?? {};
+    const a: Record<string, number | undefined> = before.loads[name]?.median ?? {}, b: Record<string, number | undefined> = after.loads[name]?.median ?? {};
     lines.push(name);
-    for (const k of LOAD_METRICS) if (a[k] != null || b[k] != null) lines.push(`  ${HEAD[k].padEnd(10)}${delta(a[k], b[k])}`);
+    for (const k of LOAD_METRICS) {
+      if (a[k] == null && b[k] == null) continue;
+      // Only in this run (a number new to the bench, or a case new to it): nothing to compare with.
+      lines.push(`  ${HEAD[k].padEnd(10)}${a[k] == null ? `new: ${cell(b[k])}` : delta(a[k], b[k])}`);
+    }
+    for (const k of Object.keys(a)) if (k in RETIRED) lines.push(`  ${k.padEnd(10)}${cell(a[k])} -> gone`);
   }
   for (const name of new Set([...Object.keys(before.keys), ...Object.keys(after.keys)])) {
     const a = before.keys[name], b = after.keys[name];
     lines.push(`keys ${name}`);
     for (const k of KEY_METRICS) lines.push(`  ${k.padEnd(10)}${delta(a?.[k], b?.[k])}`);
   }
+  const retired = Object.keys(RETIRED).filter((k) => Object.values(before.loads).some((l) => (l.median as Record<string, unknown>)[k] != null));
+  if (retired.length) lines.push("", ...retired.map((k) => `gone: ${k}, ${RETIRED[k]}`));
   return lines.join("\n");
 }

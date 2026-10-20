@@ -1,6 +1,10 @@
 // The benchmark's documents, and the few calls to the server that make them
 // and read them back. These calls set the benchmark up; they are not measured.
-// The measurements themselves (measure.ts) look only at what a person sees.
+// The measurements themselves (measure.ts) look only at what a person sees,
+// and at what a second editor of the document would see (`live`).
+
+import * as Y from "yjs";
+import { decodeStart } from "../../shared/room-socket";
 //
 // Each document's first <h1> holds MARK, with elementtiming="erga-bench" (the
 // Element Timing API: the browser says when it painted it). Below it, a
@@ -107,7 +111,20 @@ export class Docs {
     return make(this.root, await this.source(kind));
   }
 
-  /** The document's page as the server stores it now. */
+  /**
+   * The document's page as a second editor sees it now: the room's state
+   * from GET /d/<id>/api/start, the request an editor starts with
+   * (shared/room-socket.ts). "" if there is none.
+   */
+  async live(id: string): Promise<string> {
+    const r = await fetch(`${this.root}/d/${id}/api/start`, { cache: "no-store" });
+    if (!r.ok) return "";
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, decodeStart(new Uint8Array(await r.arrayBuffer())).state);
+    return doc.getMap<Y.Text>("files").get("index.html")?.toString() ?? "";
+  }
+
+  /** The document's page as the server stores it now, as a file (the room writes it lazily: up to about 3 s after an edit). */
   async stored(id: string): Promise<string> {
     const r = await fetch(stored(this.root, id, "index.html"), { cache: "no-store" });
     return r.ok ? r.text() : "";
