@@ -1,144 +1,117 @@
-// A document's page runs on the document's own origin, whose files
-// open only with the editor's token, and loads fast: files checked by ETag, the frame's host page kept by version.
+// A document's page runs on the document's own origin, for readers and editors alike, whose files open only with the
+// token the viewer's page hands out, and loads fast: files checked by ETag, the page too (with what goes in it).
 import { createHash } from "node:crypto";
-import { request } from "node:http";
 import { expect, test } from "../../fixtures";
+import { framed, pagesFetch } from "../../pages-fetch";
 import { person, servers, type Person } from "./front";
 
 await servers.script();
 
-/** Browsers send <anything>.localhost to this machine; Node's fetch doesn't, and won't send a Host header of its own, so node:http asks. */
-function pagesFetch(u: string, headers: Record<string, string> = {}): Promise<Response> {
-  const url = new URL(u);
-  if (!url.hostname.endsWith(".localhost")) return fetch(u, { headers });
-  return new Promise((resolve, reject) => {
-    const req = request({ host: "127.0.0.1", port: url.port, path: url.pathname + url.search, headers: { ...headers, Host: url.host } }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on("data", (c: Buffer) => chunks.push(c));
-      res.on("end", () => {
-        const h = new Headers();
-        for (const [k, v] of Object.entries(res.headers)) if (v != null) h.set(k, Array.isArray(v) ? v.join(", ") : v);
-        const status = res.statusCode ?? 0;
-        resolve(new Response([101, 204, 205, 304].includes(status) ? null : Buffer.concat(chunks), { status, headers: h }));
-      });
-    });
-    req.on("error", reject);
-    req.end();
-  });
-}
-/** A new document's editor page, and the origin it names for the page. */
+/** A new document's page in the viewer, and the address of its files it names on the document's origin (with the token). */
 async function pages(p: Person) {
   const id = await p.make();
-  const editor = await (await p.get((await p.nameOf(id)).address)).text();
-  const url = /<meta name="erga-pages" content="([^"]+)">/.exec(editor)?.[1] ?? "";
-  expect(url, editor.slice(0, 1500)).toBeTruthy();
-  return { id, editor, url, at: new URL(url) };
+  const viewer = await (await p.get((await p.nameOf(id)).address)).text();
+  const url = /<meta name="erga-pages" content="([^"]+)">/.exec(viewer)?.[1] ?? "";
+  expect(url, viewer.slice(0, 1500)).toBeTruthy();
+  return { id, viewer, url, at: new URL(url) };
 }
 
-test("the editor names the document's own origin, which serves the page editor's frame only to this site, and the document's files without a cookie; a forged token, or a good one at another document's origin, opens nothing; none of this site's pages are there", async () => {
+
+test("the viewer names the document's own origin, which serves the page only to this site's frame, and the document's files without a cookie; a forged token, or a good one at another document's origin, opens nothing; none of this site's pages are there", async () => {
   const p = await person(await servers.script());
   const { id, url, at } = await pages(p);
   expect(at.hostname.startsWith(`${id}-${p.login}.`), url).toBe(true);
   expect(at.origin).not.toBe(p.origin);
-  const frame = await pagesFetch(url);
-  expect(frame.status).toBe(200);
-  expect(frame.headers.get("content-security-policy") ?? "").toContain(`frame-ancestors ${p.origin}`);
-  expect(await (await pagesFetch(`${url}doc/index.html`)).text()).toBe(await (await p.get(`/d/${id}/doc/index.html`)).text());
+  // The page, as a frame's: only this site may frame it; its text blocks marked, the viewer's script first.
+  const page = await framed(`${url}index.html`);
+  expect(page.status).toBe(200);
+  expect(page.headers.get("content-security-policy") ?? "").toContain(`frame-ancestors ${p.origin}`);
+  const html = await page.text();
+  expect(html).toContain("data-erga-id=");
+  expect(html.indexOf("erga-hello")).toBeGreaterThan(0);
+  // The file itself, as a page's own fetch has it: as it is.
+  expect(await (await pagesFetch(`${url}index.html`)).text()).toBe(await (await p.get(`/d/${id}/doc/index.html`)).text());
   const forged = url.replace(/\/t\/([^/.]+)\.[^/]+\//, "/t/$1.forged/");
-  expect((await pagesFetch(`${forged}doc/index.html`)).status).toBe(403);
-  expect((await pagesFetch(`${at.origin.replace(id, "aaaaaaaa")}${at.pathname}doc/index.html`)).status).toBe(403);
+  expect((await pagesFetch(`${forged}index.html`)).status).toBe(403);
+  expect((await pagesFetch(`${at.origin.replace(id, "aaaaaaaa")}${at.pathname}index.html`)).status).toBe(403);
   expect((await pagesFetch(`${at.origin}/docs`)).status).toBe(404);
 });
 
-test("doc/ is the page; a file has an ETag, is checked each time, and is a 304 with no body when unchanged; the frame's host page is kept by version (another version is checked each time); the editor's page preloads its files with #edit; responses say where their time went", async () => {
+test("a file has an ETag, is checked each time, and is a 304 with no body when unchanged; so is the page, with what goes in it; an editor's page names the editor's half at the app's origin with its integrity; the editor's page preloads its files with ?edit; responses say where their time went", async () => {
   const p = await person(await servers.script());
-  const { editor, url, at } = await pages(p);
-  const file = await pagesFetch(`${url}doc/index.html`);
+  const { viewer, url, at } = await pages(p);
+  const file = await pagesFetch(`${url}index.html`);
   const etag = file.headers.get("etag");
-  expect(await (await pagesFetch(`${url}doc/`)).text()).toBe(await file.text());
   expect(etag).toBeTruthy();
   expect(file.headers.get("cache-control")).toBe("no-cache");
-  const again = await pagesFetch(`${url}doc/index.html`, { "If-None-Match": etag! });
+  const again = await pagesFetch(`${url}index.html`, { "If-None-Match": etag! });
   expect(again.status).toBe(304);
   expect(await again.text()).toBe("");
-  const src = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(editor)?.[1]?.replace(/&amp;/g, "&") ?? "";
-  expect(src).toMatch(/[?&]v=[a-z0-9]+/);
-  expect(editor).toContain('f.src = inline.dataset.src + "&edit=1"');
-  const host = await pagesFetch(src);
-  expect(host.headers.get("cache-control") ?? "").toMatch(/max-age=\d+/);
-  const hostPage = await host.text();
-  expect(hostPage).toContain(`<base href="${at.pathname}doc/">`);
+  // The page: its own ETag (the file's, and what goes in it), a 304 when neither changed; its address is the file's own.
+  expect(await (await framed(url)).text()).toBe(await (await framed(`${url}index.html`)).text());
+  const page = await framed(`${url}index.html`);
+  const pageTag = page.headers.get("etag")!;
+  expect(pageTag).toMatch(/^"[^"]+\.[a-z0-9]+w"$/);
+  expect(pageTag).not.toBe(etag!);
+  expect((await framed(`${url}index.html`, { "If-None-Match": pageTag })).status).toBe(304);
+  expect((await framed(`${url}index.html`, { "If-None-Match": etag! })).status).toBe(200);
   // The editor's half loads from the app's origin (one address for every document), each script with its integrity.
-  const frame = JSON.parse(/<script type="application\/json" id="erga-frame">(.*?)<\/script>/.exec(hostPage)?.[1] ?? "null") as { src: string; integrity: string; map: Record<string, string> };
-  expect(frame.src).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
-  expect(frame.integrity).toMatch(/^sha384-/);
-  expect(hostPage).toContain('<script type="importmap">');
-  expect(frame.map[frame.src]).toBe(frame.integrity);
+  const html = await page.text();
+  const config = JSON.parse(/var C = (\{.*?\});\n/.exec(html)?.[1] ?? "null") as { shell: string; prefix: string; editor: { src: string; integrity: string; map: Record<string, string> } };
+  expect(config.shell).toBe(p.origin);
+  expect(config.prefix).toBe(at.pathname);
+  expect(config.editor.src).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
+  expect(config.editor.integrity).toMatch(/^sha384-/);
+  expect(html).toContain('<script type="importmap" data-erga>');
+  expect(config.editor.map[config.editor.src]).toBe(config.editor.integrity);
   // There: kept a year, and loadable from the document's origin (CORS), as the bytes the integrity names.
-  const script = await fetch(frame.src, { headers: { Origin: at.origin } });
+  const script = await fetch(config.editor.src, { headers: { Origin: at.origin } });
   expect(script.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
   expect(script.headers.get("access-control-allow-origin")).toBe("*");
   const digest = createHash("sha384").update(new Uint8Array(await script.arrayBuffer())).digest("base64");
-  expect(`sha384-${digest}`).toBe(frame.integrity);
+  expect(`sha384-${digest}`).toBe(config.editor.integrity);
   // A file that isn't there is never kept.
   expect((await fetch(`${p.origin}/_erga/frame-none.js`)).headers.get("cache-control")).toBe("no-store");
-  expect((await pagesFetch(src.replace(/([?&])v=[^&]+/, "$1v=old"))).headers.get("cache-control")).toBe("no-cache");
-  expect(editor).toContain('if (location.hash == "#edit") {');
   // The editor's shell is in the page (no page of its own to fetch); its script and chunks are preloaded, and its start
-  // and socket asked for, as the page parses.
-  expect(editor).toContain('<template id="erga-shell"><style>');
-  expect(editor).not.toMatch(/\/_erga\/editor-[a-z0-9]+\.html","fetch"/);
-  expect(editor).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js"(,"\/_erga\/chunk-[a-z0-9]+\.js")*\]/);
-  expect(editor).toContain('rel: "modulepreload"');
-  expect(editor).toContain('"/api/start"');
-  expect((await pagesFetch(url)).headers.get("server-timing") ?? "").toContain("worker;dur=");
+  // and socket asked for, as the page parses, opened with ?edit.
+  expect(viewer).toContain("if (ergaEditAddress()) {");
+  expect(viewer).toContain('<template id="erga-shell"><style>');
+  expect(viewer).not.toMatch(/\/_erga\/editor-[a-z0-9]+\.html","fetch"/);
+  expect(viewer).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js"(,"\/_erga\/chunk-[a-z0-9]+\.js")*\]/);
+  expect(viewer).toContain('rel: "modulepreload"');
+  expect(viewer).toContain('"/api/start"');
+  expect((await framed(url)).headers.get("server-timing") ?? "").toContain("worker;dur=");
 });
 
-test("the viewer holds the page inline, in an opaque origin, with an ETag (304 when unchanged); its files are at their version's address, kept a year, readable from any origin, each in a sandbox of its own; a forged key opens nothing; an edit gives a new version", async () => {
+test("a reader's viewer holds the page in one frame on its own origin (allow-same-origin there), with an ETag (304 when unchanged); the page comes with nothing of the editor's; someone it isn't shared with gets no page; an edit shows on the next load", async () => {
   const p = await person(await servers.script());
   const id = await p.make();
+  expect((await p.share(id, "Ada", "viewer")).status).toBe(200);
   const { address } = await p.nameOf(id);
-  const view = await p.get(address);
+  const view = await p.as("Ada", address);
   expect(view.status).toBe(200);
   expect(view.headers.get("cache-control")).toBe("private, no-cache");
   const html = await view.text();
-  const frame = /<iframe id="frame"[^>]*srcdoc="([^"]*)"/.exec(html)![0];
-  expect(frame).toContain('sandbox="allow-scripts allow-forms allow-modals allow-popups"');
-  expect(frame).not.toContain("allow-same-origin");
-  const base = /&lt;base href=&quot;([^&]+)&quot;&gt;/.exec(frame)![1];
-  expect(new URL(base).origin).toBe(p.origin);
-  expect(new URL(base).pathname).toMatch(new RegExp(`^/_f/${id}\\.l[0-9a-f]+\\.[A-Za-z0-9_-]+/$`));
+  const frame = /<iframe id="frame"[^>]*>/.exec(html)![0];
+  expect(frame).toContain('sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"');
+  expect(frame).toContain(`allow="autoplay 'none'; fullscreen 'none'"`);
+  expect(frame).not.toContain("srcdoc");
+  const src = /src="([^"]+)"/.exec(frame)![1].replace(/&amp;/g, "&");
+  expect(new URL(src).origin).not.toBe(p.origin);
+  expect(new URL(src).pathname).toMatch(/^\/t\/[^/]+\/index\.html$/);
+  expect(html).not.toContain('name="erga-base"');
   // Unchanged: a 304, with no body.
   const etag = view.headers.get("etag")!;
   expect(etag).toBeTruthy();
-  const again = await p.get(address, { headers: { "If-None-Match": etag } });
-  expect(again.status).toBe(304);
-  // A file at the version's address: anyone holding the key (no cookie), kept for good.
-  const file = await fetch(`${base}index.html`, { headers: { Origin: "null" } });
-  expect(file.status).toBe(200);
-  expect(file.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
-  expect(file.headers.get("access-control-allow-origin")).toBe("*");
-  expect(file.headers.get("content-security-policy")).toBe(`sandbox allow-scripts allow-forms allow-modals allow-popups; frame-ancestors ${p.origin}`);
-  expect(file.headers.get("x-content-type-options")).toBe("nosniff");
-  expect(await file.text()).toContain("<script>(function () {");
-  // Forged, or another document's id under this key: nothing.
-  const forged = base.replace(/\.[A-Za-z0-9_-]+\/$/, ".AAAAAAAAAAAAAAAAAAAAAA/");
-  expect((await fetch(`${forged}index.html`)).status).toBe(404);
-  expect((await fetch(`${base.replace(id, "aaaaaaaa")}index.html`)).status).toBe(404);
+  expect((await p.as("Ada", address, { headers: { "If-None-Match": etag } })).status).toBe(304);
+  // The page: none of the editor's (its half, its integrity, its watches).
+  const page = await (await framed(src)).text();
+  expect(page).toContain("erga-hello");
+  expect(page).not.toContain("importmap");
+  expect(page).not.toContain("__ergaProblems");
   // Someone it isn't shared with gets no page.
   expect((await p.as("Zed", address)).status).toBe(403);
-  // Edited: another version, at another address; the old address still answers, with what it was.
+  // Edited: the next load shows it (readers see the document as it is now).
   expect((await p.get(`/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Edited</h1>" })).status).toBe(200);
-  let next = base;
-  for (let i = 0; i < 40 && next == base; i++) {
-    // (Its address follows its new heading.)
-    const page = await (await p.get((await p.nameOf(id)).address)).text();
-    next = /&lt;base href=&quot;([^&]+)&quot;&gt;/.exec(page)?.[1] ?? base;
-    if (next == base) await new Promise((r) => setTimeout(r, 300));
-  }
-  expect(next).not.toBe(base);
-  const old = await fetch(`${base}index.html`);
-  expect(old.status).toBe(200);
-  expect(await old.text()).not.toContain("<h1>Edited</h1>");
-  expect(await (await fetch(`${next}index.html`)).text()).toContain("<h1>Edited</h1>");
+  expect(await (await framed(src)).text()).toContain("<h1 data-erga-id=\"0\">Edited</h1>");
 });

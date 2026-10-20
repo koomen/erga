@@ -49,17 +49,21 @@ export const zoomFactor = (zoom: ZoomBy) => ("step" in zoom ? (zoom.step > 0 ? 1
  * and on a Mac's Safari its pinch (gesture events, which on a touch screen are the pinch that zooms the
  * screen itself, left alone), while `when` holds. A page that takes a ctrl-wheel itself (a map: preventDefault) keeps it.
  */
-export function catchZoomGestures(win: Window, to: (zoom: ZoomBy) => void, when: () => boolean = () => true): void {
-  win.addEventListener("wheel", (e) => {
-    if (!e.ctrlKey || e.defaultPrevented || !when()) return;
-    e.preventDefault();
-    const z = wheelZoom(e);
+export function catchZoomGestures(win: Window, to: (zoom: ZoomBy) => void, when: () => boolean = () => true): () => void {
+  const off: (() => void)[] = [];
+  const on = (type: string, f: (e: Event) => void, opts?: AddEventListenerOptions) => { win.addEventListener(type, f, opts); off.push(() => win.removeEventListener(type, f, opts)); };
+  const stop = () => { for (const f of off) f(); };
+  on("wheel", (e) => {
+    const w = e as WheelEvent;
+    if (!w.ctrlKey || w.defaultPrevented || !when()) return;
+    w.preventDefault();
+    const z = wheelZoom(w);
     if (z) to(z);
   }, { passive: false });
-  if (!("GestureEvent" in win) || navigator.maxTouchPoints > 0) return;
+  if (!("GestureEvent" in win) || navigator.maxTouchPoints > 0) return stop;
   let last = 1;
-  win.addEventListener("gesturestart", (e) => { if (!e.defaultPrevented && when()) { e.preventDefault(); last = 1; } });
-  win.addEventListener("gesturechange", (e) => {
+  on("gesturestart", (e) => { if (!e.defaultPrevented && when()) { e.preventDefault(); last = 1; } });
+  on("gesturechange", (e) => {
     if (e.defaultPrevented || !when()) return;
     e.preventDefault();
     const scale = (e as Event & { scale?: number }).scale;
@@ -67,5 +71,6 @@ export function catchZoomGestures(win: Window, to: (zoom: ZoomBy) => void, when:
     to({ by: scale / last });
     last = scale;
   });
-  win.addEventListener("gestureend", (e) => { if (!e.defaultPrevented && when()) e.preventDefault(); });
+  on("gestureend", (e) => { if (!e.defaultPrevented && when()) e.preventDefault(); });
+  return stop;
 }

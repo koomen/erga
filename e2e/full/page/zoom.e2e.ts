@@ -11,7 +11,7 @@ test("⌘+, ⌘− and ctrl with the wheel zoom the page only; a click on the zo
   const page = tab.page;
   /** The page's scale, and the h1's box in the tab. */
   const zoomed = () => ed.frame<{ scale: number; width: number; height: number }>(`(() => {
-    const f = document.getElementById("page"), b = f.getBoundingClientRect(), scale = b.width / f.offsetWidth;
+    const f = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }), b = f.getBoundingClientRect(), scale = b.width / f.offsetWidth;
     const h = ${F}.querySelector("h1").getBoundingClientRect();
     return { scale, width: h.width * scale, height: h.height * scale };
   })()`);
@@ -25,7 +25,7 @@ test("⌘+, ⌘− and ctrl with the wheel zoom the page only; a click on the zo
   const pointOn = async (selector: string, at = 0.5) => {
     const f = await ed.frameAt();
     const r = await ed.frame<{ x: number; y: number }>(`(() => {
-      const fr = document.getElementById("page"), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
+      const fr = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
       const r = ${F}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
       return { x: b.left + (r.left + r.width * ${at}) * k, y: b.top + (r.top + r.height / 2) * k };
     })()`);

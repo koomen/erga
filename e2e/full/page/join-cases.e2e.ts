@@ -22,7 +22,7 @@ async function caretAt(ed: Editor, text: string, end: boolean) {
   const r = await ed.frame<{ x: number; y: number }>(`(() => {
     const seen = (e) => { const r = e.getBoundingClientRect(); return r.width > 20 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; };
     const e = seen(${block(text)}) ? ${block(text)} : [...${F}.querySelectorAll("[data-erga-id]")].find(seen);
-    const r = e.getBoundingClientRect(), f = document.getElementById("page").getBoundingClientRect();
+    const r = e.getBoundingClientRect(), f = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }).getBoundingClientRect();
     return { x: f.left + r.left + r.width * 0.98, y: f.top + r.top + r.height / 2 };
   })()`);
   const at = await ed.frameAt();
@@ -155,7 +155,7 @@ for (const [what, a, b] of NO_JOIN) {
 
 test("a canvas: a frame's text joins its heading, and the next frame's heading joins the text of the frame before", async ({ tab }) => {
   const made = await newDoc(await servers.main(), "canvas");
-  await openTab(tab, `${made.address}#edit`, { width: 1100, height: 720 });
+  await openTab(tab, `${made.address}?edit`, { width: 1100, height: 720 });
   await editorReady(tab.page);
   const ed = editor(tab.page, { address: made.address, dir: "", file: "" });
   await ed.loaded();

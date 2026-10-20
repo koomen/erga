@@ -8,7 +8,7 @@ import { afterAll, expect, test } from "bun:test";
 import { HEADERS } from "../client/build.ts";
 import { adminsOnlyGate } from "../server/identity/admins-only.ts";
 import { asset, assetScripts, fontTags, scriptTag, serveAsset, useAssets } from "../server/pages/index.ts";
-import { frameHead, hostVersion } from "../server/pages/frame-host.ts";
+import { readerPage, readerVersion } from "../server/pages/reader.ts";
 import type { Platform } from "../server/platform.ts";
 import { ASSET_PREFIX, stemOf, type AssetManifest } from "../shared/assets.ts";
 
@@ -41,17 +41,22 @@ test("the control Worker names the app's files at the app's origin", () => {
   useAssets(MANIFEST);
 });
 
-test("the frame's host page names the frame's script at the app's origin, with the integrity of every script it may load", () => {
+test("an editor's page names the editor's half at the app's origin, with the integrity of every script it may load, before any of the page's own", () => {
   useAssets(MANIFEST);
-  const head = frameHead("https://erga.test");
-  const map = JSON.parse(/<script type="importmap">(.*?)<\/script>/.exec(head)![1]) as { integrity: Record<string, string> };
+  const page = readerPage("<!doctype html><html><head><script type=\"module\" src=\"app.js\"></script></head><body></body></html>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: true });
+  const map = JSON.parse(/<script type="importmap" data-erga>(.*?)<\/script>/.exec(page)![1]) as { integrity: Record<string, string> };
   expect(map.integrity).toEqual({ "https://erga.test/_erga/frame-bbbb2222.js": "sha384-frame", "https://erga.test/_erga/chunk-gggg7777.js": "sha384-chunk", "https://erga.test/_erga/chunk-hhhh8888.js": "sha384-later" });
-  const frame = JSON.parse(/<script type="application\/json" id="erga-frame">(.*?)<\/script>/.exec(head)![1]);
-  expect(frame).toMatchObject({ src: "https://erga.test/_erga/frame-bbbb2222.js", integrity: "sha384-frame", preload: ["https://erga.test/_erga/chunk-gggg7777.js"] });
-  // Another frame build is another host page version: a viewer's cached host page never names a script that's gone.
-  const before = hostVersion();
+  expect(page.indexOf('type="importmap"')).toBeLessThan(page.indexOf('src="app.js"'));
+  const config = JSON.parse(/var C = (\{.*?\});\n/.exec(page)![1]);
+  expect(config.editor).toMatchObject({ src: "https://erga.test/_erga/frame-bbbb2222.js", integrity: "sha384-frame", preload: ["https://erga.test/_erga/chunk-gggg7777.js"] });
+  // A reader's page has none of the editor's.
+  const reader = readerPage("<p>x</p>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: false });
+  expect(reader).not.toContain("importmap");
+  expect(reader).not.toContain("frame-bbbb2222");
+  // Another frame build is another version of what goes in a page: a page kept by its ETag never names a script that's gone.
+  const before = readerVersion();
   useAssets({ ...MANIFEST, files: { ...MANIFEST.files, "frame.js": "/_erga/frame-zzzz0000.js" } });
-  expect(hostVersion()).not.toBe(before);
+  expect(readerVersion()).not.toBe(before);
   useAssets(MANIFEST);
 });
 

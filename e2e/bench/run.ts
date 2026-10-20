@@ -27,7 +27,7 @@
 //                 cached), the document a new copy (its Durable Object has its
 //                 files but hasn't opened its room)
 //   viewer warm   the same address again, in the same profile
-//   editor cold   the address with #edit, as for the viewer
+//   editor cold   the address with ?edit, as for the viewer
 //   editor warm   the same again
 //   keys          after "editor warm": a key press each 100 ms at the end of the typing line
 //
@@ -111,7 +111,7 @@ async function viewer(kind: DocKind, keep: boolean) {
 /** The editor, cold then warm, on a new copy of the document; then key presses in it. */
 async function editor(kind: DocKind, keep: boolean) {
   const doc = await docs.fresh(kind);
-  const url = `${proxy.root}${doc.address}#edit`;
+  const url = `${proxy.root}${doc.address}?edit`;
   const tab = await Tab.open(newContext, proxy);
   try {
     const cold = await load(tab, proxy, docs, { id: doc.id, url }, { edit: true });

@@ -15,7 +15,7 @@ export interface AssetManifest {
   files: Record<string, string>;
   /** A script's static imports, all of them (the chunks it needs before it runs), by the script's name: what to preload. */
   deps: Record<string, string[]>;
-  /** Every script the frame (frame.js) may load, at once or later: the integrity map its host page gives the browser. */
+  /** Every script the frame (frame.js) may load, at once or later: the integrity map an editor's page gives the browser. */
   frame: string[];
   /** Each script's Subresource Integrity hash ("sha384-..."), by its address. */
   integrity: Record<string, string>;

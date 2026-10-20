@@ -23,7 +23,7 @@ test("a viewer at the editor's address gets the viewer, with the document as it 
   const server = await servers.short();
   const doc = await draftDoc(server, "Read notes", 5);
   await doc.owner.share(doc.id, "bo", "viewer");
-  await viewerShows(tab.page, server, `${doc.address}?user=Bo#edit`, "Draft 5");
+  await viewerShows(tab.page, server, `${doc.address}?user=Bo&edit`, "Draft 5");
   expect(await rect(tab.page, "#btn-settings")).toBeNull();
   const bo = (path: string, method = "GET") => fetch(`${server.root}${path}?user=Bo`, { method, headers: { Origin: server.root, "Content-Type": "application/json" }, body: method == "POST" ? JSON.stringify({ mode: "latest" }) : undefined });
   const state = (await (await bo(`/api/docs/${doc.id}/versions`)).json()) as { canEdit: boolean; current: { n: number } };

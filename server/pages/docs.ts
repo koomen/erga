@@ -3,7 +3,7 @@
 import type { Listed, Session } from "../platform.ts";
 import { asset } from "./assets.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
-import { appPage, crumbs, esc, ICON, link, TIMES_SCRIPT } from "./chrome.ts";
+import { appPage, crumbs, esc, ICON, link, TIMES_SCRIPT, withEdit } from "./chrome.ts";
 import { editorScripts } from "./viewer.ts";
 
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
@@ -38,7 +38,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     // The whole row opens the document (the link stretches over it); its buttons sit on top.
     return `  <li>
-    <div class="name"><button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}#edit"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
+    <div class="name"><button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button><a class="doc" href="${esc(withEdit(link(`/${d.owner}/${d.slug}`, session)))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" data-tip="${remove}">${ICON.delete}</button></form>` : ""}</div>

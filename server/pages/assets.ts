@@ -78,9 +78,9 @@ export const editorShell = () => manifest?.shell ?? { style: "", body: "" };
 export const styleTag = () => `<link rel="stylesheet" href="${asset("style.css")}">`;
 
 /**
- * The frame's script for a document's own origin (pages/frame-host.ts), at the app's origin `shell`: its address, its
- * chunks, and the integrity of every script it may load, which the frame's host page gives the browser (an import map),
- * so a script that isn't this build's doesn't run there.
+ * The editor's half for a document's own page (pages/reader.ts), at the app's origin `shell`: its address, its chunks,
+ * and the integrity of every script it may load, which an editor's page gives the browser (an import map), so a script
+ * that isn't this build's doesn't run there.
  */
 export function frameScripts(shell: string): { src: string; integrity: string; preload: string[]; map: Record<string, string> } {
   const at = (u: string) => `${shell}${u}`;

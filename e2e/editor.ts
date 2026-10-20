@@ -1,22 +1,22 @@
 // The page editor in a tab, for the editor's tests: a fixture's copy linked as
-// a document on a worker's server, opened in the editor (#edit), with helpers
+// a document on a worker's server, opened in the editor (?edit), with helpers
 // to read the page and its source and to click and select by CSS selector.
 //
-// The tab holds the shell (editor.ts: the source, the selection, the panels).
-// The page editor runs in a frame on the document's own origin (frame.ts, its
-// window has `ergaFrame`), and the page itself in a frame inside that one (F).
-// Expressions for the page are strings evaluated in the page editor's frame.
+// The tab holds the shell (editor.ts: the source, the selection, the panels),
+// and the page in its frame, on the document's own origin; the page editor runs
+// in the page itself (frame.ts: its window has `ergaFrame`). Expressions for the
+// page are strings evaluated in the page's frame.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
 import { settle, until, type Server, type Tab } from "./fixtures";
 
-/** The page's document and window, as expressions in the page editor's frame. */
-export const F = `document.getElementById("page").contentDocument`;
-export const W = `document.getElementById("page").contentWindow`;
-/** In the page editor's frame: where the page sits in it. */
-const PAGE_AT = `document.getElementById("page").getBoundingClientRect()`;
+/** The page's document and window, as expressions in the page's frame (where the editor runs). */
+export const F = `document`;
+export const W = `window`;
+/** In the page's frame: where the page sits in it (it is it). */
+const PAGE_AT = `({ left: 0, top: 0 })`;
 
 /** Keys sent as plain DevTools key events (Editor.press), with their Windows key codes. */
 const RAW = { Home: 36, End: 35, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 } as const;
@@ -28,7 +28,7 @@ export const TIMESCALE = 0.1;
 export interface OpenOptions {
   /** The fixture's file the document is. */
   file?: string;
-  /** Added to the document's address, before #edit. */
+  /** Added to the document's address (a query, "?..."), before edit. */
   query?: string;
   timescale?: number;
   /** Start as someone who keeps the agent pane closed (true: whatever the editor does by itself). */
@@ -58,7 +58,7 @@ export async function openEditor(tab: Tab, server: Server, fixture: string, opts
       }
     } catch { /* no storage */ }
   }, { timescale, agent: opts.agent ?? false });
-  await page.goto(`${address}${opts.query ?? ""}#edit`);
+  await page.goto(`${address}${opts.query ? `${opts.query}&edit` : "?edit"}`);
   const ed = editor(page, { address, dir, file });
   await ed.loaded();
   // The page's own fonts too: text measured before they load moves when they do.
@@ -109,9 +109,13 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
         catch (e) { if (i > 20 || !/detached|destroyed|Target closed/.test((e as Error).message)) throw e; cached = null; }
       }
     },
-    /** After a (re)load: the shell is up, the page rendered and shown (the page inline gone from over it), the agent's status in. */
-    loaded: () => until(async () => await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent && !document.getElementById("erga-inline")`) && await ed.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000, "the editor loads"),
-    settle: () => settle(page),
+    /** After a (re)load: the shell is up, the editor on the page (its text blocks editable), the agent's status in. */
+    loaded: () => until(async () => await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`) && await ed.frame<boolean>(`!!window.ergaFrame?.page && !!${F}.querySelector("[data-erga-id][contenteditable]")`), 10_000, "the editor loads"),
+    /** The tab has drawn what's done, and the editor in the page is up (a page that loads again, made afresh, has come). */
+    settle: async () => {
+      await settle(page);
+      await until(() => page.evaluate(`!window.ergaPage?.page?.loading`), 10_000, "the page's editor is up");
+    },
     /**
      * The page is rendered and has the caret in a unit. Keys never need it (the editor holds keys that come while it
      * renders the page afresh, and applies them after); a click does, after a change that renders the page afresh (an
@@ -119,7 +123,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
      */
     async idle() {
       await settle(page);
-      await until(() => ed.frame<boolean>(`!ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && !!${F}.activeElement?.closest("[data-erga-id]")`), 5000, "the editor to settle");
+      await until(() => ed.frame<boolean>(`!!window.ergaFrame?.page && !ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && !!${F}.activeElement?.closest("[data-erga-id]")`), 5000, "the editor to settle");
     },
     /** The file on disk. */
     disk: () => readFileSync(doc.file, "utf8"),

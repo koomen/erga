@@ -12,7 +12,7 @@ for (const doc of ["light", "dark"] as const) for (const mode of ["view", "edit"
   test(`${doc} page, ${mode == "view" ? "viewing" : "editing"}, 390px: no control covers the text; the band is the page's colour; the controls are ${tone == "light" ? "dark" : "light"}`, async ({ tab }) => {
     tab.strict = true;
     const address = await topDoc(await servers.main(), doc);
-    await openViewer(tab.page, `${address}${mode == "edit" ? "#edit" : ""}`, { width: 390, height: 760 });
+    await openViewer(tab.page, `${address}${mode == "edit" ? "?edit" : ""}`, { width: 390, height: 760 });
     await docShows(tab.page, "A ");
     if (mode == "edit") await expect.poll(() => tab.page.evaluate(() => document.body.classList.contains("erga-editor-ready")), { timeout: 10_000 }).toBe(true);
     // Settled: the controls have come in and the band has its colour.

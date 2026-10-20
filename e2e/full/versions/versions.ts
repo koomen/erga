@@ -32,7 +32,7 @@ export async function person(server: Server, as: string) {
     login: as.toLowerCase(), cookie, get,
     /** A blank document of theirs (/new): its address and id. */
     async newDoc() {
-      const at = (await get("/new")).headers.get("location")!.replace(/(\/edit|#edit)$/, "");
+      const at = (await get("/new")).headers.get("location")!.replace(/(\/edit|[?&]edit)$/, "");
       const { id } = (await (await get(`${at}/api/name`)).json()) as { id: string };
       return { address: at, id };
     },

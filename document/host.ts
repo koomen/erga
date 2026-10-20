@@ -245,14 +245,14 @@ export function makeHost(opts: HostOptions) {
   // says so, and gives the page's address to pass on.
   const openFor = (user: { id: string; name: string }) => async (raw: string): Promise<OpenResult> => {
     const all = new Set(room.paths());
-    const asked = String(raw ?? "").trim().replace(/^\.?\/+/, "").replace(/#edit$/, "");
+    const asked = String(raw ?? "").trim().replace(/^\.?\/+/, "").replace(/(\?edit|#edit)$/, "");
     const file = isPage(asked) && all.has(asked) ? asked : resolvePage((p) => all.has(p), asked, doc.path)?.file;
     if (!file) throw new TreeError(`There's no page "${raw}" in this document. list_pages lists them.`, 404);
     const name = await namingAs(user)?.get().catch(() => undefined);
     const rest = pageAddress(file);
     const at = `${name?.address ?? "/<owner>/<slug>"}${rest ? `/${rest}` : ""}`;
     const n = [...tabs].filter((t) => t.user == user.id).length;
-    if (!n) return { path: file, tabs: 0, message: `${user.name} has no editor open on this document, so nothing was opened. ${file} is at ${at} (its editor at ${at}#edit): give them that link if they should see it.` };
+    if (!n) return { path: file, tabs: 0, message: `${user.name} has no editor open on this document, so nothing was opened. ${file} is at ${at} (its editor at ${at}?edit): give them that link if they should see it.` };
     sendTo(user.id, { type: "open", path: file });
     return { path: file, tabs: n, message: `Opened ${file} (${at}) in ${user.name}'s editor${n > 1 ? `, in all ${n} of their tabs` : ""}.` };
   };
@@ -477,7 +477,7 @@ export function makeHost(opts: HostOptions) {
       const raw = asked.startsWith("/doc/") ? asked.slice("/doc/".length) : (yield* HttpRouter.params)["*"] ?? "";
       // A page by its address (blog for blog.html or blog/index.html): sent to its file, relatively, so the
       // frame's address is the file's and the page's own relative links resolve. doc/ itself is the document's
-      // page, served as it is (the frame asks for it so, server/pages/frame-host.ts; its links resolve from the root either way).
+      // page, served as it is (the viewer's frame may ask for it so: server/documents/pages-origin.ts; its links resolve from the root either way).
       const page = () => {
         const found = resolvePage((p) => room.exists(p) == "file", raw, doc.path);
         if (!found || found.file == cleanRel(raw)) return null;

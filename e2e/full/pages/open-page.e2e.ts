@@ -13,7 +13,7 @@ async function onPost(tab: Tab) {
     if (window.top != window) return;
     try { if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}'); } catch { /* no storage */ }
   });
-  await tab.page.goto(`${server.root}${s.address}/blog/post#edit`);
+  await tab.page.goto(`${server.root}${s.address}/blog/post?edit`);
   await expect.poll(async () => `${await ready(tab.page)} ${await editing(tab.page)}`).toBe("true blog/post.html");
   return { server, s, p: tab.page };
 }
@@ -40,11 +40,11 @@ test("open_page, from the editor's own agent and from an external one, switches 
   const { s, p } = await onPost(tab);
   const calls = await s.agentTurn("Take me to About", [{ tool: "open_page", args: { path: "about.html" } }, { text: "There." }]);
   expect(calls.map((c) => `${c.name} ${c.status}`)).toEqual(["open_page done"]);
-  await expect.poll(async () => `${await where(p)} ${await ready(p)} ${await editing(p)}`).toBe(`${s.address}/about#edit true about.html`);
+  await expect.poll(async () => `${await where(p)} ${await ready(p)} ${await editing(p)}`).toBe(`${s.address}/about?edit true about.html`);
   const back = await s.tool("open_page", { path: "blog/post" });
   expect(back.ok).toBe(true);
   expect(back.text.startsWith("Opened blog/post.html")).toBe(true);
-  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/post#edit true`);
+  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/post?edit true`);
 });
 
 test("new_page with open: true, and new_page then open_page, take the editor to the new page; its page deleted, the editor goes home", async ({ tab }) => {
@@ -53,12 +53,12 @@ test("new_page with open: true, and new_page then open_page, take the editor to 
   expect(made.ok).toBe(true);
   expect(made.text).toContain("Made blog/second.html");
   expect(made.text).toContain("Opened blog/second.html");
-  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/second#edit true`);
-  await expect.poll(() => inFrames<string>(p, `document.getElementById("page")?.contentDocument?.querySelector("h1")?.textContent ?? null`)).toBe("Untitled");
+  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/second?edit true`);
+  await expect.poll(() => inFrames<string>(p, `document.querySelector("h1")?.textContent ?? null`)).toBe("Untitled");
   await s.tool("new_page", { path: "blog/third" });
   expect((await s.tool("open_page", { path: "blog/third.html" })).ok).toBe(true);
-  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/third#edit true`);
+  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/third?edit true`);
   await s.tool("rm", { path: "blog/second.html" });
   await s.tool("rm", { path: "blog/third.html" });
-  await expect.poll(() => where(p)).toMatch(new RegExp(`^${s.address}/?#edit$`));
+  await expect.poll(() => where(p)).toMatch(new RegExp(`^${s.address}/?\\?edit$`));
 });

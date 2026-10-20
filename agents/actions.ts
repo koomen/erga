@@ -168,7 +168,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /d/<id>/api/share", domain: "document", action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)", exempt: SECRET },
 
   // ------------------------------------------------------------ the editor
-  { route: "GET /_f/<key>/<path>", domain: "none", action: "The viewer's frame loads the document's files (styles, scripts, images, its other pages)", exempt: "the browser's own loading of a page it shows, not a person's action" },
+
   { route: "WS /d/<id>/api/room", domain: "document", action: "Edit the text, and hear the document's and your agent's events (editor: its one socket)", tool: "edit" },
   { route: "GET /d/<id>/api/start", domain: "document", action: "Open the editor: the document's name, pages and text in one answer (editor)", tool: "read" },
   { route: "GET /d/<id>/api/doc", domain: "document", action: "Read the document's name and address (editor)", tool: "get_title" },

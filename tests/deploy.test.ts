@@ -244,7 +244,7 @@ describe("around it", () => {
 
   test("a shared pages host finds the document by its token", async () => {
     const platform = { pagesDomain: () => "erga-pages.dev", pagesShared: () => "erga-pages.ada.workers.dev" } as unknown as Platform;
-    const app = new URL("https://erga.ada.workers.dev/ada/notes#edit");
+    const app = new URL("https://erga.ada.workers.dev/ada/notes?edit");
     expect(pagesOrigin("Ada", "abcd2345", app, platform)).toBe("https://erga-pages.ada.workers.dev");
     const token = await pagesToken("secret", "Ada", "abcd2345", app.origin);
     expect(pagesHost(new URL(`https://erga-pages.ada.workers.dev/t/${token}/doc/index.html`), platform)).toEqual({ owner: "ada", id: "abcd2345" });

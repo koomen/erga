@@ -9,6 +9,9 @@ import { fontTags, styleTag } from "./assets.ts";
 export const link = (path: string, session: Session | null) =>
   session?.as ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(session.as)}` : path;
 
+/** An address with ?edit (its query kept): the editor on it. */
+export const withEdit = (href: string) => href + (href.includes("?") ? "&" : "?") + "edit";
+
 export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 /**

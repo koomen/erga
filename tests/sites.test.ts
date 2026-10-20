@@ -53,7 +53,7 @@ function server(secret: string | null = "the factory key") {
     return r;
   };
   /** The consent, through to the callback: Cloudflare's answer is `answer` (code=mock-code, or error=...). */
-  const consent = async (answer: Record<string, string> = { code: "mock-code" }, start = "/auth/cloudflare/start?return=%2Fada%2Fnotes%23edit") => {
+  const consent = async (answer: Record<string, string> = { code: "mock-code" }, start = "/auth/cloudflare/start?return=%2Fada%2Fnotes%3Fedit") => {
     const to = new URL((await get(start)).headers.get("location")!);
     return get(`/auth/cloudflare/callback?${new URLSearchParams({ ...answer, state: to.searchParams.get("state")! })}`);
   };
@@ -62,7 +62,7 @@ function server(secret: string | null = "the factory key") {
 
 test("Connect Cloudflare goes to Cloudflare's consent page: Erga's client, PKCE (S256), a site's scopes only, and the state in a short cookie", async () => {
   const s = server();
-  const r = await s.get("/auth/cloudflare/start?return=%2Fada%2Fnotes%23edit&popup=1");
+  const r = await s.get("/auth/cloudflare/start?return=%2Fada%2Fnotes%3Fedit&popup=1");
   expect(r.status).toBe(302);
   const to = new URL(r.headers.get("location")!);
   expect(to.origin + to.pathname).toBe(`${ORIGIN}/auth/cloudflare/mock/consent`);
@@ -82,7 +82,7 @@ test("the callback exchanges the code, keeps the grant sealed for its person, re
   const s = server();
   const r = await s.consent();
   expect(r.status).toBe(303);
-  expect(r.headers.get("location")).toBe("/ada/notes?cloudflare=connected#edit");
+  expect(r.headers.get("location")).toBe("/ada/notes?edit=&cloudflare=connected");
   expect(s.jar.erga_cf_consent).toBeUndefined();
   const info = await s.dir.cloudflare.info("Ada");
   expect(info).toMatchObject({ connected: true, accounts: [{ id: s.cf.state.account.id, name: "Ada's account" }], error: null, canStore: true, unreadable: false });

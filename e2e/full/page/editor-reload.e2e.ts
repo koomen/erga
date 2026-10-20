@@ -18,12 +18,12 @@ test("a reload in the editor shows the editor, as it was, from its first frame",
   await expect.poll(async () => { const was = left; left = await frameAt(); await ed.settle(); return was == left && left > 100; }).toBe(true);
 
   // What each frame of the reloaded page shows, from its first: in the tab, the editor's controls or the viewer's, and
-  // where the document's frame is; in the frame's host page, where the page it shows is scrolled, while it shows.
+  // where the document's frame is; in the page (in the frame), where it's scrolled, on each frame it shows.
   await page.addInitScript(() => {
     const seen: unknown[] = (window as any).__seen = [];
     const top = window.top == window;
-    // (The frame's host page is at /t/<token>/ on the document's origin; the editor's half runs in it too.)
-    const host = !top && /\/t\/[^/]+\/$/.test(location.pathname);
+    // (The page is under /t/<token>/ on the document's origin; the editor's half runs in it too.)
+    const host = !top && /^\/t\//.test(location.pathname);
     if (!top && !host) return;
     const tick = () => {
       if (top && document.body) {
@@ -35,12 +35,7 @@ test("a reload in the editor shows the editor, as it was, from its first frame",
           left: document.getElementById("frame")?.getBoundingClientRect().left,
         });
       }
-      if (host) {
-        const f = document.querySelector<HTMLIFrameElement>("iframe.on");
-        try {
-          if (f && getComputedStyle(f).visibility == "visible" && f.contentDocument?.body?.childElementCount) seen.push({ y: f.contentWindow!.scrollY });
-        } catch { /* not yet */ }
-      }
+      if (host && document.body?.childElementCount && getComputedStyle(document.documentElement).visibility == "visible") seen.push({ y: scrollY });
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);

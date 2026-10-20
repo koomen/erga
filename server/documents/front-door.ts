@@ -13,16 +13,15 @@
 //   /admin                     the server's settings and users, for admins; POST /admin/settings, /admin/users
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with): its canonical address;
 //                              Clone, and Edit for those who may edit it
-//   /<owner>/<slug>#edit       the editor on it, under Documents (its breadcrumbs): the same page, which
-//                              goes into the editor for #edit (the server never sees it)
-//   /<owner>/<slug>/<page>     another of its pages (document/pages.ts: blog is blog.html, else blog/index.html), #edit
+//   /<owner>/<slug>?edit       the editor on it, under Documents (its breadcrumbs): the same page, which
+//                              goes into the editor (the pencil goes there and back without a reload)
+//   /<owner>/<slug>/<page>     another of its pages (document/pages.ts: blog is blog.html, else blog/index.html), ?edit
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
 //                              redirect there
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets; the
 //                              editor uses this address, which never changes. Under any of the
 //                              addresses above it works too (older tabs and share links use them).
-//   /_f/<key>/<path>           a document's files for the viewer, at a version's address (files.ts)
 //
 // Who may open, edit, rename, delete or share a document is the directory's
 // rule (`Directory.decide`, from the document's permissions). For a request to
@@ -70,7 +69,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   const session = await platform.sessionOf(request);
 
   // A document's address is the document: /<owner>/<slug>, and /<page> after it for its other pages. Its editor
-  // is the same page with #edit, which never reaches the server. Sign in first, then the page, at its canonical address.
+  // is the same page with ?edit. Sign in first, then the page, at its canonical address.
   // /api/... and /doc/... under it are the document's host (so no page or folder at its top may be called api or doc).
   if (!/^\/(api|doc)(\/|$)/.test(rest ?? "")) {
     if (!session) return signInFirst(path + url.search);
@@ -132,22 +131,20 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
 // ---------------------------------------------------------------- pages
 
 // A document's page never runs as this site: its scripts, whoever wrote
-// them, can't act as the person viewing it. In the viewer it runs inline, in
-// a frame with an opaque origin (view.ts), its files from their version's
-// address (files.ts). In the editor it runs on an origin of its own,
+// them, can't act as the person viewing it. It runs on an origin of its own,
 // <id>-<owner>.erga-pages.dev (or <id>-<owner>.localhost:<port> on this
-// machine), because the page editor reaches into it there (see
-// client/bridge.ts). That origin has no cookies. It serves the page editor's
-// frame and the document's files under a token, signed here, that opens this
-// one document for a week; the editor's page hands it out to whoever may edit
-// the document.
+// machine), for readers and editors alike, in the viewer's one frame
+// (view.ts), and the page editor reaches into it there (see client/bridge.ts).
+// That origin has no cookies. It serves the document's files under a token,
+// signed here, that opens this one document for a week; the viewer's page
+// hands it out to whoever may open the document.
 
 /**
  * A request for the document's host: the path inside the document, its
  * public address, who's asking (x-erga-who: the document decides what they
  * may do), and whether it's an agent with a token; never what the browser
  * claimed: those headers are replaced. `checked`: a file read with a key the
- * front door checked itself (the viewer's files, the editor's pages origin),
+ * front door checked itself (the document's pages origin),
  * for nobody in particular.
  */
 export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null, checked?: "files"): Request {

@@ -55,8 +55,12 @@ export function applyMorph(live: Document, ops: Op[]): void {
   }
 }
 
-/** The editor's own additions to the page (editor.ts: the authors' colours, the layers of marks and carets; caret.ts), which morphing leaves be. */
-const editors = (n: Node) => n.nodeType == 1 && ((n as Element).id == "erga-authors" || (n as Element).hasAttribute("data-erga-caret") || (n as Element).localName.startsWith("erga-"));
+/**
+ * The editor's own additions to the page, which morphing leaves be: the authors' colours, the layers of marks and carets
+ * (editor.ts, caret.ts), and whatever else of Erga's is in it (data-erga: what the pages origin puts first in its head,
+ * pages/reader.ts, the editor's styles and frames).
+ */
+const editors = (n: Node) => n.nodeType == 1 && ((n as Element).id == "erga-authors" || (n as Element).hasAttribute("data-erga-caret") || (n as Element).hasAttribute("data-erga") || (n as Element).localName.startsWith("erga-"));
 const key = (n: Node) => n.nodeType == 1 ? (n as Element).outerHTML.replace(ID, "") : `${n.nodeType}:${n.nodeValue}`;
 const isScript = (n: Node) => n.nodeType == 1 && ((n as Element).localName == "script" || !!(n as Element).querySelector("script"));
 const ids = (n: Element) => [...(n.hasAttribute("data-erga-id") ? [n] : []), ...n.querySelectorAll("[data-erga-id]")].map((e) => e.getAttribute("data-erga-id")!);

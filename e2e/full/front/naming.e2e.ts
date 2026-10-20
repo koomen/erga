@@ -39,7 +39,7 @@ test("an edit retitles the document after its heading; its slug follows; the lis
     retitle(ada, "Untitled", "Field &amp; notes");
     await expect.poll(() => p.docs()).toContain(">Field &amp; notes<");
     await expect.poll(async () => (await p.nameOf(id)).slug).toBe("field-notes");
-    expect(await p.docs()).toContain(`href="/${p.login}/field-notes#edit"`);
+    expect(await p.docs()).toContain(`href="/${p.login}/field-notes?edit"`);
     // The title and the edit's time are recorded separately, so the mark can go a moment after the title changes.
     await expect.poll(() => unedited(p, id)).toBe(false);
     expect(await p.location(`/${p.login}/untitled`)).toBe(`/${p.login}/field-notes`);
@@ -93,7 +93,7 @@ test("the list shows a renamed document at its new address", async () => {
   const p = await person(await servers.script());
   const id = await p.make();
   expect((await p.rename(id, { title: "Demo copy", slug: "my-demo" })).ok).toBe(true);
-  expect(await p.docs()).toContain(`href="/${p.login}/my-demo#edit"`);
+  expect(await p.docs()).toContain(`href="/${p.login}/my-demo?edit"`);
 });
 
 test("the agent's get_title and set_title, over /api/ext with the share button's token: the guide lists them; set_title renames (an empty slug follows the title) and is refused a taken slug; the API under the old /<owner>/<id> still answers", async () => {
@@ -130,7 +130,7 @@ test("open tabs follow a rename, by anyone or by an edit to the heading: the add
   await p.rename(id, { title: "Agent's pick" });
   const page = tab.page;
   // (The fragment survives the redirects: the browser keeps it.)
-  await page.goto(`${p.base}/auth/github?as=${p.login}&next=${encodeURIComponent(`/${p.login}/agents-pick`)}#edit`);
+  await page.goto(`${p.base}/auth/github?as=${p.login}&next=${encodeURIComponent(`/${p.login}/agents-pick`)}?edit`);
   await expect.poll(() => page.evaluate(`document.getElementById("doc-title-text")?.textContent ?? ""`), { timeout: 10_000 }).toBe("Agent's pick");
   await page.evaluate(`window.__sameTab = true`);
   await p.rename(id, { title: "Renamed elsewhere" });

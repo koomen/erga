@@ -5,7 +5,7 @@ import { titleOf } from "../../document/pages.ts";
 import { type DocRow, type Grant, ID, newDocId, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
-import { avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES } from "../pages/index.ts";
+import { avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
 
 /** A template's starting files (server/templates.ts: a folder under assets/templates/), and its page; null if this server hasn't them. */
 export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
@@ -55,7 +55,7 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
     const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
     if (!known) await makeDoc(platform, owner, wanted, files, { test: true, index });
-    return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}#edit` } });
+    return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}?edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/front/lifetime.e2e.ts).
@@ -64,7 +64,7 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newDocId();
     const made = await makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index });
-    if (made) return new Response(null, { status: 302, headers: { Location: `${link(`/${made.owner}/${made.slug}`, session)}#edit` } });
+    if (made) return new Response(null, { status: 302, headers: { Location: withEdit(link(`/${made.owner}/${made.slug}`, session)) } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
 }

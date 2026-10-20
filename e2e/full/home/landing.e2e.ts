@@ -19,7 +19,7 @@ test("in a browser, once its first deploy is done, / is the landing document its
   expect(await tab.page.evaluate((address) => {
     const controls = document.querySelector("erga-controls")?.shadowRoot;
     return document.querySelector("h1")?.textContent == "Erga" && !document.querySelector("iframe#frame")
-      && !!controls?.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!controls?.querySelector(`a.erga-edit-button[href='${address}#edit']`);
+      && !!controls?.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!controls?.querySelector(`a.erga-edit-button[href='${address}?edit']`);
   }, address)).toBe(true);
 });
 
@@ -32,7 +32,7 @@ test("its owner edits it in the editor, and / shows the edit", { timeout: 30_000
     try { if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}'); } catch { /* no storage */ }
   });
   await tab.page.setViewportSize({ width: 1200, height: 800 });
-  await tab.page.goto(`${server.root}${address}#edit`);
+  await tab.page.goto(`${server.root}${address}?edit`);
   const ed = editor(tab.page, { address, dir: "", file: "" });
   await expect.poll(() => tab.page.evaluate(() => document.body.classList.contains("erga-editor-ready"))).toBe(true);
   // The first paragraph: the heading is the logo, which isn't edited (data-erga-noedit).
@@ -58,7 +58,7 @@ test("someone who isn't an admin sees it with Clone, without Edit; /new?from=lan
   const made = await get(server, "/new?from=landing");
   const to = made.headers.get("location") ?? "";
   expect(made.status).toBe(302);
-  expect(to).toMatch(/^\/tester\/.+#edit$/);
+  expect(to).toMatch(/^\/tester\/.+?edit$/);
 });
 
 test("deleted, the landing document is made again from assets/landing/ on the next /", async () => {
@@ -77,9 +77,9 @@ test("deleted, the landing document is made again from assets/landing/ on the ne
 test("a landing document an admin chose is the front page, and nothing more is made", async () => {
   const server = await servers.short();
   await fresh(server);
-  const landings = async () => ((await (await get(server, "/docs")).text()).match(/href="\/tester\/landing(-\d+)?#edit"/g) ?? []).length;
+  const landings = async () => ((await (await get(server, "/docs")).text()).match(/href="\/tester\/landing(-\d+)?\?edit"/g) ?? []).length;
   const before = await landings();
-  const mine = (await get(server, "/new")).headers.get("location")!.replace(/#edit$/, "");
+  const mine = (await get(server, "/new")).headers.get("location")!.replace(/[?&]edit=?$/, "");
   const mineId = ((await (await get(server, `${mine}/api/name`)).json()) as { id: string }).id;
   const set = await get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(mine) }) });
   expect(set.ok).toBe(true);

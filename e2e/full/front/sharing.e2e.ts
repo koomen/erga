@@ -23,7 +23,7 @@ test("the owner shares it with a viewer, who opens it and has it on their list, 
   expect((await p.as("Ada", `/${p.login}/untitled`)).status).toBe(200);
   expect((await p.as("Ada", `/d/${id}/doc/index.html`)).ok).toBe(true);
   const list = await (await p.as("Ada", "/docs")).text();
-  expect(list).toContain(`href="/${p.login}/untitled?user=Ada#edit"`);
+  expect(list).toContain(`href="/${p.login}/untitled?user=Ada&amp;edit"`);
   expect(list).toContain(`${p.login} · view only`);
   expect(list).not.toContain(`value="${id}"`);
   expect((await p.as("Ada", `/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Mine now</h1>" })).status).toBe(403);
@@ -91,7 +91,7 @@ test("the share dialog on /docs, in a browser, adds people, sets anyone-with-the
   const address = (await p.nameOf(id)).address;
   const page = tab.page;
   await page.goto(`${p.base}/auth/github?as=${p.login}&next=/docs`);
-  await page.evaluate(`document.querySelector('li a[href="${address}#edit"]').closest('li').querySelector('button.share').click()`);
+  await page.evaluate(`document.querySelector('li a[href="${address}?edit"]').closest('li').querySelector('button.share').click()`);
   const people = () => page.evaluate(`document.querySelectorAll('#share .people li').length`);
   await expect.poll(people).toBe(1);
   await page.evaluate(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);

@@ -12,8 +12,8 @@
 // blog.html wins over blog/index.html. No address ends in a
 // slash, and none is added: the page renders in a frame at its file's own
 // path, so its relative links and assets resolve as they would on disk.
-// The editor for a page is its address with #edit, which only the browser
-// sees: an address always means a page, so a page may be called edit too.
+// The editor for a page is its address with ?edit (the pencil goes there and
+// back without a reload): an address always means a page, so a page may be called edit too.
 //
 // Shared by the host (document/host.ts: the tree's API and its operations), the front
 // door (server/documents/front-door.ts: which page an address is) and the browser (the editor and

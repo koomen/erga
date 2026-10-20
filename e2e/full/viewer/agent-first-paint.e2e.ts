@@ -1,9 +1,9 @@
-// A document opened in the editor (#edit), with the agent's panel open, closed to its button, or wide at the right, as
+// A document opened in the editor (?edit), with the agent's panel open, closed to its button, or wide at the right, as
 // this browser keeps it: from the first frame that shows the document, the document stays where it is and as it is, on
 // a first load and on a reload. Its frame never moves or changes width, the page records no layout shift of it, and no frame
-// after the first loses the document (the page inline goes only once the editor's frame has painted it in its place).
+// after the first loses the document (it's one page, loaded once: the editor loads into it).
 // Before, the document showed across the whole window, then slid beside the panel once the editor's script ran; and the
-// page inline went before the editor's frame had painted, so the document went blank and came back.
+// viewer's copy of the page went before the editor's had painted, so the document went blank and came back.
 import { expect, servers, test, type Page } from "../../fixtures";
 import { topDoc } from "./band";
 import { openViewer, pause } from "./viewer";
@@ -12,17 +12,17 @@ await servers.main();
 
 const WIDTH = 1300, HEIGHT = 800;
 type Spot = { l: number; r: number };
-/** The page inline's scale on each frame it shows (the document's zoom). */
+/** The frame's scale on each frame (the document's zoom). */
 type Scale = number;
 
-/** From each page's first moment, on every frame: where the document's frame is (the inline page while it shows), and its layout shifts. */
+/** From each page's first moment, on every frame: where the document's frame is, its scale, and its layout shifts. */
 async function watch(page: Page) {
   await page.addInitScript(() => {
     if (window.top != window) return;
     const w = window as any;
     w.__spots = []; w.__shifted = []; w.__scales = [];
-    // The layout shifts of the document: its frame, the page inline, the canvas around them, or what holds them.
-    const DOC = "#frame, #erga-inline, .erga-canvas";
+    // The layout shifts of the document: its frame, the canvas around it, or what holds them.
+    const DOC = "#frame, .erga-canvas";
     try {
       new PerformanceObserver((l) => {
         for (const e of l.getEntries() as any[]) for (const s of e.sources ?? []) {
@@ -32,9 +32,8 @@ async function watch(page: Page) {
       }).observe({ type: "layout-shift", buffered: true });
     } catch { /* none */ }
     (function log() {
-      const f = document.getElementById("erga-inline") ?? document.getElementById("frame");
-      if (f) { const r = f.getBoundingClientRect(); w.__spots.push({ l: Math.round(r.left), r: Math.round(r.right) }); }
-      if (f?.id == "erga-inline") w.__scales.push(new DOMMatrix(getComputedStyle(f).transform).a);
+      const f = document.getElementById("frame");
+      if (f) { const r = f.getBoundingClientRect(); w.__spots.push({ l: Math.round(r.left), r: Math.round(r.right) }); w.__scales.push(new DOMMatrix(getComputedStyle(f).transform).a); }
       requestAnimationFrame(log);
     })();
   });
@@ -53,8 +52,8 @@ const ink = (page: Page, pngs: string[], at: Spot) => page.evaluate(async ({ png
 
 /**
  * Opens (or reloads) the document in the editor and records every frame the tab paints until it has been ready a moment
- * (a DevTools screencast): the new page's, from the first that shows the document. (Before that, on a reload, Chrome
- * shows the band alone for a frame, as the new page comes in: the page inline paints a moment after it's parsed.)
+ * (a DevTools screencast): the new page's, from the first that shows the document. (Before that, the band alone: the
+ * page in the frame paints a moment after the viewer.)
  */
 async function open(page: Page, url: string, how: "load" | "reload", at: Spot) {
   if (how == "load") await page.goto("about:blank");
@@ -63,8 +62,8 @@ async function open(page: Page, url: string, how: "load" | "reload", at: Spot) {
   cdp.on("Page.screencastFrame", (f) => { frames.push({ data: f.data, t: f.metadata.timestamp ?? 0 }); cdp.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => {}); });
   await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1, maxWidth: WIDTH, maxHeight: HEIGHT });
   try {
-    if (how == "load") await page.goto(url + "#edit"); else await page.reload();
-    await expect.poll(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready") && !!(window as any).ergaPage && !document.getElementById("erga-inline")), { timeout: 15_000 }).toBe(true);
+    if (how == "load") await page.goto(url + "?edit"); else await page.reload();
+    await expect.poll(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready") && !!(window as any).ergaPage), { timeout: 15_000 }).toBe(true);
     await pause(700);
   } finally { await cdp.send("Page.stopScreencast").catch(() => {}); }
   const { spots, shifted, scales, origin } = await page.evaluate(() => ({
@@ -112,7 +111,7 @@ test("the agent closed to its button (its close button): the document is across 
   await openViewer(page, url, { width: WIDTH, height: HEIGHT, agent: true });
   await page.evaluate(() => localStorage.setItem("erga:settings:v1", JSON.stringify({ agent: true })));
   await page.goto("about:blank");
-  await page.goto(url + "#edit");
+  await page.goto(url + "?edit");
   await expect.poll(() => page.evaluate(() => document.body.classList.contains("agent-open") && !!(window as any).ergaPage), { timeout: 15_000 }).toBe(true);
   await page.locator("#agent-close").click();
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("erga:settings:v1") || "{}").agent)).toBe(false);
@@ -133,6 +132,6 @@ test("a document zoomed in the editor: the page shows at its zoom from the first
   await watch(page);
   const r = await open(page, url, "load", { l: 0, r: WIDTH });
   still(r, { l: 0, r: WIDTH }, "zoomed, load");
-  expect(r.scales.length, "the page inline showed").toBeGreaterThan(0);
-  expect([...new Set(r.scales)], "the page inline's scale").toEqual([1.5]);
+  expect(r.scales.length, "the frame showed").toBeGreaterThan(0);
+  expect([...new Set(r.scales)], "the frame's scale").toEqual([1.5]);
 });

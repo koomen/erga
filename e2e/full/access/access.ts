@@ -13,12 +13,12 @@ export const getter = (root: string) => (path: string, init: RequestInit = {}) =
 /** A name no other test (nor a repeat of this one) uses: for logins, slugs and labels. */
 export const unique = (name: string) => `${name}${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
 
-/** A new document from /new: its editor address (with #edit) and id. */
+/** A new document from /new: its editor address (with ?edit) and id. */
 export async function newDoc(root: string): Promise<{ at: string; id: string }> {
   const get = getter(root);
   const at = (await get("/new")).headers.get("location")!;
-  expect(at).toMatch(/#edit$/);
-  const id = ((await (await get(`${at.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  expect(at).toMatch(/[?&]edit=?$/);
+  const id = ((await (await get(`${at.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
   return { at, id };
 }
 
@@ -54,9 +54,9 @@ export async function clickOn(page: Page, selector: string) {
 export const inFrames = <T>(page: Page, expr: string): Promise<(T | null)[]> =>
   Promise.all(page.frames().filter((f) => f != page.mainFrame()).map((f) => f.evaluate(expr).then((v) => v as T, () => null)));
 
-/** Evaluates in the document's page: the viewer's frame itself (inline, an opaque origin), or what the editor's frame on another site shows (iframe.on, server/pages/frame-host.ts). */
+/** Evaluates in the document's page: the viewer's frame, on the document's own origin (the editor runs in it too). */
 export const inPage = <T>(page: Page, expr: string) =>
-  inFrames<T>(page, `(() => { if (parent == top && !document.querySelector('meta[name="erga-shell"]')) return window.eval(${JSON.stringify(expr)}); const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`);
+  inFrames<T>(page, `(() => parent == top ? window.eval(${JSON.stringify(expr)}) : null)()`);
 
 /** Signs in as someone by the dev sign-in (no `as`: DEV_LOGIN, an admin): their session cookie. */
 export async function signIn(root: string, as: string | null): Promise<string> {

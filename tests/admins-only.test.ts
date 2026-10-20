@@ -1,7 +1,7 @@
 // Which servers are for admins only (deploy/targets.json `adminsOnly`), and sign-in on a server with no GitHub OAuth app.
 import { expect, test } from "bun:test";
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
-import { filesDoor, filesPrefix, pagesToken, readFilesKey, readPagesClaims } from "../server/documents/index.ts";
+import { pagesToken, readPagesClaims } from "../server/documents/index.ts";
 import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
@@ -29,6 +29,9 @@ test("a pages token names its admin only when asked to (staging), and it can't b
   const [claims, mac] = named.split(".");
   const forged = btoa(atob(claims.replace(/-/g, "+").replace(/_/g, "/")).replace("koomen", "bo")).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   expect(await readPagesClaims("s", `${forged}.${mac}`, "ada", "abcd2345")).toBeNull();
+  // An editor's token says so (its pages come with the editor's scripts in them); a reader's doesn't.
+  expect((await readPagesClaims("s", plain, "ada", "abcd2345"))?.edit).toBeUndefined();
+  expect((await readPagesClaims("s", await pagesToken("s", "ada", "abcd2345", "https://staging.erga.dev", undefined, { edit: true }), "ada", "abcd2345"))?.edit).toBe(true);
 });
 
 test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than sending people to GitHub's 404", async () => {
@@ -51,27 +54,4 @@ test("an admin's token without the admin scope reaches only the API, MCP and doc
     "/ada/notes/api/ext", "/ada/notes/doc/index.html", "/d/abcd2345/doc/a.css", "/d/abcd2345/api/name"]) expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: true`);
   for (const p of ["/admin", "/admin/ops/api/x", "/api/admin/agent", "/api/admin/guide", "/api/source/api/x", "/api/deploys", "/api/events", "/api/docs/abcd2345/home", "/settings", "/tokens/new",
     "/docs", "/new", "/deploy/x/api", "/git/erga.git/info/refs", "/git/x/api", "/source/x/doc", "/tokens/x/api", "/ada/notes", "/d/notanid/doc/x", "/"]) expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: false`);
-});
-
-test("a viewer's files key names the document and version, and on staging its admin, who must still be one; it can't be forged or changed", async () => {
-  const plain = await filesPrefix("s", "abcd2345", "l0123abcd");
-  expect(plain).toMatch(/^\/_f\/abcd2345\.l0123abcd\.[A-Za-z0-9_-]{22}\/$/);
-  const key = (prefix: string) => prefix.slice("/_f/".length, -1);
-  expect(await readFilesKey("s", key(plain))).toEqual({ id: "abcd2345", ver: "l0123abcd", by: null });
-  expect(await readFilesKey("other secret", key(plain))).toBeNull();
-  expect(await readFilesKey("s", key(plain).replace("l0123abcd", "l0123abce"))).toBeNull();
-  expect(await readFilesKey("s", key(plain).replace("abcd2345", "abcd2346"))).toBeNull();
-  const named = await filesPrefix("s", "abcd2345", "l0123abcd", "Koomen");
-  expect(await readFilesKey("s", key(named))).toEqual({ id: "abcd2345", ver: "l0123abcd", by: "koomen" });
-  expect(await readFilesKey("s", key(named).replace(".koomen.", ".ada."))).toBeNull();
-  // On staging: the files' address gets past the guard (an opaque origin sends no cookie), and the files door checks
-  // the admin itself: a key without one, or with someone who isn't an admin, opens nothing.
-  const admins = new Set(["koomen"]);
-  const staging = { secret: "s", adminsOnly: true, directory: { users: { isAdmin: async (w: { login: string }) => admins.has(w.login) } } as unknown as Directory, edge: { cache: null, background: () => {} },
-    docs: { fetch: async () => new Response("<p>x</p>", { headers: { "Content-Type": "text/html", "x-erga-view-same": "1" } }) } } as unknown as Platform;
-  const get = (prefix: string) => filesDoor(new Request(`https://staging.erga.dev${prefix}index.html`), staging);
-  expect((await get(plain)).status).toBe(403);
-  expect((await get(named)).status).toBe(200);
-  admins.delete("koomen");
-  expect((await get(named)).status).toBe(403);
 });

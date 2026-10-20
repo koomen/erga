@@ -15,7 +15,7 @@ await servers.main();
 const CARET = `(() => {
   const c = ${F}.querySelector("erga-caret");
   if (!c || getComputedStyle(c).display == "none") return null;
-  const fr = document.getElementById("page"), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
+  const fr = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
   const r = c.getBoundingClientRect(), s = ${F}.getSelection().getRangeAt(0).getBoundingClientRect();
   const h = ${F}.querySelector(".frame.current p");
   return { x: b.left + r.left * k, y: b.top + r.top * k, width: r.width * k, height: r.height * k, line: s.height * k,
@@ -26,7 +26,7 @@ type Caret = { x: number; y: number; width: number; height: number; line: number
 test("the caret is a thin bar as tall as its line at every zoom: the canvas's camera and the editor's zoom", async ({ tab }) => {
   const made = await newDoc(await servers.main(), "canvas");
   const page = tab.page;
-  await openTab(tab, `${made.address}#edit`, { width: 1100, height: 720 });
+  await openTab(tab, `${made.address}?edit`, { width: 1100, height: 720 });
   await editorReady(page);
   const ed = editor(page, { address: made.address, dir: "", file: "" });
   await ed.loaded();
@@ -38,7 +38,7 @@ test("the caret is a thin bar as tall as its line at every zoom: the canvas's ca
   // The caret in the current frame's paragraph, after its third word.
   const placeCaret = async () => {
     const p = await ed.frame<{ x: number; y: number }>(`(() => {
-      const fr = document.getElementById("page"), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
+      const fr = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
       const t = ${F}.querySelector(".frame.current p").firstChild, rg = ${F}.createRange();
       rg.setStart(t, 18); rg.setEnd(t, 19);
       const r = rg.getBoundingClientRect();
@@ -56,7 +56,7 @@ test("the caret is a thin bar as tall as its line at every zoom: the canvas's ca
     return true;
   })()`);
   /** The editor's zoom, by its keys: a step at a time to `level`. */
-  const scale = () => ed.frame<number>(`(() => { const f = document.getElementById("page"); return f.getBoundingClientRect().width / f.offsetWidth; })()`);
+  const scale = () => ed.frame<number>(`(() => { const f = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }); return f.getBoundingClientRect().width / f.offsetWidth; })()`);
   const zoomTo = async (level: number) => {
     for (let at = await scale(); Math.abs(at - level) > 0.01; at = await scale()) {
       await ed.press(at < level ? "ControlOrMeta+Equal" : "ControlOrMeta+Minus");

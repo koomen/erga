@@ -1,6 +1,6 @@
 // Another of the document's pages, picked while editing, opens in place: the editor's controls, the
 // agent's pane (open) and the document's place beside it stay as they are, in every frame, and never the viewer's
-// controls; only the page in the frame changes. The address follows, and Back and Forward go between the pages the same way.
+// controls; only the page in the frame changes (it goes to the other page's address, in place of this one's). The address follows, and Back and Forward go between the pages the same way.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../../fixtures";
@@ -38,21 +38,12 @@ test("a page picked in the pages card opens in the editor in place, and Back and
     };
     requestAnimationFrame(tick);
   })()`);
-  // In the editor's frame: whether a page shows, with its heading (never an empty place between the two pages).
-  await ed.frame(`(() => {
-    const shown = window.__shown = [];
-    const tick = () => {
-      shown.push([...document.querySelectorAll("iframe")].some((f) => getComputedStyle(f).visibility == "visible" && f.getBoundingClientRect().width > 0 && !!f.contentDocument?.querySelector("h1")?.textContent));
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  })()`);
   await page.click("#doc-title");
   await page.click(`#pages ${row("about.html")}`);
   await expect.poll(h1).toBe("About us");
   await expect.poll(() => ed.eval<string>(`ergaPage.pagePath`)).toBe("about.html");
   expect(path()).toBe(`${home}/about`);
-  expect(new URL(page.url()).hash).toBe("#edit");
+  expect(new URL(page.url()).search).toBe("?edit");
 
   // The same page all along: from the click to the new page, the editor's controls, the pane open, the document in its place.
   expect(await ed.eval<boolean>(`window.__same === true`)).toBe(true);
@@ -61,9 +52,6 @@ test("a page picked in the pages card opens in the editor in place, and Back and
   expect(seen.filter((s) => !s.editor || s.viewer || !s.agent)).toEqual([]);
   expect([...new Set(seen.map((s) => s.left))]).toEqual([Math.round(left)]);
   expect(await ed.eval<boolean>(`document.getElementById("pages").hidden`)).toBe(true);
-  const shown = await ed.frame<boolean[]>(`window.__shown`);
-  expect(shown.length).toBeGreaterThan(0);
-  expect(shown.filter((s) => !s).length).toBe(0);
 
   // The new page is the one edited: typing goes to its file, and the first page's stays as it was.
   const dir = ed.dir, before = readFileSync(join(dir, "index.html"), "utf8");

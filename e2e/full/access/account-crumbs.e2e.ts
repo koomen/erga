@@ -34,7 +34,7 @@ test("Documents and the title share a baseline, the title's descenders whole, th
   await page.setViewportSize({ width: 1100, height: 720 });
   for (const dark of [false, true]) {
     await page.emulateMedia({ colorScheme: dark ? "dark" : "light" });
-    await page.goto(`${root}/tester/${slug}#edit`);
+    await page.goto(`${root}/tester/${slug}?edit`);
     await until(() => page.evaluate(() => document.getElementById("doc-title-text")?.textContent == "Gyp jogging plan"), 10_000, "the editor shows the title");
     const m = await crumbs(page), mode = dark ? "dark" : "light";
     expect(Math.abs(m.docs - m.title), `one baseline (${mode})`).toBeLessThan(0.5);

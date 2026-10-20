@@ -1,6 +1,6 @@
 // Helpers for the document settings tests on
 // servers.short(): documents whose every version is its own draft ("Draft n"
-// in the page), the editor opened at a document's #edit address, and the
+// in the page), the editor opened at a document's ?edit address, and the
 // settings popover's parts.
 
 import type { Page } from "playwright-core";
@@ -71,7 +71,7 @@ const slug = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
 export interface EditorOptions { width?: number; height?: number; user?: string; dark?: boolean; mobile?: boolean }
 
-/** The editor on a document, at its #edit address, in `page`, as someone who keeps the agent pane closed; once the gear shows. */
+/** The editor on a document, at its ?edit address, in `page`, as someone who keeps the agent pane closed; once the gear shows. */
 export async function openDocEditor(page: Page, server: Server, address: string, o: EditorOptions = {}) {
   await page.setViewportSize({ width: o.width ?? 1200, height: o.height ?? 820 });
   if (o.dark) await page.emulateMedia({ colorScheme: "dark" });
@@ -79,7 +79,7 @@ export async function openDocEditor(page: Page, server: Server, address: string,
     if (window.top != window) return;
     try { if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}'); } catch { /* no storage */ }
   });
-  await page.goto(`${server.root}${address}${o.user ? `?user=${o.user}` : ""}#edit`);
+  await page.goto(`${server.root}${address}${o.user ? `?user=${o.user}&edit` : "?edit"}`);
   await until(() => rect(page, "#btn-settings"), 10_000, "the gear shows");
   return settings(page);
 }

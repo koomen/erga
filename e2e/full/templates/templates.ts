@@ -10,15 +10,15 @@
 import type { Page } from "playwright-core";
 import { settle, until, type Server, type Tab } from "../../fixtures";
 
-/** Makes a document from a template (/new?template=<id>): the answer, and the document's address (no #edit). */
+/** Makes a document from a template (/new?template=<id>): the answer, and the document's address (no ?edit). */
 export async function newDoc(server: Server, template: string) {
   const r = await fetch(`${server.root}/new?template=${template}`, { redirect: "manual" });
   const location = r.headers.get("location") ?? "";
-  return { status: r.status, location, address: server.root + location.replace(/#edit$/, "") };
+  return { status: r.status, location, address: server.root + location.replace(/[?&]edit=?$/, "") };
 }
 
 /** The document's id, from its address. */
-export const idOf = async (address: string) => ((await (await fetch(`${address.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
+export const idOf = async (address: string) => ((await (await fetch(`${address.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
 
 /**
  * Opens a URL in the test's tab, as someone who keeps the agent pane closed (it opens by itself in the editor

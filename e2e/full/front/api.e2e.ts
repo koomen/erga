@@ -59,8 +59,8 @@ test("POST /api/publish makes a document of a folder at its title's address: ima
   expect(new Uint8Array(await (await p.get(`/d/${pub.id}/doc/img/dot.png`)).arrayBuffer())).toEqual(PNG);
   expect(await (await p.get(`/d/${pub.id}/doc/css/app.css`)).text()).toContain("rebeccapurple");
   const list = await p.docs();
-  expect(list).toContain(`href="/${p.login}/published-app#edit"`);
-  expect(list.slice(list.indexOf(`/${p.login}/published-app#edit"`)).split("</li>")[0]).not.toContain("Unedited");
+  expect(list).toContain(`href="/${p.login}/published-app?edit"`);
+  expect(list.slice(list.indexOf(`/${p.login}/published-app?edit"`)).split("</li>")[0]).not.toContain("Unedited");
 });
 
 test("the document tools work on any of your documents, named by address, URL, slug or id; a failure says why; an unknown document is a 404; list_documents lists it", async () => {

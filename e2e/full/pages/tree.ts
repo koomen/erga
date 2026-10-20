@@ -90,7 +90,7 @@ export const styled = (page: import("playwright-core").Page) => inFrames<{ h1: s
   `document.querySelector("h1") && !document.getElementById("frame") ? { h1: document.querySelector("h1").textContent, color: getComputedStyle(document.querySelector("h1")).color, bg: getComputedStyle(document.body).backgroundColor } : null`);
 
 /** The tab's address, path and hash. */
-export const where = (page: import("playwright-core").Page) => page.evaluate(() => location.pathname + location.hash).catch(() => "");
+export const where = (page: import("playwright-core").Page) => page.evaluate(() => location.pathname + location.search).catch(() => "");
 /** The editor is ready and listening: open_page and new_page reach only the tabs whose event channel is up (erga-listening). */
 export const ready = (page: import("playwright-core").Page) => page.evaluate(() => ["erga-editor-ready", "erga-editing", "erga-listening"].every((c) => document.body.classList.contains(c))).catch(() => false);
 /** The page the editor edits (window.ergaPage.pagePath). */

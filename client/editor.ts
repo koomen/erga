@@ -1,8 +1,9 @@
-// The page editor: the rendered page is the editing surface. The page's HTML
+// The page editor: the page itself is the editing surface. The page's HTML
 // source is the model, an EditorState with the same change sets and undo
-// history as the source view. The page is rendered in an iframe; its
-// manuscript elements are found by the deterministic analysis in
-// manuscript.ts, which gives every text node a source range.
+// history as the source view. The editor runs in the page's own window
+// (frame.ts), which the pages origin served from the same text with its
+// manuscript elements marked (shared/page.ts); they're found by the
+// deterministic analysis in manuscript.ts, which gives every text node a source range.
 //
 // Two regimes. Each manuscript unit is its own contenteditable host: click
 // into one and it behaves like an editor (caret, selection, typing), and the
@@ -13,19 +14,19 @@
 // transaction on the source; the DOM is then patched: text nodes in place,
 // a unit's inner HTML when its inline structure changed, sibling elements
 // when a paragraph was split or joined, and the whole page only as a last
-// resort. IME composition is the one case where the browser edits the DOM
+// resort (it loads again: onReload). IME composition is the one case where the browser edits the DOM
 // first; the text is read back into the model when it ends.
 
 import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode, findClusterBreak, type ChangeSet, type Text as Source, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
-import * as M from "./manuscript";
+import * as M from "../shared/manuscript";
+import { insertHead, sourceDigest } from "../shared/page";
 import * as C from "./clipboard";
 import { changesBetween } from "../document/merge";
 import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
 import { watchMoves } from "./moves";
-import { TEXT_GUARD, listenAsEditor } from "./text-guard";
-import { LIVE_WATCH } from "./live-page";
+import { listenAsEditor } from "./text-guard";
 import { ms } from "./timescale";
 
 export interface PageUpdate {
@@ -49,26 +50,11 @@ export interface PageProblem {
   fix: string;
 }
 
-/**
- * Put first in the page's <head>: catches the page's script errors and
- * files that fail to load (from the first script on, before the editor can
- * listen), and hands them to the editor once it's there (`__ergaReport`).
- */
-const PROBLEM_WATCH = `<script data-erga>(function(){var q=window.__ergaProblems=[];function r(p){window.__ergaReport?window.__ergaReport(p):q.push(p)}addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.tagName){var u=t.getAttribute("src")||t.getAttribute("href");if(u)r({kind:"resource",tag:t.tagName.toLowerCase(),url:u})}else r({kind:"script",message:String(e.message||"Script error"),file:e.filename||"",line:e.lineno||0})},true);addEventListener("unhandledrejection",function(e){r({kind:"script",message:"Unhandled promise rejection: "+String(e.reason&&e.reason.message||e.reason),file:"",line:0})})})()</script>`;
-
-/**
- * Put in an HTML page's <head> after PROBLEM_WATCH: tells the page it's in the
- * editor and gives it `ergaEditor.apply(edits)` for its custom edits
- * (editor-agent/PROMPT.md, "Custom edits"), which hands them to the editor once
- * it's there (`__ergaApply`).
- */
-const CUSTOM_EDITS_API = `<script data-erga>(function(){var q=[];window.__ergaApplyQueue=q;window.ergaEditor=Object.freeze({editing:true,apply:function(ops){return new Promise(function(done){window.__ergaApply?done(window.__ergaApply(ops)):q.push([ops,done])})}});document.documentElement.setAttribute("data-erga-editing","")})()</script>`;
-
 /** How long after the person's click or key the page may make a custom edit: as long as a browser's user activation lasts. */
 const GESTURE_MS = 5000;
 
 /** A key or input that came while the editor couldn't take it (see hold, render), to apply once it can. */
-type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean } | { input: string; data: string | null };
+export type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean } | { input: string; data: string | null };
 /** The selection moves a held arrow, Home or End key makes, if the editor doesn't take the key itself. */
 const MOVES: Record<string, [string, string]> = { ArrowLeft: ["backward", "character"], ArrowRight: ["forward", "character"], ArrowUp: ["backward", "line"], ArrowDown: ["forward", "line"], Home: ["backward", "lineboundary"], End: ["forward", "lineboundary"] };
 
@@ -89,7 +75,10 @@ export interface Peer {
 }
 
 export interface PageEditorConfig {
-  frame: HTMLIFrameElement;
+  /** The page's window: the editor runs in it, on the page as the pages origin served it. */
+  win: Window;
+  /** The digest of the text the page was made from (shared/page.ts): the editor takes the page only if its text is the same. */
+  source: string;
   state: EditorState;
   /** Where the document's relative URLs resolve, e.g. "/doc/". */
   base: string;
@@ -111,6 +100,16 @@ export interface PageEditorConfig {
   onProblem?: (problem: PageProblem) => void;
   /** Whoever is using this editor, for the marks on their own edits while tracking. */
   self?: MarkAuthor;
+  /** The page is paused (it loaded again while it was: setPaused). */
+  paused?: boolean;
+  /** Keys and input that came while the page loaded again (the shell held them), to apply first, in order. */
+  held?: HeldInput[];
+  /**
+   * The page must be made afresh from the text (the first time, from another text; or a change it can't patch in): it
+   * loads again. `view`: the text on the window's top line (its source position in the text now, and how far down the
+   * window its line is), for the page that comes to show it there again (restoreView).
+   */
+  onReload: (view: { pos: number; top: number } | null) => void;
 }
 
 /** Inline styles the editor can apply to a selection. */
@@ -135,27 +134,12 @@ const FORMAT_TAGS = new Set(["strong", "b", "em", "i", "code", "a", "u", "s", "s
 
 interface Analysis { units: M.Unit[]; html: string }
 
-/** Where the reader is in the page (see viewNow): the text on the window's top line, the first block in it, the scroll. */
-interface View { text: { pos: number; top: number } | null; block: { pos: number; top: number } | null; x: number; y: number }
-
 /** Units that go whole when a selection across units is deleted (replaceRange). */
 const WHOLE_BLOCKS = /^(p|h[1-6]|li|pre|blockquote|figcaption|dt|dd)$/;
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const noHistory = () => Transaction.addToHistory.of(false);
-
-/**
- * Calls `fn` once `win` (a frame's window, loaded) has drawn two frames: the first runs what the page does on its first
- * frame, the second paints it. A tab in the background draws none, so after PAINT_WAIT_MS at most.
- */
-const PAINT_WAIT_MS = 120;
-function afterPaint(win: Window | null, fn: () => void): void {
-  let done = false;
-  const go = () => { if (!done) { done = true; fn(); } };
-  setTimeout(go, PAINT_WAIT_MS);
-  try { win?.requestAnimationFrame(() => win.requestAnimationFrame(go)); } catch { go(); }
-}
 
 /** The changed region between two texts, placing an ambiguous edit at `preferredPos` (CodeMirror's findDiff). */
 function findDiff(a: string, b: string, preferredPos: number): { from: number; toA: number; toB: number } | null {
@@ -419,7 +403,7 @@ function describeProblem(raw: RawProblem, base: string): PageProblem | null {
 
 export class PageEditor {
   state: EditorState;
-  private frame: HTMLIFrameElement;
+  private readonly win: Window;
   private units: M.Unit[] = [];
   private els: (Element | undefined)[] = [];
   private doc: Document | null = null;
@@ -438,10 +422,12 @@ export class PageEditor {
   private listeners: ((u: PageUpdate) => void)[] = [];
   /** Set while a full render is in flight; edits wait for it. */
   private rendering = false;
-  /** The frame a render in flight loads the page into, out of sight, while the page it replaces stays on screen. */
-  private next: HTMLIFrameElement | null = null;
-  /** Where the reader was in the page a render replaces: the block at the top of the window, and how far down it was. */
-  private view: View | null = null;
+  /** The text on the top line before the change keepView is making (and the change), for a render it asks for meanwhile. */
+  private viewBefore: { pos: number; top: number; changes: ChangeSet | null } | null = null;
+  /** Stopped (out of the editor): the page is the page alone again. */
+  private stopped = false;
+  /** The page's own editability on the elements the editor made editable (contenteditable, spellcheck), to give back on stop. */
+  private own = new Map<Element, [string | null, string | null]>();
   /**
    * What the page on screen shows (rendered from, then patched to), for a morph to start from: its HTML, or, after
    * a patch of the page's text alone, the source, whose HTML is worked out only when a morph needs it (see
@@ -492,8 +478,6 @@ export class PageEditor {
   private lockReasons = new WeakMap<Element, { message: string; fix?: string }>();
   /** Keys and input held while the editor couldn't take them, oldest first (see release). */
   private held: HeldInput[] = [];
-  /** Takes the keys while the page renders afresh (see render). */
-  private sink: HTMLTextAreaElement | null = null;
   /** Set while the shell has the document (see hold). */
   private holding = false;
   /** Counts clicks on the page, to tell one made while holding (see setState). */
@@ -502,7 +486,11 @@ export class PageEditor {
 
   constructor(readonly config: PageEditorConfig) {
     this.state = config.state;
-    this.frame = config.frame;
+    this.win = config.win;
+    this.held = [...(config.held ?? [])];
+    this.paused = !!config.paused;
+    // (They wait for the page to have the focus: the caller hands them over, hold(false).)
+    if (this.held.length) this.holding = true;
     if (config.onUpdate) this.listeners.push(config.onUpdate);
     this.render();
   }
@@ -547,22 +535,11 @@ export class PageEditor {
 
   private analyze(src: string): Analysis {
     const a = M.analyzeHtml(src, this.decoder);
-    return { units: a.units, html: this.injectHead(M.stamp(src, a.units)) };
+    return { units: a.units, html: M.stamp(src, a.units) };
   }
 
-  private injectHead(html: string): string {
-    // <base> first, before any script: Chrome's preload scanner otherwise fetches the page's files against the frame's own address too (404s).
-    // TEXT_GUARD before the page's scripts too: a press on the text is the editor's, not the page's (text-guard.ts).
-    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${LIVE_WATCH}${TEXT_GUARD}${CUSTOM_EDITS_API}<style data-erga>${PAGE_STYLE}</style>`;
-    const m = /<head(\s[^>]*)?>/i.exec(html);
-    if (m) return html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length);
-    const h = /<html(\s[^>]*)?>/i.exec(html);
-    if (h) return html.slice(0, h.index + h[0].length) + `<head>${inject}</head>` + html.slice(h.index + h[0].length);
-    return `<head>${inject}</head>` + html;
-  }
-
-  /** The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture). */
-  renderedHtml(src = this.src): string { return this.analyze(src).html; }
+  /** The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture, in a frame of its own): its files where they are. */
+  renderedHtml(src = this.src): string { return insertHead(this.analyze(src).html, `<base href="${this.config.base}">`); }
 
   /** The page's title: its <title>, else its first heading. */
   title(): string {
@@ -574,147 +551,112 @@ export class PageEditor {
 
   // ------------------------------------------------------------ rendering
 
-  /** Renders the whole page from the current source. */
+  /**
+   * Takes the page in the window, the first time: the pages origin made it from the text (shared/page.ts), its text
+   * blocks marked as this editor's analysis of the same text numbers them; only if its text is this one (else, and
+   * any later time: the page is made afresh from the text, as it loads again, onReload, and the editor with it).
+   */
   render(): void {
     this.staleSince = null;
-    // A render must not take focus from elsewhere (the agent's input, say); it puts the caret back only if the page had it.
-    const hadFocus = this.hasFocus;
-    const token = ++this.renderToken;
-    // A page already on screen stays there while the new one loads in a frame of its own, out of sight, and gives it
-    // its place once it has rendered, scrolled to the same text: no blank page, no jump. (Only the first render loads
-    // into the frame itself.)
-    if (!this.rendering) this.view = this.viewNow();
-    const old = this.doc ? this.frame : null;
-    this.next?.remove();
-    this.next = null;
-    let target = this.frame;
-    if (old) {
-      target = this.next = old.cloneNode(false) as HTMLIFrameElement;
-      target.removeAttribute("srcdoc");
-      target.classList.remove("on");
-      target.style.visibility = "hidden";
-    }
-    this.rendering = true;
-    // Keys from now until the new page loads wait for it: a page between two documents takes none (Chrome drops them).
-    if (hadFocus) this.focusSink();
-    this.unbind();
+    if (this.stopped) return;
     const src = this.src;
+    this.rendering = true;
+    if (this.doc || sourceDigest(src) != this.config.source) {
+      const b = this.viewBefore;
+      let view: { pos: number; top: number } | null = null;
+      try { view = b ? { pos: b.changes ? b.changes.mapPos(b.pos, 1) : b.pos, top: b.top } : this.doc && this.win.scrollY > 0 ? this.topText() : null; } catch { view = null; }
+      this.config.onReload(view);
+      return;
+    }
     const a = this.analyze(src);
     this.units = a.units;
     this.domFrom = a.html;
     this.unshown = false;
-    const onLoad = () => {
-      if (token != this.renderToken) return;
-      target.removeEventListener("load", onLoad);
-      // A new page takes the old one's place only once it has had two frames of its own (afterPaint): what its scripts do
-      // on load and on their first frame is done, and it never shows half drawn. The first render shows nothing to replace.
-      if (old) afterPaint(target.contentWindow, () => { if (token == this.renderToken) loaded(); });
-      else loaded();
-    };
-    const loaded = () => {
-      if (old) { this.frame = target; this.next = null; }
-      this.doc = this.frame.contentDocument!;
-      this.watchProblems();
-      this.takeCustomEdits();
-      this.collectEls();
-      this.bind();
-      // A new page starts live: tell it it's paused again, if it still can be.
-      if (this.paused) { if (this.canPause) this.tellPause(); else this.paused = false; }
-      this.rendering = false;
-      this.spanning = false;
-      for (const el of this.els) if (el) this.prepareUnit(el);
-      // Verified, never guessed: a unit whose DOM text doesn't match the
-      // source is locked now, not when someone tries to type into it.
-      for (const u of this.units) if (this.verify(u)) this.showSpaces(u, src);
-      this.updateEmpty();
-      if (old) this.show(old);
-      // Edits that arrived while the page loaded (someone else typing) are patched in now.
-      const now = this.src;
-      if (now != src) { const changes = changesBetween(src, now); this.keepView(() => this.applyChanges({ changes }, this.units, src), changes); }
-      // Start with the caret in the manuscript, like a document that opens ready to type.
-      const head = this.state.selection.main.head;
-      const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
-      if (first && !M.unitAt(this.units, head)) {
-        this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
-      }
-      const sinkHad = this.sinkHasFocus;
-      if (hadFocus || sinkHad) {
-        if (sinkHad) this.frame.contentWindow?.focus();
-        this.syncDOMSelection(true);
-      }
-      this.notify({ docChanged: false, selectionSet: false, rendered: true, changes: null, remote: false });
-      if (this.pendingFlash.length) { this.flash(this.pendingFlash); this.pendingFlash = []; }
-      this.markObserver?.disconnect();
-      // The old document's layers are gone with it (though they'd still say isConnected).
-      this.overlay = null;
-      this.peerLayer = null;
-      const RO = (this.frame.contentWindow as (Window & typeof globalThis) | null)?.ResizeObserver;
-      if (RO) { this.markObserver = new RO(() => this.queuePaint()); this.markObserver.observe(this.doc.documentElement); }
-      // The text can move with no change of size: a scroll in an element, a pan of the page's own (moves.ts).
-      const win = this.frame.contentWindow as (Window & typeof globalThis) | null;
-      if (win) watchMoves(this.doc, win, () => this.queuePaint());
-      this.paintMarks();
-      this.release();
-    };
-    target.addEventListener("load", onLoad);
-    target.srcdoc = a.html;
-    if (old) old.after(target);
+    this.attach(src);
+  }
+
+  /** Makes the page in the window editable: its text blocks, the editor's listeners and layers. */
+  private attach(src: string): void {
+    const doc = this.doc = this.win.document;
+    const style = doc.createElement("style");
+    style.setAttribute("data-erga", "page");
+    style.textContent = PAGE_STYLE;
+    (doc.head ?? doc.documentElement).append(style);
+    doc.documentElement.setAttribute("data-erga-editing", "");
+    this.win.dispatchEvent(new Event("erga-editing"));
+    this.watchProblems();
+    this.takeCustomEdits();
+    this.collectEls();
+    this.bind();
+    // A page starts live: tell it it's paused again, if it still can be.
+    if (this.paused) { if (this.canPause) this.tellPause(); else this.paused = false; }
+    this.rendering = false;
+    this.spanning = false;
+    for (const el of this.els) if (el) this.prepareUnit(el);
+    // Verified, never guessed: a unit whose DOM text doesn't match the
+    // source is locked now, not when someone tries to type into it.
+    for (const u of this.units) if (this.verify(u)) this.showSpaces(u, src);
+    this.updateEmpty();
+    // Start with the caret in the manuscript, like a document that opens ready to type.
+    const head = this.state.selection.main.head;
+    const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
+    if (first && !M.unitAt(this.units, head)) {
+      this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
+    }
+    this.notify({ docChanged: false, selectionSet: false, rendered: true, changes: null, remote: false });
+    if (this.pendingFlash.length) { this.flash(this.pendingFlash); this.pendingFlash = []; }
+    this.markObserver?.disconnect();
+    this.overlay = null;
+    this.peerLayer = null;
+    const win = this.win as Window & typeof globalThis;
+    this.markObserver = new win.ResizeObserver(() => this.queuePaint());
+    this.markObserver.observe(doc.documentElement);
+    // The text can move with no change of size: a scroll in an element, a pan of the page's own (moves.ts).
+    watchMoves(doc, win, () => this.queuePaint());
+    this.paintMarks();
+    this.release();
+  }
+
+  /** After the page was made afresh: the text at `view.pos` where it was, `view.top` down the window (see onReload). */
+  restoreView(view: { pos: number; top: number }): void {
+    const t = this.doc ? this.textTop(Math.min(view.pos, this.state.doc.length)) : null;
+    if (t != null && Math.abs(t - view.top) >= 0.5) this.win.scrollBy(0, t - view.top);
   }
 
   /**
-   * Another page in this one's place (the shell went to another of the document's pages): its state (with an undo
-   * history of its own) and its folder (`base`, as in the config). It renders as any render does, out of sight
-   * until it has loaded, so the last page shows until then; but from its top, and with none of the last page's marks.
+   * Out of the editor: the page is the page alone again, as it is now (its scripts and media carry on). The editor's
+   * listeners, layers, styles and marks go, and the elements it made editable are as the page had them.
    */
-  open(state: EditorState, base: string): void {
-    this.config.base = base;
-    this.state = state;
-    this.marks = [];
-    this.render();
-    this.view = null;
-  }
-
-  /** The frame the page is in (a render replaces it). */
-  get frameElement(): HTMLIFrameElement { return this.frame; }
-
-  /**
-   * Where the reader is in the page on screen: the text on the top line of
-   * the window (a source position, and how far down the window its line is),
-   * the first block in the window as a fallback, and the scroll.
-   */
-  private viewNow(): View | null {
-    const win = this.frame.contentWindow;
-    if (!win || !this.doc) return null;
-    const view: View = { text: null, block: null, x: win.scrollX, y: win.scrollY };
-    if (win.scrollY > 0) {
-      view.text = this.topText();
-      for (const u of this.units) {
-        const r = this.els[u.id]?.getBoundingClientRect();
-        if (!r || r.bottom <= 0 || !r.height) continue;
-        if (r.top < win.innerHeight) view.block = { pos: u.from, top: r.top };
-        break;
-      }
+  stop(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.renderToken++;
+    this.unbind();
+    this.markObserver?.disconnect();
+    this.markObserver = null;
+    clearTimeout(this.fadeTimer);
+    const doc = this.doc;
+    if (!doc) return;
+    this.overlay?.remove();
+    this.peerLayer?.remove();
+    this.overlay = this.peerLayer = null;
+    doc.getElementById("erga-authors")?.remove();
+    doc.querySelector('style[data-erga="page"]')?.remove();
+    const registry = (this.win as Window & typeof globalThis).CSS?.highlights as Map<string, unknown> | undefined;
+    if (registry) for (const name of [...registry.keys()]) if (/^erga-/.test(name)) registry.delete(name);
+    for (const [el, [editable, spell]] of this.own) {
+      if (editable == null) el.removeAttribute("contenteditable"); else el.setAttribute("contenteditable", editable);
+      if (spell == null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", spell);
     }
-    return view;
-  }
-
-  /** A render's new page (now this.frame) takes the old one's place, scrolled to show the same text on its top line. */
-  private show(old: HTMLIFrameElement): void {
-    const frame = this.frame, win = frame.contentWindow, view = this.view;
-    this.view = null;
-    if (win && view) {
-      win.scrollTo(view.x, view.y);
-      const t = view.text && this.textTop(view.text.pos);
-      if (t != null) win.scrollBy(0, t - view.text!.top);
-      else {
-        const u = view.block && this.units.find((u) => u.to >= view.block!.pos);
-        const r = u && this.els[u.id]?.getBoundingClientRect();
-        if (r) win.scrollBy(0, r.top - view.block!.top);
-      }
-    }
-    frame.style.visibility = "";
-    if (old.classList.contains("on")) frame.classList.add("on");
-    old.remove();
+    this.own.clear();
+    for (const el of doc.querySelectorAll(".erga-locked, .erga-empty, .erga-flash")) el.classList.remove("erga-locked", "erga-empty", "erga-flash");
+    doc.documentElement.classList.remove("erga-span");
+    doc.documentElement.removeAttribute("data-erga-editing");
+    this.win.dispatchEvent(new Event("erga-editing"));
+    const w = this.win as Window & { __ergaReport?: unknown; __ergaApply?: unknown };
+    delete w.__ergaReport;
+    delete w.__ergaApply;
+    this.doc = null;
   }
 
   /**
@@ -725,7 +667,7 @@ export class PageEditor {
    */
   private topText(start = this.firstShown()): { pos: number; top: number } | null {
     const doc = this.doc as (Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }) | null;
-    const win = this.frame.contentWindow;
+    const win = this.win;
     if (!doc || !win) return null;
     for (let i = start; i < this.els.length; i++) {
       const el = this.els[i];
@@ -785,7 +727,7 @@ export class PageEditor {
 
   /** Hands the page's problems (see PROBLEM_WATCH) to the shell, as they happen. */
   private watchProblems(): void {
-    const win = this.frame.contentWindow as (Window & { __ergaProblems?: RawProblem[]; __ergaReport?: (p: RawProblem) => void }) | null;
+    const win = this.win as (Window & { __ergaProblems?: RawProblem[]; __ergaReport?: (p: RawProblem) => void }) | null;
     if (!win) return;
     const seen = new Set<string>();
     const report = (raw: RawProblem) => {
@@ -807,7 +749,7 @@ export class PageEditor {
   /** Takes the page's custom edits (`ergaEditor.apply`, see CUSTOM_EDITS_API): those it made before the editor was there, then each as it comes. */
   private takeCustomEdits(): void {
     type EditWindow = Window & { __ergaApply?: (ops: unknown) => { ok: boolean; error?: string }; __ergaApplyQueue?: [unknown, (r: unknown) => void][] };
-    const win = this.frame.contentWindow as EditWindow | null;
+    const win = this.win as EditWindow | null;
     if (!win) return;
     win.__ergaApply = (ops) => this.applyCustomEdits(win, ops);
     for (const [ops, done] of win.__ergaApplyQueue?.splice(0) ?? []) done(win.__ergaApply(ops));
@@ -825,7 +767,7 @@ export class PageEditor {
       return { ok: false, error };
     };
     if (performance.now() - this.lastGesture > ms(GESTURE_MS)) return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
-    if (win != this.frame.contentWindow || this.rendering) return refuse("the page is being rendered again; try once more");
+    if (win != this.win || this.rendering) return refuse("the page is being rendered again; try once more");
     if (!Array.isArray(ops)) return refuse("apply takes a list of custom edits");
     // A fresh analysis: its units match the page's data-erga-id numbers, and their elements are in one parse of the source as it is.
     const src = this.src, fresh = M.analyzeHtml(src, this.decoder);
@@ -849,7 +791,7 @@ export class PageEditor {
     const u = this.units.find((x) => x.to > at && x.runs.some((r) => r.editable)) ?? this.units.at(-1);
     if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
     // The page's controls are usually in what changed, so the page no longer matches what it was rendered from and the
-    // change can't be morphed in: the page then renders afresh (in place, at the same text), its script drawing them again.
+    // change can't be morphed in: the page is then made afresh (it loads again, at the same text), its script drawing them again.
     if (this.stale || !this.domFrom) this.render();
     this.focus();
     return { ok: true };
@@ -896,7 +838,7 @@ export class PageEditor {
    * keys (so only the editor answers them) and false to resume it.
    */
   get canPause(): boolean {
-    return typeof (this.frame.contentWindow as PausableWindow | null)?.ergaPause == "function";
+    return typeof (this.win as PausableWindow | null)?.ergaPause == "function";
   }
 
   get isPaused(): boolean { return this.paused; }
@@ -911,7 +853,7 @@ export class PageEditor {
   }
 
   private tellPause(): void {
-    const win = this.frame.contentWindow as PausableWindow | null;
+    const win = this.win as PausableWindow | null;
     if (typeof win?.ergaPause != "function") return;
     try { (win.ergaPause as (paused: boolean) => void)(this.paused); }
     catch (e) { this.reportRaw?.({ kind: "script", message: `window.ergaPause(${this.paused}) threw: ${e instanceof Error ? e.message : String(e)}`, file: "", line: 0 }); }
@@ -925,11 +867,17 @@ export class PageEditor {
 
   /** A unit element is its own editing host; anything atomic inside it stays a normal widget. */
   private prepareUnit(el: Element): void {
+    this.keepOwn(el);
     if (!el.classList.contains("erga-locked") && !this.spanning) el.setAttribute("contenteditable", "true");
     // No spellcheck: these are technical documents, full of names a dictionary flags.
     el.setAttribute("spellcheck", "false");
-    for (const atom of el.querySelectorAll("*")) if (M.ATOMIC.has(atom.localName)) atom.setAttribute("contenteditable", "false");
-    for (const fixed of el.querySelectorAll(`[${M.NO_EDIT_ATTR}]`)) fixed.setAttribute("contenteditable", "false");
+    for (const atom of el.querySelectorAll("*")) if (M.ATOMIC.has(atom.localName)) { this.keepOwn(atom); atom.setAttribute("contenteditable", "false"); }
+    for (const fixed of el.querySelectorAll(`[${M.NO_EDIT_ATTR}]`)) { this.keepOwn(fixed); fixed.setAttribute("contenteditable", "false"); }
+  }
+
+  /** Notes how the page had an element's editability, the first time the editor changes it (stop gives it back). */
+  private keepOwn(el: Element): void {
+    if (!this.own.has(el)) this.own.set(el, [el.getAttribute("contenteditable"), el.getAttribute("spellcheck")]);
   }
 
   private updateEmpty(changed?: Set<number>): void {
@@ -1168,9 +1116,8 @@ export class PageEditor {
   }
 
   focus(): void {
-    // While the page renders afresh, to the stand-in that holds the keys: the render then puts the focus in the new page.
-    if (this.rendering) { this.focusSink(); return; }
-    this.frame.contentWindow?.focus();
+    if (this.rendering || !this.doc) return;
+    this.win.focus();
     this.syncDOMSelection(true);
   }
 
@@ -1342,31 +1289,6 @@ export class PageEditor {
     this.held.push(h);
     return true;
   }
-
-  /** Focuses a stand-in outside the page, in this frame, that holds the keys and input it gets. */
-  private focusSink(): void {
-    const doc = this.frame.ownerDocument;
-    if (!this.sink?.isConnected) {
-      const sink = this.sink = doc.createElement("textarea");
-      sink.tabIndex = -1;
-      sink.setAttribute("aria-hidden", "true");
-      sink.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;resize:none";
-      // Stopped here: the frame's own shortcut keys come in with the rest. With no render in flight
-      // (nothing should leave the focus here then), the page takes the focus back and the key at once.
-      const hold = (e: Event, h: HeldInput) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.held.push(h);
-        if (!this.rendering && this.doc) { this.frame.contentWindow?.focus(); this.syncDOMSelection(true); this.release(); }
-      };
-      sink.addEventListener("keydown", (e) => { if (!e.isComposing) hold(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey }); });
-      sink.addEventListener("beforeinput", (e) => hold(e, { input: e.inputType, data: e.data }));
-      doc.body.append(sink);
-    }
-    this.sink!.focus({ preventScroll: true });
-  }
-
-  private get sinkHasFocus(): boolean { return !!this.sink && this.sink.ownerDocument.activeElement == this.sink; }
 
   /** Takes input on the page again, once it's rendered and not handed over: what was held meanwhile goes in first, in order. */
   private release(): void {
@@ -1791,7 +1713,7 @@ export class PageEditor {
   }
 
   private scrollCaretIntoView(): void {
-    const win = this.frame.contentWindow;
+    const win = this.win;
     if (!win) return;
     const r = this.coordsAtPos(this.state.selection.main.head);
     if (!r) return;
@@ -2547,6 +2469,9 @@ export class PageEditor {
   /** Whether the page shows an older version of something outside the text blocks; render() fixes it. */
   get stale(): boolean { return this.staleSince != null; }
 
+  /** The page shows the text exactly (nothing patching couldn't show: a page made from it would be this one). */
+  get upToDate(): boolean { return !this.stale && !this.unshown && !!this.domFrom && !this.rendering; }
+
   /**
    * Track changes: on, every change from now on (yours, the agent's) stays
    * marked, as a diff against the document as it is now (so text typed and
@@ -2644,7 +2569,7 @@ export class PageEditor {
 
   /** Draws the marks: CSS highlights over added text (the DOM is untouched), notches in an overlay for removed text. */
   private paintMarks(): void {
-    const doc = this.doc, win = this.frame.contentWindow as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
+    const doc = this.doc, win = this.win as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
     if (!doc || !win || this.rendering) return;
     const registry = (win.CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
     // One highlight per author colour and fade level: "erga-add-<level>" for
@@ -2725,7 +2650,7 @@ export class PageEditor {
 
   /** Scrolls a source position into view, if it's off screen (to find someone's caret). */
   reveal(pos: number): void {
-    const win = this.frame.contentWindow;
+    const win = this.win;
     const at = this.anchorAt(pos);
     if (win && at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
   }
@@ -2737,7 +2662,7 @@ export class PageEditor {
   }
 
   private paintPeers(): void {
-    const doc = this.doc, win = this.frame.contentWindow;
+    const doc = this.doc, win = this.win;
     if (!doc || !win || this.rendering) return;
     if (!this.peers.length) { this.peerLayer?.remove(); this.peerLayer = null; return; }
     if (!this.peerLayer || !this.peerLayer.isConnected) {
@@ -2808,7 +2733,7 @@ export class PageEditor {
    * Adopts a state edited elsewhere (the source view). Edits to the text
    * blocks only are patched in, so the page stays as it is and takes a click
    * or a key at once (a render replaces the page, and loses any meanwhile);
-   * anything else (a style, a script, the page's structure) renders afresh.
+   * anything else that patching can't show (a script, say) makes the page afresh: it loads again.
    */
   setState(state: EditorState): void {
     if (state == this.state) return;
@@ -2904,7 +2829,7 @@ export class PageEditor {
     const changed = new Set<number>();
     try {
       // Whatever changed, in place where it can be: the elements that changed, and only those.
-      if ((outside || structural) && this.morph(fromHtml, a.html)) return true;
+      if ((outside || structural) && this.morph(fromHtml, a.html, src)) return true;
       this.unshown = outside;
       // The page is what a.html says only where the blocks are, after a structural patch (it inserts no whitespace) or
       // a change outside them it couldn't show: no morph starts from it until a render.
@@ -2991,8 +2916,8 @@ export class PageEditor {
     return true;
   }
 
-  /** Brings the page to `to` in place; false if it can't (a script changed, or the page's own script built that part). */
-  private morph(from: string, to: string): boolean {
+  /** Brings the page to `to` (the HTML of the source `src`) in place; false if it can't (a script changed, or the page's own script built that part). */
+  private morph(from: string, to: string, src: string): boolean {
     const doc = this.doc;
     if (!doc || !from) return false;
     let ops: ReturnType<typeof planMorph>;
@@ -3015,7 +2940,7 @@ export class PageEditor {
       if (!el) continue;
       if (el.classList.contains("erga-locked")) { el.classList.remove("erga-locked"); this.lockReasons.delete(el); }
       this.prepareUnit(el);
-      if (this.verify(u)) this.showSpaces(u, to);
+      if (this.verify(u)) this.showSpaces(u, src);
     }
     this.updateEmpty();
     return true;
@@ -3029,7 +2954,7 @@ export class PageEditor {
    * meanwhile, so the two don't both move the page.)
    */
   private keepView(change: () => void, changes: ChangeSet | null): void {
-    const win = this.frame.contentWindow, doc = this.doc, root = doc?.documentElement;
+    const win = this.win, doc = this.doc, root = doc?.documentElement;
     if (!win || !root || this.rendering || win.scrollY <= 0) { change(); return; }
     // First the text on the top line, by its source position (a long paragraph that starts above the window, edited
     // up there, keeps the line you're reading still); else the first block that's still there.
@@ -3048,7 +2973,9 @@ export class PageEditor {
     if (!held.length && !text) { change(); return; }
     const styled = root.hasAttribute("style"), before = root.style.overflowAnchor;
     root.style.overflowAnchor = "none";
+    this.viewBefore = text ? { ...text, changes } : null;
     try { change(); } finally {
+      this.viewBefore = null;
       const live = !this.rendering && this.doc == doc;
       const pos = live && text ? (changes ? changes.mapPos(text.pos, 1, MapMode.TrackDel) : text.pos) : null;
       const top = pos == null ? null : this.textTop(pos);

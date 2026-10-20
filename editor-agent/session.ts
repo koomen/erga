@@ -190,7 +190,7 @@ there is one, wins over blog/index.html). Link pages to each other with relative
 ("post.html", "../about.html", "blog/"), never ones starting with /: each page renders
 at its own file's path, so relative links and assets resolve as they would on disk.
 Styles and scripts the pages share can live in one file they all link to. A page's
-address with #edit opens it in the editor (/<owner>/<slug>/blog#edit).`;
+address with ?edit opens it in the editor (/<owner>/<slug>/blog?edit).`;
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
