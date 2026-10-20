@@ -339,6 +339,22 @@ export function dragToDock(e: PointerEvent, o: DockOptions) {
 export interface LayoutHandle { refresh(): void; get layout(): Layout }
 
 /**
+ * The CSS variables mountLayout puts on <html> for this layout, window and panels shown, in px (server/pages/viewer.ts,
+ * LAYOUT_EARLY, puts the same on before the first paint).
+ */
+export function layoutVars(layout: Layout, view: View, shown: Shown): Record<string, number> {
+  const g = geometry(layout, view, shown), agentSide = sideOf(layout.order, "agent");
+  const fabX = agentSide == "left" ? g.agent.x : g.agent.x + g.agent.w - FAB;
+  const fabLeft = !shown.agent && agentSide == "left", fabRight = !shown.agent && agentSide == "right";
+  return {
+    "--agent-x": g.agent.x, "--agent-w": g.agent.w, "--fab-x": fabX,
+    "--frame-l": g.frameL, "--frame-r": g.frameR, "--picker-x": g.picker.x, "--picker-w": g.picker.w,
+    "--cb-l": Math.max(g.frameL + 22, fabLeft ? fabX + FAB + 14 : 0),
+    "--cb-r": Math.max(g.frameR + 22, fabRight ? view.width - fabX + 14 : 0),
+  };
+}
+
+/**
  * Puts the layout on the editor's page: CSS variables on <html> (--agent-x,
  * --agent-w, --fab-x, --frame-l, --frame-r, --picker-x, --picker-w, --cb-l,
  * --cb-r), body.agent-right when the agent is right of the document, and the
@@ -380,15 +396,7 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
 
   function apply(l: Layout = layout, s: Shown = shown()) {
     const v = view(), g = geometry(l, v, s), agentSide = sideOf(l.order, "agent");
-    const fabX = agentSide == "left" ? g.agent.x : g.agent.x + g.agent.w - FAB;
-    const fabLeft = !s.agent && agentSide == "left", fabRight = !s.agent && agentSide == "right";
-    const vars: Record<string, number> = {
-      "--agent-x": g.agent.x, "--agent-w": g.agent.w, "--fab-x": fabX,
-      "--frame-l": g.frameL, "--frame-r": g.frameR, "--picker-x": g.picker.x, "--picker-w": g.picker.w,
-      "--cb-l": Math.max(g.frameL + 22, fabLeft ? fabX + FAB + 14 : 0),
-      "--cb-r": Math.max(g.frameR + 22, fabRight ? v.width - fabX + 14 : 0),
-    };
-    for (const [k, n] of Object.entries(vars)) root.style.setProperty(k, px(n));
+    for (const [k, n] of Object.entries(layoutVars(l, v, s))) root.style.setProperty(k, px(n));
     body.classList.toggle("agent-right", agentSide == "right");
     body.classList.toggle("layout-narrow", g.narrow);
     const p = picker();

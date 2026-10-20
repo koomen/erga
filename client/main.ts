@@ -1909,19 +1909,13 @@ Once you've read the guide, await further instructions.`;
     stopVoice();
     showChrome();
   }
-  // Loaded in the editor: a reload (or back/forward) keeps things as they
-  // were, the pane put back as it was left, unanimated; arriving here from
-  // elsewhere is coming into the editor, and the agent grows out as above.
-  // Only a page opened with #edit is "loaded in the editor": one opened viewing (by a reload or not) and
-  // switched into it is coming into the editor (server/pages/viewer.ts says which, ergaShell.loadedEditing).
+  // Loaded in the editor (opened with #edit: a link, a reload, back or forward), the pane is as it was left from the
+  // page's first frame (server/pages/viewer.ts, LAYOUT_EARLY), unanimated, and stays so: nothing moves as this runs.
+  // Switched into the editor from viewing is coming into it, and the agent grows out as above
+  // (server/pages/viewer.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
-  else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
-    if (settings.agent) {
-      document.body.classList.add("no-motion");
-      showAgent(true);
-      requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove("no-motion")));
-    }
-  } else openAgentOnEntry();
+  else if (window.ergaShell?.loadedEditing !== false) showAgent(settings.agent);
+  else openAgentOnEntry();
 
   // ---------------------------------------------------------------- a new release
 
