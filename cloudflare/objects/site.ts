@@ -9,6 +9,7 @@ import { directoryOf } from "../d1";
 import type { Env } from "../env";
 import { publishedFiles } from "../published";
 import { siteNet, siteOAuth } from "../sites";
+import { documentOf } from "../document-host";
 
 const DELAY_MS = 30_000;
 
@@ -20,7 +21,7 @@ export class SiteHost extends DurableObject<Env> implements SiteObject {
     published: (docId) => publishedFiles(this.env, docId),
     net: (token) => siteNet(this.env, token),
     oauth: siteOAuth(this.env),
-    notify: (docId) => { this.ctx.waitUntil(this.env.DOCUMENTS.getByName(docId).notify({ type: "site" }).catch(() => {})); },
+    notify: (docId) => { this.ctx.waitUntil(documentOf(this.env, docId).notify({ type: "site" }).catch(() => {})); },
     delay: () => { const ms = Number(this.env.ERGA_SITE_DELAY_MS); return ms > 0 ? ms : DELAY_MS; },
   });
 

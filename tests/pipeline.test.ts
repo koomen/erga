@@ -105,6 +105,8 @@ describe("staging", () => {
     expect(b.SNAPSHOT_IMPORT.text).toBe("1");
     expect(b.PAGES_DOMAIN.text).toBe("erga-pages-staging.dev");
     expect(b.ERGA_VERSION.text).toBe(release.version);
+    // When the upload was made: a document's object older than its caller restarts (cloudflare/document-host.ts).
+    expect(Math.abs(Number(b.ERGA_DEPLOYED.text) - Date.now())).toBeLessThan(5 * 60_000);
     expect(b.CLOUDFLARE_ACCOUNT_ID.text).toBe(FLEET_ACCOUNT);
     expect(b.CONTROL).toEqual({ type: "service", name: "CONTROL", service: "erga-control", entrypoint: "App" });
     expect(b.CONTROL_URL).toEqual({ type: "plain_text", name: "CONTROL_URL", text: "https://ops.erga.dev" });

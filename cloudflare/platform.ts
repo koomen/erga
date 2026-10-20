@@ -17,6 +17,7 @@ import { sourceService } from "./source";
 import type { App } from "../control/index";
 import type { SourceService } from "../server/source/index.ts";
 import { agentSettings } from "./agent-settings";
+import { documentOf } from "./document-host";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -101,7 +102,7 @@ const edgeCache = (): Platform["edge"]["cache"] => {
 /** The Platform for one request (`ctx`: its execution context, for work after the response), or for work outside one. */
 export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const directory = directoryOf(env);
-  const host = (doc: Route) => env.DOCUMENTS.getByName(doc.id);
+  const host = (doc: Route) => documentOf(env, doc.id);
   const target = env.DEPLOY_TARGET?.trim() ?? "";
   // Local development only (the tests): stand-ins for GitHub and for the other target's server.
   const standIn = (value: string | undefined) => (env.DEV_LOGIN && value?.trim() ? value.trim().replace(/\/+$/, "") : null);
@@ -163,7 +164,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       list: async (owner) => {
         return Promise.all((await directory.list(owner)).map(async (d) => {
           // In local development a document may be on disk: only it knows where.
-          const path = env.ERGA_LINK_SECRET ? await env.DOCUMENTS.getByName(d.id).diskPath().catch(() => null) : null;
+          const path = env.ERGA_LINK_SECRET ? await documentOf(env, d.id).diskPath().catch(() => null) : null;
           return {
             id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
             created: d.created, modified: d.modified ?? d.created, role: d.role, shared: d.shared,
@@ -172,7 +173,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
         }));
       },
       fetch: (doc, request) => counted("doc", () => host(doc).fetch(request)),
-      view: (id, who, opts) => counted("doc", () => env.DOCUMENTS.getByName(id).view(who, opts)),
+      view: (id, who, opts) => counted("doc", () => documentOf(env, id).view(who, opts)),
     },
   };
   return p;

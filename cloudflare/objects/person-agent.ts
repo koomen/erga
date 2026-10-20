@@ -13,6 +13,7 @@ import { DurableObject } from "cloudflare:workers";
 import { ChatTables, STALE_MS, wakeRuns } from "../../agents/chat-store";
 import type { ChatSave, StoredChat } from "../../agents/checkpoint";
 import type { Env } from "../env";
+import { documentOf } from "../document-host";
 
 export class PersonAgent extends DurableObject<Env> {
   private chats = new ChatTables({
@@ -39,7 +40,7 @@ export class PersonAgent extends DurableObject<Env> {
     const more = await wakeRuns(this.chats, async (scope, state) => {
       const doc = /^doc:(.+)$/.exec(scope)?.[1];
       if (!doc || !state.meta.person) return;
-      await this.env.DOCUMENTS.getByName(doc).resumeAgent({ id: state.meta.person, name: state.meta.name ?? state.meta.person });
+      await documentOf(this.env, doc).resumeAgent({ id: state.meta.person, name: state.meta.name ?? state.meta.person });
     });
     if (more) await this.ctx.storage.setAlarm(Date.now() + STALE_MS);
   }

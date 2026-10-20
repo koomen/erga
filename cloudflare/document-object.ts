@@ -27,6 +27,7 @@ import type { DocSnapshot, Page } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
 import { forgetDecisions } from "../server/documents/index.ts";
 import { platform } from "./platform";
+import { CALLS, DeployGate, DEPLOYED_HEADER, deployedOf, STALE, staleResponse, type Call } from "./document-host";
 import { DiskLink } from "../dev/disk-storage";
 import { publishedChanged } from "./published";
 import { siteChanged, siteOps } from "./sites";
@@ -109,6 +110,26 @@ export class DocumentObject extends DurableObject<Env> {
 
   // ------------------------------------------------------------ what the Worker calls (RPC)
 
+  /** A caller from a newer deploy: the object writes what it holds, then stops; the next call starts it on the new code (document-host.ts). */
+  private gate = new DeployGate(deployedOf(this.env), async () => {
+    console.log("a caller from a newer deploy: this object writes its edits and restarts");
+    await this.document.flush().catch((e) => console.log(`couldn't write before the restart: ${e}`));
+    // After this answer goes.
+    setTimeout(() => this.ctx.abort("a newer deploy"), 0);
+  });
+
+  /**
+   * Every call from the Worker (documentOf, document-host.ts): `method` with
+   * `args`, from a caller of deploy `deployed`. An object older than its
+   * caller runs nothing, answers STALE and stops. Each version of the object
+   * keeps this signature.
+   */
+  async call(deployed: number, method: string, args: unknown[]): Promise<unknown> {
+    if (await this.gate.stale(deployed)) return STALE;
+    if (!(CALLS as readonly string[]).includes(method)) throw new Error(`No such call: ${method}`);
+    return (this[method as Call] as (...a: unknown[]) => unknown)(...args);
+  }
+
   create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> { return this.document.create(owner, id, files, index, opts); }
   link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> { return this.document.link(owner, id, index, disk); }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
@@ -141,6 +162,7 @@ export class DocumentObject extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    if (await this.gate.stale(Number(request.headers.get(DEPLOYED_HEADER)) || 0)) return staleResponse();
     const url = new URL(request.url);
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (url.pathname == "/api/mirror") return this.mirror(request);

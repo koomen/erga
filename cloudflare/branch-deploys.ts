@@ -13,6 +13,7 @@ import { PRODUCTION } from "../deploy/targets";
 import { health } from "../server/health";
 import type { Platform } from "../server/platform";
 import type { Env } from "./env";
+import { documentOf } from "./document-host";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) => path == "/api/deploys/version" || path == "/api/health" || path.startsWith("/api/snapshot/");
@@ -33,9 +34,9 @@ export async function deploysDoor(request: Request, env: Env, platform: Platform
       token: env.SNAPSHOT_TOKEN,
       importAllowed: env.SNAPSHOT_IMPORT == "1" && !production,
       store: {
-        export: (id, page) => env.DOCUMENTS.getByName(id).exportStorage(id, page),
-        import: (snap) => env.DOCUMENTS.getByName(snap.id).importStorage(snap),
-        wipe: (id) => env.DOCUMENTS.getByName(id).wipeStorage(),
+        export: (id, page) => documentOf(env, id).exportStorage(id, page),
+        import: (snap) => documentOf(env, snap.id).importStorage(snap),
+        wipe: (id) => documentOf(env, id).wipeStorage(),
       },
     })) ?? Response.json({ error: "Not found" }, { status: 404 });
   }
