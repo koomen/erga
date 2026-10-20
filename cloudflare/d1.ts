@@ -1,8 +1,9 @@
 // The directory, with the server's users and
 // settings, on D1, through D1's API. A batch is one transaction.
 
-import { Directory, type Param, parseDeployed, type Sql, withCredentials } from "../server/directory/index.ts";
+import { Directory, type Param, parseDeployed, type Permission, type Sql, withCredentials } from "../server/directory/index.ts";
 import { Tokens } from "../server/identity/index.ts";
+import { forgetDecisions } from "../server/documents/index.ts";
 
 import type { Env } from "./env";
 import { counted } from "./timing";
@@ -31,7 +32,9 @@ export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) {
     // A change to the homepage setting, however it's made (the admin page, an agent, the homepage's API, the first /), reaches its deploys.
     const changed = async (key: string) => { if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged(); };
-    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG), changed, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
+    // A document's permissions changed: its object keeps a copy, and decides with it (document/document.ts, authorize).
+    const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await env.DOCUMENTS.getByName(id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };
+    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG), changed, permissionsChanged, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
   }
   return directory.dir;
 }

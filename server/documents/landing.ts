@@ -1,28 +1,19 @@
-// The front page's document (the landing_document setting): the viewer on it at /, and
-// making it from the repo's assets/landing/ when there's none (seedLanding).
+// The front page's document (the landing_document setting), and making it from the repo's
+// assets/landing/ when there's none (seedLanding). The viewer on it at / is view.ts's.
 
 import { type DocRow, newDocId } from "../directory/index.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { type Platform } from "../platform.ts";
 import { makeDoc } from "./make.ts";
-import { viewDocument } from "./view.ts";
-import { startPage } from "../pages/index.ts";
 
-/** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. Made from the repo's assets/landing/ if there's none (seedLanding). */
-export async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
-  const roleOf = (doc: DocRow) => (session ? platform.directory.access(whoOf(session), doc) : Promise.resolve(null));
-  // The usual case, the setting's document there: whether it is (its host's page) and what they may do with it, at once.
-  let named = await platform.directory.landing();
-  // A seed in this isolate that has claimed the setting, but not yet moved its document to its address (seedLanding):
-  // its answer, at /<owner>/landing, rather than the document at its id.
+/**
+ * The document the front page shows now: the setting's (and, while a seed in this isolate has claimed it but not yet
+ * moved it to /<owner>/landing, that seed's answer, at its address). Null when there's none yet (landingPage makes one).
+ */
+export async function frontDocument(platform: Platform): Promise<DocRow | null> {
+  const named = await platform.directory.landing();
   const running = seeding.get(platform.directory);
-  if (named && running && named.slug == named.id) named = (await running) ?? named;
-  if (named) {
-    const [index, role] = await Promise.all([platform.docs.index(named), roleOf(named)]);
-    if (index != null) return viewDocument(platform, request, { doc: named, index, role }, session, true);
-  }
-  const landing = await landingPage(platform);
-  if (!landing) return startPage(platform, session);
-  return viewDocument(platform, request, { ...landing, role: await roleOf(landing.doc) }, session, true);
+  if (named && running && named.slug == named.id) return (await running) ?? named;
+  return named;
 }
 
 /**
@@ -36,7 +27,7 @@ export async function landingDocument(platform: Platform): Promise<DocRow | null
 }
 
 /** The front page's document (landingDocument) and its page: the one round trip to its host tells both that it's there and which file to show. */
-async function landingPage(platform: Platform): Promise<{ doc: DocRow; index: string } | null> {
+export async function landingPage(platform: Platform): Promise<{ doc: DocRow; index: string } | null> {
   const doc = await platform.directory.landing();
   const index = doc && (await platform.docs.index(doc));
   if (doc && index != null) return { doc, index };

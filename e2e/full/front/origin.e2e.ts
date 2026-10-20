@@ -63,7 +63,7 @@ test("doc/ is the page; a file has an ETag, is checked each time, and is a 304 w
   expect(await again.text()).toBe("");
   const src = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(editor)?.[1]?.replace(/&amp;/g, "&") ?? "";
   expect(src).toMatch(/[?&]v=[a-z0-9]+/);
-  expect(editor).toContain('f.src = f.dataset.src + (location.hash == "#edit" ? "&edit=1"');
+  expect(editor).toContain('f.src = f.dataset.src + "&edit=1"');
   const host = await pagesFetch(src);
   expect(host.headers.get("cache-control") ?? "").toMatch(/max-age=\d+/);
   const hostPage = await host.text();
@@ -88,4 +88,53 @@ test("doc/ is the page; a file has an ETag, is checked each time, and is a 304 w
   expect(editor).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js","modulepreload"\]/);
   expect(editor).toContain('rel: "preload"');
   expect((await pagesFetch(url)).headers.get("server-timing") ?? "").toContain("worker;dur=");
+});
+
+test("the viewer holds the page inline, in an opaque origin, with an ETag (304 when unchanged); its files are at their version's address, kept a year, readable from any origin, each in a sandbox of its own; a forged key opens nothing; an edit gives a new version", async () => {
+  const p = await person(await servers.script());
+  const id = await p.make();
+  const { address } = await p.nameOf(id);
+  const view = await p.get(address);
+  expect(view.status).toBe(200);
+  expect(view.headers.get("cache-control")).toBe("private, no-cache");
+  const html = await view.text();
+  const frame = /<iframe id="frame"[^>]*srcdoc="([^"]*)"/.exec(html)![0];
+  expect(frame).toContain('sandbox="allow-scripts allow-forms allow-modals allow-popups"');
+  expect(frame).not.toContain("allow-same-origin");
+  const base = /&lt;base href=&quot;([^&]+)&quot;&gt;/.exec(frame)![1];
+  expect(new URL(base).origin).toBe(p.origin);
+  expect(new URL(base).pathname).toMatch(new RegExp(`^/_f/${id}\\.l[0-9a-f]+\\.[A-Za-z0-9_-]+/$`));
+  // Unchanged: a 304, with no body.
+  const etag = view.headers.get("etag")!;
+  expect(etag).toBeTruthy();
+  const again = await p.get(address, { headers: { "If-None-Match": etag } });
+  expect(again.status).toBe(304);
+  // A file at the version's address: anyone holding the key (no cookie), kept for good.
+  const file = await fetch(`${base}index.html`, { headers: { Origin: "null" } });
+  expect(file.status).toBe(200);
+  expect(file.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+  expect(file.headers.get("access-control-allow-origin")).toBe("*");
+  expect(file.headers.get("content-security-policy")).toBe(`sandbox allow-scripts allow-forms allow-modals allow-popups; frame-ancestors ${p.origin}`);
+  expect(file.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(await file.text()).toContain("<script>(function () {");
+  // Forged, or another document's id under this key: nothing.
+  const forged = base.replace(/\.[A-Za-z0-9_-]+\/$/, ".AAAAAAAAAAAAAAAAAAAAAA/");
+  expect((await fetch(`${forged}index.html`)).status).toBe(404);
+  expect((await fetch(`${base.replace(id, "aaaaaaaa")}index.html`)).status).toBe(404);
+  // Someone it isn't shared with gets no page.
+  expect((await p.as("Zed", address)).status).toBe(403);
+  // Edited: another version, at another address; the old address still answers, with what it was.
+  expect((await p.get(`/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Edited</h1>" })).status).toBe(200);
+  let next = base;
+  for (let i = 0; i < 40 && next == base; i++) {
+    // (Its address follows its new heading.)
+    const page = await (await p.get((await p.nameOf(id)).address)).text();
+    next = /&lt;base href=&quot;([^&]+)&quot;&gt;/.exec(page)?.[1] ?? base;
+    if (next == base) await new Promise((r) => setTimeout(r, 300));
+  }
+  expect(next).not.toBe(base);
+  const old = await fetch(`${base}index.html`);
+  expect(old.status).toBe(200);
+  expect(await old.text()).not.toContain("<h1>Edited</h1>");
+  expect(await (await fetch(`${next}index.html`)).text()).toContain("<h1>Edited</h1>");
 });

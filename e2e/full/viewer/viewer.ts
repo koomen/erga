@@ -1,7 +1,8 @@
 // The viewer, for its tests: a document's page in the test's tab.
-// The tab holds the host page: the band, the controls, and the document's
-// frame (#frame, on the document's own origin), which shows the page itself in
-// its visible iframe (iframe.on). `inPage` evaluates there.
+// The tab holds the band, the controls, and the document's frame (#frame):
+// viewing, the page itself, inline (an opaque origin); editing, the host page on
+// the document's own origin, which shows the page in its visible iframe
+// (iframe.on). `inPage` evaluates in the page, whichever it is.
 
 import type { Page } from "playwright-core";
 import { settle, until } from "../../fixtures";
@@ -30,8 +31,11 @@ export async function openViewer(page: Page, url: string, opts: { width?: number
 
 /** Evaluates `expr` in the page each document frame shows (its iframe.on), answering what each gave. */
 export async function inPage<T>(page: Page, expr: string): Promise<T[]> {
-  const run = `(() => { const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`;
-  const out = await Promise.all(page.frames().filter((f) => f != page.mainFrame()).map((f) => f.evaluate(run).catch(() => null)));
+  const run = `(() => {
+    if (!document.querySelector('meta[name="erga-shell"]')) return window.eval(${JSON.stringify(expr)});
+    const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null;
+  })()`;
+  const out = await Promise.all(page.frames().filter((f) => f.parentFrame() == page.mainFrame()).map((f) => f.evaluate(run).catch(() => null)));
   return out.filter((v) => v != null) as T[];
 }
 

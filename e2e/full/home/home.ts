@@ -23,8 +23,8 @@ export async function front(server: Server, user?: string) {
   const html = await r.text();
   return { html, direct: html.includes("<erga-controls"), timing: r.headers.get("server-timing") ?? "", headers: r.headers };
 }
-/** The id and owner of the document / frames, from its pages origin. */
-export const frameOf = (html: string) => /<iframe id="frame" class="erga-view" (?:data-)?src="http:\/\/([a-z0-9]{8})-([a-z0-9-]+)\.localhost/.exec(html);
+/** The viewer's document, and its owner, as its page names them: [, id, owner]. */
+export const frameOf = (html: string) => { const id = /<meta name="erga-doc" content="([a-z0-9]{8})">/.exec(html)?.[1], owner = /<meta name="erga-address" content="\/([a-z0-9-]+)\//.exec(html)?.[1]; return id && owner ? [html, id, owner] as const : null; };
 /** The document / shows: in the viewer's frame, or served directly (its controls name it). */
 export const docOf = (html: string) => frameOf(html)?.[1] ?? /<erga-controls data-doc="([a-z0-9]{8})"/.exec(html)?.[1];
 /** Edit's address on a page, if it has Edit. */

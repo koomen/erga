@@ -2,9 +2,10 @@
 // template, opened in the viewer or the editor, and the step controls under
 // them (server/pages/viewer.ts, STEPS_BOOT; editor-agent/PROMPT.md, "Presentations").
 //
-// The document's page runs in a frame on its own origin: in the viewer the
-// host page's visible frame (iframe.on, server/pages/frame-host.ts), in the editor the page
-// editor's frame. `inPage` evaluates an expression in that page.
+// The document's page runs in a frame: in the viewer the viewer's frame itself
+// (inline, an opaque origin), in the editor the host page's visible frame on the
+// document's own origin (iframe.on, server/pages/frame-host.ts). `inPage`
+// evaluates an expression in that page.
 
 import type { Page } from "playwright-core";
 import { settle, until, type Server, type Tab } from "../../fixtures";
@@ -45,7 +46,7 @@ export const editorReady = (page: Page) => until(() => page.evaluate(() => docum
 
 /** Evaluates an expression in the document's page (whichever frame shows it): the first answer that isn't null. */
 export async function inPage<T = any>(page: Page, expr: string): Promise<T> {
-  const wrapped = `(() => { const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`;
+  const wrapped = `(() => { if (parent == top && !document.querySelector('meta[name="erga-shell"]')) return window.eval(${JSON.stringify(expr)}); const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`;
   for (const f of page.frames()) {
     if (f == page.mainFrame()) continue;
     const v = await f.evaluate(wrapped).catch(() => null);

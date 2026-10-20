@@ -296,8 +296,7 @@ function resolve(ctx: ToolContext, ref: unknown, action: Action): Promise<DocRow
 /** A request to a document's own host, as the agent's person, with what they may do there. */
 async function callDoc(ctx: ToolContext, doc: Route, path: string, init: RequestInit): Promise<Response> {
   const inner = new Request(new URL(path, ctx.origin), init);
-  const access = accessOf(await ctx.platform.directory.access(whoOf(ctx.session), doc));
-  return ctx.platform.docs.fetch(doc, forwarded(inner, new URL(path, ctx.origin), path, `${ctx.origin}/d/${doc.id}`, ctx.session, access));
+  return ctx.platform.docs.fetch(doc, forwarded(inner, new URL(path, ctx.origin), path, `${ctx.origin}/d/${doc.id}`, ctx.session));
 }
 
 const MAX_FILE = 2_000_000, MAX_TOTAL = 50_000_000, MAX_FILES = 2000;
@@ -471,7 +470,7 @@ async function docTree(request: Request, platform: Platform, session: Session | 
   if (post && accessOf(access) != "edit") return err("You can only view this document.", 403);
   const url = new URL(request.url);
   const inner = new Request(new URL("/api/tree", url.origin), { method: request.method, headers: request.headers, body: post ? await request.text() : undefined });
-  return platform.docs.fetch(route, forwarded(inner, new URL("/api/tree", url.origin), "/api/tree", `${url.origin}/d/${route.id}`, session, accessOf(access)));
+  return platform.docs.fetch(route, forwarded(inner, new URL("/api/tree", url.origin), "/api/tree", `${url.origin}/d/${route.id}`, session));
 }
 
 /**
