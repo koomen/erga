@@ -14,6 +14,7 @@ import { directoryOf } from "./d1";
 import type { Env } from "./env";
 import { isDev } from "./platform";
 import { mockSiteFile } from "./sites";
+import { documentOf } from "./document-host";
 
 /** The dev server's routes: null for a path that isn't one of them; refused unless it's local development and the request carries the secret (?link=). */
 export async function devRoutes(request: Request, env: Env, platform: Platform, url: URL): Promise<Response | null> {
@@ -34,13 +35,13 @@ export async function devRoutes(request: Request, env: Env, platform: Platform, 
     // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
     const owner = (body.owner ?? session?.login)?.toLowerCase();
     if (!owner || !OWNER.test(owner) || session?.test || !body.id || !idShaped(body.id) || !body.index || !body.path) return new Response("Bad link", { status: 400 });
-    const doc = await env.DOCUMENTS.getByName(body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
+    const doc = await documentOf(env, body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
     return Response.json({ owner: doc.owner, id: doc.id, slug: doc.slug });
   }
   const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
   const route = id && idShaped(id) ? await directory.route(id) : null;
   if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
-  return env.DOCUMENTS.getByName(route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
+  return documentOf(env, route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
 }
 
 /** The directory's migrations, as `cf d1 migrations apply` would apply them. */

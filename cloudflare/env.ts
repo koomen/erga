@@ -82,6 +82,8 @@ export interface Env {
   DEPLOY_TARGET?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
+  /** When the pipeline uploaded this server (ms): a document's object older than its caller restarts (cloudflare/document-host.ts). */
+  ERGA_DEPLOYED?: string;
   /** The Cloudflare account the server is in (the pipeline sets it): where it deploys itself. */
   CLOUDFLARE_ACCOUNT_ID?: string;
   /** A secret: the API token the server deploys itself with. Branch deploys run only when it's set. */

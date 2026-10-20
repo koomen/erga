@@ -8,13 +8,14 @@
 // fires `firePublished`.
 
 import type { Env } from "./env";
+import { documentOf } from "./document-host";
 
 /** A document's published version: its page, its files and the version's number. */
 export interface Published { index: string; files: Record<string, string | Uint8Array>; version: number | null }
 
 /** The published version of a document; null if there's no such document. */
 export async function publishedFiles(env: Env, docId: string): Promise<Published | null> {
-  const r = await env.DOCUMENTS.getByName(docId).publishedFiles();
+  const r = await documentOf(env, docId).publishedFiles();
   return r && { index: r.index, files: Object.fromEntries(r.files), version: r.published.version.n };
 }
 
