@@ -168,10 +168,11 @@ export const agent: Test[] = [
       // Bo's event channel, listening the whole time.
       let boEvents = "";
       const headers = d.headersFor("Bo");
-      const bo = new WebSocket(d.base.replace(/^http/, "ws") + "/api/events?user=Bo", (Object.keys(headers).length ? { headers } : undefined) as unknown as string[]);
+      const bo = new WebSocket(d.base.replace(/^http/, "ws") + "/api/room?events=1&user=Bo", (Object.keys(headers).length ? { headers } : undefined) as unknown as string[]);
       ctx.defer(() => bo.close());
-      // (The document's new title, which follows the heading the agent edits, goes to everyone: it's the document's, not the conversation's.)
-      bo.onmessage = (e) => { if (!String(e.data).startsWith(`{"type":"name"`)) boEvents += String(e.data); };
+      // (The document's new title, which follows the heading the agent edits, goes to everyone: it's the document's, not the
+      // conversation's. So are the room's own messages, binary, and the hello: its name and pages.)
+      bo.onmessage = (e) => { if (typeof e.data == "string" && !e.data.startsWith(`{"type":"name"`) && !e.data.startsWith(`{"type":"hello"`)) boEvents += e.data; };
       await new Promise((r) => { bo.onopen = r; });
       await runScript(d, "Ada", [edit(d.path, "<h1>Launch notes", "<h1>Launch notes (private)"), { text: "secret reply" }], { text: "a private question" });
       await sleep(300);

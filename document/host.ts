@@ -6,7 +6,7 @@
 //
 // What's the Durable Object's stays with it: where files live, who a request
 // is from (the person the front door vouched for), and the WebSockets, which
-// it accepts its own way and hands to `room.connect` and `addTab`.
+// it accepts its own way and hands to `room.connect`, `addTab` and `hello`.
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,7 +17,7 @@ import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "../editor-agent/session";
-import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
+import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type DocInfo, type Hello, type ModelState } from "./api";
 import type { DocName, Naming } from "../server/directory/index.ts";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
@@ -25,6 +25,8 @@ import { TreeError, checkNewName, cleanTreePath, isPage, pageAddress, parentsOf,
 import { ignored, isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";
+import { encodeStart } from "../shared/room-socket";
+import * as Y from "yjs";
 import type { VersionsAccess } from "../editor-agent/session";
 import type { ChatStore } from "../agents/checkpoint";
 
@@ -329,11 +331,19 @@ export function makeHost(opts: HostOptions) {
       ? Effect.fail(new BadRequest({ ok: false, error: e.cause.message }))
       : Effect.die(e));
 
+  /** The document's details as a person sees them (GET /api/doc, and a tab's hello). */
+  const infoFor = async (user: { id: string; name: string }): Promise<DocInfo> => {
+    const docName = await (namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
+    return { name: doc.name, path: doc.path, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
+  };
+  /** The person's agent: on or off, its model, its conversation (GET /api/agent, and a tab's socket once its session is up). */
+  const agentStateFor = (user: { id: string; name: string }): Promise<AgentState> => Effect.runPromise(session(user).pipe(
+    Effect.flatMap((s) => Effect.map(configured(s), (off): AgentState => off ? { enabled: false, reason: off, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })),
+    Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
+  ));
+
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
-    .handle("info", () => Person.use((user) => Effect.gen(function* () {
-      const docName = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
-      return { name: doc.name, path: doc.path, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
-    })))
+    .handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user))))
     .handle("name", () => Person.use((user) => {
       const n = namingAs(user);
       return n ? Effect.tryPromise({ try: () => n.get(), catch: nameError }) : Effect.fail(nameError("This document has no name to read."));
@@ -344,10 +354,7 @@ export function makeHost(opts: HostOptions) {
     })));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
-    .handle("state", () => Person.use((user) => session(user).pipe(
-      Effect.flatMap((s) => Effect.map(configured(s), (off): AgentState => off ? { enabled: false, reason: off, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })),
-      Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
-    )))
+    .handle("state", () => Person.use((user) => Effect.promise(() => agentStateFor(user))))
     .handle("prompt", ({ payload }) => Effect.gen(function* () {
       const s = yield* agentSession;
       // The sender's last keystrokes travel over its WebSocket; let them land first.
@@ -408,7 +415,20 @@ export function makeHost(opts: HostOptions) {
     const title = text != null ? titleOf(text) : null;
     return title ? { ...e, title } : e;
   });
+  /** What a tab hears first: the document's details as its person sees them, its tree (`canEdit`: theirs to change), and the room's epoch. */
+  const helloFor = async (user: { id: string; name: string }, canEdit: boolean): Promise<Hello> => ({
+    type: "hello",
+    info: await infoFor(user),
+    tree: { entries: entries(), canEdit: canEdit && opts.only == null, moved: moves },
+    epoch: room.epoch,
+  });
   const routes: Array<HttpRouter.Route<unknown>> = [
+    // An editor's start, in one answer: its hello and the room's whole state (shared/room-socket.ts).
+    HttpRouter.route("GET", "/api/start", Effect.gen(function* () {
+      const req = yield* HttpServerRequest.HttpServerRequest;
+      const hello = yield* Effect.promise(() => helloFor(opts.personOf(req), opts.mayPublish?.(req) ?? true));
+      return HttpServerResponse.uint8Array(encodeStart(hello, Y.encodeStateAsUpdate(room.doc)), { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store" } });
+    })),
     // The document's file tree: its pages, other files and folders.
     HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
@@ -501,6 +521,9 @@ export function makeHost(opts: HostOptions) {
       tabs.add(tab);
       return () => { tabs.delete(tab); };
     },
+    /** What a tab hears first: the document's details as its person sees them, and its tree (`canEdit`: theirs to change). */
+    hello: helloFor,
+    agentState: agentStateFor,
     /** Tells every open tab, whoever's (a new version, a publish: { type: "versions" }). */
     broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */

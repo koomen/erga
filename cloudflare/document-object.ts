@@ -18,6 +18,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Document, personOf, type DocumentDeps, type OnDisk, type ViewAnswer } from "../document/document";
 import { Tabs, type Tab } from "../document/tabs";
+import { PING, PONG } from "../shared/room-socket";
 import type { DocRow, Role, Who } from "../server/directory/index.ts";
 import { agentToolsFor } from "../agents/tools";
 import { VIA } from "../shared/attribution";
@@ -53,6 +54,12 @@ export class DocumentObject extends DurableObject<Env> {
     tabOf: (ws) => (ws.deserializeAttachment() as Tab | null) ?? null,
     keep: (ws, tab) => ws.serializeAttachment(tab),
   });
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // A tab's "are you there?" is answered without waking the object (client/collab.ts sends it while idle).
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
+  }
 
   private deps(): DocumentDeps {
     const env = this.env;
@@ -138,25 +145,26 @@ export class DocumentObject extends DurableObject<Env> {
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (url.pathname == "/api/mirror") return this.mirror(request);
     if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return this.document.handle(request);
-    const room = url.pathname.startsWith("/api/room");
-    if (!room && url.pathname != "/api/events") return new Response("Not found", { status: 404 });
+    // A tab's one socket: the room, and with ?events=1 its person's events (document/tabs.ts).
+    if (!url.pathname.startsWith("/api/room")) return new Response("Not found", { status: 404 });
     // Who may: decided here, on the document's copy of its permissions (the front door asked no database).
     const allowed = await this.document.authorize(request);
     if (allowed instanceof Response) return allowed;
     request = allowed;
     const opened = await this.document.admit(request);
     if (!opened) return new Response("No such document", { status: 404 });
-    const tab: Tab = room
-      ? { id: crypto.randomUUID(), kind: "room", readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null }
-      : { id: crypto.randomUUID(), kind: "events", person: personOf(request.headers) };
+    const tab: Tab = {
+      id: crypto.randomUUID(), readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null,
+      person: personOf(request.headers), events: url.searchParams.get("events") == "1",
+    };
     const [client, server] = Object.values(new WebSocketPair());
     // A tab holding another epoch's history is refused, never merged (on a socket of its own, closed at once).
-    if (tab.kind == "room" && tab.epoch && tab.epoch != opened.room.epoch) {
+    if (tab.epoch && tab.epoch != opened.room.epoch) {
       server.accept();
       server.close(4409, "stale epoch");
       return new Response(null, { status: 101, webSocket: client });
     }
-    this.ctx.acceptWebSocket(server, [tab.kind]);
+    this.ctx.acceptWebSocket(server);
     server.serializeAttachment(tab);
     if (!this.tabs.join(server, opened, tab)) server.close(4409, "stale epoch");
     return new Response(null, { status: 101, webSocket: client });
@@ -164,7 +172,7 @@ export class DocumentObject extends DurableObject<Env> {
 
   /** A tab's message (it may wake the object: the document then opens again from storage). */
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    await this.tabs.message(ws, bytesOf(message));
+    await this.tabs.message(ws, typeof message == "string" ? message : bytesOf(message));
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {

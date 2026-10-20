@@ -26,7 +26,8 @@ let boot = "";
 /** GET /api/release: the files' addresses, and the release (the deploy's version, ERGA_VERSION). */
 export function releaseApi(platform: Platform): Response {
   const assets = assetManifest();
-  return Response.json({ files: assets?.files ?? {}, version: platform.deploy.version ?? `boot-${boot ||= crypto.randomUUID().slice(0, 8)}`, assets }, { headers: { "Cache-Control": "no-store" } });
+  // (Without the editor's shell, the largest part, which only the app's own document pages put in: shared/assets.ts.)
+  return Response.json({ files: assets?.files ?? {}, version: platform.deploy.version ?? `boot-${boot ||= crypto.randomUUID().slice(0, 8)}`, assets: assets && { ...assets, shell: undefined } }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /** The digest of a page's code: its inline scripts and the scripts it loads, in order (not its text or data). */

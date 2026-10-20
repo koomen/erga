@@ -21,6 +21,11 @@ export interface AssetManifest {
   integrity: Record<string, string>;
   /** The app's typeface: its @font-face rules (the font files' addresses root-relative), to put in a page's own <style>. */
   fonts: { css: string; preload: string };
+  /**
+   * The editor's shell (client/editor.html), which the server puts into a document's page: its styles, and its controls'
+   * HTML. Not in GET /api/release's copy (server/live.ts): only the app's own Worker makes those pages.
+   */
+  shell?: { style: string; body: string };
 }
 
 /** A hashed file's address without its hash and extension ("/_erga/main-1a2b3c4d.js" → "/_erga/main"): the same for every build of it. */

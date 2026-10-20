@@ -55,7 +55,8 @@ test("the pointer resting on a document's row fetches its page ahead (speculatio
   const row = (await page.locator(`button.twist[data-id="${id}"]`).boundingBox())!;
   await page.mouse.move(row.x + 300, row.y + row.height / 2);
   await expect.poll(rules).toEqual([href]);
-  expect(await js(page, `[...document.querySelectorAll('link[rel="prefetch"]')].some((l) => /editor.*\\.html$/.test(l.href))`)).toBe(true);
+  // (The editor's script: its shell comes in the document's page.)
+  expect(await js(page, `[...document.querySelectorAll('link[rel="prefetch"]')].some((l) => /_erga.main-[a-z0-9]+\\.js$/.test(l.href))`)).toBe(true);
   await page.mouse.move(row.x + 300, 700);
   await page.mouse.move(row.x + 300, row.y + row.height / 2);
   await page.waitForTimeout(150);

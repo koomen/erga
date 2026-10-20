@@ -29,6 +29,7 @@ declare global {
  * shell, has the HTML language. (Here, not in bridge.ts: the shell's main
  * script imports bridge.ts, and @codemirror/commands would bring the view.)
  */
+performance.mark("erga:frame-js");
 const docExtensions: Extension[] = [history()];
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -181,6 +182,7 @@ function setBase(dir: string | undefined): string {
 }
 
 function start(m: Extract<ToFrame, { type: "init" }>) {
+  performance.mark("erga:init");
   if (page) return;
   if (m.timescale) window.__ergaTimescale = m.timescale;
   if (typeof m.zoom == "number") setZoom(m.zoom);
@@ -221,7 +223,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
         watchBackdrop();
         syncBackdrop(true);
         // (Shown first: the host page puts it where the plain page was scrolled, which a kept position then overrides.)
-        if (!cur().dataset.ready) { cur().dataset.ready = "1"; window.ergaHost?.ready(); }
+        if (!cur().dataset.ready) { cur().dataset.ready = "1"; performance.mark("erga:rendered"); window.ergaHost?.ready(); }
         if (restoreScroll != null) { cur().contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
       }
       queueSnapshot(u.rendered);

@@ -71,11 +71,11 @@ export function tools(server: Server, token: string, document: string) {
   };
 }
 
-/** The document's events ({ type } messages on /d/<id>/api/events), as a list that fills as they come. */
+/** The document's events ({ type } messages, the text frames on a tab's socket: /d/<id>/api/room?events=1), as a list that fills as they come. */
 export async function events(server: Server, id: string, cookie?: string) {
   const seen: { type: string; [k: string]: unknown }[] = [];
-  const ws = new WebSocket(`${server.root.replace(/^http/, "ws")}/d/${id}/api/events`, (cookie ? { headers: { Cookie: cookie } } : undefined) as unknown as string[]);
-  ws.onmessage = (e) => { seen.push(JSON.parse(String(e.data))); };
+  const ws = new WebSocket(`${server.root.replace(/^http/, "ws")}/d/${id}/api/room?events=1`, (cookie ? { headers: { Cookie: cookie } } : undefined) as unknown as string[]);
+  ws.onmessage = (e) => { if (typeof e.data == "string") seen.push(JSON.parse(e.data)); };
   await until(() => ws.readyState == WebSocket.OPEN, 5_000, "the event socket opens");
   return Object.assign(seen, { close: () => ws.close(), of: (type: string) => seen.filter((m) => m.type == type) });
 }

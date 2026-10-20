@@ -4,7 +4,7 @@ import type { Listed, Session } from "../platform.ts";
 import { asset } from "./assets.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
 import { appPage, crumbs, esc, ICON, link, TIMES_SCRIPT } from "./chrome.ts";
-import { editorFiles } from "./viewer.ts";
+import { editorScripts } from "./viewer.ts";
 
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
 export function ago(t: number, now: number): string {
@@ -287,7 +287,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
     if (SPECULATE) document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", textContent: JSON.stringify({ prefetch: [{ source: "list", urls: [url] }] }) }));
     if (edit && !filesWarmed) {
       filesWarmed = true;
-      for (const [href, as] of ${editorFiles()}) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href, ...(as == "fetch" ? { crossOrigin: "anonymous" } : {}) }));
+      for (const href of ${editorScripts()}) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
     }
   };
   for (const b of document.querySelectorAll("button.twist")) {
