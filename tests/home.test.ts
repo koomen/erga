@@ -70,11 +70,11 @@ test("a <base> moves where its URLs resolve; a page that isn't HTML can't be ser
 });
 
 test("the controls: in a declarative shadow root, Edit only when given", () => {
-  const h = homeHeader({ clone: "/new?from=landing", edit: "/ada/home#edit", account: null, here: "/" });
+  const h = homeHeader({ clone: "/new?from=landing", edit: "/ada/home?edit", account: null, here: "/" });
   expect(h).toMatch(/^<erga-controls><template shadowrootmode="open">/);
   expect(homeHeader({ clone: "/c", edit: null, account: null, here: "/", doc: "abcdefgh" })).toMatch(/^<erga-controls data-doc="abcdefgh">/);
   expect(h).toContain('href="/new?from=landing"');
-  expect(h).toContain('href="/ada/home#edit"');
+  expect(h).toContain('href="/ada/home?edit"');
   expect(h).toContain('data-erga-account="out"');
   expect(homeHeader({ clone: "/c", edit: null, account: null, here: "/" })).not.toContain("erga-edit-button");
 });

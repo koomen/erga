@@ -7,7 +7,7 @@
 // memory serves alone.
 
 import { roleMay } from "../directory/index.ts";
-import { accountOf, link, OWN_ACCOUNT } from "../pages/index.ts";
+import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
 import { mayDeploy } from "../deploys/access.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import type { LivePage } from "./deploys.ts";
@@ -93,7 +93,7 @@ export async function serveHome(request: Request, platform: Platform): Promise<R
     const role = admin ? await dir.access(who, doc) : null;
     return homeHeader({
       clone: link("/new?from=landing", session),
-      edit: session && !session.agent && roleMay(role, "edit") ? `${link(page.address, session)}#edit` : null,
+      edit: session && !session.agent && roleMay(role, "edit") ? withEdit(link(page.address, session)) : null,
       account: accountOf(session, admin, await mayDeploy(dir, session)),
       here: url.pathname + url.search,
       doc: page.docId,

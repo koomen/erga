@@ -16,7 +16,7 @@ test("Clone for everyone, Edit for its editors, and who you are, with its menu",
     return { clone: r?.querySelector(".erga-clone-button")?.getAttribute("href") ?? null, edit: r?.querySelector(".erga-edit-button")?.getAttribute("href") ?? null, account: (r?.querySelector(".erga-account") as HTMLElement | null)?.dataset.ergaAccount ?? null, inBody: !!document.body.querySelector("erga-controls") };
   });
   await p.goto(`${server.root}/`);
-  expect(await controls()).toEqual({ clone: "/new?from=landing", edit: `${address}#edit`, account: "in", inBody: false });
+  expect(await controls()).toEqual({ clone: "/new?from=landing", edit: `${address}?edit`, account: "in", inBody: false });
   const menuHidden = () => p.evaluate(() => (document.querySelector("erga-controls")!.shadowRoot!.querySelector(".erga-account-menu") as HTMLElement).hidden);
   await p.evaluate(() => (document.querySelector("erga-controls")!.shadowRoot!.querySelector(".erga-account-btn") as HTMLElement).click());
   expect(await menuHidden()).toBe(false);

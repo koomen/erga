@@ -151,7 +151,7 @@ export class DocumentObject extends DurableObject<Env> {
   /** The directory's permissions for this document now (Directory.share pushes each change): the document's copy. */
   setPermissions(list: { login: string; role: Role }[]): Promise<void> { return this.document.setPermissions(list); }
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */
-  view(who: Who | null, opts: { page: string; anyone?: boolean; have?: string | null }): Promise<ViewAnswer | null> { return this.document.view(who, opts); }
+  view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> { return this.document.view(who, opts); }
   /** A person's agent run that a restart cut off goes on (their object's alarm asks). */
   resumeAgent(person: { id: string; name: string }): Promise<void> { return this.document.hold(() => this.document.resumeAgent(person)); }
 

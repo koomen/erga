@@ -387,3 +387,118 @@ export function describeAct(kind: "click" | "key", a: ActResult): string {
 
 /** Where the answer came from, in words: which page, and the tab's state. */
 export const describeTab = (t: LiveResult["tab"]) => t ? `(From ${t.page} in the person's ${t.focused ? "focused" : t.visible ? "visible" : "background"} tab.)` : "";
+
+/**
+ * The page's first script (a function, as its text goes into the page, so
+ * it refers to nothing outside itself). `o.events` and `o.net` turn the event
+ * and request watches on (off for the editor's own window, which only logs).
+ */
+export function liveWatch(o: { events: boolean; net: boolean; types: string[] }): void {
+  // (The page's window, loosely typed: this module is the server's too, which has no DOM types.)
+  const w = globalThis as any;
+  if (w.__ergaLiveInstalled) return;
+  w.__ergaLiveInstalled = true;
+  let q: [string, unknown][] = [];
+  const send = (kind: string, data: unknown) => {
+    const s = w.__ergaLiveSink;
+    if (s) { try { s(kind, data); } catch { /* the editor's to handle */ } }
+    else if (q.length < 5000) q.push([kind, data]);
+  };
+  w.__ergaLiveTake = (sink: (k: string, d: unknown) => void) => { w.__ergaLiveSink = sink; const held = q; q = []; for (const [k, d] of held) sink(k, d); };
+  const text = (x: unknown): string => {
+    if (typeof x == "string") return x;
+    if (x instanceof Error) return `${x.name}: ${x.message}`;
+    if (x && typeof x == "object") {
+      if ((x as { nodeType?: number }).nodeType == 1) { const el = x as { localName: string; id: string }; return `<${el.localName}${el.id ? "#" + el.id : ""}>`; }
+      try { const j = JSON.stringify(x); if (j !== undefined) return j.length > 500 ? j.slice(0, 500) + "…" : j; } catch { /* a cycle */ }
+    }
+    return String(x);
+  };
+  const con = w.console as unknown as Record<string, (...a: unknown[]) => unknown>;
+  for (const level of ["error", "warn", "info", "log", "debug"]) {
+    const orig = con[level];
+    if (typeof orig != "function") continue;
+    con[level] = function (this: unknown, ...args: unknown[]) {
+      try {
+        // console.log("%c styled", "css"): the format's %c parts are the page's styling, not its words.
+        let a = args;
+        if (typeof a[0] == "string" && a[0].includes("%c")) { const n = (a[0].match(/%c/g) ?? []).length; a = [a[0].replace(/%c/g, ""), ...a.slice(1 + n)]; }
+        send("console", { level, text: a.map(text).join(" "), at: Date.now() });
+      } catch { /* never in the page's way */ }
+      return orig.apply(this, args);
+    };
+  }
+  const MEDIA_ERR = ["", "MEDIA_ERR_ABORTED", "MEDIA_ERR_NETWORK", "MEDIA_ERR_DECODE", "MEDIA_ERR_SRC_NOT_SUPPORTED"];
+  w.addEventListener("error", (e: any) => {
+    const t = e.target as any;
+    if (t && (t as unknown) !== w && t.nodeType == 1) {
+      const media = t.localName == "audio" || t.localName == "video";
+      const src = t.getAttribute("src") || t.getAttribute("href") || (media ? t.currentSrc : "") || "";
+      const why = media && t.error ? ` (${MEDIA_ERR[t.error.code] ?? t.error.code}${t.error.message ? `: ${t.error.message}` : ""})` : "";
+      send("console", { level: "error", text: `<${t.localName}${t.id ? "#" + t.id : ""}> failed to load ${src || "its source"}${why}`, at: Date.now() });
+    } else {
+      const ev = e;
+      send("console", { level: "error", text: `Uncaught ${ev.error instanceof Error ? `${ev.error.name}: ${ev.error.message}` : ev.message}${ev.filename ? ` (${ev.filename}${ev.lineno ? `:${ev.lineno}` : ""})` : ""}`, at: Date.now() });
+    }
+  }, true);
+  w.addEventListener("unhandledrejection", (e: any) => send("console", { level: "error", text: `Unhandled rejection: ${text(e.reason)}`, at: Date.now() }));
+  if (o.net) {
+    try { w.performance.setResourceTimingBufferSize(2000); } catch { /* not here */ }
+    const of = w.fetch;
+    if (typeof of == "function") {
+      w.fetch = function (this: unknown, input: any, init?: any) {
+        const at = Date.now();
+        let url = "", method = "GET", range: string | undefined;
+        try {
+          const req = input instanceof w.Request ? input : null;
+          url = new URL(req ? req.url : String(input), w.location.href).href;
+          method = (init?.method ?? req?.method ?? "GET").toUpperCase();
+          range = new w.Headers(init?.headers ?? req?.headers).get("range") ?? undefined;
+        } catch { /* the request will say what's wrong */ }
+        const p = of.call(this, input, init);
+        p.then((r: any) => send("request", { url, method, range, status: r.status, type: r.headers.get("content-type") ?? undefined, contentRange: r.headers.get("content-range") ?? undefined, length: Number(r.headers.get("content-length")) || undefined, at, via: "fetch" }),
+          (err: unknown) => send("request", { url, method, range, error: text(err), at, via: "fetch" }));
+        return p;
+      };
+    }
+    const X = w.XMLHttpRequest?.prototype;
+    if (X) {
+      const open = X.open, setHeader = X.setRequestHeader, sendX = X.send;
+      type Rec = { url: string; method: string; range?: string; at: number };
+      const recs = new WeakMap<object, Rec>();
+      X.open = function (this: any, method: string, url: unknown, ...rest: unknown[]) {
+        try { recs.set(this, { url: new URL(String(url), w.location.href).href, method: String(method).toUpperCase(), at: 0 }); } catch { /* as the browser will say */ }
+        return (open as (...a: unknown[]) => void).call(this, method, url, ...rest);
+      };
+      X.setRequestHeader = function (this: any, name: string, value: string) {
+        const r = recs.get(this);
+        if (r && name.toLowerCase() == "range") r.range = value;
+        return setHeader.call(this, name, value);
+      };
+      X.send = function (this: any, body?: unknown) {
+        const r = recs.get(this);
+        if (r) {
+          r.at = Date.now();
+          this.addEventListener("loadend", () => {
+            const failed = this.status == 0;
+            send("request", { url: r.url, method: r.method, range: r.range, at: r.at, via: "xhr", ...(failed ? { error: "the request failed (network error, CORS, or aborted)" } : { status: this.status, type: this.getResponseHeader("content-type") ?? undefined, contentRange: this.getResponseHeader("content-range") ?? undefined }) });
+          });
+        }
+        return sendX.call(this, body);
+      };
+    }
+  }
+  if (o.events) {
+    const watched = new Set(o.types);
+    const P = w.Event.prototype as Record<string, (...a: unknown[]) => unknown>;
+    for (const how of ["preventDefault", "stopPropagation", "stopImmediatePropagation"]) {
+      const orig = P[how];
+      P[how] = function (this: any, ...a: unknown[]) {
+        try { if (watched.has(this.type)) send("consume", { ev: this, how, phase: this.eventPhase, on: this.currentTarget, stack: String(new Error().stack ?? "") }); } catch { /* never in the page's way */ }
+        return orig.apply(this, a);
+      };
+    }
+    // At the window, in the capture phase, before anyone else's listener: every event, consumed or not.
+    for (const type of o.types) w.addEventListener(type, (e: unknown) => send("event", e), true);
+  }
+}

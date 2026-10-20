@@ -62,7 +62,7 @@ test("viewing: 1 / 4 on frame 1, centred; the list has four labelled steps, each
 test("editing: the controls show, forward flies the same way, and the frames' text is editable", async ({ tab }) => {
   const made = await newDoc(await servers.main(), "canvas");
   const page = tab.page;
-  await openTab(tab, `${made.address}#edit`, { width: 1100, height: 720 });
+  await openTab(tab, `${made.address}?edit`, { width: 1100, height: 720 });
   await editorReady(page);
   await expect.poll(async () => (await bar(page)).shown && (await camera(page))?.at == 0).toBe(true);
   await flies(page, 0);
@@ -72,7 +72,7 @@ test("editing: the controls show, forward flies the same way, and the frames' te
 test("editing: the camera zooms past the editor's limits, by ctrl and the wheel and by the zoom keys, and a drag pans; a press on the text places the caret and doesn't pan", async ({ tab }) => {
   const made = await newDoc(await servers.main(), "canvas");
   const page = tab.page;
-  await openTab(tab, `${made.address}#edit`, { width: 1100, height: 720 });
+  await openTab(tab, `${made.address}?edit`, { width: 1100, height: 720 });
   await editorReady(page);
   const ed = editor(page, { address: made.address, dir: "", file: "" });
   await ed.loaded();
@@ -80,8 +80,8 @@ test("editing: the camera zooms past the editor's limits, by ctrl and the wheel 
   const fit = (await camera(page))!.s;
   const zoom = async () => (await camera(page))!.s;
   /** The editor's own zoom: the page's frame against its size. It stays at 100%, the header and the agent as they were. */
-  const frameScale = () => ed.frame<number>(`(() => { const f = document.getElementById("page"); return f.getBoundingClientRect().width / f.offsetWidth; })()`);
-  const middle = await ed.frame<{ x: number; y: number }>(`(() => { const r = document.getElementById("page").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  const frameScale = () => ed.frame<number>(`(() => { const f = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }); return f.getBoundingClientRect().width / f.offsetWidth; })()`);
+  const middle = await ed.frame<{ x: number; y: number }>(`(() => { const r = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
   const at = await ed.frameAt(), mx = at.x + middle.x, my = at.y + middle.y;
 
   // Ctrl and the wheel (a pinch on a trackpad): out to below 10%, then in to above 400%.
@@ -114,7 +114,7 @@ test("editing: the camera zooms past the editor's limits, by ctrl and the wheel 
   /** A point of the canvas, in the tab: the canvas's own (60, 60), a corner no frame covers. */
   const corner = async () => {
     const p = await ed.frame<{ x: number; y: number; free: boolean }>(`(() => {
-      const r = document.getElementById("page").getBoundingClientRect(), cv = ${F}.querySelector(".canvas"), c = cv.getBoundingClientRect(), k = c.width / cv.offsetWidth;
+      const r = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }).getBoundingClientRect(), cv = ${F}.querySelector(".canvas"), c = cv.getBoundingClientRect(), k = c.width / cv.offsetWidth;
       const x = c.left + 60 * k, y = c.top + 60 * k;
       return { x: r.left + x, y: r.top + y, free: !${F}.elementFromPoint(x, y)?.closest(".frame") };
     })()`);

@@ -36,7 +36,7 @@ test("the pencil opens the page shown in the editor, rendered with its folder's 
   await p.goto(`${server.root}${s.address}/blog`);
   await expect.poll(async () => (await styled(p))?.h1).toBe("Blog");
   await p.evaluate(() => (document.querySelector(".erga-edit-button") as HTMLElement).click());
-  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog#edit true`);
+  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog?edit true`);
   const ed = editor(p, { address: s.address, dir: "", file: "" });
   const rendered = () => ed.frame<{ h1: string; color: string } | null>(`(() => { const h = ${F}?.querySelector("h1"); return h ? { h1: h.textContent, color: getComputedStyle(h).color } : null; })()`);
   await expect.poll(async () => (await rendered())?.h1).toBe("Blog");
@@ -68,43 +68,45 @@ test("in the editor, a link to another page opens its editor, and a page moved u
   tab.strict = true;
   const p = tab.page;
   await keepAgentClosed(p);
-  await p.goto(`${server.root}${s.address}/blog#edit`);
+  await p.goto(`${server.root}${s.address}/blog?edit`);
   await expect.poll(() => ready(p)).toBe(true);
   const ed = editor(p, { address: s.address, dir: "", file: "" });
   await expect.poll(() => ed.frame<boolean>(`!!${F}?.querySelector('nav a[href="post.html"]')`)).toBe(true);
   await ed.frame(`${F}.querySelector('nav a[href="post.html"]').click()`);
-  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/post#edit true`);
+  await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/post?edit true`);
   expect(await editing(p)).toBe("blog/post.html");
   await s.treeOp({ op: "move", from: "blog/post.html", to: "blog/hello.html" });
-  await expect.poll(() => where(p)).toBe(`${s.address}/blog/hello#edit`);
+  await expect.poll(() => where(p)).toBe(`${s.address}/blog/hello?edit`);
   await expect.poll(() => editing(p)).toBe("blog/hello.html");
   await s.treeOp({ op: "move", from: "blog/hello.html", to: "blog/post.html" });
-  await expect.poll(() => where(p)).toBe(`${s.address}/blog/post#edit`);
+  await expect.poll(() => where(p)).toBe(`${s.address}/blog/post?edit`);
   await expect.poll(() => ready(p)).toBe(true);
 });
 
-test("#edit opens the editor, on load and on a hash change; Back and Forward follow it, without a reload", async ({ tab }) => {
+test("?edit opens the editor, on load and by the pencil (the address follows it); Back and Forward follow it, without a reload", async ({ tab }) => {
   const server = await servers.short();
   const s = await site(server, { pages: true });
   tab.strict = true;
   const p = tab.page;
   await keepAgentClosed(p);
-  await p.goto(`${server.root}${s.address}/blog/post#edit`);
+  await p.goto(`${server.root}${s.address}/blog/post?edit`);
   await expect.poll(() => ready(p)).toBe(true);
   const editingNow = () => p.evaluate(() => document.body.classList.contains("erga-editing"));
-  await p.evaluate(() => { (window as any).__same = true; location.hash = ""; });
-  await expect.poll(() => where(p)).toMatch(new RegExp(`^${s.address}/blog/post#?$`));
+  await p.evaluate(() => { (window as any).__same = true; });
+  await p.locator("#btn-edit").click();
+  await expect.poll(() => where(p)).toBe(`${s.address}/blog/post`);
   await expect.poll(editingNow).toBe(false);
-  await p.evaluate(() => { location.hash = "edit"; });
+  await p.locator(".erga-edit-button").click();
   await expect.poll(() => ready(p)).toBe(true);
+  expect(await where(p)).toBe(`${s.address}/blog/post?edit`);
   await p.evaluate(() => history.back());
   await expect.poll(editingNow).toBe(false);
   await p.evaluate(() => history.forward());
   await expect.poll(() => ready(p)).toBe(true);
   expect(await p.evaluate(() => (window as any).__same)).toBe(true);
-  // Opened with #edit, a page loads straight into the editor; without, it's viewed.
-  await p.goto(`${server.root}${s.address}/about#edit`);
-  await expect.poll(async () => `${await where(p)} ${await ready(p)} ${await editing(p)}`).toBe(`${s.address}/about#edit true about.html`);
+  // Opened with ?edit, a page loads straight into the editor; without, it's viewed.
+  await p.goto(`${server.root}${s.address}/about?edit`);
+  await expect.poll(async () => `${await where(p)} ${await ready(p)} ${await editing(p)}`).toBe(`${s.address}/about?edit true about.html`);
   await p.goto(`${server.root}${s.address}/about`);
   await expect.poll(async () => (await styled(p))?.h1).toBe("About");
   expect(await editingNow()).toBe(false);

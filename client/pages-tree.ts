@@ -34,7 +34,7 @@ export interface TreeOptions {
   id: string;
   /** Its address, /<owner>/<slug>: where its pages are (pageUrl). */
   base: string;
-  /** Open pages in the editor (<address>#edit) rather than the viewer (<address>). */
+  /** Open pages in the editor (<address>?edit) rather than the viewer (<address>). */
   editing: boolean;
   /** Carried on every request and link (a local tab's ?user=). */
   query?: string;
@@ -317,8 +317,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   addPage.addEventListener("click", () => startNew("", "page"));
   addFolder.addEventListener("click", () => startNew("", "folder"));
 
-  /** Where a page opens: its address, and #edit in the editor (an address always names a page, so one may be called "edit"). */
-  const href = (path: string) => pageUrl(base, path) + query + (opts.editing ? "#edit" : "");
+  /** Where a page opens: its address, and ?edit in the editor (an address always names a page, so one may be called "edit"). */
+  const href = (path: string) => pageUrl(base, path) + query + (opts.editing ? (query ? "&edit" : "?edit") : "");
   const titleFor = (n: { path: string; title?: string }) => (n.path == ROOT && rootTitle) || opts.titleOf?.(n.path) || n.title || null;
   // A new page's template is titled "Untitled": that says nothing, so its name does instead.
   const known = (t: string | null | undefined) => (t && t.trim() && t.trim().toLowerCase() != "untitled" ? t.trim() : null);

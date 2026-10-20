@@ -80,8 +80,8 @@ test("a single-page document (/new) works as before: its tree is its one page", 
   const blank = await s.get("/new");
   const at = blank.headers.get("location") ?? "";
   expect(blank.status).toBe(302);
-  expect(at.endsWith("#edit")).toBe(true);
-  const id = ((await (await s.get(`${at.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  expect(at.endsWith("?edit")).toBe(true);
+  const id = ((await (await s.get(`${at.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
   expect(paths(((await (await s.get(`/api/docs/${id}/tree`)).json()) as { entries: [] }).entries)).toBe("index.html");
-  expect((await s.get(at.replace(/#edit$/, ""))).status).toBe(200);
+  expect((await s.get(at.replace(/[?&]edit=?$/, ""))).status).toBe(200);
 });

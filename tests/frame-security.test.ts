@@ -1,40 +1,42 @@
-// The page's frame on a document's page (server/pages/viewer.ts): what it may do. The viewer holds the page inline in an
-// opaque origin; the editor's frame is on the document's pages origin, where the page's script can act as the frame's host
-// page, so that frame's own permissions are the page's.
+// The page's frame on a document's page (server/pages/viewer.ts): what it may do. The viewer holds the page in one
+// frame on the document's pages origin, for readers and editors alike, where the page's script can remove its own
+// sandbox: the frame's own permissions are the page's, and the boundary is its origin.
 
 import { expect, test } from "bun:test";
 import { viewerPage } from "../server/pages/viewer.ts";
-import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "../server/pages/frame-host.ts";
-import { READER_SANDBOX, readerPage } from "../server/pages/reader.ts";
+import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX, readerPage } from "../server/pages/reader.ts";
 import { FIX_REPORTED, pageReport } from "../shared/page-report.ts";
 
-const frameOf = (editable: boolean) => {
-  const { before, after } = viewerPage({ title: "T", docId: "abcd1234", pages: editable ? "https://abcd1234-ada.erga-pages.dev" : "", host: editable ? "https://abcd1234-ada.erga-pages.dev/t/x/" : "", index: "index.html", meta: "", session: null, editable, landing: false, clone: "", edit: "" });
-  return { tag: /<iframe id="frame"[^>]*srcdoc="$/.exec(before)![0], page: before + after };
+const frameOf = (editable: boolean, editing = false) => {
+  const { before, after } = viewerPage({ title: "T", docId: "abcd1234", pages: "https://abcd1234-ada.erga-pages.dev", src: "https://abcd1234-ada.erga-pages.dev/t/x/index.html", meta: "", session: null, editable, editing, landing: false, clone: "", edit: "" });
+  return { tag: /<iframe id="frame"[^>]*><\/iframe>/.exec(before)![0], page: before + after };
 };
 
-test("the document's page is inline, in an opaque origin (no allow-same-origin), without autoplay or full screen, for everyone; going into the editor gives the page editor's frame its own sandbox, never full screen", () => {
-  const viewer = frameOf(false), editor = frameOf(true);
-  for (const f of [viewer, editor]) {
-    expect(f.tag).toContain(`sandbox="${READER_SANDBOX}"`);
-    expect(f.tag).toContain(`allow="${PAGE_ALLOW}"`);
-    expect(READER_SANDBOX, "an opaque origin").not.toContain("allow-same-origin");
+test("the document's page is in one frame on its pages origin, for everyone: never the tab itself, no autoplay or full screen; opened in the editor, autoplay (for the agent's clicks), never full screen", () => {
+  const viewer = frameOf(false), editor = frameOf(true), editing = frameOf(true, true);
+  for (const f of [viewer, editor, editing]) {
+    expect(f.tag).toContain(`sandbox="${PAGE_SANDBOX}"`);
     expect(f.tag, "never the tab itself").not.toMatch(/allow-top-navigation|allow-popups-to-escape-sandbox/);
   }
-  // Only an editor's page names the page editor's frame, which keeps the pages origin's sandbox.
-  expect(viewer.tag).not.toContain("data-src");
-  expect(editor.tag).toContain('data-src="https://abcd1234-ada.erga-pages.dev/t/x/?view=index.html');
-  expect(editor.page).toContain(`f.setAttribute("sandbox", "${PAGE_SANDBOX}")`);
-  expect(editor.page).toContain(`f.setAttribute("allow", "${EDITOR_ALLOW}")`);
-  expect(EDITOR_ALLOW, "no full screen").not.toMatch(/fullscreen(?! 'none')/);
+  expect(viewer.tag).toContain('src="https://abcd1234-ada.erga-pages.dev/t/x/index.html"');
+  expect(viewer.tag).toContain(`allow="${PAGE_ALLOW}"`);
+  expect(editor.tag).toContain(`allow="${PAGE_ALLOW}"`);
+  // Opened in the editor, its address waits for the editor's half to start with the page (FRAME_SRC).
+  expect(editing.tag).toContain('data-src="https://abcd1234-ada.erga-pages.dev/t/x/index.html"');
+  expect(editing.tag).toContain(`allow="${EDITOR_ALLOW}"`);
+  expect(editing.page).toContain('f.src = f.dataset.src + "?erga-edit"');
+  expect(EDITOR_ALLOW, "no full screen").toContain("fullscreen 'none'");
   expect(PAGE_SANDBOX).not.toMatch(/allow-top-navigation|allow-popups-to-escape-sandbox/);
 });
 
-test("the reader's script goes first in the page, after its doctype, and nothing in the page can close its element", () => {
-  const page = readerPage("<!DOCTYPE html><html><head><title>x</title></head><body></body></html>", { base: "https://erga.dev/_f/k/", page: "index.html", prefix: "/_f/k/" });
-  expect(page.startsWith('<!DOCTYPE html><base href="https://erga.dev/_f/k/"><script>')).toBe(true);
-  const hostile = readerPage("<p>x</p>", { page: "</script><script>alert(1)</script>", prefix: "/_f/k/" });
-  expect(hostile.match(/<script>/g)?.length).toBe(1);
+test("the viewer's script goes first in the page's head, and nothing in the page or its config can close its element", () => {
+  const page = readerPage("<!DOCTYPE html><html><head><title>x</title><script>own()</script></head><body></body></html>", { shell: "https://erga.dev", prefix: "/t/x/", src: "s", editor: false });
+  expect(page.startsWith('<!DOCTYPE html><html><head><script data-erga>')).toBe(true);
+  expect(page.indexOf("own()")).toBeGreaterThan(page.indexOf("erga-hello"));
+  const hostile = readerPage("<p>x</p>", { shell: "https://erga.dev", prefix: "/t/</script><script>alert(1)</script>/", src: "s", editor: true });
+  expect(hostile).not.toContain("</script><script>alert(1)");
+  // No head of its own, no <html>, only a doctype: still first, and the page keeps its mode.
+  expect(readerPage("<!doctype html><p>x</p>", { shell: "https://erga.dev", prefix: "/t/x/", src: "s", editor: false })).toStartWith("<!doctype html><script data-erga>");
 });
 
 test("a page's report for the agent is a block of its own, which nothing in the report can close", () => {

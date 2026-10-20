@@ -22,8 +22,8 @@ const twist = (page: Page, id: string) => clickOn(page, `button.twist[data-id="$
 /** A new document from the Page template: no other pages yet. */
 async function empty(root: string) {
   const made = (await fetch(`${root}/new?template=page`, { redirect: "manual" })).headers.get("location") ?? "";
-  expect(made).toMatch(/#edit$/);
-  return ((await (await fetch(`${root}${made.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  expect(made).toMatch(/[?&]edit=?$/);
+  return ((await (await fetch(`${root}${made.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
 }
 const hasRows = (s: State) => s.rows > 0;
 const nonePlaceholder = (s: State) => /No other pages yet\./.test(s.text) && /New page/.test(s.text) && /New folder/.test(s.text);

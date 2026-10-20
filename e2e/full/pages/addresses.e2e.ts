@@ -53,16 +53,18 @@ test("on the pages origin, a page's address goes to its file, relatively, so rel
   const s = await site(await servers.short(), { pages: true });
   const viewer = await (await s.get(`${s.address}/blog`)).text();
   const frameSrc = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(viewer)?.[1]?.replace(/&amp;/g, "&") ?? "";
+  // The frame's address is the page's file, under the token that opens the document's files.
   const frame = new URL(frameSrc);
-  expect(frame.searchParams.get("view")).toBe("blog/index.html");
-  const onPages = (path: string) => pagesFetch(`${frame.origin}${frame.pathname}${path}`);
-  for (const [path, location] of [["doc/blog", "blog/index.html"], ["doc/blog/", "index.html"], ["doc/blog/post", "post.html"]]) {
+  expect(frame.pathname).toMatch(/^\/t\/[^/]+\/blog\/index\.html$/);
+  const prefix = frame.pathname.slice(0, -"blog/index.html".length);
+  const onPages = (path: string) => pagesFetch(`${frame.origin}${prefix}${path}`);
+  for (const [path, location] of [["blog", "blog/index.html"], ["blog/", "index.html"], ["blog/post", "post.html"]]) {
     const r = await onPages(path);
     expect({ path, status: r.status, location: r.location }).toEqual({ path, status: 302, location });
   }
-  const root = await onPages("doc/");
+  const root = await onPages("");
   expect(root.status).toBe(200);
   expect(await root.text()).toContain("<h1>Home</h1>");
-  expect((await onPages("doc/blog/blog.css")).status).toBe(200);
-  expect((await onPages("doc/nope")).status).toBe(404);
+  expect((await onPages("blog/blog.css")).status).toBe(200);
+  expect((await onPages("nope")).status).toBe(404);
 });

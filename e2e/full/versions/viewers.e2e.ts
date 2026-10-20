@@ -1,6 +1,7 @@
 // What viewers see: the document as it is now, always. There's no publishing.
 import { expect, servers, test } from "../../fixtures";
 import { cut, intoHeading, person, someone, type Get } from "./versions";
+import { framed, pagesFetch } from "../../pages-fetch";
 
 await servers.short();
 
@@ -16,16 +17,12 @@ async function shared() {
   return { server, owner, viewer, id, ada };
 }
 
-/** What the viewer's page shows `who` (the page inline, as its frame holds it), each time afresh; and a file at its files' address. */
+/** What the viewer's page shows `who` (the page on the document's origin, as its frame has it), each time afresh; and a file of its. */
 function viewerOf(who: Get, id: string) {
-  const unescape = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
-  const inline = async () => unescape(/<iframe id="frame"[^>]*srcdoc="([^"]*)"/.exec(await (await who(`/d/${id}`, { redirect: "follow" })).text())![1]);
+  const src = async () => /<iframe id="frame"[^>]* src="([^"]+)"/.exec(await (await who(`/d/${id}`, { redirect: "follow" })).text())![1].replace(/&amp;/g, "&");
   return {
-    text: inline,
-    file: async (path: string) => {
-      const base = /<base href="([^"]+)">/.exec(await inline())![1];
-      return (await fetch(base + path)).text();
-    },
+    text: async () => (await framed(await src())).text(),
+    file: async (path: string) => (await pagesFetch(new URL(path, await src()).href)).text(),
   };
 }
 
@@ -37,7 +34,7 @@ test("viewers see edits up to the keystroke, before any version is cut, in the p
     await expect.poll(() => theirs.text(), { timeout: 2_000 }).toContain("live-now");
     expect(await theirs.file("index.html")).toContain("live-now");
     expect((await owner.versions(id)).pending).toBe(true);
-    const copy = (await viewer.get(`/new?from=${id}`)).headers.get("location")!.replace(/(\/edit|#edit)$/, "");
+    const copy = (await viewer.get(`/new?from=${id}`)).headers.get("location")!.replace(/(\/edit|[?&]edit)$/, "");
     expect(await (await viewer.get(`${copy}/doc/index.html`)).text()).toContain("live-now");
   } finally { ada.disconnect(); }
 });

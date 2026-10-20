@@ -1,14 +1,16 @@
 // A document's pages origin (<id>-<owner>.erga-pages.dev, or one shared host): where the
-// editor's page editor runs, apart from the app's origin. The page editor reaches into the
-// editable page (typing, carets), so the page needs an origin of its own, holding nothing
-// but this one document; the viewer needs none (its frame has an opaque origin: view.ts).
-// The frame's host page there (pages/frame-host.ts) opens the document's files with a
-// signed token the editor's page gives it (pagesToken), for someone who may edit it.
+// document's page runs, for readers and editors alike, apart from the app's origin. The
+// viewer (view.ts) holds it in its one frame; the page editor runs inside it there (the
+// page needs an origin of its own for that, holding nothing but this one document). A
+// signed token in the address opens the document's files (pagesToken): /t/<token>/<path>
+// is the file at <path>, and a page (an HTML file the frame goes to) comes with what the
+// viewer and the editor need in it (pages/reader.ts, readerPage).
 
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./front-door.ts";
-import { esc, frameHead, HOST_SCRIPT, HOST_STYLE, hostVersion, PAGE_ALLOW, PAGE_SANDBOX } from "../pages/index.ts";
+import { markPage, sourceDigest } from "../../shared/page.ts";
+import { readerPage, readerVersion } from "../pages/index.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -67,15 +69,16 @@ const hmac = async (secret: string, value: string) => {
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 /**
- * A token that opens one document's files on its pages origin, for a week, for the editor at `shell` (whose origin it names).
+ * A token that opens one document's files on its pages origin, for a week, for the viewer at `shell` (whose origin it names);
+ * `edit`: for someone who may edit it, whose pages come with what the editor needs in them (readerPage).
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, pagesDoor and document/host.ts's docFile).
  */
-export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { by?: string } = {}): Promise<string> {
+export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { by?: string; edit?: boolean } = {}): Promise<string> {
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
   // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
   // scripts can read its address).
-  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.by ? { a: opts.by.toLowerCase() } : {}) })));
+  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.by ? { a: opts.by.toLowerCase() } : {}), ...(opts.edit ? { w: 1 } : {}) })));
   return `${claims}.${await hmac(secret, claims)}`;
 }
 
@@ -84,21 +87,38 @@ export async function readPagesToken(secret: string, token: string, owner: strin
   return (await readPagesClaims(secret, token, owner, id, now))?.shell ?? null;
 }
 
-/** What a good, current token for this document says: the editor's origin, and whom it was made for (if it says). */
-export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; by?: string } | null> {
+/** What a good, current token for this document says: the viewer's origin, whom it was made for (if it says), and whether for an editor. */
+export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; by?: string; edit?: boolean } | null> {
   const [claims, mac, extra] = token.split(".");
   if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
   try {
-    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; a?: unknown };
+    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; a?: unknown; w?: unknown };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
-    return new URL(c.s).origin == c.s ? { shell: c.s, ...(typeof c.a == "string" ? { by: c.a } : {}) } : null;
+    return new URL(c.s).origin == c.s ? { shell: c.s, ...(typeof c.a == "string" ? { by: c.a } : {}), ...(c.w === 1 ? { edit: true } : {}) } : null;
   } catch { return null; }
 }
 
+/** A page made from a text (by its file's ETag): its marked HTML and its text's digest, a few megabytes at most. */
+const marked = new Map<string, { html: string; src: string }>();
+let markedSize = 0;
+const MARKED_MAX = 8_000_000;
+
+function markedPage(etag: string | null, text: string): { html: string; src: string } {
+  const kept = etag ? marked.get(etag) : undefined;
+  if (kept) return kept;
+  const made = { html: markPage(text), src: sourceDigest(text) };
+  if (etag && text.length < MARKED_MAX / 8) {
+    if (markedSize + made.html.length > MARKED_MAX) { marked.clear(); markedSize = 0; }
+    marked.set(etag, made);
+    markedSize += made.html.length;
+  }
+  return made;
+}
+
 /**
- * A request to a document's pages origin: /t/<token>/ is the page editor's
- * frame, which only the editor on this site may embed, and /t/<token>/doc/...
- * are the document's files.
+ * A request to a document's pages origin: /t/<token>/<path> is the document's file at <path> (/t/<token>/ its own
+ * page), which only the viewer on the token's site may frame. A page the frame goes to (an HTML file, as a frame's
+ * document) comes marked, with the viewer's script first in it (readerPage); anything else as the file is.
  */
 export async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
@@ -106,37 +126,37 @@ export async function pagesDoor(request: Request, url: URL, doc: { owner: string
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();
   const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
   const shell = claims?.shell;
-  if (!claims || !shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  if (rest == "/") {
-    // ?view=<file>: the page to show straight away, as it renders (the viewer's, and the editor's until it has its own).
-    // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
-    const view = url.searchParams.get("view");
-    const files = `/t/${token}/doc/`;
-    // The page as it renders is what viewers see: the files as they are now.
-    const shown = files;
-    const src = view == "" ? shown : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${shown}${view.split("/").map(encodeURIComponent).join("/")}` : "";
-    // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
-    // resolves the document's files there from the start, even in Chrome's preload scanner, which otherwise asks for them here too.
-    const html = `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(files)}"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
-<style>${HOST_STYLE}</style>${frameHead(shell)}
-</head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}" allow="${PAGE_ALLOW}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`;
-    // Everything in it comes from its address (the token names the shell) and this code: with this code's version in the
-    // address (?v=, as the document's page links it), the browser may keep it for the day the token stays the same; without,
-    // it's checked with the server each time (answered 304 when unchanged).
-    const etag = `"${b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(html)))).slice(0, 22)}"`;
-    const cache = url.searchParams.get("v") == hostVersion() ? `private, max-age=${DAY}` : "no-cache";
-    const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": cache, ETag: etag, "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" };
-    if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
-    return new Response(html, { headers });
+  if (!claims || !shell) return new Response("This link has expired: reload the page.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  // A frame's document (Sec-Fetch-Dest says so: a page's own fetch of an HTML file gets the file as it is).
+  const page = request.method == "GET" && /^(iframe|frame|document)$/.test(request.headers.get("sec-fetch-dest") ?? "");
+  // Its ETag is the file's with what goes in it (this code's version and the token's kind), so the browser's copy is
+  // checked against the file's: the file's own (stripped of ours) goes to the document.
+  const ours = `.${readerVersion()}${claims.edit ? "w" : ""}`;
+  const asked = new Headers(request.headers);
+  const inm = asked.get("if-none-match");
+  if (page && inm) {
+    const theirs = inm.split(",").map((t) => t.trim().replace(/^W\//, "")).filter((t) => t.endsWith(`${ours}"`)).map((t) => t.slice(0, -ours.length - 1) + '"');
+    if (theirs.length) asked.set("if-none-match", theirs.join(", ")); else asked.delete("if-none-match");
   }
-  if (!rest.startsWith("/doc/")) return notFound();
   // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
   // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
-  const asked = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
+  const at = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
+  const inner = new Request(request.url, { method: request.method, headers: asked });
   const [route, answer] = await Promise.all([
     platform.directory.route(doc.id),
-    platform.docs.fetch(asked, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, "files")),
+    platform.docs.fetch(at, forwarded(inner, url, `/doc${rest}`, `${shell}/d/${doc.id}`, null, "files")),
   ]);
-  if (!route || route.owner != asked.owner) { await answer.body?.cancel(); return notFound(); }
-  return answer;
+  if (!route || route.owner != at.owner) { await answer.body?.cancel(); return notFound(); }
+  const type = answer.headers.get("content-type") ?? "";
+  if (!page || !/^text\/html\b/i.test(type) || (answer.status != 200 && answer.status != 304)) return answer;
+  const etag = answer.headers.get("etag");
+  const headers = new Headers(answer.headers);
+  for (const h of ["content-length", "content-range", "accept-ranges"]) headers.delete(h);
+  if (etag) headers.set("ETag", etag.replace(/"$/, `${ours}"`));
+  // Only the viewer that the token names may frame it.
+  headers.set("Content-Security-Policy", `frame-ancestors ${shell}`);
+  headers.set("Referrer-Policy", "no-referrer");
+  if (answer.status == 304) return new Response(null, { status: 304, headers });
+  const made = markedPage(etag, await answer.text());
+  return new Response(readerPage(made.html, { shell, prefix: `/t/${token}/`, src: made.src, editor: !!claims.edit }), { status: 200, headers });
 }

@@ -28,7 +28,7 @@ export const frameOf = (html: string) => { const id = /<meta name="erga-doc" con
 /** The document / shows: in the viewer's frame, or served directly (its controls name it). */
 export const docOf = (html: string) => frameOf(html)?.[1] ?? /<erga-controls data-doc="([a-z0-9]{8})"/.exec(html)?.[1];
 /** Edit's address on a page, if it has Edit. */
-export const editOf = (html: string) => /href="([^"]+)#edit"/.exec(html)?.[1] ?? null;
+export const editOf = (html: string) => /href="([^"?]+)\?edit"/.exec(html)?.[1] ?? null;
 
 /** The landing_document setting as /admin shows it (the document's address). */
 export const landingSetting = async (server: Server) => (await (await get(server, "/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";

@@ -115,7 +115,7 @@ export function makeDoc(base: string, headers: Record<string, string>, fixture: 
     writeDelay: 400,
     roomUrl: base.replace(/^http/, "ws") + "/api/room",
     roomName: "doc",
-    pageUrl: (user) => `${base}?user=${encodeURIComponent(user)}#edit`,
+    pageUrl: (user) => `${base}?user=${encodeURIComponent(user)}&edit`,
     fetch: (p, init = {}, user) => fetch(base + p, { ...init, headers: { ...(user ? doc.headersFor(user) : headers), ...(init.headers as Record<string, string> | undefined) } }),
     async stored(p) {
       const r = await doc.fetch(`/api/stored/${p.split("/").map(encodeURIComponent).join("/")}`);
@@ -135,7 +135,7 @@ export function makeDoc(base: string, headers: Record<string, string>, fixture: 
 
 // ------------------------------------------------------------ remote
 
-/** A document's address, the base of its API: without the editor's #edit (where /new sends you) or a trailing slash. */
+/** A document's address, the base of its API: without the editor's ?edit (where /new sends you) or a trailing slash. */
 const docAddress = (url: string) => { const u = new URL(url); u.hash = ""; return u.toString().replace(/\/+$/, ""); };
 
 export class RemoteTarget implements Target {

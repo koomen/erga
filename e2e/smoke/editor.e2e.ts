@@ -41,7 +41,7 @@ test("an edit made to the file on disk reaches the open page", async ({ tab }) =
 test("two tabs on one document: typing in one shows in the other, without a reload", async ({ tab }) => {
   const a = await openEditor(tab, await servers.main(), "page");
   const page = await tab.page.context().newPage();
-  await page.goto(`${a.address}#edit`);
+  await page.goto(`${a.address}?edit`);
   const b = editor(page, { address: a.address, dir: a.dir, file: a.file });
   await b.loaded();
   await a.clickEnd("h1");

@@ -145,30 +145,27 @@ test("the document decides who may do what from its own copy of its permissions,
   expect((await checked("/api/stored/index.html", "PUT")).status).toBe(403);
 });
 
-test("a viewer's page in one call: the role, the file an address is, a version that changes with the files and only then, the text unless the caller has it", async () => {
+test("a viewer's page in one call: the role, the file an address is, a version that changes with the files and only then", async () => {
   const { dir, make } = setup();
   const doc = make();
   await dir.add({ id: "view1234", owner: "ada", title: "Notes", created: Date.now() });
   await doc.create("ada", "view1234", { "index.html": "<h1>One</h1>", "blog.html": "<h1>Blog</h1>", "style.css": "h1{}" }, "index.html", { expires: null });
   const first = (await doc.view({ login: "ada" }, { page: "" }))!;
-  expect(first).toMatchObject({ role: "owner", file: "index.html", canonical: "", html: "<h1>One</h1>" });
+  expect(first).toMatchObject({ role: "owner", file: "index.html", canonical: "" });
   expect(first.ver).toMatch(/^l[0-9a-f]+$/);
   expect(await doc.view({ login: "bo" }, { page: "" })).toMatchObject({ role: null });
-  expect((await doc.view({ login: "bo" }, { page: "" }))!.html).toBeUndefined();
   // The front page: anyone sees it.
   expect(await doc.view(null, { page: "", anyone: true })).toMatchObject({ role: null, file: "index.html" });
   // Another page by its address; one that isn't there.
-  expect(await doc.view({ login: "ada" }, { page: "blog" })).toMatchObject({ file: "blog.html", canonical: "blog", html: "<h1>Blog</h1>" });
+  expect(await doc.view({ login: "ada" }, { page: "blog" })).toMatchObject({ file: "blog.html", canonical: "blog" });
   expect(await doc.view({ login: "ada" }, { page: "nope" })).toMatchObject({ file: null });
-  // The same files: the same version, and no text for a caller who has it.
-  const again = (await doc.view({ login: "ada" }, { page: "", have: first.ver }))!;
+  // The same files: the same version.
+  const again = (await doc.view({ login: "ada" }, { page: "" }))!;
   expect(again.ver).toBe(first.ver);
-  expect(again.html).toBeUndefined();
   // A file changes (not the page): another version.
   await doc.publish({ "style.css": "h1{color:red}" }, [], "ada");
-  const changed = (await doc.view({ login: "ada" }, { page: "", have: first.ver }))!;
+  const changed = (await doc.view({ login: "ada" }, { page: "" }))!;
   expect(changed.ver).not.toBe(first.ver);
-  expect(changed.html).toBe("<h1>One</h1>");
 });
 
 test("a document stored before publishing went (its record names a published version) opens as it is now, for viewers and editors", async () => {
@@ -187,7 +184,7 @@ test("a document stored before publishing went (its record names a published ver
   // The object starts again on that storage: what it shows is the document as it is now.
   const again = new Document({ ...deps, storage: stored });
   expect(await (await get(again, "/doc/index.html")).text()).toBe("<h1>Two</h1>");
-  expect(await again.view({ login: "ada" }, { page: "" })).toMatchObject({ role: "owner", file: "index.html", html: "<h1>Two</h1>" });
+  expect(await again.view({ login: "ada" }, { page: "" })).toMatchObject({ role: "owner", file: "index.html" });
   expect((await again.snapshot())!.files["index.html"]).toBe("<h1>Two</h1>");
   const state = (await again.versionsState())!;
   expect(state).toMatchObject({ total: 2, current: { n: 2 } });
@@ -195,18 +192,3 @@ test("a document stored before publishing went (its record names a published ver
   expect((await again.currentFiles())!.version.n).toBe(2);
 });
 
-test("a viewer's page holds its own small stylesheets inline, where their links were; others stay links", async () => {
-  const { dir, make } = setup();
-  const doc = make();
-  await dir.add({ id: "styl1234", owner: "ada", title: "Notes", created: Date.now() });
-  const page = `<!doctype html><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="print.css" media="print"><link rel="stylesheet" href="https://example.com/x.css"><link rel="stylesheet" href="css/far.css"><link rel="stylesheet" href="css/plain.css"><h1>One</h1>`;
-  await doc.create("ada", "styl1234", { "index.html": page, "style.css": "h1{color:red}", "print.css": "h1{}", "css/far.css": "h1{background:url(a.png)}", "css/plain.css": "p{margin:0}" }, "index.html", { expires: null });
-  const html = (await doc.view({ login: "ada" }, { page: "" }))!.html!;
-  expect(html).toContain('<style data-erga-href="style.css">h1{color:red}</style>');
-  expect(html).toContain('<style data-erga-href="css/plain.css">p{margin:0}</style>');
-  // Its own media, another site's, and one whose url() would mean another file from the page's folder: links still.
-  expect(html).toContain('<link rel="stylesheet" href="print.css" media="print">');
-  expect(html).toContain('<link rel="stylesheet" href="https://example.com/x.css">');
-  expect(html).toContain('<link rel="stylesheet" href="css/far.css">');
-  expect(html.endsWith("<h1>One</h1>")).toBe(true);
-});

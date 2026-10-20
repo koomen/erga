@@ -1,5 +1,5 @@
-// The shell's hold on the page editor, which runs in a frame on the
-// document's own origin (frame.ts; why, in bridge.ts). It keeps the shell's
+// The shell's hold on the page editor, which runs in the page, in the shell's
+// frame on the document's own origin (frame.ts; why, in bridge.ts). It keeps the shell's
 // copy of the text (the room's, exactly) and numbers every change, takes the
 // frame's edits when they fit, and mirrors the page's state for the shell's
 // controls. Everything the frame sends is checked: the page itself could
@@ -7,7 +7,7 @@
 
 import { EditorState, Transaction, type ChangeSet, type Extension, type StateField } from "@codemirror/state";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
-import type { InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "./editor";
+import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "./editor";
 import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { changesBetween } from "../document/merge";
@@ -17,8 +17,8 @@ export interface RemotePageConfig {
   frame: HTMLIFrameElement;
   /** The frame's origin: messages from anywhere else are ignored. */
   origin: string;
-  /** The folder the page is in, inside the document ("" at its root): where its relative links and assets resolve. */
-  dir?: string;
+  /** The address of the document's files there (with the token that opens them): another of its pages is at its path under it. */
+  files: string;
   text: string;
   self: MarkAuthor;
   tracking: boolean;
@@ -44,6 +44,8 @@ export interface RemotePageConfig {
   scroll?: number;
   /** A link on the page to another of the document's pages was followed (its path in the document). */
   onOpen?: (path: string) => void;
+  /** Resolves once the room has every edit this tab made (the page that loads again is made from the room's text). */
+  flushed?: () => Promise<unknown>;
 }
 
 /** What the source view's state is made with: its extensions, and the field its undo history is in. */
@@ -63,6 +65,15 @@ export class RemotePage {
   /** While the source view holds the text: the frame is set aside until `attach`. */
   private detached = false;
   private ready = false;
+  /** In the editor: the page in the frame runs the editor (it asks the page for it as the page comes: start). */
+  private active = false;
+  /** The page's editor's last state (undo history and all), for the next one: as the page loads again, or back into the editor. */
+  private carry: unknown = null;
+  /** And where the reader was on the page that loads again (the text on its top line), to show there again. */
+  private carryView: { pos: number; top: number } | null = null;
+  /** While the page loads again with the focus: what holds the keys meanwhile (here, in the shell), and the keys. */
+  private sink: HTMLTextAreaElement | null = null;
+  private held: HeldInput[] = [];
   private queue: ToFrame[] = [];
   private nextId = 1;
   private waiting = new Map<number, (m: FromFrame) => void>();
@@ -74,36 +85,57 @@ export class RemotePage {
     this.state = EditorState.create({ doc: config.text, ...(sel ? { selection: sel } : {}) });
     window.addEventListener("message", (e) => {
       if (e.source != this.frame.contentWindow || e.origin != config.origin || typeof e.data?.type != "string") return;
-      // The frame's host page is up (again: it reloaded): ask it for the editor afresh.
-      if (e.data.type == "erga-host") { this.ready = false; this.start(); return; }
+      // A page in the frame (again: it loaded again, or went to another page): its editor, if in the editor.
+      if (e.data.type == "erga-hello") { this.ready = false; if (this.active) this.ask(); return; }
       this.receive(e.data as FromFrame);
     });
   }
 
-  /**
-   * Asks the frame for the editor (server/pages/frame-host.ts: its host page shows the page as
-   * it renders until then): it answers "ready" once the editor is loaded.
-   */
+  /** Into the editor: the page in the frame loads it (server/pages/reader.ts), and answers "ready" once it's there. */
   start(): void {
+    this.active = true;
+    this.ask();
+  }
+
+  private ask(): void {
+    // A frame whose page hasn't come yet (its first, empty document is this origin's): the page says hello when it comes.
+    try { void this.frame.contentWindow?.location.href; return; } catch { /* the page's own origin: it's there */ }
     this.frame.contentWindow?.postMessage({ type: "erga-edit" }, this.config.origin);
   }
 
   /**
-   * Another of the document's pages, in place of this one (the shell went to it without a reload): the shell's state
-   * is its text from now on, and the frame's (it renders it from its top, with an undo history of its own). Its numbering
-   * moves on by one, so an edit of the last page still on its way from the frame never fits the new one.
+   * Out of the editor: the editor in the page stops once its edits are in (the page stays as it is), and its state
+   * (undo history and all) is kept for the way back in.
    */
-  load(page: { dir: string; text: string }): void {
+  async stop(): Promise<void> {
+    if (!this.active) return;
+    this.active = false;
+    if (!this.ready) return;
+    const id = this.nextId++;
+    const reply = await this.request<Extract<FromFrame, { type: "stopped" }>>({ type: "stop", id }, 3000);
+    if (reply?.state) this.carry = reply.state;
+    if (!this.active) this.ready = false;
+  }
+
+  /**
+   * Another of the document's pages, in place of this one (the shell went to it without a reload): the shell's state
+   * is its text from now on, and the frame goes to it (its address under the document's files, in place of this one's:
+   * no new entry in the tab's history), whose editor starts from that state, with an undo history of its own. Its
+   * numbering moves on by one, so an edit of the last page still on its way from the frame never fits the new one.
+   */
+  load(page: { path: string; text: string }): void {
     const c = this.config;
-    c.dir = page.dir;
     c.scroll = undefined;
     this.state = EditorState.create({ doc: page.text });
     this.authority.reset(this.authority.version + 1);
     this.snapshot = EMPTY;
     this.detached = false;
-    // What was queued for the last page is of no use; a frame not up yet starts on the new one (its init).
+    this.carry = null;
+    this.carryView = null;
+    this.ready = false;
+    // What was queued for the last page is of no use.
     this.queue = [];
-    if (this.ready) this.post({ type: "page", dir: page.dir, state: this.state.toJSON(), version: this.authority.version });
+    this.frame.contentWindow?.location.replace(c.files + page.path.split("/").map(encodeURIComponent).join("/"));
   }
 
   // ------------------------------------------------------------ messages
@@ -130,7 +162,17 @@ export class RemotePage {
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
-        this.post({ type: "init", dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}), ...(this.zoom != 1 ? { zoom: this.zoom } : {}) });
+        this.post({ type: "init", state: this.state.toJSON(), version: this.authority.version, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}), ...(this.zoom != 1 ? { zoom: this.zoom } : {}), ...(this.carry ? { carry: this.carry } : {}), ...(this.carryView ? { view: this.carryView } : {}), ...(this.sink ? { held: this.held, focus: true } : {}), frame: { sandbox: this.frame.getAttribute("sandbox"), allow: this.frame.getAttribute("allow") }, ...(this.snapshot.paused ? { paused: true } : {}) });
+        this.carry = null;
+        this.carryView = null;
+        if (this.sink) {
+          // The keys held go to the page's editor with its start (above); the focus goes back to the page.
+          const had = document.activeElement == this.sink;
+          this.sink.remove();
+          this.sink = null;
+          this.held = [];
+          if (had) this.frame.focus();
+        }
         // Only the first frame: one that loads again later starts where it renders.
         c.scroll = undefined;
         // A focus asked for before the frame was up only if the frame still has it: focus moved on since (the pages
@@ -183,11 +225,44 @@ export class RemotePage {
       }
       case "activity": if (m.kind == "focus" || m.kind == "key") c.onActivity(m.kind); return;
       case "open": if (typeof m.path == "string" && m.path.length < 1000) c.onOpen?.(m.path); return;
-      case "detached": case "styled": case "captured": case "lived":
+      // The page loads again: its editor's state goes to the one in the page that comes (its init).
+      case "reloading": {
+        this.carry = m.state;
+        // (Only keys that were going to the page anyway: the page itself can say this, and mustn't take the focus from the shell.)
+        if (m.focus === true && document.activeElement == this.frame) this.holdKeys();
+        // It loads again once the room has its edits (else it would come made from the text before them, and load again).
+        void Promise.race([c.flushed?.(), new Promise((r) => setTimeout(r, 3000))]).then(() => this.frame.contentWindow?.postMessage({ type: "reload" }, c.origin));
+        const v = m.view;
+        this.carryView = v && Number.isInteger(v.pos) && v.pos >= 0 && Number.isFinite(v.top) ? { pos: v.pos, top: v.top } : null;
+        this.ready = false;
+        return;
+      }
+      case "detached": case "styled": case "captured": case "lived": case "stopped":
         this.waiting.get(m.id)?.(m);
         this.waiting.delete(m.id);
         return;
     }
+  }
+
+  /**
+   * The page loads again with the focus: the keys typed meanwhile would go nowhere (a page that's going), so a stand-in
+   * here takes them, and the page's editor applies them first once it's up (its init: held), as a key typed while the
+   * page renders always was. The shell's own shortcuts still work meanwhile.
+   */
+  private holdKeys(): void {
+    if (this.sink) return;
+    const sink = this.sink = document.createElement("textarea");
+    sink.tabIndex = -1;
+    sink.setAttribute("aria-hidden", "true");
+    sink.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;resize:none";
+    sink.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.metaKey || e.ctrlKey || e.key == "Escape") return;
+      e.preventDefault();
+      this.held.push({ key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey });
+    });
+    sink.addEventListener("beforeinput", (e) => { e.preventDefault(); this.held.push({ input: e.inputType, data: e.data }); });
+    document.body.append(sink);
+    sink.focus({ preventScroll: true });
   }
 
   /** Starts the frame afresh from the shell's text (it loses its undo history, which no longer fits). */
@@ -249,6 +324,8 @@ export class RemotePage {
 
   // ------------------------------------------------------------ the page
 
+  /** In the editor, and the editor in the page isn't up yet (the page loads again, or comes). */
+  get loading(): boolean { return this.active && !this.ready; }
   get isTracking(): boolean { return this.tracking; }
   setTracking(on: boolean): void { this.tracking = on; this.post({ type: "tracking", on }); }
   get canPause(): boolean { return this.snapshot.canPause; }
@@ -269,11 +346,21 @@ export class RemotePage {
   get scrollY(): number { const y = Number(this.snapshot.scrollY); return Number.isFinite(y) && y > 0 ? y : 0; }
   render(): void { this.post({ type: "render" }); }
   get zoomLevel(): number { return this.zoom; }
-  /** Draws the page at `level` (1 is 100%); a frame not up yet starts at it (its init). */
+  /**
+   * Draws the page at `level` (1 is 100%): its frame scaled (client/editor.html, html.erga-zoomed), and the editor in
+   * it told, for what it says in the shell's terms (a frame not up yet starts at it: its init).
+   */
   setZoom(level: number): void {
     const z = clampZoom(level);
     if (z == this.zoom) return;
     this.zoom = z;
+    // At once, as the browser's own zoom: not the frame's move as the agent's panel opens (its width's transition).
+    const root = document.documentElement, f = this.frame;
+    f.style.transition = "none";
+    if (z == 1) root.style.removeProperty("--erga-zoom"); else root.style.setProperty("--erga-zoom", String(z));
+    root.classList.toggle("erga-zoomed", z != 1);
+    void f.offsetWidth;
+    f.style.transition = "";
     if (this.ready) this.post({ type: "zoom", level: z });
   }
   focus(): void { this.frame.focus(); this.post({ type: "focus" }); }

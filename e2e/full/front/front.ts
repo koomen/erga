@@ -53,8 +53,8 @@ export async function person(s: Server, login = freshLogin()) {
       const at = r.headers.get("location") ?? "";
       expect(r.status, `/new${query}`).toBe(302);
       expect(at.startsWith(`/${login}/`), at).toBe(true);
-      const name = (await (await get(`${at.replace(/#edit$/, "")}/api/name`)).json()) as Name;
-      expect(`${name.address}#edit`).toBe(at);
+      const name = (await (await get(`${at.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as Name;
+      expect(`${name.address}?edit`).toBe(at);
       return name.id;
     },
     /** Shares a document (as its owner, or `as` someone) with someone ("*": anyone with the link); role "none" stops sharing it. */

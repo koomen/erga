@@ -4,7 +4,6 @@
 // through this file.
 
 export { forwarded, frontDoor } from "./front-door.ts";
-export { FILES_PREFIX, filesDoor, filesPrefix, isFilesPath, readFilesKey } from "./files.ts";
 export { forgetDecisions } from "./view.ts";
 export { landingDocument } from "./landing.ts";
 export { makeDoc, startingFiles } from "./make.ts";

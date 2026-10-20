@@ -7,11 +7,9 @@
 //                              landing document (a setting), with an Edit button for those who may
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
 //   /docs                      your documents (the directory), latest edit first; POST /docs/delete, /docs/share
-//   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at #edit; /d/<id>,
+//   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
-//   GET /_f/<key>/<path>       a document's files for the viewer's frame, at their version's address, kept for good
-//                              (server/documents/files.ts): the key, signed here, is what lets them in
 //   /auth/github[/callback]    signing in; /auth/logout signs out; /auth/github?app=pending, a test sign-in with the
 //                              GitHub app values that wait on /admin/auth
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
@@ -46,7 +44,7 @@
 import { adminAgentApi, adminGate, adminGuideApi, isAdminAgentPath, isAdminPath } from "./admin/index.ts";
 import { serverApi, tokensDoor } from "./api.ts";
 import { mayDeploy } from "./deploys/access.ts";
-import { filesDoor, frontDoor, isFilesPath, isPagesSite } from "./documents/index.ts";
+import { frontDoor, isPagesSite } from "./documents/index.ts";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
 import { adminsOnlyGate, finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
@@ -64,7 +62,7 @@ export async function handle(request: Request, platform: Platform, outside: Outs
   if (!isAsset(url.pathname)) await loadAssets(platform, url);
   const response = await route(request, platform, url, outside);
   // Every page of the site's own has who you are in its upper right; a document's pages origin, and its files, never do.
-  if (response.status == 101 || isPagesSite(url, platform) || isFilesPath(url.pathname)) return response;
+  if (response.status == 101 || isPagesSite(url, platform)) return response;
   // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
   const own = response.headers.has(OWN_ACCOUNT);
   const page = await withAccount(response, async () => {
@@ -83,14 +81,12 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   // admin-scope token, but for the exemptions server/identity/admins-only.ts lists and explains.
   const refused = await adminsOnlyGate(request, p, url);
   if (refused) return refused;
-  // A document's pages origin serves its frame and files, and nothing of this site's.
+  // A document's pages origin serves its page and files, and nothing of this site's.
   // No service workers there: one would outlive the page that registered it, in the browser of whoever viewed it, and
-  // answer for the document's files (or, at /, for the frame's host page) after its authors had changed them.
+  // answer for the document's files after its authors had changed them.
   if (isPagesSite(url, p) && request.headers.get("service-worker") == "script") return new Response("A document's page can't register a service worker.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  // (Not the editor's files: the frame loads them from the app's origin, one address for every document: frame-host.ts.)
+  // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)
   if (isPagesSite(url, p)) return frontDoor(request, p);
-  // A document's files for the viewer (their key says which, and lets them in).
-  if (isFilesPath(path)) return filesDoor(request, p);
   if (path == "/auth/github") return startSignIn(p, request);
   // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; local development serves it here (`outside`).
   if (path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"))) return (await outside(request, url)) ?? finishSignIn(p, request);

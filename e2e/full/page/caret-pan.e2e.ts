@@ -21,7 +21,7 @@ type Caret = { off: number; x: number; y: number } | null;
 async function onPage(ed: Editor, x: number, y: number) {
   const f = await ed.frameAt();
   const p = await ed.frame<{ x: number; y: number }>(`(() => {
-    const fr = document.getElementById("page"), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
+    const fr = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }), b = fr.getBoundingClientRect(), k = b.width / fr.offsetWidth;
     return { x: b.left + ${x} * k, y: b.top + ${y} * k };
   })()`);
   return { x: f.x + p.x, y: f.y + p.y };
@@ -58,7 +58,7 @@ test("the caret stays on its text while the board pans, at 100% and at 125%, and
 
   await ed.press("ControlOrMeta+Equal");
   await ed.press("ControlOrMeta+Equal");
-  await expect.poll(() => ed.frame<number>(`(() => { const f = document.getElementById("page"); return f.getBoundingClientRect().width / f.offsetWidth; })()`)).toBeCloseTo(1.25, 2);
+  await expect.poll(() => ed.frame<number>(`(() => { const f = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }); return f.getBoundingClientRect().width / f.offsetWidth; })()`)).toBeCloseTo(1.25, 2);
   await clickEnd(ed, ".card h2");
   await expect.poll(async () => (await ed.frame<Caret>(CARET))?.off ?? 99).toBeLessThan(2);
   await pans(ed);

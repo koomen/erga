@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EditorState } from "@codemirror/state";
 import { planCustomEdits, applyChanges, type CustomEdit } from "../client/custom-edits";
-import { parseHtml, type ElementNode } from "../client/manuscript";
+import { parseHtml, type ElementNode } from "../shared/manuscript";
 
 const page = `<body>
   <ul class="branch">

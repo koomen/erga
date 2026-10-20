@@ -59,7 +59,7 @@ for (const [name, bytes] of [["5 KB", 5_000], ["200 KB", 200_000], ["1 MB", 1_00
     const server = await servers.main();
     const { dir, address } = await server.fixture("page");
     writeFileSync(join(dir, "index.html"), documentOf(bytes));
-    await tab.page.goto(`${address}#edit`);
+    await tab.page.goto(`${address}?edit`);
     const ed = editor(tab.page, { address, dir, file: join(dir, "index.html") });
     await ed.loaded();
     // The caret at the end of the middle section's first paragraph.
@@ -124,7 +124,7 @@ for (const [name, bytes] of [["5 KB", 5_000], ["200 KB", 200_000], ["1 MB", 1_00
       page.applyExternal = (c, a) => { const t0 = performance.now(); plain(c, a); window.__remote.push(performance.now() - t0); };
     })()`);
     const other = editor(await tab.page.context().newPage(), { address, dir, file: join(dir, "index.html") });
-    await other.page.goto(`${address}#edit`);
+    await other.page.goto(`${address}?edit`);
     await other.loaded();
     await other.clickEnd(`#s${mid} p:nth-of-type(2)`);
     await other.frame(`(async () => {

@@ -17,7 +17,7 @@ test("/new makes a blank document, a copy of assets/templates/doc, Untitled at /
   expect(name).toMatchObject({ title: "Untitled", slug: "untitled", titleSet: false, slugSet: false });
   expect(await (await p.get(`/${p.login}/untitled/doc/index.html`)).text()).toBe(template("doc"));
   const list = await p.docs();
-  expect(list).toContain(`href="/${p.login}/untitled#edit"`);
+  expect(list).toContain(`href="/${p.login}/untitled?edit"`);
   expect(list).toContain(">Untitled<");
   expect(list).toContain("Unedited");
 });
@@ -34,7 +34,7 @@ test("/new?from=landing copies the landing page the server makes, and / shows it
   const p = await person(await servers.script());
   const copy = await p.get("/new?from=landing");
   expect(copy.status).toBe(302);
-  expect(copy.headers.get("location") ?? "").toMatch(/#edit$/);
+  expect(copy.headers.get("location") ?? "").toMatch(/[?&]edit=?$/);
   const front = await (await p.get("/")).text();
   // The viewer on it until its first deploy is done, then the page itself.
   expect(front.includes('class="erga-view"') || front.includes("<erga-controls"), front.slice(0, 1500)).toBe(true);

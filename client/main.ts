@@ -26,12 +26,12 @@ import type { AgentState, DocInfo, DocName, Hello, ModelState } from "../documen
 import { BASE } from "./base";
 import { shareWithAgent } from "./share-agent";
 import type { Settings } from "./settings";
-import { dirOf, isPage, pageUrl } from "../document/pages";
+import { isPage, pageUrl } from "../document/pages";
 import { mountLayout } from "./layout";
 import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "./zoom";
-import { liveWatch } from "./live-page";
+import { liveWatch } from "../shared/live-page";
 import { ConsoleLog, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
 import { FIX_REPORTED, pageReport } from "../shared/page-report";
 import { fastClick } from "../shared/fast-click";
@@ -189,7 +189,7 @@ type TreeModule = { mountTree: typeof mountTree };
     const doc = docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
     // A path that isn't a page file ("blog/", a folder) is an address as it is: the front door finds its page.
     const at = path == null ? doc : isPage(path) ? pageUrl(doc, path) : `${doc}/${path.replace(/^\/+|\/+$/g, "").split("/").map(encodeURIComponent).join("/")}`;
-    return at.replace(/\/$/, "") + as + (editing() ? "#edit" : "");
+    return at.replace(/\/$/, "") + (as ? as + (editing() ? "&edit" : "") : editing() ? "?edit" : "");
   };
   /**
    * Goes to an address, once: the tree (after its own move or delete), the "tree" event and the catch-up on
@@ -309,7 +309,7 @@ type TreeModule = { mountTree: typeof mountTree };
     document.title = n.title;
     tree?.setRootTitle(n.title);
     if (n.address) tree?.setBase(n.address);
-    // The editor's own address is the page's, with #edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
+    // The editor's own address is the page's, with ?edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
     const at = viewHref(n.address);
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
@@ -1052,14 +1052,13 @@ Once you've read the guide, await further instructions.`;
 
   const currentState = () => (sourceView ? sourceView.state : page.state);
 
-  // The page editor runs on the document's own origin: the
-  // address the front door gave this page (with the token that opens the
-  // document's files there), in the frame.
+  // The page editor runs in the page, in the frame, on the document's own origin: under the address the front door gave
+  // this page (with the token that opens the document's files there).
   const pagesUrl = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')?.content ?? "";
   const page = new RemotePage({
     frame,
     origin: new URL(pagesUrl, location.href).origin,
-    dir: dirOf(pagePath),
+    files: pagesUrl,
     text: initialText,
     self,
     tracking: settings.track,
@@ -1110,9 +1109,10 @@ Once you've read the guide, await further instructions.`;
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => needRefresh(),
     onOpen: (path) => openPage(path),
+    flushed: () => collab.flushed(),
     onZoom: (by) => zoomPage(by),
   });
-  page.start();
+  if (editing()) page.start();
   performance.mark("erga:frame-asked");
 
   // ---------------------------------------------------------------- zoom
@@ -1898,18 +1898,21 @@ Once you've read the guide, await further instructions.`;
   function setEditing(on: boolean) {
     syncZoom(on);
     if (on) {
+      // The editor in the page (it stopped on the way out: the page stays as it was).
+      page.start();
       page.focus();
       openAgentOnEntry();
       return;
     }
     if (mode != "text") setMode("text");
+    void page.stop();
     toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); showPauseCard(false);
     hideFmt();
     showAgent(false);
     stopVoice();
     showChrome();
   }
-  // Loaded in the editor (opened with #edit: a link, a reload, back or forward), the pane is as it was left from the
+  // Loaded in the editor (opened with ?edit: a link, a reload, back or forward), the pane is as it was left from the
   // page's first frame (server/pages/viewer.ts, LAYOUT_EARLY), unanimated, and stays so: nothing moves as this runs.
   // Switched into the editor from viewing is coming into it, and the agent grows out as above
   // (server/pages/viewer.ts says which, ergaShell.loadedEditing).
@@ -1973,9 +1976,9 @@ Once you've read the guide, await further instructions.`;
   // ---------------------------------------------------------------- another page
 
   // Another of the document's pages, opened while editing (the pages card, a link on the page, your agent's open_page),
-  // opens in place: the room holds every page already, so the editor takes the new page's text, and the frame renders it
-  // (RemotePage.load), out of sight until it has loaded, the last page showing until then. The frame's own address stays
-  // the first page's: a frame that changes address adds to the tab's history, and Back would go through that first. The controls, the agent's pane and its conversation, and the cards stay as they are. The
+  // opens in place: the room holds every page already, so the editor takes the new page's text, and the frame goes to the
+  // new page (RemotePage.load), whose editor starts from it. The frame's address changes in place (no entry in the tab's
+  // history: Back would go through it first). The controls, the agent's pane and its conversation, and the cards stay as they are. The
   // address changes as it would have (a new entry in the history), and Back and Forward go between the pages the same way.
   // Anything else (viewing, a page the room hasn't got yet, a folder's address) is a page load, as before.
   let swaps: Promise<void> = Promise.resolve();
@@ -1993,7 +1996,7 @@ Once you've read the guide, await further instructions.`;
     if (text == null) { goTo(addressOf(path)); return; }
     pagePath = path;
     info = { ...info!, path, name: path };
-    page.load({ dir: dirOf(path), text });
+    page.load({ path, text });
     // What was said of the last page was of it alone.
     shownProblems.clear();
     problemQueue.length = 0;
@@ -2011,10 +2014,9 @@ Once you've read the guide, await further instructions.`;
     queueCursor();
     queuePeers();
   }
-  // Each entry in the history says which page it is (one added as the hash changes, by the pencil, is stamped as it comes).
+  // Each entry in the history says which page it is (one the pencil adds, going in or out, is stamped as it comes).
   const stamp = () => { if (typeof window.history.state?.ergaPage != "string") window.history.replaceState({ ...window.history.state, ergaPage: pagePath }, ""); };
   stamp();
-  addEventListener("hashchange", stamp);
   addEventListener("popstate", () => {
     const to = window.history.state?.ergaPage;
     if (typeof to == "string") { if (to != pagePath && !swapPage(to, false)) location.reload(); return; }

@@ -18,7 +18,7 @@ test("/new?template=solar-system opens a new document in the editor, made from a
   const s = await servers.main();
   const made = await newDoc(s, "solar-system");
   expect(made.status).toBe(302);
-  expect(made.location).toMatch(/#edit$/);
+  expect(made.location).toMatch(/[?&]edit=?$/);
   const id = await idOf(made.address);
   expect(await (await fetch(`${s.root}/d/${id}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "assets/templates/solar-system/index.html"), "utf8"));
 });
@@ -57,7 +57,7 @@ test("viewing: the list has the nine steps, labelled, each with a different view
 test("editing: forward goes to Mercury, and its note shows", async ({ tab }) => {
   const made = await newDoc(await servers.main(), "solar-system");
   const page = tab.page;
-  await openTab(tab, `${made.address}#edit`, { width: 1200, height: 760 });
+  await openTab(tab, `${made.address}?edit`, { width: 1200, height: 760 });
   await editorReady(page);
   await expect.poll(async () => (await bar(page)).shown).toBe(true);
   await clickOn(page, ".erga-steps-next");

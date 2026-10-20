@@ -127,8 +127,6 @@ export interface DocumentDeps {
 const { file: FILE, meta: INFO } = KEYS;
 const PERMS = "perms", VIEW = "view";
 
-/** How much of a page's own stylesheets the viewer's page holds inline (Document.inlineStyles). */
-const INLINE_STYLES_MAX = 64_000;
 
 /** How long a document trusts its copy of its permissions before it reads them again (in the background): changes are pushed, so this only covers one that didn't arrive. */
 const PERMISSIONS_FRESH_MS = 5 * 60_000;
@@ -148,7 +146,6 @@ export interface ViewAnswer {
   canonical?: string | null;
   /** No file changed in QUIET_MS: the answer may be kept a moment (server/documents/view.ts). */
   quiet?: boolean;
-  html?: string;
 }
 
 /** How long without a file changing before a viewer's answer may be kept (a document being edited is asked each time). */
@@ -658,17 +655,6 @@ export class Document {
     const allowed = await this.authorize(request);
     if (allowed instanceof Response) return allowed;
     request = allowed;
-    // A viewer's file at a version's address (server/documents/files.ts): whether it's still the version viewers see, before
-    // and after it's read, so the front door keeps it for good only when it is.
-    const ver = request.headers.get("x-erga-view");
-    if (ver) {
-      const before = await this.viewVersion().catch(() => null);
-      const answer = await this.serve(request);
-      const same = before == ver && (await this.viewVersion().catch(() => null)) == ver;
-      const headers = new Headers(answer.headers);
-      headers.set("x-erga-view-same", same ? "1" : "0");
-      return new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers });
-    }
     return this.serve(request);
   }
 
@@ -764,7 +750,7 @@ export class Document {
     if ((request.method != "GET" && request.method != "HEAD") || !url.pathname.startsWith("/doc/") || request.headers.get("upgrade")) return null;
     const info = await this.readInfo();
     if (!info || info.disk) return null;
-    // doc/ itself is its page (the viewer's frame asks for it so, server/pages/frame-host.ts, not knowing its name).
+    // doc/ itself is its page (the viewer's frame asks for it so, at the token's own address: server/documents/pages-origin.ts).
     const rel = url.pathname == "/doc/" ? info.index : cleanRel(url.pathname.slice("/doc/".length));
     if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     // The file, and the files whose latest text storage doesn't have yet (the room stopped before writing them): one read.
@@ -883,29 +869,15 @@ export class Document {
     return state;
   }
 
-  /** One file of what viewers see (its text), or null. */
-  private async viewText(file: string): Promise<string | null> {
-    const open = this.opened?.room.text(file);
-    if (open != null) return open;
-    const info = await this.readInfo();
-    if (!this.opened && !info?.disk) {
-      await this.closing;
-      const got = await this.storage.get<unknown>([FILE + file, KEYS.unwritten]);
-      const unwritten = (got.get(KEYS.unwritten) as string[] | undefined)?.includes(file);
-      const bytes = got.get(FILE + file) as Uint8Array | undefined;
-      if (!unwritten && bytes) return new TextDecoder().decode(bytes);
-    }
-    const opened = await this.room();
-    return opened?.room.text(file) ?? null;
-  }
+
 
   /**
    * A document's page for a viewer (the front door's viewer, server/documents/view.ts), in one call: what `who` may do
    * (`anyone`: the front page, which everyone may view), which file the address `page` is (its path under the
-   * document's; "" its own page) in what viewers see, that version, the document's name, and the file's text unless
-   * the caller has that version already (`have`). Null if there's no such document.
+   * document's; "" its own page) in what viewers see, that version, and the document's name (the page itself comes
+   * from the document's pages origin: server/documents/pages-origin.ts). Null if there's no such document.
    */
-  async view(who: Who | null, opts: { page: string; anyone?: boolean; have?: string | null }): Promise<ViewAnswer | null> {
+  async view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
     const info = await this.readInfo();
     if (!info) return null;
     const role = who ? await this.roleOf(who) : null;
@@ -915,51 +887,14 @@ export class Document {
       const state = await this.viewNow(info);
       const paths = new Set(state.paths);
       const found = opts.page ? resolvePage((p) => paths.has(p), opts.page, state.index) : paths.has(state.index) ? { file: state.index, canonical: "" } : null;
-      const text = found && opts.have != state.ver ? await this.viewText(found.file) : null;
-      const html = text != null ? await this.inlineStyles(state, found!.file, text) : null;
       // Quiet: no file changed in a while, so the front door may keep this answer a moment. A document being edited is
       // asked each time.
       const quiet = Date.now() - this.lastChange > QUIET_MS;
-      return { role, name, test: !!info.test, ver: state.ver, file: found?.file ?? null, canonical: found?.canonical ?? null, quiet, ...(html != null ? { html } : {}) };
+      return { role, name, test: !!info.test, ver: state.ver, file: found?.file ?? null, canonical: found?.canonical ?? null, quiet };
     });
   }
 
-  /**
-   * The page with its own small stylesheets in it (<link rel="stylesheet"> to a file of the document, INLINE_STYLES_MAX
-   * in all), each a <style> where its link was: a first view then waits for no file before it paints. Only a
-   * stylesheet whose relative addresses mean the same in the page (in the page's folder, or with no url() or @import),
-   * and with no media of its own; the rest stay links.
-   */
-  private async inlineStyles(state: ViewState, file: string, html: string): Promise<string> {
-    const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/") + 1) : "";
-    const paths = new Set(state.paths);
-    let budget = INLINE_STYLES_MAX;
-    const links = [...html.matchAll(/<link\b[^>]*>/gi)];
-    const out: string[] = [];
-    let at = 0;
-    for (const m of links) {
-      const tag = m[0];
-      const attr = (name: string) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(tag);
-      const value = (name: string) => { const a = attr(name); return a ? (a[1] ?? a[2] ?? a[3] ?? "") : null; };
-      const href = value("href");
-      if (!/^\s*stylesheet\s*$/i.test(value("rel") ?? "") || !href || value("media") != null || /^([a-z][a-z0-9+.-]*:|\/|#)/i.test(href.trim())) continue;
-      const rel = cleanRel(dir + href.trim().split(/[?#]/)[0]);
-      if (!rel || !paths.has(rel)) continue;
-      const css = await this.viewText(rel);
-      if (css == null || css.length > budget || /<\/style/i.test(css)) continue;
-      if (rel.slice(0, rel.lastIndexOf("/") + 1) != dir && /url\(|@import/i.test(css)) continue;
-      budget -= css.length;
-      out.push(html.slice(at, m.index), `<style data-erga-href="${href.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">${css}</style>`);
-      at = m.index! + tag.length;
-    }
-    return at ? out.join("") + html.slice(at) : html;
-  }
 
-  /** Which version viewers see now (ViewState.ver): a viewer's file is kept for good only while it's this one. Null: no such document. */
-  async viewVersion(): Promise<string | null> {
-    const info = await this.readInfo();
-    return info ? (await this.viewNow(info)).ver : null;
-  }
 
   // ---------------------------------------------------------------- versions
 

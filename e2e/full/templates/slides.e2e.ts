@@ -60,7 +60,7 @@ test("viewing in a tall, narrow window (600 × 900): the slide takes its width",
 test("editing: one slide fits; forward, back and → outside the text step; an edit to a title shows in the list with a new picture", async ({ tab }) => {
   const made = await newDoc(await servers.main(), "slides");
   const page = tab.page;
-  await openTab(tab, `${made.address}#edit`, { width: 1200, height: 800 });
+  await openTab(tab, `${made.address}?edit`, { width: 1200, height: 800 });
   await editorReady(page);
   await expect.poll(async () => (await bar(page)).shown && (await inPage<number>(page, "ergaSteps.current()")) == 0).toBe(true);
   await expect.poll(() => fits(page)).toBe(true);

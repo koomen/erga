@@ -3,8 +3,8 @@
 // session, the room, the agent. The page, which anyone who can edit the
 // document may have written, runs on its document's own origin
 // (<id>-<owner>.erga-pages.dev, or <id>-<owner>.localhost locally) with no
-// cookies, inside a host frame that runs the page editor next to
-// it. The two talk only through the messages below, and the shell checks
+// cookies, in the shell's frame, and the page editor runs inside it there
+// (frame.ts). The two talk only through the messages below, and the shell checks
 // every one: the most a page can do is edit its own document, as whoever
 // has it open.
 //
@@ -18,7 +18,7 @@
 // both sides end up with the same text.
 
 import { ChangeSet, EditorSelection, type EditorState } from "@codemirror/state";
-import type { InlineStyle, LinkEdit, LinkInfo, MarkAuthor, Peer } from "./editor";
+import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, Peer } from "./editor";
 import type { ViewRequest, ViewResult } from "../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../shared/live-page";
 import { zoomKey, type ZoomBy } from "./zoom";
@@ -70,8 +70,12 @@ export interface Backdrop { color: string; image: string }
 
 /** Shell → frame. */
 export type ToFrame =
-  /** `scroll`: where to scroll the page once it first renders (the page reloaded for a new release kept it: live.ts). */
-  | { type: "init"; dir?: string; state: unknown; version: number; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number; zoom?: number }
+  /**
+   * `scroll`: where to scroll the page once it first renders (the page reloaded for a new release kept it: live.ts).
+   * `carry`: the state the page's editor had, undo history and all (before the page loaded again, or the editor stopped),
+   * which the frame brings to `state`'s text and carries on from.
+   */
+  | { type: "init"; state: unknown; version: number; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number; zoom?: number; carry?: unknown; view?: { pos: number; top: number }; held?: HeldInput[]; focus?: boolean; frame?: { sandbox: string | null; allow: string | null }; paused?: boolean }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }
@@ -90,8 +94,10 @@ export type ToFrame =
   | { type: "detach"; id: number }
   /** Back from the source view: the state to carry on from. */
   | { type: "attach"; state: unknown; version: number }
-  /** Another of the document's pages in this one's place (the shell went to it): its kind, folder and state. */
-  | { type: "page"; dir: string; state: unknown; version: number }
+  /** The page may load again now (it said it would: reloading): the room has every edit, so the page comes made from them. */
+  | { type: "reload" }
+  /** Out of the editor: the frame answers with its state, undo history and all, once its edits are in, and stops. */
+  | { type: "stop"; id: number }
   | { type: "style"; id: number; op: "toggle"; style: InlineStyle }
   | { type: "style"; id: number; op: "clear" }
   | { type: "style"; id: number; op: "link"; edit: LinkEdit }
@@ -119,6 +125,10 @@ export type FromFrame =
   | { type: "pointer"; kind: "move" | "down" | "up"; x: number; y: number }
   | { type: "activity"; kind: "focus" | "key" }
   | { type: "detached"; id: number; state: unknown; version: number }
+  /** The editor stopped (stop): its state for the way back in, or null if it hadn't started. */
+  | { type: "stopped"; id: number; state: unknown; version: number }
+  /** The page loads again, made from the text (a change the editor can't patch in): its editor's state, for the editor in the page that comes. */
+  | { type: "reloading"; state: unknown; version: number; view: { pos: number; top: number } | null; focus: boolean }
   | { type: "styled"; id: number; why: string | null }
   | { type: "captured"; id: number; result: ViewResult }
   | { type: "lived"; id: number; result: LiveResult }

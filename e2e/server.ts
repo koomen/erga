@@ -38,7 +38,7 @@ export interface Server {
   /** http://127.0.0.1:<port> */
   root: string;
   port: number;
-  /** The `open` folder's document (no #edit), else `root`. */
+  /** The `open` folder's document (no ?edit), else `root`. */
   base: string;
   /** The Worker's local state (ERGA_STATE_DIR): its Durable Objects. */
   state: string;
@@ -48,7 +48,7 @@ export interface Server {
   output(): string;
   /** Whether its process still runs. */
   alive(): boolean;
-  /** Links a file or folder as one of DEV_LOGIN's documents: the document's address (no #edit). */
+  /** Links a file or folder as one of DEV_LOGIN's documents: the document's address (no ?edit). */
   open(path: string): Promise<string>;
   /** Copies e2e/fixtures/<name> into the scratch folder and links it: its folder and address. */
   fixture(name: string): Promise<{ dir: string; address: string }>;
@@ -117,7 +117,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       const r = await fetch(`${server.root}/__erga/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), redirect: "manual" });
       const at = r.headers.get("location");
       if (r.status != 303 || !at) throw new Error(`opening ${path}: ${r.status} ${await r.text()}`);
-      return server.root + at.replace(/#edit$/, "");
+      return server.root + at.replace(/[?&]edit$/, "");
     },
     async fixture(name) {
       const dir = join(scratch, "docs", `${name}-${++fixtures}`);

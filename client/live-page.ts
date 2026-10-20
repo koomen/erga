@@ -1,10 +1,9 @@
-// The live page, in the editor's frame (frame.ts, on the document's own
-// origin): the logs the agent's page_console, page_network and page_events
+// The live page, in the page itself (the editor runs there: frame.ts, on the
+// document's own origin): the logs the agent's page_console, page_network and page_events
 // read, page_inspect's run in the page as it is, and page_click and page_key
 // (shared/live-page.ts says what each one is).
 //
-// The page's frame is on this origin too, so the editor reaches into it. Its
-// first script (LIVE_WATCH, before the page's own) catches what happens from
+// The page's first script (LIVE_WATCH, before the page's own) catches what happens from
 // the start: console calls, errors, the page's fetch and XHR, and who calls
 // preventDefault or stopPropagation on a pointer or key event. It keeps them
 // until the editor takes them (`__ergaLiveTake`), and hands each over as it
@@ -16,7 +15,7 @@
 // editor's own script (frame.js) is the editor's, anything else the page's.
 
 import {
-  ConsoleLog, EVENT_TYPES, Ring, fromTiming, mergeHooked, queryConsole, queryEvents, queryNetwork,
+  ConsoleLog, EVENT_TYPES, liveWatch, Ring, fromTiming, mergeHooked, queryConsole, queryEvents, queryNetwork,
   type ActResult, type Activation, type ConsoleLevel, type Consumer, type EventEntry, type HookedRequest, type LiveRequest, type LiveResult, type NetworkEntry,
 } from "../shared/live-page";
 import { evaluateIn, toJSON } from "./evaluate";
@@ -25,122 +24,6 @@ import { EVAL_MAX_JSON, evalTimeout } from "../shared/agent-log";
 type LiveWindow = Window & typeof globalThis & { __ergaLiveInstalled?: boolean; __ergaLiveTake?: (sink: Sink) => void };
 type Sink = (kind: string, data: unknown) => void;
 
-/**
- * The page's first script (a function, as its text goes into the page, so
- * it refers to nothing outside itself). `o.events` and `o.net` turn the event
- * and request watches on (off for the editor's own window, which only logs).
- */
-export function liveWatch(o: { events: boolean; net: boolean; types: string[] }): void {
-  const w = window as Window & typeof globalThis & { __ergaLiveInstalled?: boolean; __ergaLiveTake?: (s: (k: string, d: unknown) => void) => void; __ergaLiveSink?: (k: string, d: unknown) => void };
-  if (w.__ergaLiveInstalled) return;
-  w.__ergaLiveInstalled = true;
-  let q: [string, unknown][] = [];
-  const send = (kind: string, data: unknown) => {
-    const s = w.__ergaLiveSink;
-    if (s) { try { s(kind, data); } catch { /* the editor's to handle */ } }
-    else if (q.length < 5000) q.push([kind, data]);
-  };
-  w.__ergaLiveTake = (sink) => { w.__ergaLiveSink = sink; const held = q; q = []; for (const [k, d] of held) sink(k, d); };
-  const text = (x: unknown): string => {
-    if (typeof x == "string") return x;
-    if (x instanceof Error) return `${x.name}: ${x.message}`;
-    if (x && typeof x == "object") {
-      if ((x as Element).nodeType == 1) { const el = x as Element; return `<${el.localName}${el.id ? "#" + el.id : ""}>`; }
-      try { const j = JSON.stringify(x); if (j !== undefined) return j.length > 500 ? j.slice(0, 500) + "…" : j; } catch { /* a cycle */ }
-    }
-    return String(x);
-  };
-  const con = w.console as unknown as Record<string, (...a: unknown[]) => unknown>;
-  for (const level of ["error", "warn", "info", "log", "debug"]) {
-    const orig = con[level];
-    if (typeof orig != "function") continue;
-    con[level] = function (this: unknown, ...args: unknown[]) {
-      try {
-        // console.log("%c styled", "css"): the format's %c parts are the page's styling, not its words.
-        let a = args;
-        if (typeof a[0] == "string" && a[0].includes("%c")) { const n = (a[0].match(/%c/g) ?? []).length; a = [a[0].replace(/%c/g, ""), ...a.slice(1 + n)]; }
-        send("console", { level, text: a.map(text).join(" "), at: Date.now() });
-      } catch { /* never in the page's way */ }
-      return orig.apply(this, args);
-    };
-  }
-  const MEDIA_ERR = ["", "MEDIA_ERR_ABORTED", "MEDIA_ERR_NETWORK", "MEDIA_ERR_DECODE", "MEDIA_ERR_SRC_NOT_SUPPORTED"];
-  w.addEventListener("error", (e) => {
-    const t = e.target as (Element & { error?: MediaError | null; currentSrc?: string }) | null;
-    if (t && (t as unknown) !== w && t.nodeType == 1) {
-      const media = t.localName == "audio" || t.localName == "video";
-      const src = t.getAttribute("src") || t.getAttribute("href") || (media ? t.currentSrc : "") || "";
-      const why = media && t.error ? ` (${MEDIA_ERR[t.error.code] ?? t.error.code}${t.error.message ? `: ${t.error.message}` : ""})` : "";
-      send("console", { level: "error", text: `<${t.localName}${t.id ? "#" + t.id : ""}> failed to load ${src || "its source"}${why}`, at: Date.now() });
-    } else {
-      const ev = e as ErrorEvent;
-      send("console", { level: "error", text: `Uncaught ${ev.error instanceof Error ? `${ev.error.name}: ${ev.error.message}` : ev.message}${ev.filename ? ` (${ev.filename}${ev.lineno ? `:${ev.lineno}` : ""})` : ""}`, at: Date.now() });
-    }
-  }, true);
-  w.addEventListener("unhandledrejection", (e) => send("console", { level: "error", text: `Unhandled rejection: ${text((e as PromiseRejectionEvent).reason)}`, at: Date.now() }));
-  if (o.net) {
-    try { w.performance.setResourceTimingBufferSize(2000); } catch { /* not here */ }
-    const of = w.fetch;
-    if (typeof of == "function") {
-      w.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
-        const at = Date.now();
-        let url = "", method = "GET", range: string | undefined;
-        try {
-          const req = input instanceof w.Request ? input : null;
-          url = new URL(req ? req.url : String(input), w.location.href).href;
-          method = (init?.method ?? req?.method ?? "GET").toUpperCase();
-          range = new w.Headers(init?.headers ?? req?.headers).get("range") ?? undefined;
-        } catch { /* the request will say what's wrong */ }
-        const p = of.call(this, input as RequestInfo, init);
-        p.then((r: Response) => send("request", { url, method, range, status: r.status, type: r.headers.get("content-type") ?? undefined, contentRange: r.headers.get("content-range") ?? undefined, length: Number(r.headers.get("content-length")) || undefined, at, via: "fetch" }),
-          (err: unknown) => send("request", { url, method, range, error: text(err), at, via: "fetch" }));
-        return p;
-      } as typeof fetch;
-    }
-    const X = w.XMLHttpRequest?.prototype;
-    if (X) {
-      const open = X.open, setHeader = X.setRequestHeader, sendX = X.send;
-      type Rec = { url: string; method: string; range?: string; at: number };
-      const recs = new WeakMap<XMLHttpRequest, Rec>();
-      X.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
-        try { recs.set(this, { url: new URL(String(url), w.location.href).href, method: String(method).toUpperCase(), at: 0 }); } catch { /* as the browser will say */ }
-        return (open as (...a: unknown[]) => void).call(this, method, url, ...rest);
-      } as typeof X.open;
-      X.setRequestHeader = function (this: XMLHttpRequest, name: string, value: string) {
-        const r = recs.get(this);
-        if (r && name.toLowerCase() == "range") r.range = value;
-        return setHeader.call(this, name, value);
-      };
-      X.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
-        const r = recs.get(this);
-        if (r) {
-          r.at = Date.now();
-          this.addEventListener("loadend", () => {
-            const failed = this.status == 0;
-            send("request", { url: r.url, method: r.method, range: r.range, at: r.at, via: "xhr", ...(failed ? { error: "the request failed (network error, CORS, or aborted)" } : { status: this.status, type: this.getResponseHeader("content-type") ?? undefined, contentRange: this.getResponseHeader("content-range") ?? undefined }) });
-          });
-        }
-        return sendX.call(this, body);
-      };
-    }
-  }
-  if (o.events) {
-    const watched = new Set(o.types);
-    const P = w.Event.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
-    for (const how of ["preventDefault", "stopPropagation", "stopImmediatePropagation"]) {
-      const orig = P[how];
-      P[how] = function (this: Event, ...a: unknown[]) {
-        try { if (watched.has(this.type)) send("consume", { ev: this, how, phase: this.eventPhase, on: this.currentTarget, stack: String(new Error().stack ?? "") }); } catch { /* never in the page's way */ }
-        return orig.apply(this, a);
-      };
-    }
-    // At the window, in the capture phase, before anyone else's listener: every event, consumed or not.
-    for (const type of o.types) w.addEventListener(type, (e) => send("event", e), true);
-  }
-}
-
-/** LIVE_WATCH: the page's first script (editor.ts puts it in the page's <head>, after PROBLEM_WATCH). */
-export const LIVE_WATCH = `<script data-erga>(${liveWatch.toString()})(${JSON.stringify({ events: true, net: true, types: EVENT_TYPES })})</script>`;
 
 const describeEl = (x: unknown): string => {
   if (!x || typeof x != "object") return String(x);
@@ -157,7 +40,8 @@ const NETWORK = ["NETWORK_EMPTY", "NETWORK_IDLE", "NETWORK_LOADING", "NETWORK_NO
 const MEDIA_ERR = ["", "MEDIA_ERR_ABORTED", "MEDIA_ERR_NETWORK", "MEDIA_ERR_DECODE", "MEDIA_ERR_SRC_NOT_SUPPORTED"];
 
 /** One frame the editor watches: the page's own, or one inside it. */
-interface Watched { win: LiveWindow; label: string; el: HTMLIFrameElement }
+/** A window of the page: the page's own (no frame element of its own here: the viewer's frame is on another origin), or a frame inside it. */
+interface Watched { win: LiveWindow; label: string; el: HTMLIFrameElement | null }
 
 export class LivePage {
   readonly console = new ConsoleLog(500);
@@ -171,30 +55,24 @@ export class LivePage {
   /** Frames inside the page on another origin: the answers name them, as out of reach. */
   private foreign = new Set<string>();
   private pageWin: LiveWindow | null = null;
+  /** What the page's own frame (the viewer's, on another origin) may do, as the viewer says. */
+  pageFrame: { sandbox: string | null; allow: string | null } | null = null;
 
   /** `editorScript`: the editor's own script's address (frame.js), how a stack shows the editor's code. */
   /** The address of the document's files (".../doc/"): a request there went to Erga's server. */
   private readonly docUrl: string;
   constructor(docBase: string, private readonly editorScript: string) { this.docUrl = new URL(docBase, location.href).href; }
 
-  /** The editor's own window: its console, as "editor frame". */
-  watchEditor(win: Window): void {
-    liveWatch({ events: false, net: false, types: [] });
-    (win as LiveWindow).__ergaLiveTake?.((kind, data) => { if (kind == "console") this.log(data, "editor frame"); });
-  }
-
-  /** The page's frame, after each render (a render puts the page in a new frame). */
-  attach(el: HTMLIFrameElement): void {
-    const win = el.contentWindow as LiveWindow | null;
-    if (!win) return;
-    this.pageWin = win;
-    // The frames inside the last page went with it; this page's are found afresh.
+  /** The page's window, once the editor is on it (the editor runs in it: frame.ts). */
+  attach(win: Window): void {
+    if (this.pageWin == win) return;
+    this.pageWin = win as LiveWindow;
     this.frames = [];
     this.foreign.clear();
-    this.watch(win, "page", el);
+    this.watch(this.pageWin, "page", null);
   }
 
-  private watch(win: LiveWindow, label: string, el: HTMLIFrameElement): void {
+  private watch(win: LiveWindow, label: string, el: HTMLIFrameElement | null): void {
     let d: Document;
     try { d = win.document; } catch { this.foreign.add(label); return; }
     if (!this.frames.some((f) => f.win == win)) this.frames.push({ win, label, el });
@@ -310,7 +188,7 @@ export class LivePage {
     const f = this.frameFor(req.frame);
     if (typeof f == "string") return { error: f };
     if (req.expression?.trim()) return await evaluateIn(f.win, req.expression, evalTimeout(req), { live: true });
-    const facts = this.frames.filter((x) => x.el.isConnected || x.win == this.pageWin).map((x) => this.facts(x));
+    const facts = this.frames.filter((x) => x.el?.isConnected || x.win == this.pageWin).map((x) => this.facts(x));
     const json = toJSON(facts, f.win);
     return { facts: JSON.parse(json.length > EVAL_MAX_JSON ? JSON.stringify(facts.map((x) => ({ ...x, media: `${(x.media as unknown[]).length} elements (too long to show)` }))) : json) };
   }
@@ -324,8 +202,9 @@ export class LivePage {
     return {
       frame: f.label,
       url: w.location.href,
-      sandbox: f.el.getAttribute("sandbox"),
-      allow: f.el.getAttribute("allow"),
+      // (The page's own frame is the viewer's, on another origin, which says what it may do.)
+      sandbox: f.el ? f.el.getAttribute("sandbox") : this.pageFrame?.sandbox ?? null,
+      allow: f.el ? f.el.getAttribute("allow") : this.pageFrame?.allow ?? null,
       userActivation: nav.userActivation ? { isActive: nav.userActivation.isActive, hasBeenActive: nav.userActivation.hasBeenActive } : "not supported here",
       autoplay: {
         allowsFeature: pp ? pp.allowsFeature("autoplay") : "permissionsPolicy not supported here",

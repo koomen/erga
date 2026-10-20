@@ -27,7 +27,7 @@ test("a document nobody edits is deleted on time, and leaves the list; one that'
     expect(await p.exists(open)).toBe(true);
     const list = await p.docs();
     expect(list).not.toContain(`value="${gone}"`);
-    expect(list).toContain(`href="${(await p.nameOf(kept)).address}#edit"`);
+    expect(list).toContain(`href="${(await p.nameOf(kept)).address}?edit"`);
   } finally { bo.destroy(); cy.destroy(); }
 });
 

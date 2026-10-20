@@ -1,8 +1,7 @@
 // Edits from elsewhere (the agent, another tab, the disk) while you read or type in another part of the page, as in a
 // shared document: only what changed changes. The view doesn't move, however much changes above it; the page isn't
-// rendered again, so its scripts keep their state; the caret stays where you type. Only a change to a script renders
-// the page afresh, out of sight, and the new page takes the old one's place at the same spot (client/editor.ts,
-// morph.ts).
+// loaded again, so its scripts keep their state; the caret stays where you type. Only a change to a script makes the
+// page afresh: it loads again, and opens at the same spot (client/editor.ts, restoreView; morph.ts).
 import { expect, servers, test, until } from "../../fixtures";
 import { F, W, openEditor, type Editor } from "../../editor";
 
@@ -14,7 +13,7 @@ const LONG = " This sentence makes the paragraph much longer, so that it wraps o
 const block = (d: string, text: string) => `[...${d}.querySelectorAll("[data-erga-id]")].find((e) => e.textContent.startsWith(${JSON.stringify(text)}))`;
 
 /**
- * Scrolls the page so the block starting with `text` is near the top, marks the page's window (a render replaces it),
+ * Scrolls the page so the block starting with `text` is near the top, marks the page's window (a page that loads again has another),
  * and from then on, every frame, notes where that block is on the page shown. Answers a reading of it so far: how far
  * it moved at most and in the end, in pixels, whether the page rendered afresh, and in how many frames it wasn't there.
  */
@@ -23,20 +22,22 @@ async function watch(ed: Editor, text: string) {
   await ed.settle();
   const top = await ed.frame<number>(`${block(F, text)}.getBoundingClientRect().top`);
   expect(await ed.frame<number>(`${W}.scrollY`), "the page is scrolled").toBeGreaterThan(500);
-  await ed.frame(`(() => { const out = window.__tops = []; const tick = () => { const d = document.getElementById("page").contentDocument; const el = d && ${block("d", text)}; out.push(el ? el.getBoundingClientRect().top : null); if (window.__tops == out) requestAnimationFrame(tick); }; requestAnimationFrame(tick); })()`);
+  await ed.frame(`(() => { const out = window.__tops = []; const tick = () => { const d = document; const el = d && ${block("d", text)}; out.push(el ? el.getBoundingClientRect().top : null); if (window.__tops == out) requestAnimationFrame(tick); }; requestAnimationFrame(tick); })()`);
   return async () => {
-    const tops = await ed.frame<(number | null)[]>(`window.__tops`);
+    // A page that loaded again has none of this one's notes: where the block is now.
+    const reloaded = !(await ed.frame<boolean>(`${W}.__marker == 1`));
+    const tops = reloaded ? [await ed.frame<number>(`${block(F, text)}.getBoundingClientRect().top`)] : await ed.frame<(number | null)[]>(`window.__tops`);
     const seen = tops.filter((t): t is number => t != null);
     return {
       worst: Math.round(Math.max(0, ...seen.map((t) => Math.abs(t - top)))),
       end: Math.round((seen.at(-1) ?? top) - top),
       missing: tops.length - seen.length,
-      reloaded: !(await ed.frame<boolean>(`${W}.__marker == 1`)),
+      reloaded,
     };
   };
 }
 
-/** The block at the top of the window stayed where it was (to a pixel), the page on screen all along; rendered afresh or not. */
+/** The block at the top of the window stayed where it was (to a pixel), the page on screen all along (loaded again: where it is now); loaded again or not. */
 function still(r: { worst: number; end: number; missing: number; reloaded: boolean }, reloaded: boolean) {
   expect(r.worst <= 1 && r.missing == 0 && r.reloaded == reloaded, JSON.stringify(r)).toBe(true);
 }
@@ -78,7 +79,7 @@ test("while you type in one paragraph, a list arrives above it: the caret stays,
   still(await reading(), false);
 });
 
-test("the agent edits above the view as it works: each edit shows at once and the view stays; its change to a script renders the page afresh when it finishes, at the same spot, with no blank frame", async ({ tab }) => {
+test("the agent edits above the view as it works: each edit shows at once and the view stays; its change to a script makes the page afresh when it finishes: it loads again, at the same spot", async ({ tab }) => {
   await tab.page.setViewportSize({ width: 1280, height: 800 });
   const ed = await openEditor(tab, await servers.script(), "long");
   await ed.openAgent();
@@ -101,11 +102,11 @@ test("the agent edits above the view as it works: each edit shows at once and th
   await ed.settle();
   still(await reading(), true);
   expect(await ed.eval<boolean>(`document.getElementById("refresh-pill").hidden`)).toBe(true);
-  expect(await ed.frame<number>(`document.querySelectorAll("#page").length`), "one page frame").toBe(1);
+  expect(await ed.eval<number>(`document.querySelectorAll("iframe").length`), "one page frame").toBe(1);
   expect(await ed.frame<boolean>(`!!${F}.querySelector("style[data-erga-caret]")`), "the new page draws your caret too (caret.ts)").toBe(true);
 });
 
-test("the agent edits the first sentence of a long paragraph that starts above the window: the line you read stays put, and so it does when its change to a script renders the page afresh", async ({ tab }) => {
+test("the agent edits the first sentence of a long paragraph that starts above the window: the line you read stays put, and so it does when its change to a script makes the page afresh (it loads again)", async ({ tab }) => {
   await tab.page.setViewportSize({ width: 1280, height: 800 });
   const ed = await openEditor(tab, await servers.script(), "long");
   const sentences = Array.from({ length: 80 }, (_, i) => i == 50 ? "Here is the word zebra, in the middle." : `Sentence ${i + 1} of the long paragraph.`);
@@ -113,16 +114,18 @@ test("the agent edits the first sentence of a long paragraph that starts above t
   await until(() => ed.frame<boolean>(`!!${F}.getElementById("long")`), 5000, "the long paragraph shows");
   await ed.openAgent();
   // The word "zebra" 300 px down the window, the paragraph's start far above it.
-  const word = `(() => { const d = document.getElementById("page").contentDocument; const p = d.getElementById("long"); const t = p && [...p.childNodes].find((n) => n.nodeType == 3 && n.nodeValue.includes("zebra")); if (!t) return null; const r = d.createRange(); const i = t.nodeValue.indexOf("zebra"); r.setStart(t, i); r.setEnd(t, i + 5); return r.getBoundingClientRect().top; })()`;
+  const word = `(() => { const d = document; const p = d.getElementById("long"); const t = p && [...p.childNodes].find((n) => n.nodeType == 3 && n.nodeValue.includes("zebra")); if (!t) return null; const r = d.createRange(); const i = t.nodeValue.indexOf("zebra"); r.setStart(t, i); r.setEnd(t, i + 5); return r.getBoundingClientRect().top; })()`;
   await ed.frame(`${W}.scrollBy(0, ${word} - 300)`);
   await ed.settle();
   const top = (await ed.frame<number>(word))!;
   expect(await ed.frame<number>(`${F}.getElementById("long").getBoundingClientRect().top`), "the paragraph starts above the window").toBeLessThan(-300);
   await ed.frame(`(() => { ${W}.__marker = 1; const out = window.__tops = []; const tick = () => { out.push(${word}); if (window.__tops == out) requestAnimationFrame(tick); }; requestAnimationFrame(tick); })()`);
   const reading = async () => {
-    const tops = await ed.frame<(number | null)[]>(`window.__tops`);
+    // A page that loaded again has none of this one's notes: where the word is now.
+    const reloaded = !(await ed.frame<boolean>(`${W}.__marker == 1`));
+    const tops = reloaded ? [await ed.frame<number | null>(word)] : await ed.frame<(number | null)[]>(`window.__tops`);
     const seen = tops.filter((t): t is number => t != null);
-    return { worst: Math.round(Math.max(0, ...seen.map((t) => Math.abs(t - top)))), end: Math.round((seen.at(-1) ?? top) - top), missing: tops.length - seen.length, reloaded: !(await ed.frame<boolean>(`${W}.__marker == 1`)) };
+    return { worst: Math.round(Math.max(0, ...seen.map((t) => Math.abs(t - top)))), end: Math.round((seen.at(-1) ?? top) - top), missing: tops.length - seen.length, reloaded };
   };
   const run = async (steps: unknown[]) => {
     const replies = () => ed.eval<number>(`document.querySelectorAll(".msg-assistant").length`);

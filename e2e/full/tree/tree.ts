@@ -76,7 +76,7 @@ export const agentClosed = (page: Page) => page.addInitScript(() => {
 });
 
 /**
- * The editor at `url` (an address, without #edit), up: the shell ready with the document's title, the tree's script
+ * The editor at `url` (an address, without ?edit), up: the shell ready with the document's title, the tree's script
  * mounted (still closed), and the page in its frame rendered and focused.
  *
  * That last part is the editor's own ready state, and it matters: the shell focuses the page each time the frame
@@ -89,7 +89,7 @@ export async function openTreeEditor(tab: Tab, url: string, opts: { query?: stri
   const page = tab.page;
   tab.strict = true;
   await agentClosed(page);
-  await page.goto(`${url}${opts.query ?? ""}#edit`);
+  await page.goto(`${url}${opts.query ? `${opts.query}&edit` : "?edit"}`);
   await until(() => page.evaluate(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden && !!window.ergaPage`), 10_000, "the editor is up with its title");
   await until(() => page.evaluate(`!!window.ergaTree && !!document.querySelector("#pages #pages-tree .et-row[data-path]")`), 10_000, "the editor loads pages-tree.js once it is up, and mounts the tree");
   if (opts.focus ?? !opts.query) await editorFocused(page);
@@ -98,9 +98,12 @@ export async function openTreeEditor(tab: Tab, url: string, opts: { query?: stri
 /** The page in the editor's frame is rendered and has the focus (see openTreeEditor). */
 export const editorFocused = (page: Page) => until(async () => {
   if (await page.evaluate(`document.activeElement?.id != "frame"`)) return false;
-  for (const f of page.frames()) if (await f.evaluate(`!!window.ergaFrame && document.hasFocus() && !!document.getElementById("page")?.dataset.ready`).catch(() => false)) return true;
+  for (const f of page.frames()) if (await f.evaluate(`!!window.ergaFrame && document.hasFocus() && !!window.ergaFrame?.page`).catch(() => false)) return true;
   return false;
-}, 10_000, "the page in the editor's frame is rendered and has the focus");
+}, 10_000, "the page in the editor's frame is rendered and has the focus", async () => ({
+  shell: await page.evaluate(`({ ae: document.activeElement?.id || document.activeElement?.tagName, cls: document.activeElement?.className, hf: document.hasFocus(), loading: window.ergaPage?.page?.loading })`),
+  frames: await Promise.all(page.frames().filter((f) => f != page.mainFrame()).map((f) => f.evaluate(`({ ef: !!window.ergaFrame?.page, hf: document.hasFocus(), ae: document.activeElement?.tagName, url: location.pathname.slice(-30) })`).catch((e) => String(e)))),
+}));
 
 /** The rows the tree shows: [path, label, depth, current]. */
 export const rows = (page: Page, within = "") => page.evaluate(`[...document.querySelectorAll(${JSON.stringify(`${within} .et-row[data-path]`.trim())})].map((r) => [r.dataset.path, r.querySelector(".et-name").textContent, +r.getAttribute("aria-level"), r.getAttribute("aria-current") == "page"])`) as Promise<[string, string, number, boolean][]>;
@@ -125,7 +128,7 @@ export async function clickToGo(page: Page, selector: string, want: string) {
   for (let tries = 0; ; tries++) {
     const r = await centre(page, selector);
     await page.mouse.click(r.x, r.y);
-    try { return await until(() => { const u = new URL(page.url()); return u.pathname + u.hash == want; }, 2500, `the tab goes to ${want}`); }
+    try { return await until(() => { const u = new URL(page.url()); return u.pathname + u.search == want; }, 2500, `the tab goes to ${want}`); }
     catch (e) { if (tries == 2) throw e; }
   }
 }

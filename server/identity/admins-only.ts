@@ -26,9 +26,6 @@
 //                                   GitHub app: until staging has one, no admin can sign in there
 //   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN
 //   /__erga/...                     local development only, behind the dev server's secret
-//   /_f/<key>/...                   a document's files for the viewer's frame, whose opaque origin sends no cookie: the
-//                                   key, signed here, names the admin it was made for (server/documents/files.ts), and a
-//                                   file is served only while that person is still an admin (filesDoor checks it)
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
 //                                   must work here as on production: /llms.txt, /api, /api/ext/..., /mcp, /api/publish,
@@ -46,7 +43,7 @@
 
 
 import { TARGETS } from "../../deploy/targets.ts";
-import { isFilesPath, isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
+import { isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
 import { esc, isAssetPath, page, safeNext } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { isPeer } from "./peer.ts";
@@ -63,7 +60,6 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   if (isSignInPath(path) && isPeer(request, base)) return true;
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/__erga/")) return true;
-  if (isFilesPath(path)) return method == "GET" || method == "HEAD";
   return false;
 }
 

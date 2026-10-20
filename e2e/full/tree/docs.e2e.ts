@@ -110,6 +110,6 @@ test("a page's row opens it in the editor, for an editor", async ({ tab }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
   await openDocs(page, doc);
-  await clickToGo(page, `#pages-${doc.id} ${row("about.html")}`, `${doc.address}/about#edit`);
+  await clickToGo(page, `#pages-${doc.id} ${row("about.html")}`, `${doc.address}/about?edit`);
   await until(() => page.evaluate(`document.body.classList.contains("erga-editor-ready")`).catch(() => false), 10_000, "the editor is up");
 });

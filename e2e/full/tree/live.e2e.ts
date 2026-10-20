@@ -66,6 +66,6 @@ test("?pages opens the tree at once; the page you're on, moved by an agent: the 
   await openTreeEditor(tab, `${doc.base}/blog/owl-calls`, { query: "?pages" });
   await until(async () => (await rows(page)).some((x) => x[0] == "blog/owl-calls.html" && x[3]), 10_000, "the tree marks the page you're on, in its folder, which opened");
   await doc.agentTool("mv", { from: "blog/owl-calls.html", to: "owl-calls.html" });
-  await until(() => { const u = new URL(page.url()); return u.pathname + u.hash == `${doc.address}/owl-calls#edit`; }, 10_000, "the editor follows its page to its new address");
+  await until(() => { const u = new URL(page.url()); return u.pathname + u.search == `${doc.address}/owl-calls?edit`; }, 10_000, "the editor follows its page to its new address");
   await until(async () => (await rows(page).catch(() => [])).some((x) => x[0] == "owl-calls.html" && x[3]), 10_000, "and the tree marks it there");
 });

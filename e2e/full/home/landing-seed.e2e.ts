@@ -15,12 +15,12 @@ test("on a fresh server, the first / (eight at once) makes one landing document,
   expect([...ids]).toHaveLength(1);
   expect(ids.has(undefined)).toBe(false);
   // Every one of them at /tester/landing: the seed that won the claim never ends up at landing-2 (server/documents/landing.ts seedLanding).
-  for (const f of fronts) expect(f).toContain('href="/tester/landing#edit"');
+  for (const f of fronts) expect(f).toContain('href="/tester/landing?edit"');
   const front = fronts[0];
   const id = frameOf(front)![1];
   expect(frameOf(front)![2]).toBe("tester");
   const list = await (await get(server, "/docs")).text();
-  expect(list.match(/href="\/tester\/landing(-\d+)?#edit"/g)).toEqual(['href="/tester/landing#edit"']);
+  expect(list.match(/href="\/tester\/landing(-\d+)?\?edit"/g)).toEqual(['href="/tester/landing?edit"']);
   expect(front).toContain("<title>Erga</title>");
   expect(front).toContain('href="/new?from=landing"');
   expect(await (await get(server, `/d/${id}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "assets/landing/index.html"), "utf8"));

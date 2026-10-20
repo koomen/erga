@@ -34,22 +34,17 @@ erga-caret.on.again { animation-name: erga-caret-b; }
 @keyframes erga-caret-b { from, to { opacity: 1; } 50% { opacity: 0; } }
 `;
 
-/** Draws the caret in each page the frame shows (each render loads a new one), from the page it shows now if it has one. */
-const drawn = new WeakSet<HTMLIFrameElement>(), attached = new WeakSet<Document>();
-export function drawCaret(frame: HTMLIFrameElement): void {
-  const start = () => {
-    const doc = frame.contentDocument, win = frame.contentWindow;
-    if (doc && win && doc.URL != "about:blank" && !attached.has(doc)) { attached.add(doc); attach(frame, doc, win as Window & typeof globalThis); }
-  };
-  if (drawn.has(frame)) return;
-  drawn.add(frame);
-  frame.addEventListener("load", start);
-  start();
+/**
+ * Draws the caret in the page (its window: the editor runs in it), at the editor's zoom (`zoom`, how much larger the
+ * viewer draws the page). Returns what stops it: the page's own caret again, and nothing of this one left.
+ */
+export function drawCaret(win: Window & typeof globalThis, zoom: () => number): () => void {
+  return attach(win.document, win, zoom);
 }
 
 interface Spot { x: number; y: number; width: number; height: number; color: string }
 
-function attach(frame: HTMLIFrameElement, doc: Document, win: Window & typeof globalThis): void {
+function attach(doc: Document, win: Window & typeof globalThis, zoomOf: () => number): () => void {
   const html = doc.documentElement;
   const style = doc.createElement("style");
   style.setAttribute("data-erga-caret", "");
@@ -59,17 +54,18 @@ function attach(frame: HTMLIFrameElement, doc: Document, win: Window & typeof gl
   html.classList.add(DRAWN);
   /** The native caret's colour for each element (the page's caret-color, else its text colour). */
   let colors = new WeakMap<Element, string>();
-  let last = "", queued = false, moved = false;
+  let last = "", queued = false, moved = false, stopped = false;
 
   const queue = (restart = false) => {
     moved ||= restart;
-    if (queued) return;
+    if (queued || stopped) return;
     queued = true;
     win.requestAnimationFrame(paint);
   };
 
   function paint() {
     queued = false;
+    if (stopped) return;
     const spot = measure();
     if (spot == "native") { html.classList.remove(DRAWN); hide(); return; }
     if (!html.classList.contains(DRAWN)) html.classList.add(DRAWN);
@@ -106,7 +102,7 @@ function attach(frame: HTMLIFrameElement, doc: Document, win: Window & typeof gl
     const active = doc.activeElement as HTMLElement | null;
     if (!active?.isContentEditable) return null;
     // The page's scale on the screen (the editor's zoom), and the text's in the page (a transform of the page's own).
-    const zoom = scaleOf(frame), scale = scaleOf(el);
+    const zoom = zoomOf(), scale = scaleOf(el);
     const box = caretBox(sel.getRangeAt(0), el, scale);
     if (!box) return "native";
     const cs = win.getComputedStyle(el);
@@ -124,7 +120,7 @@ function attach(frame: HTMLIFrameElement, doc: Document, win: Window & typeof gl
     };
   }
 
-  /** How much larger than its own size an element shows (1 unless a transform scales it); for a frame, in its document. */
+  /** How much larger than its own size an element shows (1 unless a transform scales it). */
   function scaleOf(el: Element): number {
     let e: Element | null = el;
     while (e && !((e as HTMLElement).offsetWidth > 0)) e = e.parentElement;
@@ -175,21 +171,35 @@ function attach(frame: HTMLIFrameElement, doc: Document, win: Window & typeof gl
     return color;
   }
 
+  const off: (() => void)[] = [];
   const on = (target: Document | Window, type: string, restart = false) => {
-    const opts = { capture: true, passive: true };
-    if (target == doc) listenAsEditor(doc, type, () => queue(restart), opts);
-    else target.addEventListener(type, () => queue(restart), opts);
+    const opts = { capture: true, passive: true }, f = () => queue(restart);
+    if (target == doc) off.push(listenAsEditor(doc, type, f, opts));
+    else { target.addEventListener(type, f, opts); off.push(() => target.removeEventListener(type, f, opts)); }
   };
   on(doc, "selectionchange");
   for (const type of ["keydown", "input", "compositionstart", "compositionupdate", "compositionend", "mousedown"]) on(doc, type, true);
   for (const type of ["mouseup", "focusin", "focusout"]) on(doc, type);
   for (const type of ["focus", "blur", "resize"]) on(win, type);
   // Dark mode can change the text's colour, and so the caret's.
-  win.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { colors = new WeakMap(); queue(); });
+  const dark = win.matchMedia("(prefers-color-scheme: dark)"), recolor = () => { colors = new WeakMap(); queue(); };
+  dark.addEventListener("change", recolor);
   // The text around the caret can move without the selection changing: someone else's edit above it, an image that loads, a font.
-  new win.ResizeObserver(() => queue()).observe(html);
-  new win.MutationObserver(() => queue()).observe(doc, { childList: true, characterData: true, subtree: true });
+  const sized = new win.ResizeObserver(() => queue());
+  sized.observe(html);
+  const changed = new win.MutationObserver(() => queue());
+  changed.observe(doc, { childList: true, characterData: true, subtree: true });
   // A scroll, here or in an element, and a page that moves its text itself: a board panned by a drag, a transition.
   watchMoves(doc, win, () => queue());
   queue();
+  return () => {
+    stopped = true;
+    for (const f of off) f();
+    dark.removeEventListener("change", recolor);
+    sized.disconnect();
+    changed.disconnect();
+    caret.remove();
+    style.remove();
+    html.classList.remove(DRAWN);
+  };
 }

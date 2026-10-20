@@ -47,7 +47,7 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   const tool = tools(server, token, doc.id);
   const p = tab.page;
   await p.setViewportSize({ width: 1200, height: 800 });
-  await p.goto(`${server.root}${doc.address}#edit`);
+  await p.goto(`${server.root}${doc.address}?edit`);
   await until(() => p.evaluate(() => ["erga-editor-ready", "erga-editing", "erga-listening"].every((c) => document.body.classList.contains(c))).catch(() => false), 15_000, "the editor is ready");
 
   // The console, with the page's 1000 warnings as one line.
@@ -64,7 +64,7 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   expect(pageFacts.allow).toBe("autoplay; fullscreen 'none'");
   expect(pageFacts.autoplay).toMatchObject({ allowsFeature: true, fullscreen: false });
   expect(pageFacts.media?.[0]).toMatchObject({ element: "<audio#track>", paused: true });
-  expect(facts![0]).toMatchObject({ frame: "the editor (the tab itself)", editorFrame: { allow: "autoplay" } });
+  expect(facts![0]).toMatchObject({ frame: "the editor (the tab itself)", editorFrame: { allow: "autoplay; fullscreen 'none'" } });
   // The tab shows the person a line each time the agent inspects their page.
   await until(() => p.evaluate(() => document.getElementById("agent-live-text")?.textContent ?? ""), 3000, "the line in the tab").then((t) => expect(t).toMatch(/The agent read the page's media and permissions/));
   // Nothing in the agent's panel to switch on.

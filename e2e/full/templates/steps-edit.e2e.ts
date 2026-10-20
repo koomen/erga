@@ -9,7 +9,7 @@ test("editing: forward and → outside the text go to a step; ← in the heading
   const s = await servers.main();
   const { address } = await s.fixture("steps");
   const page = tab.page;
-  await openTab(tab, `${address}#edit`);
+  await openTab(tab, `${address}?edit`);
   await editorReady(page);
   await expect.poll(async () => (await bar(page)).shown && (await inPage<number>(page, "ergaSteps.current()")) == 0).toBe(true);
   // The list open first: a click on its toggle later would take the caret out of the page.

@@ -69,7 +69,7 @@ export async function openFonts(tab: Tab, dark = false): Promise<Editor> {
   await tab.page.emulateMedia({ colorScheme: dark ? "dark" : "light" });
   // Someone who keeps the agent pane closed (the window it renders at is the frame's whole width).
   await tab.page.addInitScript(() => { if (window.top == window) try { if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}'); } catch { /* none */ } });
-  await tab.page.goto(`${address}#edit`);
+  await tab.page.goto(`${address}?edit`);
   const ed = editor(tab.page, { address, dir, file: join(dir, "index.html") });
   await ed.loaded();
   return ed;

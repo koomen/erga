@@ -38,7 +38,7 @@ test("list_pages: every page with its title and address, folders, and the shared
   const none = await s.tool("open_page", { path: "about" });
   expect(none.ok).toBe(true);
   expect(none.text).toContain("no editor open");
-  expect(none.text).toContain(`${a}/about#edit`);
+  expect(none.text).toContain(`${a}/about?edit`);
   expect((await s.tool("open_page", { path: "nope.html" })).ok).toBe(false);
 });
 

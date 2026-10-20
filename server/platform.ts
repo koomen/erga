@@ -193,7 +193,7 @@ export interface Platform {
      * the front page), which file the address `page` is, the version viewers see, and the file's text unless the caller
      * has that version (`have`). Null if there's no such document. Asks the database nothing.
      */
-    view(id: string, who: Who | null, opts: { page: string; anyone?: boolean; have?: string | null }): Promise<ViewAnswer | null>;
+    view(id: string, who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null>;
   };
 }
 

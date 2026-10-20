@@ -6,7 +6,7 @@ import { agentClosed } from "./tree";
 /** The editor at `url` (an address), up with its title showing; the tree's script may not be there yet. */
 export async function up(page: Page, url: string) {
   await agentClosed(page);
-  await page.goto(`${url}#edit`);
+  await page.goto(`${url}?edit`);
   await until(() => page.evaluate(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 10_000, "the editor is up with its title");
 }
 

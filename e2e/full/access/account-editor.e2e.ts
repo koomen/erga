@@ -30,7 +30,7 @@ test("your avatar, far right of the editor's controls with your GitHub picture, 
   expect((await menu()).hidden).toBe(false);
   await page.keyboard.press("Escape");
   await expect.poll(() => page.evaluate(() => document.getElementById("account")!.hidden)).toBe(true);
-  expect(await page.evaluate(() => { const e = document.getElementById("btn-edit")!; return { pressed: e.getAttribute("aria-pressed"), hidden: e.hidden, href: e.getAttribute("href") }; })).toEqual({ pressed: "true", hidden: false, href: at.replace(/#edit$/, "") });
+  expect(await page.evaluate(() => { const e = document.getElementById("btn-edit")!; return { pressed: e.getAttribute("aria-pressed"), hidden: e.hidden, href: e.getAttribute("href") }; })).toEqual({ pressed: "true", hidden: false, href: at.replace(/[?&]edit=?$/, "") });
 });
 
 test("its owner adds someone, sees them listed with their role and picture, and takes them off; the controls, left to right up to your avatar", async ({ tab }) => {
@@ -64,7 +64,7 @@ test("the pencil switches between viewing and editing without a reload, the docu
   for (const v of await bounce()) expect(v, "editing, overscroll").toBe("none");
   await page.evaluate(() => { (window as any).__samePage = true; });
   await clickOn(page, "#btn-edit");
-  await until(async () => (await page.evaluate(() => location.pathname + location.hash)) == at.replace(/#edit$/, "") && await visible(".erga-view-buttons") && !(await visible("#erga-editor")), 5000, "the pencil goes back to the viewer");
+  await until(async () => (await page.evaluate(() => location.pathname + location.search)) == at.replace(/[?&]edit=?$/, "") && await visible(".erga-view-buttons") && !(await visible("#erga-editor")), 5000, "the pencil goes back to the viewer");
   await until(async () => (await h1()) != null, 5000, "the viewer's page shows");
   const viewing = await bounce();
   expect(viewing.length).toBeGreaterThanOrEqual(3);
@@ -73,8 +73,8 @@ test("the pencil switches between viewing and editing without a reload, the docu
   expect(await page.evaluate(() => getComputedStyle(document.getElementById("nav-docs")!).visibility)).toBe("hidden");
   expect(await h1()).toBe(editingTop);
   await clickOn(page, ".erga-edit-button");
-  await until(async () => (await page.evaluate(() => location.pathname + location.hash)) == at && await visible("#erga-editor") && !(await visible(".erga-view-buttons")), 5000, "the pencil goes back into the editor");
+  await until(async () => (await page.evaluate(() => location.pathname + location.search)) == at && await visible("#erga-editor") && !(await visible(".erga-view-buttons")), 5000, "the pencil goes back into the editor");
   expect(await page.evaluate(() => (window as any).__samePage === true), "neither reloaded the page").toBe(true);
   await page.evaluate(() => history.back());
-  await until(async () => (await page.evaluate(() => location.pathname + location.hash)) == at.replace(/#edit$/, "") && await visible(".erga-view-buttons"), 5000, "Back goes to the viewer too");
+  await until(async () => (await page.evaluate(() => location.pathname + location.search)) == at.replace(/[?&]edit=?$/, "") && await visible(".erga-view-buttons"), 5000, "Back goes to the viewer too");
 });

@@ -1,28 +1,24 @@
 // The viewer on a document: the page at /<owner>/<slug> (and the front page, /), which is
-// the editor too for whoever may edit (#edit). One document load: the page holds the
-// document's page itself, inline (a srcdoc frame with an opaque origin: pages/viewer.ts,
-// pages/reader.ts), and the document's other files come from their version's address
-// (files.ts), which the browser keeps for good.
+// the editor too for whoever may edit (?edit). It holds the document's page in one frame,
+// on the document's own pages origin (pages-origin.ts: the page with what the viewer and
+// the editor need in it, pages/reader.ts), for readers and editors alike: the page loads
+// once, and going into the editor loads the editor into it.
 //
-// One call to the document's host says everything (Platform.docs.view): what the person
-// may do (the host decides, on its copy of the document's permissions), which file the
-// address is, the version viewers see, and the file's text. The answer is kept:
+// One call to the document's host says what this page needs (Platform.docs.view): what the
+// person may do (the host decides, on its copy of the document's permissions), and which
+// file the address is. The answer is kept: what someone may see at an address (the
+// document, their role, the file), by the address and who they are, for DECISION_MS (in
+// this isolate's memory and the edge's cache), when the document is quiet (no file changed
+// in the last minute: one being edited is asked each time). It's theirs alone: the key
+// names them. A change of permissions, or of a quiet document, reaches it within that time
+// (this isolate forgets a change of permissions at once).
 //
-//   - what someone may see at an address (the document, their role, the version, the
-//     file), by the address and who they are, for DECISION_MS (in this isolate's memory
-//     and the edge's cache), when the document is quiet (no file changed in the last
-//     minute: one being edited is asked each time). It's theirs alone: the key names
-//     them. A change of permissions, or of a quiet document, reaches it within that
-//     time (this isolate forgets a change of permissions at once);
-//   - a version's page (its text), by document, version and file, for good: a version
-//     never changes, and nobody reaches it without a decision that lets them.
-//
-// So a second view in a short while asks neither the database nor the document. The
-// page has an ETag (the version, and everything else the page says); the browser checks it
-// each time (`private, no-cache`), and an unchanged page is a 304.
+// So a second view in a short while asks neither the database nor the document. The page
+// has an ETag (everything it says); the browser checks it each time (`private, no-cache`),
+// and an unchanged page is a 304.
 //
 // The page is rendered whole here, with the account corner and live.js (what server/app.ts
-// adds to the site's other pages, reading them back): it's sent as it's made.
+// adds to the site's other pages, reading them back).
 
 import { pageAddress } from "../../document/pages.ts";
 import type { ViewAnswer } from "../../document/document.ts";
@@ -30,11 +26,9 @@ import { mayDeploy } from "../deploys/access.ts";
 import { ID, OWNER, type Role, roleMay } from "../directory/index.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { filesPrefix } from "./files.ts";
 import { frontDocument, landingPage } from "./landing.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
-import { accountHtml, accountOf, cloneButton, editButton, esc, link, OWN_ACCOUNT, page, scriptTag, startPage, viewerPage } from "../pages/index.ts";
-import { readerPage } from "../pages/index.ts";
+import { accountHtml, accountOf, cloneButton, editButton, esc, link, OWN_ACCOUNT, page, scriptTag, startPage, viewerPage, withEdit } from "../pages/index.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -56,14 +50,9 @@ interface Decision {
 const decisions = new Map<string, { at: number; d: Decision }>();
 /** Documents whose permissions changed, and when: a decision made before (here or kept at the edge) no longer holds. */
 const changed = new Map<string, number>();
-/** Pages kept in this isolate, by document, version and file (a few megabytes at most). */
-const pages = new Map<string, string>();
-let pagesSize = 0;
-const PAGES_MAX = 8_000_000;
 
 // (Keys on this site's own origin, at a path nothing serves: the edge's cache holds only its own zone's addresses.)
 const decisionKey = (url: URL, who: string) => `${url.origin}/_erga-cache/view${url.pathname}?who=${encodeURIComponent(who)}`;
-const pageKey = (url: URL, id: string, ver: string, file: string) => `${url.origin}/_erga-cache/page/${id}/${ver}/${encodeURIComponent(file)}`;
 
 /** Who's asking, as a decision's key names them: everything Directory.decide looks at. */
 const whoKey = (session: Session | null) => (session ? JSON.stringify(whoOf(session)) : "");
@@ -92,23 +81,6 @@ export function forgetDecisions(id: string): void {
   if (changed.size > 5000) changed.clear();
   changed.set(id, Date.now());
   for (const [key, { d }] of decisions) if (d.id == id) decisions.delete(key);
-}
-
-async function keptPage(platform: Platform, key: string): Promise<string | null> {
-  const mine = pages.get(key);
-  if (mine != null) return mine;
-  const hit = await platform.edge.cache?.match(key).catch(() => undefined);
-  return hit ? hit.text() : null;
-}
-
-function keepPage(platform: Platform, key: string, html: string): void {
-  if (html.length < PAGES_MAX / 4) {
-    if (pagesSize + html.length > PAGES_MAX) { pages.clear(); pagesSize = 0; }
-    pages.set(key, html);
-    pagesSize += html.length;
-  }
-  const cache = platform.edge.cache;
-  if (cache) platform.edge.background(cache.put(key, new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=31536000, immutable" } })).catch(() => {}));
 }
 
 /** Whether two paths are the same address, however each is percent-encoded. */
@@ -155,11 +127,10 @@ export async function viewAddress(platform: Platform, request: Request, session:
     if (answer.file == null || answer.ver == null) return noPage(`/${name.owner}/${name.slug}`);
     d = { id, owner: name.owner, slug: name.slug, title: name.title, role: answer.role, ver: answer.ver, file: answer.file, canonical: answer.canonical ?? "" };
     if (answer.quiet) keepDecision(platform, key, d);
-    if (answer.html != null) keepPage(platform, pageKey(url, d.id, d.ver, d.file), answer.html);
   }
   const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`)) return new Response(null, { status: 302, headers: { Location: canonical + url.search, "Cache-Control": "no-store" } });
-  return render(platform, request, session, d, answer?.html ?? null, false);
+  return render(platform, request, session, d, false);
 }
 
 /**
@@ -173,7 +144,6 @@ export async function viewLanding(platform: Platform, request: Request, session:
   const home = await platform.directory.homeId();
   const key = home ? `${decisionKey(url, whoKey(session))}&home=${home}` : null;
   let d = key ? await keptDecision(platform, key) : null;
-  let html: string | null = null;
   if (!d) {
     const who = session ? whoOf(session) : null;
     const doc = await frontDocument(platform);
@@ -189,10 +159,8 @@ export async function viewLanding(platform: Platform, request: Request, session:
     if (!row || !answer || answer.file == null || answer.ver == null) return nothing();
     d = { id: row.id, owner: row.owner, slug: row.slug, title: row.title, role: answer.role, ver: answer.ver, file: answer.file, canonical: "" };
     if (answer.quiet && key && row.id == home) keepDecision(platform, key, d);
-    html = answer.html ?? null;
-    if (html != null) keepPage(platform, pageKey(url, d.id, d.ver, d.file), html);
   }
-  return render(platform, request, session, d, html, true);
+  return render(platform, request, session, d, true);
 }
 
 /** What the editor's menu on your avatar needs to know that the document doesn't: the links it offers. */
@@ -207,72 +175,51 @@ async function digestOf(text: string): Promise<string> {
   return btoa(String.fromCharCode(...bytes.slice(0, 16))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** As an attribute's value holds it (srcdoc): nothing in it closes the attribute, nor looks like a tag. */
-const attr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
 /**
- * The page: the band, the controls, the document's page inline. For whoever may edit, what the editor needs too (the
- * document's host, its pages origin for the page editor, the account's links). Sent as it's made.
+ * The page: the band, the controls, the document's page in its frame on its pages origin (with the token that opens its
+ * files there: an editor's says so, and its pages come with what the editor needs). For whoever may edit, what the
+ * editor needs too (the document's host, the account's links); opened with ?edit, the editor from the first response.
  */
-async function render(platform: Platform, request: Request, session: Session | null, d: Decision, html: string | null, landing: boolean): Promise<Response> {
+async function render(platform: Platform, request: Request, session: Session | null, d: Decision, landing: boolean): Promise<Response> {
   const url = new URL(request.url);
   const dir = platform.directory;
   const canEdit = !!session && !session.agent && roleMay(d.role, "edit");
+  const editing = canEdit && url.searchParams.has("edit");
   const [admin, deploy] = await Promise.all([
     session && !session.test ? dir.users.isAdmin(whoOf(session)) : false,
     mayDeploy(dir, session),
   ]);
-  // The page editor's frame, for whoever may edit: on the document's pages origin, with the token that opens its files there.
-  // On a server for admins alone (staging), the token, and the files' key, name the admin.
+  // On a server for admins alone (staging), the token names the admin.
   const by = platform.adminsOnly && session ? session.login : null;
-  const [prefix, token] = await Promise.all([
-    filesPrefix(platform.secret, d.id, d.ver, by),
-    canEdit ? pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, by ? { by } : {}) : null,
-  ]);
-  const origin = canEdit ? pagesOrigin(d.owner, d.id, url, platform) : "";
-  const host = token ? `${origin}/t/${token}/` : "";
+  const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, { ...(by ? { by } : {}), ...(canEdit ? { edit: true } : {}) });
+  const origin = pagesOrigin(d.owner, d.id, url, platform);
+  const files = `${origin}/t/${token}/`;
   const address = `/${d.owner}/${d.slug}`;
   const clone = cloneButton(link(`/new?from=${landing ? "landing" : d.id}`, session));
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;
-  const edit = canEdit ? editButton(`${link(here, session)}#edit`, false) : "";
+  const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";
   const canShare = canEdit && !!session && !session.test && roleMay(d.role, "share");
-  const index = d.file;
-  const meta = `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(index)}">` + (canEdit && session
-    ? `<meta name="erga-pages" content="${esc(host)}"><meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${accountMeta(session, admin && !session.agent, deploy)}`
+  const meta = `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` + (canEdit && session
+    ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${accountMeta(session, admin && !session.agent, deploy)}`
     : "");
-  const shell = viewerPage({ title: d.title, docId: d.id, pages: origin, host, index, meta, session, editable: canEdit, landing, clone, edit });
+  // The page's own address there: its file, under the token.
+  const src = files + d.file.split("/").map(encodeURIComponent).join("/");
+  const shell = viewerPage({ title: d.title, docId: d.id, pages: origin, src, meta, session, editable: canEdit, editing, landing, clone, edit });
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
   const before = shell.before, after = shell.after + corner;
   const build = await pageBuild(before + after);
   const headers = new Headers({
     "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-cache", "Referrer-Policy": "no-referrer",
     [BUILD_HEADER]: build, [OWN_ACCOUNT]: "1", Vary: "Cookie",
+    // The page's origin, connected to as early as can be (an early hint, where the edge sends them).
+    Link: `<${origin}>; rel=preconnect`,
   });
   // live.js asking whether the page's code changed: the build alone.
   if (request.headers.get(CHECK_HEADER) == "build") return new Response(null, { status: 204, headers });
-  const etag = `"${await digestOf(`${d.ver}\n${d.file}\n${prefix}\n${before}\n${after}`)}"`;
+  const live = `<meta name="erga-build" content="${build}">${scriptTag("live.js")}`;
+  const body = before + after + live + "\n</body>\n</html>";
+  const etag = `"${await digestOf(body)}"`;
   headers.set("ETag", etag);
   if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
-  // The page's text: from the call that decided, else kept, else its host once more.
-  const pk = pageKey(url, d.id, d.ver, d.file);
-  let text = html ?? (await keptPage(platform, pk));
-  if (text == null) {
-    const again = await platform.docs.view(d.id, session ? whoOf(session) : null, { page: d.canonical, anyone: landing });
-    // (A newer version since: its text, under this one's key only if it's the same.)
-    text = again?.html ?? "";
-    if (again?.ver == d.ver && again.html != null) keepPage(platform, pk, again.html);
-  }
-  const slash = d.file.lastIndexOf("/");
-  const base = `${url.origin}${prefix}${slash >= 0 ? d.file.slice(0, slash + 1).split("/").map(encodeURIComponent).join("/") : ""}`;
-  const srcdoc = attr(readerPage(text, { base, page: d.file, prefix }));
-  const live = `<meta name="erga-build" content="${build}">${scriptTag("live.js")}`;
-  const encoder = new TextEncoder();
-  const parts = [before, srcdoc, after + live + "\n</body>\n</html>"];
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      const next = parts.shift();
-      if (next == null) controller.close(); else controller.enqueue(encoder.encode(next));
-    },
-  });
   return new Response(request.method == "HEAD" ? null : body, { headers });
 }

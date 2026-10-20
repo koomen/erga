@@ -74,13 +74,13 @@ const newId = () => "b" + Array.from(crypto.getRandomValues(new Uint8Array(7)), 
 /** Where to read and write a document's files, raw (/d/<id>/api/stored/<path>): set-up only. */
 const stored = (root: string, id: string, path: string) => `${root}/d/${id}/api/stored/${path}`;
 
-/** Makes a document (POST /new): its id and its address (no #edit). `from`: a copy of that document. */
+/** Makes a document (POST /new): its id and its address (no ?edit). `from`: a copy of that document. */
 async function make(root: string, from?: string): Promise<{ id: string; address: string }> {
   const id = newId();
   const r = await fetch(`${root}/new?id=${id}${from ? `&from=${from}` : ""}`, { method: "POST", headers: { Origin: root }, redirect: "manual" });
   const at = r.headers.get("location");
   if (r.status != 302 || !at) throw new Error(`/new answered ${r.status}: ${(await r.text()).slice(0, 300)}`);
-  return { id, address: at.replace(/#edit$/, "") };
+  return { id, address: at.replace(/[?&]edit=?$/, "") };
 }
 
 /**
@@ -106,7 +106,7 @@ export class Docs {
     return p;
   }
 
-  /** A new copy of a kind's document: its id and its address (no #edit). */
+  /** A new copy of a kind's document: its id and its address (no ?edit). */
   async fresh(kind: DocKind): Promise<{ id: string; address: string }> {
     return make(this.root, await this.source(kind));
   }

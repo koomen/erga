@@ -49,7 +49,7 @@ test("/new?template=<id> makes each template's document, Page first; an unknown 
   const s = await servers.main();
   const page = await newDoc(s, "page");
   expect(page.status).toBe(302);
-  expect(page.location).toMatch(/#edit$/);
+  expect(page.location).toMatch(/[?&]edit=?$/);
   expect(TEMPLATES[0].id).toBe("page");
   expect(await fileOf(s.root, page.address)).toBe(template("assets/templates/doc"));
   for (const t of TEMPLATES.slice(1)) expect(await fileOf(s.root, (await newDoc(s, t.id)).address), t.name).toBe(template(t.files));
@@ -71,7 +71,7 @@ test("the viewer's + opens the picker, in one typeface; Escape closes it; Page m
   await clickOn(page, ".erga-view-buttons .erga-new-btn");
   await clickOn(page, '.erga-new-menu a[data-template="page"]');
   const from = new URL(address).pathname;
-  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#edit");
+  await expect.poll(() => page.evaluate(() => location.search)).toBe("?edit");
   await expect.poll(() => page.evaluate(() => location.pathname)).not.toBe(from);
   expect(await fileOf(s.root, s.root + await page.evaluate(() => location.pathname))).toBe(template("assets/templates/doc"));
 });
@@ -80,7 +80,7 @@ test("the editor's + opens the picker under it, in the window, in one typeface; 
   const s = await servers.main();
   const { address } = await newDoc(s, "page");
   const page = tab.page;
-  await openTab(tab, `${address}#edit`);
+  await openTab(tab, `${address}?edit`);
   await editorReady(page);
   // The viewer's controls fade out over the editor's for 200 ms after it is ready, and take clicks meanwhile
   // (server/pages/viewer.ts, `.erga-editor-ready :is(.erga-view-buttons, .erga-account)`): a click on + then hits the viewer's
@@ -99,7 +99,7 @@ test("the editor's + opens the picker under it, in the window, in one typeface; 
   expect(place.menu.right).toBeLessThanOrEqual(place.w);
   await clickOn(page, '.erga-new-menu a[data-template="page"]');
   const from = new URL(address).pathname;
-  await expect.poll(() => page.evaluate(() => location.pathname != "" && location.hash == "#edit" && location.pathname)).not.toBe(from);
+  await expect.poll(() => page.evaluate(() => location.pathname != "" && location.search == "?edit" && location.pathname)).not.toBe(from);
 });
 
 test("signed out, the front page's + says you sign in first, and a template goes to sign-in and comes back to make it", async ({ tab }) => {

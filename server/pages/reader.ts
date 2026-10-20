@@ -1,66 +1,105 @@
-// The viewer's half inside the document's own frame. The viewer (pages/viewer.ts) holds a document's page inline,
-// in a frame of an opaque origin (srcdoc, sandboxed without allow-same-origin): its scripts reach nothing of
-// erga.dev's, nor of any other document's, and the viewer can't reach into it either. So this script goes into the
-// page first (before the page's own), and tells the viewer by postMessage what it needs: where the page is
-// scrolled to and where the pointer is (the fade), its background (the band and the canvas around the frame), its
-// steps (a presentation), and which of the document's pages it shows. It follows the viewer's asks (a step, a
-// step's picture), and sends links that leave the document to the viewer, which opens them.
+// A document's page, as everyone sees it: one frame on the viewer (pages/viewer.ts), which holds the page on the
+// document's own pages origin (documents/pages-origin.ts), served with the source marks the editor needs
+// (shared/page.ts). It loads once: reading it, and editing it. Going into the editor loads the editor's half into the
+// page itself (client/frame.ts, from the app's origin, pinned by its integrity), which finds the text there by its
+// marks; going back out stops it, and the page stays as it is, its scripts and media carrying on.
 //
-// The page's own files (its styles, scripts, images, other pages) come from the files address, /_f/<key>/
-// (server/documents/files.ts): the srcdoc page has it as its <base>; a page the frame goes to is served from there
-// with this script in it too.
-//
-// An opaque origin has no storage: localStorage, sessionStorage and document.cookie would throw. Here they're kept
-// in memory, for as long as the page is open, so a page that uses them still runs.
+// This script goes into the page first (before the page's own), and tells the viewer by postMessage what it needs:
+// where the page is scrolled to and where the pointer is (the fade), its background (the band and the canvas around
+// the frame), its steps (a presentation), and which of the document's pages it shows. It follows the viewer's asks (a
+// step, a step's picture, the editor), and sends links that leave the document to the viewer, which opens them.
 //
 // What it sends is the page's own word: the page's scripts can send the same (the viewer checks every message as
-// coming from the page). It sends nothing secret, and to the frame's parent only.
+// coming from the page). It sends nothing secret, and to the viewer's origin only. The page's origin holds nothing but
+// this one document: that's the boundary (PAGE_SANDBOX).
 
-/** What the frame of a page in the viewer may do: scripts, forms, dialogs and popups, and never its own origin (no allow-same-origin). */
-export const READER_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups";
+import { EVENT_TYPES, liveWatch } from "../../shared/live-page.ts";
+import { EDITING_API, insertHead, PROBLEM_WATCH, TEXT_GUARD } from "../../shared/page.ts";
+import { asset, frameScripts } from "./assets.ts";
 
-/** The script, as text: `config` is { page: the page's file, or null to read it from the frame's address; prefix: the files address's path }. */
-export const readerScript = (config: { page: string | null; prefix: string }) => `(function () {
+/**
+ * What a document's page may do in its frame, for readers and editors alike.
+ *
+ * allow-same-origin stays, with allow-scripts: the page keeps its pages origin, which holds nothing but this one
+ * document, and the editor's half reaches into it there (typing and carets). So the page's script can remove its own
+ * sandbox: Chrome warns about that, rightly, and it changes nothing. The boundary is the origin: the page can't reach
+ * erga.dev, its cookies or another document's origin, and the viewer (viewer.ts, client/remote.ts) treats every
+ * message from it as the page's own. Its own storage is its own, as on any site.
+ */
+export const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
+
+/** What a reader's page may do beyond its sandbox: nothing. */
+export const PAGE_ALLOW = "autoplay 'none'; fullscreen 'none'";
+
+/**
+ * What an editor's page may do beyond its sandbox: autoplay, for the agent's page_click (it gives no activation of its
+ * own, so the page's media plays on the tab's). Never full screen: the agent can't use it, and a page in full screen
+ * could pass for Erga. (The frame is the same one viewing and editing: what it may do is decided as the viewer loads,
+ * opened in the editor or not.)
+ */
+export const EDITOR_ALLOW = "autoplay; fullscreen 'none'";
+
+/** What the script needs: the viewer's origin, where the document's files are (with the token), and its text's digest. */
+export interface ReaderConfig {
+  /** The viewer's origin (the token names it): the only one it talks to. */
+  shell: string;
+  /** The path the document's files are under on this origin: /t/<token>/. */
+  prefix: string;
+  /** The digest of the text the page was made from (shared/page.ts, sourceDigest): the editor checks it has the same. */
+  src: string;
+  /** For whoever may edit: the editor's half (frame.js), its chunks and their integrity. */
+  editor?: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
+}
+
+/** The script, as text. */
+export const readerScript = (config: ReaderConfig) => `(function () {
   var C = ${JSON.stringify(config).replace(/</g, "\\u003c")};
-  // Storage that an opaque origin lacks: in memory, for this page's life.
-  function memory() {
-    var m = new Map();
-    var s = {
-      getItem: function (k) { k = String(k); return m.has(k) ? m.get(k) : null; },
-      setItem: function (k, v) { m.set(String(k), String(v)); },
-      removeItem: function (k) { m.delete(String(k)); },
-      clear: function () { m.clear(); },
-      key: function (i) { var a = Array.from(m.keys()); return i < a.length ? a[i] : null; },
-    };
-    Object.defineProperty(s, "length", { get: function () { return m.size; } });
-    return s;
-  }
-  for (var name of ["localStorage", "sessionStorage"]) {
-    try { window[name].length; } catch (e) { try { Object.defineProperty(window, name, { value: memory(), configurable: true }); } catch (e2) {} }
-  }
-  try { document.cookie; } catch (e) {
-    var jar = {};
-    try {
-      Object.defineProperty(document, "cookie", { configurable: true,
-        get: function () { return Object.keys(jar).map(function (k) { return k + "=" + jar[k]; }).join("; "); },
-        set: function (v) { var kv = String(v).split(";")[0], i = kv.indexOf("="); if (i > 0) jar[kv.slice(0, i).trim()] = kv.slice(i + 1).trim(); } });
-    } catch (e2) {}
-  }
-  if (parent == window) return;
-  var P = parent;
-  function tell(m) { try { P.postMessage(m, "*"); } catch (e) {} }
+  // Only as the viewer's document: not opened by itself, nor in a frame inside the page.
+  if (parent == window || parent != top) return;
+  var P = parent, root = document.documentElement;
+  function tell(m) { try { P.postMessage(m, C.shell); } catch (e) {} }
+  function editing() { return root.hasAttribute("data-erga-editing"); }
+  window.__ergaReader = { config: C, changed: function () { rev++; said = ""; tellSteps(); }, placed: function () { placed(); } };
+  tell({ type: "erga-hello" });
   // Which of the document's pages this is ("" for its own page).
-  var page = C.page;
-  if (page == null) {
-    var p = location.pathname;
-    page = p.indexOf(C.prefix) == 0 ? p.slice(C.prefix.length) : "";
-    try { page = decodeURIComponent(page); } catch (e) {}
-  }
+  var page = location.pathname.indexOf(C.prefix) == 0 ? location.pathname.slice(C.prefix.length) : "";
+  try { page = decodeURIComponent(page); } catch (e) {}
   if (!page || /\\.html$/i.test(page)) tell({ type: "erga-nav", path: page || "" });
   // The page stops dead at its top and bottom.
   var still = document.createElement("style");
+  still.setAttribute("data-erga", "");
   still.textContent = "html { overscroll-behavior: none; }";
-  (document.head || document.documentElement).append(still);
+  (document.head || root).append(still);
+  // Reloaded in the editor scrolled down the page (?erga-y=, viewer.ts): it opens where it was, out of sight until it's
+  // there (its content may still be coming), or as far as it goes once it has loaded (a shorter page now), or after a moment.
+  var startY = Number((/[?&]erga-y=(\\d+)/.exec(location.search) || [])[1]) || 0, placing = null;
+  function placed() { startY = 0; if (placing) { placing.remove(); placing = null; } }
+  function place() {
+    if (!startY || !document.body) return;
+    scrollTo(0, startY);
+    if (Math.abs(scrollY - startY) < 2 || (document.readyState == "complete" && scrollY + innerHeight >= root.scrollHeight - 2)) placed();
+  }
+  if (startY) {
+    placing = document.createElement("style");
+    placing.setAttribute("data-erga", "");
+    placing.textContent = "html { visibility: hidden !important; }";
+    (document.head || root).append(placing);
+    setTimeout(placed, 1500);
+  }
+  // The editor's half, into this page: at once when the viewer opened the page in the editor (?erga-edit), else when it
+  // asks. (Its chunks' integrity is the import map's, before this script: readerPage puts it there.)
+  var loading = false;
+  function load() {
+    if (loading || !C.editor) return;
+    loading = true;
+    var head = document.head || root;
+    C.editor.preload.forEach(function (href) { var l = document.createElement("link"); l.rel = "modulepreload"; l.href = href; l.crossOrigin = "anonymous"; l.setAttribute("data-erga", ""); if (C.editor.map[href]) l.integrity = C.editor.map[href]; head.append(l); });
+    var s = document.createElement("script");
+    s.type = "module"; s.crossOrigin = "anonymous"; s.src = C.editor.src; s.setAttribute("data-erga", "");
+    if (C.editor.integrity) s.integrity = C.editor.integrity;
+    head.append(s);
+  }
+  if (/[?&]erga-edit(=|&|$)/.test(location.search)) load();
   // The fade: where the page is scrolled to, and the pointer over it, at most once a frame.
   var scrolled = null, pointer = null;
   function report() {
@@ -76,24 +115,15 @@ export const readerScript = (config: { page: string | null; prefix: string }) =>
   document.addEventListener("pointerdown", function (e) {
     if (e.pointerType != "mouse") tell({ type: "erga-pointer", x: e.clientX, y: e.clientY, tap: true });
   }, { capture: true, passive: true });
-  // Links. Within this page (#part): scrolled to here (a srcdoc page's links resolve against its base). To another of
-  // the document's pages: in this frame, as the link says. Out of the document: a new tab, unless the link names its
-  // own target; "_self" takes the whole tab. The viewer opens both, on the reader's click.
+  // Links, reading (the editor follows its own: client/frame.ts). To another of the document's pages: in this frame, as
+  // the link says. Out of the document: a new tab, unless the link names its own target; "_self" takes the whole tab.
+  // The viewer opens both, on the reader's click.
   document.addEventListener("click", function (e) {
-    if (e.defaultPrevented || e.button != 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (editing() || e.defaultPrevented || e.button != 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
-    if (!a || a.hasAttribute("download")) return;
-    var href = a.getAttribute("href") || "";
-    if (href.charAt(0) == "#") {
-      e.preventDefault();
-      var id = decodeURIComponent(href.slice(1)), el = id ? document.getElementById(id) || document.getElementsByName(id)[0] : null;
-      if (el) el.scrollIntoView(); else if (!id) scrollTo(0, 0);
-      return;
-    }
-    if (!/^https?:$/.test(a.protocol)) return;
-    var mine = a.pathname.indexOf(C.prefix) == 0 && a.origin == new URL(C.prefix, document.baseURI).origin;
+    if (!a || a.hasAttribute("download") || !/^https?:$/.test(a.protocol)) return;
+    if (a.origin == location.origin && a.pathname.indexOf(C.prefix) == 0) return;
     var t = (a.getAttribute("target") || "").toLowerCase();
-    if (mine && (!t || t == "_self")) return;
     if (!t || t == "_blank") { e.preventDefault(); tell({ type: "erga-go", url: a.href, tab: "new" }); }
     else if (t == "_self" || t == "_top" || t == "_parent") { e.preventDefault(); tell({ type: "erga-go", url: a.href }); }
   });
@@ -108,10 +138,10 @@ export const readerScript = (config: { page: string | null; prefix: string }) =>
     if (stops) return /^linear-gradient\\((to top|0deg|360deg)[,)]/.test(img) ? stops[stops.length - 1] : stops[0];
     return "";
   }
-  function ready() { return !!document.documentElement && (!!document.body || document.readyState != "loading"); }
+  function ready() { return !!document.body || document.readyState != "loading"; }
   function colour() {
     if (!ready()) return null;
-    var c = solid(getComputedStyle(document.documentElement));
+    var c = solid(getComputedStyle(root));
     if (!c && document.body) c = solid(getComputedStyle(document.body));
     return c;
   }
@@ -138,7 +168,6 @@ export const readerScript = (config: { page: string | null; prefix: string }) =>
     return undefined;
   }
   function canvas() {
-    var root = document.documentElement;
     if (!ready()) return null;
     var cs = getComputedStyle(root);
     if (cs.backgroundImage == "none" && clear(cs.backgroundColor) && document.body) cs = getComputedStyle(document.body);
@@ -160,7 +189,7 @@ export const readerScript = (config: { page: string | null; prefix: string }) =>
     if (images.every(function (v) { return v == "none"; })) return c;
     var r = root.getBoundingClientRect(), fixed = /fixed/.test(cs.backgroundAttachment);
     c.image = images.join(", "); c.size = cs.backgroundSize; c.position = cs.backgroundPosition; c.repeat = cs.backgroundRepeat;
-    c.tile = tile; c.fixed = fixed; c.zoom = 1;
+    c.tile = tile; c.fixed = fixed;
     c.x = fixed ? 0 : r.left + scrollX; c.y = fixed ? 0 : r.top + scrollY;
     c.w = fixed ? innerWidth : r.width; c.h = fixed ? innerHeight : r.height;
     return c;
@@ -168,6 +197,7 @@ export const readerScript = (config: { page: string | null; prefix: string }) =>
   var band = null, canvasSaid = "", STEP_MAX = 1000, said = "null", shape = "", rev = 0, polled = 0, listening = false;
   (function watch() {
     try {
+      if (startY) place();
       var c = colour(), cv = c != null ? canvas() : null;
       if (cv) {
         var key = JSON.stringify(cv);
@@ -244,18 +274,47 @@ export const readerScript = (config: { page: string | null; prefix: string }) =>
     }).then(answer, function () { answer(null); });
   }
   addEventListener("message", function (e) {
-    if (e.source != P || !e.data) return;
-    if (e.data.type == "erga-step") step(e.data);
-    else if (e.data.type == "erga-step-image") stepImage(e.data);
+    if (e.source != P || e.origin != C.shell || !e.data) return;
+    var type = e.data.type;
+    if (type == "erga-step") step(e.data);
+    else if (type == "erga-step-image") stepImage(e.data);
+    else if (type == "erga-edit") load();
+    else if (type == "erga-prefetch" && C.editor && !loading) {
+      [C.editor.src].concat(C.editor.preload).forEach(function (href) { var l = document.createElement("link"); l.rel = "prefetch"; l.href = href; l.crossOrigin = "anonymous"; l.setAttribute("data-erga", ""); (document.head || root).append(l); });
+    }
   });
 })();`;
 
 /**
- * A page of the document as the viewer's frame holds it: this script first (after the doctype, so the page keeps its
- * mode), and for a srcdoc page the files address as its <base>, so its relative addresses are its files'.
+ * The live log's watch (shared/live-page.ts), from its function's own text, with a stand-in for the helper a bundler that
+ * keeps names puts in it (esbuild's __name), which the page hasn't got.
  */
-export function readerPage(html: string, o: { base?: string; page: string | null; prefix: string }): string {
-  const head = `${o.base ? `<base href="${o.base.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">` : ""}<script>${readerScript({ page: o.page, prefix: o.prefix }).replace(/<\/script/gi, "<\\/script")}</script>`;
-  const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(html);
-  return doctype ? doctype[0] + head + html.slice(doctype[0].length) : head + html;
+const LIVE_WATCH = () => `(function(){var __name=function(f){return f};(${liveWatch.toString()})(${JSON.stringify({ events: true, net: true, types: EVENT_TYPES })})})();`;
+
+/** A script element's text, as nothing in it can close the element. */
+const inline = (js: string) => js.replace(/<\/script/gi, "<\\/script");
+
+/**
+ * A page of the document as its pages origin serves it: its marked HTML (shared/page.ts, markPage) with, first in its
+ * <head>, this script; for whoever may edit, before it, the editor's half's integrity (an import map: the browser checks
+ * each of its modules against it, and it must come before any module loads), and after it, the scripts the editor needs
+ * from the page's first moment (its problems and its live log, the text guard, ergaEditor).
+ */
+export function readerPage(marked: string, o: { shell: string; prefix: string; src: string; editor: boolean }): string {
+  const editor = o.editor ? frameScripts(o.shell) : undefined;
+  const json = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
+  const head = (editor ? `<script type="importmap" data-erga>${json({ imports: {}, integrity: editor.map })}</script>` : "")
+    + `<script data-erga>${inline(readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) }))}</script>`
+    + (editor ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${inline(LIVE_WATCH())}</script><script data-erga>${inline(TEXT_GUARD)}</script><script data-erga>${EDITING_API}</script>` : "");
+  return insertHead(marked, head);
 }
+
+/** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
+export const readerVersion = () => versionOf(readerScript({ shell: "", prefix: "", src: "" }) + PROBLEM_WATCH + TEXT_GUARD + EDITING_API + LIVE_WATCH() + asset("frame.js"));
+
+/** A digest of text (FNV-1a), which changes whenever it does. */
+const versionOf = (text: string) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
+};
