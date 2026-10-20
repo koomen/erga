@@ -14,6 +14,7 @@
 import { esc, link, safeNext } from "./chrome.ts";
 import type { Session } from "../platform.ts";
 import { colorFor } from "../../document/content.ts";
+import { fastClickScript } from "../../shared/fast-click.ts";
 
 /** A response header: this page shows the account itself (the editor), so leave it be. */
 export const OWN_ACCOUNT = "x-erga-own-account";
@@ -148,6 +149,8 @@ const ACCOUNT_SCRIPT = `<script>(() => {
   const root = document.currentScript.previousElementSibling.previousElementSibling, btn = root.querySelector("button"), menu = root.querySelector(".erga-account-menu");
   const show = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
   btn.addEventListener("click", () => { show(menu.hidden); if (!menu.hidden) menu.querySelector("a")?.focus({ preventScroll: true }); });
+  // It opens as the press starts (shared/fast-click.ts).
+  ${fastClickScript("root", ".erga-account-btn")}
   document.addEventListener("pointerdown", (e) => { if (!root.contains(e.target)) show(false); });
   document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
   window.addEventListener("blur", () => show(false));

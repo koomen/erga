@@ -2,7 +2,9 @@
 
 import type { Listed, Session } from "../platform.ts";
 import { asset } from "./assets.ts";
+import { fastClickScript } from "../../shared/fast-click.ts";
 import { appPage, crumbs, esc, ICON, link, TIMES_SCRIPT } from "./chrome.ts";
+import { editorFiles } from "./viewer.ts";
 
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
 export function ago(t: number, now: number): string {
@@ -133,6 +135,8 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
 <script>
   // Times in the reader's own language and zone, and a question before deleting.
   ${TIMES_SCRIPT}
+  // The chevrons, Share and the share card's buttons act as the press starts (shared/fast-click.ts). Delete keeps its click.
+  ${fastClickScript("document", "button.twist, button.share, #share .copy, #share .done")}
   for (const f of document.querySelectorAll("form[data-title]")) {
     const q = "disk" in f.dataset ? "Take “" + f.dataset.title + "” off your list? Its files stay where they are." : "Delete “" + f.dataset.title + "”? This can't be undone.";
     f.addEventListener("submit", (e) => { if (!confirm(q)) e.preventDefault(); });
@@ -263,13 +267,40 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
         initial: kept(id), fetch: fetchFor(id), onChange: (a) => { readAt.set(id, Date.now()); keep(id, a); } }));
     } catch (e) { box.className = "sub-tree error"; box.textContent = e.message; }
   }
+  // Opening a document, ahead of the click: as the pointer rests on its row, or focus comes to it, the browser fetches its page
+  // (speculation rules: the click's navigation then takes that answer instead of asking again), and the editor's files for one
+  // you may edit (kept for good, by their hashed names). Its room wakes too: the tree read above goes through the room, after
+  // the same access check as the page. Each document once, and at most WARM_MAX a minute, so a pointer sweeping down
+  // the list fetches little. A browser without speculation rules gets the files and the room only (the page itself is never
+  // cached, so a plain prefetch of it would be thrown away).
+  const SPECULATE = !!HTMLScriptElement.supports?.("speculationrules"), WARM_MAX = 6;
+  const warmed = new Set();
+  let warmTimes = [], filesWarmed = false;
+  const warm = (a, edit) => {
+    // (With its #edit: Chrome takes a prefetch only for the very address the click goes to, fragment and all.)
+    const url = a.href, now = Date.now();
+    if (warmed.has(url)) return;
+    warmTimes = warmTimes.filter((t) => now - t < 60000);
+    if (warmTimes.length >= WARM_MAX) return;
+    warmTimes.push(now);
+    warmed.add(url);
+    if (SPECULATE) document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", textContent: JSON.stringify({ prefetch: [{ source: "list", urls: [url] }] }) }));
+    if (edit && !filesWarmed) {
+      filesWarmed = true;
+      for (const [href, as] of ${editorFiles()}) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href, ...(as == "fetch" ? { crossOrigin: "anonymous" } : {}) }));
+    }
+  };
   for (const b of document.querySelectorAll("button.twist")) {
-    // The pointer resting on a row (or the chevron focused, or touched): its pages are read, and the script fetched.
+    // The pointer resting on a row (or the chevron or the title focused, or touched): its pages are read, the script fetched,
+    // and the document's page fetched ahead (warm).
     let rest = 0;
-    const li = b.closest("li");
+    const li = b.closest("li"), a = li.querySelector("a.doc"), edit = "edit" in b.dataset;
     const ready = () => { if (!trees.has(b.dataset.id)) readAhead(b.dataset.id); loadTree().catch(() => {}); };
-    li.addEventListener("pointerenter", () => { clearTimeout(rest); rest = setTimeout(ready, 60); });
+    const opening = () => { ready(); warm(a, edit); };
+    li.addEventListener("pointerenter", () => { clearTimeout(rest); rest = setTimeout(opening, 60); });
     li.addEventListener("pointerleave", () => clearTimeout(rest));
+    a.addEventListener("focus", opening);
+    a.addEventListener("pointerdown", opening);
     b.addEventListener("focus", ready);
     b.addEventListener("pointerdown", ready);
     b.addEventListener("click", () => showPages(b, b.getAttribute("aria-expanded") != "true"));

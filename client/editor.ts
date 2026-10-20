@@ -145,6 +145,18 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const noHistory = () => Transaction.addToHistory.of(false);
 
+/**
+ * Calls `fn` once `win` (a frame's window, loaded) has drawn two frames: the first runs what the page does on its first
+ * frame, the second paints it. A tab in the background draws none, so after PAINT_WAIT_MS at most.
+ */
+const PAINT_WAIT_MS = 120;
+function afterPaint(win: Window | null, fn: () => void): void {
+  let done = false;
+  const go = () => { if (!done) { done = true; fn(); } };
+  setTimeout(go, PAINT_WAIT_MS);
+  try { win?.requestAnimationFrame(() => win.requestAnimationFrame(go)); } catch { go(); }
+}
+
 /** The changed region between two texts, placing an ambiguous edit at `preferredPos` (CodeMirror's findDiff). */
 function findDiff(a: string, b: string, preferredPos: number): { from: number; toA: number; toB: number } | null {
   const minLen = Math.min(a.length, b.length);
@@ -594,6 +606,12 @@ export class PageEditor {
     const onLoad = () => {
       if (token != this.renderToken) return;
       target.removeEventListener("load", onLoad);
+      // A new page takes the old one's place only once it has had two frames of its own (afterPaint): what its scripts do
+      // on load and on their first frame is done, and it never shows half drawn. The first render shows nothing to replace.
+      if (old) afterPaint(target.contentWindow, () => { if (token == this.renderToken) loaded(); });
+      else loaded();
+    };
+    const loaded = () => {
       if (old) { this.frame = target; this.next = null; }
       this.doc = this.frame.contentDocument!;
       this.watchProblems();

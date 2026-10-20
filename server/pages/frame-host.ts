@@ -268,6 +268,13 @@ export const HOST_SCRIPT = `(function () {
     } catch (e) {}
     requestAnimationFrame(watch);
   })();
+  // fn, once the frame f (loaded) has drawn two frames: its first-frame work is done and it has painted. A tab in the
+  // background draws none: after 120 ms at most.
+  function afterPaint(f, fn) {
+    var done = false, go = function () { if (!done) { done = true; fn(); } };
+    setTimeout(go, 120);
+    try { f.contentWindow.requestAnimationFrame(function () { f.contentWindow.requestAnimationFrame(go); }); } catch (e) { go(); }
+  }
   function show(to) {
     var from = document.querySelector("iframe.on");
     if (from == to) return;
@@ -369,7 +376,8 @@ export const HOST_SCRIPT = `(function () {
       if (old) old.remove();
       var v = document.createElement("iframe");
       v.id = "view"; v.title = "Document"; v.setAttribute("sandbox", "${PAGE_SANDBOX}"); v.setAttribute("allow", "${PAGE_ALLOW}");
-      v.onload = function () { still(v); moved(v); follow(v); if (want == "view") show(v); };
+      // It takes the editor's place once it has drawn two frames of its own (afterPaint), never half drawn.
+      v.onload = function () { still(v); moved(v); follow(v); afterPaint(v, function () { if (want == "view" && v.isConnected) show(v); }); };
       v.src = src;
       document.body.prepend(v);
     } else if (type == "erga-step") step(e.data);
