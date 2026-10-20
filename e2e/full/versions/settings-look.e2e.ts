@@ -5,10 +5,9 @@ import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 await servers.short();
 test.afterEach(closeDrafts);
 
-test("on a phone: the top row fits, the settings are a sheet from the bottom, and its menus fit the screen", async ({ tab }) => {
+test("on a phone: the top row fits, the settings are a sheet from the bottom, and its versions fit the screen", async ({ tab }) => {
   const server = await servers.short();
   const doc = await draftDoc(server, "Phone notes", 3);
-  expect((await doc.owner.publish(doc.id, { mode: "manual", versionId: "v2" })).ok).toBe(true);
   tab.strict = true;
   const s = await openDocEditor(tab.page, server, doc.address, { width: 390, height: 780 });
   expect(await s.eval<number>(`document.querySelector(".chrome-top").scrollWidth - document.querySelector(".chrome-top").clientWidth`)).toBeLessThanOrEqual(0);
@@ -19,9 +18,9 @@ test("on a phone: the top row fits, the settings are a sheet from the bottom, an
   const sheet = (await s.rect("#doc-settings"))!;
   expect(sheet.left).toBe(0);
   expect(Math.round(sheet.w)).toBe(vw);
-  await s.clickOn("#ds-pick");
-  const m = (await s.rect(".ds-menu"))!;
-  expect(m.left >= 0 && m.right <= vw && m.top >= 0 && m.bottom <= vh).toBe(true);
+  const row = (await s.rect("#ds-list li[data-n]"))!;
+  expect(row.left >= 0 && row.right <= vw && row.top >= 0 && row.bottom <= vh).toBe(true);
+  expect(await s.eval<number>(`document.getElementById("doc-settings").scrollWidth - document.getElementById("doc-settings").clientWidth`)).toBeLessThanOrEqual(0);
 });
 
 test("on a page with a dark background, the popover is the editor's own dark card, with none of the page's colour", async ({ tab }) => {

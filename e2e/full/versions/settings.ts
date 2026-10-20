@@ -21,9 +21,8 @@ export const closeDrafts = () => { for (const p of open) p.disconnect(); open.cl
 
 /**
  * A new document of DEV_LOGIN's with versions 1..upTo, each version n its own draft: written by someone in its room
- * (as an editor's tab does, so the versions follow the people's rules, not an agent's turn), then cut by a publish of
- * what's published already, so nothing changes for viewers in "manual". `address` follows the title once the page has
- * one.
+ * (as an editor's tab does, so the versions follow the people's rules, not an agent's turn), each cut once the edits
+ * pause (SHORT.idle). `address` follows the title once the page has one.
  */
 export async function draftDoc(server: Server, title: string, upTo: number, style?: string) {
   const owner = await tester(server);
@@ -33,7 +32,7 @@ export async function draftDoc(server: Server, title: string, upTo: number, styl
   let first = true;
   const doc = {
     id, owner, address: "", room: ada,
-    /** Writes draft n (not cut: a version once the edits pause, or at the next publish). */
+    /** Writes draft n (a version once the edits pause). */
     draft(n: number) {
       ada.edit((t) => {
         if (first) { t.delete(0, t.length); t.insert(0, draftPage(title, n, style)); first = false; return; }
@@ -56,10 +55,7 @@ export async function draftDoc(server: Server, title: string, upTo: number, styl
     async versions(upTo: number) {
       for (let n = (await owner.versions(id)).total + 1; n <= upTo; n++) {
         doc.draft(n);
-        await until(async () => (await owner.versions(id)).pending, 5_000, `the edit for version ${n} reaches the room`);
-        const { published } = await owner.versions(id);
-        const r = await owner.publish(id, published.mode == "latest" ? { mode: "latest" } : { mode: "manual", versionId: published.version.id });
-        if (!r.ok) throw new Error(`cutting version ${n}: ${r.status}`);
+        await until(async () => (await owner.versions(id)).total == n, 5_000, `version ${n} is cut`);
       }
       const s = await owner.versions(id);
       if (s.total != upTo) throw new Error(`the document has ${s.total} versions, not ${upTo}`);
@@ -122,23 +118,20 @@ export function settings(p: Page) {
     text: (sel: string) => p.evaluate((sel) => document.querySelector(sel)?.textContent?.trim() ?? "", sel),
     attr: (sel: string, name: string) => p.evaluate(([sel, name]) => document.querySelector(sel!)?.getAttribute(name!) ?? null, [sel, name]),
     firstRow: () => p.evaluate(() => document.querySelector("#ds-list li")?.textContent ?? ""),
-    /** The open menu's rows: version numbers, and "…N" for a row of N more. */
-    menuRows: () => p.evaluate(() => [...document.querySelectorAll(".ds-menu [role=option]")].map((o) => (o.id.startsWith("ds-ver-") ? o.id.slice(7) : "…" + ((o.textContent ?? "").match(/\d+/) || [""])[0])).join(" ")),
-    hasMenu: () => p.evaluate(() => !!document.querySelector(".ds-menu")),
+    /** The version numbers the list shows, newest first. */
+    listed: () => p.evaluate(() => [...document.querySelectorAll<HTMLElement>("#ds-list li[data-n]")].map((li) => Number(li.dataset.n))),
     focused: () => p.evaluate(() => document.activeElement?.id ?? ""),
     /** Opens the popover, once the gear can be clicked (the editor's controls fade in as it comes up), and its versions are in. */
     async open() {
       await until(() => p.evaluate(() => { const g = document.getElementById("btn-settings"), r = g?.getBoundingClientRect(); return !!r?.width && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest("#btn-settings") == g && getComputedStyle(g!.closest(".chrome")!).opacity == "1"; }), 10_000, "the gear can be clicked");
       if (!(await s.isOpen())) await s.clickOn("#btn-settings");
       await until(() => s.isOpen(), 5_000, "the settings open");
-      await until(async () => !["Loading…", ""].includes(await s.text("#ds-mode")), 5_000, "the versions load");
+      await until(() => p.evaluate(() => !!document.querySelector("#ds-list li[data-n]")), 5_000, "the versions load");
     },
     async close() {
       if (await s.isOpen()) { await p.keyboard.press("Escape"); await p.keyboard.press("Escape"); }
       await until(async () => !(await s.isOpen()), 5_000, "the settings close");
     },
-    /** A publish has finished saving (the menus are off limits while it saves). */
-    saved: () => until(async () => (await s.attr("#ds-mode", "aria-disabled")) == null, 5_000, "the publish is saved"),
     /** Every status line the homepage section showed, from now on (a deploy can be quick: each one is caught as it's drawn). */
     watchStatus: () => p.evaluate(() => {
       const w = window as any;

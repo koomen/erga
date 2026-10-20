@@ -36,7 +36,7 @@ test("diff_versions: since the agent's last turn by default, between two version
   } finally { ada.disconnect(); }
 });
 
-test("list_versions, read_version and publish_version; an agent token publishes over the HTTP API too", async () => {
+test("list_versions and read_version; there's no publish_version", async () => {
   const server = await servers.short();
   const owner = await person(server, someone("v"));
   const { id } = await owner.newDoc();
@@ -49,7 +49,8 @@ test("list_versions, read_version and publish_version; an agent token publishes 
     const tool = tools(server, token, id);
     let t = await tool("list_versions", {});
     expect(t.status).toBe(200);
-    for (const s of ["Published: latest", "v2", "Edited index.html"]) expect(t.text).toContain(s);
+    for (const s of ["Current: v3", "v2", "Edited index.html"]) expect(t.text).toContain(s);
+    expect(t.text).not.toContain("Published");
     t = await tool("read_version", { version: "v1" });
     expect(t.status).toBe(200);
     expect(t.text).toContain("index.html");
@@ -57,14 +58,9 @@ test("list_versions, read_version and publish_version; an agent token publishes 
     expect(t.text).toContain("alpha");
     expect(t.text).not.toContain("beta");
     t = await tool("publish_version", { mode: "manual", version: "v3" });
-    expect(t.status).toBe(200);
-    expect(t.text).toContain("manual, v3");
-    expect((await owner.versions(id)).published.version.id).toBe("v3");
-    t = await tool("publish_version", { mode: "latest" });
-    expect(t.status).toBe(200);
-    expect((await owner.versions(id)).published.mode).toBe("latest");
-    const viaToken = await fetch(`${server.root}/api/docs/${id}/publish`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ mode: "manual", versionId: "v2" }) });
-    expect(viaToken.ok).toBe(true);
-    expect((await owner.versions(id)).published.version.id).toBe("v2");
+    expect(t.status).not.toBe(200);
+    const listed = (await (await fetch(`${server.root}/api/ext/tools`, { headers: { Authorization: `Bearer ${token}` } })).json()) as { tools: { name: string }[] };
+    expect(listed.tools.map((x) => x.name)).toContain("restore_version");
+    expect(listed.tools.map((x) => x.name)).not.toContain("publish_version");
   } finally { ada.disconnect(); }
 });

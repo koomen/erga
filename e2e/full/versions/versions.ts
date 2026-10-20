@@ -1,6 +1,6 @@
 // Helpers for the versions and settings tests (document/versions.ts, cloudflare/document-object.ts,
 // client/settings.ts), on servers.short(): people signed in by cookie, a
-// document's versions and publishing over the HTTP API, an agent token and its
+// document's versions over the HTTP API, an agent token and its
 // tools, and someone in the document's room (a headless Yjs participant, as an
 // editor's tab is: e2e/suite/client.ts).
 
@@ -13,7 +13,7 @@ import { until, type Server } from "../../fixtures";
 export { Participant };
 
 export interface V { id: string; n: number; at: string; authors: string[]; description: string | null }
-export interface State { current: V; published: { mode: string; version: V }; versions: V[]; total: number; canEdit: boolean; pending: boolean }
+export interface State { current: V; versions: V[]; total: number; canEdit: boolean; pending: boolean }
 export interface HomeState { isHome: boolean; canSet: boolean; blocked: string | null; deploy: { state: string; version: number | null; at: string | null; scheduledFor?: string | null; error?: string | null }; error?: string }
 
 /** A login of this test's own, so nothing it makes is anyone else's. */
@@ -38,8 +38,6 @@ export async function person(server: Server, as: string) {
     },
     versions: async (id: string, q = "") => (await (await get(`/api/docs/${id}/versions${q}`)).json()) as State,
     home: async (id: string) => (await (await get(`/api/docs/${id}/home`)).json()) as HomeState,
-    publish: (id: string, body: unknown, headers: Record<string, string> = { Origin: origin }) =>
-      get(`/api/docs/${id}/publish`, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json", ...headers } }),
     restore: (id: string, version: string, body?: unknown) =>
       get(`/api/docs/${id}/versions/${version}/restore`, { method: "POST", headers: { Origin: origin, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined }),
     share: (id: string, login: string, role: string) => get("/docs/share", { method: "POST", body: new URLSearchParams({ id, login, role }), headers: { Origin: origin } }),
@@ -100,14 +98,10 @@ export function pagesFetch(u: string): Promise<{ status: number; location: strin
   });
 }
 
-/** An edit in the room, cut into a version of its own at once: a publish of what's published already cuts what's pending. */
+/** An edit in the room, a version of its own: cut once the edits pause (SHORT.idle). */
 export async function cut(owner: Person, id: string, ada: Participant, edit: (t: Y.Text) => void) {
   const before = (await owner.versions(id)).total;
   ada.edit(edit);
-  await until(async () => (await owner.versions(id)).pending, 5_000, "the edit reaches the room");
-  const { published } = await owner.versions(id);
-  const r = await owner.publish(id, published.mode == "latest" ? { mode: "latest" } : { mode: "manual", versionId: published.version.id });
-  if (!r.ok) throw new Error(`cutting a version: ${r.status} ${await r.text()}`);
   await until(async () => (await owner.versions(id)).total == before + 1, 5_000, "the version is cut");
 }
 
