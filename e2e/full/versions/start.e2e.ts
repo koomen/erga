@@ -4,11 +4,11 @@ import { events, person, someone } from "./versions";
 
 await servers.short();
 
-test("a new document starts with version 1, published as \"latest\"", async () => {
+test("a new document starts with version 1", async () => {
   const owner = await person(await servers.short(), someone("v"));
   const { id } = await owner.newDoc();
   const s = await owner.versions(id);
-  expect(s).toMatchObject({ total: 1, canEdit: true, current: { id: "v1", description: "First version" }, published: { mode: "latest", version: { id: "v1" } } });
+  expect(s).toMatchObject({ total: 1, canEdit: true, current: { id: "v1", description: "First version" } });
   expect(s.current.authors).toContain(owner.login);
 });
 

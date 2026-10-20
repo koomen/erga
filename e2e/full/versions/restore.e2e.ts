@@ -4,7 +4,7 @@ import { cut, intoHeading, person, someone, tools } from "./versions";
 
 await servers.short();
 
-/** A document with v2 ("alpha") and v3 ("beta"), published manually at v3, and someone in its room. */
+/** A document with v2 ("alpha") and v3 ("beta"), and someone in its room. */
 async function setup() {
   const server = await servers.short();
   const owner = await person(server, someone("v"));
@@ -12,11 +12,10 @@ async function setup() {
   const ada = await owner.join(id);
   await cut(owner, id, ada, intoHeading(" alpha"));
   await cut(owner, id, ada, intoHeading(" beta"));
-  expect((await owner.publish(id, { mode: "manual", versionId: "v3" })).ok).toBe(true);
   return { server, owner, id, ada, tool: tools(server, await owner.token("versions test"), id) };
 }
 
-test("restoring a version: a new current version by the person, live in open editors, the published one unchanged; only for editors", async () => {
+test("restoring a version: a new current version by the person, live in open editors and for viewers; only for editors", async () => {
   const { server, owner, id, ada, tool } = await setup();
   try {
     const viewer = await person(server, someone("vb"));
@@ -31,7 +30,8 @@ test("restoring a version: a new current version by the person, live in open edi
     expect(s.current.id).toBe(body.current.id);
     const v2 = (await tool("read_version", { version: "v2", path: "index.html" })).text;
     await expect.poll(() => ada.str()).toBe(v2);
-    expect(s.published).toMatchObject({ mode: "manual", version: { id: "v3" } });
+    await expect.poll(async () => (await viewer.get(`/d/${id}`, { redirect: "follow" })).text()).toContain("alpha");
+    expect(await (await viewer.get(`/d/${id}`, { redirect: "follow" })).text()).not.toContain("beta");
   } finally { ada.disconnect(); }
 });
 
@@ -49,8 +49,10 @@ test("restore_version, by the agent, is attributed to the person via their agent
 test("restoring one file: the others stay, the answer has its text and the new version, and an edit lands right after", async () => {
   const { owner, id, ada, tool } = await setup();
   try {
+    const before = (await owner.versions(id)).total;
     expect((await tool("write", { path: "notes.md", content: "# Notes\n\nnotes-one\n" })).status).toBe(200);
-    expect((await owner.publish(id, { mode: "manual" })).ok).toBe(true);
+    // An external agent's calls are one turn: a version 8 seconds after its last.
+    await expect.poll(async () => (await owner.versions(id)).total, { timeout: 15_000 }).toBe(before + 1);
     const withNotes = (await owner.versions(id)).current;
     await tool("write", { path: "notes.md", content: "# Notes\n\nnotes-two\n" });
     ada.edit(intoHeading(" keeps"));
