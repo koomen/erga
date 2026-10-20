@@ -74,3 +74,27 @@ test("the page runs on its own origin; it can't reach the editor's window, its c
   expect(await page.evaluate(() => !!document.querySelector("#toast.show")?.textContent?.includes("forged")), "a forged notice").toBe(false);
   expect(await ed.textOf("h1")).toBe("Quarterly notes!");
 });
+
+// The viewer holds the page inline, in a frame with an opaque origin: the same page there reaches nothing either.
+test("in the viewer the page runs in an opaque origin: no reach into the viewer's window, its cookies or its site, no storage of the site's (its own, in memory, works)", async ({ tab }) => {
+  const s = await servers.main(), page = tab.page;
+  const dir = join(s.scratch, "docs", unique("isolation-view-"));
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "index.html");
+  writeFileSync(file, thief(s.root).replace("document.getElementById(\"loot\")", "(localStorage.setItem(\"k\", \"v\"), got.storage = localStorage.getItem(\"k\"), document.getElementById(\"loot\"))"));
+  const address = await s.open(file);
+  await page.goto(address);
+  const inline = () => page.frames().find((f) => f.parentFrame() == page.mainFrame());
+  let text = "";
+  await until(async () => (text = (await inline()?.evaluate(() => document.getElementById("loot")?.textContent ?? "").catch(() => "")) ?? "") != "", 10_000, "the page's script ran");
+  const loot = JSON.parse(text) as Record<string, unknown>;
+  expect(loot.origin, JSON.stringify(loot)).toBe("null");
+  expect(String(loot.topDocument)).toMatch(/^blocked/);
+  expect(String(loot.topLocation)).toMatch(/^blocked/);
+  expect(loot.cookie).toBe("");
+  expect(String(loot.docs), "the documents list").toMatch(/^blocked/);
+  expect(String(loot.agent), "the agent").toMatch(/^blocked/);
+  expect(loot.storage, "its own storage, in memory").toBe("v");
+  expect(await page.evaluate(() => !!document.querySelector("#toast.show")), "a forged notice").toBe(false);
+  expect(await inline()!.evaluate(() => document.querySelector("h1")!.textContent)).toBe("Quarterly notes");
+});

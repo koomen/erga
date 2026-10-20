@@ -34,6 +34,12 @@
 // may edit it. It can't be made the front page while anyone else may
 // (homeBlocked), nobody else can be made its editor (share), and anyone else
 // whose permission says otherwise only views it (homeLimit).
+//
+// A document's host (its Durable Object) keeps a copy of the document's
+// permissions, so a request to the document needs no query here: it decides
+// with `decide`, the same rule `access` uses. D1 stays the truth: every
+// change here (`share`) is pushed to the host at once (`permissionsChanged`),
+// and the host reads them afresh when it has none, or an old copy.
 
 import { ConfigError, ServerConfig } from "./settings.ts";
 
@@ -193,7 +199,11 @@ export class Directory {
    * encrypted with (none: they can't be stored); `fallback`: which Worker
    * secrets stand in for them.
    */
-  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean } = {}) {
+  /** Tells a document's host its permissions now (the platform's: its Durable Object keeps a copy); none: the document is gone. */
+  private readonly permissionsChanged: (id: string, permissions: Permission[]) => Promise<void>;
+
+  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean; permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void> } = {}) {
+    this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
     this.users = new Users(sql, opts.admins);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.cloudflare = new CloudflareGrants(sql, opts.credentialSecret ?? null);
@@ -268,7 +278,7 @@ export class Directory {
    * Anyone else, whatever their permission says (an admin since made a user,
    * or an admin's documents token), only views it while it's the front page.
    */
-  private async homeLimit(who: Who, id: string, role: Role | null): Promise<Role | null> {
+  async homeLimit(who: Who, id: string, role: Role | null): Promise<Role | null> {
     if (role != "owner" && role != "editor") return role;
     if ((await this.homeId()) != id) return role;
     return (await this.users.actsAsAdmin(who)) ? role : "viewer";
@@ -476,6 +486,8 @@ export class Directory {
       ["DELETE FROM permissions WHERE doc_id = ?1", id],
       ["DELETE FROM documents WHERE id = ?1", id],
     ]);
+    // Nobody may do anything with it now: whatever was decided about it goes.
+    await this.tell(id, []);
   }
 
   /**
@@ -504,11 +516,23 @@ export class Directory {
    * person (`onlyDoc`) has nothing on any other document. Null: nothing at all.
    */
   async access(who: Who | null, doc: { id: string; owner: string; test: boolean }): Promise<Role | null> {
+    if (!who || (who.onlyDoc != null && who.onlyDoc != doc.id) || who.test) return this.decide(who, doc, []);
+    const rows = await this.sql.all<{ login: string; role: Role }>("SELECT login, role FROM permissions WHERE doc_id = ?1 AND login IN (?2, ?3)", doc.id, who.login.toLowerCase(), ANYONE);
+    return this.decide(who, doc, rows);
+  }
+
+  /**
+   * `access`'s rule, on permissions already at hand (`access` reads them here; a document's host keeps a copy:
+   * document/document.ts). Only the front page's limit may ask the database (homeLimit: its settings and users,
+   * remembered a few seconds).
+   */
+  async decide(who: Who | null, doc: { id: string; owner: string; test: boolean }, permissions: readonly { login: string; role: Role }[]): Promise<Role | null> {
     if (!who) return null;
     if (who.onlyDoc != null && who.onlyDoc != doc.id) return null;
     if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
-    const rows = await this.sql.all<{ role: Role }>("SELECT role FROM permissions WHERE doc_id = ?1 AND login IN (?2, ?3)", doc.id, who.login.toLowerCase(), ANYONE);
-    return this.homeLimit(who, doc.id, rows.reduce<Role | null>((best, r) => (best && RANK[best] >= RANK[r.role] ? best : r.role), null));
+    const login = who.login.toLowerCase();
+    const best = permissions.reduce<Role | null>((b, p) => (p.login != login && p.login != ANYONE) || (b && RANK[b] >= RANK[p.role]) ? b : p.role, null);
+    return this.homeLimit(who, doc.id, best);
   }
 
   /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
@@ -546,7 +570,18 @@ export class Directory {
       `INSERT INTO permissions (doc_id, login, role, granted, granted_by, granted_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
        ON CONFLICT (doc_id, login) DO UPDATE SET role = ?3, granted = ?4, granted_by = ?5, granted_via = ?6`,
       id, login, role, Date.now(), who.login.toLowerCase(), who.via ?? null);
-    return this.permissions(id);
+    const now = await this.permissions(id);
+    await this.tell(id, now);
+    return now;
+  }
+
+  /** The document's host hears its permissions now (it keeps a copy, and decides with it); a failure is logged, and its copy is read afresh in a while. */
+  private async tell(id: string, permissions: Permission[]): Promise<void> {
+    for (let tries = 0; tries < 2; tries++) {
+      try { await this.permissionsChanged(id, permissions); return; } catch (e) {
+        if (tries) console.log(`couldn't tell ${id}'s host its permissions: ${e instanceof Error ? e.message : e}`);
+      }
+    }
   }
 }
 

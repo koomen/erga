@@ -13,6 +13,7 @@ import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
 import type { SiteOps } from "./sites/index.ts";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions.ts";
+import type { ViewAnswer } from "../document/document.ts";
 import { VIA } from "../shared/attribution.ts";
 
 /** Who's signed in. */
@@ -189,6 +190,12 @@ export interface Platform {
     list(owner: string): Promise<Listed[]>;
     /** Hands a request to the document's host, its path already the one inside the document. */
     fetch(doc: Route, request: Request): Promise<Response>;
+    /**
+     * A viewer's page, in one call to the document's host (document/document.ts, view): what `who` may do (`anyone`:
+     * the front page), which file the address `page` is, the version viewers see, and the file's text unless the caller
+     * has that version (`have`). Null if there's no such document. Asks the database nothing.
+     */
+    view(id: string, who: Who | null, opts: { page: string; anyone?: boolean; have?: string | null }): Promise<ViewAnswer | null>;
   };
 }
 

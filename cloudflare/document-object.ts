@@ -16,14 +16,15 @@
 // It's an ordinary socket: a document on disk never sleeps.
 
 import { DurableObject } from "cloudflare:workers";
-import { Document, personOf, type DocumentDeps, type OnDisk } from "../document/document";
+import { Document, personOf, type DocumentDeps, type OnDisk, type ViewAnswer } from "../document/document";
 import { Tabs, type Tab } from "../document/tabs";
-import type { DocRow } from "../server/directory/index.ts";
+import type { DocRow, Role, Who } from "../server/directory/index.ts";
 import { agentToolsFor } from "../agents/tools";
 import { VIA } from "../shared/attribution";
 import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions";
 import type { DocSnapshot, Page } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
+import { forgetDecisions } from "../server/documents/index.ts";
 import { platform } from "./platform";
 import { DiskLink } from "../dev/disk-storage";
 import { publishedChanged } from "./published";
@@ -85,6 +86,8 @@ export class DocumentObject extends DurableObject<Env> {
         closeIdleMs: Number(env.ERGA_ROOM_IDLE_MS) || 60_000,
       },
       background: (work) => this.ctx.waitUntil(work),
+      // (This isolate's answers only: elsewhere a viewer's kept answer lasts its few seconds: server/documents/view.ts.)
+      viewChanged: (docId) => forgetDecisions(docId),
       log: (line) => console.log(line),
       pageTemplate: TEMPLATE || undefined,
       // People's ids are their GitHub logins, so GitHub serves their pictures.
@@ -118,6 +121,10 @@ export class DocumentObject extends DurableObject<Env> {
   setPublished(req: PublishRequest): Promise<PublishResult> { return this.document.hold(() => this.document.setPublished(req)); }
   restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.hold(() => this.document.restore(ref, by, path)); }
   publishedFiles() { return this.document.hold(() => this.document.publishedFiles()); }
+  /** The directory's permissions for this document now (Directory.share pushes each change): the document's copy. */
+  setPermissions(list: { login: string; role: Role }[]): Promise<void> { return this.document.setPermissions(list); }
+  /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */
+  view(who: Who | null, opts: { page: string; anyone?: boolean; have?: string | null }): Promise<ViewAnswer | null> { return this.document.view(who, opts); }
   /** A person's agent run that a restart cut off goes on (their object's alarm asks). */
   resumeAgent(person: { id: string; name: string }): Promise<void> { return this.document.hold(() => this.document.resumeAgent(person)); }
 
@@ -133,6 +140,10 @@ export class DocumentObject extends DurableObject<Env> {
     if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return this.document.handle(request);
     const room = url.pathname.startsWith("/api/room");
     if (!room && url.pathname != "/api/events") return new Response("Not found", { status: 404 });
+    // Who may: decided here, on the document's copy of its permissions (the front door asked no database).
+    const allowed = await this.document.authorize(request);
+    if (allowed instanceof Response) return allowed;
+    request = allowed;
     const opened = await this.document.admit(request);
     if (!opened) return new Response("No such document", { status: 404 });
     const tab: Tab = room

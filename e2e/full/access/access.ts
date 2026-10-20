@@ -54,9 +54,9 @@ export async function clickOn(page: Page, selector: string) {
 export const inFrames = <T>(page: Page, expr: string): Promise<(T | null)[]> =>
   Promise.all(page.frames().filter((f) => f != page.mainFrame()).map((f) => f.evaluate(expr).then((v) => v as T, () => null)));
 
-/** Evaluates in the document's page that a frame on another site shows (iframe.on: viewing or editing, server/pages/frame-host.ts). */
+/** Evaluates in the document's page: the viewer's frame itself (inline, an opaque origin), or what the editor's frame on another site shows (iframe.on, server/pages/frame-host.ts). */
 export const inPage = <T>(page: Page, expr: string) =>
-  inFrames<T>(page, `(() => { const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`);
+  inFrames<T>(page, `(() => { if (parent == top && !document.querySelector('meta[name="erga-shell"]')) return window.eval(${JSON.stringify(expr)}); const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`);
 
 /** Signs in as someone by the dev sign-in (no `as`: DEV_LOGIN, an admin): their session cookie. */
 export async function signIn(root: string, as: string | null): Promise<string> {

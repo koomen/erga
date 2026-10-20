@@ -5,6 +5,7 @@
 
 export { appPage, confirmAction, crumbs, crumbsFont, esc, fromElsewhere, ICON, link, page, safeNext, signInFirst, TIMES_SCRIPT, viewCrumbs } from "./chrome.ts";
 export { docsPage } from "./docs.ts";
+export { READER_SANDBOX, readerPage, readerScript } from "./reader.ts";
 export { frameHead, HOST_SCRIPT, HOST_STYLE, hostVersion, PAGE_ALLOW, PAGE_SANDBOX, VIEW_FILES } from "./frame-host.ts";
 export { startPage } from "./start.ts";
 export { cloneButton, editButton, FADE, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";

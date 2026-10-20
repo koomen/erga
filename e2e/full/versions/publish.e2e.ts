@@ -1,6 +1,6 @@
 // Who may publish, and what viewers see in "manual" and "latest".
 import { expect, servers, test } from "../../fixtures";
-import { cut, events, intoHeading, pagesFetch, person, someone, type Get } from "./versions";
+import { cut, events, intoHeading, person, someone, type Get } from "./versions";
 
 await servers.short();
 
@@ -17,13 +17,17 @@ async function twoVersions() {
   return { server, owner, viewer, id, address, ada };
 }
 
-/** The viewer's frame and what it shows, as the viewer's page links them, for `who`. */
-async function viewerOf(who: Get, id: string) {
-  const html = await (await who(`/d/${id}`, { redirect: "follow" })).text();
-  const frame = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");
-  const hostPage = await (await pagesFetch(frame)).text();
-  const shown = new URL(/<iframe id="view"[^>]* src="([^"]+)"/.exec(hostPage)![1], frame).href;
-  return { shown, docUrl: shown.replace("/pub/", "/doc/"), text: async (u = shown) => (await pagesFetch(u)).text() };
+/** What the viewer's page shows `who` (the page inline, as its frame holds it), each time afresh; and a file at its files' address. */
+function viewerOf(who: Get, id: string) {
+  const unescape = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+  const inline = async () => unescape(/<iframe id="frame"[^>]*srcdoc="([^"]*)"/.exec(await (await who(`/d/${id}`, { redirect: "follow" })).text())![1]);
+  return {
+    text: inline,
+    file: async (path: string) => {
+      const base = /<base href="([^"]+)">/.exec(await inline())![1];
+      return (await fetch(base + path)).text();
+    },
+  };
 }
 
 test("only editors may publish (viewers may list), only from this site's pages; a missing version or a bad token gets nothing", async () => {
@@ -49,14 +53,15 @@ test("manual: viewers see the published version in every file, and copy it; edit
     heard.close();
     ada.edit(intoHeading(" draft"));
     await expect.poll(async () => (await owner.get(`/d/${id}/doc/index.html`)).text()).toContain("draft");
-    const mine = await viewerOf(owner.get, id);
-    expect(mine.shown).toContain("/pub/");
+    const mine = viewerOf(owner.get, id);
     const shown = await mine.text();
     expect(shown).toContain("alpha");
     expect(shown).not.toContain("beta");
-    expect(await mine.text(mine.docUrl)).toContain("draft");
-    const theirs = await viewerOf(viewer.get, id);
-    const theirDoc = await theirs.text(theirs.docUrl);
+    expect(await mine.file("index.html")).toContain("alpha");
+    expect(await (await owner.get(`/d/${id}/doc/index.html`)).text()).toContain("draft");
+    const theirs = viewerOf(viewer.get, id);
+    const theirDoc = await theirs.file("index.html");
+    expect(await theirs.text()).toContain("alpha");
     expect(theirDoc).toContain("alpha");
     expect(theirDoc).not.toContain("beta");
     expect(theirDoc).not.toContain("draft");
@@ -74,7 +79,7 @@ test("the viewer in a browser shows the published version", async ({ tab }) => {
   ada.disconnect();
   expect((await owner.publish(id, { mode: "manual", versionId: "v2" })).ok).toBe(true);
   await tab.page.goto(`${server.root}/auth/github?as=${viewer.login}&next=${encodeURIComponent(`/d/${id}`)}`);
-  const view = tab.page.frameLocator("#frame").frameLocator("#view").locator("h1");
+  const view = tab.page.frameLocator("#frame").locator("h1");
   await expect.poll(() => view.textContent({ timeout: 1_000 }).catch(() => "")).toContain("alpha");
   expect(await view.textContent()).not.toContain("beta");
 });
@@ -83,7 +88,7 @@ test("latest: viewers see edits up to the keystroke, before any version is cut",
   const { owner, id, ada } = await twoVersions();
   try {
     expect((await owner.publish(id, { mode: "manual", versionId: "v2" })).ok).toBe(true);
-    const mine = await viewerOf(owner.get, id);
+    const mine = viewerOf(owner.get, id);
     expect((await owner.publish(id, { mode: "latest" })).ok).toBe(true);
     ada.edit(intoHeading(" live-now"));
     await expect.poll(() => mine.text(), { timeout: 2_000 }).toContain("live-now");
@@ -95,7 +100,7 @@ test("publishing the current version, with edits pending, cuts them first and pu
   const { owner, id, ada } = await twoVersions();
   try {
     expect((await owner.publish(id, { mode: "manual", versionId: "v2" })).ok).toBe(true);
-    const mine = await viewerOf(owner.get, id);
+    const mine = viewerOf(owner.get, id);
     ada.edit(intoHeading(" pending-publish"));
     await expect.poll(async () => (await owner.versions(id)).pending).toBe(true);
     const cur = (await owner.versions(id)).current;

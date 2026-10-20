@@ -20,7 +20,7 @@ test("the viewer shows a nested page, its relative stylesheets applying, and its
   await expect.poll(async () => (await styled(p))?.h1).toBe("A post");
   expect(await styled(p)).toMatchObject({ color: "rgb(180, 40, 30)", bg: "rgb(250, 246, 236)" });
   await p.evaluate(() => { (window as any).__same = true; });
-  await p.frameLocator("#frame").frameLocator("#view").locator('nav a[href="./"]').click();
+  await p.frameLocator("#frame").locator('nav a[href="./"]').click();
   await expect.poll(async () => `${await where(p)} ${(await styled(p))?.h1}`).toBe(`${s.address}/blog Blog`);
   expect(await p.evaluate(() => (window as any).__same)).toBe(true);
 });

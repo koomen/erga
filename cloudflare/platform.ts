@@ -172,6 +172,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
         }));
       },
       fetch: (doc, request) => counted("doc", () => host(doc).fetch(request)),
+      view: (id, who, opts) => counted("doc", () => env.DOCUMENTS.getByName(id).view(who, opts)),
     },
   };
   return p;

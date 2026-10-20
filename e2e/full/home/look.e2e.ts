@@ -46,7 +46,7 @@ for (const v of [VIEWS[0], VIEWS[2]]) {
     await steady(pv);
     await steady(pd);
     // Measured in the viewer's frame, its blocks start at 0 wherever the frame sits: on the page, they're BAND lower.
-    const inner = pv.frames().find((f) => f != pv.mainFrame() && f.parentFrame() != pv.mainFrame())!;
+    const inner = pv.frames().find((f) => f.parentFrame() == pv.mainFrame())!;
     const viewer = JSON.parse(await inner.evaluate(layout) as string) as [string, number, number, number, number][];
     const direct = JSON.parse(await pd.evaluate(layout) as string) as unknown[][];
     expect(viewer.length).toBeGreaterThan(5);

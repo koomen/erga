@@ -1,7 +1,9 @@
-// A document's pages origin (<id>-<owner>.erga-pages.dev, or one shared host): where its
-// files run, apart from the app's origin. The frame's host page there (pages/frame-host.ts)
-// opens the document's files with a signed token the viewer gives it (pagesToken), which
-// says what it may read: the latest state, or the published version only.
+// A document's pages origin (<id>-<owner>.erga-pages.dev, or one shared host): where the
+// editor's page editor runs, apart from the app's origin. The page editor reaches into the
+// editable page (typing, carets), so the page needs an origin of its own, holding nothing
+// but this one document; the viewer needs none (its frame has an opaque origin: view.ts).
+// The frame's host page there (pages/frame-host.ts) opens the document's files with a
+// signed token the editor's page gives it (pagesToken), for someone who may edit it.
 
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
@@ -69,12 +71,11 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, pagesDoor and document/host.ts's docFile).
  */
-export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { published?: boolean; by?: string } = {}): Promise<string> {
-  // published: for someone who may only view it, whose every file is the published version's, doc/ as pub/.
+export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { by?: string } = {}): Promise<string> {
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
   // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
   // scripts can read its address).
-  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.published ? { p: 1 } : {}), ...(opts.by ? { a: opts.by.toLowerCase() } : {}) })));
+  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.by ? { a: opts.by.toLowerCase() } : {}) })));
   return `${claims}.${await hmac(secret, claims)}`;
 }
 
@@ -83,14 +84,14 @@ export async function readPagesToken(secret: string, token: string, owner: strin
   return (await readPagesClaims(secret, token, owner, id, now))?.shell ?? null;
 }
 
-/** What a good, current token for this document says: the editor's origin, whether it opens only the published version, and whom it was made for (if it says). */
-export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; published: boolean; by?: string } | null> {
+/** What a good, current token for this document says: the editor's origin, and whom it was made for (if it says). */
+export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; by?: string } | null> {
   const [claims, mac, extra] = token.split(".");
   if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
   try {
-    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; p?: number; a?: unknown };
+    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; a?: unknown };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
-    return new URL(c.s).origin == c.s ? { shell: c.s, published: c.p == 1, ...(typeof c.a == "string" ? { by: c.a } : {}) } : null;
+    return new URL(c.s).origin == c.s ? { shell: c.s, ...(typeof c.a == "string" ? { by: c.a } : {}) } : null;
   } catch { return null; }
 }
 
@@ -101,7 +102,7 @@ export async function readPagesClaims(secret: string, token: string, owner: stri
  */
 export async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  let [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
+  const [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();
   const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
   const shell = claims?.shell;
@@ -129,14 +130,12 @@ export async function pagesDoor(request: Request, url: URL, doc: { owner: string
     return new Response(html, { headers });
   }
   if (!rest.startsWith("/doc/") && !rest.startsWith("/pub/")) return notFound();
-  // Someone who may only view the document gets the published version's files, whichever they ask for.
-  if (claims.published && rest.startsWith("/doc/")) rest = "/pub/" + rest.slice("/doc/".length);
   // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
   // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
   const asked = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
   const [route, answer] = await Promise.all([
     platform.directory.route(doc.id),
-    platform.docs.fetch(asked, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, null)),
+    platform.docs.fetch(asked, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, "files")),
   ]);
   if (!route || route.owner != asked.owner) { await answer.body?.cancel(); return notFound(); }
   return answer;

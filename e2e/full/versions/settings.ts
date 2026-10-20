@@ -159,9 +159,9 @@ export type Settings = ReturnType<typeof settings>;
 /** What the document's viewer shows (its page's #draft, in the frame), opened afresh in `v`. */
 export async function viewerShows(v: Page, server: Server, address: string, want: string, user?: string) {
   await v.goto(`${server.root}${address}${user ? `?user=${user}` : ""}`);
-  const draft = v.frameLocator("#frame").frameLocator("#view").locator("#draft");
+  const draft = v.frameLocator("#frame").locator("#draft");
   await until(async () => (await draft.textContent({ timeout: 500 }).catch(() => "")) == want, 5_000, `the viewer shows "${want}"`);
-  return v.frameLocator("#frame").frameLocator("#view").locator("body").innerText();
+  return v.frameLocator("#frame").locator("body").innerText();
 }
 
 /** A second page in the test's browser context (the viewer beside the editor). */

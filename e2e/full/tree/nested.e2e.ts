@@ -41,7 +41,7 @@ test("at its own address in the viewer, which never loads pages-tree.js", async 
   const at = `${doc.base}/blog/drafts/owls`;
   expect((await fetch(at, { redirect: "manual" })).status).toBe(200);
   await page.goto(at);
-  await until(async () => (await inFrames(page, rendered(`document.querySelector("iframe.on")?.contentDocument`))).some(whole), 5000, "rendered whole in the viewer at its address");
+  await until(async () => (await inFrames(page, rendered(`document.querySelector("iframe.on")?.contentDocument ?? document`))).some(whole), 5000, "rendered whole in the viewer at its address");
   await until(() => page.evaluate(`document.readyState == "complete"`), 5000, "the viewer has loaded");
   expect(await js(page, `!!window.ergaTree || performance.getEntriesByType("resource").some((e) => e.name.includes("/_erga/pages-tree-"))`)).toBe(false);
 });
