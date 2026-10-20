@@ -109,8 +109,8 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
         catch (e) { if (i > 20 || !/detached|destroyed|Target closed/.test((e as Error).message)) throw e; cached = null; }
       }
     },
-    /** After a (re)load: the shell is up, the page rendered, the agent's status in. */
-    loaded: () => until(async () => await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`) && await ed.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000, "the editor loads"),
+    /** After a (re)load: the shell is up, the page rendered and shown (the page inline gone from over it), the agent's status in. */
+    loaded: () => until(async () => await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent && !document.getElementById("erga-inline")`) && await ed.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000, "the editor loads"),
     settle: () => settle(page),
     /**
      * The page is rendered and has the caret in a unit. Keys never need it (the editor holds keys that come while it

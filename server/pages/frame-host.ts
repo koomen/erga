@@ -275,10 +275,10 @@ export const HOST_SCRIPT = `(function () {
     setTimeout(go, 120);
     try { f.contentWindow.requestAnimationFrame(function () { f.contentWindow.requestAnimationFrame(go); }); } catch (e) { go(); }
   }
-  function show(to) {
+  function show(to, placed) {
     var from = document.querySelector("iframe.on");
     if (from == to) return;
-    try { if (from) to.contentWindow.scrollTo(from.contentWindow.scrollX, from.contentWindow.scrollY); } catch (e) {}
+    try { if (from && !placed) to.contentWindow.scrollTo(from.contentWindow.scrollX, from.contentWindow.scrollY); } catch (e) {}
     to.classList.add("on");
     report(to);
     tellSteps();
@@ -286,7 +286,19 @@ export const HOST_SCRIPT = `(function () {
     from.classList.remove("on");
     if (from.id == "view") from.remove();
   }
-  window.ergaHost = { ready: function () { if (want == "edit") show(page()); } };
+  // The editable page takes the plain one's place once it has painted; once this frame has painted it too, the shell
+  // can drop the page it shows over this frame while the editor starts (erga-shown: viewer.ts, editBoot).
+  window.ergaHost = { ready: function () {
+    if (want != "edit") return;
+    // Where the plain page is scrolled now (a position frame.ts keeps then overrides that, as it did when this showed at once).
+    var from = document.querySelector("iframe.on"), to = page();
+    try { if (from && from != to) to.contentWindow.scrollTo(from.contentWindow.scrollX, from.contentWindow.scrollY); } catch (e) {}
+    afterPaint(to, function () {
+      if (want != "edit") return;
+      show(to, true);
+      requestAnimationFrame(function () { requestAnimationFrame(function () { parent.postMessage({ type: "erga-shown" }, SHELL); }); });
+    });
+  } };
   // A presentation (editor-agent/PROMPT.md, "Presentations"): the page shown says it has steps (window.ergaSteps). This tells
   // the shell how many, their labels and the current one (STEPS_BOOT shows them) whenever that changes, goes to a step or
   // draws one when the shell asks, and steps with the arrow keys pressed in the page. "rev" changes whenever a step's

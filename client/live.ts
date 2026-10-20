@@ -71,9 +71,6 @@ const api: Live = {
   },
   check: (why) => check(why),
 };
-window.ergaLive = api;
-for (const fn of window.ergaLiveQueue?.splice(0) ?? []) try { fn(api); } catch (e) { console.error(e); }
-window.ergaLiveQueue = { push: (fn: (l: Live) => void) => { try { fn(api); } catch (e) { console.error(e); } return 0; } } as unknown as ((l: Live) => void)[];
 
 for (const type of ["keydown", "input", "pointerdown", "wheel", "touchmove"]) addEventListener(type, () => { lastActivity = now(); }, { capture: true, passive: true });
 addEventListener("pointerdown", () => { pointerHeld = true; }, true);
@@ -381,3 +378,9 @@ const POLL_MS = (window as { __ergaLivePoll?: number }).__ergaLivePoll ?? 60_000
 setInterval(() => { if (document.visibilityState == "visible") check("every minute"); }, POLL_MS);
 // The first look: the builds of the files this page uses, before any redeploy could change them.
 check("loaded");
+
+// The page's calls from before this loaded (live-client.ts), now that all of this is set up: a connection that went down
+// and came back meanwhile rechecks (recheck, above), which wasn't there yet when they ran mid-way.
+window.ergaLive = api;
+for (const fn of window.ergaLiveQueue?.splice(0) ?? []) try { fn(api); } catch (e) { console.error(e); }
+window.ergaLiveQueue = { push: (fn: (l: Live) => void) => { try { fn(api); } catch (e) { console.error(e); } return 0; } } as unknown as ((l: Live) => void)[];

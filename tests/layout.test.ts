@@ -201,3 +201,30 @@ test("the admin pages' early script puts the agent where mountPaneLayout will (n
     else expect(vars["--agent-w"]).toBeUndefined();
   }
 });
+
+test("the editor's early layout puts on what mountLayout will (the document doesn't move once main.ts runs)", async () => {
+  const { LAYOUT_EARLY } = await import("../server/pages/viewer.ts");
+  const { KEY, layoutVars, load } = await import("../client/layout");
+  const layouts: unknown[] = [null, "broken", { order: ["doc", "picker", "agent"], agentWidth: 520 }, { order: ["picker", "agent", "doc"], agentWidth: 900 },
+    { order: ["agent", "picker", "doc"], agentWidth: 100 }, { order: ["doc", "agent", "picker"], agentWidth: 450 }, { order: ["x"], agentWidth: "wide" }];
+  for (const kept of layouts) for (const agent of [true, false, undefined]) for (const width of [1300, 1000, 800, 700, 390]) for (const safe of [0, 47]) {
+    const vars: Record<string, string> = {}, classes = new Set<string>();
+    const stored: Record<string, string> = { [KEY]: typeof kept == "string" ? "{" : JSON.stringify(kept), "erga:settings:v1": JSON.stringify(agent == null ? {} : { agent }) };
+    const storage = { getItem: (k: string) => stored[k] ?? null };
+    const el = () => ({ style: { cssText: "" }, remove() {} });
+    const document = {
+      documentElement: { clientWidth: width, style: { setProperty: (k: string, v: string) => { vars[k] = v; } }, classList: { add() {} } },
+      body: { append() {}, classList: { toggle: (c: string, on: boolean) => { if (on) classes.add(c); else classes.delete(c); } } },
+      createElement: el,
+      querySelector: () => ({ content: "doc" }),
+    };
+    const computed = () => ({ paddingLeft: `${safe}px`, paddingRight: `${safe}px` });
+    new Function("document", "localStorage", "getComputedStyle", "innerWidth", LAYOUT_EARLY)(document, storage, computed, width);
+    const open = agent !== false, want = layoutVars(load(storage), { width, safeL: safe, safeR: safe }, { agent: open, picker: false });
+    const what = `${JSON.stringify(kept)}, agent ${agent}, ${width}px, notch ${safe}px`;
+    expect(vars, what).toEqual(Object.fromEntries(Object.entries(want).map(([k, n]) => [k, `${Math.round(n)}px`])));
+    expect(classes.has("agent-open"), what).toBe(open);
+    expect(classes.has("agent-right"), what).toBe(load(storage).order.indexOf("agent") > load(storage).order.indexOf("doc"));
+    expect(classes.has("layout-narrow"), what).toBe(width < 760);
+  }
+});

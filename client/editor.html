@@ -149,7 +149,10 @@
       --frame-l: var(--safe-l); --frame-r: var(--safe-r);
       --cb-l: calc(var(--agent-left) + var(--agent-fab) + 14px); --cb-r: 22px;
     }
-    :is(#frame, .erga-canvas) { left: var(--frame-l); width: calc(100% - var(--frame-l) - var(--frame-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
+    :is(#frame, #erga-inline, .erga-canvas) { left: var(--frame-l); width: calc(100% - var(--frame-l) - var(--frame-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
+    /* The page inline, over the editor's frame while the editor starts, at the document's zoom as the frame will show it
+       (frame.ts, setZoom; server/pages/viewer.ts, LAYOUT_EARLY). */
+    html.erga-zoomed #erga-inline { width: calc((100% - var(--frame-l) - var(--frame-r)) / var(--erga-zoom)); height: calc((100% - var(--band-h)) / var(--erga-zoom)); transform: scale(var(--erga-zoom)); transform-origin: 0 0; }
     #source { left: var(--frame-l); right: var(--frame-r); transition: left var(--agent-ms) var(--agent-ease), right var(--agent-ms) var(--agent-ease); }
     .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding var(--agent-ms) var(--agent-ease); padding-left: var(--cb-l); padding-right: var(--cb-r); }
     /* The top row and its cards keep clear of a panel on the right. */
