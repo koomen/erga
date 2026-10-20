@@ -75,7 +75,7 @@ const once = <T extends Disposable>(key: string, make: () => Promise<T>) => (): 
 
 /**
  * servers.short()'s timings: a version is cut once edits pause for `idle` ms (or after `max`, whatever the typing); a
- * homepage deploys `homeDelay` ms after its published version changes, and / always asks for the latest deploy.
+ * homepage deploys `homeDelay` ms after it has a new version, and / always asks for the latest deploy.
  */
 export const SHORT = { idle: 1000, max: 8000, homeDelay: 2000 };
 

@@ -111,7 +111,7 @@ export interface Env {
   CF_VERSION_METADATA?: { id?: string };
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
   ERGA_DEPLOY_MOCK?: string;
-  /** Local development only: how long after a publish a document's site deploys (cloudflare/objects/site.ts; tests shorten it). */
+  /** Local development only: how long after a new version a document's site deploys (cloudflare/objects/site.ts; tests shorten it). */
   ERGA_SITE_DELAY_MS?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;

@@ -54,7 +54,7 @@ export function siteOps(env: Env, origin: string): SiteOps {
   };
 }
 
-/** A document's published version changed: if it has a site, its next deploy is scheduled (the document's object calls this). */
+/** A document has a new version: if it has a site, its next deploy is scheduled (the document's object calls this). */
 export async function siteChanged(env: Env, docId: string): Promise<void> {
   if (await directoryOf(env).sites.get(docId)) await env.SITES.getByName(docId).changed(docId);
 }

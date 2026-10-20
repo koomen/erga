@@ -48,7 +48,7 @@ export class DeployGate {
 /** What the Worker calls on a document: the object's methods it lists (DocumentObject's CALLS), and fetch. */
 export const CALLS = [
   "create", "link", "publish", "paths", "index", "snapshot", "delete", "notify", "diskPath", "exists",
-  "exportStorage", "importStorage", "wipeStorage", "versionsState", "setPublished", "restore", "publishedFiles",
+  "exportStorage", "importStorage", "wipeStorage", "versionsState", "restore", "currentFiles",
   "setPermissions", "view", "resumeAgent",
 ] as const;
 export type Call = (typeof CALLS)[number];

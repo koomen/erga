@@ -22,14 +22,14 @@ import { PING, PONG } from "../shared/room-socket";
 import type { DocRow, Role, Who } from "../server/directory/index.ts";
 import { agentToolsFor } from "../agents/tools";
 import { VIA } from "../shared/attribution";
-import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions";
+import type { RestoreResult, VersionsState } from "../document/versions";
 import type { DocSnapshot, Page } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
 import { forgetDecisions } from "../server/documents/index.ts";
 import { platform } from "./platform";
 import { CALLS, DeployGate, DEPLOYED_HEADER, deployedOf, STALE, staleResponse, type Call } from "./document-host";
 import { DiskLink } from "../dev/disk-storage";
-import { publishedChanged } from "./published";
+import { homeChanged } from "./current-files";
 import { siteChanged, siteOps } from "./sites";
 import type { Env } from "./env";
 
@@ -83,7 +83,7 @@ export class DocumentObject extends DurableObject<Env> {
       takeDownSite: (site) => env.SITES.getByName(site.docId).remove(site.docId, site),
       home: {
         forget: (docId) => env.HOME.getByName("home").forget(docId),
-        publishedChanged: (docId) => publishedChanged(env, docId),
+        changed: (docId) => homeChanged(env, docId),
       },
       siteChanged: (docId) => siteChanged(env, docId),
       disk: { storage: (only) => this.disk.storage(this.ctx.storage, only) },
@@ -136,7 +136,7 @@ export class DocumentObject extends DurableObject<Env> {
   publish(files: Record<string, string | Uint8Array>, remove: string[], by?: string) { return this.document.publish(files, remove, by); }
   paths(): Promise<string[]> { return this.document.hold(() => this.document.paths()); }
   index(): Promise<string | null> { return this.document.index(); }
-  snapshot(opts: { published?: boolean } = {}) { return this.document.hold(() => this.document.snapshot(opts)); }
+  snapshot() { return this.document.hold(() => this.document.snapshot()); }
   delete(): Promise<boolean> { return this.document.delete(); }
   /** A message for everyone who has the document open (the homepage's deploy status, home.ts). Opens nothing. */
   async notify(msg: unknown): Promise<void> { this.tabs.notify(msg); }
@@ -146,9 +146,8 @@ export class DocumentObject extends DurableObject<Env> {
   importStorage(snap: DocSnapshot): Promise<void> { return this.document.importStorage(snap); }
   wipeStorage(): Promise<void> { return this.document.wipeStorage(); }
   versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> { return this.document.hold(() => this.document.versionsState(opts)); }
-  setPublished(req: PublishRequest): Promise<PublishResult> { return this.document.hold(() => this.document.setPublished(req)); }
   restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.hold(() => this.document.restore(ref, by, path)); }
-  publishedFiles() { return this.document.hold(() => this.document.publishedFiles()); }
+  currentFiles() { return this.document.hold(() => this.document.currentFiles()); }
   /** The directory's permissions for this document now (Directory.share pushes each change): the document's copy. */
   setPermissions(list: { login: string; role: Role }[]): Promise<void> { return this.document.setPermissions(list); }
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */

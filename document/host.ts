@@ -69,7 +69,7 @@ export interface HostOptions {
   readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
   /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut; answers the version the document is at then. */
   readonly turnEnded?: () => Promise<string | null> | void;
-  /** The document's versions and publishing, for the agents' tools. */
+  /** The document's versions, for the agents' tools. */
   readonly versions?: VersionsAccess;
   /** A new page's text; a plain one if not given. */
   readonly newPage?: string;
@@ -524,7 +524,7 @@ export function makeHost(opts: HostOptions) {
     /** What a tab hears first: the document's details as its person sees them, and its tree (`canEdit`: theirs to change). */
     hello: helloFor,
     agentState: agentStateFor,
-    /** Tells every open tab, whoever's (a new version, a publish: { type: "versions" }). */
+    /** Tells every open tab, whoever's (a new version, a restore: { type: "versions" }). */
     broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
     renamed,

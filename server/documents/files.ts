@@ -79,7 +79,7 @@ export async function filesDoor(request: Request, platform: Platform): Promise<R
     const hit = await cache.match(cacheKey).catch(() => undefined);
     if (hit) return fresh(hit, request);
   }
-  const inner = forwarded(request, url, `/pub${rest}`, `${url.origin}/d/${claims.id}`, null, "files");
+  const inner = forwarded(request, url, `/doc${rest}`, `${url.origin}/d/${claims.id}`, null, "files");
   inner.headers.set("x-erga-view", claims.ver);
   const answer = await platform.docs.fetch({ id: claims.id, owner: "", test: false }, inner);
   const same = answer.headers.get("x-erga-view-same") == "1";

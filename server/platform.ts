@@ -12,7 +12,7 @@ import type { AdminAgentObject, DashboardDeploys } from "./admin/index.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
 import type { SiteOps } from "./sites/index.ts";
-import type { PublishRequest, PublishResult, RestoreResult, VersionsState } from "../document/versions.ts";
+import type { RestoreResult, VersionsState } from "../document/versions.ts";
 import type { ViewAnswer } from "../document/document.ts";
 import { VIA } from "../shared/attribution.ts";
 
@@ -176,11 +176,9 @@ export interface Platform {
     /** A document's page, or null if it has no host. */
     index(doc: Route): Promise<string | null>;
     /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
-    snapshot(doc: Route, opts?: { published?: boolean }): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
-    /** A document's versions, the current one and the published one; null if it has no host. */
+    snapshot(doc: Route): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
+    /** A document's versions and the current one; null if it has no host. */
     versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
-    /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
-    setPublished(doc: Route, req: PublishRequest): Promise<PublishResult>;
     /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */
     restore(doc: Route, ref: string, by: string, path?: string | null): Promise<RestoreResult>;
     exists(doc: Route): Promise<boolean>;

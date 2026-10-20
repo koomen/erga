@@ -8,7 +8,7 @@
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./front-door.ts";
-import { esc, frameHead, HOST_SCRIPT, HOST_STYLE, hostVersion, PAGE_ALLOW, PAGE_SANDBOX, VIEW_FILES } from "../pages/index.ts";
+import { esc, frameHead, HOST_SCRIPT, HOST_STYLE, hostVersion, PAGE_ALLOW, PAGE_SANDBOX } from "../pages/index.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -112,8 +112,8 @@ export async function pagesDoor(request: Request, url: URL, doc: { owner: string
     // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
     const view = url.searchParams.get("view");
     const files = `/t/${token}/doc/`;
-    // The page as it renders is what viewers see (pub/: the published version, or the files as they are now; document/versions.ts).
-    const shown = `/t/${token}/${VIEW_FILES}/`;
+    // The page as it renders is what viewers see: the files as they are now.
+    const shown = files;
     const src = view == "" ? shown : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${shown}${view.split("/").map(encodeURIComponent).join("/")}` : "";
     // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
     // resolves the document's files there from the start, even in Chrome's preload scanner, which otherwise asks for them here too.
@@ -129,7 +129,7 @@ export async function pagesDoor(request: Request, url: URL, doc: { owner: string
     if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
     return new Response(html, { headers });
   }
-  if (!rest.startsWith("/doc/") && !rest.startsWith("/pub/")) return notFound();
+  if (!rest.startsWith("/doc/")) return notFound();
   // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
   // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
   const asked = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };

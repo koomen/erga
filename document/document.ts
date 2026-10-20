@@ -2,7 +2,7 @@
 // the server around it offers (DocumentDeps), it keeps the document's files
 // and its room's state, opens the room when the first request arrives,
 // serves the document's API (host.ts), cuts versions as it is edited,
-// publishes, restores, deletes itself when nobody edits it, and keeps its
+// restores them, deletes itself when nobody edits it, and keeps its
 // row in the directory up to date. cloudflare/document-object.ts runs one in
 // a Durable Object; the tests run one on MemoryStorage.
 //
@@ -15,14 +15,14 @@
 // (`authorize`, Directory.decide), so a request here asks the database
 // nothing. What they may do goes on as x-erga-access ("edit", or "view":
 // their room connection is then read-only, and so are their agent and
-// publishes). A read of a file with a key the front door checked (the
+// the files they send whole). A read of a file with a key the front door checked (the
 // viewer's files, the editor's pages origin) says so in x-erga-checked. A request that came with an agent token also has x-erga-agent:
 // only those may call the external agent's tools (/api/ext), as the person
 // the token stands for, who may do what they last could.
 //
 // Storage keys: `info` (what the document is, read once and kept in
 // memory), `perms` (its permissions, as the directory last said), `view`
-// (which version viewers see, while it holds), `files/<path>` (a file's bytes), `folders/<path>` (a folder made
+// (the version viewers see, while no file changes), `files/<path>` (a file's bytes), `folders/<path>` (a folder made
 // as one, empty ones too), `room/...` (the room's journal: storage.ts), and
 // the versions' (versions.ts).
 //
@@ -45,25 +45,27 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow, type Naming, type Role, type Who } from "../server/directory/index.ts";
 import type { SiteRow } from "../server/sites/index.ts";
-import { cleanRel, docFile, makeHost, relativeUrl } from "./host.ts";
+import { cleanRel, docFile, makeHost } from "./host.ts";
 import type { AgentState, Hello } from "./api.ts";
 import { resolvePage, titleOf } from "./pages.ts";
 import { digest, FileStore, Room, StateStore, type Connection } from "./room.ts";
 import { fileStoreOf, KEYS, kvOf, stateStoreOf, type Storage } from "./storage.ts";
 import { VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
-import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
+import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import type { ChatStore } from "../agents/checkpoint.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
- * it's a test document, when a file last changed (never, if unset), where it
- * is on disk (local development), and the published version in "manual" mode.
+ * it's a test document, when a file last changed (never, if unset), and where
+ * it is on disk (local development). (A document from before 2026-10-20 may
+ * also hold `published`, from when viewers could see one chosen version: it is
+ * no longer read.)
  */
 export interface DocumentInfo {
-  id: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk; published?: { n: number };
+  id: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk;
   /** Its title and address as the directory last said (D1 is the truth; every rename passes here). */
   name?: DocName;
   /** It has edits no version holds yet: it cuts one as it opens. */
@@ -95,8 +97,8 @@ export interface DocumentDeps {
   serverTools: (person: Person, here: string) => Promise<AgentTool[]>;
   /** Takes down the document's site on its person's Cloudflare account; a refusal, or nothing. */
   takeDownSite: (site: SiteRow) => Promise<string | null | undefined>;
-  /** The homepage forgets a deleted document; and its next deploy is scheduled when the homepage's published version changed. */
-  home: { forget: (docId: string) => Promise<void>; publishedChanged: (docId: string) => Promise<void> };
+  /** The homepage forgets a deleted document; and its next deploy is scheduled when the homepage has a new version. */
+  home: { forget: (docId: string) => Promise<void>; changed: (docId: string) => Promise<void> };
   /** The document's site, if it has one, deploys again a short time from now. */
   siteChanged: (docId: string) => Promise<void>;
   /** Local development: this document's storage with its files on disk (dev/disk-storage.ts), for a document that is one. */
@@ -131,8 +133,8 @@ const INLINE_STYLES_MAX = 64_000;
 /** How long a document trusts its copy of its permissions before it reads them again (in the background): changes are pushed, so this only covers one that didn't arrive. */
 const PERMISSIONS_FRESH_MS = 5 * 60_000;
 
-/** What viewers see: its version (a digest), its page, its files' paths, and the published version's number ("manual" mode; null: "latest"). */
-export interface ViewState { ver: string; index: string; paths: string[]; version: number | null }
+/** What viewers see: its version (a digest), its page and its files' paths. */
+export interface ViewState { ver: string; index: string; paths: string[] }
 
 /** Document.view's answer: what the person may do, the document's name as last told, and (if they may view) the version and file, with its text. */
 export interface ViewAnswer {
@@ -188,8 +190,6 @@ export class Document {
   private cutting: Promise<unknown> = Promise.resolve();
   /** Room connections that may edit: when the last one goes, a version is cut. */
   private editing = 0;
-  /** The published version's number in "manual" mode, null in "latest" (undefined: not read yet). */
-  private pub: number | null | undefined = undefined;
   /** Who the files arriving whole now are by (publish), for the version. */
   private publisher: string | null = null;
   /**
@@ -200,7 +200,7 @@ export class Document {
   private editors = new Map<string, boolean>();
   /** Its permissions as the directory last said, and when (undefined: not read yet; null: none kept). */
   private perms: { list: { login: string; role: Role }[]; at: number } | null | undefined = undefined;
-  /** What viewers see in "latest" mode, while no file changes (null: work it out again). */
+  /** What viewers see, while no file changes (null: work it out again). */
   private latestView: ViewState | null = null;
   /** Whether storage may hold `view` (so a change deletes it, once). */
   private viewKept = true;
@@ -241,7 +241,6 @@ export class Document {
   private forgetStorage(): void {
     this.info = undefined;
     this.kept = false;
-    this.pub = undefined;
     this.perms = undefined;
     this.latestView = null;
     this.viewKept = true;
@@ -412,11 +411,8 @@ export class Document {
    * latest edits are in it), and its page: what a copy of it starts from.
    * Null if there's no such document.
    */
-  async snapshot(opts: { published?: boolean } = {}): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
+  async snapshot(): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
     const info = await this.readInfo();
-    // Someone who may only view it, in "manual" mode, copies what they see: the published version.
-    const v = opts.published && info?.published ? await this.versions.get(info.published.n) : null;
-    if (v) return { index: v.index, files: Object.fromEntries(await this.versions.files(v)) };
     const opened = info && await this.room();
     if (!info || !opened) { if (!opened) this.open = null; return null; }
     const files: Record<string, string | Uint8Array> = {};
@@ -656,8 +652,7 @@ export class Document {
 
   /**
    * A request inside the document (not a WebSocket: the adapter takes those
-   * after `admit`). What viewers see: in "manual" mode the published
-   * version's files (/pub/); in "latest" the files as they are now, as /doc/.
+   * after `admit`). Viewers see the files as they are now, at /doc/.
    */
   async handle(request: Request): Promise<Response> {
     const allowed = await this.authorize(request);
@@ -678,13 +673,6 @@ export class Document {
   }
 
   private async serve(request: Request): Promise<Response> {
-    const asked = new URL(request.url);
-    if (asked.pathname.startsWith("/pub/")) {
-      const served = await this.publishedFile(request, asked);
-      if (served) return served;
-      asked.pathname = "/doc/" + asked.pathname.slice("/pub/".length);
-      request = new Request(asked, request);
-    }
     // Someone viewing it: its files straight from storage while the room isn't open, without opening it
     // (once a room closing a moment ago has written them).
     await this.closing;
@@ -788,39 +776,6 @@ export class Document {
     return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers } });
   }
 
-  /**
-   * A GET of one of the published version's files, in "manual"
-   * mode; null in "latest" mode (the caller serves the files as they are now),
-   * which costs no more than reading the document's info, kept in memory.
-   */
-  private async publishedFile(request: Request, url: URL): Promise<Response | null> {
-    if (request.method != "GET" && request.method != "HEAD") return null;
-    const n = await this.publishedNumber();
-    const v = n != null ? await this.versions.get(n) : null;
-    if (!v) return null;
-    const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    const raw = url.pathname.slice("/pub/".length);
-    const rel = raw ? cleanRel(raw) : v.index;
-    // A page by its address (blog for blog.html or blog/index.html), as doc/ does: sent to its file, relatively.
-    if (!rel || !(rel in v.files)) {
-      const found = resolvePage((p) => p in v.files, raw, v.index);
-      if (!found || found.file == rel) return notFound();
-      let from = raw;
-      try { from = decodeURIComponent(raw); } catch { /* resolvePage refused it already */ }
-      return new Response(null, { status: 302, headers: { Location: relativeUrl(from, found.file), "Cache-Control": "no-store" } });
-    }
-    const bytes = await this.versions.file(v, rel);
-    if (!bytes) return notFound();
-    const r = docFile(rel, bytes, request.headers.get("if-none-match"), request.headers.get("range"), `version ${n}`);
-    return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers } });
-  }
-
-  /** The published version's number in "manual" mode; null in "latest". */
-  private async publishedNumber(): Promise<number | null> {
-    if (this.pub === undefined) this.pub = (await this.readInfo())?.published?.n ?? null;
-    return this.pub;
-  }
-
   // ---------------------------------------------------------------- who may, and what viewers see
 
   /**
@@ -838,7 +793,7 @@ export class Document {
     const read = request.method == "GET" || request.method == "HEAD";
     if (headers.has("x-erga-checked")) {
       headers.delete("x-erga-who");
-      if (read && /^\/(doc|pub)\//.test(url.pathname) && !headers.get("upgrade")) return new Request(request, { headers });
+      if (read && url.pathname.startsWith("/doc/") && !headers.get("upgrade")) return new Request(request, { headers });
       return new Response("Not allowed", { status: 403 });
     }
     let who: Who | null = null;
@@ -904,22 +859,15 @@ export class Document {
   /**
    * What viewers see now, and its version: a digest of the files (their paths
    * and digests) and the page, so the same files are always the same version,
-   * whatever happened between. In "manual" mode the published version's; in
-   * "latest" the files as they are now (from the room, or kept in storage
-   * while no file has changed: a request needn't open the room).
+   * whatever happened between: the files as they are now (from the room, or
+   * kept in storage while no file has changed: a request needn't open the room).
    */
   private async viewNow(info: DocumentInfo): Promise<ViewState> {
-    const n = await this.publishedNumber();
-    const v = n != null ? await this.versions.get(n) : null;
-    if (v) {
-      const entries = Object.entries(v.files).sort(([a], [b]) => (a < b ? -1 : 1));
-      return { ver: "p" + hashText(JSON.stringify([v.index, entries])), index: v.index, paths: entries.map(([p]) => p), version: n };
-    }
     if (this.latestView && this.latestView.index == info.index) return this.latestView;
     if (!this.opened && !info.disk) {
       await this.closing;
       const kept = await this.storage.get<ViewState>(VIEW);
-      if (kept && kept.version == null && kept.index == info.index) { this.viewKept = true; return (this.latestView = kept); }
+      if (kept && kept.index == info.index) { this.viewKept = true; return (this.latestView = kept); }
     }
     const opened = await this.room();
     if (!opened) { this.open = null; throw new Error("There's no such document."); }
@@ -928,7 +876,7 @@ export class Document {
     for (const [path, text] of texts(doc).entries()) entries.push([path, digest(encoder.encode(text.toString()))]);
     for (const [path, d] of assets(doc).entries()) if (!texts(doc).has(path)) entries.push([path, d]);
     entries.sort(([a], [b]) => (a < b ? -1 : 1));
-    const state: ViewState = { ver: "l" + hashText(JSON.stringify([info.index, entries])), index: info.index, paths: entries.map(([p]) => p), version: null };
+    const state: ViewState = { ver: "l" + hashText(JSON.stringify([info.index, entries])), index: info.index, paths: entries.map(([p]) => p) };
     this.latestView = state;
     this.viewKept = true;
     if (!info.disk) await this.storage.put(VIEW, state);
@@ -936,12 +884,7 @@ export class Document {
   }
 
   /** One file of what viewers see (its text), or null. */
-  private async viewText(state: ViewState, file: string): Promise<string | null> {
-    if (state.version != null) {
-      const v = await this.versions.get(state.version);
-      const bytes = v ? await this.versions.file(v, file) : null;
-      return bytes ? new TextDecoder().decode(bytes) : null;
-    }
+  private async viewText(file: string): Promise<string | null> {
     const open = this.opened?.room.text(file);
     if (open != null) return open;
     const info = await this.readInfo();
@@ -972,11 +915,11 @@ export class Document {
       const state = await this.viewNow(info);
       const paths = new Set(state.paths);
       const found = opts.page ? resolvePage((p) => paths.has(p), opts.page, state.index) : paths.has(state.index) ? { file: state.index, canonical: "" } : null;
-      const text = found && opts.have != state.ver ? await this.viewText(state, found.file) : null;
+      const text = found && opts.have != state.ver ? await this.viewText(found.file) : null;
       const html = text != null ? await this.inlineStyles(state, found!.file, text) : null;
-      // Quiet: no file changed in a while (or "manual" mode, where only a publish changes what viewers see), so the
-      // front door may keep this answer a moment. A document being edited is asked each time.
-      const quiet = state.version != null || Date.now() - this.lastChange > QUIET_MS;
+      // Quiet: no file changed in a while, so the front door may keep this answer a moment. A document being edited is
+      // asked each time.
+      const quiet = Date.now() - this.lastChange > QUIET_MS;
       return { role, name, test: !!info.test, ver: state.ver, file: found?.file ?? null, canonical: found?.canonical ?? null, quiet, ...(html != null ? { html } : {}) };
     });
   }
@@ -1002,7 +945,7 @@ export class Document {
       if (!/^\s*stylesheet\s*$/i.test(value("rel") ?? "") || !href || value("media") != null || /^([a-z][a-z0-9+.-]*:|\/|#)/i.test(href.trim())) continue;
       const rel = cleanRel(dir + href.trim().split(/[?#]/)[0]);
       if (!rel || !paths.has(rel)) continue;
-      const css = await this.viewText(state, rel);
+      const css = await this.viewText(rel);
       if (css == null || css.length > budget || /<\/style/i.test(css)) continue;
       if (rel.slice(0, rel.lastIndexOf("/") + 1) != dir && /url\(|@import/i.test(css)) continue;
       budget -= css.length;
@@ -1030,7 +973,6 @@ export class Document {
    *   calls, 8 seconds after its last), so an agent's turn is one version:
    *   while any agent works, the two rules above wait for it;
    * - the last person who may edit leaves (their room connection closes);
-   * - before a publish, so what's published can be the latest edit;
    * - when the room opens, if what it holds isn't the latest version (edits
    *   made while timers couldn't run: the object was evicted).
    *
@@ -1101,7 +1043,7 @@ export class Document {
     await Effect.runPromise(opened.room.settle);
     if (!r) return null;
     opened.broadcast({ type: "versions" });
-    if (!info.published) this.firePublished(info);
+    this.versionCut(info.id);
     if (r.previous && !as) this.deps.background(this.describe(r.version, r.previous, info).catch((e) => this.deps.log(`couldn't describe version ${r.version.n}: ${e}`)));
     return r.version;
   }
@@ -1117,18 +1059,10 @@ export class Document {
     this.opened?.broadcast({ type: "versions" });
   }
 
-  private async publishedNow(info: DocumentInfo): Promise<Published> {
-    const latest = (await this.versions.latest())!;
-    const v = info.published ? await this.versions.get(info.published.n) : null;
-    return v ? { mode: "manual", version: publicVersion(v) } : { mode: "latest", version: publicVersion(latest) };
-  }
-
-  private firePublished(info: DocumentInfo): void {
-    const docId = info.id;
-    this.publishedNow(info).then((published) => firePublished({ docId, published, files: async () => (await this.publishedFiles())?.files ?? new Map() }))
-      .catch((e) => this.deps.log(`couldn't tell of ${docId}'s published version: ${e}`));
+  /** A new version: the homepage and the document's site, which show the document as it is, deploy again soon. */
+  private versionCut(docId: string): void {
     // If it's the homepage, its next deploy is scheduled.
-    this.deps.background(this.directory.homeId().then((home) => home == docId ? this.deps.home.publishedChanged(docId) : undefined)
+    this.deps.background(this.directory.homeId().then((home) => home == docId ? this.deps.home.changed(docId) : undefined)
       .catch((e) => this.deps.log(`couldn't schedule the homepage's deploy: ${e}`)));
     // If it has a site on its person's Cloudflare account, the site's next deploy is scheduled.
     this.deps.background(this.deps.siteChanged(docId).catch((e) => this.deps.log(`couldn't schedule ${docId}'s site deploy: ${e}`)));
@@ -1144,14 +1078,14 @@ export class Document {
     return info ? { opened, info } : null;
   }
 
-  /** Its versions, newest first (`limit`, before version `before`), the current one and the published one. Null if there's no such document. */
+  /** Its versions, newest first (`limit`, before version `before`), and the current one. Null if there's no such document. */
   async versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> {
     const r = await this.ready();
     if (!r) return null;
     const before = opts.before != null ? versionNumber(opts.before) : null;
     const { versions, total } = await this.versions.list({ before, limit: opts.limit });
     const latest = (await this.versions.latest())!;
-    return { current: publicVersion(latest), published: await this.publishedNow(r.info), versions: versions.map(publicVersion), total, pending: this.pending.dirty };
+    return { current: publicVersion(latest), versions: versions.map(publicVersion), total, pending: this.pending.dirty };
   }
 
   /** One version (by id or number), with its files' paths; null if there's none. */
@@ -1171,45 +1105,13 @@ export class Document {
   }
 
   /**
-   * Sets what viewers see (the front door has checked the person may edit):
-   * "latest", the document as it is, up to the keystroke, or "manual", one
-   * version (by default the current one). Edits not yet in a version become
-   * one first. Every open tab hears of it ({ type: "versions" }).
-   */
-  async setPublished(req: PublishRequest): Promise<PublishResult> {
-    const r = await this.ready();
-    if (!r) return { ok: false, status: 404, error: "There's no such document." };
-    if (req?.mode != "latest" && req?.mode != "manual") return { ok: false, status: 400, error: 'Send {"mode": "latest"} or {"mode": "manual", "versionId": "v3"}.' };
-    // Edits not yet in a version become one: publishing the current version means up to the keystroke.
-    const before = await this.versions.head();
-    await this.cutSoon("publish");
-    const info = (await this.readInfo())!;
-    if (req.mode == "latest") delete info.published;
-    else {
-      const head = await this.versions.head();
-      const asked = req.versionId == null ? head : versionNumber(req.versionId);
-      // The version that was current when the person asked is the current state, now cut.
-      const n = asked == before ? head : asked;
-      if (n == null || n > head || !(await this.versions.get(n))) return { ok: false, status: 404, error: `There's no version ${req.versionId} of this document: its versions are v1 to v${head}.` };
-      info.published = { n };
-    }
-    await this.saveInfo(info);
-    this.pub = info.published?.n ?? null;
-    // What viewers see changed: whatever the server kept of it goes.
-    this.deps.viewChanged?.(info.id);
-    r.opened.broadcast({ type: "versions" });
-    this.firePublished(info);
-    return { ok: true, published: await this.publishedNow(info) };
-  }
-
-  /**
    * Brings a version back: its files are written over the document as it
    * is now (every file: those it didn't have are deleted), as an edit open
    * editors see live, and that becomes a new version, the current one, by
    * `by`, "Restored version <n>". With `path`, only that file comes back
    * ("Restored <path> from version <n>"); the other files stay as they are.
-   * Edits not yet in a version become one first, so nothing is lost. In
-   * "latest" mode viewers then see it; in "manual" mode what's published stays.
+   * Edits not yet in a version become one first, so nothing is lost.
+   * Viewers then see it.
    */
   async restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> {
     const r = await this.ready();
@@ -1242,17 +1144,13 @@ export class Document {
   }
 
   /**
-   * The files viewers see, and which version that is: the published
-   * version's in "manual" mode; in "latest" mode the document as it is now
-   * (up to the keystroke), with the current version. For the homepage's
-   * deploy.
+   * The document as it is now (up to the keystroke), with its current
+   * version: what the homepage and the document's site deploy.
    */
-  async publishedFiles(): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> {
+  async currentFiles(): Promise<{ version: Version; index: string; files: Map<string, Uint8Array> } | null> {
     const r = await this.ready();
     if (!r) return null;
-    const published = await this.publishedNow(r.info);
-    const v = r.info.published ? await this.versions.get(r.info.published.n) : null;
-    return v ? { published, index: v.index, files: await this.versions.files(v) } : { published, index: r.info.index, files: await r.opened.current() };
+    return { version: publicVersion((await this.versions.latest())!), index: r.info.index, files: await r.opened.current() };
   }
 
   /** Opens the room on this document's storage, for as long as the document lives. */
@@ -1309,7 +1207,6 @@ export class Document {
           return v ? this.versions.files(v) : null;
         },
         current: async () => (await this.ready())?.opened.current() ?? new Map(),
-        publish: (req) => this.setPublished(req),
         restore: (ref, by, path) => this.restore(ref, by, path),
       },
       // A new page in its file tree starts as a new document does.

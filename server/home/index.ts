@@ -3,6 +3,6 @@
 // this file.
 
 export { homeApi } from "./api.ts";
-export { HomeDeploys, type HomeDeps, type HomeObject, type LivePage, type PublishedHome } from "./deploys.ts";
+export { HomeDeploys, type HomeDeps, type HomeObject, type LivePage, type HomeFiles } from "./deploys.ts";
 export { addressOf, BAND, homeHeader, renderHome, type DeployStatus, HOME_FILES, IDLE } from "./render.ts";
 export { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./serve.ts";

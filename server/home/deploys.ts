@@ -1,10 +1,10 @@
-// The homepage's deploys: a deploy renders the homepage document's published
-// version into a snapshot (its page and its files), kept under a generation
+// The homepage's deploys: a deploy renders the homepage document, as it is
+// now, into a snapshot (its page and its files), kept under a generation
 // id that's never reused, and serve.ts serves / from the snapshot. This is
 // the state machine; the Durable Object (cloudflare/objects/home.ts) gives
 // it storage and an alarm, and forwards the calls.
 //
-// When the homepage's published version changes, the next deploy runs about
+// When the homepage document has a new version, the next deploy runs about
 // five minutes later (`delay`), each change pushing it back (debounced), on
 // the alarm; "Redeploy now" (POST /api/docs/<id>/home/deploy) runs it at
 // once. A deploy that fails leaves the last good snapshot serving. Choosing
@@ -38,7 +38,7 @@ export interface LivePage {
 export interface HomeObject {
   /** The deploy's state, as the API gives it. */
   status(): Promise<DeployStatus>;
-  /** A document's published version changed: if it's the homepage, its deploy is (re)scheduled. */
+  /** A document has a new version: if it's the homepage, its deploy is (re)scheduled. */
   changed(docId: string): Promise<DeployStatus>;
   /** Deploys now (Redeploy now), whatever was scheduled; `by`: who asks (byLine). */
   deploy(by?: string): Promise<DeployStatus>;
@@ -54,8 +54,8 @@ export interface HomeObject {
   file(gen: string, path: string): Promise<{ bytes: Uint8Array; type: string } | null>;
 }
 
-/** A document's published version, as a deploy reads it. */
-export interface PublishedHome { index: string; files: Record<string, string | Uint8Array>; version: number | null }
+/** A document's files as they are now, as a deploy reads them. */
+export interface HomeFiles { index: string; files: Record<string, string | Uint8Array>; version: number | null }
 
 /** What the deploys need from where they run. */
 export interface HomeDeps {
@@ -68,8 +68,8 @@ export interface HomeDeps {
   };
   alarm: { get(): Promise<number | null>; set(at: number): Promise<void>; delete(): Promise<void> };
   directory: Directory;
-  /** A document's published version; null if there's no such document. */
-  published(docId: string): Promise<PublishedHome | null>;
+  /** A document's files as they are now; null if there's no such document. */
+  current(docId: string): Promise<HomeFiles | null>;
   /** Tells everyone with the document open that its homepage state changed. */
   notify(docId: string): Promise<void>;
   /** How long after a change the next deploy runs. */
@@ -91,7 +91,7 @@ interface State {
   docId: string | null;
   /** Deploy again as soon as the one under way is done (it was asked for meanwhile). */
   again?: boolean;
-  /** Who asked for the latest deploy (byLine); the system's own (after a publish, a new homepage) when not set. */
+  /** Who asked for the latest deploy (byLine); the system's own (after a new version, a new homepage) when not set. */
   by?: string | null;
 }
 
@@ -262,25 +262,25 @@ export class HomeDeploys implements HomeObject {
     }
   }
 
-  /** Renders the homepage's published version and makes it the live snapshot. Null: there's no homepage. */
+  /** Renders the homepage as it is now and makes it the live snapshot. Null: there's no homepage. */
   private async run(): Promise<LivePage | null> {
     const doc = await this.homeDoc();
     if (!doc) { await this.drop(); return null; }
     this.s.docId = doc.id;
     const epoch = this.epoch;
-    const published = await this.deps.published(doc.id);
-    if (!published) throw new Error("The homepage's document has no files.");
-    const page = published.files[published.index];
+    const now = await this.deps.current(doc.id);
+    if (!now) throw new Error("The homepage's document has no files.");
+    const page = now.files[now.index];
     if (this.deps.testFailures && String(typeof page == "string" ? page : new TextDecoder().decode(page ?? new Uint8Array())).includes("erga:test-fail-deploy")) {
       throw new Error("This test page asks for its deploy to fail.");
     }
     const gen = `${Date.now().toString(36)}${Array.from(crypto.getRandomValues(new Uint8Array(3)), (b) => b.toString(36)).join("")}`;
-    const rendered = await renderHome({ index: published.index, files: published.files, gen, title: doc.title });
+    const rendered = await renderHome({ index: now.index, files: now.files, gen, title: doc.title });
     const encoder = new TextEncoder();
-    const entries = Object.entries(published.files).map(([path, data]) => [`${FILE}${gen}:${path}`, typeof data == "string" ? encoder.encode(data) : data] as const);
+    const entries = Object.entries(now.files).map(([path, data]) => [`${FILE}${gen}:${path}`, typeof data == "string" ? encoder.encode(data) : data] as const);
     for (let i = 0; i < entries.length; i += 64) await this.deps.storage.put(Object.fromEntries(entries.slice(i, i + 64)));
     if (epoch != this.epoch) { await this.prune(new Set([this.live?.gen ?? ""])); return null; }
-    const live: LivePage = { gen, docId: doc.id, address: `/${doc.owner}/${doc.slug}`, before: rendered.before, after: rendered.after, files: Object.keys(published.files), at: Date.now(), version: published.version };
+    const live: LivePage = { gen, docId: doc.id, address: `/${doc.owner}/${doc.slug}`, before: rendered.before, after: rendered.after, files: Object.keys(now.files), at: Date.now(), version: now.version };
     const previous = this.live;
     await this.deps.storage.put(LIVE, live);
     this.live = live;

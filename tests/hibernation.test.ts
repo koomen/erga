@@ -77,7 +77,7 @@ class World {
         detach: () => this.tabs.detachAll(),
       },
       agentSettings: async () => ({ missing: "no key in the tests" }), serverTools: async () => [], takeDownSite: async () => null,
-      home: { forget: async () => {}, publishedChanged: async () => {} }, siteChanged: async () => {},
+      home: { forget: async () => {}, changed: async () => {} }, siteChanged: async () => {},
       timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
       background: () => {}, log: () => {},
     };

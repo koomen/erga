@@ -48,8 +48,6 @@ export const PAGE_ALLOW = "autoplay 'none'; fullscreen 'none'";
  */
 export const EDITOR_ALLOW = "autoplay";
 
-/** Where the frame's host page shows the page as it renders from: what viewers see, which the document serves at pub/. */
-export const VIEW_FILES = "pub";
 
 /**
  * The frame's host page, on the document's own origin: it shows the page as
@@ -86,12 +84,12 @@ export const HOST_SCRIPT = `(function () {
   }
   // The page went to another of the document's pages (a link followed): the shell's address follows, and so
   // does the page shown again on the way back from editing.
-  var DOC = location.pathname.replace(/\\/?$/, "/") + "${VIEW_FILES}/";
+  var DOC = location.pathname.replace(/\\/?$/, "/") + "doc/";
   function moved(f) {
     try {
       var p = f.contentWindow.location.pathname;
       if (p.indexOf(DOC) != 0) return;
-      // pub/ itself is the document's own page ("").
+      // doc/ itself is the document's own page ("").
       var path = decodeURIComponent(p.slice(DOC.length));
       if (path && !/\\.html$/i.test(path)) return;
       src = p;
@@ -403,7 +401,7 @@ export const HOST_SCRIPT = `(function () {
   parent.postMessage({ type: "erga-host" }, SHELL);
 })();`;
 
-const HOST_TEXT = HOST_STYLE + PAGE_SANDBOX + PAGE_ALLOW + HOST_SCRIPT + VIEW_FILES;
+const HOST_TEXT = HOST_STYLE + PAGE_SANDBOX + PAGE_ALLOW + HOST_SCRIPT;
 
 /** The frame's host page's version: its code's, and the editor's build's (frame.js's address names it). */
 export const hostVersion = () => versionOf(HOST_TEXT + asset("frame.js"));

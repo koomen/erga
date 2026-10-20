@@ -231,7 +231,7 @@ test("the site's files: as they are, the page also at index.html", () => {
   const html = siteFiles("home.html", { "home.html": "<h1>Hi</h1>", "style.css": "h1{}", "img/a.png": new Uint8Array([1, 2]) });
   expect(Object.keys(html).sort()).toEqual(["/home.html", "/img/a.png", "/index.html", "/style.css"]);
   expect(new TextDecoder().decode(html["/index.html"])).toBe("<h1>Hi</h1>");
-  expect(() => siteFiles("gone.html", {})).toThrow(/isn't in its published version/);
+  expect(() => siteFiles("gone.html", {})).toThrow(/isn't in its files/);
 });
 
 test("a deploy puts the files up as a Worker on the hostname, again only what changed, and a take-down removes both", async () => {
@@ -250,7 +250,7 @@ test("a deploy puts the files up as a Worker on the hostname, again only what ch
   const read = (path: string) => { const f = mockSite(cf.state, site.hostname, path); return f && new TextDecoder().decode(f.bytes); };
   expect(read("/")).toBe("<h1>Draft 1</h1>");
   expect(read("/about")).toBe("<p>About</p>");
-  // A new published version: only the page that changed goes up.
+  // A new version: only the page that changed goes up.
   const before = cf.state.assets.uploaded.length;
   await deploySite(api, site, siteFiles("index.html", { "index.html": "<h1>Draft 2</h1>", "about.html": "<p>About</p>" }), "https://erga.dev/ada/notes");
   expect(cf.state.assets.uploaded.length - before).toBe(1);

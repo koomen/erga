@@ -51,7 +51,7 @@ import { byLine, VIA } from "../shared/attribution";
 import { pageAddress, type TreeEntry, type TreeOp } from "../document/pages";
 import { joinLocal, type Room } from "../document/room";
 import type { Naming } from "../server/directory/index.ts";
-import { unifiedDiff, type PublishRequest, type PublishResult, type Published, type RestoreResult, type Version, type VersionsState } from "../document/versions";
+import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../document/versions";
 import { SERVER_TOOL_ACTIVITY } from "../agents/tools";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import documentPrompt from "./PROMPT.md" with { type: "text" };
@@ -164,9 +164,8 @@ ${PAGES_PROMPT}`}
   after each of your turns). list_versions and read_version show them; diff_versions
   shows what changed between two of them, or since your last turn (by default), as a
   diff, so you needn't read whole files to compare. To bring an old version back (or
-  one file of it, with path), use restore_version. publish_version chooses what viewers
-  see: "latest" (the document as it is, the default) or one version. Only publish when
-  asked.${beyondPrompt(owner, beyond)}
+  one file of it, with path), use restore_version. Only restore when asked. Viewers
+  always see the document as it is now.${beyondPrompt(owner, beyond)}
 - Keep replies short: say what you changed, not how. ${owner} can see the result.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand. When you fix a page that breaks them, keep its text as it is.
@@ -492,7 +491,7 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
   ] as AgentTool[];
 }
 
-/** The document's versions and publishing, as the agents' tools reach them. */
+/** The document's versions, as the agents' tools reach them. */
 export interface VersionsAccess {
   state(opts: { before?: string | number | null; limit?: number }): Promise<VersionsState>;
   version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null>;
@@ -501,21 +500,19 @@ export interface VersionsAccess {
   files(ref: string | number): Promise<Map<string, Uint8Array> | null>;
   /** Every file as it is now, up to the keystroke. */
   current(): Promise<Map<string, Uint8Array>>;
-  publish(req: PublishRequest): Promise<PublishResult>;
   /** Brings a version back (or, with `path`, one file of it) as a new current version, by `by` (a login). */
   restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult>;
 }
 
-/** list_versions, read_version, diff_versions, restore_version and publish_version: what the person can do with versions and publishing, their agent can (and diff them). */
+/** list_versions, read_version, diff_versions and restore_version: what the person can do with versions, their agent can (and diff them). */
 function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () => string, lastTurn: () => Promise<string | null>, ws: Workspace, caughtUp: () => Promise<void>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   const line = (v: Version) => `${v.id}  ${v.at}  ${v.authors.join(", ") || "(unknown)"}  ${v.description ?? "(description coming)"}`;
-  const published = (p: Published) => p.mode == "latest" ? `Published: latest (viewers see the document as it is, up to the keystroke; that's ${p.version.id} plus any edits since)` : `Published: manual, ${p.version.id} (viewers see that version until someone publishes another)`;
   return [
     {
       name: "list_versions",
       label: "List versions",
-      description: "List the document's versions, newest first: each one's id (v1, v2...), when it was cut, who edited, and a short description. A version is a snapshot of every file, cut after a burst of edits (when edits pause, when an agent's turn ends, when the last editor leaves). Also says which version viewers see (published: \"latest\" or one chosen version).",
+      description: "List the document's versions, newest first: each one's id (v1, v2...), when it was cut, who edited, and a short description. A version is a snapshot of every file, cut after a burst of edits (when edits pause, when an agent's turn ends, when the last editor leaves). Viewers always see the document as it is now.",
       parameters: Type.Object({
         before: Type.Optional(Type.String({ description: "Only versions older than this one (its id, e.g. \"v12\"), to page back" })),
         limit: Type.Optional(Type.Number({ description: "How many (default 10, at most 100)" })),
@@ -523,7 +520,7 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
       execute: async (_id, p: { before?: string; limit?: number }) => {
         const s = await versions.state({ before: p.before ?? null, limit: p.limit });
         const more = s.versions.length && s.versions[s.versions.length - 1].n > 1 ? `\n[Older versions: before=${s.versions[s.versions.length - 1].id}]` : "";
-        return text(`${published(s.published)}\nCurrent: ${s.current.id}${s.pending ? " (with edits since, not yet a version)" : ""}; ${s.total} version(s).\n\n${s.versions.map(line).join("\n")}${more}`);
+        return text(`Current: ${s.current.id}${s.pending ? " (with edits since, not yet a version)" : ""}; ${s.total} version(s).\n\n${s.versions.map(line).join("\n")}${more}`);
       },
     },
     {
@@ -621,21 +618,6 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
         }
         const tail = rest.length ? `\n\n[Not shown: ${rest.join(", ")}. Read them before you edit them.]` : "";
         return text(`${head}${shown.length ? ` Its text now, to edit against:\n\n${shown.join("\n\n")}` : ""}${tail}`);
-      },
-    },
-    {
-      name: "publish_version",
-      label: "Publish",
-      description: "Choose what the document's viewers see. mode \"latest\": the document as it is, always, up to the keystroke (the default). mode \"manual\": one version, until someone publishes another (version: its id; without it, the current state, which becomes a version first). Editors always edit the current state. Only someone who may edit the document may publish; only do it when asked.",
-      parameters: Type.Object({
-        mode: Type.Union([Type.Literal("latest"), Type.Literal("manual")], { description: "\"latest\" or \"manual\"" }),
-        version: Type.Optional(Type.String({ description: "With mode \"manual\": the version's id (\"v3\"); default the current state" })),
-      }),
-      execute: async (_id, p: { mode: "latest" | "manual"; version?: string }) => {
-        if (!canEdit()) throw new Error("You may only view this document, so you can't publish it.");
-        const r = await versions.publish(p.mode == "latest" ? { mode: "latest" } : { mode: "manual", ...(p.version ? { versionId: p.version } : {}) });
-        if (!r.ok) throw new Error(r.error);
-        return text(`Done. ${published(r.published)}.`);
       },
     },
   ] as AgentTool[];
@@ -768,7 +750,7 @@ function namingTools(naming: Naming): AgentTool[] {
 export function documentToolSpecs(): ToolSpec[] {
   const none = () => { throw new Error("no document"); };
   const naming = { get: none, set: none } as unknown as Naming;
-  const versions = { state: none, version: none, file: none, files: none, current: none, publish: none, restore: none } as unknown as VersionsAccess;
+  const versions = { state: none, version: none, file: none, files: none, current: none, restore: none } as unknown as VersionsAccess;
   return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none, versions, pages: none, open: none })
     .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
@@ -849,7 +831,7 @@ export interface SessionOptions {
   serverTools?: () => Promise<AgentTool[]>;
   /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
   turnEnded?: () => Promise<string | null> | void;
-  /** The document's versions and publishing; without it those tools are left out. */
+  /** The document's versions; without it those tools are left out. */
   versions?: VersionsAccess;
   /** Where the person's conversation here is kept, step by step (the person's own object: agents/checkpoint.ts); without it, only in memory. */
   store?: ChatStore;
@@ -857,7 +839,7 @@ export interface SessionOptions {
   meta?: Record<string, string>;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", page_console: "reading the page's console", page_network: "reading the page's requests", page_events: "reading the page's events", page_inspect: "inspecting the live page", page_click: "clicking on the page", page_key: "pressing a key on the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version", publish_version: "publishing" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", page_console: "reading the page's console", page_network: "reading the page's requests", page_events: "reading the page's events", page_inspect: "inspecting the live page", page_click: "clicking on the page", page_key: "pressing a key on the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { owner } = opts;
@@ -1218,9 +1200,8 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   edits, and after each run of your calls). list_versions and read_version show
   them; diff_versions shows what changed between two of them, or since your last
   run of calls (by default), as a unified diff for each file; restore_version
-  brings one back (or one file of it) as a new version; publish_version
-  chooses what viewers see: "latest" (the document as it is, the default) or one
-  version. Only restore or publish when asked.
+  brings one back (or one file of it) as a new version. Only restore when asked.
+  Viewers always see the document as it is now.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand.
 

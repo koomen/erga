@@ -7,7 +7,7 @@ import { mimeOf } from "../../document/host";
 import { HomeDeploys, type HomeObject } from "../../server/home/index.ts";
 import { directoryOf } from "../d1";
 import type { Env } from "../env";
-import { publishedFiles } from "../published";
+import { currentFiles } from "../current-files";
 import { documentOf } from "../document-host";
 
 const FIVE_MINUTES = 5 * 60 * 1000;
@@ -22,7 +22,7 @@ export class Home extends DurableObject<Env> implements HomeObject {
     },
     alarm: { get: () => this.ctx.storage.getAlarm(), set: (at) => this.ctx.storage.setAlarm(at), delete: () => this.ctx.storage.deleteAlarm() },
     directory: directoryOf(this.env),
-    published: (docId) => publishedFiles(this.env, docId),
+    current: (docId) => currentFiles(this.env, docId),
     notify: (docId) => documentOf(this.env, docId).notify({ type: "home" }),
     delay: () => { const ms = Number(this.env.ERGA_HOME_DELAY_MS); return ms > 0 ? ms : FIVE_MINUTES; },
     mimeOf,
