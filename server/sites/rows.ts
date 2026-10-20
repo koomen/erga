@@ -3,9 +3,9 @@
 // Cloudflare, the files); deploys.ts runs the deploys; api.ts is the API.
 //
 // The site lives in the person's account, not on Erga: a Worker there with
-// the published version's files as its static assets, on a custom domain of
+// the document's files as its static assets, on a custom domain of
 // theirs (notes.example.com). Erga uploads a new copy each time the
-// published version changes. Readers reach Cloudflare only, never erga.dev,
+// document has a new version. Readers reach Cloudflare only, never erga.dev,
 // so the site keeps working if Erga is down, and its traffic is theirs.
 //
 // Two tables:

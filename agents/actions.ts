@@ -180,7 +180,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/docs/<id>/tree op=move", domain: "document", action: "Rename or move a page or folder (page tree)", tool: "mv" },
   { route: "POST /api/docs/<id>/tree op=delete", domain: "document", action: "Delete a page or folder (page tree)", tool: "rm" },
   { route: "GET /api/docs/<id>/versions", domain: "document", action: "Read the versions (editor's settings)", tool: "list_versions" },
-  { route: "POST /api/docs/<id>/publish", domain: "document", action: "Publish: latest, or a version (editor's settings)", tool: "publish_version" },
   { route: "POST /api/docs/<id>/versions/<versionId>/restore", domain: "document", action: "Restore a version, or one file of it (editor's settings)", tool: "restore_version" },
   { route: "POST /api/publish", domain: "document", action: "Publish a folder of files as a document", tool: "create_document" },
   { route: "GET /d/<id>/api/agent", domain: "none", action: "The editor's agent panel", exempt: PANEL },

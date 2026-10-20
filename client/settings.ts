@@ -3,16 +3,10 @@
 // loaded only when the gear is reached for, so it
 // costs viewing and opening the editor nothing.
 //
-// It holds, top to bottom:
-//   - Publishing: Latest (viewers see the current version, as it's typed) or
-//     Manual (viewers see the version picked), and in Manual the picker,
-//     which always shows the published version, the latest ten and the few
-//     before the published one, with a row for each run in between that
-//     loads more.
-//     Below it, "Publish the current version" when that isn't the published one.
+// Readers always see the document as it is now. It holds, top to bottom:
 //   - Homepage (for admins, and on the homepage itself): whether this is the
 //     server's homepage, how its deploy is going, and Redeploy now.
-//   - Custom domain: the document published at a domain of the person's own,
+//   - Custom domain: the document at a domain of the person's own,
 //     from their Cloudflare account: Connect Cloudflare if they haven't
 //     (Cloudflare's consent page in a popup; when it's done, the popup tells
 //     this panel on a BroadcastChannel), else a name and one of their domains,
@@ -20,16 +14,15 @@
 //     now and Remove.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
-//     current and the published one marked. Edit, on hover or focus, makes a
-//     copy of a version the current one (POST .../versions/<id>/restore).
+//     current one marked; Show older versions loads ten more. Edit, on hover or
+//     focus, makes a copy of a version the current one (POST .../versions/<id>/restore).
 //
 // It talks to the server's API as the shared contract says (document/versions.ts
 // server/home/api.ts and server/sites/api.ts), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "site" } (main.ts passes them on).
-// Someone who can't edit sees it all read-only, with a line saying why: what
-// viewers see is worth knowing even when you can't change it.
+// Someone who can't edit sees it all read-only.
 
-import { ago, clock, nearNeed, pickerRows, RECENT, type Published, type Row, type Version, type Versions } from "./versions";
+import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
 /** GET /api/docs/<id>/home. `blocked`: why this document can't be made the homepage (others may edit it), or null. */
@@ -62,11 +55,11 @@ export interface SettingsHost {
 export interface Settings {
   toggle(open?: boolean): void;
   isOpen(): boolean;
-  /** Escape: closes an open menu, else the popover. False if neither was open. */
+  /** Escape: closes the popover. False if it wasn't open. */
   escape(): boolean;
   /** An event from the channel ("versions", "home"). */
   event(type: string): void;
-  /** Whether a node is part of it (the popover or one of its menus). */
+  /** Whether a node is part of the popover. */
   contains(node: Node): boolean;
   /** Back from Cloudflare's consent without the popup: opens at Custom domain, with the refusal if there was one. */
   consented(error: string | null): void;
@@ -80,7 +73,7 @@ const CSS = `
 .help.ds { width: min(380px, calc(100vw - 24px)); box-sizing: border-box; padding: 0; right: var(--ds-right, 16px); overflow-x: hidden; }
 .ds section { padding: 14px 16px; }
 .ds section + section { border-top: 1px solid var(--rule); }
-.ds h2 { margin: 0 0 10px; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
+.ds h2 { margin: 0; padding: 14px 16px 0; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .ds h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font: 600 12px/1.3 var(--font-text); color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
 .ds h3 small { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--chrome); }
 .ds-field { display: grid; grid-template-columns: 1fr; gap: 5px; margin: 0 0 6px; }
@@ -93,12 +86,6 @@ const CSS = `
 }
 .ds-select:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
 .ds-select:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-.ds-select[aria-expanded="true"] { border-color: var(--caret); }
-.ds-select[aria-disabled="true"] { cursor: default; opacity: 0.7; }
-.ds-select[aria-disabled="true"]:hover { border-color: var(--panel-border); }
-.ds-select .ds-val { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
-.ds-select .ds-val span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ds-select svg.ds-chev { flex: none; width: 12px; height: 12px; fill: none; stroke: var(--chrome); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ds-n { flex: none; font: 600 12px/1.3 var(--font-mono); color: var(--soft); font-feature-settings: "tnum"; }
 .ds-explain { margin: 6px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--soft); }
 .ds-explain:empty, .ds-error:empty { display: none; }
@@ -119,14 +106,12 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-list li:hover .ds-edit:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
 .ds-edit:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 @media (hover: none) { .ds-edit { opacity: 1; pointer-events: auto; position: static; transform: none; grid-column: 3; grid-row: 1 / span 2; align-self: center; } .ds-list li:has(.ds-edit) .ds-tags { display: none; } }
-.ds-pub-current { justify-self: start; margin-top: 4px; }
 .ds-list .ds-n { grid-row: span 2; }
 .ds-list .ds-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); font-size: 13px; }
 .ds-list .ds-meta { grid-column: 2 / span 2; font-size: 11.5px; color: var(--chrome); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-tags { display: flex; gap: 4px; }
 .ds-tag { font: 600 10.5px/1 var(--font-text); padding: 3px 6px; border-radius: 999px; color: var(--soft); background: var(--code-bg); white-space: nowrap; }
-.ds-tag.pub { color: var(--caret); background: color-mix(in srgb, var(--caret) 13%, transparent); }
-.ds-foot { margin: 6px 0 0; font-size: 11.5px; color: var(--chrome); }
+.ds-foot { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; font-size: 11.5px; color: var(--chrome); }
 .ds-skel { height: 12px; border-radius: 6px; background: var(--code-bg); margin: 10px 0; animation: ds-pulse 1.1s ease-in-out infinite alternate; }
 @keyframes ds-pulse { from { opacity: 0.5; } to { opacity: 1; } }
 .ds-switch-row { display: flex; align-items: center; gap: 12px; }
@@ -150,24 +135,6 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-btn:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
 .ds-btn:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-btn[aria-disabled="true"] { opacity: 0.5; cursor: default; }
-.ds-menu {
-  position: fixed; z-index: 45; box-sizing: border-box; padding: 5px; overflow-y: auto; overscroll-behavior: contain;
-  background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 11px; box-shadow: var(--shadow);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); color: var(--fg); font: 13px/1.35 var(--font-text); outline: none;
-  animation: pop 120ms var(--ease);
-}
-.ds-menu [role="option"] { display: grid; grid-template-columns: 16px 1fr; gap: 0 8px; align-items: start; padding: 7px 9px 7px 7px; border-radius: 7px; cursor: pointer; }
-.ds-menu [role="option"].active { background: color-mix(in srgb, var(--chrome) 15%, transparent); }
-.ds-menu .ds-check { width: 14px; height: 14px; margin-top: 1px; fill: none; stroke: var(--caret); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
-.ds-menu [aria-selected="true"] .ds-check { visibility: visible; }
-.ds-menu .ds-opt-title { font-weight: 600; color: var(--fg-strong, var(--fg)); }
-.ds-menu .ds-opt-sub { display: block; font-size: 12px; color: var(--soft); margin-top: 1px; }
-.ds-menu .ds-ver { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.ds-menu .ds-ver .ds-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); }
-.ds-menu .ds-ver .ds-when { flex: none; font-size: 11.5px; color: var(--chrome); }
-.ds-menu .ds-more { color: var(--soft); font-size: 12px; }
-.ds-menu .ds-more .ds-dots { letter-spacing: 2px; color: var(--chrome); }
-.ds-menu [role="separator"] { height: 1px; margin: 4px 6px; background: var(--rule); }
 #ds-site-body > .ds-explain:first-child { margin-top: 0; }
 .ds-site-row { display: flex; align-items: stretch; gap: 6px; }
 .ds-input {
@@ -201,12 +168,9 @@ a.ds-btn svg { width: 14px; height: 14px; }
 }
 .ds-sheet-grip { display: none; }
 @keyframes ds-sheet { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (pointer: coarse) { .ds-menu [role="option"] { padding-top: 10px; padding-bottom: 10px; } .ds-select { min-height: 42px; } }
+@media (pointer: coarse) { .ds-select { min-height: 42px; } }
 @media (prefers-reduced-motion: reduce) { .ds-dot.deploying, .ds-skel { animation-duration: 3s; } .help.ds { animation: none; } }
 `;
-
-const CHEV = `<svg class="ds-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5l3-3"/></svg>`;
-const CHECK = `<svg class="ds-check" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>`;
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n == 1 ? one : many}`;
@@ -221,20 +185,7 @@ function mount(host: SettingsHost): Settings {
   pop.setAttribute("role", "dialog");
   pop.setAttribute("aria-labelledby", "ds-title");
   pop.innerHTML = `<div class="ds-sheet-grip" aria-hidden="true"></div>
-    <section class="ds-publish">
-      <h2 id="ds-title">Document settings</h2>
-      <div class="ds-field">
-        <span class="ds-label" id="ds-mode-label">Publishing</span>
-        <button type="button" class="ds-select" id="ds-mode" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="ds-mode-label ds-mode"></button>
-      </div>
-      <div class="ds-field" id="ds-pick-field" hidden>
-        <span class="ds-label" id="ds-pick-label">Published version</span>
-        <button type="button" class="ds-select" id="ds-pick" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="ds-pick-label ds-pick"></button>
-        <button type="button" class="ds-btn ds-pub-current" id="ds-pub-current" hidden></button>
-      </div>
-      <p class="ds-explain" id="ds-explain"></p>
-      <p class="ds-error" id="ds-pub-error" role="alert"></p>
-    </section>
+    <h2 id="ds-title">Document settings</h2>
     <section class="ds-home" id="ds-home" hidden aria-label="Homepage">
       <div class="ds-switch-row">
         <label id="ds-home-label" for="ds-home-switch">This is the homepage</label>
@@ -258,13 +209,11 @@ function mount(host: SettingsHost): Settings {
       <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
       <ol class="ds-list" id="ds-list" aria-label="Recent versions"></ol>
       <p class="ds-error" id="ds-hist-error" role="alert"></p>
-      <p class="ds-foot" id="ds-foot" hidden></p>
+      <p class="ds-foot" id="ds-foot" hidden><span id="ds-foot-text"></span><button type="button" class="ds-quiet" id="ds-older">Show older versions</button></p>
     </section>`;
   document.body.append(pop);
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => pop.querySelector<T>(`#${id}`)!;
-  const modeBtn = $("ds-mode"), pickBtn = $("ds-pick"), pickField = $("ds-pick-field");
-  const explainEl = $("ds-explain"), pubError = $("ds-pub-error");
-  const list = $("ds-list"), totalEl = $("ds-total"), foot = $("ds-foot"), histError = $("ds-hist-error"), pubCurrent = $("ds-pub-current");
+  const list = $("ds-list"), totalEl = $("ds-total"), foot = $("ds-foot"), footText = $("ds-foot-text"), olderBtn = $("ds-older"), histError = $("ds-hist-error");
   const homeSec = $("ds-home"), homeSwitch = $("ds-home-switch"), homeExplain = $("ds-home-explain");
   const deployBox = $("ds-deploy"), statusEl = $("ds-status"), redeploy = $("ds-redeploy"), homeError = $("ds-home-error");
   const siteSec = $("ds-site"), siteBody = $("ds-site-body"), siteError = $("ds-site-error");
@@ -296,9 +245,8 @@ function mount(host: SettingsHost): Settings {
 
   let data: Versions | null = null;
   let loadError: string | null = null;
-  /** Every version the picker has, by number. */
+  /** Every version loaded, by number: the latest ten, and the older ones Show older versions brought. */
   let loaded = new Map<number, Version>();
-  let publishing = false;
   let home: Home | null = null;
   let homeBusy = false;
   let loadSeq = 0, homeSeq = 0, siteSeq = 0;
@@ -308,44 +256,40 @@ function mount(host: SettingsHost): Settings {
   let siteName = "", siteZone = "";
 
   const add = (vs: Version[]) => { for (const v of vs) loaded.set(v.n, v); };
-  /**
-   * The picker starts afresh (another published version: its neighbours, not the last one's). Versions loaded for
-   * the one before, still on their way, are dropped; a plain refresh (a new version, a description) keeps them.
-   */
-  let loadedEpoch = 0;
-  const fresh = () => { loaded = new Map(); loadedEpoch++; };
+  /** The loaded versions, newest first. */
+  const shown = () => [...loaded.values()].sort((a, b) => b.n - a.n);
   async function loadVersions() {
     const seq = ++loadSeq;
     try {
       const d = await call<Versions>("versions");
       if (seq != loadSeq) return;
-      // What was loaded before stays (more rows opened in the picker), with the fresh copies over it.
-      // A different published version starts afresh: its neighbours, not the last one's.
-      if (data && (d.total < data.total || d.published.version.id != data.published.version.id || d.published.mode != data.published.mode)) fresh();
-      add(d.versions); add([d.current, d.published.version]);
+      // What was loaded before stays (older versions shown), with the fresh copies over it.
+      if (data && d.total < data.total) loaded = new Map();
+      add(d.versions); add([d.current]);
       data = d;
       loadError = null;
       render();
-      await loadNear();
     } catch (e) {
       if (seq != loadSeq) return;
       loadError = (e as Error).message;
       // What was shown stays, saying it may be out of date.
-      if (data) pubError.textContent = `Couldn't refresh the versions: ${loadError}`;
+      if (data) histError.textContent = `Couldn't refresh the versions: ${loadError}`;
       else render();
     }
   }
-  /** The few versions before the published one, for rolling back to (Manual only). */
-  async function loadNear() {
-    if (!data || data.published.mode != "manual") return;
-    const need = nearNeed(loaded, data.published.version);
-    if (!need) return;
-    const epoch = loadedEpoch;
-    const more = await call<Versions>("versions", undefined, { before: need.before, limit: String(need.limit) }).catch(() => null);
-    if (!more || epoch != loadedEpoch) return;
-    add(more.versions);
-    renderMenu();
+  /** Show older versions: the ten before the oldest one shown. */
+  let loadingOlder = false;
+  async function loadOlder() {
+    const oldest = shown().at(-1);
+    if (!data || !oldest || oldest.n <= 1 || loadingOlder) return;
+    loadingOlder = true;
+    render();
+    const r = await call<Versions>("versions", undefined, { before: oldest.id, limit: String(RECENT) }).catch((e: Error) => { histError.textContent = `Couldn't load older versions: ${e.message}`; return null; });
+    loadingOlder = false;
+    if (r) add(r.versions);
+    render();
   }
+  olderBtn.addEventListener("click", () => loadOlder());
   async function loadHome() {
     const seq = ++homeSeq;
     let h: Home | null = null;
@@ -364,39 +308,6 @@ function mount(host: SettingsHost): Settings {
     renderSite();
   }
 
-  async function publish(next: Published, body: unknown) {
-    if (!data || publishing) return;
-    const was = data.published;
-    data.published = next;
-    publishing = true;
-    pubError.textContent = "";
-    render();
-    try {
-      const r = await call<{ published: Published }>("publish", { method: "POST", body: JSON.stringify(body) });
-      data.published = r.published;
-      // The picker shows the new published version's neighbours, not the last one's.
-      fresh();
-      add(data.versions); add([data.current, r.published.version]);
-    } catch (e) {
-      data.published = was;
-      pubError.textContent = `Couldn't change what's published: ${(e as Error).message}`;
-    } finally {
-      publishing = false;
-      render();
-      loadNear();
-    }
-  }
-  const setMode = (mode: "latest" | "manual") => {
-    if (!data || mode == data.published.mode) return;
-    // Manual starts on what viewers see now, so nothing changes for them until a version is picked.
-    if (mode == "latest") publish({ mode, version: data.current }, { mode });
-    else publish({ mode, version: data.published.version }, { mode, versionId: data.published.version.id });
-  };
-  const pickVersion = (v: Version) => {
-    if (!data || v.id == data.published.version.id) return;
-    publish({ mode: "manual", version: v }, { mode: "manual", versionId: v.id });
-  };
-
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
   let restoring: string | null = null;
   async function restore(id: string) {
@@ -410,8 +321,7 @@ function mount(host: SettingsHost): Settings {
       restoring = null;
       // Shown at once; the event channel's "versions" brings the rest (its description, the total).
       if (data && !data.versions.some((x) => x.id == r.current.id)) {
-        data = { ...data, current: r.current, versions: [r.current, ...data.versions], total: data.total + 1,
-          published: data.published.mode == "latest" ? { mode: "latest", version: r.current } : data.published };
+        data = { ...data, current: r.current, versions: [r.current, ...data.versions], total: data.total + 1 };
         add([r.current]);
       }
       render();
@@ -427,65 +337,37 @@ function mount(host: SettingsHost): Settings {
     const b = (e.target as Element).closest<HTMLElement>("[data-restore]");
     if (b) restore(b.dataset.restore!);
   });
-  pubCurrent.addEventListener("click", () => {
-    if (!data || pubCurrent.getAttribute("aria-disabled") == "true") return;
-    // The server cuts a version of edits not yet in one first, so this is the document up to the keystroke.
-    publish({ mode: "manual", version: data.current }, { mode: "manual", versionId: data.current.id });
-  });
 
   // ------------------------------------------------------------ rendering
 
-  const canEdit = () => !!data?.canEdit && !publishing;
   const desc = (v: Version) => (v.description ? esc(v.description) : `<span class="ds-desc-none">Describing the changes…</span>`);
   const whoWhen = (v: Version) => [ago(v.at), v.authors.join(", ")].filter(Boolean).join(" · ");
 
   function render() {
     if (!data) {
-      modeBtn.innerHTML = `<span class="ds-val"><span>${loadError ? "Unavailable" : "Loading…"}</span></span>${CHEV}`;
-      modeBtn.setAttribute("aria-disabled", "true");
-      pickField.hidden = true;
-      explainEl.textContent = "";
-      pubError.textContent = loadError ? `Couldn't load the versions: ${loadError}` : "";
+      histError.textContent = loadError ? `Couldn't load the versions: ${loadError}` : "";
       list.innerHTML = loadError ? "" : `<li aria-hidden="true" style="display:block"><div class="ds-skel" style="width:70%"></div><div class="ds-skel" style="width:45%"></div><div class="ds-skel" style="width:60%"></div></li>`;
       totalEl.textContent = "";
       foot.hidden = true;
       return;
     }
-    const { published: pub, current } = data;
-    const manual = pub.mode == "manual";
-    modeBtn.innerHTML = `<span class="ds-val"><span>${manual ? "Manual" : "Latest"}</span></span>${CHEV}`;
-    for (const b of [modeBtn, pickBtn]) if (!canEdit()) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled");
-    pickField.hidden = !manual;
-    pickBtn.innerHTML = `<span class="ds-val"><span class="ds-n">v${pub.version.n}</span><span>${desc(pub.version)}</span></span>${CHEV}`;
-    const newer = current.n - pub.version.n;
-    // Edits not yet cut into a version count too: publishing cuts them first (the server's next version).
-    const unpublished = newer > 0 || !!data.pending;
-    pubCurrent.hidden = !manual || !unpublished || !data.canEdit;
-    pubCurrent.textContent = newer > 0 ? `Publish the current version (v${current.n})` : "Publish the latest edits";
-    pubCurrent.title = "Viewers see the document as it is now, up to the keystroke";
-    if (publishing) pubCurrent.setAttribute("aria-disabled", "true"); else pubCurrent.removeAttribute("aria-disabled");
-    explainEl.textContent = !data.canEdit
-      ? `Only the document's editors can change what's published. Viewers see version ${pub.version.n}${manual ? "" : ", the latest"}.`
-      : publishing ? "Saving…"
-      : !manual ? "Viewers see the latest version, up to the keystroke."
-      : newer > 0 ? `Viewers see version ${pub.version.n} until you pick another. ${plural(newer, "newer version")} ${newer == 1 ? "isn't" : "aren't"} published.`
-      : data.pending ? `Viewers see version ${pub.version.n} until you pick another. The latest edits aren't published.`
-      : "Viewers see this version until you pick another, even as the document changes.";
-
+    const { current } = data;
     totalEl.textContent = data.total > 1 ? `${data.total} in all` : "";
     // The list is drawn afresh: an Edit button that had focus keeps it.
     const focused = (document.activeElement as HTMLElement | null)?.closest?.("#ds-list [data-restore]")?.getAttribute("data-restore");
-    list.innerHTML = data.versions.slice(0, RECENT).map((v) => {
-      const tags = [v.id == current.id ? `<span class="ds-tag">Current</span>` : "", v.id == pub.version.id ? `<span class="ds-tag pub">Published</span>` : ""].join("");
+    const vs = shown();
+    list.innerHTML = vs.map((v) => {
+      const tags = v.id == current.id ? `<span class="ds-tag">Current</span>` : "";
       const edit = v.id == current.id || !data!.canEdit ? ""
         : `<button type="button" class="ds-edit${restoring == v.id ? " busy" : ""}" data-restore="${esc(v.id)}" aria-label="Edit version ${v.n}: make a copy of it the current version" title="Make a copy of version ${v.n} the current version, to edit it">${restoring == v.id ? "Restoring…" : "Edit"}</button>`;
       return `<li data-n="${v.n}"><span class="ds-n">v${v.n}</span><span class="ds-desc">${desc(v)}</span><span class="ds-tags">${tags}</span><span class="ds-meta" title="${esc(new Date(v.at).toLocaleString())}">${esc(whoWhen(v))}</span>${edit}</li>`;
     }).join("");
     if (focused) [...list.querySelectorAll<HTMLElement>("[data-restore]")].find((b) => b.dataset.restore == focused)?.focus();
-    const shown = Math.min(RECENT, data.versions.length);
-    foot.hidden = data.total <= shown;
-    foot.textContent = manual ? `The latest ${shown} of ${data.total}. The published-version menu reaches the older ones.` : `The latest ${shown} of ${data.total}.`;
-    renderMenu();
+    const older = (vs.at(-1)?.n ?? 1) > 1;
+    foot.hidden = !older;
+    footText.textContent = `The latest ${vs.length} of ${data.total}.`;
+    olderBtn.textContent = loadingOlder ? "Loading…" : "Show older versions";
+    if (loadingOlder) olderBtn.setAttribute("aria-disabled", "true"); else olderBtn.removeAttribute("aria-disabled");
   }
 
   function renderHome() {
@@ -501,7 +383,7 @@ function mount(host: SettingsHost): Settings {
       : blocked ? blocked
       : !home.canSet && d.state == "deploying" ? "You can change this once the deploy finishes."
       : !home.canSet ? "You can't change the homepage here: the server's configuration fixes it, or you can't edit this document."
-      : home.isHome ? "The site's front page shows this document. Each version you publish goes live a few minutes later."
+      : home.isHome ? "The site's front page shows this document. Each new version goes live a few minutes later."
       : "Turn on to make this the site's front page, in place of the current one.";
 
     deployBox.hidden = !home.isHome;
@@ -514,7 +396,7 @@ function mount(host: SettingsHost): Settings {
       : d.at ? `<span><b>Deployed</b> at ${esc(clock(d.at))}${live}</span>` : `<span>Not deployed yet</span>`;
     statusEl.innerHTML = `<span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}`;
     const can = host.admin && !home.locked && d.state != "deploying" && !homeBusy;
-    if (can) { redeploy.removeAttribute("aria-disabled"); redeploy.title = "Deploy the published version now"; }
+    if (can) { redeploy.removeAttribute("aria-disabled"); redeploy.title = "Deploy the document as it is now"; }
     else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = !host.admin ? "Only admins can redeploy the homepage." : home.locked ? "This token has no admin power." : "A deploy is running."; }
     redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Redeploy now";
   }
@@ -574,12 +456,12 @@ function mount(host: SettingsHost): Settings {
           <a class="ds-btn" href="${esc(st.site.dashboard)}" target="_blank" rel="noopener">Open in Cloudflare</a>
           <button type="button" class="ds-quiet${removeArmed ? " armed" : ""}" id="ds-site-remove"${siteBusy ? ` aria-disabled="true"` : ""}>${removeArmed ? "Click again to take it down" : "Remove"}</button>
         </div>` : ""}
-        <p class="ds-site-foot">From ${esc(st.site.by)}’s Cloudflare account. Each new published version goes live there within a minute.</p>`;
+        <p class="ds-site-foot">From ${esc(st.site.by)}’s Cloudflare account. Each new version goes live there within a minute.</p>`;
       return;
     }
     const c = st.connection;
     if (!c.connected) {
-      siteBody.innerHTML = `<p class="ds-explain">Publish this document at a domain of yours, such as <b>notes.example.com</b>. It is served from your own Cloudflare account, and follows each published version.</p>
+      siteBody.innerHTML = `<p class="ds-explain">Publish this document at a domain of yours, such as <b>notes.example.com</b>. It is served from your own Cloudflare account, and follows each new version.</p>
         ${c.error ? `<p class="ds-explain">Your Cloudflare connection stopped working: ${esc(c.error)}.</p>` : ""}
         <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-connect"${consenting ? ` aria-disabled="true"` : ""}>${consenting ? "Waiting for Cloudflare…" : c.unreadable || c.error ? "Connect Cloudflare again" : "Connect Cloudflare"}</button></div>
         <p class="ds-explain">Cloudflare asks you to allow Erga to put Workers on your domains, and to read your accounts and domains.</p>`;
@@ -601,7 +483,7 @@ function mount(host: SettingsHost): Settings {
         <select class="ds-select" id="ds-site-zone" aria-label="Your domain">${zones.map((z) => `<option value="${esc(z.id)}"${z.id == siteZone ? " selected" : ""}>${esc(z.name)}${accounts ? ` (${esc(z.account.name)})` : ""}</option>`).join("")}</select>
       </div>
       <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-publish"${siteBusy ? ` aria-disabled="true"` : ""}>${siteBusy ? "Publishing…" : `Publish to ${esc(hostnameNow() ?? "")}`}</button></div>
-      <p class="ds-explain">Cloudflare serves the published version from your account (${esc(c.accounts.map((a) => a.name).join(", "))}). Leave the name empty to use the domain itself.</p>`;
+      <p class="ds-explain">Cloudflare serves the document from your account (${esc(c.accounts.map((a) => a.name).join(", "))}). Leave the name empty to use the domain itself.</p>`;
   }
   function hostnameNow(): string | null {
     const zone = site?.zones?.find((z) => z.id == siteZone);
@@ -675,146 +557,6 @@ function mount(host: SettingsHost): Settings {
   // Back from Cloudflare (the popup closed, or another tab): the section shows the domains.
   window.addEventListener("focus", () => { if (!pop.hidden && site && !site.connection.connected) loadSite(); });
 
-  // ------------------------------------------------------------ menus
-
-  // A listbox under its button, on the page itself (fixed), so the popover's
-  // scrolling never cuts it off. Focus moves into it; the arrows, Home and
-  // End move, Enter or Space chooses, Escape or Tab closes it.
-  interface Item { id: string; html: string; selected?: boolean; separator?: boolean; act(): void | Promise<void>; keepOpen?: boolean; label: string }
-  let menu: { kind: "mode" | "pick"; el: HTMLElement; btn: HTMLElement; items: Item[]; active: number } | null = null;
-
-  function items(kind: "mode" | "pick"): Item[] {
-    if (!data) return [];
-    if (kind == "mode") {
-      const m = data.published.mode;
-      return [
-        { id: "ds-opt-latest", label: "Latest", selected: m == "latest", act: () => setMode("latest"),
-          html: `<span class="ds-opt-title">Latest</span><span class="ds-opt-sub">Viewers see every change, up to the keystroke.</span>` },
-        { id: "ds-opt-manual", label: "Manual", selected: m == "manual", act: () => setMode("manual"),
-          html: `<span class="ds-opt-title">Manual</span><span class="ds-opt-sub">Viewers see the version you pick, until you pick another.</span>` },
-      ];
-    }
-    const cur = data.current.id, pub = data.published.version.id;
-    return pickerRows(loaded, data.total).map((r: Row): Item => {
-      if (r.kind == "more") {
-        return { id: `ds-more-${r.before}`, keepOpen: true, label: `Show ${r.older ? "older" : "more"} versions (${r.count})`, act: () => loadMore(r.before, r.count),
-          html: `<span></span><span class="ds-more"><span class="ds-dots">···</span> ${plural(r.count, r.older ? "older version" : "more version")}</span>` };
-      }
-      const v = r.v;
-      const tag = v.id == cur ? ` <span class="ds-tag">Current</span>` : "";
-      return { id: `ds-ver-${v.n}`, selected: v.id == pub, label: `Version ${v.n}: ${v.description ?? "not described yet"}${v.id == cur ? ", current" : ""}`, act: () => pickVersion(v),
-        html: `${CHECK}<span class="ds-ver"><span class="ds-n">v${v.n}</span><span class="ds-desc">${desc(v)}</span>${tag}<span class="ds-when">${esc(ago(v.at))}</span></span>` };
-    });
-  }
-  async function loadMore(before: string, count: number) {
-    if (!menu) return;
-    const epoch = loadedEpoch;
-    const at = menu.active;
-    const r = await call<Versions>("versions", undefined, { before, limit: String(Math.min(count, RECENT)) }).catch((e: Error) => { pubError.textContent = `Couldn't load more versions: ${e.message}`; return null; });
-    if (!r || epoch != loadedEpoch) return;
-    add(r.versions);
-    renderMenu();
-    // The first of the newly loaded versions, where the row was.
-    if (menu) { menu.active = Math.min(at, menu.items.length - 1); paintActive(); }
-  }
-  function openMenu(kind: "mode" | "pick", btn: HTMLElement) {
-    closeMenu(false);
-    if (btn.getAttribute("aria-disabled") == "true" || !data) return;
-    const el = document.createElement("div");
-    el.className = "ds-menu";
-    el.id = `ds-menu-${kind}`;
-    el.setAttribute("role", "listbox");
-    el.setAttribute("aria-labelledby", kind == "mode" ? "ds-mode-label" : "ds-pick-label");
-    el.tabIndex = -1;
-    document.body.append(el);
-    btn.setAttribute("aria-expanded", "true");
-    btn.setAttribute("aria-controls", el.id);
-    menu = { kind, el, btn, items: [], active: 0 };
-    renderMenu();
-    menu.active = Math.max(0, menu.items.findIndex((i) => i.selected));
-    paintActive();
-    place();
-    el.focus();
-    el.addEventListener("keydown", menuKey);
-    el.addEventListener("pointermove", (e) => {
-      const o = (e.target as Element).closest<HTMLElement>("[role=option]");
-      if (o && menu) { const i = menu.items.findIndex((it) => it.id == o.id); if (i >= 0 && i != menu.active) { menu.active = i; paintActive(false); } }
-    });
-    el.addEventListener("click", (e) => {
-      const o = (e.target as Element).closest<HTMLElement>("[role=option]");
-      if (!o || !menu) return;
-      const i = menu.items.findIndex((it) => it.id == o.id);
-      if (i >= 0) choose(i);
-    });
-  }
-  function renderMenu() {
-    if (!menu) return;
-    const activeId = menu.items[menu.active]?.id;
-    menu.items = items(menu.kind);
-    menu.el.innerHTML = menu.items.map((i) => `<div role="option" id="${i.id}" aria-selected="${!!i.selected}" aria-label="${esc(i.label)}">${i.html}</div>`).join("");
-    const keep = menu.items.findIndex((i) => i.id == activeId);
-    if (keep >= 0) menu.active = keep;
-    paintActive(false);
-    place();
-  }
-  function paintActive(scroll = true) {
-    if (!menu) return;
-    menu.active = Math.max(0, Math.min(menu.active, menu.items.length - 1));
-    for (const o of menu.el.querySelectorAll(".active")) o.classList.remove("active");
-    const it = menu.items[menu.active];
-    const o = it && menu.el.querySelector<HTMLElement>(`#${it.id}`);
-    if (!o) return;
-    o.classList.add("active");
-    menu.el.setAttribute("aria-activedescendant", it.id);
-    if (scroll) o.scrollIntoView({ block: "nearest" });
-  }
-  function place() {
-    if (!menu) return;
-    const r = menu.btn.getBoundingClientRect();
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const width = Math.min(Math.max(r.width, menu.kind == "mode" ? 300 : 340), vw - 16);
-    const left = Math.max(8, Math.min(r.left, vw - width - 8));
-    const below = vh - r.bottom - 12, above = r.top - 12;
-    const natural = menu.el.scrollHeight + 2;
-    const down = below >= Math.min(natural, 240) || below >= above;
-    const max = Math.max(120, Math.min(natural, down ? below : above, 420));
-    Object.assign(menu.el.style, { left: `${left}px`, width: `${width}px`, maxHeight: `${max}px`, top: down ? `${r.bottom + 4}px` : `${r.top - 4 - Math.min(natural, max)}px` });
-  }
-  function choose(i: number) {
-    if (!menu) return;
-    const it = menu.items[i];
-    if (!it) return;
-    if (it.keepOpen) { menu.active = i; it.act(); return; }
-    closeMenu(true);
-    it.act();
-  }
-  function closeMenu(focus: boolean) {
-    if (!menu) return;
-    const { el, btn } = menu;
-    menu = null;
-    el.remove();
-    btn.setAttribute("aria-expanded", "false");
-    btn.removeAttribute("aria-controls");
-    if (focus) btn.focus();
-  }
-  function menuKey(e: KeyboardEvent) {
-    if (!menu) return;
-    const n = menu.items.length;
-    if (e.key == "ArrowDown") menu.active = (menu.active + 1) % n;
-    else if (e.key == "ArrowUp") menu.active = (menu.active - 1 + n) % n;
-    else if (e.key == "Home") menu.active = 0;
-    else if (e.key == "End") menu.active = n - 1;
-    else if (e.key == "Enter" || e.key == " ") { e.preventDefault(); choose(menu.active); return; }
-    else if (e.key == "Tab") { closeMenu(false); return; }
-    else return;
-    e.preventDefault();
-    paintActive();
-  }
-  for (const [btn, kind] of [[modeBtn, "mode"], [pickBtn, "pick"]] as const) {
-    btn.addEventListener("click", () => (menu?.btn == btn ? closeMenu(true) : openMenu(kind, btn)));
-    btn.addEventListener("keydown", (e) => { if (e.key == "ArrowDown" || e.key == "ArrowUp") { e.preventDefault(); openMenu(kind, btn); } });
-  }
-
   // ------------------------------------------------------------ the popover
 
   let ticker = 0;
@@ -829,12 +571,10 @@ function mount(host: SettingsHost): Settings {
     host.anchor.setAttribute("aria-expanded", String(open));
     host.onToggle(open);
     if (!open) {
-      closeMenu(false);
       clearInterval(ticker);
       return;
     }
     position();
-    pubError.textContent = "";
     homeError.textContent = "";
     histError.textContent = "";
     siteError.textContent = "";
@@ -852,24 +592,22 @@ function mount(host: SettingsHost): Settings {
       if (!siteBusy && !siteBody.contains(document.activeElement)) renderSite();
     }, 5_000);
     pop.tabIndex = -1;
-    (modeBtn.getAttribute("aria-disabled") == "true" ? pop : modeBtn).focus();
+    pop.focus();
   }
-  const contains = (node: Node) => pop.contains(node) || !!menu?.el.contains(node);
+  const contains = (node: Node) => pop.contains(node);
   document.addEventListener("pointerdown", (e) => {
     const t = e.target as Node;
-    if (menu && !menu.el.contains(t) && !menu.btn.contains(t)) closeMenu(false);
     if (!pop.hidden && !contains(t) && !host.anchor.contains(t)) toggle(false);
   }, true);
   // A click into the page (another document, out of reach of pointerdown here) closes it too.
   window.addEventListener("blur", () => setTimeout(() => { if (!pop.hidden && document.activeElement?.tagName == "IFRAME") toggle(false); }, 0));
-  window.addEventListener("resize", () => { if (!pop.hidden) { position(); place(); } });
+  window.addEventListener("resize", () => { if (!pop.hidden) position(); });
 
   const pending: Record<string, number> = {};
   return {
     toggle,
     isOpen: () => !pop.hidden,
     escape() {
-      if (menu) { closeMenu(true); return true; }
       if (pop.hidden) return false;
       toggle(false);
       host.anchor.focus();

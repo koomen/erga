@@ -1,7 +1,6 @@
 // One document (document/document.ts) on MemoryStorage, with the real
 // directory on bun:sqlite: made, read while its room is closed, edited by a
-// publish (a version cut once edits pause), published at a version, restored,
-// deleted when unedited.
+// publish (a version cut once edits pause), restored, deleted when unedited.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
@@ -33,20 +32,20 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
     agentSettings: async () => ({ missing: "no key in the tests" }),
     serverTools: async () => [],
     takeDownSite: async () => null,
-    home: { forget: async (id) => { forgotten.push(id); }, publishedChanged: async () => {} },
+    home: { forget: async (id) => { forgotten.push(id); }, changed: async () => {} },
     siteChanged: async () => {},
     timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
     background: () => {},
     log: (line) => log.push(line),
   };
   const make = () => { storage = new MemoryStorage(() => doc.wake()); const doc = new Document(deps); return doc; };
-  return { dir, log, forgotten, make, storage: () => storage };
+  return { dir, log, forgotten, make, deps, storage: () => storage };
 }
 
 const get = (doc: Document, path: string, headers: Record<string, string> = {}) => doc.handle(new Request(`http://doc${path}`, { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers } }));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-test("a document is made from files, read from storage while closed, edited by a publish, versioned, published at a version and restored", async () => {
+test("a document is made from files, read from storage while closed, edited by a publish, versioned and restored", async () => {
   const { dir, make, storage } = setup();
   await dir.add({ id: "doc12345", owner: "ada", title: "Notes", created: Date.now(), expires: Date.now() + 60_000 });
   const doc = make();
@@ -71,26 +70,19 @@ test("a document is made from files, read from storage while closed, edited by a
   await sleep(120);
   let state = (await doc.versionsState())!;
   expect(state.total).toBe(2);
-  expect(state.published.mode).toBe("latest");
   expect(state.current.n).toBe(2);
   expect((await dir.get("doc12345"))!.modified).not.toBeNull();
 
-  // Published at version 1: /pub/ serves it, /doc/ the current; a copy for viewers is the published one.
-  const pub = await doc.setPublished({ mode: "manual", versionId: "v1" });
-  expect(pub.ok).toBe(true);
-  expect(await (await get(doc, "/pub/index.html")).text()).toBe("<h1>One</h1>");
+  // Viewers, and a copy, see the document as it is now.
   expect(await (await get(doc, "/doc/index.html")).text()).toBe("<h1>Two</h1>");
-  expect(new TextDecoder().decode((await doc.snapshot({ published: true }))!.files["index.html"] as Uint8Array)).toBe("<h1>One</h1>");
   expect((await doc.snapshot())!.files["index.html"]).toBe("<h1>Two</h1>");
-  expect(await doc.setPublished({ mode: "nope" } as never)).toMatchObject({ ok: false, status: 400 });
 
-  // Restore version 1: a new version with its files; what's published stays.
+  // Restore version 1: a new version with its files, which viewers see.
   const restored = await doc.restore("v1", "ada");
   expect(restored).toMatchObject({ ok: true, from: "v1", files: ["index.html", "logo.png"] });
   state = (await doc.versionsState())!;
   expect(state.total).toBe(3);
   expect(state.current.description).toBe("Restored version 1");
-  expect(state.published.mode).toBe("manual");
   expect(await (await get(doc, "/doc/index.html")).text()).toBe("<h1>One</h1>");
   expect(await doc.versionFile("v2", "index.html")).toEqual(new TextEncoder().encode("<h1>Two</h1>"));
   expect(await doc.restore("v9", "ada")).toMatchObject({ ok: false, status: 404 });
@@ -147,7 +139,8 @@ test("the document decides who may do what from its own copy of its permissions,
   expect((await as("bo", "/doc/index.html", { headers: { "x-erga-access": "edit" } })).status).toBe(403);
   // A checked key reads files, and nothing else.
   const checked = (path: string, method = "GET") => doc.handle(new Request(`http://doc${path}`, { method, headers: { "x-erga-checked": "files" }, ...(method == "GET" ? {} : { body: "x" }) }));
-  expect((await checked("/pub/index.html")).status).toBe(200);
+  expect((await checked("/doc/index.html")).status).toBe(200);
+  expect((await checked("/pub/index.html")).status).toBe(403);
   expect((await checked("/api/doc")).status).toBe(403);
   expect((await checked("/api/stored/index.html", "PUT")).status).toBe(403);
 });
@@ -176,12 +169,30 @@ test("a viewer's page in one call: the role, the file an address is, a version t
   const changed = (await doc.view({ login: "ada" }, { page: "", have: first.ver }))!;
   expect(changed.ver).not.toBe(first.ver);
   expect(changed.html).toBe("<h1>One</h1>");
-  // Published at version 1: its version, its files.
+});
+
+test("a document stored before publishing went (its record names a published version) opens as it is now, for viewers and editors", async () => {
+  const { dir, make, deps, storage } = setup();
+  const doc = make();
+  await dir.add({ id: "old12345", owner: "ada", title: "Old", created: Date.now() });
+  await doc.create("ada", "old12345", { "index.html": "<h1>One</h1>" }, "index.html", { expires: null });
+  await doc.publish({ "index.html": "<h1>Two</h1>" }, [], "ada");
   await sleep(120);
-  await doc.setPublished({ mode: "manual", versionId: "v1" });
-  const pub = (await doc.view({ login: "ada" }, { page: "" }))!;
-  expect(pub.ver).toMatch(/^p/);
-  expect(pub.html).toBe("<h1>One</h1>");
+  expect((await doc.versionsState())!.total).toBe(2);
+  // Its record as an older Erga left it: viewers saw version 1 ("manual").
+  const stored = storage();
+  await doc.flush();
+  stored.data.set(KEYS.meta, { ...(stored.data.get(KEYS.meta) as object), published: { n: 1 } });
+  stored.data.delete("view");
+  // The object starts again on that storage: what it shows is the document as it is now.
+  const again = new Document({ ...deps, storage: stored });
+  expect(await (await get(again, "/doc/index.html")).text()).toBe("<h1>Two</h1>");
+  expect(await again.view({ login: "ada" }, { page: "" })).toMatchObject({ role: "owner", file: "index.html", html: "<h1>Two</h1>" });
+  expect((await again.snapshot())!.files["index.html"]).toBe("<h1>Two</h1>");
+  const state = (await again.versionsState())!;
+  expect(state).toMatchObject({ total: 2, current: { n: 2 } });
+  expect(state).not.toHaveProperty("published");
+  expect((await again.currentFiles())!.version.n).toBe(2);
 });
 
 test("a viewer's page holds its own small stylesheets inline, where their links were; others stay links", async () => {

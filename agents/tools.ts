@@ -206,7 +206,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     sites: true,
     label: "Publish to a domain",
     activity: "publishing to a domain",
-    description: "Publishes a document at a hostname on one of the person's own domains (such as notes.example.com, or the domain itself), as Custom domain in the editor's settings does: Erga puts the published version up as a Worker in their Cloudflare account, on that hostname, and puts each new published version up after it. Needs their Cloudflare connection (domain_status says; they connect it themselves, in the browser). The first deploy runs at once; check domain_status for how it went.",
+    description: "Publishes a document at a hostname on one of the person's own domains (such as notes.example.com, or the domain itself), as Custom domain in the editor's settings does: Erga puts the document up as a Worker in their Cloudflare account, on that hostname, and puts each new version of it up after it. Needs their Cloudflare connection (domain_status says; they connect it themselves, in the browser). The first deploy runs at once; check domain_status for how it went.",
     parameters: Type.Object({ document: DOCUMENT, hostname: Type.String({ description: "The site's address, on one of their domains: notes.example.com" }) }),
     run: async (args, ctx) => {
       const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "edit");
@@ -224,7 +224,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     sites: true,
     label: "Deploy to the domain",
     activity: "deploying to the domain",
-    description: "Puts a document's published version up at its domain again, now (Deploy now in the editor's settings), instead of waiting for the next publish.",
+    description: "Puts a document, as it is now, up at its domain again, now (Deploy now in the editor's settings), instead of waiting for its next version.",
     parameters: Type.Object({ document: DOCUMENT }),
     run: async (args, ctx) => {
       const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "edit");

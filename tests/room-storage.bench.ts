@@ -61,7 +61,7 @@ const deps = (): DocumentDeps => ({
   storage, directory: dir,
   tabs: { count: () => 0, closeAll: () => {} },
   agentSettings: async () => ({ missing: "none" }), serverTools: async () => [], takeDownSite: async () => null,
-  home: { forget: async () => {}, publishedChanged: async () => {} }, siteChanged: async () => {},
+  home: { forget: async () => {}, changed: async () => {} }, siteChanged: async () => {},
   timing: { idleMs: 3_600_000, maxMs: 3_600_000 },
   background: () => {}, log: () => {},
 });

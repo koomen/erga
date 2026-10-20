@@ -7,7 +7,7 @@ import { DurableObject } from "cloudflare:workers";
 import { SiteDeploys, type SiteObject, type SiteRow } from "../../server/sites/index.ts";
 import { directoryOf } from "../d1";
 import type { Env } from "../env";
-import { publishedFiles } from "../published";
+import { currentFiles } from "../current-files";
 import { siteNet, siteOAuth } from "../sites";
 import { documentOf } from "../document-host";
 
@@ -18,7 +18,7 @@ export class SiteHost extends DurableObject<Env> implements SiteObject {
     storage: { get: (key) => this.ctx.storage.get(key), put: (key, value) => this.ctx.storage.put(key, value), deleteAll: () => this.ctx.storage.deleteAll() },
     alarm: { get: () => this.ctx.storage.getAlarm(), set: (at) => this.ctx.storage.setAlarm(at), delete: () => this.ctx.storage.deleteAlarm() },
     directory: directoryOf(this.env),
-    published: (docId) => publishedFiles(this.env, docId),
+    current: (docId) => currentFiles(this.env, docId),
     net: (token) => siteNet(this.env, token),
     oauth: siteOAuth(this.env),
     notify: (docId) => { this.ctx.waitUntil(documentOf(this.env, docId).notify({ type: "site" }).catch(() => {})); },

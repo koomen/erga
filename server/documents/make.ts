@@ -25,9 +25,7 @@ export async function startingFiles(platform: Platform, from: string | null, who
   if (!from) return templateFiles(platform, template ?? TEMPLATES[0]);
   const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
-  // A copy of what they may see: someone who may not edit it copies its published version (the same in "latest" mode).
-  const editor = !!who && (await platform.directory.may(who, "edit", doc));
-  return platform.docs.snapshot(doc, { published: !editor });
+  return platform.docs.snapshot(doc);
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/templates.ts), or a copy of the front page's (?from=landing). */

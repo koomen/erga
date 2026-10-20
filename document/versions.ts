@@ -1,6 +1,6 @@
 // A document's versions: snapshots of its whole file set (every page, style,
-// script and image), cut now and then as it's edited, and which of them its
-// viewers see (publishing).
+// script and image), cut now and then as it's edited: its history, to look
+// back at and restore. Readers always see the document as it is now.
 //
 // Storage is the document's own (its Durable Object, cloudflare/document-object.ts),
 // behind the small `KV` interface so the unit tests run it on a Map. Files are
@@ -31,15 +31,8 @@ export interface Version {
   description: string | null;
 }
 
-/** What viewers see: the latest version, up to the keystroke, or one chosen version. */
-export type PublishMode = "latest" | "manual";
-export interface Published { mode: PublishMode; version: Version }
-
 /** What GET /api/docs/<id>/versions answers, but canEdit (the front door adds it); `pending`: edits since the current version. */
-export interface VersionsState { current: Version; published: Published; versions: Version[]; total: number; pending: boolean }
-/** A publish: what viewers see from now on ("manual" without a version: the current one). */
-export type PublishRequest = { mode: "latest" } | { mode: "manual"; versionId?: string | number };
-export type PublishResult = { ok: true; published: Published } | { ok: false; status: number; error: string };
+export interface VersionsState { current: Version; versions: Version[]; total: number; pending: boolean }
 
 /** A restore: the new current version, the version it came from, and the files it brought back. */
 export type RestoreResult = { ok: true; current: Version; from: string; files: string[] } | { ok: false; status: number; error: string };
@@ -296,32 +289,4 @@ export function cleanDescription(text: string): string | null {
   const line = text.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
   const words = line.replace(/^["'“‘]+|["'”’.]+$/g, "").split(/\s+/).filter(Boolean);
   return words.length ? words.slice(0, 8).join(" ") : null;
-}
-
-// ---------------------------------------------------------------- hooks for the homepage deploy
-
-/** A document's published version changed: which, and how to read its files. */
-export interface PublishedEvent { docId: string; published: Published; files(): Promise<Map<string, Uint8Array>> }
-
-const listeners = new Map<string, Set<(e: PublishedEvent) => void>>();
-
-/**
- * Calls `cb` whenever the published version of `docId` (or of any document,
- * "*") changes: a manual publish, going back to "latest", or, in "latest"
- * mode, a new version cut. In process: the document's Durable Object fires
- * it, so subscribe from code that runs there. Returns
- * the unsubscribe function.
- */
-export function onPublished(docId: string, cb: (e: PublishedEvent) => void): () => void {
-  let set = listeners.get(docId);
-  if (!set) listeners.set(docId, set = new Set());
-  set.add(cb);
-  return () => { set!.delete(cb); };
-}
-
-/** Tells every subscriber (onPublished) that a document's published version changed. */
-export function firePublished(e: PublishedEvent): void {
-  for (const id of [e.docId, "*"]) for (const cb of listeners.get(id) ?? []) {
-    try { cb(e); } catch (err) { console.log(`a published-version listener failed: ${err}`); }
-  }
 }

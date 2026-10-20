@@ -2,14 +2,13 @@
 // has a site. The Durable Object (cloudflare/objects/site.ts) gives it
 // storage and an alarm, and forwards the calls.
 //
-// When the document's published version changes, the next deploy runs a
-// short time later (`delay`, 30 seconds by default), each change pushing it
-// back, on the alarm. In "latest" mode a version is cut after each burst of
-// edits, so a site follows the document within a minute or so; in "manual"
-// mode, it follows each publish. "Deploy now" (POST /api/docs/<id>/site/deploy)
+// When the document has a new version, the next deploy runs a short time
+// later (`delay`, 30 seconds by default), each change pushing it back, on the
+// alarm. A version is cut after each burst of edits, so a site follows the
+// document within a minute or so. "Deploy now" (POST /api/docs/<id>/site/deploy)
 // runs it at once. A deploy that fails leaves the last good one live, and
 // says why. Each deploy reads the site's row, its person's grant and the
-// published version afresh, so a new consent is used at the next one. Every change of state is told to everyone who has the document
+// document's files afresh, so a new consent is used at the next one. Every change of state is told to everyone who has the document
 // open ({ type: "site" } on its /api/events).
 
 import type { Fetch } from "../../deploy/pipeline.ts";
@@ -21,7 +20,7 @@ import type { SiteOAuth, SiteRow } from "./rows.ts";
 /** What the rest of the app may ask a site's deploys (the Durable Object answers, by RPC). */
 export interface SiteObject {
   status(): Promise<SiteDeploy>;
-  /** The document's published version changed: the next deploy runs a short time from now (debounced). */
+  /** The document has a new version: the next deploy runs a short time from now (debounced). */
   changed(docId: string): Promise<void>;
   /** Deploys now; answers the status (deploying). `origin`: the server's, for the note in the site's Worker. */
   deploy(docId: string, by: string, origin?: string): Promise<SiteDeploy>;
@@ -29,15 +28,15 @@ export interface SiteObject {
   remove(docId: string, site: SiteRow): Promise<string | null>;
 }
 
-/** A document's published version, as a deploy reads it. */
-export interface PublishedSite { index: string; files: Record<string, string | Uint8Array>; version: number | null }
+/** A document's files as they are now, as a deploy reads them. */
+export interface SiteFiles { index: string; files: Record<string, string | Uint8Array>; version: number | null }
 
 /** What a site's deploys need from where they run. */
 export interface SiteDeps {
   storage: { get<T>(key: string): Promise<T | undefined>; put(key: string, value: unknown): Promise<void>; deleteAll(): Promise<void> };
   alarm: { get(): Promise<number | null>; set(at: number): Promise<void>; delete(): Promise<void> };
   directory: Directory;
-  published(docId: string): Promise<PublishedSite | null>;
+  current(docId: string): Promise<SiteFiles | null>;
   /** How to reach Cloudflare with this token: the real API, or (local development) a pretend one. */
   net(token: string): Fetch;
   /** Cloudflare's OAuth, to refresh the person's grant. */
@@ -145,11 +144,11 @@ export class SiteDeploys implements SiteObject {
       if (!site || !doc) return { ok: false, error: "The document has no site any more." };
       const token = await dir.cloudflare.token(site.login, this.deps.oauth);
       if (!token) return { ok: false, error: `${site.login}'s Cloudflare connection is gone: ${site.login} connects Cloudflare again.` };
-      const published = await this.deps.published(docId);
-      if (!published) return { ok: false, error: "The document has no published version yet." };
-      const files = siteFiles(published.index, published.files);
+      const now = await this.deps.current(docId);
+      if (!now) return { ok: false, error: "There's no such document." };
+      const files = siteFiles(now.index, now.files);
       await deploySite(siteCloudflare(token, this.deps.net(token)), site, files, `${this.s.origin ?? ""}/${doc.owner}/${doc.slug}`);
-      return { ok: true, version: published.version };
+      return { ok: true, version: now.version };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }

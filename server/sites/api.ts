@@ -3,7 +3,7 @@
 //
 //   GET    /api/docs/<id>/site          { canEdit, connection, site, deploy } (?zones=1 adds your domains)
 //   POST   /api/docs/<id>/site          { hostname }: publishes the document there, with your Cloudflare connection
-//   POST   /api/docs/<id>/site/deploy   deploys the published version again, now
+//   POST   /api/docs/<id>/site/deploy   deploys the document again, now
 //   DELETE /api/docs/<id>/site          takes the site down: its custom domain and its Worker go from the account
 
 import { DeployError } from "../../deploy/pipeline.ts";

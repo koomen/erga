@@ -9,7 +9,7 @@
 //   GET  /api/ext/tools            the tools, as JSON (name, description, JSON Schema)
 //   POST /api/ext/tools/<name>     runs one, the body its arguments: {"ok": true, "content": [...]}
 //   POST /api/publish              a folder of files as a document (multipart or JSON), or into one
-//   GET  /api/docs/<id>/versions   a document's versions and what's published; POST .../publish sets it,
+//   GET  /api/docs/<id>/versions   a document's versions;
 //                                  POST .../versions/<versionId>/restore brings one back, or one file of it with {"path": ...}
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
@@ -37,7 +37,6 @@
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
 import { type Action, type DocRow, ID, LOCKED, nameOf, newDocId, roleMay, type Route } from "./directory/index.ts";
-import type { PublishRequest } from "../document/versions";
 import { appPage, crumbs, esc, fromElsewhere, ICON, page, safeNext, TIMES_SCRIPT } from "./pages/index.ts";
 import { forwarded, makeDoc, startingFiles } from "./documents/index.ts";
 import { accessOf, type Platform, type Session, whoOf } from "./platform";
@@ -115,7 +114,7 @@ export const TOOLS: ServerTool[] = [
         title: str("Its title (else the page's first heading)."),
         slug: str("Its address after /<owner>/ (letters, digits and dashes; else made from the title). Taken already, it gets -2, -3..."),
         template: { type: "string", enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"], description: "Without files: a blank page (blank or page, the default), another template, or a copy of the server's front page (landing)." },
-        from: str("Without files: a document to copy instead (its address, URL or id). Someone who may not edit it copies its published version."),
+        from: str("Without files: a document to copy instead (its address, URL or id). It copies the document as it is now."),
       },
     },
     run: async (args, ctx) => {
@@ -384,9 +383,9 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
     return json({ ok: true, tools: (await toolsFor(ctx)).map(specOf) });
   }
   if (path == "/api/auth/request" && method == "POST") return askForToken(request, platform, origin);
-  // A document's versions and publishing: for the person signed in (the settings UI) or an agent token alike.
-  const [, docId, what, restoreId] = /^\/api\/docs\/([^/]+)\/(versions|publish|versions\/([^/]+)\/restore)$/.exec(path) ?? [];
-  if (docId) return versionsApi(request, platform, session, decodeURIComponent(docId), restoreId ? "restore" : what as "versions" | "publish", restoreId && decodeURIComponent(restoreId));
+  // A document's versions: for the person signed in (the settings UI) or an agent token alike.
+  const [, docId, , restoreId] = /^\/api\/docs\/([^/]+)\/(versions|versions\/([^/]+)\/restore)$/.exec(path) ?? [];
+  if (docId) return versionsApi(request, platform, session, decodeURIComponent(docId), restoreId ? "restore" : "versions", restoreId && decodeURIComponent(restoreId));
   const [, treeOf] = /^\/api\/docs\/([^/]+)\/tree$/.exec(path) ?? [];
   if (treeOf && (method == "GET" || method == "POST")) return docTree(request, platform, session, decodeURIComponent(treeOf));
   if (path == "/api/auth/poll" && method == "POST") return pollForToken(request, platform);
@@ -415,13 +414,12 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
 
 /**
  * GET /api/docs/<id>/versions[?before=<versionId>&limit=<n>]: its versions,
- * newest first, the current one and the published one, and whether the
- * person may publish (canEdit). POST /api/docs/<id>/publish {mode: "latest"}
- * or {mode: "manual", versionId}: editors only. For anyone who may open the
- * document, signed in or with an agent token; a POST from a browser only from
- * this site's own pages.
+ * newest first, the current one, and whether the person may restore one
+ * (canEdit). POST /api/docs/<id>/versions/<versionId>/restore: editors only.
+ * For anyone who may open the document, signed in or with an agent token; a
+ * POST from a browser only from this site's own pages.
  */
-async function versionsApi(request: Request, platform: Platform, session: Session | null, ref: string, what: "versions" | "publish" | "restore", versionRef?: string): Promise<Response> {
+async function versionsApi(request: Request, platform: Platform, session: Session | null, ref: string, what: "versions" | "restore", versionRef?: string): Promise<Response> {
   const url = new URL(request.url);
   const fail = (error: string, status: number) => json({ error }, status);
   if (!session) return fail("Sign in first, or send an agent token as \"Authorization: Bearer <token>\".", 401);
@@ -435,22 +433,16 @@ async function versionsApi(request: Request, platform: Platform, session: Sessio
     const state = await platform.docs.versions(doc, { before: url.searchParams.get("before"), limit });
     return state ? json({ ...state, canEdit }) : fail("There's no such document.", 404);
   }
-  if (request.method != "POST") return fail(what == "restore" ? "POST this." : "POST {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 405);
+  if (request.method != "POST") return fail("POST this.", 405);
   if (!session.agent && request.headers.get("origin") != url.origin) return fail(`Only this site's own pages may ${what}.`, 403);
   if (!canEdit) return fail(`You may only view this document, so you can't ${what} it.`, 403);
-  if (what == "restore") {
-    // A person's restore is theirs; an agent token's is its person's, via it ("ada, via a shared agent (CI)").
-    const by = byLine(session.login.toLowerCase(), whoOf(session).via);
-    // Optionally one file only: {"path": "blog/post.html"}.
-    const body = (await request.json().catch(() => null)) as { path?: unknown } | null;
-    const path = typeof body?.path == "string" && body.path ? body.path : null;
-    const r = await platform.docs.restore(doc, versionRef ?? "", by, path);
-    return r.ok ? json({ current: r.current, from: r.from, files: r.files }) : fail(r.error, r.status);
-  }
-  const body = (await request.json().catch(() => null)) as PublishRequest | null;
-  if (!body || typeof body != "object") return fail("Send JSON: {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 400);
-  const r = await platform.docs.setPublished(doc, body);
-  return r.ok ? json({ published: r.published }) : fail(r.error, r.status);
+  // A person's restore is theirs; an agent token's is its person's, via it ("ada, via a shared agent (CI)").
+  const by = byLine(session.login.toLowerCase(), whoOf(session).via);
+  // Optionally one file only: {"path": "blog/post.html"}.
+  const body = (await request.json().catch(() => null)) as { path?: unknown } | null;
+  const path = typeof body?.path == "string" && body.path ? body.path : null;
+  const r = await platform.docs.restore(doc, versionRef ?? "", by, path);
+  return r.ok ? json({ current: r.current, from: r.from, files: r.files }) : fail(r.error, r.status);
 }
 
 /**
@@ -1005,23 +997,20 @@ can undo them one call at a time. edit matches text exactly as it is right
 now: read a file right before editing it, and read again if an edit fails
 because someone changed the text meanwhile.
 
-## Versions and publishing
+## Versions
 
 Each document keeps versions: snapshots of all its files, cut after each burst
-of edits and each agent turn, with a five-word description. What its viewers
-see is either "latest" (the document as it is) or one version ("manual"). The
-document tools list_versions, read_version, diff_versions, restore_version and publish_version handle them; so
-does plain HTTP:
+of edits and each agent turn, with a five-word description. Its viewers always
+see the document as it is now. The document tools list_versions, read_version,
+diff_versions and restore_version handle them; so does plain HTTP:
 
     curl -s ${origin}/api/docs/<id>/versions -H "Authorization: Bearer $ERGA_TOKEN"
-    curl -s -X POST ${origin}/api/docs/<id>/publish -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"mode": "manual", "versionId": "v3"}'
     curl -s -X POST ${origin}/api/docs/<id>/versions/v3/restore -H "Authorization: Bearer $ERGA_TOKEN"
     curl -s -X POST ${origin}/api/docs/<id>/versions/v3/restore -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"path": "blog/post.html"}'
 
-Only someone who may edit a document may publish it or restore a version (a
-restore writes the old version's files over the document, as a new version;
-with a path, only that file).
-Do either only when your person asks.
+Only someone who may edit a document may restore a version (a restore writes
+the old version's files over the document, as a new version; with a path, only
+that file). Do it only when your person asks.
 
 ## The server's tools
 

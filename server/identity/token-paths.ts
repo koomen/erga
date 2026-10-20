@@ -15,7 +15,7 @@ export function tokenPath(path: string): boolean {
   path = path.replace(/\/+$/, "") || "/";
   if (path == "/llms.txt" || path == "/api" || path == "/mcp" || path == "/api/publish") return true;
   if (path == "/api/ext" || path.startsWith("/api/ext/")) return true;
-  if (/^\/api\/docs\/[^/]+\/(versions|publish|tree|versions\/[^/]+\/restore)$/.test(path)) return true;
+  if (/^\/api\/docs\/[^/]+\/(versions|tree|versions\/[^/]+\/restore)$/.test(path)) return true;
   const [, first, second] = /^\/([^/]+)\/([^/]+)\/(?:api|doc)(?:\/|$)/.exec(path) ?? [];
   if (!first) return false;
   if (first == "d") return ID.test(second);

@@ -124,7 +124,7 @@ export default defineConfig(({ mode }) => ({
         // The homepage's deploys: how long after a change the next runs, and how often / checks for one (tests shorten both).
         ERGA_HOME_DELAY_MS: bindings.text(process.env.ERGA_HOME_DELAY_MS ?? ""),
         ERGA_HOME_RECHECK_MS: bindings.text(process.env.ERGA_HOME_RECHECK_MS ?? ""),
-        // Documents' sites on Cloudflare: how long after a publish the next deploy runs.
+        // Documents' sites on Cloudflare: how long after a new version the next deploy runs.
         ERGA_SITE_DELAY_MS: bindings.text(process.env.ERGA_SITE_DELAY_MS ?? ""),
         // When versions are cut: how long edits pause first, and the longest burst one version holds.
         ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),

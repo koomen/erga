@@ -4,7 +4,7 @@
 //
 // A deploy, in their account, with their grant (the Cloudflare API only):
 //
-//   1. the published version's files go up as a Worker's static assets
+//   1. the document's files go up as a Worker's static assets
 //      (direct upload: only files Cloudflare doesn't have yet are sent);
 //   2. the Worker itself goes up: a few lines that hand every request to
 //      those files, so a request for a file never runs it (free, and no
@@ -31,10 +31,10 @@ export interface SiteDeploy {
   /** The last good deploy (ISO time). */
   at: string | null;
   scheduledFor: string | null;
-  /** The published version that's live there. */
+  /** The version that's live there. */
   version: number | null;
   error: string | null;
-  /** Who asked for the latest deploy (byLine), or the system (after a publish). */
+  /** Who asked for the latest deploy (byLine), or the system (after a new version). */
   by: string | null;
 }
 export const IDLE_SITE: SiteDeploy = { state: "idle", at: null, scheduledFor: null, version: null, error: null, by: null };
@@ -83,12 +83,12 @@ export async function listZones(token: string, net: Fetch, accounts: CfAccount[]
 
 // ------------------------------------------------------------------ the files
 
-/** The site's files, by path ("/index.html"), from the published version's. */
+/** The site's files, by path ("/index.html"), from the document's. */
 export function siteFiles(index: string, files: Record<string, string | Uint8Array>): Record<string, Uint8Array> {
   const out: Record<string, Uint8Array> = {};
   for (const [path, value] of Object.entries(files)) out[`/${path}`] = typeof value == "string" ? new TextEncoder().encode(value) : value;
   const page = `/${index}`;
-  if (!out[page]) throw new SiteError(`The document's page (${index}) isn't in its published version.`);
+  if (!out[page]) throw new SiteError(`The document's page (${index}) isn't in its files.`);
   if (page != "/index.html") out["/index.html"] = out[page];
   return out;
 }
@@ -96,7 +96,7 @@ export function siteFiles(index: string, files: Record<string, string | Uint8Arr
 // ------------------------------------------------------------------ deploying
 
 /** The Worker that serves the site: every request goes to its files (it runs only for a path that isn't one). */
-const SITE_WORKER = (origin: string) => `// A site published from Erga (${origin}). Erga replaces these files each time the document is published.
+const SITE_WORKER = (origin: string) => `// A site published from Erga (${origin}). Erga replaces these files each time the document has a new version.
 export default { fetch: (request, env) => env.ASSETS.fetch(request) };
 `;
 const SITE_TAG = "erga-site";

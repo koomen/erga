@@ -24,11 +24,11 @@ export interface DeployStatus {
   at: string | null;
   /** When the next deploy runs, while one is scheduled. */
   scheduledFor: string | null;
-  /** The published version that's live (its number), or null. */
+  /** The version that's live (its number), or null. */
   version: number | null;
   /** Why the last deploy failed, while it's failed. */
   error: string | null;
-  /** Who asked for the latest deploy: "ada", "ada, via their admin agent", or "the system" (one after a publish, or a new homepage). */
+  /** Who asked for the latest deploy: "ada", "ada, via their admin agent", or "the system" (one after a new version, or a new homepage). */
   by?: string | null;
 }
 

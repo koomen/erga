@@ -3,7 +3,7 @@
 // the descriptions written when no model does.
 
 import { expect, test } from "bun:test";
-import { cleanDescription, fallbackDescription, firePublished, onPublished, unifiedDiff, versionNumber, Versions, type KV } from "../document/versions";
+import { cleanDescription, fallbackDescription, unifiedDiff, versionNumber, Versions, type KV } from "../document/versions";
 
 /** Durable Object storage's shape, in a Map, counting what's written. */
 function memory() {
@@ -94,18 +94,6 @@ test("the model's answer, cleaned", () => {
   expect(versionNumber("12")).toBe(12);
   expect(versionNumber("x")).toBeNull();
   expect(versionNumber("v0")).toBeNull();
-});
-
-test("published-version listeners: by document, and for every document", () => {
-  const seen: string[] = [];
-  const off = onPublished("abcd2345", (e) => seen.push(`one:${e.published.version.id}`));
-  const offAll = onPublished("*", (e) => seen.push(`all:${e.docId}`));
-  const version = { id: "v2", n: 2, at: "", authors: [], description: null };
-  firePublished({ docId: "abcd2345", published: { mode: "latest", version }, files: async () => new Map() });
-  firePublished({ docId: "zzzz2345", published: { mode: "manual", version }, files: async () => new Map() });
-  off(); offAll();
-  firePublished({ docId: "abcd2345", published: { mode: "latest", version }, files: async () => new Map() });
-  expect(seen).toEqual(["one:v2", "all:abcd2345", "all:zzzz2345"]);
 });
 
 test("unified diffs between two file sets: changed, added, deleted, binary, one path, cut", () => {
