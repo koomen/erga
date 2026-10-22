@@ -927,6 +927,7 @@ Once you've read the guide, await further instructions.`;
     tellSharing("Loading…");
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
     shareCall().then((d) => { renderSharing(d); tellSharing(""); }, (e: Error) => tellSharing(e.message, true));
+    viewersCall().then(renderViewers, () => { viewersAgent.hidden = true; });
   }
   shareBtn.addEventListener("click", () => toggleSharing());
   sharingAdd.addEventListener("submit", async (e) => {
@@ -936,6 +937,24 @@ Once you've read the guide, await further instructions.`;
     if (login && (await changeSharing(login, (sharingAdd.elements.namedItem("role") as HTMLSelectElement).value))) input.value = "";
   });
   sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
+  // Viewers and the agent (its owner only): the switch, and what each viewer used (their turns use the server's key).
+  const viewersAgent = $("viewers-agent"), viewersOn = $("viewers-agent-on") as HTMLInputElement, viewersUse = $("viewers-agent-use");
+  type ViewersReport = { on: boolean; limit: number; viewers: { login: string; today: number; total: number }[] };
+  function renderViewers(r: ViewersReport) {
+    viewersAgent.hidden = false;
+    viewersOn.checked = r.on;
+    const used = r.viewers.map((v) => `${v.login} ${v.today} today, ${v.total} in all`).join(" · ");
+    viewersUse.textContent = (r.on ? `Each viewer may ask ${r.limit} times a day.` : "Off: people who can only view can't ask it.") + (used ? ` Used: ${used}.` : "");
+  }
+  async function viewersCall(on?: boolean): Promise<ViewersReport> {
+    const r = await fetch(api("/api/viewers-agent"), on == null ? { signal: AbortSignal.timeout(10_000) } : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }), signal: AbortSignal.timeout(10_000) }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    if (!r?.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
+    return body as ViewersReport;
+  }
+  viewersOn.addEventListener("change", () => {
+    viewersCall(viewersOn.checked).then(renderViewers, (e: Error) => { viewersOn.checked = !viewersOn.checked; tellSharing(e.message, true); });
+  });
   const copied = $("sharing-copied"), linkHint = copied.textContent;
   let copiedTimer = 0;
   $("sharing-copy").addEventListener("click", async () => {

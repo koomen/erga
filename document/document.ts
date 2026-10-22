@@ -45,7 +45,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow, type Naming, type Role, type Who } from "../server/directory/index.ts";
 import type { SiteRow } from "../server/sites/index.ts";
-import { cleanRel, docFile, makeHost, typeOf } from "./host.ts";
+import { cleanRel, docFile, makeHost, typeOf, type ViewersReport } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, Hello } from "./api.ts";
 import { resolvePage, titleOf } from "./pages.ts";
@@ -74,6 +74,8 @@ export interface DocumentInfo {
   uncut?: boolean;
   /** A document (one page) or a project (pages). Missing on one from before kinds: decided from its pages as it opens. */
   kind?: DocKind;
+  /** People who may only view may ask its agent (its owner's choice; off if missing). */
+  viewersAgent?: boolean;
 }
 
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
@@ -134,6 +136,9 @@ export interface DocumentDeps {
 export type FileData = string | Uint8Array | BlobRef;
 
 const { file: FILE, ref: REF, meta: INFO } = KEYS;
+/** Each viewer's turns with the agent (ViewerUse, by login): what the owner sees, and the day's limit counts. */
+const VIEWER_USE = "viewer-use";
+interface ViewerUse { day: string; today: number; total: number; last: number }
 const PERMS = "perms", VIEW = "view";
 /** Set once every file and version blob kept in the object before blobs has been copied to the blob store (copyToBlobs). */
 const COPIED = "blobs-copied";
@@ -438,6 +443,32 @@ export class Document {
     if (!info || info.kind == "project") return;
     await this.saveInfo({ ...info, kind: "project" });
     await this.directory.setKind(info.id, "project");
+  }
+
+  /**
+   * A viewer asks the agent (its turns use the server's API key): only where the owner lets viewers ask, and at most
+   * viewer_agent_turns times a day (UTC). Why not, or null; `count`: it's a turn, so it counts.
+   */
+  private async viewerTurn(login: string, count: boolean): Promise<string | null> {
+    const info = await this.readInfo();
+    if (!info?.viewersAgent) return "You can only view this document, and its owner hasn't let viewers ask its agent.";
+    const limit = await this.directory.config.get("viewer_agent_turns");
+    const day = new Date().toISOString().slice(0, 10);
+    const all = (await this.storage.get<Record<string, ViewerUse>>(VIEWER_USE)) ?? {};
+    const mine = all[login] ?? { day, today: 0, total: 0, last: 0 };
+    const today = mine.day == day ? mine.today : 0;
+    if (today >= limit) return limit == 0 ? "This server lets nobody who may only view ask a document's agent." : `You've asked this document's agent ${today} times today, which is as many as a viewer may (the server's viewer_agent_turns). Ask again tomorrow (UTC).`;
+    if (count) await this.storage.put(VIEWER_USE, { ...all, [login]: { day, today: today + 1, total: mine.total + 1, last: Date.now() } });
+    return null;
+  }
+
+  /** Viewers and the agent, for the owner: whether viewers may ask, the limit, and what each viewer used. */
+  private async viewersReport(): Promise<ViewersReport> {
+    const info = await this.readInfo();
+    const day = new Date().toISOString().slice(0, 10);
+    const all = (await this.storage.get<Record<string, ViewerUse>>(VIEWER_USE)) ?? {};
+    const viewers = Object.entries(all).map(([login, u]) => ({ login, today: u.day == day ? u.today : 0, total: u.total, last: u.last })).sort((a, b) => b.last - a.last);
+    return { on: !!info?.viewersAgent, limit: await this.directory.config.get("viewer_agent_turns"), viewers };
   }
 
   /** Every file the document holds (the room's view: text files and others). */
@@ -1379,6 +1410,12 @@ export class Document {
       // One from before kinds is decided (below) before anyone reaches it.
       kind: () => this.info?.kind ?? "project",
       makeProject: () => this.makeProject(),
+      viewers: {
+        gate: (person, count) => this.viewerTurn(person.id, count),
+        isOwner: (person) => person.id.toLowerCase() == info.owner,
+        report: () => this.viewersReport(),
+        set: async (on) => { const now = (await this.readInfo())!; await this.saveInfo({ ...now, viewersAgent: on }); },
+      },
     });
     // From before kinds: a project if it has more than one page, else a document. Kept, and told to the directory.
     if (!info.kind && !info.disk?.only) {

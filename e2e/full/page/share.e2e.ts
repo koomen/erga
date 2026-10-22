@@ -17,3 +17,16 @@ test("the Share button opens a card whose agent half has a prompt naming the pag
   // With the caret on the page, the key reaches the shell from the frame, by message: a moment later.
   await expect.poll(() => ed.eval<boolean>(`document.getElementById("sharing").hidden`)).toBe(true);
 });
+
+test("the owner's Share card has Viewers can ask the agent, off; turned on, it says each viewer's turns a day, and it stays on", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "noedit");
+  await ed.eval(`document.getElementById("btn-share").click()`);
+  await expect.poll(() => ed.eval<boolean>(`!document.getElementById("viewers-agent").hidden`)).toBe(true);
+  expect(await ed.eval<boolean>(`document.getElementById("viewers-agent-on").checked`)).toBe(false);
+  expect(await ed.eval<string>(`document.getElementById("viewers-agent-use").textContent`)).toContain("can't ask it");
+  await ed.eval(`document.getElementById("viewers-agent-on").click()`);
+  await expect.poll(() => ed.eval<string>(`document.getElementById("viewers-agent-use").textContent`)).toMatch(/Each viewer may ask \d+ times a day/);
+  // Kept: the document's own answer says so.
+  const r = await ed.eval<{ on: boolean }>(`fetch(location.pathname.replace(/\\/?$/, "") + "/api/viewers-agent").then((r) => r.json())`);
+  expect(r.on).toBe(true);
+});

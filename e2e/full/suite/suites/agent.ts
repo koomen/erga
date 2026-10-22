@@ -245,6 +245,9 @@ export const agent: Test[] = [
       await d.share!("*", null);
       await d.share!("Bo", "editor");
       await d.share!("Dee", "viewer");
+      // Viewers may ask the agent here (its owner's choice: off unless turned on).
+      const on = await d.fetch("/api/viewers-agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true }) });
+      expect(on.ok, "the owner lets viewers ask the agent", on.status);
       const b = await Participant.join(d, "Bo");
       ctx.defer(() => b.destroy());
       const log = await runScript(d, "Dee", [edit(d.path, "<h1>Launch notes", "<h1>Dee's notes"), { text: "Tried." }]);
