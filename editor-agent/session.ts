@@ -1019,7 +1019,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   // The tools beyond the document, as the owner may use them now (none if they can't be had).
   const beyond = async () => (await opts.serverTools?.().catch((e: unknown) => { console.log(`server tools for ${owner.id}: ${e}`); return null; })) ?? [];
   let starting = false;
-  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, owner.name, opts.only != null, more.map((t) => t.name));
+  // Someone who may only view: the prompt says so, and why the tools that change the document aren't there.
+  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, owner.name, opts.only != null, more.map((t) => t.name)) + (opts.canEdit() ? "" : `\n\n${owner.name} can only view this document, so you can't change it: you have only the tools that change nothing (read, ls, find, grep and the like). If they ask for a change, say so.`);
   /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
   let agent: PiAgent | null = null;
   /** The model's messages while it has no model side yet (the agent off): the stored ones, until a reset. */

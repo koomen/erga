@@ -26,7 +26,8 @@ test("an agent in blog/post.html's editor sees one file system: every page, the 
   ], "The user has the page blog/post.html open.");
   expect(calls.map((c) => c.status)).toEqual(Array(7).fill("done"));
   // The same tools, as the same person's agent from outside, with their answers.
-  const ls = (await s.tool("ls", {})).text.split("\n");
+  // (Each line: its kind, size and time, then its name.)
+  const ls = (await s.tool("ls", {})).text.split("\n").map((l) => l.trim().split(/\s{2,}/).pop());
   for (const f of ["about.html", "blog/", "index.html", "style.css"]) expect(ls).toContain(f);
   expect((await s.tool("read", { path: "index.html" })).text).toContain("<h1>Home</h1>");
   expect((await s.tool("read", { path: "style.css" })).text).toContain("rgb(250, 246, 236)");

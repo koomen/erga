@@ -248,8 +248,9 @@ export const agent: Test[] = [
       const b = await Participant.join(d, "Bo");
       ctx.defer(() => b.destroy());
       const log = await runScript(d, "Dee", [edit(d.path, "<h1>Launch notes", "<h1>Dee's notes"), { text: "Tried." }]);
+      // Its agent has no tool that changes the document (its prompt says why): a call to one fails.
       const failed = log.items.find((i) => i.kind == "tool" && i.name == "edit");
-      expect(failed?.status == "error" && /only view/.test(failed.detail ?? ""), "the viewer's agent's edit fails, saying why", failed);
+      expect(failed?.status == "error" && /only view|not found/.test(failed.detail ?? ""), "the viewer's agent's edit fails", failed);
       // Nor do the viewer's own edits, in the room or as a publish, go anywhere.
       const v = await Participant.join(d, "Dee");
       ctx.defer(() => v.destroy());
