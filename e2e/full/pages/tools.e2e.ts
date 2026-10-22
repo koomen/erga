@@ -8,7 +8,10 @@ test("ls, mkdir, new_page, read, mv, find, grep and rm over the API; rm refuses 
   const s = await site(await servers.short(), { pages: true });
   const ls = await s.tool("ls", {});
   expect(ls.ok).toBe(true);
-  expect(ls.text.split("\n").join(" ")).toBe("about.html blog/ index.html style.css");
+  // Each line: its kind (text, a file kept whole, dir), size and time, then its name.
+  expect(ls.text.split("\n").map((l) => l.trim().split(/\s{2,}/).pop()).join(" ")).toBe("about.html blog/ index.html style.css");
+  expect(ls.text).toMatch(/^text\s+\d+ B\s+.*about\.html$/m);
+  expect(ls.text).toMatch(/^dir\s+blog\/$/m);
   let r = await s.tool("mkdir", { path: "notes/2026" });
   expect(r.ok).toBe(true);
   expect((await s.tool("ls", { path: "notes/2026" })).text).toContain("empty folder");

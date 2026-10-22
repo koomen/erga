@@ -53,6 +53,8 @@ test("from the reader, the pencil to the first edit: measured, and well under th
   await page.locator(".erga-edit-button").click();
   await ed.loaded();
   const ready = Date.now() - clicked;
+  // The page's editor up and drawn (a click while it renders the page is lost), as openEditor waits for.
+  await ed.settle();
   await ed.clickEnd("h1");
   await ed.type("!");
   await expect.poll(() => ed.source(), { timeout: 10_000 }).toContain("<h1>Launch notes!</h1>");
