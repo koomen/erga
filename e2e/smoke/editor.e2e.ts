@@ -4,6 +4,7 @@
 // stays well under its limit (E2E_SMOKE_LIMIT_S in e2e/run.ts).
 import { expect, servers, test } from "../fixtures";
 import { editor, openEditor } from "../editor";
+import { docShows, openViewer } from "../full/viewer/viewer";
 
 await servers.main();
 
@@ -36,6 +37,28 @@ test("an edit made to the file on disk reaches the open page", async ({ tab }) =
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("Where the leads go.", "Where the leads went."));
   await expect.poll(() => ed.textOf("figcaption")).toBe("Where the leads went.");
+});
+
+test("from the reader, the pencil to the first edit: measured, and well under the limit", async ({ tab }) => {
+  // The measure the files plan names (step 4, one Yjs document for each text file): the time from the pencil to the first
+  // typed character in the document's text. It prints, for a before and after; the limit only catches a broken switch.
+  const server = await servers.main();
+  const { dir, address } = await server.fixture("page");
+  const page = tab.page;
+  tab.strict = true;
+  await openViewer(page, address);
+  await docShows(page, "Launch notes");
+  const ed = editor(page, { address, dir, file: `${dir}/index.html` });
+  const clicked = Date.now();
+  await page.locator(".erga-edit-button").click();
+  await ed.loaded();
+  const ready = Date.now() - clicked;
+  await ed.clickEnd("h1");
+  await ed.type("!");
+  await expect.poll(() => ed.source(), { timeout: 10_000 }).toContain("<h1>Launch notes!</h1>");
+  const first = Date.now() - clicked;
+  console.log(`[measure] the pencil to the first edit: ${first} ms (the editor ready: ${ready} ms)`);
+  expect(first).toBeLessThan(10_000);
 });
 
 test("two tabs on one document: typing in one shows in the other, without a reload", async ({ tab }) => {
