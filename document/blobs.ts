@@ -22,7 +22,7 @@ export const isBlobRef = (v: unknown): v is BlobRef =>
   !!v && typeof v == "object" && typeof (v as BlobRef).hash == "string" && /^[0-9a-f]{64}$/.test((v as BlobRef).hash) && typeof (v as BlobRef).size == "number";
 
 /** Bytes of a blob, or a range of them. */
-export interface BlobBody { body: ReadableStream<Uint8Array> | Uint8Array; size: number; range?: { start: number; end: number } }
+export interface BlobBody { body: ReadableStream<Uint8Array> | Uint8Array; size: number; range?: { start: number; end: number }; cached?: boolean }
 
 /** Where blobs are. Every write names the hash, and the store checks the bytes against it. */
 export interface BlobStore {
@@ -160,15 +160,18 @@ export async function serveBlob(answer: Response, request: Request, blobs: BlobS
   }
   const got = blobs ? await blobs.get(hash, r ?? undefined) : null;
   if (!got) return inline();
+  // Where it came from, for page_network and for a person checking: the edge's cache, or the store.
+  const from = got.cached ? "blob from the edge's cache" : "blob";
+  const timed = (more: string) => headers.set("Server-Timing", `file;desc="${from}${more} type ${type}"`);
   const head = request.method == "HEAD";
   if (r) {
     const cr = `bytes ${r.start}-${r.end}/${got.size}`;
     headers.set("Content-Range", cr);
     headers.set("Content-Length", String(r.end - r.start + 1));
-    timing(` ${cr}`);
+    timed(` ${cr}`);
     return new Response(head ? null : got.body as BodyInit, { status: 206, headers });
   }
   headers.set("Content-Length", String(got.size));
-  timing(` bytes 0-${Math.max(0, got.size - 1)}/${got.size}`);
+  timed(` bytes 0-${Math.max(0, got.size - 1)}/${got.size}`);
   return new Response(head ? null : got.body as BodyInit, { status: 200, headers });
 }

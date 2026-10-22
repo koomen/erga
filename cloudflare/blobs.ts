@@ -60,7 +60,7 @@ export function blobsOf(env: Pick<Env, "FILES" | "SNAPSHOT_IMPORT" | "SNAPSHOT_T
         // A range the cache answered as a range; or the whole blob.
         if (hit?.body && (range ? hit.status == 206 : hit.status == 200)) {
           const total = range ? Number(/\/(\d+)$/.exec(hit.headers.get("content-range") ?? "")?.[1]) : Number(hit.headers.get("content-length"));
-          if (Number.isFinite(total) && total > 0) return { body: hit.body, size: total, ...(range ? { range } : {}) };
+          if (Number.isFinite(total) && total > 0) return { body: hit.body, size: total, ...(range ? { range } : {}), cached: true };
         }
         await hit?.body?.cancel();
       }
