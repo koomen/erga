@@ -2,7 +2,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test, until } from "../../fixtures";
-import { act, clickOn, menuItem, multi, NOT_DOCUMENTS, openCard, openTreeEditor, paths, press, rows, type } from "./tree";
+import { act, clickOn, menuItem, multi, openCard, openTreeEditor, paths, press, rows, type } from "./tree";
 
 await servers.main();
 
@@ -40,7 +40,7 @@ test("two tabs: a page made and moved in one shows in the other", async ({ tab }
   } finally { await p2.close(); }
 });
 
-test("an agent's new page and move show, by their titles; its stylesheet doesn't", async ({ tab }) => {
+test("an agent's new page, move and stylesheet show: pages by their titles", async ({ tab }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
   await openTreeEditor(tab, doc.base);
@@ -51,12 +51,9 @@ test("an agent's new page and move show, by their titles; its stylesheet doesn't
   await until(async () => (await rows(page)).some((x) => x[0] == "blog/owl-calls.html" && x[1] == "Owl calls"), 10_000, "an agent's new page shows, by its title");
   await doc.agentTool("mv", { from: "about.html", to: "blog/about.html" });
   await until(async () => { const p = await paths(page); return p.includes("blog/about.html") && !p.includes("about.html"); }, 10_000, "an agent's move shows");
-  // A stylesheet: the server lists it, the tree doesn't. Then a page after it, so the tree has had the change.
+  // A stylesheet: a project's tree shows it too.
   await doc.agentTool("write", { path: "blog/blog.css", content: "h1 { letter-spacing: 0.01em; }" });
-  await doc.agentTool("new_page", { path: "blog/after" });
-  await until(async () => (await paths(page)).includes("blog/after.html"), 10_000, "the page after it shows");
-  expect(await doc.tree()).toContain("blog/blog.css");
-  expect((await paths(page)).filter((x) => NOT_DOCUMENTS.test(x.split("/").pop()!) || NOT_DOCUMENTS.test(x))).toEqual([]);
+  await until(async () => (await paths(page)).includes("blog/blog.css"), 10_000, "the stylesheet shows");
 });
 
 test("?pages opens the tree at once; the page you're on, moved by an agent: the editor follows it to its new address, and the tree marks it there", async ({ tab }) => {

@@ -129,7 +129,7 @@ export type AgentState = typeof AgentState.Type;
 export interface Hello {
   type: "hello";
   info: DocInfo;
-  tree: { entries: { path: string; type: string; title?: string }[]; canEdit: boolean; moved: { from: string; to: string }[] };
+  tree: { entries: { path: string; type: string; title?: string }[]; canEdit: boolean; moved: { from: string; to: string }[]; /** A document (one page) or a project (pages). */ kind?: "document" | "project" };
   /** The room's history (document/room.ts): a tab that started from another's must not merge into this one. */
   epoch: string;
 }

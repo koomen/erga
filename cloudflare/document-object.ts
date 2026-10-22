@@ -17,6 +17,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { Document, personOf, type DocumentDeps, type FileData, type OnDisk, type ViewAnswer } from "../document/document";
+import type { DocKind } from "../document/pages";
 import { Tabs, type Tab } from "../document/tabs";
 import { PING, PONG } from "../shared/room-socket";
 import type { DocRow, Role, Who } from "../server/directory/index.ts";
@@ -133,7 +134,7 @@ export class DocumentObject extends DurableObject<Env> {
     return (this[method as Call] as (...a: unknown[]) => unknown)(...args);
   }
 
-  create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> { return this.document.create(owner, id, files, index, opts); }
+  create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }): Promise<boolean> { return this.document.create(owner, id, files, index, opts); }
   link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> { return this.document.link(owner, id, index, disk); }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
   publish(files: Record<string, FileData>, remove: string[], by?: string) { return this.document.publish(files, remove, by); }

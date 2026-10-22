@@ -168,7 +168,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
           const path = env.ERGA_LINK_SECRET ? await documentOf(env, d.id).diskPath().catch(() => null) : null;
           return {
             id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
-            created: d.created, modified: d.modified ?? d.created, role: d.role, shared: d.shared,
+            created: d.created, modified: d.modified ?? d.created, role: d.role, shared: d.shared, ...(d.kind ? { kind: d.kind } : {}),
             ...(path != null ? { path } : d.modified == null && d.expires != null ? { expires: d.expires } : {}),
           };
         }));

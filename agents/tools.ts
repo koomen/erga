@@ -45,6 +45,7 @@ import type { Platform } from "../server/platform.ts";
 import { TEMPLATES, templateById } from "../server/pages/index.ts";
 import { publishTo, SiteError, type SiteOps, siteView, zonesOf } from "../server/sites/index.ts";
 import { byLine } from "../shared/attribution.ts";
+import { isDocKind } from "../document/pages.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
 export class ToolError extends Error {
@@ -130,7 +131,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     parameters: Type.Object({}),
     run: async (_args, ctx) => (await docsOf(ctx).docs.list(ctx.who.login.toLowerCase())).map((d) => ({
       id: d.id, title: d.title, address: `/${d.owner}/${d.slug}`, ...(ctx.origin ? { url: `${ctx.origin}/${d.owner}/${d.slug}` } : {}), owner: d.owner, role: d.role,
-      modified: iso(d.modified), ...(d.expires != null ? { expires: iso(d.expires) } : {}), ...(d.id == ctx.here ? { here: true } : {}),
+      modified: iso(d.modified), ...(d.kind ? { kind: d.kind } : {}), ...(d.expires != null ? { expires: iso(d.expires) } : {}), ...(d.id == ctx.here ? { here: true } : {}),
     })),
   },
   {
@@ -144,6 +145,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
       from: Type.Optional(Type.String({ description: "A document to copy instead: its address, URL or id" })),
       title: Type.Optional(Type.String({ description: "Its title (else the page's first heading)" })),
       slug: Type.Optional(Type.String({ description: "Its address after /<owner>/ (else made from the title)" })),
+      kind: Type.Optional(Type.Union([Type.Literal("document"), Type.Literal("project")], { description: "document: one page and any files beside it (the default, or the kind of the document copied); project: a folder of pages, each with its own address" })),
     }),
     run: async (args, ctx) => {
       const { who } = ctx, platform = docsOf(ctx);
@@ -157,7 +159,8 @@ export const SERVER_TOOLS: ServerToolDef[] = [
       if (!start) throw new ToolError(from == "landing" ? "This server has no front page (landing document) to copy." : "There's nothing there you can copy.", 404);
       const title = typeof args.title == "string" ? args.title : undefined, slug = typeof args.slug == "string" ? args.slug : undefined;
       for (let tries = 0; tries < 5; tries++) {
-        const doc = await makeDoc(platform, who.login.toLowerCase(), newDocId(), start.files, { index: start.index, title, slug });
+        const kind = isDocKind(args.kind) ? args.kind : start.kind;
+        const doc = await makeDoc(platform, who.login.toLowerCase(), newDocId(), start.files, { index: start.index, title, slug, kind });
         if (doc) return { made: described(doc, ctx), from: from ?? `the ${template?.id ?? TEMPLATES[0].id} template`, ...(doc.expires != null ? { expires: `${iso(doc.expires)}, unless someone edits it` } : {}) };
       }
       throw new ToolError("Couldn't pick an address for it: try again.", 500);

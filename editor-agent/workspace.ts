@@ -70,6 +70,8 @@ export class YjsWorkspace implements Workspace {
     private origin: object,
     /** A document that's a single file: the one path it holds (no other files can be made). */
     private only: string | null = null,
+    /** Why a new file can't be made at a path (a document's second page), or null. */
+    private refuse: (path: string) => string | null = () => null,
   ) {}
 
   private text(path: string): Effect.Effect<Y.Text, WorkspaceError> {
@@ -170,6 +172,8 @@ export class YjsWorkspace implements Workspace {
       yield* self.mayEdit();
       if (assets(self.doc).has(path)) return yield* fail("binary", `${path} is a file kept whole (not text): replace it with write's content_base64, or rm it first to make it a text file.`);
       if (self.only != null && path != self.only) return yield* fail("single", `This document is the single file ${self.only}: you can't make other files in it.`);
+      const refused = files(self.doc).has(path) ? null : self.refuse(path);
+      if (refused) return yield* fail("single", refused);
       return self.merge(path, content);
     });
   }

@@ -55,7 +55,7 @@ import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot.ts";
-import { parentsOf } from "./pages.ts";
+import { kindOf, pageRefusal, parentsOf, type DocKind } from "./pages.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { withBlobs, type ChatStore } from "../agents/checkpoint.ts";
 
@@ -72,6 +72,8 @@ export interface DocumentInfo {
   name?: DocName;
   /** It has edits no version holds yet: it cuts one as it opens. */
   uncut?: boolean;
+  /** A document (one page) or a project (pages). Missing on one from before kinds: decided from its pages as it opens. */
+  kind?: DocKind;
 }
 
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
@@ -328,13 +330,15 @@ export class Document {
    * someone edits it, it's deleted at `expires` (the delete_docs_after_hours setting
    * after it's made, or sooner when local development asks, to test it).
    */
-  async create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
+  async create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }): Promise<boolean> {
     if (await this.readInfo()) return false;
     const encoder = new TextEncoder();
     // A blob (a copy's file that is one) goes by its ref.
     const entries = Object.entries(files).map(([path, data]) => isBlobRef(data) ? [REF + path, data] as const : [FILE + path, typeof data == "string" ? encoder.encode(data) : data] as const);
     for (let i = 0; i < entries.length; i += 128) await this.storage.put(Object.fromEntries(entries.slice(i, i + 128)));
-    const info: DocumentInfo = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
+    // A project if asked, or if its files have more than one page; else a document.
+    const kind = opts.kind ?? kindOf(Object.keys(files));
+    const info: DocumentInfo = { id, owner: owner.toLowerCase(), index, created: Date.now(), kind, ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
     await this.saveInfo(info);
     if (!info.test && opts.expires != null) await this.storage.setAlarm(opts.expires);
     // Its first version: the files it starts from.
@@ -388,6 +392,8 @@ export class Document {
     const blobs = info.disk ? null : this.deps.blobs ?? null;
     for (const [path, data] of Object.entries(files)) {
       if (info.disk?.only && path != info.index) { out.refused.push({ path, why: `this document is the single file ${info.index}` }); continue; }
+      const notPage = opened.room.exists(path) ? null : pageRefusal(info.kind ?? "project", path, info.index);
+      if (notPage) { out.refused.push({ path, why: notPage }); continue; }
       // Its kind, decided as it arrives (D5): text if it's a text file's name, UTF-8 and at most TEXT_MAX bytes; else a blob.
       let text: string | null = null;
       if (typeof data == "string") text = data;
@@ -421,6 +427,17 @@ export class Document {
     // In the history now, with the files (an image's bytes went straight to storage).
     if (out.written.length || out.removed.length) await Promise.all([Effect.runPromise(opened.room.flush), this.touch()]);
     return out;
+  }
+
+  /**
+   * Makes the document a project (make_project: the pages card's Make a project, or an agent): from now on it may
+   * have more pages. Kept here, where the rule is checked, and in its row, which the documents list reads.
+   */
+  async makeProject(): Promise<void> {
+    const info = await this.readInfo();
+    if (!info || info.kind == "project") return;
+    await this.saveInfo({ ...info, kind: "project" });
+    await this.directory.setKind(info.id, "project");
   }
 
   /** Every file the document holds (the room's view: text files and others). */
@@ -474,7 +491,7 @@ export class Document {
       ...(info.test ? { slug: info.id, slugSet: true } : info.disk ? { slug: info.disk.slug, slugSet: true } : {}),
       created: info.created, modified: info.modified ?? null,
       expires: info.modified || info.test || info.disk ? null : (await this.storage.getAlarm()),
-      test: info.test,
+      test: info.test, kind: info.kind,
       ...(info.disk ? { everyone: "editor" as const } : {}),
     });
     return doc;
@@ -1192,6 +1209,8 @@ export class Document {
     if (at == "folder") return { ok: false, status: 409, error: `There's a folder at ${path}: a file can't take its place.` };
     const inFile = parentsOf(path).find((d) => room.exists(d) == "file");
     if (inFile) return { ok: false, status: 409, error: `${inFile} is a file, so nothing can go inside it.` };
+    const notPage = at ? null : pageRefusal((await this.readInfo())?.kind ?? "project", path, (await this.readInfo())?.index ?? "index.html");
+    if (notPage) return { ok: false, status: 409, error: notPage };
     const maxGb = await this.directory.config.get("max_project_gb");
     const used = (await this.bytesUsed(opened)) - (at == "file" ? await this.sizeOf(opened, path) : 0);
     if (used + size > maxGb * GB) return { ok: false, status: 413, error: `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).` };
@@ -1357,7 +1376,16 @@ export class Document {
       blobs,
       // An agent's write of bytes: as an upload is.
       putFile: (path, bytes, by) => this.putFile(path, bytes, by),
+      // One from before kinds is decided (below) before anyone reaches it.
+      kind: () => this.info?.kind ?? "project",
+      makeProject: () => this.makeProject(),
     });
+    // From before kinds: a project if it has more than one page, else a document. Kept, and told to the directory.
+    if (!info.kind && !info.disk?.only) {
+      const kind = kindOf(room.paths());
+      await this.saveInfo({ ...((await this.readInfo()) ?? info), kind });
+      this.deps.background(this.directory.setKind(info.id, kind).catch((e) => this.deps.log(`couldn't tell the directory ${info.id}'s kind: ${e}`)));
+    }
     // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).
     room.doc.on("afterTransaction", (tr: Y.Transaction) => {
       if (!touchesFiles(room.doc, tr)) return;

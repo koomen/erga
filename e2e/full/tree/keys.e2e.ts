@@ -10,7 +10,7 @@ test("clicking a folder opens it; ← closes it, → opens it, → again goes in
   await openTreeEditor(tab, doc.base);
   await openCard(page);
   await clickOn(page, row("blog"));
-  await expect.poll(async () => (await paths(page)).join()).toBe("index.html,blog,blog/drafts,blog/index.html,blog/spring-migration.html,about.html,contact.html");
+  await expect.poll(async () => (await paths(page)).join()).toBe("index.html,assets,blog,blog/drafts,blog/index.html,blog/spring-migration.html,fonts,about.html,contact.html,style.css");
   await press(page, "ArrowLeft");
   await expect.poll(() => paths(page)).not.toContain("blog/drafts");
   await press(page, "ArrowRight");
@@ -23,5 +23,5 @@ test("clicking a folder opens it; ← closes it, → opens it, → again goes in
   await press(page, "Home");
   await expect.poll(() => focused(page)).toBe("index.html");
   await press(page, "End");
-  await expect.poll(() => focused(page)).toBe("contact.html");
+  await expect.poll(() => focused(page)).toBe("style.css");
 });

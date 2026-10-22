@@ -397,7 +397,7 @@ type TreeModule = { mountTree: typeof mountTree };
   });
   const keptKey = () => `erga:docs-tree:${docName!.id}`;
   const kept = () => { try { return JSON.parse(sessionStorage.getItem(keptKey()) || "null") as Parameters<typeof mountTree>[1]["initial"]; } catch { return null; } };
-  const keep = (a: { entries: unknown[]; canEdit: boolean }) => { try { sessionStorage.setItem(keptKey(), JSON.stringify({ entries: a.entries, canEdit: a.canEdit })); } catch { /* private mode */ } };
+  const keep = (a: { entries: unknown[]; canEdit: boolean; kind: string }) => { try { sessionStorage.setItem(keptKey(), JSON.stringify({ entries: a.entries, canEdit: a.canEdit, kind: a.kind })); } catch { /* private mode */ } };
   /** The tree, mounted (closed or open) once its script is in: what opening it waits for, if anything. */
   let treeReady: Promise<TreeHandle> | null = null;
   const slot = $("pages-tree");

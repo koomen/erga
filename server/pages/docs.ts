@@ -36,9 +36,13 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
     const when = new Date(d.modified).toISOString();
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
+    // A project's row opens to its pages (the chevron); a document has one page, so its row has none (one from
+    // before kinds that hasn't opened since has it, as before).
+    const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
+      : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button>`;
     // The whole row opens the document (the link stretches over it); its buttons sit on top.
     return `  <li>
-    <div class="name"><button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button><a class="doc" href="${esc(withEdit(link(`/${d.owner}/${d.slug}`, session)))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
+    <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(`/${d.owner}/${d.slug}`, session)))}"><span class="title">${esc(d.title)}</span></a>${d.kind == "project" ? `<span class="note kind" title="A folder of pages, each with its own address">Project</span>` : ""}${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" data-tip="${remove}">${ICON.delete}</button></form>` : ""}</div>
@@ -63,6 +67,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   .twist svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
   .twist:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
   .twist[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .twist.none, .twist.none:hover { background: none; cursor: default; }
   .twist:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
   .labels span:first-child { padding-left: 22px; }
   ol.rows > li.sub { display: block; padding: 0 0 10px 18px; }
@@ -239,7 +244,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   };
   const keptKey = (id) => "erga:docs-tree:" + id;
   const kept = (id) => { try { return JSON.parse(sessionStorage.getItem(keptKey(id)) || "null"); } catch { return null; } };
-  const keep = (id, answer) => { try { sessionStorage.setItem(keptKey(id), JSON.stringify({ entries: answer.entries, canEdit: answer.canEdit })); } catch {} };
+  const keep = (id, answer) => { try { sessionStorage.setItem(keptKey(id), JSON.stringify({ entries: answer.entries, canEdit: answer.canEdit, kind: answer.kind })); } catch {} };
   const openKey = "erga:docs-open";
   const opened = new Set((() => { try { return JSON.parse(sessionStorage.getItem(openKey) || "[]"); } catch { return []; } })());
   const saveOpened = () => { try { sessionStorage.setItem(openKey, JSON.stringify([...opened])); } catch {} };

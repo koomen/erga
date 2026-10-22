@@ -29,8 +29,8 @@ const viewEl = main.querySelector<HTMLElement>(".view-pane")!;
 const dropEl = main.querySelector<HTMLElement>(".drop")!;
 
 let listing: Listing = { files: [], folders: [], index: "index.html", canEdit: meta("erga-can-edit") == "1" };
-/** The selected file or folder ("" is the top). */
-let selected = "";
+/** The selected file or folder ("" is the top): at first, the one the address names (?files=<path>, a link from a project's page tree). */
+let selected = new URLSearchParams(location.search).get("files") ?? "";
 const collapsed = new Set<string>();
 /** Something is being named or confirmed here: a change from elsewhere waits for it. */
 let busy = false;
