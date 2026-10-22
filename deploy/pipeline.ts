@@ -537,6 +537,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   /** The Worker's upload: its modules, and its metadata. */
   const uploadWorker = async (rel: Release, assetsJwt: string) => {
     // Whether the Worker was there: the account step's answer, kept in the carry (it may have run in an earlier call, before the build).
+    await ensureBuckets(cf, acc, rel, target);
     const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing: !!carry.existing });
     const form = new FormData();
     form.set("metadata", JSON.stringify(metadata));
@@ -828,6 +829,8 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "service" && b.name && target.services?.[name]) bindings.push(serviceBinding(name, target.services[name]));
     // Erga's own source: only on a target that names the namespace; elsewhere left out.
     else if (b.type == "artifacts") { if (target.artifacts) bindings.push({ type: "artifacts", name, namespace: target.artifacts }); }
+    // A bucket of the target's own (documents' files: FILES), made before the upload if it isn't there (ensureBuckets).
+    else if (b.type == "r2") bindings.push({ type: "r2_bucket", name, bucket_name: bucketName(target, name) });
     else throw new DeployError(`This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`);
   }
   // Settings and secrets the build doesn't declare (the version, the account, the branch deploys' own secrets), and services.
@@ -862,6 +865,33 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     ...(Object.keys(exports).length ? { exports } : {}),
     tags: [WORKER_TAG],
   };
+}
+
+/**
+ * The R2 bucket a target binds as `binding`: one of its own, named after its
+ * Worker (FILES on erga is erga-files, on erga-staging erga-staging-files),
+ * so no two targets share one.
+ */
+export const bucketName = (target: Pick<Target, "workerName">, binding: string) => `${target.workerName}-${binding.toLowerCase().replace(/_/g, "-")}`;
+
+/**
+ * Makes each R2 bucket the release binds that the target's account doesn't
+ * have yet. A credential that may not read the account's buckets (the
+ * control Worker's grant has no R2 scope) goes on: the buckets of Erga's own
+ * targets are made once, by hand, and the upload says in Cloudflare's words
+ * if one is missing.
+ */
+async function ensureBuckets(cf: Cloudflare, acc: string, release: Release, target: Target): Promise<void> {
+  for (const [name, b] of Object.entries(release.worker.env)) {
+    if (b.type != "r2") continue;
+    const bucket = bucketName(target, name);
+    const found = await cf.call<{ buckets?: { name: string }[] }>("GET", `${acc}/r2/buckets?name_contains=${encodeURIComponent(bucket)}`, `look for the R2 bucket ${bucket}`).catch((e) => {
+      if (e instanceof DeployError && (e.status == 403 || e.status == 401)) return "not allowed" as const;
+      throw e;
+    });
+    if (found == "not allowed" || found?.buckets?.some((x) => x.name == bucket)) continue;
+    await cf.call("POST", `${acc}/r2/buckets`, `make the R2 bucket ${bucket} (documents' files)`, { name: bucket });
+  }
 }
 
 /** A service binding's metadata: the Worker, and its entrypoint when it isn't the default export. */

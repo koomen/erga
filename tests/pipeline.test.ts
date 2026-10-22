@@ -23,7 +23,7 @@ import { artifactsNamespace, packRelease } from "../control/builder/build";
 import { handle as builderServer } from "../control/builder/server";
 import { containerBuilder, ndjsonLines } from "../control/builder/client";
 import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../control/builder/cache";
-import { ALL_STEPS, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release, type Target } from "../deploy/pipeline";
+import { ALL_STEPS, bucketName, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release, type Target } from "../deploy/pipeline";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock-cloudflare";
 import { memoryBlobs, ReleaseStore, storeBuilder } from "../deploy/releases";
 import { installFleet } from "../deploy/fleet";
@@ -1584,6 +1584,22 @@ describe("the builder fetches only the commit", () => {
       expect(older.head).toBe(commits[0]);
       expect(older.log).toContain(`staging has moved on from ${commits[0].slice(0, 12)}: fetching its history`);
     } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+describe("documents' files: an R2 bucket of each target's own", () => {
+  test("the pipeline makes the bucket a release binds, once, and binds it by the target's Worker's name", async () => {
+    const rel: Release = { ...release, worker: { ...release.worker, env: { ...release.worker.env, FILES: { type: "r2", name: "erga-files" } } } };
+    const mock = mockCloudflare({ fleet: true });
+    await deployTo(staging({ secrets: stagingSecrets }), mock, rel);
+    expect(mock.state.buckets).toContain("erga-staging-files");
+    expect(bindingsOf(mock.state, "erga-staging").FILES).toEqual({ type: "r2_bucket", name: "FILES", bucket_name: "erga-staging-files" });
+    // Again: the bucket is there, so none is made.
+    const made = () => mock.state.calls.filter((c) => c.startsWith("POST ") && c.endsWith("/r2/buckets")).length;
+    const before = made();
+    await deployTo(staging({ secrets: stagingSecrets }), mock, rel);
+    expect(made()).toBe(before);
+    expect(bucketName({ workerName: "erga" }, "FILES")).toBe("erga-files");
   });
 });
 
