@@ -181,7 +181,7 @@ export function mockCloudflare(opts: {
     account: { id: ACCOUNT_ID, name: "Ada's account" },
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
-    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], repos: opts.fleet ? ["erga"] : [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
+    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], repos: opts.fleet ? ["erga"] : [], buckets: opts.fleet ? ["erga-releases"] : [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
     secrets: {}, docs: {}, versions: {}, kept: {}, deployments: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} }, refreshTokens: [], oauthGrants: 0,
   };
   /** Tokens' values, by token id (never in `state`). */
@@ -419,6 +419,7 @@ export function mockCloudflare(opts: {
           if ((b.type == "plain_text" || b.type == "secret_text") && typeof b.text != "string") return fail(400, 10021, `binding ${b.name} needs text`);
           if (b.type == "service" && !state.scripts[b.service]) return fail(400, 10143, `service binding ${b.name}: no Worker ${b.service}`);
           if (b.type == "artifacts" && (!opts.fleet || b.namespace != "erga")) return fail(400, 10021, `binding ${b.name}: no Artifacts namespace ${b.namespace}`);
+          if (b.type == "r2_bucket" && !(state.buckets ?? []).includes(b.bucket_name)) return fail(400, 10085, `binding ${b.name}: no R2 bucket ${b.bucket_name}`);
         }
         // Secrets: those in this upload, and the last version's when keep_bindings says so (as the real API does).
         const kept = (meta.keep_bindings ?? []).includes("secret_text") ? { ...(state.secrets[r[1]] ?? {}) } : {};
