@@ -8,6 +8,7 @@
 // is from (the person the front door vouched for), and the WebSockets, which
 // it accepts its own way and hands to `room.connect`, `addTab` and `hello`.
 //
+//   GET  /api/files          anyone who may view: every file (its kind, size and time) and the folders: the files view
 //   PUT  /api/files/<path>   editors: one file, its bytes the body (any kind, any size up to the limits: a text file is
 //                            text, anything else a blob in R2), replacing one at that path (document.ts, upload)
 
@@ -88,7 +89,7 @@ export interface HostOptions {
 }
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
-interface Tab { user: string; send: (msg: unknown) => void }
+interface Tab { user: string; send: (msg: unknown) => void; watch?: boolean }
 
 /** A request's path inside the folder, or null if it would leave it (or is ignored). */
 export function cleanRel(raw: string | undefined): string | null {
@@ -169,7 +170,9 @@ export function makeHost(opts: HostOptions) {
     ? agent().catch((e: unknown) => ({ missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment` }))
     : Promise.resolve(agent);
   const tabs = new Set<Tab>();
-  const sendTo = (user: string, msg: unknown) => { for (const t of tabs) if (t.user == user) t.send(msg); };
+  /** A person's own tabs (an editor's: not a files view, which only watches the tree). */
+  const own = (user: string) => [...tabs].filter((t) => t.user == user && !t.watch);
+  const sendTo = (user: string, msg: unknown) => { for (const t of own(user)) t.send(msg); };
   /** Every open tab, whoever's. */
   const sendAll = (msg: unknown) => { for (const t of tabs) t.send(msg); };
   // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
@@ -205,7 +208,7 @@ export function makeHost(opts: HostOptions) {
   // control off there) loses to one that could.
   const views = new Map<string, (r: ViewResult) => void>();
   const view = (user: string) => (req: ViewRequest): Promise<ViewResult> => {
-    const mine = [...tabs].filter((t) => t.user == user).length;
+    const mine = own(user).length;
     if (!mine) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
     const id = crypto.randomUUID();
     return new Promise((resolve) => {
@@ -242,7 +245,7 @@ export function makeHost(opts: HostOptions) {
     const name = await namingAs(user)?.get().catch(() => undefined);
     const rest = pageAddress(file);
     const at = `${name?.address ?? "/<owner>/<slug>"}${rest ? `/${rest}` : ""}`;
-    const n = [...tabs].filter((t) => t.user == user.id).length;
+    const n = own(user.id).length;
     if (!n) return { path: file, tabs: 0, message: `${user.name} has no editor open on this document, so nothing was opened. ${file} is at ${at} (its editor at ${at}?edit): give them that link if they should see it.` };
     sendTo(user.id, { type: "open", path: file });
     return { path: file, tabs: n, message: `Opened ${file} (${at}) in ${user.name}'s editor${n > 1 ? `, in all ${n} of their tabs` : ""}.` };
@@ -420,6 +423,19 @@ export function makeHost(opts: HostOptions) {
       const hello = yield* Effect.promise(() => helloFor(opts.personOf(req), opts.mayPublish?.(req) ?? true));
       return HttpServerResponse.uint8Array(encodeStart(hello, Y.encodeStateAsUpdate(room.doc)), { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store" } });
     })),
+    // Every file, with its kind (text, or a file kept whole: a blob), its size and its time, and the folders: the files
+    // view's list (client/files.ts).
+    HttpRouter.route("GET", "/api/files", Effect.gen(function* () {
+      const req = yield* HttpServerRequest.HttpServerRequest;
+      const stats = files.stats ? yield* files.stats : new Map<string, { size?: number; at?: number; hash?: string }>();
+      const encoder = new TextEncoder();
+      const list = room.paths().map((path) => {
+        const text = room.text(path), s = stats.get(path);
+        return { path, kind: text != null ? "text" : "file", size: text != null ? encoder.encode(text).length : s?.size ?? null, at: s?.at ?? null, type: typeOf(path).split(";")[0] };
+      });
+      const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
+      return yield* HttpServerResponse.json({ files: list, folders: room.folderPaths(), index: doc.path, canEdit }, { headers: { "Cache-Control": "no-store" } });
+    })),
     // The document's file tree: its pages, other files and folders.
     HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
@@ -509,9 +525,9 @@ export function makeHost(opts: HostOptions) {
       tabs.clear();
       await web.dispose();
     },
-    /** A tab joins its person's event channel; returns the leave function. */
-    addTab: (user: string, send: (msg: unknown) => void) => {
-      const tab: Tab = { user, send };
+    /** A tab joins its person's event channel (`watch`: a files view, which hears only what every tab does); returns the leave function. */
+    addTab: (user: string, send: (msg: unknown) => void, watch = false) => {
+      const tab: Tab = { user, send, watch };
       tabs.add(tab);
       return () => { tabs.delete(tab); };
     },

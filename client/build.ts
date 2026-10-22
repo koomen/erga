@@ -11,6 +11,7 @@
 //                        from here (one address for every document, so one copy in the browser's cache)
 //     settings-<h>.js    document settings (settings.ts), imported when the gear is reached for
 //     pages-tree-<h>.js  a document's pages (pages-tree.ts), imported when someone opens the tree
+//     files-<h>.js       the files view (files.ts), on /<owner>/<slug>?files only
 //     admin-agent-<h>.js, admin-share-<h>.js, admin-nav-<h>.js   the admin pages' panel, Share and navigation
 //     live-<h>.js        open pages across a redeploy (live.ts), on every page of the site's own
 //     chunk-<h>.js       code two of them share, or that one of them imports only when it needs it (the source
@@ -44,6 +45,7 @@ export const ENTRIES: Record<string, string> = {
   "frame.js": "client/frame.ts",
   "settings.js": "client/settings.ts",
   "pages-tree.js": "client/pages-tree.ts",
+  "files.js": "client/files.ts",
   "admin-agent.js": "client/admin-agent.ts",
   "admin-share.js": "client/admin-share.ts",
   "admin-nav.js": "client/admin-nav.ts",

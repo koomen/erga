@@ -85,6 +85,8 @@ export class FileStore extends Context.Service<FileStore, {
   readonly putBlob?: (path: string, ref: BlobRef, bytes?: Uint8Array) => Effect.Effect<void, StoreError>;
   /** Copies a file to another path, a blob by its ref (no bytes read); false if there's no such file. */
   readonly copy?: (from: string, to: string) => Effect.Effect<boolean, StoreError>;
+  /** What storage knows of its files beyond their bytes: a blob's size, hash and time, a text file's last write. */
+  readonly stats?: Effect.Effect<Map<string, { size?: number; at?: number; hash?: string }>, StoreError>;
 }>()("erga/FileStore") {}
 
 /** What a room saved: its history (a snapshot, then the updates after it, in order). */

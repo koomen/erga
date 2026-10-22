@@ -30,7 +30,7 @@ import { PING, PONG } from "../shared/room-socket.ts";
  * What a socket is, kept with it: read-only or not; `epoch`, the history the tab holds, once it has one; `events`,
  * whether it hears its person's events (and the document's details as it joins: Document.joinRoom).
  */
-export type Tab = { id: string; readOnly: boolean; epoch: string | null; person: Person; events: boolean };
+export type Tab = { id: string; readOnly: boolean; epoch: string | null; person: Person; events: boolean; watch?: boolean };
 
 export interface TabSocket {
   send(message: string | Uint8Array): void;
@@ -56,8 +56,9 @@ export class Tabs<S extends TabSocket> {
   join(socket: S, opened: Opened, tab = this.o.tabOf(socket)): boolean {
     if (!tab || this.joined.has(tab.id)) return true;
     const send = (m: string | Uint8Array) => { try { socket.send(m); } catch { /* already closed */ } };
-    const joined = this.o.document().joinRoom(opened, { epoch: tab.epoch, readOnly: tab.readOnly, send, events: tab.events ? tab.person : null });
+    const joined = this.o.document().joinRoom(opened, { epoch: tab.epoch, readOnly: tab.readOnly, send, events: tab.events ? tab.person : null, watch: tab.watch });
     if (!joined) return false;
+    if (tab.watch) { this.joined.set(tab.id, { receive: joined.receive, leave: joined.left }); return true; }
     // From now on it holds this history: after a sleep, it may only join this epoch again.
     if (tab.epoch != opened.room.epoch) this.o.keep(socket, { ...tab, epoch: opened.room.epoch });
     this.joined.set(tab.id, { receive: joined.receive, leave: joined.left });
@@ -81,6 +82,8 @@ export class Tabs<S extends TabSocket> {
     const tab = this.o.tabOf(socket);
     if (!tab) return;
     if (typeof data == "string") { if (data == PING) { try { socket.send(PONG); } catch { /* gone */ } } return; }
+    // A files view only listens.
+    if (tab.watch) return;
     const document = this.o.document();
     let joined = this.joined.get(tab.id);
     if (!joined) {
