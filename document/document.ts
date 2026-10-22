@@ -57,7 +57,7 @@ import { describeChange, fallbackDescription, publicVersion, versionNumber, Vers
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot.ts";
 import { parentsOf } from "./pages.ts";
 import type { AgentConfig } from "../agents/models.ts";
-import type { ChatStore } from "../agents/checkpoint.ts";
+import { withBlobs, type ChatStore } from "../agents/checkpoint.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -1147,62 +1147,94 @@ export class Document {
     if (!path) return fail(400, "Name the file in the address, PUT /api/files/<path>: a path inside the document, with no \"..\" and no part that starts with a dot.");
     const opened = await this.room();
     if (!opened) { this.open = null; return fail(404, "There's no such document."); }
-    const info = (await this.readInfo())!;
     const length = request.headers.get("content-length");
     const size = Number(length);
     if (length == null || !Number.isInteger(size) || size < 0) return fail(411, "Send the file's size in bytes as Content-Length.");
-    const maxMb = await this.directory.config.get("max_file_mb");
-    if (size > maxMb * MB) return fail(413, `${path} is ${megabytes(size)}: a file can have at most ${maxMb} MB here (an admin sets it: max_file_mb).`);
-    const room = opened.room;
-    const at = room.exists(path);
-    if (at == "folder") return fail(409, `There's a folder at ${path}: a file can't take its place.`);
-    const inFile = parentsOf(path).find((d) => room.exists(d) == "file");
-    if (inFile) return fail(409, `${inFile} is a file, so nothing can go inside it.`);
-    const maxGb = await this.directory.config.get("max_project_gb");
-    const used = (await this.bytesUsed(opened)) - (at == "file" ? await this.sizeOf(opened, path) : 0);
-    if (used + size > maxGb * GB) return fail(413, `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).`);
+    const check = await this.mayAdd(opened, path, size);
+    if (!check.ok) return fail(check.status, check.error);
+    const info = (await this.readInfo())!;
     const blobs = info.disk ? null : this.deps.blobs ?? null;
     const person = personOf(request.headers);
     const by = byLine(person.id, request.headers.get("x-erga-agent") ? viaOf(request.headers.get("x-erga-via") ?? undefined) : null);
     // Small files (and every file, without a blob store) come whole: a text may be one, and a small blob stays in the object too.
-    let bytes: Uint8Array | null = null;
-    if (!blobs || size <= Math.max(TEXT_MAX, OBJECT_MAX)) {
-      bytes = new Uint8Array(await request.arrayBuffer());
+    const given = request.headers.get("x-erga-sha256")?.trim().toLowerCase() ?? "";
+    if (!blobs || size <= Math.max(TEXT_MAX, OBJECT_MAX) || !/^[0-9a-f]{64}$/.test(given)) {
+      if (blobs && size > BUFFER_MAX) return fail(400, `${path} is ${megabytes(size)}: send its sha-256 (hex) as x-erga-sha256, so a file over ${BUFFER_MAX / MB} MB can stream.`);
+      const bytes = new Uint8Array(await request.arrayBuffer());
       if (bytes.length != size) return fail(400, `The body had ${bytes.length} bytes, not the ${size} of its Content-Length.`);
+      const r = await this.addBytes(opened, path, bytes, by);
+      return r.ok ? json({ ok: true, path, kind: r.kind, size, ...(r.hash ? { hash: r.hash } : {}), replaced: check.replaced }) : fail(r.status, r.error);
     }
+    if (path == info.index) return fail(409, `${path} is the document's page, which is text: it can't be replaced by a file that isn't.`);
+    // A big blob streams to the store, which checks the bytes against the hash: a wrong one stores nothing.
+    if (await blobs.head(given)) void request.body?.cancel().catch(() => {});
+    else {
+      try { await blobs.put(given, request.body ?? new Uint8Array(), size); } catch (e) {
+        return fail(400, `${path} wasn't stored: ${e instanceof Error ? e.message : String(e)}. Check its x-erga-sha256 and Content-Length.`);
+      }
+    }
+    const ref: BlobRef = { hash: given, size, at: Date.now() };
+    this.publisher = by;
+    try { await Effect.runPromise(opened.room.putBlob(path, ref)); } finally { this.publisher = null; }
+    return json({ ok: true, path, kind: "file", size, hash: ref.hash, replaced: check.replaced });
+  }
+
+  /**
+   * Whether a file of `size` bytes may be added at `path`: not over a
+   * folder, not inside a file, and within the limits an admin sets (one
+   * file, and the project with it); whether it replaces a file there.
+   */
+  private async mayAdd(opened: Opened, path: string, size: number): Promise<{ ok: true; replaced: boolean } | { ok: false; status: number; error: string }> {
+    const maxMb = await this.directory.config.get("max_file_mb");
+    if (size > maxMb * MB) return { ok: false, status: 413, error: `${path} is ${megabytes(size)}: a file can have at most ${maxMb} MB here (an admin sets it: max_file_mb).` };
+    const room = opened.room;
+    const at = room.exists(path);
+    if (at == "folder") return { ok: false, status: 409, error: `There's a folder at ${path}: a file can't take its place.` };
+    const inFile = parentsOf(path).find((d) => room.exists(d) == "file");
+    if (inFile) return { ok: false, status: 409, error: `${inFile} is a file, so nothing can go inside it.` };
+    const maxGb = await this.directory.config.get("max_project_gb");
+    const used = (await this.bytesUsed(opened)) - (at == "file" ? await this.sizeOf(opened, path) : 0);
+    if (used + size > maxGb * GB) return { ok: false, status: 413, error: `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).` };
+    return { ok: true, replaced: at == "file" };
+  }
+
+  /**
+   * A file's bytes, arriving whole (an upload, an agent's write of bytes), as
+   * `by`: its kind decided now (D5), text merged into the room as a publish
+   * is, anything else a blob.
+   */
+  private async addBytes(opened: Opened, path: string, bytes: Uint8Array, by: string): Promise<{ ok: true; kind: "text" | "file"; hash?: string } | { ok: false; status: number; error: string }> {
+    const info = (await this.readInfo())!;
+    const blobs = info.disk ? null : this.deps.blobs ?? null;
     let text: string | null = null;
-    if (bytes && isTextPath(path) && bytes.length <= TEXT_MAX) {
+    if (isTextPath(path) && bytes.length <= TEXT_MAX) {
       try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); } catch { /* not UTF-8: a blob */ }
     }
     if (text != null || !blobs) {
-      const r = await this.publish({ [path]: text ?? bytes! }, [], by);
-      if (r.refused.length) return fail(409, `Couldn't add ${path}: ${r.refused[0].why}.`);
-      return json({ ok: true, path, kind: text != null ? "text" : "file", size, replaced: at == "file" });
+      const r = await this.publish({ [path]: text ?? bytes }, [], by);
+      if (r.refused.length) return { ok: false, status: 409, error: `Couldn't add ${path}: ${r.refused[0].why}.` };
+      return { ok: true, kind: text != null ? "text" : "file" };
     }
-    if (path == info.index) return fail(409, `${path} is the document's page, which is text: it can't be replaced by a file that isn't.`);
-    let ref: BlobRef;
-    if (bytes) ref = await storeBlob(blobs, bytes);
-    else {
-      const given = request.headers.get("x-erga-sha256")?.trim().toLowerCase() ?? "";
-      if (!/^[0-9a-f]{64}$/.test(given)) {
-        if (size > BUFFER_MAX) return fail(400, `${path} is ${megabytes(size)}: send its sha-256 (hex) as x-erga-sha256, so a file over ${BUFFER_MAX / MB} MB can stream.`);
-        bytes = new Uint8Array(await request.arrayBuffer());
-        if (bytes.length != size) return fail(400, `The body had ${bytes.length} bytes, not the ${size} of its Content-Length.`);
-        ref = await storeBlob(blobs, bytes);
-      } else {
-        // The store checks the bytes against the hash: a wrong one stores nothing.
-        if (await blobs.head(given)) void request.body?.cancel().catch(() => {});
-        else {
-          try { await blobs.put(given, request.body ?? new Uint8Array(), size); } catch (e) {
-            return fail(400, `${path} wasn't stored: ${e instanceof Error ? e.message : String(e)}. Check its x-erga-sha256 and Content-Length.`);
-          }
-        }
-        ref = { hash: given, size, at: Date.now() };
-      }
-    }
+    if (path == info.index) return { ok: false, status: 409, error: `${path} is the document's page, which is text: it can't be replaced by a file that isn't.` };
+    const ref = await storeBlob(blobs, bytes);
     this.publisher = by;
-    try { await Effect.runPromise(room.putBlob(path, ref, bytes ?? undefined)); } finally { this.publisher = null; }
-    return json({ ok: true, path, kind: "file", size, hash: ref.hash, replaced: at == "file" });
+    try { await Effect.runPromise(opened.room.putBlob(path, ref, bytes)); } finally { this.publisher = null; }
+    return { ok: true, kind: "file", hash: ref.hash };
+  }
+
+  /** An agent's write of bytes (document/host.ts, putFile): as an upload, within its limits; throws why not. */
+  private async putFile(path: string, bytes: Uint8Array, by: string): Promise<{ kind: "text" | "file"; replaced: boolean }> {
+    return this.hold(async () => {
+      const opened = await this.room();
+      if (!opened) { this.open = null; throw new Error("There's no such document."); }
+      const clean = cleanRel(path);
+      if (!clean) throw new Error(`${path} isn't a path a file can have here (no "..", and no part that starts with a dot).`);
+      const check = await this.mayAdd(opened, clean, bytes.length);
+      if (!check.ok) throw new Error(check.error);
+      const r = await this.addBytes(opened, clean, bytes, by);
+      if (!r.ok) throw new Error(r.error);
+      return { kind: r.kind, replaced: check.replaced };
+    });
   }
 
   /** How many bytes the project's files have together: each text as it is, each blob as its ref says (one of storage's lists). */
@@ -1319,8 +1351,12 @@ export class Document {
       },
       // A new page in its file tree starts as a new document does.
       newPage: this.deps.pageTemplate,
-      chats: this.deps.chats && ((person) => this.deps.chats!(person, info.id)),
+      // (Its big pictures and PDFs in the blob store, by hash: agents/checkpoint.ts, withBlobs.)
+      chats: this.deps.chats && ((person) => (blobs ? withBlobs(this.deps.chats!(person, info.id), blobs) : this.deps.chats!(person, info.id))),
       chatMeta: { doc: info.id },
+      blobs,
+      // An agent's write of bytes: as an upload is.
+      putFile: (path, bytes, by) => this.putFile(path, bytes, by),
     });
     // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).
     room.doc.on("afterTransaction", (tr: Y.Transaction) => {

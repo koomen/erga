@@ -294,3 +294,48 @@ function toolResult(id: string, name: string, result: unknown, isError: boolean)
   const r = (result ?? {}) as { content?: ToolResultMessage["content"]; details?: unknown };
   return { role: "toolResult", toolCallId: id, toolName: name, content: r.content ?? [], details: r.details ?? {}, isError, timestamp: Date.now() };
 }
+
+// ---------------------------------------------------------------- big files out of the conversation
+
+/** A picture or a PDF in a message bigger than this (base64 characters) is kept in the blob store, by its hash, not in the conversation. */
+const KEEP_OUT = 200_000;
+const MARK = "erga-blob:";
+/** What the model hears in place of a picture or a PDF the blob store no longer has. */
+export const GONE = "[A picture or a PDF from earlier in this conversation: no longer kept.]";
+
+/**
+ * A conversation's store with its big pictures and PDFs (read's, view_page's)
+ * in the blob store, by their hash: a checkpoint carries the hash, and a load
+ * brings the bytes back. So a conversation that read a few PDFs stays small
+ * enough to save and load (a value to or from an object is at most 32 MiB).
+ */
+export function withBlobs(store: ChatStore, blobs: { head(hash: string): Promise<unknown>; put(hash: string, data: Uint8Array, size: number): Promise<void>; bytes(hash: string): Promise<Uint8Array | null> }): ChatStore {
+  type Block = { type?: string; data?: string; mimeType?: string };
+  const out = async (block: Block): Promise<Block> => {
+    if (block?.type != "image" || typeof block.data != "string" || block.data.length <= KEEP_OUT) return block;
+    const bytes = Uint8Array.from(atob(block.data), (c) => c.charCodeAt(0));
+    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (!(await blobs.head(hash))) await blobs.put(hash, bytes, bytes.length);
+    return { ...block, data: MARK + hash };
+  };
+  const back = async (block: Block): Promise<Block | { type: "text"; text: string }> => {
+    if (block?.type != "image" || typeof block.data != "string" || !block.data.startsWith(MARK)) return block;
+    const bytes = await blobs.bytes(block.data.slice(MARK.length)).catch(() => null);
+    if (!bytes) return { type: "text", text: GONE };
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return { ...block, data: btoa(s) };
+  };
+  const each = async (messages: AgentMessage[], f: (b: Block) => Promise<unknown>) => Promise.all(messages.map(async (m) => {
+    const content = (m as { content?: unknown }).content;
+    return Array.isArray(content) ? { ...m, content: await Promise.all(content.map((b) => f(b as Block))) } as AgentMessage : m;
+  }));
+  return {
+    load: async () => {
+      const s = await store.load();
+      return s && { ...s, messages: await each(s.messages, back), state: { ...s.state, queued: await each(s.state.queued, back) } };
+    },
+    save: async (change) => store.save({ ...change, messages: { ...change.messages, items: await each(change.messages.items, out) }, state: { ...change.state, queued: await each(change.state.queued, out) } }),
+    clear: () => store.clear(),
+  };
+}

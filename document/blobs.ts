@@ -34,6 +34,8 @@ export interface BlobStore {
   bytes(hash: string): Promise<Uint8Array | null>;
   /** Stores bytes under their hash: a stream must be `size` bytes long. Throws if the bytes aren't the hash's. */
   put(hash: string, data: Uint8Array | ReadableStream<Uint8Array>, size: number): Promise<void>;
+  /** What was worked out from a blob once, kept by a key that names the blob's hash (a PDF's text: "pdf-text/<hash>"). */
+  kept?: { get(key: string): Promise<string | null>; put(key: string, value: string): Promise<void> };
 }
 
 /**
@@ -62,6 +64,11 @@ export async function storeBlob(blobs: BlobStore, bytes: Uint8Array, at = Date.n
 /** Blobs in memory, for the tests and local tools. */
 export class MemoryBlobs implements BlobStore {
   readonly data = new Map<string, Uint8Array>();
+  readonly keptValues = new Map<string, string>();
+  readonly kept = {
+    get: async (key: string) => this.keptValues.get(key) ?? null,
+    put: async (key: string, value: string) => { this.keptValues.set(key, value); },
+  };
   async head(hash: string) {
     const b = this.data.get(hash);
     return b ? { size: b.length } : null;

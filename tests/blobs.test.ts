@@ -2,66 +2,12 @@
 // document on MemoryStorage with MemoryBlobs, uploaded to, served, versioned,
 // moved, restored and copied, and what a Worker from before blobs still finds.
 
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Document, type DocumentDeps } from "../document/document";
-import { BLOB_HEADER, INLINE_HEADER, MemoryBlobs, OBJECT_MAX, serveBlob, sha256 } from "../document/blobs";
-import { KEYS, MemoryStorage } from "../document/storage";
+import { BLOB_HEADER, OBJECT_MAX, sha256 } from "../document/blobs";
+import { KEYS } from "../document/storage";
+import { bytesOf, setup, sleep } from "./files-fixture";
 import { files } from "../document/content";
 import type { Room } from "../document/room";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
-
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
-function memory(): Sql {
-  const db = new Database(":memory:");
-  for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + f, "utf8"));
-  return {
-    all: async <T>(sql: string, ...params: Param[]) => db.query(sql).all(...(params as never[])) as T[],
-    run: async (sql: string, ...params: Param[]) => { db.query(sql).run(...(params as never[])); },
-    batch: async (statements) => { db.transaction(() => { for (const [sql, ...params] of statements) db.query(sql).run(...(params as never[])); })(); },
-  };
-}
-
-/** A document on memory with a blob store, and the Worker's way to serve what it answers. */
-async function setup(o: { blobs?: boolean } = {}) {
-  const dir = new Directory(memory(), { admins: ["ada"] });
-  const blobs = new MemoryBlobs();
-  const storage = new MemoryStorage();
-  const log: string[] = [];
-  const deps: DocumentDeps = {
-    storage, directory: dir,
-    tabs: { count: () => 0, closeAll: () => {} },
-    agentSettings: async () => ({ missing: "no key in the tests" }),
-    serverTools: async () => [],
-    takeDownSite: async () => null,
-    home: { forget: async () => {}, changed: async () => {} },
-    siteChanged: async () => {},
-    timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
-    background: (w) => { void w.catch(() => {}); },
-    log: (line) => log.push(line),
-    ...(o.blobs === false ? {} : { blobs }),
-  };
-  await dir.add({ id: "doc12345", owner: "ada", title: "Files", created: Date.now(), expires: null });
-  const doc = new Document(deps);
-  await doc.create("ada", "doc12345", { "index.html": "<h1>Files</h1>" }, "index.html", { expires: null, modified: Date.now() });
-  const as = (headers: Record<string, string> = {}) => ({ "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers });
-  /** A GET as the Worker makes it: a blob pointer becomes the blob's bytes. */
-  const get = async (path: string, headers: Record<string, string> = {}) => {
-    const request = new Request(`http://doc${path}`, { headers: as(headers) });
-    const answer = await doc.handle(request);
-    const inline = () => doc.handle(new Request(request, { headers: { ...as(headers), [INLINE_HEADER]: "1" } }));
-    return (await serveBlob(answer, request, deps.blobs ?? null, inline)) ?? answer;
-  };
-  const put = (path: string, body: Uint8Array | string, headers: Record<string, string> = {}) => {
-    const bytes = typeof body == "string" ? new TextEncoder().encode(body) : body;
-    return doc.handle(new Request(`http://doc/api/files/${path}`, { method: "PUT", body: bytes, headers: as({ "content-length": String(bytes.length), ...headers }) }));
-  };
-  return { doc, dir, blobs, storage, log, get, put, deps };
-}
-
-const bytesOf = (n: number, seed = 7) => Uint8Array.from({ length: n }, (_, i) => (i * seed + (i >> 8)) & 0xff);
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("an upload over 2 MB is a blob: only its ref in the object, served by hash with ranges, and in the versions by hash", async () => {
   const { doc, blobs, storage, get, put } = await setup();

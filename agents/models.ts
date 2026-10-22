@@ -85,12 +85,28 @@ export function patchPayload(settings: () => AgentConfig, current: () => ModelCh
     const p = payload as Record<string, unknown>;
     return {
       ...p,
+      messages: withDocuments(p.messages),
       max_tokens: 64_000,
       thinking: { type: "adaptive", display: "summarized" },
       output_config: { ...(p.output_config as object | undefined), effort: cfg.effort },
       ...(MODELS[current()].fast ? { speed: "fast" } : {}),
     };
   };
+}
+
+/**
+ * A PDF in a tool's result (read: an image's block with the PDF's type, as pi
+ * carries it) as the API takes it: a document.
+ */
+export function withDocuments(messages: unknown): unknown {
+  if (!Array.isArray(messages)) return messages;
+  const fix = (block: unknown): unknown => {
+    const b = block as { type?: string; source?: { type?: string; media_type?: string; data?: string }; content?: unknown };
+    if (b?.type == "image" && b.source?.media_type == "application/pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data: b.source.data } };
+    if (b?.type == "tool_result" && Array.isArray(b.content)) return { ...b, content: b.content.map(fix) };
+    return block;
+  };
+  return messages.map((m: { content?: unknown }) => (Array.isArray(m?.content) ? { ...m, content: m.content.map(fix) } : m));
 }
 
 /**
@@ -147,7 +163,7 @@ async function scriptStep(context: Context) {
 /** A tool result's image (view_page's screenshot), as a data URL for the panel. */
 export function resultImage(result: unknown): string | undefined {
   const r = result as { content?: { type: string; data?: string; mimeType?: string }[] } | null;
-  const img = r?.content?.find((c) => c.type == "image" && c.data);
+  const img = r?.content?.find((c) => c.type == "image" && c.data && (c.mimeType ?? "image/").startsWith("image/"));
   return img ? `data:${img.mimeType ?? "image/png"};base64,${img.data}` : undefined;
 }
 
