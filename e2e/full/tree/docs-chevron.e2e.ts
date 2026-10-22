@@ -19,9 +19,9 @@ const isClosed = (page: Page, id: string) =>
   expect.poll(async () => { const s = await state(page, id); return s.expanded == "false" && !s.turned && !s.shown; }).toBe(true);
 const twist = (page: Page, id: string) => clickOn(page, `button.twist[data-id="${id}"]`);
 
-/** A new document from the Page template: no other pages yet. */
+/** A new project from the Page template: no other pages yet (a document has one page, so no chevron). */
 async function empty(root: string) {
-  const made = (await fetch(`${root}/new?template=page`, { redirect: "manual" })).headers.get("location") ?? "";
+  const made = (await fetch(`${root}/new?template=page&kind=project`, { redirect: "manual" })).headers.get("location") ?? "";
   expect(made).toMatch(/[?&]edit=?$/);
   return ((await (await fetch(`${root}${made.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
 }
@@ -29,8 +29,8 @@ const hasRows = (s: State) => s.rows > 0;
 const nonePlaceholder = (s: State) => /No other pages yet\./.test(s.text) && /New page/.test(s.text) && /New folder/.test(s.text);
 
 for (const [what, make, ready] of [
-  ["a document with pages", async (_root: string) => (await multi(await servers.main())).id, hasRows],
-  ["a document with no other pages yet (No other pages yet., with New page and New folder)", empty, nonePlaceholder],
+  ["a project with pages", async (_root: string) => (await multi(await servers.main())).id, hasRows],
+  ["a project with no other pages yet (No other pages yet., with New page and New folder)", empty, nonePlaceholder],
 ] as const) {
   test(`${what}: the chevron opens and closes its pages, twice, and shows which`, async ({ tab }) => {
     const page = tab.page;

@@ -2,9 +2,9 @@
 // /docs/share and the share token do. The list's page is pages/docs.ts.
 
 import type { FileData } from "../../document/document.ts";
-import { titleOf } from "../../document/pages.ts";
+import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
 import { type DocRow, type Grant, ID, newDocId, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { type Listed, type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
 import { avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
 
@@ -22,11 +22,13 @@ export function templateFiles(platform: Platform, template: Template): { files: 
  * template's files (server/templates.ts; the first, a blank page, by default).
  * Null if there's nothing there to copy.
  */
-export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, FileData>; index: string } | null> {
+export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, FileData>; index: string; kind?: DocKind } | null> {
   if (!from) return templateFiles(platform, template ?? TEMPLATES[0]);
   const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
-  return platform.docs.snapshot(doc);
+  // A copy is the kind its original is (a project with one page stays a project).
+  const snap = await platform.docs.snapshot(doc);
+  return snap && (doc.kind ? { ...snap, kind: doc.kind } : snap);
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/templates.ts), or a copy of the front page's (?from=landing). */
@@ -48,6 +50,8 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   const start = await startingFiles(platform, from, whoOf(session), template);
   if (!start) return page("Nothing to copy", from == "landing" ? "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>." : "There's no document here you can copy. <a href=\"/new\">Make a blank document</a>.", 404);
   const files = start.files, index = start.index;
+  // ?kind=project: a project from the start (create_document's kind), else the kind it copies, else from its files.
+  const kind = params.get("kind") == "project" ? "project" as const : start.kind;
   // A test person makes (or reuses) a test document under the address of whoever minted their token.
   // Its address is its id, which never follows the title (the suite addresses it by id).
   if (session.test) {
@@ -55,7 +59,7 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
     const owner = session.test.by.toLowerCase();
     const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
-    if (!known) await makeDoc(platform, owner, wanted, files, { test: true, index });
+    if (!known) await makeDoc(platform, owner, wanted, files, { test: true, index, kind });
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}?edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
@@ -64,7 +68,7 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newDocId();
-    const made = await makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index });
+    const made = await makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index, kind });
     if (made) return new Response(null, { status: 302, headers: { Location: withEdit(link(`/${made.owner}/${made.slug}`, session)) } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
@@ -86,15 +90,17 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const index = opts.index ?? "index.html";
   const page = files[index];
   const pageText = typeof page == "string" ? page : page instanceof Uint8Array ? new TextDecoder().decode(page) : "";
+  // A project if asked, or if its files have more than one page (a published folder); else a document.
+  const kind = opts.kind ?? kindOf(Object.keys(files));
   const { doc, added } = await platform.directory.add({
-    id, owner,
+    id, owner, kind,
     ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),
     ...(opts.test ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
     created, expires, test: opts.test,
     ...(opts.published ? { modified: created } : {}),
   });
   if (!added) return null;
-  if (await platform.docs.create(doc, files, index, { test: opts.test, expires, ...(opts.published ? { modified: created } : {}) })) return doc;
+  if (await platform.docs.create(doc, files, index, { test: opts.test, expires, kind, ...(opts.published ? { modified: created } : {}) })) return doc;
   // A host by that name was there already (one whose row went): leave it, and try another id.
   await platform.directory.remove(id);
   return null;
@@ -106,6 +112,8 @@ export interface MakeOptions {
   unedited?: number;
   /** Its page (index.html if not given). */
   index?: string;
+  /** A document (one page) or a project (pages): from its files if not given (a project if they have more than one page). */
+  kind?: DocKind;
   /** A title (set: it won't follow the page's heading) and slug (set: it won't follow the title). */
   title?: string;
   slug?: string;
@@ -115,6 +123,24 @@ export interface MakeOptions {
 
 /** A new document's id: 8 letters and digits, none easily mistaken for another. */
 
+/** How long the list waits for documents from before kinds to say theirs (they say it once, for good). */
+const KINDS_WAIT_MS = 1500;
+
+/**
+ * Documents from before kinds, in a list: each opens (in the background, if it takes longer than the list may wait),
+ * which decides its kind from its pages and writes it to the directory. The list shows the ones known in time.
+ */
+async function decideKinds(platform: Platform, docs: Listed[]): Promise<void> {
+  const unknown = docs.filter((d) => !d.kind && d.path == null);
+  if (!unknown.length) return;
+  const work = Promise.all(unknown.map(async (d) => {
+    const paths = await platform.docs.paths({ id: d.id, owner: d.owner, test: false }).catch(() => null);
+    if (paths?.length) d.kind = kindOf(paths);
+  }));
+  platform.edge.background(work);
+  await Promise.race([work, new Promise((r) => setTimeout(r, KINDS_WAIT_MS))]);
+}
+
 /** /docs: the signed-in person's documents, most recently edited first. */
 export async function listDocs(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
@@ -122,6 +148,7 @@ export async function listDocs(platform: Platform, request: Request): Promise<Re
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
   const [docs, hours] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")]);
+  await decideKinds(platform, docs);
   return new Response(docsPage(session, docs, Date.now(), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 

@@ -46,6 +46,7 @@ import { ConfigError, ServerConfig } from "./settings.ts";
 import { NotAllowed, Users } from "./users.ts";
 import { Credentials } from "./api-keys.ts";
 import { CloudflareGrants, Sites } from "../sites/index.ts";
+import { isDocKind, type DocKind } from "../../document/pages.ts";
 
 
 /** What SQL a platform gives the directory (D1, bun:sqlite). Parameters are `?1`, `?2`... */
@@ -74,6 +75,8 @@ export interface DocRow {
   /** When it goes if nobody edits it; null once someone has. */
   expires: number | null;
   test: boolean;
+  /** A document (one page) or a project (pages); null for one from before kinds that hasn't opened since. */
+  kind: DocKind | null;
 }
 
 /** What a document is called, as the editor, its agents and /docs show it. */
@@ -167,15 +170,18 @@ export interface NewDoc {
   test?: boolean;
   /** A role for anyone signed in who has the link, from the start (local development's documents on disk). */
   everyone?: Grant;
+  /** A document (one page) or a project (pages); left for its object to decide as it opens, if not given. */
+  kind?: DocKind;
 }
 
 /** Where a request's document is: enough to reach its host (named by its id) and decide who may. None of it ever changes. */
 export interface Route { id: string; owner: string; test: boolean }
 
-interface Row { id: string; owner: string; slug: string; title: string; title_set: number; slug_set: number; created: number; modified: number | null; expires: number | null; test: number }
+interface Row { id: string; owner: string; slug: string; title: string; title_set: number; slug_set: number; created: number; modified: number | null; expires: number | null; test: number; kind?: string | null }
 const fromRow = (r: Row): DocRow => ({
   id: r.id, owner: r.owner, slug: r.slug, title: r.title, titleSet: !!r.title_set, slugSet: !!r.slug_set,
   created: Number(r.created), modified: r.modified == null ? null : Number(r.modified), expires: r.expires == null ? null : Number(r.expires), test: !!r.test,
+  kind: isDocKind(r.kind) ? r.kind : null,
 });
 const unique = (e: unknown) => /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(String((e as Error)?.message ?? e));
 
@@ -358,9 +364,9 @@ export class Directory {
       try {
         await this.sql.batch([
           ["DELETE FROM slug_history WHERE owner = ?1 AND slug = ?2", owner, slug],
-          [`INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
-            doc.id, owner, slug, title, doc.titleSet ? 1 : 0, doc.slugSet ? 1 : 0, doc.created, doc.modified ?? null, doc.expires ?? null, doc.test ? 1 : 0],
+          [`INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test, kind)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+            doc.id, owner, slug, title, doc.titleSet ? 1 : 0, doc.slugSet ? 1 : 0, doc.created, doc.modified ?? null, doc.expires ?? null, doc.test ? 1 : 0, doc.kind ?? null],
           ["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, 'owner', ?3, NULL)", doc.id, owner, Date.now()],
           ...(doc.everyone ? [["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)", doc.id, ANYONE, doc.everyone, Date.now(), owner] as Statement] : []),
         ]);
@@ -474,6 +480,11 @@ export class Directory {
   }
 
   /** When a document nobody has edited goes, now that it's been put off. */
+  /** Its kind, as its object says (it keeps the kind, and checks it): made a project, or decided as it opened. */
+  async setKind(id: string, kind: DocKind): Promise<void> {
+    await this.sql.run("UPDATE documents SET kind = ?2 WHERE id = ?1", id, kind);
+  }
+
   async setExpires(id: string, expires: number | null): Promise<void> {
     await this.sql.run("UPDATE documents SET expires = ?2 WHERE id = ?1", id, expires);
   }

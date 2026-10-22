@@ -48,7 +48,7 @@ import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type V
 import { CONSOLE_LEVELS, describeAct, describeConsole, describeEvents, describeNetwork, describeTab, parseSince, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
 import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../document/content";
 import { byLine, VIA } from "../shared/attribution";
-import { pageAddress, type TreeEntry, type TreeOp } from "../document/pages";
+import { pageAddress, pageRefusal, type DocKind, type TreeEntry, type TreeOp } from "../document/pages";
 import { joinLocal, type Room } from "../document/room";
 import type { Naming } from "../server/directory/index.ts";
 import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../document/versions";
@@ -206,7 +206,7 @@ const IMAGE_READ_MAX = 3_750_000;
 const WRITE_BYTES_MAX = 25_000_000;
 
 /** The tools that change the document: someone who may only view it (and their agent, and their token) has none of them. */
-export const CHANGES = new Set(["edit", "write", "mv", "rm", "mkdir", "new_page", "set_title", "restore_version"]);
+export const CHANGES = new Set(["edit", "write", "mv", "rm", "mkdir", "new_page", "make_project", "set_title", "restore_version"]);
 
 /** What the file tools reach beyond the shared text: every file's size, time and kind, a file's bytes, a PDF's text, and a write of bytes. */
 export interface FilesAccess {
@@ -704,6 +704,13 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
   ] as AgentTool[];
 }
 
+/** What the prompt says of the document's kind, as it is at this prompt (make_project changes it). */
+function kindLine(kind: DocKind | null, owner: string): string {
+  if (kind == "document") return `\n\nThis is a document: one page (its index.html) and any other files beside it. It can't have another page: a new .html file is refused. If ${owner} wants more pages, it must become a project first (make_project, when they ask or agree; it can't be undone).`;
+  if (kind == "project") return "\n\nThis is a project: a folder of pages, each .html file a page with its own address.";
+  return "";
+}
+
 /**
  * new_page, mkdir, mv and rm: the document's file tree, with the same powers
  * a person has in the editor's file tree (document/host.ts, runTreeOp, checks each).
@@ -751,6 +758,13 @@ function treeTools(tree: (op: TreeOp) => Promise<void>, open?: (path: string) =>
       parameters: Type.Object({ path: Type.String({ description: "Path of the file or folder" }) }),
       execute: async (_id, p: { path: string }) => { await tree({ op: "delete", path: p.path }); return text(`Deleted ${p.path}.`); },
     },
+    {
+      name: "make_project",
+      label: "Make a project",
+      description: "Make this document a project: a folder of pages, each with its own address, instead of one page with files beside it. Only a project can have more than one page (new_page, or a new .html file). It can't be undone. Do it only when the user asks for it, or agrees to it.",
+      parameters: Type.Object({}),
+      execute: async () => { await tree({ op: "make_project" }); return text("It's a project now: new_page makes more pages, each with its own address."); },
+    },
   ] as AgentTool[];
 }
 
@@ -766,7 +780,7 @@ function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Prom
     {
       name: "list_pages",
       label: "List pages",
-      description: "List the document's pages, as its users see them in the page tree: each page's file, title and address, by folder (folders end in /). Pages are the .html files; index.html is the home page. The other files (CSS, JS, images...) are shared assets, which users don't see in the tree: ls and find list those.",
+      description: "List the document's pages: each page's file, title and address, by folder (folders end in /). Pages are the .html files; index.html is the home page. The other files (CSS, JS, images, PDFs...) are counted here: ls and find list them.",
       parameters: Type.Object({}),
       execute: async () => {
         const t = await pages();
@@ -891,6 +905,8 @@ export interface SessionOptions {
   docName: string;
   /** A document that's a single file opened from disk: its path (the agent can't make other files). */
   only?: string;
+  /** A document (one page: no other page can be made) or a project (pages), now; a project if not given. */
+  kind?: () => DocKind;
   /** Whether the owner may edit (an agent acts with its user's permissions). */
   canEdit: () => boolean;
   /** Asks one of the owner's open tabs to render and capture the page. */
@@ -922,7 +938,7 @@ export interface SessionOptions {
   files?: FilesAccess;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", page_console: "reading the page's console", page_network: "reading the page's requests", page_events: "reading the page's events", page_inspect: "inspecting the live page", page_click: "clicking on the page", page_key: "pressing a key on the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", make_project: "making it a project", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", page_console: "reading the page's console", page_network: "reading the page's requests", page_events: "reading the page's events", page_inspect: "inspecting the live page", page_click: "clicking on the page", page_key: "pressing a key on the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { owner } = opts;
@@ -945,7 +961,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
-  const ws = new YjsWorkspace(doc, () => acting, opts.canEdit, origin, opts.only ?? null);
+  const ws = new YjsWorkspace(doc, () => acting, opts.canEdit, origin, opts.only ?? null, (path) => opts.kind ? pageRefusal(opts.kind(), path, opts.docName) : null);
   let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
 
   // The conversation as it was at its last checkpoint, if there is one (a reload, a restart).
@@ -1020,7 +1036,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const beyond = async () => (await opts.serverTools?.().catch((e: unknown) => { console.log(`server tools for ${owner.id}: ${e}`); return null; })) ?? [];
   let starting = false;
   // Someone who may only view: the prompt says so, and why the tools that change the document aren't there.
-  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, owner.name, opts.only != null, more.map((t) => t.name)) + (opts.canEdit() ? "" : `\n\n${owner.name} can only view this document, so you can't change it: you have only the tools that change nothing (read, ls, find, grep and the like). If they ask for a change, say so.`);
+  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, owner.name, opts.only != null, more.map((t) => t.name)) + kindLine(opts.only != null ? null : opts.kind?.() ?? null, owner.name) + (opts.canEdit() ? "" : `\n\n${owner.name} can only view this document, so you can't change it: you have only the tools that change nothing (read, ls, find, grep and the like). If they ask for a change, say so.`);
   /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
   let agent: PiAgent | null = null;
   /** The model's messages while it has no model side yet (the agent off): the stored ones, until a reset. */

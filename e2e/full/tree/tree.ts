@@ -6,14 +6,11 @@
 //
 // The fixture: index.html ("Field guide"), about.html ("About us"),
 // contact.html, blog/,
-// and files that aren't documents (style.css, assets/owl.svg,
-// client/fonts/field.woff2), which the tree never shows.
+// and files that aren't pages (style.css, assets/owl.svg, fonts/field.woff2).
+// It has several pages, so it's a project: its tree shows them all.
 
 import type { Page } from "playwright-core";
 import { expect, settle, until, type Server, type Tab } from "../../fixtures";
-
-/** What a person never sees in the tree: a document's stylesheets, scripts, fonts, images and data, and folders of only those. */
-export const NOT_DOCUMENTS = /\.(css|js|mjs|json|svg|png|jpe?g|gif|webp|woff2?|ttf|otf|txt|csv)$|^(assets|fonts)$/i;
 
 /** Evaluates an expression in the tab, its value as any (for expect.poll, whose matchers need a type). */
 export const js = (page: Page, expr: string) => page.evaluate(expr) as Promise<any>;

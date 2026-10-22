@@ -14,6 +14,7 @@ import { type Directory, type Role, type Route, type Who } from "./directory/ind
 import type { SiteOps } from "./sites/index.ts";
 import type { RestoreResult, VersionsState } from "../document/versions.ts";
 import type { FileData, ViewAnswer } from "../document/document.ts";
+import type { DocKind } from "../document/pages.ts";
 import { VIA } from "../shared/attribution.ts";
 
 /** Who's signed in. */
@@ -55,6 +56,8 @@ export interface Listed {
   role: Role;
   /** How many it's shared with besides its owner (anyone with the link counts as one). */
   shared?: number;
+  /** A document (one page) or a project (pages); missing for one from before kinds that hasn't opened since. */
+  kind?: DocKind;
 }
 
 /** What the front door needs from the platform it runs on. */
@@ -165,7 +168,7 @@ export interface Platform {
      * template's files; false if it already has one. Unless someone edits
      * it, it goes at `expires`.
      */
-    create(doc: Route, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean>;
+    create(doc: Route, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }): Promise<boolean>;
     /**
      * Files arriving whole into an existing document (a publish): written,
      * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).

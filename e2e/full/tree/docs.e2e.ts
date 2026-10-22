@@ -1,7 +1,7 @@
 // The tree on Documents: each document's chevron opens its pages beneath its row ("Documents").
 import type { Page } from "playwright-core";
 import { expect, servers, test, until } from "../../fixtures";
-import { act, clickOn, clickToGo, menuItem, multi, NOT_DOCUMENTS, press, row, rows, type, type Doc, js } from "./tree";
+import { act, clickOn, clickToGo, menuItem, multi, press, row, rows, type, type Doc, js } from "./tree";
 
 await servers.main();
 
@@ -13,7 +13,7 @@ async function openDocs(page: Page, doc: Doc) {
   await until(() => page.evaluate(`document.querySelectorAll("#pages-${doc.id} .et-row[data-path]").length > 0`), 5000, "the document's pages show beneath it");
 }
 
-test("its pages start at the top level (the row above is the document), documents and their folders only, by their titles; the chevron says it's open", async ({ tab }) => {
+test("a project's pages start at the top level (the row above is the project), by their titles, its other files after them; the chevron says it's open", async ({ tab }) => {
   const page = tab.page;
   tab.strict = true;
   const doc = await multi(await servers.main());
@@ -21,9 +21,9 @@ test("its pages start at the top level (the row above is the document), document
   await doc.agentTool("write", { path: "owl-calls.html", content: "<!doctype html><title>Owl calls</title><h1>Owl calls</h1>" });
   await openDocs(page, doc);
   const r = await rows(page, `#pages-${doc.id}`);
-  expect(r[0].slice(0, 3)).toEqual(["blog", "blog", 1]);
+  // Folders first, then pages, then the other files (a project's tree shows them all).
+  expect(r.filter((x) => x[2] == 1).map((x) => x[0])).toEqual(["assets", "blog", "fonts", "about.html", "contact.html", "owl-calls.html", "style.css"]);
   expect(r.some((x) => x[0] == "index.html")).toBe(false);
-  expect(r.filter((x) => NOT_DOCUMENTS.test(x[0]))).toEqual([]);
   expect(r.find((x) => x[0] == "owl-calls.html")?.[1]).toBe("Owl calls");
   expect(await js(page, `document.querySelector('button.twist[data-id="${doc.id}"]').getAttribute("aria-expanded")`)).toBe("true");
 });

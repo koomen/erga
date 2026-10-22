@@ -35,6 +35,7 @@
 // ones are listed only for an admin's token.
 
 import type { FileData } from "../document/document.ts";
+import { isDocKind, type DocKind } from "../document/pages.ts";
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { CHANGES, documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
 import { type Action, type DocRow, ID, LOCKED, nameOf, newDocId, roleMay, type Route } from "./directory/index.ts";
@@ -100,7 +101,7 @@ export const TOOLS: ServerTool[] = [
     parameters: { type: "object", properties: {} },
     run: async (_args, { session, platform, origin }) => (await platform.docs.list(session.login)).map((d) => ({
       id: d.id, title: d.title, address: `/${d.owner}/${d.slug}`, url: `${origin}/${d.owner}/${d.slug}`,
-      modified: new Date(d.modified).toISOString(), ...(d.expires != null ? { expires: new Date(d.expires).toISOString() } : {}), ...(d.path != null ? { onDisk: d.path } : {}),
+      modified: new Date(d.modified).toISOString(), ...(d.kind ? { kind: d.kind } : {}), ...(d.expires != null ? { expires: new Date(d.expires).toISOString() } : {}), ...(d.path != null ? { onDisk: d.path } : {}),
     })),
   },
   {
@@ -116,6 +117,7 @@ export const TOOLS: ServerTool[] = [
         slug: str("Its address after /<owner>/ (letters, digits and dashes; else made from the title). Taken already, it gets -2, -3..."),
         template: { type: "string", enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"], description: "Without files: a blank page (blank or page, the default), another template, or a copy of the server's front page (landing)." },
         from: str("Without files: a document to copy instead (its address, URL or id). It copies the document as it is now."),
+        kind: { type: "string", enum: ["document", "project"], description: "document: one page and any files beside it; project: a folder of pages, each with its own address. Else the kind of the document copied, or from the files: a project if they have more than one page." },
       },
     },
     run: async (args, ctx) => {
@@ -125,6 +127,7 @@ export const TOOLS: ServerTool[] = [
       let files: Record<string, FileData> = decodeFiles(args.files);
       const published = Object.keys(files).length > 0;
       let index: string;
+      let startKind: DocKind | undefined;
       if (published) index = pageOf(files, args.index);
       else {
         const named = typeof args.template == "string" && args.template != "blank" ? args.template : null;
@@ -134,10 +137,11 @@ export const TOOLS: ServerTool[] = [
         const start = await startingFiles(platform, from, whoOf(session), template);
         if (!start) throw new ToolError(from == "landing" ? "This server has no front page (landing document) to copy." : "There's nothing there you can copy.", 404);
         ({ files, index } = start);
+        startKind = start.kind;
       }
       for (let tries = 0; tries < 5; tries++) {
         const doc = await makeDoc(platform, session.login.toLowerCase(), newDocId(), files, {
-          index, published, title: optString(args.title, "title"), slug: optString(args.slug, "slug"),
+          index, published, title: optString(args.title, "title"), slug: optString(args.slug, "slug"), kind: isDocKind(args.kind) ? args.kind : startKind,
         });
         if (doc) return { ...described(doc, ctx), page: index, files: Object.keys(files).sort(), ...(published || doc.expires == null ? {} : { expires: `${new Date(doc.expires).toISOString()}, unless someone edits it` }) };
       }

@@ -23,7 +23,7 @@ export type Entry = { path: string; type: string; title?: string };
 /** A tree's entries in short: folders end in /, files that aren't pages in *. */
 export const paths = (entries: Entry[] = []) => entries.map((e) => `${e.path}${e.type == "folder" ? "/" : e.type == "file" ? "*" : ""}`).join(" ");
 
-/** A new document of DEV_LOGIN's with just its home page and stylesheet (create_document), and its tree's API. */
+/** A new project of DEV_LOGIN's with just its home page and stylesheet (create_document), and its tree's API. */
 export async function site(server: Server, opts: { pages?: boolean } = {}) {
   const owner = await person(server, "tester");
   const token = await owner.token("Pages test");
@@ -34,7 +34,7 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
     const body = (await r.json()) as { ok: boolean; content?: { text?: string }[]; error?: string };
     return { status: r.status, ok: body.ok, text: body.content?.map((c) => c.text ?? "").join("\n") ?? body.error ?? "" };
   };
-  const made = await anyTool("create_document", { title: "Pages test", slug, files: {
+  const made = await anyTool("create_document", { title: "Pages test", slug, kind: "project", files: {
     "index.html": PAGE("Home", `<nav data-erga-noedit><a href="blog">Blog</a> · <a href="about.html">About</a></nav>\n<h1>Home</h1>\n<p>The first page of a document with several.</p>`),
     "style.css": "body { background: rgb(250, 246, 236); font-family: Georgia, serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; } nav a { margin-right: .5rem; }\n",
   } });
