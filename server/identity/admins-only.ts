@@ -24,7 +24,8 @@
 //   /api/sign-in/... with DEPLOY_HOOK_SECRET
 //                                   production's Authentication page reads staging's sign-in status, and sets staging's
 //                                   GitHub app: until staging has one, no admin can sign in there
-//   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN
+//   /api/snapshot/...               the deploy copying production's documents in, and staging reading a blob its copy
+//                                   lacks (/api/snapshot/blob/<sha-256>), both with SNAPSHOT_TOKEN
 //   /__erga/...                     local development only, behind the dev server's secret
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
