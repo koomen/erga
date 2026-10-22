@@ -20,7 +20,7 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
-import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "../editor-agent/session";
+import { CHANGES, MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type FilesAccess, type OpenResult, type PageTree } from "../editor-agent/session";
 import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type DocInfo, type Hello, type ModelState } from "./api";
 import type { DocName, Naming } from "../server/directory/index.ts";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
@@ -30,7 +30,8 @@ import { ignored, isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";
 import { encodeStart } from "../shared/room-socket";
-import { blobPointer, byteRange, INLINE_HEADER } from "./blobs";
+import { blobPointer, byteRange, INLINE_HEADER, sha256, type BlobStore } from "./blobs";
+import { pdfText } from "./pdf";
 import * as Y from "yjs";
 import type { VersionsAccess } from "../editor-agent/session";
 import type { ChatStore } from "../agents/checkpoint";
@@ -86,6 +87,10 @@ export interface HostOptions {
   readonly chats?: (person: { id: string; name: string }) => ChatStore;
   /** What a person's store keeps beside their conversation, for whoever wakes a run after a restart (the document's id). */
   readonly chatMeta?: Record<string, string>;
+  /** Where files kept whole are (their bytes, and what's worked out from them once: a PDF's text). */
+  readonly blobs?: BlobStore;
+  /** Adds or replaces a file from its bytes, as `by`, within the limits an upload has (document.ts); throws why not. */
+  readonly putFile?: (path: string, bytes: Uint8Array, by: string) => Promise<{ kind: "text" | "file"; replaced: boolean }>;
 }
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
@@ -251,6 +256,34 @@ export function makeHost(opts: HostOptions) {
     return { path: file, tabs: n, message: `Opened ${file} (${at}) in ${user.name}'s editor${n > 1 ? `, in all ${n} of their tabs` : ""}.` };
   };
 
+  /** Every file's kind, size and time: the files view's list and the agent's ls. */
+  const fileStats = async () => {
+    const stats = files.stats ? await Effect.runPromise(Effect.orElseSucceed(files.stats, () => new Map<string, { size?: number; at?: number; hash?: string }>())) : new Map<string, { size?: number; at?: number; hash?: string }>();
+    const encoder = new TextEncoder();
+    const out = new Map<string, { size: number | null; at: number | null; kind: "text" | "file"; type: string; hash?: string }>();
+    for (const path of room.paths()) {
+      const text = room.text(path), s = stats.get(path);
+      out.set(path, { kind: text != null ? "text" : "file", size: text != null ? encoder.encode(text).length : s?.size ?? null, at: s?.at ?? null, type: typeOf(path).split(";")[0], ...(s?.hash ? { hash: s.hash } : {}) });
+    }
+    return out;
+  };
+  /** What the agent's file tools reach beyond the shared text. */
+  const filesAccess: FilesAccess = {
+    stats: fileStats,
+    pdfText: async (path) => {
+      const ref = files.ref ? await Effect.runPromise(Effect.orElseSucceed(files.ref(path), () => null)) : null;
+      const read = () => Effect.runPromise(Effect.orElseSucceed(files.read(path), () => null));
+      // Kept by the PDF's hash: its blob's, or (a file the object keeps, from before blobs) its bytes'.
+      const bytes = ref ? null : await read();
+      const hash = ref?.hash ?? (bytes ? await sha256(bytes) : null);
+      return hash ? pdfText(hash, async () => bytes ?? (await read()), opts.blobs) : null;
+    },
+    writeBytes: async (path, bytes, by) => {
+      if (!opts.putFile) throw new Error("This document takes only text: write the file's text in content.");
+      return opts.putFile(path, bytes, by);
+    },
+  };
+
   const sessions = new Map<string, Promise<AgentSession>>();
   /**
    * A person's agent session, started the first time they open the panel. With
@@ -273,6 +306,7 @@ export function makeHost(opts: HostOptions) {
         open: openFor(user),
         store: opts.chats?.(user),
         meta: opts.chatMeta,
+        files: filesAccess,
       }));
       // Its events reach the person's tabs; then a run a restart cut off goes on (from its last checkpoint).
       s.then((session) => {
@@ -389,7 +423,11 @@ export function makeHost(opts: HostOptions) {
     .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
       const user = yield* Person;
       const s = yield* extSession;
-      if (!s.tools().some((t) => t.name == name)) return yield* new NoSuchTool({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.tools().map((t) => t.name).join(", ")}.` });
+      if (!s.tools().some((t) => t.name == name)) {
+        // One that changes the document, for someone who may only view it: it's there, but not theirs.
+        if (CHANGES.has(name)) return yield* new ToolFailed({ ok: false, error: `${user.name} can only view this document, so ${name} isn't one of the tools: they are ${s.tools().map((t) => t.name).join(", ")}.` });
+        return yield* new NoSuchTool({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.tools().map((t) => t.name).join(", ")}.` });
+      }
       const content = yield* Effect.tryPromise({ try: () => s.runTool(name, payload, user.via), catch: (e) => new ToolFailed({ ok: false, error: (e as Error).message }) });
       return { ok: true as const, content };
     })));
@@ -427,12 +465,7 @@ export function makeHost(opts: HostOptions) {
     // view's list (client/files.ts).
     HttpRouter.route("GET", "/api/files", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
-      const stats = files.stats ? yield* files.stats : new Map<string, { size?: number; at?: number; hash?: string }>();
-      const encoder = new TextEncoder();
-      const list = room.paths().map((path) => {
-        const text = room.text(path), s = stats.get(path);
-        return { path, kind: text != null ? "text" : "file", size: text != null ? encoder.encode(text).length : s?.size ?? null, at: s?.at ?? null, type: typeOf(path).split(";")[0] };
-      });
+      const list = [...(yield* Effect.promise(fileStats))].map(([path, s]) => ({ path, kind: s.kind, size: s.size, at: s.at, type: s.type }));
       const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
       return yield* HttpServerResponse.json({ files: list, folders: room.folderPaths(), index: doc.path, canEdit }, { headers: { "Cache-Control": "no-store" } });
     })),

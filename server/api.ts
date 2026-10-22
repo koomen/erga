@@ -36,7 +36,7 @@
 
 import type { FileData } from "../document/document.ts";
 import { validateToolArguments } from "@mariozechner/pi-ai";
-import { documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
+import { CHANGES, documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
 import { type Action, type DocRow, ID, LOCKED, nameOf, newDocId, roleMay, type Route } from "./directory/index.ts";
 import { appPage, crumbs, esc, fromElsewhere, ICON, page, safeNext, TIMES_SCRIPT } from "./pages/index.ts";
 import { forwarded, makeDoc, startingFiles } from "./documents/index.ts";
@@ -219,10 +219,11 @@ function documentTools(): ServerTool[] {
     const p = spec.parameters as ArgsSchema;
     return {
       name: spec.name,
-      description: `${spec.description} (In any document you may edit: name it with "document"; paths are relative to its folder.)`,
+      description: `${spec.description} (In any document you may ${CHANGES.has(spec.name) ? "edit" : "open"}: name it with "document"; paths are relative to its folder.)`,
       parameters: { ...p, type: "object", properties: { document: DOCUMENT_ARG, ...p.properties }, required: ["document", ...(p.required ?? [])] },
       run: async (args, ctx) => {
-        const doc = await resolve(ctx, args.document, "edit");
+        // A tool that changes nothing works in any document the person may open; the document's host refuses the rest to a viewer.
+        const doc = await resolve(ctx, args.document, CHANGES.has(spec.name) ? "edit" : "open");
         const { document: _, ...rest } = args;
         const r = await callDoc(ctx, doc, `/api/ext/tools/${encodeURIComponent(spec.name)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rest) });
         const body = (await r.json().catch(() => ({ ok: false, error: `The document answered ${r.status}.` }))) as { ok: boolean; content?: ToolContent[]; error?: string };
@@ -559,7 +560,9 @@ async function rpc(m: RpcMessage, ctx: ToolContext): Promise<object | null> {
       const name = String(m.params?.name ?? "");
       if (!allTools().some((t) => t.name == name)) return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${name}` } };
       try {
-        return ok({ content: await runTool(name, m.params?.arguments ?? {}, ctx) });
+        // A PDF (read's) as MCP carries a file: an embedded resource.
+        const content = (await runTool(name, m.params?.arguments ?? {}, ctx)).map((c) => (c.type == "document" ? { type: "resource", resource: { uri: `erga:${name}/document.pdf`, mimeType: c.mimeType, blob: c.data } } : c));
+        return ok({ content });
       } catch (e) {
         return ok({ content: [{ type: "text", text: e instanceof ToolError ? e.message : `The tool failed: ${(e as Error)?.message ?? e}` }], isError: true });
       }
@@ -950,7 +953,8 @@ arguments as JSON:
 
 The answer is \`{"ok": true, "content": [{"type": "text", "text": "..."}]}\` (the
 text is JSON for the server's own tools; a document tool may answer an image,
-\`{"type": "image", "mimeType": "image/png", "data": "<base64>"}\`). A failure is
+\`{"type": "image", "mimeType": "image/png", "data": "<base64>"}\`, or a PDF's pages,
+\`{"type": "document", "mimeType": "application/pdf", "data": "<base64>"}\`). A failure is
 \`{"ok": false, "error": "..."}\` with 400 (fix the call as the error says), 401
 (no token, or a revoked or expired one), 403 (not allowed, or outside the token's scope), 404 (no such tool or document)
 or 413 (too big).

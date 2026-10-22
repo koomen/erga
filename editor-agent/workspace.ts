@@ -75,7 +75,7 @@ export class YjsWorkspace implements Workspace {
   private text(path: string): Effect.Effect<Y.Text, WorkspaceError> {
     const t = files(this.doc).get(path);
     if (t) return Effect.succeed(t);
-    if (assets(this.doc).has(path)) return fail("binary", `${path} is a binary file; it can't be read or edited as text`);
+    if (assets(this.doc).has(path)) return fail("binary", `${path} is a file kept whole (not text), so it can't be edited: read shows it, and write's content_base64 replaces it.`);
     return fail("missing", `${path} doesn't exist`);
   }
 
@@ -168,7 +168,7 @@ export class YjsWorkspace implements Workspace {
     return Effect.gen(function* () {
       path = yield* cleanPath(path);
       yield* self.mayEdit();
-      if (assets(self.doc).has(path)) return yield* fail("binary", `${path} is a binary file; it can't be written as text`);
+      if (assets(self.doc).has(path)) return yield* fail("binary", `${path} is a file kept whole (not text): replace it with write's content_base64, or rm it first to make it a text file.`);
       if (self.only != null && path != self.only) return yield* fail("single", `This document is the single file ${self.only}: you can't make other files in it.`);
       return self.merge(path, content);
     });
