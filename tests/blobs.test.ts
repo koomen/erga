@@ -65,6 +65,7 @@ test("a text file arrives as text; a second upload replaces the first, and says 
   // A blob replaced by text becomes text: a file changes kind only when it's replaced whole.
   expect((await (await put("data.csv", "a,b\n1,2\n")).json())).toMatchObject({ kind: "text", replaced: true });
   expect(await (await get("/doc/data.csv")).text()).toBe("a,b\n1,2\n");
+  expect((await (await doc.handle(new Request("http://doc/api/files", { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) } }))).json()).files.find((f: { path: string }) => f.path == "data.csv").kind).toBe("text");
   expect(await doc.paths()).toEqual(["data.csv", "index.html", "notes.md"]);
 });
 
