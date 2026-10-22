@@ -20,7 +20,7 @@ function memory(): Sql {
 }
 
 /** A document on memory with a blob store, and the Worker's way to serve what it answers. */
-export async function setup(o: { blobs?: boolean } = {}) {
+export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
   const dir = new Directory(memory(), { admins: ["ada"] });
   const blobs = new MemoryBlobs();
   const storage = new MemoryStorage();
@@ -40,7 +40,8 @@ export async function setup(o: { blobs?: boolean } = {}) {
   };
   await dir.add({ id: "doc12345", owner: "ada", title: "Files", created: Date.now(), expires: null });
   const doc = new Document(deps);
-  await doc.create("ada", "doc12345", { "index.html": "<h1>Files</h1>" }, "index.html", { expires: null, modified: Date.now() });
+  // A test document's agent is the scripted one (no key needed).
+  await doc.create("ada", "doc12345", { "index.html": "<h1>Files</h1>" }, "index.html", { expires: null, modified: Date.now(), ...(o.test ? { test: true } : {}) });
   const as = (headers: Record<string, string> = {}) => ({ "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers });
   /** A GET as the Worker makes it: a blob pointer becomes the blob's bytes. */
   const get = async (path: string, headers: Record<string, string> = {}) => {

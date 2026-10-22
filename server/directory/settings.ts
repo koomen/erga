@@ -91,6 +91,11 @@ export const SETTINGS = {
     default: 5,
     parse: integer(1, 1000),
   }),
+  viewer_agent_turns: setting<number>({
+    description: "How many times a day someone who may only view a document may ask its agent, where its owner lets viewers ask (each turn uses this server's API key). 0: never.",
+    default: 20,
+    parse: integer(0, 1000),
+  }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
     default: "users",
