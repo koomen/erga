@@ -86,6 +86,11 @@ function when(at: number | null): string {
   return new Date(at).toLocaleDateString();
 }
 
+// The times say how long ago, so they move on with the clock.
+setInterval(() => {
+  for (const t of document.querySelectorAll<HTMLTimeElement>("time[datetime]")) t.textContent = when(Date.parse(t.dateTime));
+}, 15_000);
+
 function say(text: string, error = false): void {
   statusEl.textContent = text;
   statusEl.classList.toggle("error", error);
@@ -200,8 +205,8 @@ function show(path: string): void {
     return;
   }
   const url = pages + encodePath(f.path);
-  const about = [readableSize(f.size), f.type, f.at ? `changed ${when(f.at)}` : ""].filter(Boolean).join(" · ");
-  viewEl.innerHTML = `<div class="view-head"><h2 title="${esc(f.path)}">${esc(f.path)}</h2><span class="about">${esc(about)}</span><a href="${esc(url)}" target="_blank" rel="noopener">Open in a new tab</a></div><div class="view-body"></div>`;
+  const about = [readableSize(f.size), f.type].filter(Boolean).map(esc).join(" · ") + (f.at ? ` · changed <time datetime="${new Date(f.at).toISOString()}">${esc(when(f.at))}</time>` : "");
+  viewEl.innerHTML = `<div class="view-head"><h2 title="${esc(f.path)}">${esc(f.path)}</h2><span class="about">${about}</span><a href="${esc(url)}" target="_blank" rel="noopener">Open in a new tab</a></div><div class="view-body"></div>`;
   const body = viewEl.querySelector<HTMLElement>(".view-body")!;
   if (/^image\//.test(f.type)) {
     const img = document.createElement("img");
