@@ -45,15 +45,17 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow, type Naming, type Role, type Who } from "../server/directory/index.ts";
 import type { SiteRow } from "../server/sites/index.ts";
-import { cleanRel, docFile, makeHost } from "./host.ts";
+import { cleanRel, docFile, makeHost, typeOf } from "./host.ts";
+import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, Hello } from "./api.ts";
 import { resolvePage, titleOf } from "./pages.ts";
 import { digest, FileStore, Room, StateStore, type Connection } from "./room.ts";
-import { fileStoreOf, KEYS, kvOf, stateStoreOf, type Storage } from "./storage.ts";
-import { VIA } from "../shared/attribution.ts";
+import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, type Storage } from "./storage.ts";
+import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot.ts";
+import { parentsOf } from "./pages.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import type { ChatStore } from "../agents/checkpoint.ts";
 
@@ -122,10 +124,17 @@ export interface DocumentDeps {
   viewChanged?: (docId: string) => void;
   /** Where a person's conversation with this document's agent is kept (their own object, never the document's storage). */
   chats?: (person: Person, docId: string) => ChatStore;
+  /** Where its files that aren't text are kept (R2 on Cloudflare: document/blobs.ts); without it, every file is in its storage, as before blobs. */
+  blobs?: BlobStore;
 }
 
-const { file: FILE, meta: INFO } = KEYS;
+/** A file as it arrives whole or is copied: text, bytes, or a blob already in the blob store (its ref). */
+export type FileData = string | Uint8Array | BlobRef;
+
+const { file: FILE, ref: REF, meta: INFO } = KEYS;
 const PERMS = "perms", VIEW = "view";
+/** Set once every file and version blob kept in the object before blobs has been copied to the blob store (copyToBlobs). */
+const COPIED = "blobs-copied";
 
 
 /** How long a document trusts its copy of its permissions before it reads them again (in the background): changes are pushed, so this only covers one that didn't arrive. */
@@ -150,6 +159,13 @@ export interface ViewAnswer {
 
 /** How long without a file changing before a viewer's answer may be kept (a document being edited is asked each time). */
 const QUIET_MS = 60_000;
+
+/** A file over this many bytes, uploaded without its hash, is refused (its bytes would be held in memory to hash them). */
+const BUFFER_MAX = 25 * 1_000_000;
+const MB = 1_000_000, GB = 1_000_000_000;
+const megabytes = (n: number) => (n >= GB ? `${(n / GB).toFixed(2)} GB` : `${(n / MB).toFixed(n < 10 * MB ? 1 : 0)} MB`);
+/** Where the versions keep a blob in the object (document/versions.ts). */
+const VERSION_BLOB = "blobs/";
 
 /** A short digest of a text, for versions. */
 const hashText = (text: string) => digest(new TextEncoder().encode(text));
@@ -216,7 +232,7 @@ export class Document {
 
   constructor(private deps: DocumentDeps) {
     this.storage = deps.storage;
-    this.versions = new Versions(kvOf(this.storage));
+    this.versions = new Versions(kvOf(this.storage), Date.now, deps.blobs);
   }
 
   private get idleMs() { return this.deps.timing.idleMs; }
@@ -241,7 +257,7 @@ export class Document {
     this.perms = undefined;
     this.latestView = null;
     this.viewKept = true;
-    this.versions = new Versions(kvOf(this.storage));
+    this.versions = new Versions(kvOf(this.storage), Date.now, this.deps.blobs);
   }
 
   /** The document, opened if it isn't (null if there's no such document). */
@@ -312,16 +328,19 @@ export class Document {
    * someone edits it, it's deleted at `expires` (the delete_docs_after_hours setting
    * after it's made, or sooner when local development asks, to test it).
    */
-  async create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
+  async create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
     if (await this.readInfo()) return false;
     const encoder = new TextEncoder();
-    const entries = Object.entries(files).map(([path, data]) => [FILE + path, typeof data == "string" ? encoder.encode(data) : data] as const);
+    // A blob (a copy's file that is one) goes by its ref.
+    const entries = Object.entries(files).map(([path, data]) => isBlobRef(data) ? [REF + path, data] as const : [FILE + path, typeof data == "string" ? encoder.encode(data) : data] as const);
     for (let i = 0; i < entries.length; i += 128) await this.storage.put(Object.fromEntries(entries.slice(i, i + 128)));
     const info: DocumentInfo = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
     await this.saveInfo(info);
     if (!info.test && opts.expires != null) await this.storage.setAlarm(opts.expires);
     // Its first version: the files it starts from.
     const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
+    // Copied as it is: the blobs it has were checked already, and its first open copies what's in the object to the blob store.
+    if (this.deps.blobs && !Object.values(files).some((d) => d instanceof Uint8Array)) await this.storage.put(COPIED, { at: Date.now() });
     await this.versions.cut(first, index, [info.owner], "First version");
     // Who may open it, from the start: its first viewer needn't wait for the directory.
     await this.readPermissions(id).catch((e) => this.deps.log(`couldn't read ${id}'s permissions: ${e}`));
@@ -351,7 +370,7 @@ export class Document {
    * files. Says what it did with each. `by`: who the edits are by, as a
    * version records it ("ada", "ada, via a shared agent (CI)": byLine).
    */
-  async publish(files: Record<string, string | Uint8Array>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
+  async publish(files: Record<string, FileData>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
     return this.hold(async () => {
       const opened = await this.room();
       if (!opened) throw new Error("There's no such document.");
@@ -360,23 +379,36 @@ export class Document {
     });
   }
 
-  private async publishNow(opened: Opened, files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
+  private async publishNow(opened: Opened, files: Record<string, FileData>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
     const info = (await this.readInfo())!;
     const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     // Edits not yet written land first, so a published file replaces what's there now rather than merging with it.
     await Effect.runPromise(opened.room.flush);
+    const blobs = info.disk ? null : this.deps.blobs ?? null;
     for (const [path, data] of Object.entries(files)) {
       if (info.disk?.only && path != info.index) { out.refused.push({ path, why: `this document is the single file ${info.index}` }); continue; }
+      // Its kind, decided as it arrives (D5): text if it's a text file's name, UTF-8 and at most TEXT_MAX bytes; else a blob.
       let text: string | null = null;
       if (typeof data == "string") text = data;
-      else if (isTextPath(path)) { try { text = decoder.decode(data); } catch { out.refused.push({ path, why: "not UTF-8 text" }); continue; } }
-      if (text != null && isTextPath(path)) {
+      else if (isTextPath(path) && data instanceof Uint8Array && (!blobs || data.length <= TEXT_MAX)) {
+        try { text = decoder.decode(data); } catch { if (!blobs) { out.refused.push({ path, why: "not UTF-8 text" }); continue; } }
+      }
+      if (text != null && isTextPath(path) && (!blobs || text.length <= TEXT_MAX)) {
         const r = await Effect.runPromise(opened.room.push(path, text));
         if (r.ok) out.written.push(path); else out.refused.push({ path, why: r.reason ?? "refused" });
         continue;
       }
       if (info.disk) { out.refused.push({ path, why: "a document on disk takes only text files this way" }); continue; }
+      if (path == info.index) { out.refused.push({ path, why: "it's the document's page, which is text" }); continue; }
+      if (blobs) {
+        const bytes = isBlobRef(data) ? undefined : typeof data == "string" ? new TextEncoder().encode(data) : data;
+        const ref = isBlobRef(data) ? data : await storeBlob(blobs, bytes!);
+        await Effect.runPromise(opened.room.putBlob(path, ref, bytes));
+        out.written.push(path);
+        continue;
+      }
+      if (isBlobRef(data)) { out.refused.push({ path, why: "this server keeps no blobs" }); continue; }
       await this.storage.put(FILE + path, typeof data == "string" ? new TextEncoder().encode(data) : data);
       await Effect.runPromise(opened.room.fileChanged(path));
       out.written.push(path);
@@ -408,16 +440,13 @@ export class Document {
    * latest edits are in it), and its page: what a copy of it starts from.
    * Null if there's no such document.
    */
-  async snapshot(): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
+  async snapshot(): Promise<{ index: string; files: Record<string, FileData> } | null> {
     const info = await this.readInfo();
     const opened = info && await this.room();
     if (!info || !opened) { if (!opened) this.open = null; return null; }
-    const files: Record<string, string | Uint8Array> = {};
-    for (const path of await this.paths()) {
-      const text = opened.room.text(path);
-      const data = text ?? (await this.storage.get<Uint8Array>(FILE + path));
-      if (data != null) files[path] = data;
-    }
+    // Text as text, a blob as its ref.
+    const files: Record<string, FileData> = {};
+    for (const [path, data] of await opened.entries()) files[path] = data instanceof Uint8Array && opened.room.text(path) != null ? opened.room.text(path)! : data;
     return { index: info.index, files };
   }
 
@@ -659,6 +688,7 @@ export class Document {
   }
 
   private async serve(request: Request): Promise<Response> {
+    if (request.method == "PUT" && new URL(request.url).pathname.startsWith("/api/files/")) return this.hold(() => this.upload(request));
     // Someone viewing it: its files straight from storage while the room isn't open, without opening it
     // (once a room closing a moment ago has written them).
     await this.closing;
@@ -753,10 +783,13 @@ export class Document {
     // doc/ itself is its page (the viewer's frame asks for it so, at the token's own address: server/documents/pages-origin.ts).
     const rel = url.pathname == "/doc/" ? info.index : cleanRel(url.pathname.slice("/doc/".length));
     if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    // The file, and the files whose latest text storage doesn't have yet (the room stopped before writing them): one read.
-    const got = await this.storage.get<unknown>([FILE + rel, KEYS.unwritten]);
+    // The file (its bytes, or its ref if it's a blob), and the files whose latest text storage doesn't have yet (the room
+    // stopped before writing them): one read.
+    const got = await this.storage.get<unknown>([FILE + rel, REF + rel, KEYS.unwritten]);
     if ((got.get(KEYS.unwritten) as string[] | undefined)?.includes(rel)) return null;
-    const bytes = got.get(FILE + rel) as Uint8Array | undefined;
+    const ref = got.get(REF + rel);
+    if (isBlobRef(ref) && this.deps.blobs && !request.headers.get(INLINE_HEADER)) return blobPointer(ref, typeOf(rel), { "Cache-Control": "no-cache" });
+    const bytes = (got.get(FILE + rel) as Uint8Array | undefined) ?? (isBlobRef(ref) ? (await this.deps.blobs?.bytes(ref.hash)) ?? undefined : undefined);
     if (!bytes) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const r = docFile(rel, bytes, request.headers.get("if-none-match"), request.headers.get("range"), "stored");
     return new Response(request.method == "HEAD" ? null : (r.body as Uint8Array<ArrayBuffer>), { status: r.status, headers: { "Content-Type": r.type, ...r.headers } });
@@ -972,7 +1005,7 @@ export class Document {
     const info = await this.readInfo();
     if (!opened || !info) return null;
     const { authors } = this.clearPending();
-    const r = await this.versions.cut(await opened.current(), info.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null), opened.room.folderPaths());
+    const r = await this.versions.cut(await opened.entries(), info.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null), opened.room.folderPaths());
     if (!this.pending.dirty) await this.markUncut(false);
     // At a version, a long log becomes a snapshot: the next open reads less.
     await Effect.runPromise(opened.room.settle);
@@ -1059,7 +1092,7 @@ export class Document {
       if (!(path in v.files)) return { ok: false, status: 404, error: `Version ${v.n} has no file ${path}: its files are ${Object.keys(v.files).sort().join(", ")}.` };
     }
     await this.cutSoon("restore");
-    const files = await this.versions.files(v);
+    const files = await this.versions.entries(v);
     if (path != null) {
       const out = await this.publish({ [path]: files.get(path)! }, [], by);
       if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` };
@@ -1088,6 +1121,137 @@ export class Document {
     return { version: publicVersion((await this.versions.latest())!), index: r.info.index, files: await r.opened.current() };
   }
 
+  // ---------------------------------------------------------------- files arriving whole, and blobs
+
+  /**
+   * PUT /api/files/<path>: one file from a person or an HTTP client (the
+   * files view's drop), its bytes the body, its size Content-Length. Its
+   * kind is decided now (D5): a text file's name, UTF-8 and at most TEXT_MAX
+   * bytes is text, merged into the room as a publish is; anything else is a
+   * blob, which streams to the blob store (`x-erga-sha256`, the bytes'
+   * sha-256 in hex, lets one of any size stream: without it, one over
+   * BUFFER_MAX is refused). A file at the path is replaced (it stays in the
+   * versions): the answer says so. Refused when the file, or the project
+   * with it, would pass the limits an admin sets (max_file_mb, max_project_gb).
+   */
+  private async upload(request: Request): Promise<Response> {
+    const json = (body: object, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+    const fail = (status: number, error: string) => { void request.body?.cancel().catch(() => {}); return json({ ok: false, error }, status); };
+    if (request.headers.get("x-erga-access") != "edit") return fail(403, "You can only view this document.");
+    const path = cleanRel(new URL(request.url).pathname.slice("/api/files/".length));
+    if (!path) return fail(400, "Name the file in the address, PUT /api/files/<path>: a path inside the document, with no \"..\" and no part that starts with a dot.");
+    const opened = await this.room();
+    if (!opened) { this.open = null; return fail(404, "There's no such document."); }
+    const info = (await this.readInfo())!;
+    const length = request.headers.get("content-length");
+    const size = Number(length);
+    if (length == null || !Number.isInteger(size) || size < 0) return fail(411, "Send the file's size in bytes as Content-Length.");
+    const maxMb = await this.directory.config.get("max_file_mb");
+    if (size > maxMb * MB) return fail(413, `${path} is ${megabytes(size)}: a file can have at most ${maxMb} MB here (an admin sets it: max_file_mb).`);
+    const room = opened.room;
+    const at = room.exists(path);
+    if (at == "folder") return fail(409, `There's a folder at ${path}: a file can't take its place.`);
+    const inFile = parentsOf(path).find((d) => room.exists(d) == "file");
+    if (inFile) return fail(409, `${inFile} is a file, so nothing can go inside it.`);
+    const maxGb = await this.directory.config.get("max_project_gb");
+    const used = (await this.bytesUsed(opened)) - (at == "file" ? await this.sizeOf(opened, path) : 0);
+    if (used + size > maxGb * GB) return fail(413, `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).`);
+    const blobs = info.disk ? null : this.deps.blobs ?? null;
+    const person = personOf(request.headers);
+    const by = byLine(person.id, request.headers.get("x-erga-agent") ? viaOf(request.headers.get("x-erga-via") ?? undefined) : null);
+    // Small files (and every file, without a blob store) come whole: a text may be one, and a small blob stays in the object too.
+    let bytes: Uint8Array | null = null;
+    if (!blobs || size <= Math.max(TEXT_MAX, OBJECT_MAX)) {
+      bytes = new Uint8Array(await request.arrayBuffer());
+      if (bytes.length != size) return fail(400, `The body had ${bytes.length} bytes, not the ${size} of its Content-Length.`);
+    }
+    let text: string | null = null;
+    if (bytes && isTextPath(path) && bytes.length <= TEXT_MAX) {
+      try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); } catch { /* not UTF-8: a blob */ }
+    }
+    if (text != null || !blobs) {
+      const r = await this.publish({ [path]: text ?? bytes! }, [], by);
+      if (r.refused.length) return fail(409, `Couldn't add ${path}: ${r.refused[0].why}.`);
+      return json({ ok: true, path, kind: text != null ? "text" : "file", size, replaced: at == "file" });
+    }
+    if (path == info.index) return fail(409, `${path} is the document's page, which is text: it can't be replaced by a file that isn't.`);
+    let ref: BlobRef;
+    if (bytes) ref = await storeBlob(blobs, bytes);
+    else {
+      const given = request.headers.get("x-erga-sha256")?.trim().toLowerCase() ?? "";
+      if (!/^[0-9a-f]{64}$/.test(given)) {
+        if (size > BUFFER_MAX) return fail(400, `${path} is ${megabytes(size)}: send its sha-256 (hex) as x-erga-sha256, so a file over ${BUFFER_MAX / MB} MB can stream.`);
+        bytes = new Uint8Array(await request.arrayBuffer());
+        if (bytes.length != size) return fail(400, `The body had ${bytes.length} bytes, not the ${size} of its Content-Length.`);
+        ref = await storeBlob(blobs, bytes);
+      } else {
+        // The store checks the bytes against the hash: a wrong one stores nothing.
+        if (await blobs.head(given)) void request.body?.cancel().catch(() => {});
+        else {
+          try { await blobs.put(given, request.body ?? new Uint8Array(), size); } catch (e) {
+            return fail(400, `${path} wasn't stored: ${e instanceof Error ? e.message : String(e)}. Check its x-erga-sha256 and Content-Length.`);
+          }
+        }
+        ref = { hash: given, size, at: Date.now() };
+      }
+    }
+    this.publisher = by;
+    try { await Effect.runPromise(room.putBlob(path, ref, bytes ?? undefined)); } finally { this.publisher = null; }
+    return json({ ok: true, path, kind: "file", size, hash: ref.hash, replaced: at == "file" });
+  }
+
+  /** How many bytes the project's files have together: each text as it is, each blob as its ref says (one of storage's lists). */
+  private async bytesUsed(opened: Opened): Promise<number> {
+    const encoder = new TextEncoder();
+    let n = 0;
+    for (const t of texts(opened.room.doc).values()) n += encoder.encode(t.toString()).length;
+    for (const ref of (await this.storage.list<BlobRef>({ prefix: REF })).values()) if (isBlobRef(ref)) n += ref.size;
+    return n;
+  }
+
+  /** One file's size now (0 if it has none). */
+  private async sizeOf(opened: Opened, path: string): Promise<number> {
+    const text = opened.room.text(path);
+    if (text != null) return new TextEncoder().encode(text).length;
+    const ref = opened.files.ref ? await Effect.runPromise(Effect.orElseSucceed(opened.files.ref(path), () => null)) : null;
+    return ref?.size ?? (await this.storage.get<Uint8Array>(FILE + path))?.length ?? 0;
+  }
+
+  /**
+   * Copies what the object kept before blobs to the blob store, once: every
+   * file that isn't text (it gets its ref; its bytes stay in the object too)
+   * and every version's blob. Nothing is deleted: a Worker from before blobs
+   * still reads it all. Stopped part way (the object slept), it goes on at
+   * the next open.
+   */
+  private async copyToBlobs(room: Room, refs: RefIndex, blobs: BlobStore): Promise<void> {
+    let files = 0, versions = 0;
+    for (const path of [...assets(room.doc).keys()]) {
+      if (await refs.has(path)) continue;
+      const bytes = await this.storage.get<Uint8Array>(FILE + path);
+      if (!bytes) continue;
+      const ref = await storeBlob(blobs, bytes);
+      // Still these bytes, and still no blob (an upload may have replaced the file meanwhile): only then its ref.
+      if (assets(room.doc).get(path) != digest(bytes) || (await refs.has(path))) continue;
+      await refs.add(path);
+      await this.storage.put(REF + path, ref);
+      files++;
+    }
+    let after: string | undefined;
+    for (;;) {
+      const page = await this.storage.list<Uint8Array>({ prefix: VERSION_BLOB, ...(after ? { startAfter: after } : {}), limit: 32 });
+      if (!page.size) break;
+      for (const [key, bytes] of page) {
+        after = key;
+        const hash = key.slice(VERSION_BLOB.length);
+        if (await blobs.head(hash)) continue;
+        try { await blobs.put(hash, bytes, bytes.length); versions++; } catch (e) { this.deps.log(`couldn't copy the version blob ${hash}: ${e}`); }
+      }
+    }
+    await this.storage.put(COPIED, { at: Date.now(), files, versions });
+    if (files || versions) this.deps.log(`${this.info?.id}: ${files} files and ${versions} version blobs copied to the blob store`);
+  }
+
   /** Opens the room on this document's storage, for as long as the document lives. */
   private async load(): Promise<Opened | null> {
     // Closed for being idle a moment ago: its last writes land first.
@@ -1096,10 +1260,14 @@ export class Document {
     if (!info) return null;
     // A document on disk has its files there, and the rest of its storage here.
     const storage = info.disk && this.deps.disk ? this.deps.disk.storage(info.disk.only ? info.index : null) : this.storage;
-    const files = fileStoreOf(storage, { touch: () => this.touch() });
+    // Its files that aren't text are blobs (none on disk: it keeps its own files there), and which those are, the file
+    // store and the room's writes share.
+    const blobs = info.disk ? undefined : this.deps.blobs;
+    const refs = new RefIndex(storage);
+    const files = fileStoreOf(storage, { touch: () => this.touch() }, { blobs, refs });
     // Its history, with its files written in the same transaction (and its record, as touch notes the edit).
     // On disk the files change while it's closed, so it reads them all as it opens.
-    const state = stateStoreOf(storage, { reconcile: !!info.disk, edited: () => this.touch() });
+    const state = stateStoreOf(storage, { reconcile: !!info.disk, edited: () => this.touch(), blobs, refs });
 
     // The room's scope lasts until the document closes (idle, deleted, replaced): closing it writes what's left.
     const scope = Effect.runSync(Scope.make());
@@ -1179,6 +1347,20 @@ export class Document {
         }
         return out;
       },
+      // The same, with a blob as its ref (no bytes read): what a version, a copy and a restore take.
+      entries: async () => {
+        const out = new Map<string, Uint8Array | BlobRef>();
+        const encoder = new TextEncoder();
+        for (const path of new Set([...texts(room.doc).keys(), ...assets(room.doc).keys()])) {
+          const text = room.text(path);
+          if (text != null) { out.set(path, encoder.encode(text)); continue; }
+          const ref = files.ref ? await Effect.runPromise(Effect.orElseSucceed(files.ref(path), () => null)) : null;
+          const data = ref ?? await Effect.runPromise(Effect.orElseSucceed(files.read(path), () => null));
+          if (data) out.set(path, data);
+        }
+        return out;
+      },
+      files,
       handler: host.handler,
       renamed: host.renamed,
       notify: host.notify,
@@ -1198,6 +1380,8 @@ export class Document {
     this.opened = opened;
     // A version of what it holds, if it stopped with edits no version has (or there's none yet).
     if (info.uncut || (await this.versions.head()) == 0) void this.cutSoon("open");
+    // What it kept in its object before blobs goes to the blob store too (once; copied, not moved).
+    if (blobs && !(await this.storage.get(COPIED))) this.deps.background(this.copyToBlobs(room, refs, blobs).catch((e) => this.deps.log(`couldn't copy ${info.id}'s files to the blob store: ${e}`)));
     // Tabs connected while it was closed join it now.
     this.deps.tabs.attach?.(opened);
     this.activity();
@@ -1213,6 +1397,10 @@ export interface Opened {
   broadcast: (msg: unknown) => void;
   /** Every file the document holds as it is now. */
   current: () => Promise<Map<string, Uint8Array>>;
+  /** The same, with each blob as its ref. */
+  entries: () => Promise<Map<string, Uint8Array | BlobRef>>;
+  /** Its files' store (refs, blobs). */
+  files: FileStore["Service"];
   handler: (request: Request) => Promise<Response>;
   /** A tab joins its person's event channel; returns the leave function. */
   addTab: (user: string, send: (msg: unknown) => void) => () => void;

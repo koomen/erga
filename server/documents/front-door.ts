@@ -150,7 +150,7 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
 export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null, checked?: "files"): Request {
   const inner = new URL(rest + url.search, url.origin);
   const headers = new Headers(request.headers);
-  for (const h of ["x-erga-person", "x-erga-access", "x-erga-who", "x-erga-checked", "x-erga-view", "x-erga-agent", "x-erga-via", "authorization"]) headers.delete(h);
+  for (const h of ["x-erga-person", "x-erga-access", "x-erga-who", "x-erga-checked", "x-erga-view", "x-erga-agent", "x-erga-via", "x-erga-inline", "authorization"]) headers.delete(h);
   headers.set("x-erga-base", base);
   if (session) headers.set("x-erga-person", JSON.stringify({ id: session.login.toLowerCase(), name: session.name }));
   if (session) headers.set("x-erga-who", ascii(JSON.stringify(whoOf(session))));

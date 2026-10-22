@@ -92,6 +92,9 @@ export default defineConfig(({ mode }) => ({
       // `bun run db:local` applies the migrations to.
       DB: bindings.d1({ name: PROD.database, ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
       ASSETS: bindings.assets(),
+      // Documents' blobs: their files that aren't text, by sha-256 (cloudflare/blobs.ts). Each target has a bucket of its
+      // own, named after its Worker (the pipeline binds erga-staging-files on staging); locally, Miniflare's R2.
+      FILES: bindings.r2({ name: `${PROD.worker}-files` }),
       // The bootstrap admins: always admins, always allowed to sign in. Admins let
       // everyone else in (the users table). Locally DEV_LOGIN is one too.
       ADMINS: bindings.text(PROD.vars.ADMINS),

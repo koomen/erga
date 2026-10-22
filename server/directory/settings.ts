@@ -81,6 +81,16 @@ export const SETTINGS = {
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
   }),
+  max_file_mb: setting<number>({
+    description: "The most megabytes one file may have, as someone or their agent adds it to a document (an upload, a write of bytes).",
+    default: 100,
+    parse: integer(1, 500),
+  }),
+  max_project_gb: setting<number>({
+    description: "The most gigabytes the files of one project (a document is a project with one page) may have together; an upload that would pass it is refused.",
+    default: 5,
+    parse: integer(1, 1000),
+  }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
     default: "users",

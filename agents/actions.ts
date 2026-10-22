@@ -125,6 +125,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/sign-in/status", domain: "none", action: "Another server reads this one's sign-in status", exempt: "server to server, with the shared secret (production's Authentication page shows staging's)" },
   { route: "POST /api/sign-in/github", domain: "none", action: "Production's Authentication page sets staging's GitHub app", exempt: "server to server, with the shared secret: the admin's action is POST /admin/auth" },
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },
+  { route: "GET /api/snapshot/blob/<sha-256>", domain: "none", action: "Staging reads a blob its copy of production's documents needs", exempt: "server to server (staging's blob store, cloudflare/blobs.ts)" },
 
   // ------------------------------------------------------------ the homepage (server/home.ts: in the editor's settings, admins only)
   { route: "GET /api/docs/<id>/home", domain: "admin", action: "See whether a document is the homepage (editor's settings)", tool: "list_settings" },
@@ -179,6 +180,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/docs/<id>/tree op=new_folder", domain: "document", action: "New folder (page tree)", tool: "mkdir" },
   { route: "POST /api/docs/<id>/tree op=move", domain: "document", action: "Rename or move a page or folder (page tree)", tool: "mv" },
   { route: "POST /api/docs/<id>/tree op=delete", domain: "document", action: "Delete a page or folder (page tree)", tool: "rm" },
+  { route: "PUT /api/files/<path>", domain: "document", action: "Add or replace a file of any kind (a drop on the files view, an HTTP client)", tool: "write" },
   { route: "GET /api/docs/<id>/versions", domain: "document", action: "Read the versions (editor's settings)", tool: "list_versions" },
   { route: "POST /api/docs/<id>/versions/<versionId>/restore", domain: "document", action: "Restore a version, or one file of it (editor's settings)", tool: "restore_version" },
   { route: "POST /api/publish", domain: "document", action: "Publish a folder of files as a document", tool: "create_document" },

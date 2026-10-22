@@ -7,6 +7,9 @@
 // What's the Durable Object's stays with it: where files live, who a request
 // is from (the person the front door vouched for), and the WebSockets, which
 // it accepts its own way and hands to `room.connect`, `addTab` and `hello`.
+//
+//   PUT  /api/files/<path>   editors: one file, its bytes the body (any kind, any size up to the limits: a text file is
+//                            text, anything else a blob in R2), replacing one at that path (document.ts, upload)
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,6 +29,7 @@ import { ignored, isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";
 import { encodeStart } from "../shared/room-socket";
+import { blobPointer, byteRange, INLINE_HEADER } from "./blobs";
 import * as Y from "yjs";
 import type { VersionsAccess } from "../editor-agent/session";
 import type { ChatStore } from "../agents/checkpoint";
@@ -108,6 +112,8 @@ export const MIME: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8", ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
   ".m4a": "audio/mp4", ".aac": "audio/aac", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg; codecs=opus", ".wav": "audio/wav",
   ".flac": "audio/flac", ".m4v": "video/mp4", ".mov": "video/quicktime",
+  ".pdf": "application/pdf", ".zip": "application/zip", ".csv": "text/csv; charset=utf-8", ".avif": "image/avif",
+  ".heic": "image/heic", ".tif": "image/tiff", ".tiff": "image/tiff", ".otf": "font/otf",
 };
 export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase())?.[0] ?? ""];
 
@@ -125,9 +131,12 @@ export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase()
  * page's Resource Timing reads, for page_network); the bytes sent and the type
  * are added to it.
  */
+/** A file's type as it's served, from its name. */
+export const typeOf = (rel: string) => mimeOf(rel) ?? (isTextFile(rel) ? "text/plain; charset=utf-8" : "application/octet-stream");
+
 export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | null, range?: string | null, store = "room"): { status: number; type: string; headers: Record<string, string>; body: Uint8Array | null } {
   const etag = `"${digest(bytes)}"`;
-  const type = mimeOf(rel) ?? (isTextFile(rel) ? "text/plain; charset=utf-8" : "application/octet-stream");
+  const type = typeOf(rel);
   const timing = (more: string) => `file;desc="${store}${more} type ${type.split(";")[0]}"`;
   const headers: Record<string, string> = { "Cache-Control": "no-cache", ETag: etag, "Accept-Ranges": "bytes" };
   const fresh = !!ifNoneMatch && ifNoneMatch.split(",").some((t) => t.trim().replace(/^W\//, "") == etag);
@@ -141,25 +150,7 @@ export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | n
   return { status: 200, type, headers: { ...headers, "Server-Timing": timing(` bytes 0-${Math.max(0, bytes.length - 1)}/${bytes.length}`) }, body: bytes };
 }
 
-/**
- * One range of a Range header ("bytes=0-", "bytes=100-199", "bytes=-500"),
- * clamped to the file's `size`; null to send the whole file (no range, a
- * header it doesn't understand, several ranges); "unsatisfiable" when it
- * starts past the end.
- */
-export function byteRange(header: string, size: number): { start: number; end: number } | "unsatisfiable" | null {
-  const m = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(header);
-  if (!m || (m[1] == "" && m[2] == "")) return null;
-  if (m[1] == "") {
-    const n = Number(m[2]);
-    if (n == 0) return "unsatisfiable";
-    return { start: Math.max(0, size - n), end: size - 1 };
-  }
-  const start = Number(m[1]);
-  const end = m[2] == "" ? size - 1 : Math.min(Number(m[2]), size - 1);
-  if (start >= size || end < start) return "unsatisfiable";
-  return { start, end };
-}
+export { byteRange };
 
 /** HttpApi's platform needs, none of which a document served from storage uses. */
 const fromStorage = Layer.mergeAll(
@@ -489,6 +480,9 @@ export function makeHost(opts: HostOptions) {
       if (!rel) return page() ?? HttpServerResponse.text("Not found", { status: 404 });
       if (raw && room.exists(rel) != "file") { const to = page(); if (to) return to; }
       const text = room.text(rel);
+      // A blob: the Worker sends it, from the edge or the blob store (blobs.ts, serveBlob); the bytes here only when it asks.
+      const ref = text == null && files.ref && !req.headers[INLINE_HEADER] ? yield* files.ref(rel) : null;
+      if (ref) return HttpServerResponse.fromWeb(blobPointer(ref, typeOf(rel), { "Cache-Control": "no-cache" }));
       const bytes = text != null ? new TextEncoder().encode(text) : yield* files.read(rel);
       if (!bytes) return HttpServerResponse.text("Not found", { status: 404 });
       const r = docFile(rel, bytes, req.headers["if-none-match"], req.headers["range"], text != null ? "room" : "stored");

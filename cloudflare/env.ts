@@ -30,6 +30,8 @@ export interface Env {
   FACTORY_KEY?: string;
   /** The server's database: users, settings and the directory of documents. */
   DB: D1Database;
+  /** Documents' blobs, their files that aren't text (cloudflare/blobs.ts): the target's own bucket (FILES on erga is erga-files). */
+  FILES?: R2Bucket;
   /** The editor's own files (client/editor.html as editor.html, page.js, client/style.css, fonts). */
   ASSETS: Fetcher;
   /**

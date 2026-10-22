@@ -3,13 +3,16 @@
 // back at and restore. Readers always see the document as it is now.
 //
 // Storage is the document's own (its Durable Object, cloudflare/document-object.ts),
-// behind the small `KV` interface so the unit tests run it on a Map. Files are
-// content-addressed blobs (`b:<sha-256>`), shared by every version that has
-// them, so a version that changes one file stores that one file; a version
-// itself (`v:<n>`) is a manifest, path -> digest, plus who made it, when, and
-// its description. Keeping them beside the files means no other database: a
-// version is cut, listed and served in the same object that holds the
-// document, and deleting the document deletes them.
+// behind the small `KV` interface so the unit tests run it on a Map, and the
+// blob store (R2: document/blobs.ts). Files are content-addressed blobs, by
+// their sha-256, shared by every version that has them, so a version that
+// changes one file stores that one file; a version itself (`versions/<n>`)
+// is a manifest, path -> sha-256 (a tree of hashes), plus who made it, when,
+// and its description. Every blob a version has is in the blob store; one of
+// at most OBJECT_MAX bytes is in the object too (`blobs/<sha-256>`), as
+// before the blob store, so a Worker from before it still reads every
+// version but those holding a bigger file. A file that is a blob already
+// (an upload: its BlobRef) goes into a version by its hash, with no bytes read.
 //
 // When a version is cut (document.ts decides, in `noteEdit`), and what's
 // in it, is the caller's: this file stores and reads them, says what changed (`changes`, a compact diff), and writes the
@@ -17,6 +20,8 @@
 
 import { createTwoFilesPatch, structuredPatch } from "diff";
 import Anthropic from "@anthropic-ai/sdk";
+import { OBJECT_MAX, sha256, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
+import { isTextPath } from "./content.ts";
 
 /** A version as the API shows it (the contract shared with the settings UI, client/versions.ts, and the homepage deploy, server/home.ts). */
 export interface Version {
@@ -59,17 +64,14 @@ export function versionNumber(ref: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
-export async function sha256(bytes: Uint8Array): Promise<string> {
-  return hex(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>));
-}
+export { sha256 };
 
 export const publicVersion = (v: StoredVersion): Version => ({ id: v.id, n: v.n, at: v.at, authors: v.authors, description: v.description });
 
 export class Versions {
   /** Versions already read, by number: they never change, except their description. */
   private cache = new Map<number, StoredVersion>();
-  constructor(private kv: KV, private now: () => number = Date.now) {}
+  constructor(private kv: KV, private now: () => number = Date.now, private blobs?: BlobStore) {}
 
   /** The latest version's number (0: none yet). */
   async head(): Promise<number> {
@@ -90,18 +92,19 @@ export class Versions {
   }
 
   /**
-   * Cuts a version of `files` (every file the document holds now), unless
-   * nothing changed since the latest one: then null. Only blobs storage
-   * doesn't have yet are written.
+   * Cuts a version of `files` (every file the document holds now: its bytes,
+   * or a blob's ref), unless nothing changed since the latest one: then null.
+   * Only blobs storage doesn't have yet are written.
    */
-  async cut(files: Map<string, Uint8Array>, index: string, authors: string[], description: string | null = null, folders: string[] = []): Promise<{ version: StoredVersion; previous: StoredVersion | null } | null> {
+  async cut(files: Map<string, Uint8Array | BlobRef>, index: string, authors: string[], description: string | null = null, folders: string[] = []): Promise<{ version: StoredVersion; previous: StoredVersion | null } | null> {
     const previous = await this.latest();
     const manifest: Record<string, string> = {};
     const bytesOf = new Map<string, Uint8Array>();
-    for (const [path, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
-      const digest = await sha256(bytes);
+    for (const [path, data] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+      if (!(data instanceof Uint8Array)) { manifest[path] = data.hash; continue; }
+      const digest = await sha256(data);
       manifest[path] = digest;
-      bytesOf.set(digest, bytes);
+      bytesOf.set(digest, data);
     }
     const dirs = [...new Set(folders)].sort();
     if (previous && sameFiles(previous.files, manifest) && previous.index == index && (previous.folders ?? []).join("\n") == dirs.join("\n")) return null;
@@ -112,7 +115,12 @@ export class Versions {
     for (let i = 0; i < unknown.length; i += BATCH) {
       const chunk = unknown.slice(i, i + BATCH);
       const have = await this.kv.get<Uint8Array>(chunk.map((d) => BLOB + d));
-      for (const d of chunk) if (!have.has(BLOB + d)) missing[BLOB + d] = bytesOf.get(d)!;
+      for (const d of chunk) {
+        const bytes = bytesOf.get(d)!;
+        // In the blob store too, unless it's there (the object's copy, while one is kept, may predate it).
+        if (this.blobs && !(await this.blobs.head(d))) await this.blobs.put(d, bytes, bytes.length);
+        if (!have.has(BLOB + d) && (!this.blobs || bytes.length <= OBJECT_MAX)) missing[BLOB + d] = bytes;
+      }
     }
     const entries = Object.entries(missing);
     for (let i = 0; i < entries.length; i += BATCH) await this.kv.put(Object.fromEntries(entries.slice(i, i + BATCH)));
@@ -147,10 +155,11 @@ export class Versions {
     return { versions: want.map((n) => this.cache.get(n)).filter((v): v is StoredVersion => !!v), total };
   }
 
-  /** One file of a version (null if it has no such file). */
+  /** One file of a version (null if it has no such file): from the object, else the blob store. */
   async file(v: StoredVersion, path: string): Promise<Uint8Array | null> {
     const digest = v.files[path];
-    return digest ? (await this.kv.get<Uint8Array>(BLOB + digest)) ?? null : null;
+    if (!digest) return null;
+    return (await this.kv.get<Uint8Array>(BLOB + digest)) ?? (await this.blobs?.bytes(digest)) ?? null;
   }
 
   /** Every file of a version. */
@@ -160,7 +169,34 @@ export class Versions {
     for (let i = 0; i < paths.length; i += BATCH) {
       const chunk = paths.slice(i, i + BATCH);
       const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
-      for (const p of chunk) { const b = got.get(BLOB + v.files[p]); if (b) out.set(p, b); }
+      for (const p of chunk) {
+        const b = got.get(BLOB + v.files[p]) ?? (await this.blobs?.bytes(v.files[p]));
+        if (b) out.set(p, b);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Every file of a version as a restore takes it: text (and a small file
+   * the object keeps) as bytes, any other file as a blob's ref, with no
+   * bytes read; null for one no store has.
+   */
+  async entries(v: StoredVersion): Promise<Map<string, Uint8Array | BlobRef>> {
+    const paths = Object.keys(v.files);
+    const out = new Map<string, Uint8Array | BlobRef>();
+    for (let i = 0; i < paths.length; i += BATCH) {
+      const chunk = paths.slice(i, i + BATCH);
+      const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
+      for (const p of chunk) {
+        const hash = v.files[p], b = got.get(BLOB + hash);
+        if (b) { out.set(p, b); continue; }
+        const there = await this.blobs?.head(hash);
+        if (!there) continue;
+        // A text file comes back as text (it may be one): its bytes.
+        const bytes = isTextPath(p) && there.size <= TEXT_MAX ? await this.blobs!.bytes(hash) : null;
+        out.set(p, bytes ?? { hash, size: there.size, at: this.now() });
+      }
     }
     return out;
   }
