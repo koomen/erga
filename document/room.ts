@@ -523,6 +523,8 @@ export class Room {
    * the next write, in the same commit as the change to the history.
    */
   private takeText(path: string, text: string): void {
+    // Text in place of a file kept whole (a blob): the file is text from now on.
+    if (assets(this.doc).has(path)) this.act(() => assets(this.doc).delete(path), this);
     this.take(path, new TextEncoder().encode(text));
     this.stored.delete(path);
     this.removals.delete(path);
