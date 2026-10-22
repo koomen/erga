@@ -70,8 +70,8 @@ test("the page's styles can't reach the controls, nor theirs the page; its files
     };
   });
   expect(iso).toMatchObject({ hostShown: "block", hostPosition: "fixed" });
-  // Where the viewer has them: Clone, Edit, then the avatar.
-  expect(iso).toMatchObject({ clone: [1074, 12, 34, 34], cloneColor: "rgb(161, 161, 169)", account: [1154, 14, 30, 30] });
+  // Where the viewer has them: Clone, Files, Edit, then the avatar.
+  expect(iso).toMatchObject({ clone: [1038, 12, 34, 34], cloneColor: "rgb(161, 161, 169)", account: [1154, 14, 30, 30] });
   expect(iso.probePosition).toBe("static");
   expect(iso.h1).toBe("rgb(1, 2, 3)");
   expect(iso.bg).toMatch(/\/_home\/[a-z0-9]+\/img\/dot\.svg/);
