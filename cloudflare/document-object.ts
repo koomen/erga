@@ -179,11 +179,13 @@ export class DocumentObject extends DurableObject<Env> {
     if (!opened) return new Response("No such document", { status: 404 });
     const tab: Tab = {
       id: crypto.randomUUID(), readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null,
-      person: personOf(request.headers), events: url.searchParams.get("events") == "1",
+      person: personOf(request.headers), events: url.searchParams.get("events") == "1" || url.searchParams.get("watch") == "files",
+      // A files view (client/files.ts): it hears the tree change, and never joins the room.
+      ...(url.searchParams.get("watch") == "files" ? { watch: true } : {}),
     };
     const [client, server] = Object.values(new WebSocketPair());
     // A tab holding another epoch's history is refused, never merged (on a socket of its own, closed at once).
-    if (tab.epoch && tab.epoch != opened.room.epoch) {
+    if (!tab.watch && tab.epoch && tab.epoch != opened.room.epoch) {
       server.accept();
       server.close(4409, "stale epoch");
       return new Response(null, { status: 101, webSocket: client });

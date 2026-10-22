@@ -38,7 +38,8 @@ export interface Storage {
 
 /**
  * Storage keys: a file's bytes, a file kept as a blob (its BlobRef: the
- * bytes are in the blob store, document/blobs.ts), a folder made as one
+ * bytes are in the blob store, document/blobs.ts), when a text file was
+ * last written (ms: TimeIndex; a blob's time is in its ref), a folder made as one
  * (empty ones too), what the document is, the room's journal and the files
  * whose latest text storage doesn't have yet (in it). `state`: the room's
  * whole Yjs state in one value, as documents kept it before the journal
@@ -48,7 +49,7 @@ export interface Storage {
  * same bytes (one of at most OBJECT_MAX bytes is kept there too, for a
  * Worker from before blobs). A file without one is its `files/` value.
  */
-export const KEYS = { file: "files/", ref: "refs/", dir: "folders/", meta: "info", room: "room/", unwritten: "room/unwritten", state: "room-state" } as const;
+export const KEYS = { file: "files/", ref: "refs/", at: "at/", dir: "folders/", meta: "info", room: "room/", unwritten: "room/unwritten", state: "room-state" } as const;
 
 /**
  * Which files have a ref (KEYS.ref), as the file store and the room's
@@ -67,6 +68,31 @@ export class RefIndex {
   async drop(path: string): Promise<boolean> { return (await this.load()).delete(path); }
   async all(): Promise<string[]> { return [...(await this.load())]; }
 }
+
+/**
+ * When each text file was last written (KEYS.at), as the room's writes keep
+ * it: at most once a minute for each file (TIME_STEP), so a file someone
+ * types in costs one more small write a minute, not one a keystroke.
+ */
+export class TimeIndex {
+  private times: Promise<Map<string, number>> | null = null;
+  constructor(private storage: Storage) {}
+  load(): Promise<Map<string, number>> {
+    return (this.times ??= this.storage.list<number>({ prefix: KEYS.at }).then((m) => new Map([...m].map(([k, v]) => [k.slice(KEYS.at.length), Number(v) || 0]))));
+  }
+  /** A file written at `now`: true if its time should be written (it's new, or a step old). */
+  async written(path: string, now: number): Promise<boolean> {
+    const times = await this.load();
+    if (now - (times.get(path) ?? 0) < TIME_STEP) return false;
+    times.set(path, now);
+    return true;
+  }
+  /** Forgets a file's time; whether it had one. */
+  async drop(path: string): Promise<boolean> { return (await this.load()).delete(path); }
+}
+
+/** A text file's time is written at most this often (ms). */
+export const TIME_STEP = 60_000;
 
 /** A Storage in memory, for the tests: `wake` runs when the alarm comes due. */
 export class MemoryStorage implements Storage {
@@ -125,10 +151,11 @@ const storeError = (e: unknown) => new StoreError({ message: e instanceof Error 
  * `blobs`, a file that isn't text is a blob there (its ref here), and
  * `refs` is the index the room's writes share.
  */
-export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void> }, opts: { blobs?: BlobStore; refs?: RefIndex } = {}): FileStore["Service"] {
-  const { file: FILE, ref: REF, dir: DIR } = KEYS;
+export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void> }, opts: { blobs?: BlobStore; refs?: RefIndex; times?: TimeIndex } = {}): FileStore["Service"] {
+  const { file: FILE, ref: REF, at: AT, dir: DIR } = KEYS;
   const { blobs } = opts;
   const refs = opts.refs ?? new RefIndex(storage);
+  const times = opts.times ?? new TimeIndex(storage);
   const refOf = async (path: string): Promise<BlobRef | null> => {
     if (!(await refs.has(path))) return null;
     const r = await storage.get<BlobRef>(REF + path);
@@ -168,7 +195,18 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
       try: async () => {
         const had = await refs.has(path);
         await dropRef(path);
+        if (await times.drop(path)) await storage.delete(AT + path);
         if ((await storage.delete(FILE + path)) || had) await hooks.touch();
+      },
+      catch: storeError,
+    }),
+    stats: Effect.tryPromise({
+      try: async () => {
+        const [refMap, timeMap] = await Promise.all([storage.list<BlobRef>({ prefix: REF }), times.load()]);
+        const out = new Map<string, { size?: number; at?: number; hash?: string }>();
+        for (const [path, at] of timeMap) out.set(path, { at });
+        for (const [key, ref] of refMap) if (isBlobRef(ref)) out.set(key.slice(REF.length), { ...out.get(key.slice(REF.length)), size: ref.size, at: ref.at, hash: ref.hash });
+        return out;
       },
       catch: storeError,
     }),
@@ -199,7 +237,9 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
       try: async () => {
         const inRefs = (await refs.all()).filter((p) => p.startsWith(path + "/"));
         for (const p of inRefs) await refs.drop(p);
-        const keys = [...(await storage.list({ prefix: FILE + path + "/" })).keys(), ...inRefs.map((p) => REF + p), ...(await storage.list({ prefix: DIR + path + "/" })).keys(), DIR + path];
+        const inTimes = [...(await times.load()).keys()].filter((p) => p.startsWith(path + "/"));
+        for (const p of inTimes) await times.drop(p);
+        const keys = [...(await storage.list({ prefix: FILE + path + "/" })).keys(), ...inRefs.map((p) => REF + p), ...inTimes.map((p) => AT + p), ...(await storage.list({ prefix: DIR + path + "/" })).keys(), DIR + path];
         for (let i = 0; i < keys.length; i += BATCH) await storage.delete(keys.slice(i, i + BATCH));
         await hooks.touch();
       },
@@ -398,9 +438,10 @@ export class Journal {
  * stored copy would be over OBJECT_MAX is stored as a blob (its ref, in
  * `refs`): the file stays text in the room, whatever its size.
  */
-export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edited?: () => Promise<void>; journal?: Journal; blobs?: BlobStore; refs?: RefIndex } = {}): StateStore["Service"] {
+export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edited?: () => Promise<void>; journal?: Journal; blobs?: BlobStore; refs?: RefIndex; times?: TimeIndex } = {}): StateStore["Service"] {
   const journal = opts.journal ?? new Journal(storage);
   const refs = opts.refs ?? new RefIndex(storage);
+  const times = opts.times ?? new TimeIndex(storage);
   const encoder = new TextEncoder();
   return StateStore.of({
     load: Effect.tryPromise({
@@ -413,7 +454,9 @@ export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edit
     commit: (c) => Effect.tryPromise({
       try: async () => {
         const files: Record<string, unknown> = {}, drop: string[] = [];
+        const now = Date.now();
         for (const [path, text] of c.write) {
+          if (await times.written(path, now)) files[KEYS.at + path] = now;
           const bytes = encoder.encode(text);
           if (opts.blobs && bytes.length > OBJECT_MAX) {
             // Stored first: the ref goes in with the history, in one transaction.
@@ -425,7 +468,10 @@ export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edit
             if (await refs.drop(path)) drop.push(KEYS.ref + path);
           }
         }
-        for (const path of c.remove) if (await refs.drop(path)) drop.push(KEYS.ref + path);
+        for (const path of c.remove) {
+          if (await refs.drop(path)) drop.push(KEYS.ref + path);
+          if (await times.drop(path)) drop.push(KEYS.at + path);
+        }
         await journal.commit({ update: c.update, files, remove: c.remove, unwritten: c.unwritten, drop }, c.write.length || c.remove.length ? opts.edited : undefined);
       },
       catch: storeError,

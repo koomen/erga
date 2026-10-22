@@ -28,7 +28,7 @@ import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { frontDocument, landingPage } from "./landing.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
-import { accountHtml, accountOf, cloneButton, editButton, esc, link, OWN_ACCOUNT, page, scriptTag, startPage, viewerPage, withEdit } from "../pages/index.ts";
+import { accountHtml, accountOf, cloneButton, editButton, esc, filesButton, filesPage, link, OWN_ACCOUNT, page, scriptTag, startPage, viewerPage, withEdit } from "../pages/index.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -130,7 +130,22 @@ export async function viewAddress(platform: Platform, request: Request, session:
   }
   const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`)) return new Response(null, { status: 302, headers: { Location: canonical + url.search, "Cache-Control": "no-store" } });
+  if (url.searchParams.has("files")) return renderFiles(platform, request, session, d);
   return render(platform, request, session, d, false);
+}
+
+/**
+ * The files view (?files: server/pages/files.ts): every file of the document, for whoever may view it; whoever may
+ * edit adds, moves, renames and deletes them there. Its files come from the pages origin, under a token as the viewer's.
+ */
+async function renderFiles(platform: Platform, request: Request, session: Session, d: Decision): Promise<Response> {
+  const url = new URL(request.url);
+  const canEdit = !session.agent && roleMay(d.role, "edit");
+  const by = platform.adminsOnly ? session.login : null;
+  const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, by ? { by } : {});
+  const pages = `${pagesOrigin(d.owner, d.id, url, platform)}/t/${token}/`;
+  const html = filesPage({ session, title: d.title, address: `/${d.owner}/${d.slug}`, docId: d.id, pages, canEdit });
+  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
 
 /**
@@ -204,7 +219,9 @@ async function render(platform: Platform, request: Request, session: Session | n
     : "");
   // The page's own address there: its file, under the token.
   const src = files + d.file.split("/").map(encodeURIComponent).join("/");
-  const shell = viewerPage({ title: d.title, docId: d.id, pages: origin, src, meta, session, editable: canEdit, editing, landing, clone, edit });
+  // The files view, for whoever signed in may view it (not on the front page, which is everyone's).
+  const filesLink = session && !session.agent && !landing ? filesButton(link(`${address}?files`, session)) : "";
+  const shell = viewerPage({ title: d.title, docId: d.id, pages: origin, src, meta, session, editable: canEdit, editing, landing, clone, edit, files: filesLink });
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
   const before = shell.before, after = shell.after + corner;
   const build = await pageBuild(before + after);

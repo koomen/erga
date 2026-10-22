@@ -50,7 +50,7 @@ import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX,
 import type { AgentState, Hello } from "./api.ts";
 import { resolvePage, titleOf } from "./pages.ts";
 import { digest, FileStore, Room, StateStore, type Connection } from "./room.ts";
-import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, type Storage } from "./storage.ts";
+import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storage } from "./storage.ts";
 import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
@@ -738,7 +738,12 @@ export class Document {
    * refused, never merged). Someone who may only view joins read-only: they
    * see every edit, and theirs go nowhere.
    */
-  joinRoom(opened: Opened, o: { epoch: string | null; readOnly: boolean; send: (m: Uint8Array | string) => void; events?: Person | null }): { receive: (data: Uint8Array) => boolean; left: () => void } | null {
+  joinRoom(opened: Opened, o: { epoch: string | null; readOnly: boolean; send: (m: Uint8Array | string) => void; events?: Person | null; watch?: boolean }): { receive: (data: Uint8Array) => boolean; left: () => void } | null {
+    // A files view: it hears what every tab hears (the tree changing), as text, and never joins the room.
+    if (o.watch && o.events) {
+      const leave = opened.addTab(o.events.id, (msg) => o.send(JSON.stringify(msg)), true);
+      return { receive: () => true, left: leave };
+    }
     if (o.epoch && o.epoch != opened.room.epoch) return null;
     // A tab that hears events (an editor's) first hears what it needs to start: the document's details as its person
     // sees them, and its tree (host.ts, hello); then, once their agent's session is up, its state. Its person's
@@ -1263,11 +1268,11 @@ export class Document {
     // Its files that aren't text are blobs (none on disk: it keeps its own files there), and which those are, the file
     // store and the room's writes share.
     const blobs = info.disk ? undefined : this.deps.blobs;
-    const refs = new RefIndex(storage);
-    const files = fileStoreOf(storage, { touch: () => this.touch() }, { blobs, refs });
+    const refs = new RefIndex(storage), times = new TimeIndex(storage);
+    const files = fileStoreOf(storage, { touch: () => this.touch() }, { blobs, refs, times });
     // Its history, with its files written in the same transaction (and its record, as touch notes the edit).
     // On disk the files change while it's closed, so it reads them all as it opens.
-    const state = stateStoreOf(storage, { reconcile: !!info.disk, edited: () => this.touch(), blobs, refs });
+    const state = stateStoreOf(storage, { reconcile: !!info.disk, edited: () => this.touch(), blobs, refs, times });
 
     // The room's scope lasts until the document closes (idle, deleted, replaced): closing it writes what's left.
     const scope = Effect.runSync(Scope.make());
@@ -1402,8 +1407,8 @@ export interface Opened {
   /** Its files' store (refs, blobs). */
   files: FileStore["Service"];
   handler: (request: Request) => Promise<Response>;
-  /** A tab joins its person's event channel; returns the leave function. */
-  addTab: (user: string, send: (msg: unknown) => void) => () => void;
+  /** A tab joins its person's event channel (`watch`: a files view, hearing only what every tab does); returns the leave function. */
+  addTab: (user: string, send: (msg: unknown) => void, watch?: boolean) => () => void;
   /** What a tab hears first ({ type: "hello" }): the document's details as the person sees them, and its tree. */
   hello: (person: Person, canEdit: boolean) => Promise<Hello>;
   /** The person's agent: on or off, its model and its conversation (as GET /api/agent answers). */
