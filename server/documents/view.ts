@@ -219,8 +219,8 @@ async function render(platform: Platform, request: Request, session: Session | n
     : "");
   // The page's own address there: its file, under the token.
   const src = files + d.file.split("/").map(encodeURIComponent).join("/");
-  // The files view, for whoever signed in may view it (not on the front page, which is everyone's).
-  const filesLink = session && !session.agent && !landing ? filesButton(link(`${address}?files`, session)) : "";
+  // The files view, for whoever signed in may view the document; on the front page (everyone's), for whoever may edit it.
+  const filesLink = session && !session.agent && (!landing || canEdit) ? filesButton(link(`${address}?files`, session)) : "";
   const shell = viewerPage({ title: d.title, docId: d.id, pages: origin, src, meta, session, editable: canEdit, editing, landing, clone, edit, files: filesLink });
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
   const before = shell.before, after = shell.after + corner;

@@ -12,7 +12,7 @@
 // after changes; serve.ts serves it at /; api.ts is the homepage's API.
 
 import type { DocRow } from "../directory/index.ts";
-import { ACCOUNT_STYLE, accountMarkup, cloneButton, crumbsFont, editButton, esc, FADE, link, NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, VIEW_STYLE, viewCrumbs, type Account } from "../pages/index.ts";
+import { ACCOUNT_STYLE, accountMarkup, cloneButton, crumbsFont, editButton, esc, FADE, filesButton, link, NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, VIEW_STYLE, viewCrumbs, type Account } from "../pages/index.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home/";
@@ -151,7 +151,7 @@ export async function renderHome(opts: { index: string; files: Record<string, st
 
 /**
  * The homepage's controls, over the page as on any document's viewer:
- *New document, Clone, Edit for those who may edit it, and who
+ *New document, Clone, Files and Edit for those who may edit it, and who
  * you are. They live in a shadow root (declarative, so they
  * paint as soon as they arrive, before any script), out of the page's
  * styles' reach and the page out of theirs, on a host that resets whatever
@@ -159,9 +159,9 @@ export async function renderHome(opts: { index: string; files: Record<string, st
  * page's <body> (so nothing the page does to its body moves it) and runs the
  * account menu and the tooltips.
  */
-export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
+export function homeHeader(o: { clone: string; edit: string | null; files?: string | null; account: Account | null; here: string; doc?: string }): string {
   const session = o.account?.session ?? null;
-  const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session), !!session && !session.test)}`;
+  const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.files ? filesButton(o.files) : ""}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session), !!session && !session.test)}`;
   // The font goes outside the shadow root: a font declared inside one isn't used.
   return `${crumbsFont(session)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style><div class="band"></div>${viewCrumbs(session, null)}${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
 }
