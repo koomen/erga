@@ -34,6 +34,7 @@
 // server's settings and users for an admin) are added as they are; the admin
 // ones are listed only for an admin's token.
 
+import type { FileData } from "../document/document.ts";
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
 import { type Action, type DocRow, ID, LOCKED, nameOf, newDocId, roleMay, type Route } from "./directory/index.ts";
@@ -121,7 +122,7 @@ export const TOOLS: ServerTool[] = [
       const { session, platform } = ctx;
       // Anyone who may sign in may make documents (withTokens checked they still may); test people only test documents.
       if (session.test) throw new ToolError("You can't make documents on this server.", 403);
-      let files = decodeFiles(args.files);
+      let files: Record<string, FileData> = decodeFiles(args.files);
       const published = Object.keys(files).length > 0;
       let index: string;
       if (published) index = pageOf(files, args.index);

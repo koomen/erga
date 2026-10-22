@@ -7,6 +7,7 @@
 //   GET  /api/deploys/version           anyone: {version, target}, the release this server runs (the pipeline waits for it)
 //   GET  /api/health                    anyone: {ok, version, target, checks}: the app works (server/health.ts); 503 when it doesn't
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
+//   GET  /api/snapshot/blob/<sha-256>   SNAPSHOT_TOKEN: one of the documents' blobs (any server), read-only
 
 import { snapshotDoor } from "../deploy/snapshot";
 import { PRODUCTION } from "../deploy/targets";
@@ -14,6 +15,7 @@ import { health } from "../server/health";
 import type { Platform } from "../server/platform";
 import type { Env } from "./env";
 import { documentOf } from "./document-host";
+import { snapshotBlob } from "./blobs";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) => path == "/api/deploys/version" || path == "/api/health" || path.startsWith("/api/snapshot/");
@@ -27,6 +29,9 @@ export async function deploysDoor(request: Request, env: Env, platform: Platform
     const h = await health(platform);
     return Response.json(h, { status: h.ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
   }
+  // One blob, for staging's copy of production's documents (cloudflare/blobs.ts).
+  const blob = await snapshotBlob(request, env);
+  if (blob) return blob;
   if (path.startsWith("/api/snapshot/")) {
     // Never into production, whatever its settings say.
     const production = env.DEPLOY_TARGET == "production" || url.hostname == PRODUCTION.host;

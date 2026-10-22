@@ -1,6 +1,7 @@
 // New documents, the documents list, deleting and sharing: what /new, /docs, /docs/delete,
 // /docs/share and the share token do. The list's page is pages/docs.ts.
 
+import type { FileData } from "../../document/document.ts";
 import { titleOf } from "../../document/pages.ts";
 import { type DocRow, type Grant, ID, newDocId, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
@@ -21,7 +22,7 @@ export function templateFiles(platform: Platform, template: Template): { files: 
  * template's files (server/templates.ts; the first, a blank page, by default).
  * Null if there's nothing there to copy.
  */
-export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
+export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, FileData>; index: string } | null> {
   if (!from) return templateFiles(platform, template ?? TEMPLATES[0]);
   const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
@@ -76,7 +77,7 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
  */
 const HOUR = 60 * 60 * 1000;
 
-export async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, string | Uint8Array>, opts: MakeOptions): Promise<DocRow | null> {
+export async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, FileData>, opts: MakeOptions): Promise<DocRow | null> {
   const created = Date.now();
   // A published one has been edited already (its files are someone's work): it never expires.
   // Nor does any when the server's delete_docs_after_hours is never (null).
@@ -84,7 +85,7 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
   const expires = opts.test || opts.published ? null : opts.unedited ? created + opts.unedited : hours == null ? null : created + hours * HOUR;
   const index = opts.index ?? "index.html";
   const page = files[index];
-  const pageText = typeof page == "string" ? page : page ? new TextDecoder().decode(page) : "";
+  const pageText = typeof page == "string" ? page : page instanceof Uint8Array ? new TextDecoder().decode(page) : "";
   const { doc, added } = await platform.directory.add({
     id, owner,
     ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText) ?? UNTITLED }),

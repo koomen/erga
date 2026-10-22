@@ -18,6 +18,8 @@ import type { App } from "../control/index";
 import type { SourceService } from "../server/source/index.ts";
 import { agentSettings } from "./agent-settings";
 import { documentOf } from "./document-host";
+import { blobsOf } from "./blobs";
+import { BLOB_HEADER, INLINE_HEADER, serveBlob } from "../document/blobs";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -171,7 +173,13 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
           };
         }));
       },
-      fetch: (doc, request) => counted("doc", () => host(doc).fetch(request)),
+      // A file that is a blob comes from the edge's cache or R2, never through the document's object (document/blobs.ts).
+      fetch: async (doc, request) => {
+        const answer = await counted("doc", () => host(doc).fetch(request));
+        if (!answer.headers.has(BLOB_HEADER)) return answer;
+        const inline = () => { const h = new Headers(request.headers); h.set(INLINE_HEADER, "1"); return counted("doc", () => host(doc).fetch(new Request(request, { headers: h }))); };
+        return (await serveBlob(answer, request, blobsOf(env, (w) => p.edge.background(w)) ?? null, inline)) ?? answer;
+      },
       view: (id, who, opts) => counted("doc", () => documentOf(env, id).view(who, opts)),
     },
   };

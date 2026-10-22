@@ -52,6 +52,7 @@ import * as sync from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { rebase } from "./merge";
 import { applyChanges, assets, files, folders, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "./content";
+import { TEXT_MAX, type BlobRef } from "./blobs";
 
 /** Storage failed: a file couldn't be listed, read or written. */
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { message: Schema.String }) {}
@@ -78,6 +79,12 @@ export class FileStore extends Context.Service<FileStore, {
   readonly mkdir?: (path: string) => Effect.Effect<void, StoreError>;
   /** Deletes a folder and whatever is still in it. */
   readonly rmdir?: (path: string) => Effect.Effect<void, StoreError>;
+  /** A file kept as a blob: its ref; null for any other (document/blobs.ts). Absent: the store keeps no blobs. */
+  readonly ref?: (path: string) => Effect.Effect<BlobRef | null, StoreError>;
+  /** Makes a file the blob `ref`, whose bytes the blob store has (`bytes`: the same bytes, if they're at hand). */
+  readonly putBlob?: (path: string, ref: BlobRef, bytes?: Uint8Array) => Effect.Effect<void, StoreError>;
+  /** Copies a file to another path, a blob by its ref (no bytes read); false if there's no such file. */
+  readonly copy?: (from: string, to: string) => Effect.Effect<boolean, StoreError>;
 }>()("erga/FileStore") {}
 
 /** What a room saved: its history (a snapshot, then the updates after it, in order). */
@@ -132,7 +139,6 @@ export class StateStore extends Context.Service<StateStore, {
 }
 
 const MSG_SYNC = 0, MSG_AWARENESS = 1, MSG_QUERY_AWARENESS = 3;
-const MAX_TEXT = 2_000_000;
 
 /** One participant's connection to the room. */
 export interface Connection {
@@ -300,7 +306,7 @@ export class Room {
   }
 
   private asText(path: string, bytes: Uint8Array): string | null {
-    if (!isTextPath(path) || bytes.length > MAX_TEXT) return null;
+    if (!isTextPath(path) || bytes.length > TEXT_MAX) return null;
     try { return this.decoder.decode(bytes); } catch { return null; }
   }
 
@@ -493,7 +499,8 @@ export class Room {
   push(path: string, text: string, ifMatch: string | null = null): Effect.Effect<PushResult, StoreError> {
     const self = this;
     return Semaphore.withPermit(this.turn, Effect.gen(function* () {
-      if (!isTextPath(path)) return { ok: false, etag: null, reason: "binary" } as const;
+      // Big text arriving whole is a blob (D5): only an edit makes a text that big.
+      if (!isTextPath(path) || new TextEncoder().encode(text).length > TEXT_MAX) return { ok: false, etag: null, reason: "binary" } as const;
       const before = yield* self.store.read(path);
       const current = before ? digest(before) : null;
       if (ifMatch != null && ifMatch != current) return { ok: false, etag: current, reason: "stale" } as const;
@@ -654,6 +661,26 @@ export class Room {
     }));
   }
 
+  /**
+   * Makes a file the blob `ref` (its bytes already in the blob store: an
+   * upload, an agent's write of bytes), in one turn of the queue: storage
+   * keeps the ref, and the room the hash, so every tab sees the new file at
+   * once. A text file at the path is replaced: a file changes kind only so,
+   * replaced whole, never while someone edits it.
+   */
+  putBlob(path: string, ref: BlobRef, bytes?: Uint8Array): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Semaphore.withPermit(this.turn, Effect.gen(function* () {
+      if (!self.store.putBlob) return yield* Effect.fail(new StoreError({ message: "this document keeps no files but text" }));
+      // A text there goes first (its stored copy with it), then the blob takes its place.
+      if (files(self.doc).has(path)) { self.removeFile(path); yield* self.write(true); }
+      yield* self.store.putBlob(path, ref, bytes);
+      self.removals.delete(path);
+      if (assets(self.doc).get(path) != ref.hash) self.act(() => assets(self.doc).set(path, ref.hash), self);
+      yield* self.write(true);
+    }));
+  }
+
   /** Takes a file out of the room; storage deletes it with the next write. */
   private removeFile(path: string): void {
     this.stored.delete(path);
@@ -697,6 +724,13 @@ export class Room {
     return Effect.gen(function* () {
       const text = self.text(from);
       if (text != null) return self.takeText(to, text);
+      // A blob goes by its ref: no bytes read.
+      const ref = self.store.ref ? yield* self.store.ref(from) : null;
+      if (ref && self.store.copy) {
+        if (!(yield* self.store.copy(from, to))) return;
+        self.removals.delete(to);
+        return self.act(() => assets(self.doc).set(to, assets(self.doc).get(from) ?? ref.hash), self);
+      }
       const bytes = yield* self.store.read(from);
       if (!bytes) return;
       if (!self.store.writeBytes) return yield* Effect.fail(new StoreError({ message: `${from} can't be moved here: only text files can` }));

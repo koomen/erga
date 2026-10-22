@@ -13,7 +13,7 @@ import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
 import type { SiteOps } from "./sites/index.ts";
 import type { RestoreResult, VersionsState } from "../document/versions.ts";
-import type { ViewAnswer } from "../document/document.ts";
+import type { FileData, ViewAnswer } from "../document/document.ts";
 import { VIA } from "../shared/attribution.ts";
 
 /** Who's signed in. */
@@ -165,18 +165,18 @@ export interface Platform {
      * template's files; false if it already has one. Unless someone edits
      * it, it goes at `expires`.
      */
-    create(doc: Route, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean>;
+    create(doc: Route, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean>;
     /**
      * Files arriving whole into an existing document (a publish): written,
      * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).
      */
-    publish(doc: Route, files: Record<string, string | Uint8Array>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
+    publish(doc: Route, files: Record<string, FileData>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
     /** Every file a document holds. */
     paths(doc: Route): Promise<string[]>;
     /** A document's page, or null if it has no host. */
     index(doc: Route): Promise<string | null>;
-    /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
-    snapshot(doc: Route): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
+    /** A document's files as they are now (a blob as its ref), and its page: what a copy starts from. Null if it has no host. */
+    snapshot(doc: Route): Promise<{ index: string; files: Record<string, FileData> } | null>;
     /** A document's versions and the current one; null if it has no host. */
     versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
     /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */

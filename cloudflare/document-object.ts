@@ -16,7 +16,7 @@
 // It's an ordinary socket: a document on disk never sleeps.
 
 import { DurableObject } from "cloudflare:workers";
-import { Document, personOf, type DocumentDeps, type OnDisk, type ViewAnswer } from "../document/document";
+import { Document, personOf, type DocumentDeps, type FileData, type OnDisk, type ViewAnswer } from "../document/document";
 import { Tabs, type Tab } from "../document/tabs";
 import { PING, PONG } from "../shared/room-socket";
 import type { DocRow, Role, Who } from "../server/directory/index.ts";
@@ -32,6 +32,7 @@ import { DiskLink } from "../dev/disk-storage";
 import { homeChanged } from "./current-files";
 import { siteChanged, siteOps } from "./sites";
 import type { Env } from "./env";
+import { blobsOf } from "./blobs";
 
 /** The new-document template's page, which a new page starts from. */
 const TEMPLATE = Object.values(import.meta.glob("../assets/templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>)[0] ?? "";
@@ -94,6 +95,8 @@ export class DocumentObject extends DurableObject<Env> {
         closeIdleMs: Number(env.ERGA_ROOM_IDLE_MS) || 60_000,
       },
       background: (work) => this.ctx.waitUntil(work),
+      // Its files that aren't text, in R2.
+      blobs: blobsOf(env),
       // (This isolate's answers only: elsewhere a viewer's kept answer lasts its few seconds: server/documents/view.ts.)
       viewChanged: (docId) => forgetDecisions(docId),
       log: (line) => console.log(line),
@@ -130,10 +133,10 @@ export class DocumentObject extends DurableObject<Env> {
     return (this[method as Call] as (...a: unknown[]) => unknown)(...args);
   }
 
-  create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> { return this.document.create(owner, id, files, index, opts); }
+  create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> { return this.document.create(owner, id, files, index, opts); }
   link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> { return this.document.link(owner, id, index, disk); }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
-  publish(files: Record<string, string | Uint8Array>, remove: string[], by?: string) { return this.document.publish(files, remove, by); }
+  publish(files: Record<string, FileData>, remove: string[], by?: string) { return this.document.publish(files, remove, by); }
   paths(): Promise<string[]> { return this.document.hold(() => this.document.paths()); }
   index(): Promise<string | null> { return this.document.index(); }
   snapshot() { return this.document.hold(() => this.document.snapshot()); }
