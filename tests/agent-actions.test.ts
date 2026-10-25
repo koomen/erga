@@ -24,8 +24,20 @@ const ROUTE_TABLES = [
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
 const PAGE_SCRIPTS = [
-  ...readdirSync(ROOT + "client").filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
-  "server/source/page.ts", "deploy/page.ts", "server/admin/pages.ts", "server/documents/view.ts", "server/documents/make.ts", "server/pages/viewer.ts", "server/pages/reader.ts", "server/pages/docs.ts", "server/pages/chrome.ts", "server/api.ts", "server/home/render.ts",
+  ...(readdirSync(ROOT + "client", { recursive: true }) as string[]).filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
+  "server/source/page.ts",
+  "server/source/page-script.ts",
+  "server/tokens-page.ts",
+  "deploy/page.ts",
+  "server/admin/pages.ts",
+  "server/documents/view.ts",
+  "server/documents/make.ts",
+  "server/pages/viewer.ts",
+  "server/pages/reader.ts",
+  "server/pages/docs.ts",
+  "server/pages/chrome.ts",
+  "server/api.ts",
+  "server/home/render.ts",
 ];
 
 const METHOD = "GET|POST|PUT|PATCH|DELETE";

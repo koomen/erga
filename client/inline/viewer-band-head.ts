@@ -3,7 +3,9 @@
 // the tone.
 
 export default function viewerBandHead(): void {
-  window.ergaBand = function (id: string, color?: string) {
+  // (`given`: whether a colour was passed at all, as ergaBand(id) remembers nothing.)
+  window.ergaBand = (id: string, ...given: [color?: string]) => {
+    let color = given[0];
     const key = "erga:band:v1:" + id,
       root = document.documentElement;
     let tone = "";
@@ -23,7 +25,7 @@ export default function viewerBandHead(): void {
     else root.style.removeProperty("--band");
     root.classList.toggle("page-dark", tone == "page-dark");
     root.classList.toggle("page-light", tone == "page-light");
-    if (arguments.length > 1)
+    if (given.length)
       try {
         localStorage.setItem(key, JSON.stringify({ bg: color, tone }));
       } catch {}
