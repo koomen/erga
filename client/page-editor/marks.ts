@@ -1,9 +1,13 @@
-// The marks over the page: text a change added, and text it removed, in its author's colour.
+// The marks over the page: text a change added, and text it removed, in its author's colour, fading or tracked;
+// other people's carets and selections; and blocks that flash where a change showed no text.
 
 import type { ChangeSet } from "@codemirror/state";
-import type * as M from "../../shared/manuscript";
-import { textIn } from "./source";
-import type { MarkAuthor } from "./types";
+import * as M from "../../shared/manuscript";
+import { changesBetween } from "../../document/merge";
+import { ms } from "../timescale";
+import type { MarkAuthor, Peer } from "./types";
+import { copyUnit, textIn, unitsIn } from "./source";
+import { EditorCore } from "./core";
 
 export type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number; author?: MarkAuthor | null };
 
@@ -33,4 +37,292 @@ export function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Uni
     if (!shown && !gone) unmarked.push({ from: fromB, to: toB });
   });
   return { marks, unmarked };
+}
+
+export abstract class EditorMarks extends EditorCore {
+  /** Source ranges to flash once the render in flight is done. */
+  protected pendingFlash: { from: number; to: number }[] = [];
+  /**
+   * What changed, drawn over the page without touching its text: added text
+   * gets a green highlight, removed text a red notch (hover it for the text).
+   * With tracking off, edits from elsewhere are marked briefly and fade
+   * (`level` counts up the fade); with tracking on, the marks are a diff of
+   * the document against `tracking.baseline`, whoever made the changes.
+   */
+  protected marks: Mark[] = [];
+  /**
+   * While tracking, who wrote what: every insertion and deletion since it
+   * started, with its author, mapped through later changes. The tracked diff
+   * is computed from the text alone; its marks take their authors from here.
+   */
+  protected tracking: { baseline: string; units: M.Unit[]; adds: { from: number; to: number; author: MarkAuthor | null }[]; dels: { pos: number; author: MarkAuthor | null }[] } | null = null;
+  protected overlay: HTMLElement | null = null;
+  /** Other people's carets and selections, drawn over the page like the marks. */
+  protected peers: Peer[] = [];
+  protected peerLayer: HTMLElement | null = null;
+  /** Highlight names registered for each author colour. */
+  protected authorStyles = new Map<string, number>();
+  protected markObserver: ResizeObserver | null = null;
+  protected paintQueued = false;
+  protected diffQueued = false;
+  protected fadeTimer = 0;
+
+  get isTracking(): boolean { return !!this.tracking; }
+
+  /**
+   * Track changes: on, every change from now on (yours, the agent's) stays
+   * marked, as a diff against the document as it is now (so text typed and
+   * deleted again leaves no trace); off, the marks go.
+   */
+  setTracking(on: boolean): void {
+    if (on == !!this.tracking) return;
+    this.marks = [];
+    this.tracking = on ? { baseline: this.src, units: this.units.map(copyUnit), adds: [], dels: [] } : null;
+    this.paintMarks();
+  }
+
+  /**
+   * Records who made a change, while tracking (see `tracking`). The page's
+   * own edits and `applyExternal`'s are recorded here; the shell records
+   * the ones made in the source view.
+   */
+  recordAuthorship(changes: ChangeSet, author: MarkAuthor | null): void {
+    const t = this.tracking;
+    if (!t) return;
+    t.adds = t.adds.flatMap((a) => {
+      const from = changes.mapPos(a.from, 1), to = changes.mapPos(a.to, -1);
+      return to > from ? [{ ...a, from, to }] : [];
+    });
+    for (const d of t.dels) d.pos = changes.mapPos(d.pos, -1);
+    changes.iterChanges((fromA, toA, fromB, toB) => {
+      if (toB > fromB) t.adds.push({ from: fromB, to: toB, author });
+      if (toA > fromA) t.dels.push({ pos: fromB, author });
+    });
+    if (t.adds.length > 2000) t.adds.splice(0, t.adds.length - 2000);
+    if (t.dels.length > 2000) t.dels.splice(0, t.dels.length - 2000);
+  }
+
+  /** The author of a tracked mark: whoever wrote most of an addition, or deleted nearest a deletion. */
+  protected trackedAuthor(m: Mark): MarkAuthor | null {
+    const t = this.tracking!;
+    if (m.kind == "add") {
+      let best: MarkAuthor | null = null, most = 0;
+      for (const a of t.adds) {
+        const overlap = Math.min(a.to, m.to) - Math.max(a.from, m.from);
+        if (overlap > most) { most = overlap; best = a.author; }
+      }
+      return best;
+    }
+    let best: MarkAuthor | null = null, dist = Infinity;
+    for (let i = t.dels.length - 1; i >= 0; i--) {
+      const d = Math.abs(t.dels[i].pos - m.pos);
+      if (d < dist) { dist = d; best = t.dels[i].author; }
+    }
+    return dist <= Math.max(8, m.text.length) ? best : null;
+  }
+
+  protected mapMarks(changes: ChangeSet): void {
+    if (this.tracking || !this.marks.length) return;
+    this.marks = this.marks.flatMap((m): Mark[] => {
+      if (m.kind == "del") return [{ ...m, pos: changes.mapPos(m.pos, -1) }];
+      const from = changes.mapPos(m.from, 1), to = changes.mapPos(m.to, -1);
+      return to > from ? [{ ...m, from, to }] : [];
+    });
+  }
+
+  /** Recomputes the tracked diff (coalesced to one per frame: it runs on every keystroke). */
+  protected queueDiff(): void {
+    if (this.diffQueued) return;
+    this.diffQueued = true;
+    requestAnimationFrame(() => {
+      this.diffQueued = false;
+      if (!this.tracking) return;
+      this.marks = marksFor(changesBetween(this.tracking.baseline, this.src), this.tracking.units, this.units, 0).marks;
+      for (const m of this.marks) m.author = this.trackedAuthor(m);
+      this.paintMarks();
+    });
+  }
+
+  /** Brief marks hold for a moment, then fade out step by step. */
+  protected startFade(): void {
+    const HOLD = ms(2200), STEP = ms(110), LEVELS = 6;
+    const born = performance.now();
+    for (const m of this.marks) m.born ??= born;
+    if (this.fadeTimer) return;
+    this.fadeTimer = window.setInterval(() => {
+      const now = performance.now();
+      this.marks = this.marks.filter((m) => now - m.born! < HOLD + LEVELS * STEP);
+      for (const m of this.marks) m.level = Math.max(0, Math.min(LEVELS - 1, Math.floor((now - m.born! - HOLD) / STEP) + 1));
+      if (!this.marks.length || this.tracking) { clearInterval(this.fadeTimer); this.fadeTimer = 0; }
+      this.paintMarks();
+    }, 60);
+  }
+
+  protected queuePaint(): void {
+    if (this.paintQueued || (!this.marks.length && !this.overlay && !this.peers.length && !this.peerLayer)) return;
+    this.paintQueued = true;
+    requestAnimationFrame(() => { this.paintQueued = false; this.paintMarks(); });
+  }
+
+  /** Draws the marks: CSS highlights over added text (the DOM is untouched), notches in an overlay for removed text. */
+  protected paintMarks(): void {
+    const doc = this.doc, win = this.win as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
+    if (!doc || !win || this.rendering) return;
+    const registry = (win.CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+    // One highlight per author colour and fade level: "erga-add-<level>" for
+    // unattributed changes (green), "erga-a<n>-<level>" for each author's.
+    const groups = new Map<string, Range[]>();
+    for (const m of this.marks) {
+      if (m.kind != "add") continue;
+      const name = m.author ? `erga-a${this.authorStyle(m.author.color)}-${m.level ?? 0}` : `erga-add-${m.level ?? 0}`;
+      let ranges = groups.get(name);
+      if (!ranges) groups.set(name, (ranges = []));
+      ranges.push(...this.rangesIn(m.from, m.to));
+    }
+    if (registry && win.Highlight) {
+      for (const name of [...registry.keys()]) if (/^erga-(add|a\d+)-\d$/.test(name) && !groups.has(name)) registry.delete(name);
+      for (const [name, ranges] of groups) registry.set(name, new win.Highlight!(...ranges));
+    }
+
+    const dels = this.marks.filter((m): m is Mark & { kind: "del" } => m.kind == "del");
+    if (!dels.length) {
+      this.overlay?.remove();
+      this.overlay = null;
+    } else {
+      if (!this.overlay || !this.overlay.isConnected) {
+        this.overlay = doc.createElement("erga-marks");
+        doc.documentElement.append(this.overlay);
+      }
+      this.overlay.textContent = "";
+      for (const m of dels) {
+        const at = this.anchorAt(m.pos);
+        if (!at) continue;
+        const notch = doc.createElement("erga-del");
+        notch.style.cssText = `left:${at.rect.left + win.scrollX}px;top:${at.rect.top + win.scrollY}px;height:${at.inline ? at.rect.height : 18}px;opacity:${1 - (m.level ?? 0) / 6}`;
+        if (m.author) notch.style.setProperty("--erga-del", m.author.color);
+        notch.setAttribute("aria-label", `Deleted${m.author ? ` by ${m.author.name}` : ""}: ${m.text}`);
+        const tip = doc.createElement("erga-tip");
+        if (m.author) { const who = doc.createElement("erga-who"); who.textContent = m.author.name; who.style.color = m.author.color; tip.append(who); }
+        tip.append(m.text.length > 160 ? m.text.slice(0, 160) + "…" : m.text);
+        notch.append(tip);
+        this.overlay.append(notch);
+      }
+    }
+
+    this.paintPeers();
+  }
+
+  /** DOM ranges over the page text of source [from, to), one per text node it touches. */
+  protected rangesIn(from: number, to: number): Range[] {
+    const out: Range[] = [];
+    for (const u of unitsIn(this.units, from, to)) {
+      const el = this.els[u.id];
+      if (!el) continue;
+      const nodes = this.textNodes(el);
+      if (nodes.length != u.runs.length) continue;
+      u.runs.forEach((run, i) => {
+        const s = Math.max(from, run.from), e = Math.min(to, run.to);
+        if (s >= e) return;
+        const range = this.doc!.createRange();
+        try { range.setStart(nodes[i], M.runOffset(run, s)); range.setEnd(nodes[i], M.runOffset(run, e)); } catch { return; }
+        out.push(range);
+      });
+    }
+    return out;
+  }
+
+  /** The index of an author colour's highlights, writing their styles into the page the first time. */
+  protected authorStyle(color: string): number {
+    let n = this.authorStyles.get(color);
+    if (n == null) this.authorStyles.set(color, (n = this.authorStyles.size));
+    const doc = this.doc!;
+    let style = doc.getElementById("erga-authors");
+    if (!style || style.dataset.count != String(this.authorStyles.size)) {
+      style ??= doc.head.appendChild(Object.assign(doc.createElement("style"), { id: "erga-authors" }));
+      style.dataset.count = String(this.authorStyles.size);
+      style.textContent = [...this.authorStyles].map(([c, i]) => FADE.map((a, level) => `::highlight(erga-a${i}-${level}) { background-color: ${rgba(c, a * 0.9)}; }`).join("\n")).join("\n");
+    }
+    return n;
+  }
+
+  /** Scrolls a source position into view, if it's off screen (to find someone's caret). */
+  reveal(pos: number): void {
+    const win = this.win;
+    const at = this.anchorAt(pos);
+    if (win && at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
+  }
+
+  /** Shows other people's carets and selections (positions in the current source). */
+  setPeers(peers: Peer[]): void {
+    this.peers = peers;
+    this.paintPeers();
+  }
+
+  protected paintPeers(): void {
+    const doc = this.doc, win = this.win;
+    if (!doc || !win || this.rendering) return;
+    if (!this.peers.length) { this.peerLayer?.remove(); this.peerLayer = null; return; }
+    if (!this.peerLayer || !this.peerLayer.isConnected) {
+      this.peerLayer = doc.createElement("erga-peers");
+      doc.documentElement.append(this.peerLayer);
+    }
+    const layer = this.peerLayer;
+    layer.textContent = "";
+    const len = this.state.doc.length;
+    for (const p of this.peers) {
+      const anchor = Math.min(p.anchor, len);
+      if (p.head != null && p.head != anchor) {
+        const from = Math.min(anchor, p.head), to = Math.min(len, Math.max(anchor, p.head));
+        for (const r of this.rangesIn(from, to)) for (const rect of r.getClientRects()) {
+          const box = doc.createElement("erga-peer-sel");
+          box.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;width:${rect.width}px;height:${rect.height}px;background:${rgba(p.color, 0.18)}`;
+          layer.append(box);
+        }
+      }
+      // An agent's caret can sit between blocks (after an edit to the markup):
+      // show it at the end of the text before, or the start of the text after.
+      let caretAt = Math.min(p.head ?? anchor, len);
+      if (!M.unitAt(this.units, caretAt)) {
+        const prev = [...this.units].reverse().find((u) => u.to <= caretAt && this.els[u.id]);
+        const near = prev ?? this.units.find((u) => u.from >= caretAt && this.els[u.id]);
+        if (!near) continue;
+        caretAt = near == prev ? M.textEnd(near) : M.textStart(near);
+      }
+      const rect = this.coordsAtPos(Math.min(caretAt, len), -1);
+      if (!rect || (!rect.height && !rect.width && !rect.top)) continue;
+      const caret = doc.createElement("erga-peer");
+      caret.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;height:${rect.height || 18}px;--erga-peer:${p.color}`;
+      if (p.agent) caret.setAttribute("data-agent", "");
+      const label = doc.createElement("erga-peer-name");
+      label.textContent = p.activity ? `${p.name} · ${p.activity}` : p.name;
+      caret.append(label);
+      layer.append(caret);
+    }
+  }
+
+  /** Where a source position is on the page: inside text (a caret rect), or else at the start of the next paragraph. */
+  protected anchorAt(pos: number): { rect: DOMRect; inline: boolean } | null {
+    const u = M.unitAt(this.units, pos);
+    if (u && this.els[u.id]) {
+      const rect = this.coordsAtPos(pos, -1);
+      if (rect) return { rect, inline: true };
+    }
+    const next = this.units.find((x) => x.from >= pos && this.els[x.id]) ?? [...this.units].reverse().find((x) => this.els[x.id]);
+    if (!next) return null;
+    const r = this.els[next.id]!.getBoundingClientRect();
+    return { rect: new DOMRect(r.left, next.from >= pos ? r.top : r.bottom - 18, 0, 0), inline: false };
+  }
+
+  /** Highlights the units that overlap the ranges, where they are: the view doesn't move to them. */
+  protected flash(ranges: { from: number; to: number }[]): void {
+    for (const u of this.units) {
+      if (!ranges.some((r) => r.from <= u.to && r.to >= u.from)) continue;
+      const el = this.els[u.id];
+      if (!el) continue;
+      el.classList.remove("erga-flash");
+      void (el as HTMLElement).offsetWidth;
+      el.classList.add("erga-flash");
+      el.addEventListener("animationend", () => el.classList.remove("erga-flash"), { once: true });
+    }
+  }
 }
