@@ -4,10 +4,10 @@
 //   bun dev/format.ts            check: lists each changed line that Biome would format, and fails
 //   bun dev/format.ts --write    formats those lines in place (bun run format)
 //
-// A change is everything since the base: the merge base with origin/staging (else origin/main),
-// or ERGA_FORMAT_BASE (CI sets it). Uncommitted edits and new files count. Biome formats each
-// changed file; only the parts of its result that meet a changed line are kept, so the rest of a
-// file stays as it is and a branch's diff stays its own. `bun run test` runs the check.
+// A change is everything since the base: the merge base with ERGA_FORMAT_BASE (CI sets it), else
+// with origin/staging, else with origin/main. Uncommitted edits and new files count. Biome formats
+// each changed file; only the parts of its result that meet a changed line are kept, so the rest of
+// a file stays as it is and a branch's diff stays its own. `bun run test` runs the check.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -24,7 +24,7 @@ const git = (...args: string[]) => spawnSync("git", args, { cwd: ROOT, encoding:
 /** The commit a change is measured from, or undefined when there's none to measure from. */
 function base(): string | undefined {
   const asked = process.env.ERGA_FORMAT_BASE;
-  for (const ref of asked ? [asked] : ["origin/staging", "origin/main"]) {
+  for (const ref of [...(asked ? [asked] : []), "origin/staging", "origin/main"]) {
     const mb = git("merge-base", "HEAD", ref);
     if (mb.status == 0) return mb.stdout.trim();
   }

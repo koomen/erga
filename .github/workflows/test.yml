@@ -1,0 +1,34 @@
+# The tests on every pull request and push: `bun run test` (the format check, lint, typecheck,
+# unit tests and the smoke run in Chromium). No secrets: the dev server signs in with DEV_LOGIN
+# and the agent runs its scripted model.
+name: test
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The format check compares with the branch's base, so it needs the history.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      # Vite and the typecheck run under Node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: bun install --frozen-lockfile
+      - run: bun run test:browsers --with-deps
+      - run: bun run test
+        env:
+          # A pull request: its target branch. A push: the commit before it (or origin/staging for a new branch).
+          ERGA_FORMAT_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
