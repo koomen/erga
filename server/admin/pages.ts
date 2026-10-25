@@ -4,7 +4,7 @@
 //
 //   /admin                     the Settings page (GET /admin/settings redirects here)
 //   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
-//   /admin/users               the Users page: the access rules (who, and read or write), and the users: their roles (admin,
+//   /admin/users               the Users page: the access rules (who, and No access, Can view content or Can create and edit content), and the users: their roles (admin,
 //                              deploy) as switches, when they joined and last came, remove
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
@@ -38,13 +38,13 @@
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all.
 
-import { type Access, type AccessRule, type ConfigEntry, ConfigError, KIND_LABEL, type RuleKind, type CredentialEntry, CredentialError, type DeploySecretEntry, NotAllowed, type ServerRole, type SettingChange, type Settings, type SettingsVersion, type User } from "../directory/index.ts";
+import { type Access, ACCESS_LABEL, type AccessRule, type ConfigEntry, ConfigError, KIND_LABEL, type RuleKind, type CredentialEntry, CredentialError, type DeploySecretEntry, NotAllowed, type ServerRole, type SettingChange, type Settings, type SettingsVersion, type User } from "../directory/index.ts";
 import { avatarUrl, esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
 import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { adminResponse } from "./layout.ts";
-import { authOps, AuthError, PROVIDERS, ScopeError, type AuthOps, type AuthStatus, type CheckState, type OtherStatus, type Provider } from "../identity/index.ts";
+import { authOps, AuthError, PROVIDERS, ScopeError, type AuthOps, type AuthStatus, type CheckState, type OtherStatus, type Provider, type ProvidersOn } from "../identity/index.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -299,7 +299,8 @@ function eventItem(c: SettingChange): string {
   }
   if (c.access) {
     const a = c.access, who = a.kind == "everybody" ? "Everybody" : `${esc(KIND_LABEL[a.kind as RuleKind] ?? a.kind)} <span class="title">${esc(a.value)}</span>`;
-    const what = a.event == "added" ? `added: ${esc(a.access)}` : a.event == "removed" ? "removed" : `${esc(a.from ?? "")} → ${esc(a.access)}`;
+    const shown = (x?: string) => esc(ACCESS_LABEL[x as Access] ?? x ?? "");
+    const what = a.event == "added" ? `added: ${shown(a.access)}` : a.event == "removed" ? "removed" : `${shown(a.from)} → ${shown(a.access)}`;
     return `<li><span class="key">access</span> ${who} ${what}</li>`;
   }
   if (c.signIn) {
@@ -538,7 +539,7 @@ function serverCard(s: AuthStatus | OtherStatus, o: { server: "here" | "other"; 
   // A real sign-in is what checks the callback URL: on this server a link, on the other a link to its own sign-in.
   const testUrl = `${o.server == "here" ? "" : s.origin}/auth/${provider}?app=pending&next=/admin/auth`;
   // A provider that's off: an admin's sign-in with the values in use checks them before anyone else uses them.
-  const offTest = o.on === false && s.inUse.clientId && !s.pending ? `<p class="note">Sign-in with ${name} is off. <a class="pill test-off" href="${esc(link(`/auth/${provider}?app=test&next=/admin/auth`, o.session))}">Test sign-in</a> checks these values with your own sign-in; then turn ${name} on above.</p>` : "";
+  const offTest = o.on === false && s.inUse.clientId && !s.pending ? `<p class="note">Sign-in with ${name} is off. <a class="pill test-off" href="${esc(link(`/auth/${provider}?app=test&next=/admin/auth`, o.session))}">Test sign-in</a> checks these values with your own sign-in; then turn ${name} on with the switch beside its heading.</p>` : "";
   const test = s.pending?.test && !s.pending.test.ok ? `<p class="failed">The last test sign-in failed, ${esc(setAt(s.pending.test.at))}: ${esc(s.pending.test.error ?? "")}</p>` : "";
   const pending = s.pending ? `<div class="pending">
       <p><b>New values wait for a test sign-in.</b> Client ID <code>${esc(s.pending.clientId)}</code>, set by ${who_(s.pending.updatedBy, s.pending.updatedVia)}, ${esc(setAt(s.pending.updated))}. ${s.pendingCheck ? esc(s.pendingCheck.summary) : ""} Sign-in keeps the values in use until an admin signs in with the new ones.</p>
@@ -565,6 +566,23 @@ function serverCard(s: AuthStatus | OtherStatus, o: { server: "here" | "other"; 
   </section>`;
 }
 
+/**
+ * One provider's section: its heading with its on/off switch beside it, then its apps. The last provider that's on can't
+ * be turned off: its switch is fixed, and the section says why.
+ */
+function providerSection(p: Provider, on: ProvidersOn, cards: string): string {
+  const label = PROVIDERS[p].label, other = PROVIDERS[p == "github" ? "google" : "github"].label;
+  const last = on[p] && !on[p == "github" ? "google" : "github"];
+  const why = last ? `${label} is the only sign-in that's on, so it can't be turned off: turn on ${other} first.` : "";
+  return `<section class="provider" data-provider="${p}">
+    <header><h3 class="provider-head">${label}</h3>
+      <label class="switch" title="${esc(why || `Sign-in with ${label}: ${on[p] ? "on" : "off"}`)}"><input type="checkbox" role="switch" data-provider="${p}" aria-label="Sign-in with ${label}"${on[p] ? " checked" : ""}${last ? " disabled" : ""}><span class="track" aria-hidden="true"></span><span class="state">${on[p] ? "On" : "Off"}</span></label>
+    </header>
+    <p class="hint provider-hint" role="status">${esc(why)}</p>
+    ${cards}
+  </section>`;
+}
+
 /** /admin/auth: how people sign in, on this server and on the other deploy target. */
 function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]>>): Response {
   const { here, other, google, providers } = status;
@@ -573,24 +591,18 @@ function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]
   return adminResponse({ session, title: "Authentication", here: "auth", body: `
   <section aria-labelledby="auth-head" class="auth">
     <h2 id="auth-head">Authentication</h2>
-    <p class="lede">People sign in with GitHub, Google or both: choose which here. Each server needs an OAuth app of its own for each, with its own callback URL. The deploy sets each app; values pasted here win over the deploy's while they are set. The client secret is kept encrypted and shown to nobody. A change never signs out anyone who is signed in.</p>
-    <section class="providers" aria-label="Sign-in providers">
-      ${(["github", "google"] as const).map((p) => `<label class="switch provider" title="${esc(`Sign-in with ${PROVIDERS[p].label}`)}"><input type="checkbox" role="switch" data-provider="${p}" aria-label="Sign-in with ${PROVIDERS[p].label}"${providers[p] ? " checked" : ""}><span class="track" aria-hidden="true"></span><span>${PROVIDERS[p].label}</span></label>`).join("\n      ")}
-      <p class="hint" id="providers-hint" role="status"></p>
-    </section>
-    <h3 class="provider-head">GitHub</h3>
-    ${serverCard(here, { server: "here", label: here.target ? `${name(here.target)} (this server)` : "This server", editable: here.canStore, session, here, provider: "github", on: providers.github })}
-    ${otherCard}
-    <h3 class="provider-head">Google</h3>
-    ${serverCard(google, { server: "here", label: google.target ? `${name(google.target)} (this server)` : "This server", editable: google.canStore, session, here, provider: "google", on: providers.google })}
+    ${providerSection("github", providers, `${serverCard(here, { server: "here", label: here.target ? `${name(here.target)} (this server)` : "This server", editable: here.canStore, session, here, provider: "github", on: providers.github })}
+    ${otherCard}`)}
+    ${providerSection("google", providers, serverCard(google, { server: "here", label: google.target ? `${name(google.target)} (this server)` : "This server", editable: google.canStore, session, here, provider: "google", on: providers.google }))}
   </section>
 <script>
   ${POST_SCRIPT}
-  const providersHint = document.getElementById("providers-hint");
-  for (const box of document.querySelectorAll("section.providers input[data-provider]")) box.addEventListener("change", async () => {
-    say(providersHint, "Saving\u2026");
+  // Each provider's switch, in its section's header: on or off, with the server's rules (it says why it refuses, in place).
+  for (const box of document.querySelectorAll("section.provider > header input[data-provider]")) box.addEventListener("change", async () => {
+    const hint = box.closest("section.provider").querySelector(".provider-hint");
+    say(hint, "Saving\u2026");
     try { await post(${JSON.stringify(link("/admin/auth", session))}, { do: "providers", provider: box.dataset.provider, on: box.checked ? "1" : "0" }); reload(); }
-    catch (err) { box.checked = !box.checked; say(providersHint, err.message, true); }
+    catch (err) { box.checked = !box.checked; say(hint, err.message, true); }
   });
   for (const card of document.querySelectorAll("section.server")) {
     const hint = card.querySelector(".hint"), server = card.dataset.server, provider = card.dataset.provider;
@@ -662,7 +674,7 @@ function userRow(u: User, session: Session, lastAdmin: boolean): string {
 /** /admin/users: every user, when they joined and last came, and their roles as switches; add one, remove one. */
 /** The access rules on the Users page: each rule a row (who, and its access); a form adds one. */
 function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; orgs: string[] }, session: Session): string {
-  const option = (v: Access, now: Access) => `<option value="${v}"${v == now ? " selected" : ""}>${v == "none" ? "None" : v == "read" ? "Read" : "Write"}</option>`;
+  const option = (v: Access, now: Access) => `<option value="${v}"${v == now ? " selected" : ""}>${ACCESS_LABEL[v]}</option>`;
   const row = (r: AccessRule) => `  <li data-id="${r.id}" data-kind="${r.kind}">
     <div class="who">${r.kind == "everybody" ? `<span class="title">Everybody</span><span class="note">anyone who signs in with a provider that's on</span>` : `<span class="kind">${esc(KIND_LABEL[r.kind])}</span><span class="title">${esc(r.value)}</span>`}</div>
     <select class="access" aria-label="Access for ${esc(r.kind == "everybody" ? "everybody" : r.value)}">${(r.kind == "everybody" ? ["none", "read", "write"] as Access[] : ["read", "write"] as Access[]).map((v) => option(v, r.access)).join("")}</select>
@@ -670,7 +682,6 @@ function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; 
   </li>`;
   return `<section class="rules" aria-labelledby="rules-head">
     <h2 id="rules-head">Access</h2>
-    <p class="lede">Each rule gives the people it matches <b>Read</b> (sign in, and view documents) or <b>Write</b> (also make and edit them). A person gets the highest access of the rules that match them; no match: they can't sign in. Admins always have Write. A Google Workspace organization matches its Workspace accounts (not personal Google accounts); a GitHub organization, its members, checked at each sign-in.</p>
     <ol class="rows rules">
 ${rules.map(row).join("\n")}
     </ol>
@@ -682,7 +693,7 @@ ${rules.map(row).join("\n")}
         <option value="email">Google account (email)</option>
       </select>
       <input class="input" name="value" list="suggest-workspace" placeholder="example.com" aria-label="The organization, username or email" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-      <select name="access" aria-label="Access"><option value="read">Read</option><option value="write" selected>Write</option></select>
+      <select name="access" aria-label="Access"><option value="read">${ACCESS_LABEL.read}</option><option value="write" selected>${ACCESS_LABEL.write}</option></select>
       <button class="new">Add</button>
     </form>
     <datalist id="suggest-workspace">${suggestions.workspaces.map((d) => `<option value="${esc(d)}">`).join("")}</datalist>
@@ -696,16 +707,10 @@ async function usersPage(platform: Platform, session: Session): Promise<Response
     platform.directory.users.list(whoOf(session)), platform.directory.rules.list(whoOf(session)), platform.directory.rules.suggestions(whoOf(session)),
   ]);
   const admins = users.filter((u) => u.role == "admin");
-  const deployers = users.filter((u) => u.mayDeploy).length;
-  const deployPage = await platform.directory.config.get("deploy_page");
-  const deployNote = deployPage == "admins" ? "Admins and users with the deploy role may use /deploy."
-    : deployPage == "users" ? "Now anyone signed in may use /deploy (deploy_page is users): the deploy role matters only when deploy_page is admins."
-    : "/deploy is off now (deploy_page is off): the deploy role matters only when deploy_page is admins.";
   return adminResponse({ session, title: "Users", here: "users", body: `
   <section aria-label="Users">
     ${rulesSection(rules, suggestions, session)}
     <h2>Users</h2>
-    <p class="lede"><span id="users-count">${users.length} user${users.length == 1 ? "" : "s"} · ${admins.length} admin${admins.length == 1 ? "" : "s"} · ${deployers} with deploy</span>. Each GitHub account and each Google account is an account of its own. Admins may change the server's settings and its users. ${esc(deployNote)} To let someone in, add a rule for their account above.</p>
     <p class="hint" id="users-hint" role="status"></p>
     <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span class="c">Admin</span><span class="c">Deploy</span><span></span></div>
     <ol class="rows users">

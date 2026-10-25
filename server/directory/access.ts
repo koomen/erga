@@ -7,8 +7,9 @@
 //           none, so it never matches); a GitHub organization (its active members, private ones too, as GitHub answers
 //           the person's token at each sign-in); one account (by its username); one Google account (by the email
 //           Google verified at its sign-in)
-//   ACCESS  none (only everybody's may be none), read (may sign in and view the documents shared with them and the
-//           public ones), write (may also make documents and edit them; write includes read)
+//   ACCESS  none: "No access" (only everybody's may be none); read: "Can view content" (sign in, and view the documents
+//           shared with them and the public ones); write: "Can create and edit content" (also make documents and edit
+//           them; write includes read). ACCESS_LABEL has the words, the same everywhere they show.
 //
 // A person gets the highest access of all the rules that match them; none: they can't sign in. Admins always have
 // write. On staging, the admins-only guard comes first, and wins. The directory applies it (Directory.accessOf):
@@ -19,6 +20,8 @@ import type { Sql } from "./directory.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
 export type Access = "none" | "read" | "write";
+/** How each access shows, wherever it shows (the Users page, the change log, the admin agent). */
+export const ACCESS_LABEL: Record<Access, string> = { none: "No access", read: "Can view content", write: "Can create and edit content" };
 export type RuleKind = "everybody" | "workspace" | "github_org" | "account" | "email";
 export const RULE_KINDS: readonly RuleKind[] = ["everybody", "workspace", "github_org", "account", "email"];
 const RANK: Record<Access, number> = { none: 0, read: 1, write: 2 };
@@ -62,7 +65,9 @@ export function ruleValue(kind: RuleKind, raw: unknown): string {
 export function accessValue(raw: unknown, kind: RuleKind): Access {
   const a = String(raw ?? "").trim().toLowerCase();
   if (a == "read" || a == "write" || (a == "none" && kind == "everybody")) return a;
-  throw new NotAllowed(kind == "everybody" ? 'Everybody\'s access is "none", "read" or "write".' : 'A rule\'s access is "read" or "write" (remove the rule for none).');
+  throw new NotAllowed(kind == "everybody"
+    ? `Everybody's access is none (${ACCESS_LABEL.none}), read (${ACCESS_LABEL.read}) or write (${ACCESS_LABEL.write}).`
+    : `A rule's access is read (${ACCESS_LABEL.read}) or write (${ACCESS_LABEL.write}). Remove the rule for ${ACCESS_LABEL.none.toLowerCase()}.`);
 }
 
 /** Whether a rule matches a person. */

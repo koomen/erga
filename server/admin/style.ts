@@ -174,10 +174,10 @@ const PAGES_STYLE = `
   .state-line.bad .dot { background: var(--bad); }
 
   /* Authentication: a card for each server. */
-  .providers { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; margin: 4px 0 22px; }
-  .providers .switch { font-size: 14px; color: var(--fg-strong); }
-  .providers .hint { flex-basis: 100%; margin: 0; }
-  .provider-head { margin: 26px 0 10px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
+  section.provider { margin: 26px 0 0; }
+  section.provider > header { display: flex; justify-content: flex-start; align-items: center; gap: 14px; margin: 0 0 10px; }
+  .provider-head { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
+  section.provider > .provider-hint { margin: -4px 0 10px; }
   .server { margin: 0 0 22px; padding: 18px 20px 20px; border: 1px solid var(--rule); border-radius: 12px; }
   .server > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0 0 6px; }
   .server h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
@@ -229,10 +229,11 @@ const PAGES_STYLE = `
   ol.users .never { font-style: italic; }
   @media (max-width: 640px) { .labels .seen, ol.users time.seen { display: none; } .labels, ol.users > li { grid-template-columns: minmax(0, 1fr) 6.5rem 3.5rem 3.5rem 34px; } }
   ol.rules { margin: 0 0 14px; }
-  ol.rules > li { display: grid; grid-template-columns: minmax(0, 1fr) 7rem 34px; align-items: center; column-gap: 12px; padding: 10px 4px; }
+  ol.rules > li { display: grid; grid-template-columns: minmax(0, 1fr) 15.5rem 34px; align-items: center; column-gap: 12px; padding: 10px 4px; }
   ol.rules .who { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
   ol.rules .kind { font-size: 12.5px; color: var(--soft); }
-  ol.rules select.access { justify-self: start; }
+  ol.rules select.access { justify-self: stretch; }
+  @media (max-width: 640px) { ol.rules > li { grid-template-columns: minmax(0, 1fr) 34px; row-gap: 6px; } ol.rules select.access { grid-row: 2; } }
   .add-rule { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
   .add-rule .input { flex: 1; min-width: 180px; }
   section.rules { margin-bottom: 30px; }
