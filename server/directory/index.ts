@@ -6,6 +6,7 @@
 // who's asking themselves. The rest of the app imports the directory through
 // this file.
 
+export * from "./access.ts";
 export * from "./api-keys.ts";
 export * from "./directory.ts";
 export * from "./identities.ts";

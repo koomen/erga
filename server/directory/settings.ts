@@ -63,34 +63,6 @@ export const boolean = (v: unknown): boolean => {
 
 const setting = <T>(s: Setting<T>) => s;
 
-/**
- * An access rule (Directory.passes): anyone, or only some: accounts an admin listed, Google accounts with a verified
- * email on `domains`, and GitHub accounts that are members of `orgs`.
- */
-export interface AccessRule { mode: "anyone" | "some"; domains: string[]; orgs: string[] }
-const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-const ORG = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
-const listOf = (v: unknown, what: string): string[] => {
-  const list = typeof v == "string" ? v.split(/[\s,]+/) : v ?? [];
-  if (!Array.isArray(list) || list.some((d) => typeof d != "string")) throw new ConfigError(`${what} must be a list`);
-  return [...new Set((list as string[]).map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))];
-};
-/** An access rule as given: {mode, domains, orgs}, or "anyone" / "some" (as "listed" too: listed accounts only). */
-export const accessRule = (v: unknown): AccessRule => {
-  const o = typeof v == "string" ? { mode: v } : v && typeof v == "object" ? v as { mode?: unknown; domains?: unknown; orgs?: unknown } : { mode: v };
-  const mode = typeof o.mode == "string" ? o.mode.trim().toLowerCase() : o.mode;
-  if (mode != "anyone" && mode != "some" && mode != "listed") throw new ConfigError('mode must be "anyone" or "some" (listed accounts, and the domains and organizations given)');
-  const domains = listOf((o as { domains?: unknown }).domains, "domains"), orgs = listOf((o as { orgs?: unknown }).orgs, "orgs");
-  const badDomain = domains.find((d) => !DOMAIN.test(d));
-  if (badDomain) throw new ConfigError(`"${badDomain}" isn't a domain, like example.com`);
-  const badOrg = orgs.find((d) => !ORG.test(d));
-  if (badOrg) throw new ConfigError(`"${badOrg}" isn't a GitHub organization's login`);
-  return mode == "anyone" ? { mode: "anyone", domains: [], orgs: [] } : { mode: "some", domains, orgs };
-};
-
-/** The access rules' keys: set on /admin/users, not on the Settings page. */
-export const ACCESS_KEYS = ["access_read", "access_write"] as const;
-
 /** Every setting the server has. */
 export const SETTINGS = {
   delete_docs_after_hours: setting<number | null>({
@@ -123,16 +95,6 @@ export const SETTINGS = {
     description: "How many times a day someone who may only view a document may ask its agent, where its owner lets viewers ask (each turn uses this server's API key). 0: never.",
     default: 20,
     parse: integer(0, 1000),
-  }),
-  access_read: setting<AccessRule>({
-    description: "Who may sign in, and open the documents shared with them and the public ones (the Users page): anyone; or only some: listed accounts, Google accounts with a verified email on given domains, GitHub accounts in given organizations. Admins always may.",
-    default: { mode: "some", domains: [], orgs: [] },
-    parse: accessRule,
-  }),
-  access_write: setting<AccessRule>({
-    description: "Who of those may make documents and edit them (the Users page): anyone who may sign in; or only some: listed accounts, Google accounts with a verified email on given domains, GitHub accounts in given organizations. Others open documents as viewers. Admins always may.",
-    default: { mode: "anyone", domains: [], orgs: [] },
-    parse: accessRule,
   }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
@@ -224,7 +186,9 @@ export interface SettingChange {
   /** An admin opened an override of the staging rule (key "staging"; server/source/repo.ts, STAGING_RULE): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. */
   stagingOverride?: { reason: string; until: number };
   /** A user (key "user"): added, their role or deploy role changed, or removed. `from` and `to` are null. */
-  user?: { login: string; event: "added" | "role" | "deploy" | "removed" | "listed" | "unlisted" | "invited"; role?: string; deploy?: boolean };
+  user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };
+  /** An access rule (key "access"; server/directory/access.ts): added, its access changed, or removed. `from` and `to` are null. */
+  access?: { event: "added" | "changed" | "removed"; kind: string; value: string; access: string; from?: string };
   /** An agent token (key "token"): revoked (`by` revoked it; `of`, whose it was). `from` and `to` are null. */
   token?: { id: string; label: string; event: "revoked"; of: string };
   /** A server's sign-in app (key "sign-in"; server/auth.ts): set, waiting for a test sign-in, put in use by one, discarded or cleared. Never the secret. */

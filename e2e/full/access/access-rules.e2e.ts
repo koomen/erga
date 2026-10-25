@@ -1,71 +1,77 @@
 // The access rules on the Users page (/admin/users), end to end on a server of this file's own (they change who may
-// use the whole server): an admin sets who may sign in to Google accounts on a domain and GitHub accounts in an
-// organization; such a person makes their account at their first sign-in, and anyone else is refused, told why, in
-// place. Then the write rule leaves them out: they may not make a document. Sign-ins go through local development's
-// pretend provider (/auth/dev); the admin is DEV_LOGIN ("tester"), local development's admin.
+// use the whole server): one list of rules, each who and read or write. An admin adds a Google Workspace organization
+// and a GitHub organization; such people make their accounts at their first sign-in, with that access; anyone else is
+// refused, told why, in place. Everybody's rule changes with its select; a removed rule lets nobody in any more.
+// Sign-ins go through local development's pretend provider (/auth/dev); the admin is DEV_LOGIN ("tester").
 import { expect, servers, test, until } from "../../fixtures";
 import { unique } from "./access";
 
 const server = () => servers.of("access-rules");
 await server();
 
-test("read: a domain for Google, an organization for GitHub; others are refused in place; write leaves them viewers", async ({ tab }) => {
+test("rules: a Workspace with write, a GitHub organization with read, everybody's select, a rule removed", async ({ tab }) => {
   const page = tab.page, root = (await server()).root;
-  const hint = (rule: string) => page.textContent(`form.access-rule[data-rule="${rule}"] .hint`);
-  const saveRule = async (rule: "read" | "write", o: { mode: "anyone" | "some"; domains?: string; orgs?: string }) => {
-    await page.goto(`${root}/admin/users?user=tester`);
-    const form = `form.access-rule[data-rule="${rule}"]`;
-    await page.check(`${form} input[name=mode][value=${o.mode}]`);
-    await page.fill(`${form} input[name=domains]`, o.domains ?? "");
-    await page.fill(`${form} input[name=orgs]`, o.orgs ?? "");
-    await page.click(`${form} button.save`);
-    await until(async () => (await hint(rule)) == "Saved.", 5000, `the ${rule} rule saved`);
+  const admin = () => page.goto(`${root}/admin/users?user=tester`);
+  const hint = () => page.textContent("#rules-hint");
+  const addRule = async (kind: string, value: string, access: "read" | "write") => {
+    await admin();
+    await page.selectOption("form.add-rule select[name=kind]", kind);
+    await page.fill("form.add-rule input[name=value]", value);
+    await page.selectOption("form.add-rule select[name=access]", access);
+    await page.click("form.add-rule button");
   };
-  // A domain that isn't one is refused, in place, and nothing changes.
-  await page.goto(`${root}/admin/users?user=tester`);
-  await page.check('form.access-rule[data-rule="read"] input[name=mode][value=some]');
-  await page.fill('form.access-rule[data-rule="read"] input[name=domains]', "not a domain");
-  await page.click('form.access-rule[data-rule="read"] button.save');
-  await until(async () => (await hint("read"))?.includes("isn't a domain"), 5000, "a bad domain refused");
-  await saveRule("read", { mode: "some", domains: "example.org", orgs: "acme" });
-  // The page says domains are Google's and organizations GitHub's.
-  expect(await page.textContent("section")).toContain("Email domains count for Google accounts only");
+  const rule = (kind: string, value = "") => `ol.rules > li[data-kind="${kind}"]${value ? `:has(.title:text-is("${value}"))` : ""}`;
+
+  // Everybody is first, and none: this server was invite-only.
+  await admin();
+  expect(await page.$eval("ol.rules > li:first-child", (li) => (li as HTMLElement).dataset.kind)).toBe("everybody");
+  expect(await page.inputValue(`${rule("everybody")} select.access`)).toBe("none");
+  // A Workspace is named by its domain: one that isn't is refused, in place.
+  await addRule("workspace", "not a domain", "write");
+  await until(async () => (await hint())?.includes("isn't a domain"), 5000, "a bad domain refused");
+  await addRule("workspace", "example.org", "write");
+  await until(async () => !!(await page.$(rule("workspace", "example.org"))), 5000, "the Workspace rule added");
+  await addRule("github_org", "acme", "read");
+  await until(async () => !!(await page.$(rule("github_org", "acme"))), 5000, "the organization rule added");
 
   const id = unique("");
   const signIn = (q: string) => page.goto(`${root}/auth/dev?${q}&next=/docs`);
-  // A Google account with a verified email on the domain: makes an account.
-  await signIn(`provider=google&subject=g${id}&handle=amy.${id}@example.org&email=amy.${id}@example.org&name=Amy`);
-  expect(new URL(page.url()).pathname).toBe("/auth/username");
-  await page.fill("#username", `amy${id}`);
-  await page.click("form.username button");
-  await until(async () => new URL(page.url()).pathname == "/docs", 10_000, "Amy's account made");
-  // Not verified, or another domain: refused, and told who may come in.
-  await signIn(`provider=google&subject=h${id}&handle=bob.${id}@example.org&email=bob.${id}@example.org&verified=0`);
-  expect(await page.textContent("h1")).toBe("Not on this server");
-  expect(await page.textContent("main")).toContain("Google didn't say your email is verified");
-  await signIn(`provider=google&subject=i${id}&handle=cy.${id}@other.example&email=cy.${id}@other.example`);
-  expect(await page.textContent("main")).toContain("example.org");
-  // GitHub: a member of acme comes in; anyone else is told what GitHub said.
-  await signIn(`provider=github&subject=${Date.now()}&handle=dee-${id}&org=acme`);
-  expect(new URL(page.url()).pathname).toBe("/auth/username");
-  await signIn(`provider=github&subject=${Date.now() + 1}&handle=eve-${id}&org=other`);
-  expect(await page.textContent("h1")).toBe("Not on this server");
-  expect(await page.textContent("main")).toContain("an active member of other");
-
-  // Write: listed accounts only. Amy (her account made by the rule, unlisted) may sign in, but not make a document.
-  await saveRule("write", { mode: "some" });
-  await signIn(`provider=google&subject=g${id}&handle=amy.${id}@example.org&email=amy.${id}@example.org`);
-  await until(async () => new URL(page.url()).pathname == "/docs", 10_000, "Amy signs in");
-  const made = await page.goto(`${root}/new`);
-  expect(made?.status()).toBe(403);
-  expect(await page.textContent("main")).toContain("not make or edit them");
-  // Listed by the admin: she may.
-  await page.goto(`${root}/admin/users?user=tester`);
-  await page.evaluate(() => { window.confirm = () => true; });
-  // The switch's input is under its track: a click on it, as the label passes it on.
-  await page.evaluate((login) => document.querySelector<HTMLInputElement>(`li[data-login="${login}"] input.listed`)!.click(), `amy${id}`);
-  await until(async () => (await page.isChecked(`li[data-login="amy${id}"] input.listed`)), 5000, "Amy listed");
-  await signIn(`provider=google&subject=g${id}&handle=amy.${id}@example.org&email=amy.${id}@example.org`);
+  const join = async (name: string) => {
+    expect(new URL(page.url()).pathname).toBe("/auth/username");
+    await page.fill("#username", name);
+    await page.click("form.username button");
+    await until(async () => new URL(page.url()).pathname == "/docs", 10_000, `${name}'s account made`);
+  };
+  // A Workspace account of example.org (hd): write, so a new document.
+  await signIn(`provider=google&subject=g${id}&handle=amy.${id}@example.org&email=amy.${id}@example.org&hd=example.org`);
+  await join(`amy${id}`);
   await page.goto(`${root}/new`);
   await until(async () => new URL(page.url()).pathname.startsWith(`/amy${id}/`), 10_000, "Amy makes a document");
+  // The same email domain without hd is a personal account: refused, and told so.
+  await signIn(`provider=google&subject=h${id}&handle=bob.${id}@example.org&email=bob.${id}@example.org`);
+  expect(await page.textContent("h1")).toBe("Not on this server");
+  expect(await page.textContent("main")).toContain("personal Google account");
+  // A member of acme: read, so no new document.
+  await signIn(`provider=github&subject=${Date.now()}&handle=dee-${id}&org=acme`);
+  await join(`dee${id}`);
+  expect((await page.goto(`${root}/new`))?.status()).toBe(403);
+  expect(await page.textContent("main")).toContain("not make or edit them");
+  // Not a member: refused, told what GitHub said.
+  await signIn(`provider=github&subject=${Date.now() + 1}&handle=eve-${id}&org=other`);
+  expect(await page.textContent("main")).toContain("an active member of other");
+
+  // Everybody: read, with its select. Bob (personal account) may come in now.
+  await admin();
+  await page.selectOption(`${rule("everybody")} select.access`, "read");
+  await until(async () => (await hint()) == "Saved.", 5000, "everybody's access saved");
+  await signIn(`provider=google&subject=h${id}&handle=bob.${id}@example.org&email=bob.${id}@example.org`);
+  await join(`bob${id}`);
+  // The Workspace rule removed: Amy keeps only everybody's read.
+  await admin();
+  await page.evaluate(() => { window.confirm = () => true; });
+  await page.click(`${rule("workspace", "example.org")} .remove-rule`);
+  await until(async () => !(await page.$(rule("workspace", "example.org"))), 5000, "the Workspace rule removed");
+  await signIn(`provider=google&subject=g${id}&handle=amy.${id}@example.org&email=amy.${id}@example.org&hd=example.org`);
+  await until(async () => new URL(page.url()).pathname == "/docs", 10_000, "Amy signs in");
+  expect((await page.goto(`${root}/new`))?.status()).toBe(403);
 });

@@ -52,6 +52,9 @@ async function signInWithGoogle(platform: Platform, q = ""): Promise<Response> {
   return finishGoogleSignIn(platform, new Request(atGoogle.headers.get("location")!, { headers: { cookie: cookieOf(start) } }));
 }
 
+/** A rule for one account, with write, made with it (as an admin's rule, or local development's, would be). */
+const writes = (login: string) => ({ extra: [["INSERT INTO access_rules (kind, value, access, created) VALUES ('account', ?1, 'write', 1)", login] as [string, string]] });
+
 test("the live check tells a working client from an unknown client ID, a wrong secret and none", async () => {
   const f = google.fetch as unknown as typeof fetch;
   expect((await checkGoogleApp(APP, { fetch: f, origin: GOOGLE })).state).toBe("working");
@@ -107,7 +110,7 @@ test("a sign-in from start to session, by the sub; someone unknown is refused; G
   const refused = await signInWithGoogle(platform);
   expect(refused.status).toBe(403);
   expect(await refused.text()).toContain("Not on this server");
-  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, { listed: true });
+  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, writes("ada"));
   const ok = await signInWithGoogle(platform);
   expect(ok.status).toBe(302);
   expect(ok.headers.get("location")).toBe("/docs");
@@ -148,7 +151,7 @@ test("an install signs in with Erga's Google client through erga.dev's callback,
   // The install has the client's id only (no secret): the relay has the rest.
   (platform.signIn as { googleApp: unknown }).googleApp = { clientId: APP.clientId, secret: "" };
   await platform.own.put("auth:providers", { github: true, google: true });
-  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, { listed: true });
+  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, writes("ada"));
   const start = await startGoogleSignIn(platform, new Request(`${INSTALL}/auth/google?next=/docs`));
   const to = new URL(start.headers.get("location")!);
   expect(to.searchParams.get("redirect_uri")).toBe(`${OPS}/auth/google/callback`);
