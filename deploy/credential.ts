@@ -41,8 +41,6 @@ import { open, seal, type Sealed } from "./seal";
  */
 export const CONTROL_OAUTH_SCOPES = "workers-scripts.edit containers.write cloudchamber.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
 
-/** Erga's OAuth client on Cloudflare (public, PKCE; made on erga.dev's account, any Cloudflare user may consent). */
-export const ERGA_OAUTH_CLIENT_ID = "62d43878d5673b62dd0453086a5f4fe9";
 
 /** The grant as stored: the tokens sealed with the Worker's key; the rest in the clear (nothing secret). */
 export interface StoredGrant {
