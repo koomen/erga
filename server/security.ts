@@ -1,0 +1,47 @@
+// What every answer of the app tells a browser about how it may use it
+// (handle, server/app.ts, puts it on each one, after the route table):
+//
+//   - HSTS, on every HTTPS answer (not on this machine's): HTTPS only, for a
+//     year, on every subdomain too (all of erga.dev's are HTTPS; .dev is on the
+//     browsers' HTTPS-only list anyway);
+//   - on the site's own origin, no frame but its own: frame-ancestors 'self',
+//     and X-Frame-Options for the browsers before it. The editor frames its
+//     own files (a PDF in the files view), never another site's page this one;
+//   - on the site's own pages, a Content-Security-Policy: no plugins
+//     (object-src) and no <base> to another site, so a script that got in
+//     can't load code or send forms elsewhere by that.
+//
+// An answer that has a policy of its own keeps it, with the frame rule added
+// if it lacks one: a document's own HTML here (its files at /d/<id>/..., in a
+// sandbox; the homepage and its files) is its authors' code, not the site's.
+// A document's pages origin is apart: its pages say themselves which viewer
+// may frame them (pages-origin.ts), and their scripts are their authors'.
+
+/** HTTPS only, for a year, here and on every subdomain. */
+export const HSTS = "max-age=31536000; includeSubDomains";
+
+/** The policy every page of the site's own gets. */
+export const PAGE_POLICY = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
+
+/** The policy of everything else on the site's own origin. */
+export const FRAME_POLICY = "frame-ancestors 'self'";
+
+/** Whose answer: the site's own origin's, or a document's pages origin's. */
+export type Kind = "site" | "pages";
+
+const isLocal = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" || url.hostname == "[::1]";
+
+/** The answer with the headers above. A WebSocket's (101) goes as it is. */
+export function withSecurity(response: Response, url: URL, kind: Kind): Response {
+  if (response.status == 101) return response;
+  const headers = new Headers(response.headers);
+  if (url.protocol == "https:" && !isLocal(url)) headers.set("Strict-Transport-Security", HSTS);
+  if (kind == "site") {
+    headers.set("X-Frame-Options", "SAMEORIGIN");
+    const own = headers.get("content-security-policy");
+    // Its own policy, and the frame rule as a second one if it has none (a browser keeps to both).
+    if (own != null) { if (!/\bframe-ancestors\b/.test(own)) headers.append("Content-Security-Policy", FRAME_POLICY); }
+    else headers.set("Content-Security-Policy", /^text\/html\b/i.test(headers.get("content-type") ?? "") ? PAGE_POLICY : FRAME_POLICY);
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
