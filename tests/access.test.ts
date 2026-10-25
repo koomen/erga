@@ -140,7 +140,8 @@ test("public sharing: off by default; then anyone with the link is refused, sayi
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1, expires: null });
   expect(await dir.config.get("public_sharing")).toBe(false);
   await expect(dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer")).rejects.toThrow("doesn't let people share content publicly");
-  // Sharing with people by name is unaffected.
+  // Sharing with people by name is unaffected (Bo may sign in).
+  await dir.users.add(ADMIN, "bo");
   await dir.share({ login: "ada" }, "aaaaaaaa", "bo", "viewer");
   await dir.config.set(ADMIN, "public_sharing", true);
   await dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer");
@@ -162,7 +163,7 @@ test("public sharing: off by default; then anyone with the link is refused, sayi
   await expect(dir.config.set({ login: "ada" }, "public_sharing", true)).rejects.toThrow();
 });
 
-test("public sharing: anyone with the link as an editor gives a signed-in person with 'Can view content' only viewing", async () => {
+test("public sharing: anyone with the link as an editor gives a signed-in person with 'Can authenticate' only viewing", async () => {
   const dir = fresh();
   await dir.config.set(ADMIN, "public_sharing", true);
   await dir.users.add(ADMIN, "ada");
@@ -173,4 +174,39 @@ test("public sharing: anyone with the link as an editor gives a signed-in person
   expect(await dir.access({ login: "dee" }, (await dir.get("bbbbbbbb"))!)).toBe("viewer");
   await everybody(dir, "write");
   expect(await dir.access({ login: "dee" }, (await dir.get("bbbbbbbb"))!)).toBe("editor");
+});
+
+test("a share goes only to someone who may sign in, and the page says why not; one made before stays", async () => {
+  const dir = fresh();
+  await dir.users.add(ADMIN, "ada");
+  await dir.add({ id: "cccccccc", owner: "ada", title: "Brief", created: 1, expires: null });
+  const shareTo = (login: string) => dir.share({ login: "ada" }, "cccccccc", login, "viewer");
+  // Nobody lets them in: refused, saying so.
+  await expect(shareTo("nobody")).rejects.toThrow("isn't allowed to sign in");
+  // A rule names their account (made with it): yes.
+  await dir.rules.add(ADMIN, { kind: "account", value: "bea", access: "read" });
+  await shareTo("bea");
+  // A rule names their Google email, and they signed in with it: yes.
+  await dir.rules.add(ADMIN, { kind: "email", value: "cal@example.com", access: "read" });
+  await dir.identities.createAccount("cal", google("g-cal", "cal@example.com"));
+  await shareTo("cal");
+  // An organization's rule: someone whose last sign-in recorded it, yes; someone else, no.
+  await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "read" });
+  await dir.identities.createAccount("dan", github(10, "dan", ["acme"]));
+  await shareTo("dan");
+  await dir.identities.createAccount("eli", github(11, "eli", ["other"]));
+  await expect(shareTo("eli")).rejects.toThrow("isn't allowed to sign in");
+  // Never signed in, and only an organization's rule could let them in: they sign in once first.
+  await expect(shareTo("fox")).rejects.toThrow("hasn't signed in to this server yet");
+  await dir.rules.add(ADMIN, { kind: "workspace", value: "example.org", access: "read" });
+  await expect(shareTo("gil")).rejects.toThrow("sign in once first");
+  // Everybody may sign in: anyone may get a share.
+  await everybody(dir, "read");
+  await shareTo("fox");
+  // Shares made before stay when the rules change (sign-in still checks them).
+  await everybody(dir, "none");
+  expect((await dir.permissions("cccccccc")).map((p) => p.login)).toContain("fox");
+  // Stopping a share is always allowed; so is an admin, and anyone with the link is the public switch's.
+  await dir.share({ login: "ada" }, "cccccccc", "fox", null);
+  await shareTo("koomen");
 });

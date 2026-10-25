@@ -112,7 +112,7 @@ export interface Who {
   via?: string;
 }
 /** What making a document answers someone the write rule (/admin/users) leaves out. */
-export const NO_WRITE = "Your access on this server is Can view content: you may open documents, but not make or edit them. An admin can give you Can create and edit content on the Users page.";
+export const NO_WRITE = "Your access on this server is Can authenticate: you may open what is shared with you or public, but not make or edit documents. An admin can give you Can create and edit content on the Users page.";
 
 /** What sharing with anyone with the link answers while the server doesn't let people share content publicly. */
 export const NO_PUBLIC = "This server doesn't let people share content publicly, so this document can't be shared with anyone with the link. An admin can turn on \"People can share content publicly\" on the Access page (/admin/access). Share it with people by their username instead.";
@@ -216,8 +216,12 @@ export class Directory {
   /** Tells a document's host its permissions now (the platform's: its Durable Object keeps a copy); none: the document is gone. */
   private readonly permissionsChanged: (id: string, permissions: Permission[]) => Promise<void>;
 
-  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; defaults?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean; permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void> } = {}) {
+  /** Local development, where everyone may sign in while the access rules let in accounts one by one (accounts.ts, mayJoin). */
+  private readonly local: boolean;
+
+  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; defaults?: Record<string, unknown>; local?: boolean; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean; permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void> } = {}) {
     this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
+    this.local = !!opts.local;
     this.users = new Users(sql, opts.admins);
     this.identities = new Identities(sql, this.users);
     this.rules = new AccessRules(sql, this.users);
@@ -601,6 +605,27 @@ export class Directory {
     return !user || (await this.accessOf(user)) == "write";
   }
 
+  /**
+   * Why `login` can't be given a share, or null if they can: they may sign in. That is: everybody may (at least Can
+   * authenticate); or a rule names their account (its username, or the Google email it signed in with); or they signed
+   * in before, and what their providers vouched for then (Workspace, GitHub organizations) matches a rule. Someone who
+   * never signed in and could match only an organization's rule can't be checked: they sign in once first.
+   */
+  async whyNoShare(login: string): Promise<string | null> {
+    login = login.toLowerCase();
+    const rules = await this.rules.all();
+    if (rules.some((r) => r.kind == "everybody" && r.access != "none")) return null;
+    // Local development: everyone may sign in (and gets a rule for their account), unless an admin added a rule for an
+    // organization or an email there.
+    if (this.local && rules.every((r) => r.kind == "account" || (r.kind == "everybody" && r.access == "none"))) return null;
+    const user = await this.users.get(login);
+    if (user && (await this.accessOf(user)) != "none") return null;
+    const signedInBefore = !!user && (await this.identities.of(login)).length > 0;
+    const orgRules = rules.some((r) => (r.kind == "workspace" || r.kind == "github_org") && r.access != "none");
+    if (!signedInBefore && orgRules) return `${login} hasn't signed in to this server yet, so Erga can't check whether their Google Workspace or GitHub organization lets them in. They sign in once first; then share it with them. Or an admin adds a rule for their account on the Access page.`;
+    return `${login} isn't allowed to sign in to this server, so they couldn't open it. An admin can let them in with a rule on the Access page (/admin/access).`;
+  }
+
   /** Whether someone with no account yet may make one at their first sign-in: a rule that matches them gives read or write. */
   async mayJoin(v: Vouched): Promise<boolean> {
     return (await this.rules.accessFor(this.factsOfVouched(v))) != "none";
@@ -645,6 +670,11 @@ export class Directory {
     // Anyone with the link: only while the server lets people share content publicly (the Access page). Stopping one
     // made before is always allowed.
     if (login == ANYONE && role != null && !(await this.config.get("public_sharing"))) throw new NotAllowed(NO_PUBLIC);
+    // A person: only one who may sign in (the access rules). A share made before stays: sign-in checks them anyway.
+    if (login != ANYONE && role != null) {
+      const why = await this.whyNoShare(login);
+      if (why) throw new NotAllowed(why);
+    }
     // The front page's editors are admins only (homeBlocked).
     if (role == "editor" && (await this.homeId()) == id && (login == ANYONE || !(await this.users.isAdmin(login)))) {
       throw new NotAllowed(`This document is the front page, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`);

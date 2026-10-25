@@ -92,7 +92,7 @@ export function beyondPrompt(owner: string, names: string[]): string {
   there, never in this conversation), and list_users, add_user, set_user_role,
   set_user_deploy and remove_user for the users, who's an admin and who has the deploy role,
   and list_access_rules, add_access_rule, change_access_rule and remove_access_rule for who
-  "Can view content" and who "Can create and edit content" (or "No access"), and
+  "Can authenticate" and who "Can create and edit content" (or "No access"), and
   set_public_sharing for whether people can share content publicly. These change the whole server, for
   everyone: use them only when ${owner} asks, and say exactly what you changed.`);
   return lines.length ? `\n${lines.join("\n")}` : "";

@@ -37,7 +37,8 @@ export function directoryOf(env: Env): Directory {
     const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await documentOf(env, id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };
     directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG),
       // Local development offers anyone with the link, as before the Access page's switch (a server starts with it off).
-      ...(env.DEV_LOGIN?.trim() ? { defaults: { public_sharing: true } } : {}), changed, permissionsChanged, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
+      // And everyone may sign in there (server/identity/accounts.ts, mayJoin), so anyone may get a share.
+      ...(env.DEV_LOGIN?.trim() ? { defaults: { public_sharing: true }, local: true } : {}), changed, permissionsChanged, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
   }
   return directory.dir;
 }

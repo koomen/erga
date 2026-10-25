@@ -343,7 +343,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Read the access rules",
     activity: "reading the access rules",
     admin: true,
-    description: "Admins only. The access rules on /admin/access, one list: each rule's id, who (everybody; a Google Workspace organization, by its domain, matched on the hd claim Google gives Workspace accounts; a GitHub organization, its members checked at each GitHub sign-in; one account, by username; one Google account, by email) and access: read ('Can view content': sign in and view documents) or write ('Can create and edit content': also make and edit them). A person gets the highest access of the rules that match them; none of them ('No access'): they can't sign in. Admins always have 'Can create and edit content'. Each rule's accessLabel is the words the Users page shows: use them when you tell the person. Also the Workspace domains and GitHub organizations of people who signed in here (suggestions), and whether people can share content publicly (publicSharing).",
+    description: "Admins only. The access rules on /admin/access, one list: each rule's id, who (everybody; a Google Workspace organization, by its domain, matched on the hd claim Google gives Workspace accounts; a GitHub organization, its members checked at each GitHub sign-in; one account, by username; one Google account, by email) and access: read ('Can authenticate': may sign in, and open what is shared with them or public) or write ('Can create and edit content': also make and edit them). A person gets the highest access of the rules that match them; none of them ('No access'): they can't sign in. Admins always have 'Can create and edit content'. Each rule's accessLabel is the words the Users page shows: use them when you tell the person. Also the Workspace domains and GitHub organizations of people who signed in here (suggestions), and whether people can share content publicly (publicSharing).",
     parameters: Type.Object({}),
     run: async (_args, { dir, who }) => ({ rules: (await dir.rules.list(who)).map(ruleOf), suggestions: await dir.rules.suggestions(who), publicSharing: await dir.config.get("public_sharing") }),
   },
@@ -365,11 +365,11 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Add an access rule",
     activity: "adding an access rule",
     admin: true,
-    description: "Admins only. Adds an access rule, as Add on /admin/access does (a rule for the same who changes its access). kind: workspace (value: the Google Workspace organization's domain), github_org (value: the organization's login), account (value: an Erga username, or a GitHub login that hasn't signed in yet: it claims that username at its first GitHub sign-in), email (value: a Google account's email). access: read ('Can view content') or write ('Can create and edit content'). Only when the person asks in this conversation; say what you added, in those words.",
+    description: "Admins only. Adds an access rule, as Add on /admin/access does (a rule for the same who changes its access). kind: workspace (value: the Google Workspace organization's domain), github_org (value: the organization's login), account (value: an Erga username, or a GitHub login that hasn't signed in yet: it claims that username at its first GitHub sign-in), email (value: a Google account's email). access: read ('Can authenticate') or write ('Can create and edit content'). Only when the person asks in this conversation; say what you added, in those words.",
     parameters: Type.Object({
       kind: Type.Union([Type.Literal("workspace"), Type.Literal("github_org"), Type.Literal("account"), Type.Literal("email")], { description: "workspace, github_org, account or email" }),
       value: Type.String({ description: "The domain, organization, username or email" }),
-      access: Type.Union([Type.Literal("read"), Type.Literal("write")], { description: "read ('Can view content') or write ('Can create and edit content')" }),
+      access: Type.Union([Type.Literal("read"), Type.Literal("write")], { description: "read ('Can authenticate') or write ('Can create and edit content')" }),
     }),
     run: async (args, { dir, who }) => ruleOf(await dir.rules.add(who, { kind: args.kind, value: args.value, access: args.access })),
   },
@@ -378,10 +378,10 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Change an access rule",
     activity: "changing an access rule",
     admin: true,
-    description: "Admins only. Changes a rule's access (list_access_rules gives each id), as its select on /admin/access does: read ('Can view content') or write ('Can create and edit content'); everybody's may also be none ('No access': then only the other rules let anyone in). Only when the person asks; say what changed, from what to what, in those words.",
+    description: "Admins only. Changes a rule's access (list_access_rules gives each id), as its select on /admin/access does: read ('Can authenticate') or write ('Can create and edit content'); everybody's may also be none ('No access': then only the other rules let anyone in). Only when the person asks; say what changed, from what to what, in those words.",
     parameters: Type.Object({
       id: Type.Integer({ description: "The rule's id" }),
-      access: Type.Union([Type.Literal("none"), Type.Literal("read"), Type.Literal("write")], { description: "none ('No access', everybody only), read ('Can view content') or write ('Can create and edit content')" }),
+      access: Type.Union([Type.Literal("none"), Type.Literal("read"), Type.Literal("write")], { description: "none ('No access', everybody only), read ('Can authenticate') or write ('Can create and edit content')" }),
     }),
     run: async (args, { dir, who }) => {
       const before = (await dir.rules.list(who)).find((r) => r.id == Number(args.id));

@@ -7,7 +7,7 @@
 //           none, so it never matches); a GitHub organization (its active members, private ones too, as GitHub answers
 //           the person's token at each sign-in); one account (by its username); one Google account (by the email
 //           Google verified at its sign-in)
-//   ACCESS  none: "No access" (only everybody's may be none); read: "Can view content" (sign in, and view the documents
+//   ACCESS  none: "No access" (only everybody's may be none); read: "Can authenticate" (sign in, and open the documents
 //           shared with them and the public ones); write: "Can create and edit content" (also make documents and edit
 //           them; write includes read). ACCESS_LABEL has the words, the same everywhere they show.
 //
@@ -21,7 +21,7 @@ import { type Actor, NotAllowed, type Users } from "./users.ts";
 
 export type Access = "none" | "read" | "write";
 /** How each access shows, wherever it shows (the Users page, the change log, the admin agent). */
-export const ACCESS_LABEL: Record<Access, string> = { none: "No access", read: "Can view content", write: "Can create and edit content" };
+export const ACCESS_LABEL: Record<Access, string> = { none: "No access", read: "Can authenticate", write: "Can create and edit content" };
 export type RuleKind = "everybody" | "workspace" | "github_org" | "account" | "email";
 export const RULE_KINDS: readonly RuleKind[] = ["everybody", "workspace", "github_org", "account", "email"];
 const RANK: Record<Access, number> = { none: 0, read: 1, write: 2 };
