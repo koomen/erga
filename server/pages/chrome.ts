@@ -188,7 +188,7 @@ export const fromElsewhere = (request: Request) => {
 export const confirmAction = (title: string, button: string, action: string) =>
   page(title, `<form method="post" action="${esc(action)}"><button class="new">${esc(button)}</button></form>`, 200);
 
-export const signInFirst = (next: string) => new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(safeNext(next))}` } });
+export const signInFirst = (next: string) => new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(safeNext(next))}` } });
 
 /**
  * A small page for when there's nothing to show, or something about signing in goes wrong: the app's look (its type and

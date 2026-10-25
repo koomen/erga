@@ -134,6 +134,8 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     signIn: {
       app: { clientId: env.GITHUB_CLIENT_ID?.trim() ?? "", secret: env.GITHUB_CLIENT_SECRET?.trim() ?? "" },
       github: standIn(env.ERGA_GITHUB_ORIGIN) ?? "https://github.com",
+      googleApp: { clientId: env.GOOGLE_CLIENT_ID?.trim() ?? "", secret: env.GOOGLE_CLIENT_SECRET?.trim() ?? "" },
+      google: standIn(env.ERGA_GOOGLE_ORIGIN),
       relay: env.SIGN_IN_RELAY?.trim().replace(/\/+$/, "") || null,
       devLogin: env.DEV_LOGIN?.trim() || null,
       encryptionKey: factoryKey(env),

@@ -201,7 +201,7 @@ export async function adminGate(platform: Platform, request: Request): Promise<R
   const read = request.method == "GET" || request.method == "HEAD";
   const session = await platform.sessionOf(request);
   if (!session) {
-    if (read) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname + url.search)}`, "Cache-Control": "no-store" } });
+    if (read) return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(url.pathname + url.search)}`, "Cache-Control": "no-store" } });
     return Response.json({ error: "Sign in as an admin first." }, { status: 401 });
   }
   const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));

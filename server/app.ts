@@ -10,8 +10,10 @@
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
-//   /auth/github[/callback]    signing in; /auth/logout signs out; /auth/github?app=pending, a test sign-in with the
-//                              GitHub app values that wait on /admin/auth
+//   /auth/sign-in              signing in: the providers that are on (GitHub, Google), to choose from
+//   /auth/github[/callback], /auth/google[/callback]
+//                              signing in with each; /auth/logout signs out; ?app=pending, a test sign-in with the
+//                              values that wait on /admin/auth
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
@@ -45,7 +47,7 @@ import { serverApi, tokensDoor } from "./api.ts";
 import { mayDeploy } from "./deploys/access.ts";
 import { frontDoor, isPagesSite } from "./documents/index.ts";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
-import { adminsOnlyGate, devSignIn, finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn, usernameStep } from "./identity/index.ts";
+import { adminsOnlyGate, chooseSignIn, devSignIn, finishGoogleSignIn, finishSignIn, startGoogleSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn, usernameStep } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
@@ -85,7 +87,10 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (isPagesSite(url, p) && request.headers.get("service-worker") == "script") return new Response("A document's page can't register a service worker.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)
   if (isPagesSite(url, p)) return frontDoor(request, p);
+  if (path == "/auth/sign-in") return chooseSignIn(p, request);
   if (path == "/auth/github") return startSignIn(p, request);
+  if (path == "/auth/google") return startGoogleSignIn(p, request);
+  if (path == "/auth/google/callback") return finishGoogleSignIn(p, request);
   // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; local development serves it here (`outside`).
   if (path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"))) return (await outside(request, url)) ?? finishSignIn(p, request);
   if (path == "/auth/github/callback") return finishSignIn(p, request);

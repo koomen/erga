@@ -1,4 +1,4 @@
-// How people sign in to a server: its OAuth app (GitHub's, for now), as the
+// How people sign in to a server: its OAuth apps (GitHub's, Google's), as the
 // Authentication page shows it (/admin/auth, server/admin/pages.ts) and the admin agent
 // reads it.
 //
@@ -47,11 +47,13 @@
 // A server takes values only from the target it copies its data from
 // (`snapshotFrom`: staging from production), never the other way round.
 //
-// Built for GitHub only; PROVIDERS keeps room for others.
+// GitHub and Google, each with its own app and the same rules. Google's
+// values are set only for this server (no other server's page sets them):
+// its admins sign in with GitHub to set them.
 
 import type { Act } from "../../shared/attribution.ts";
 
-/** The sign-in providers: GitHub only, for now. */
+/** The sign-in providers. */
 export const PROVIDERS = {
   github: {
     label: "GitHub",
@@ -61,6 +63,18 @@ export const PROVIDERS = {
     idEnv: "GITHUB_CLIENT_ID",
     secretEnv: "GITHUB_CLIENT_SECRET",
     callbackPath: "/auth/github/callback",
+    /** What a client ID looks like, and how the page says so. */
+    clientId: /^[A-Za-z0-9._-]{8,80}$/,
+    clientIdShape: "a GitHub Client ID: it is 8 to 80 letters and digits, like Ov23li…",
+  },
+  google: {
+    label: "Google",
+    newApp: "https://console.cloud.google.com/apis/credentials",
+    idEnv: "GOOGLE_CLIENT_ID",
+    secretEnv: "GOOGLE_CLIENT_SECRET",
+    callbackPath: "/auth/google/callback",
+    clientId: /^[0-9]{4,30}-[a-z0-9]{8,64}\.apps\.googleusercontent\.com$/,
+    clientIdShape: "a Google OAuth client ID: digits, a dash, letters and digits, then .apps.googleusercontent.com",
   },
 } as const;
 export type Provider = keyof typeof PROVIDERS;
@@ -84,15 +98,14 @@ export interface AppCheck {
 /** A value an admin pasted that can't be used; the message says why, for a person or an agent to act on. */
 export class AuthError extends Error {}
 
-const CLIENT_ID = /^[A-Za-z0-9._-]{8,80}$/;
 const SECRET = /^[\x21-\x7e]{16,200}$/;
 
 /** Checks and tidies the values as pasted. */
-export function checkValues(input: { clientId?: unknown; secret?: unknown }): AppValues {
+export function checkValues(input: { clientId?: unknown; secret?: unknown }, provider: Provider = "github"): AppValues {
   const clientId = String(input.clientId ?? "").trim(), secret = String(input.secret ?? "").trim();
   if (!clientId) throw new AuthError("Paste the app's Client ID.");
-  if (!CLIENT_ID.test(clientId)) throw new AuthError("That isn't a GitHub Client ID: it is 8 to 80 letters and digits, like Ov23li…");
-  if (!secret) throw new AuthError("Paste the app's client secret too (Generate a new client secret, on the app's page on GitHub).");
+  if (!PROVIDERS[provider].clientId.test(clientId)) throw new AuthError(`That isn't ${PROVIDERS[provider].clientIdShape}`);
+  if (!secret) throw new AuthError(provider == "github" ? "Paste the app's client secret too (Generate a new client secret, on the app's page on GitHub)." : "Paste the client's secret too (on the client's page in Google Cloud Console).");
   if (!SECRET.test(secret)) throw new AuthError("That isn't a client secret: it is one line of 16 to 200 characters, with no spaces.");
   return { clientId, secret };
 }
@@ -134,6 +147,49 @@ export async function checkGithubApp(v: AppValues, o: { fetch?: typeof fetch; or
   if (body.error == "bad_verification_code") return out("working", "GitHub accepts the client ID and secret.");
   if (r.status == 429 || r.status >= 500) return out("unknown", `GitHub couldn't check the app now (${r.status}).`);
   return out("unknown", `GitHub answered the check with ${body.error ? `"${body.error}"` : `status ${r.status}`}.`, body.error_description ? [body.error_description] : []);
+}
+
+/**
+ * Asks Google whether an OAuth client works, without signing anyone in: a token exchange with a code that can't be
+ * real. Google answers invalid_client for a client ID it doesn't know ("The OAuth client was not found.") or a wrong
+ * secret ("Unauthorized"), and invalid_grant when the client ID and secret are right. The redirect URI is checked only
+ * during a real sign-in. `origin`: Google's token endpoint's (a stand-in's, in the tests).
+ */
+export async function checkGoogleApp(v: AppValues, o: { fetch?: typeof fetch; origin?: string | null; timeoutMs?: number } = {}): Promise<AppCheck> {
+  const at = Date.now();
+  const out = (state: CheckState, summary: string, reasons: string[] = []): AppCheck => ({ state, summary, reasons, at });
+  if (!v.clientId) return out("not_set_up", "No Google OAuth client: nobody can sign in with Google here.", ["No client ID."]);
+  const f = o.fetch ?? fetch;
+  let r: Response | null;
+  try {
+    r = await Promise.race([
+      f(googleEndpoints(o.origin ?? null).token, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({ client_id: v.clientId, client_secret: v.secret, code: `erga-check-${crypto.randomUUID()}`, grant_type: "authorization_code", redirect_uri: "https://erga.dev/auth/google/callback" }).toString(),
+      }),
+      new Promise<null>((ok) => setTimeout(() => ok(null), o.timeoutMs ?? 8000)),
+    ]);
+  } catch (e) {
+    return out("unknown", `Couldn't reach Google to check the client (${(e as Error).message}).`);
+  }
+  if (!r) return out("unknown", "Google didn't answer the check in time.");
+  const body = (await r.json().catch(() => ({}))) as { error?: string; error_description?: string };
+  if (body.error == "invalid_client") {
+    if (/not found/i.test(body.error_description ?? "")) return out("misconfigured", "Google has no OAuth client with this client ID.", [`Google doesn't know the client ID ${v.clientId}: it is wrong, or its client was deleted.`]);
+    return v.secret
+      ? out("misconfigured", "The client secret is wrong.", ["Google refused the client secret for this client ID. Add a new secret on the client's page in Google Cloud Console."])
+      : out("misconfigured", "The client has no secret here.", ["The client ID is right, but there is no client secret."]);
+  }
+  if (body.error == "invalid_grant") return out("working", "Google accepts the client ID and secret.");
+  if (r.status == 429 || r.status >= 500) return out("unknown", `Google couldn't check the client now (${r.status}).`);
+  return out("unknown", `Google answered the check with ${body.error ? `"${body.error}"` : `status ${r.status}`}.`, body.error_description ? [body.error_description] : []);
+}
+
+/** Google's sign-in endpoints, or a stand-in's under its origin (the tests'). */
+export function googleEndpoints(origin: string | null): { authorize: string; token: string; userinfo: string } {
+  if (!origin) return { authorize: "https://accounts.google.com/o/oauth2/v2/auth", token: "https://oauth2.googleapis.com/token", userinfo: "https://openidconnect.googleapis.com/v1/userinfo" };
+  return { authorize: `${origin}/o/oauth2/v2/auth`, token: `${origin}/token`, userinfo: `${origin}/v1/userinfo` };
 }
 
 // ------------------------------------------------------------ the page's values, kept
@@ -262,7 +318,7 @@ export interface SignInChange {
   provider: Provider;
   /** The server whose app changed ("" for one that isn't a deploy target). */
   target: string;
-  event: "set" | "pending" | "tested" | "discarded" | "cleared";
+  event: "set" | "pending" | "tested" | "discarded" | "cleared" | "on" | "off";
   /** The client ID it changed to (public), if any. */
   clientId?: string | null;
 }
@@ -277,7 +333,8 @@ export interface SaveResult { kept: "active" | "pending"; message: string }
 
 /** Saves pasted values, with the lockout rules (the top of this file). */
 export async function saveApp(c: AppContext, target: string, input: { clientId?: unknown; secret?: unknown }, by: Act): Promise<SaveResult> {
-  const v = checkValues(input);
+  const v = checkValues(input, c.provider);
+  const name = PROVIDERS[c.provider].label;
   if (!c.apps.canStore) throw new AuthError("This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.");
   const fresh = await c.check(v);
   if (fresh.state != "working") throw new AuthError(`${fresh.summary}${fresh.reasons.length ? ` ${fresh.reasons.join(" ")}` : ""} Nothing changed.`);
@@ -286,11 +343,11 @@ export async function saveApp(c: AppContext, target: string, input: { clientId?:
   if (working && !(now.clientId == v.clientId && now.secret == v.secret)) {
     await c.apps.keep(c.provider, "pending", v, by);
     await c.log(by, { provider: c.provider, target, event: "pending", clientId: v.clientId });
-    return { kept: "pending", message: "GitHub accepts the new values. Sign-in keeps the values that work now until an admin signs in with the new ones: use Test sign-in." };
+    return { kept: "pending", message: `${name} accepts the new values. Sign-in keeps the values that work now until an admin signs in with the new ones: use Test sign-in.` };
   }
   await c.apps.keep(c.provider, "active", v, by);
   await c.log(by, { provider: c.provider, target, event: "set", clientId: v.clientId });
-  return { kept: "active", message: working ? "These are the values in use already." : "GitHub accepts the values, and sign-in uses them now. Sign in with them to check the callback URL." };
+  return { kept: "active", message: working ? "These are the values in use already." : `${name} accepts the values, and sign-in uses them now. Sign in with them to check the callback URL.` };
 }
 
 /** Drops values that wait for a test sign-in. */
@@ -329,10 +386,10 @@ export interface AuthStatus {
   /** The deploy target ("production", "staging"), or null for a server that isn't one. */
   target: string | null;
   origin: string;
-  /** The URLs to enter on GitHub. */
+  /** The URLs to enter on the provider's page. */
   homepageUrl: string;
   callbackUrl: string;
-  /** Local development: everyone signs in as DEV_LOGIN, without GitHub. */
+  /** Local development: everyone signs in as DEV_LOGIN, without a provider. */
   dev: boolean;
   /** What sign-in uses now. */
   inUse: { clientId: string | null; secretSet: boolean; source: "page" | "deploy" };
@@ -350,17 +407,27 @@ export interface AuthStatus {
   setup: string[] | null;
 }
 
-/** The steps to make a GitHub OAuth app for a server, and where its values go. */
-export function setupSteps(o: { origin: string; target: string | null; worker?: string; pagePlace: string }): string[] {
+/** The steps to make a provider's OAuth app for a server, and where its values go. */
+export function setupSteps(o: { origin: string; target: string | null; worker?: string; pagePlace: string; provider?: Provider }): string[] {
+  const provider = o.provider ?? "github", p = PROVIDERS[provider];
   const name = o.target ? `Erga (${o.target})` : "Erga";
+  const deploy = o.target && o.worker
+    ? `Or set them in the deploy: put the Client ID in deploy/targets.json (targets.${o.target}.vars.${p.idEnv}), set the secret with "bunx cf workers secrets update ${p.secretEnv} --name ${o.worker}", and deploy.`
+    : `Or set them in the deploy: ${p.idEnv} as a text binding, and ${p.secretEnv} as a Worker secret.`;
+  if (provider == "google") return [
+    `Open ${p.newApp}, in the Google Cloud project that should own the client. If Google asks, set up the OAuth consent screen first (External, the app name "${name}", your support email).`,
+    `Click Create credentials, then OAuth client ID. Choose the application type Web application, and the name "${name}".`,
+    `Under Authorized redirect URIs, add ${o.origin}${p.callbackPath}. Click Create.`,
+    `Copy the Client ID and the Client secret.`,
+    `Paste both ${o.pagePlace} and click Save. Erga checks them with Google before it uses them.`,
+    deploy,
+  ];
   return [
-    `Open ${PROVIDERS.github.newApp}, signed in as the GitHub account that should own the app.`,
-    `Enter the application name "${name}", the homepage URL ${o.origin}, and the authorization callback URL ${o.origin}${PROVIDERS.github.callbackPath}. Leave Enable Device Flow off. Click Register application.`,
+    `Open ${p.newApp}, signed in as the GitHub account that should own the app.`,
+    `Enter the application name "${name}", the homepage URL ${o.origin}, and the authorization callback URL ${o.origin}${p.callbackPath}. Leave Enable Device Flow off. Click Register application.`,
     `Copy the Client ID. Click Generate a new client secret, and copy the secret.`,
     `Paste both ${o.pagePlace} and click Save. Erga checks them with GitHub before it uses them.`,
-    o.target && o.worker
-      ? `Or set them in the deploy: put the Client ID in deploy/targets.json (targets.${o.target}.vars.GITHUB_CLIENT_ID), set the secret with "bunx cf workers secrets update GITHUB_CLIENT_SECRET --name ${o.worker}", and deploy.`
-      : `Or set them in the deploy: GITHUB_CLIENT_ID as a text binding, and GITHUB_CLIENT_SECRET as a Worker secret.`,
+    deploy,
   ];
 }
 
@@ -383,7 +450,7 @@ export async function statusOf(c: AppContext, o: { origin: string; target: strin
     takesFrom: o.takesFrom,
     check,
     pendingCheck,
-    setup: check.state == "working" ? null : setupSteps({ origin: o.origin, target: o.target, worker: o.worker, pagePlace: o.pagePlace }),
+    setup: check.state == "working" ? null : setupSteps({ origin: o.origin, target: o.target, worker: o.worker, pagePlace: o.pagePlace, provider: c.provider }),
   };
 }
 
@@ -398,12 +465,21 @@ export type OtherStatus = AuthStatus | { target: string; origin: string; error: 
  * only where it takes this server's values). Admins only. No call answers a secret.
  */
 export interface AuthOps {
-  /** `by`: who asks, with their admin power (Users.actsAsAdmin): each call checks it. */
-  status(by: By): Promise<{ here: AuthStatus; other: OtherStatus | null }>;
-  save(by: By, server: "here" | "other", input: { clientId?: unknown; secret?: unknown }): Promise<SaveResult>;
-  discard(by: By, server: "here" | "other"): Promise<{ discarded: boolean }>;
-  clear(by: By, server: "here" | "other", force?: boolean): Promise<{ cleared: boolean; message: string }>;
+  /**
+   * `by`: who asks, with their admin power (Users.actsAsAdmin): each call checks it. GitHub's app here and on the
+   * other server; Google's here (each server sets its own); which providers are on.
+   */
+  status(by: By): Promise<{ here: AuthStatus; other: OtherStatus | null; google: AuthStatus; providers: ProvidersOn }>;
+  /** Turns sign-in with a provider on or off here, with the rules that keep someone able to sign in. */
+  setProvider(by: By, provider: Provider, on: boolean): Promise<ProvidersOn>;
+  /** `provider`: GitHub (the default), or Google (this server only). */
+  save(by: By, server: "here" | "other", input: { clientId?: unknown; secret?: unknown }, provider?: Provider): Promise<SaveResult>;
+  discard(by: By, server: "here" | "other", provider?: Provider): Promise<{ discarded: boolean }>;
+  clear(by: By, server: "here" | "other", force?: boolean, provider?: Provider): Promise<{ cleared: boolean; message: string }>;
 }
+
+/** Which providers people may sign in with on a server. */
+export interface ProvidersOn { github: boolean; google: boolean }
 
 /**
  * A check, remembered for a minute by the values' hash, so a page that opens

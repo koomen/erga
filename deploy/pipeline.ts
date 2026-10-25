@@ -447,7 +447,7 @@ export const targetPagesShown = (t: Pick<Target, "pages" | "workerName" | "subdo
   t.pages.kind == "zone" ? `*.${t.pages.domain ?? t.pages.zoneName}` : targetSharedPagesHost(t);
 
 /** How a new server's people sign in: Erga's GitHub App (its client id), through erga.dev's callback (the relay: server/source/github.ts). */
-export interface SignInVia { clientId: string; relay: string }
+export interface SignInVia { clientId: string; relay: string; googleClientId?: string }
 
 /** The /deploy page's plan as a pipeline target: a new server in someone's own account, them its admin, its own secrets. */
 export function targetOfPlan(plan: DeployPlan, sessionSecret: string, signIn?: SignInVia): Target {
@@ -459,6 +459,8 @@ export function targetOfPlan(plan: DeployPlan, sessionSecret: string, signIn?: S
       // Sign-in: Erga's GitHub App, through erga.dev (no app of the install's own, nothing pasted).
       GITHUB_CLIENT_ID: signIn?.clientId ?? "",
       SIGN_IN_RELAY: signIn?.relay ?? "",
+      // And Erga's Google OAuth client (its id), through the same relay; none: Google stays unset on the install.
+      ...(signIn?.googleClientId ? { GOOGLE_CLIENT_ID: signIn.googleClientId } : {}),
       SERVER_CONFIG: "{}",
       // erga.dev's own deploy page needs erga.dev's OAuth client; the new server has none (the token link still works).
       CLOUDFLARE_OAUTH_CLIENT_ID: "",

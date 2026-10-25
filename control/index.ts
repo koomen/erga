@@ -107,6 +107,7 @@ export default {
         },
       }),
       github: githubAppOf(env),
+      google: env.GOOGLE_APP_CLIENT_ID?.trim() && env.GOOGLE_APP_CLIENT_SECRET?.trim() ? { clientId: env.GOOGLE_APP_CLIENT_ID.trim(), secret: env.GOOGLE_APP_CLIENT_SECRET.trim() } : null,
       sealKey: sealKeyFrom(env.SESSION_SECRET),
       background: (work: Promise<unknown>) => ctx.waitUntil(work),
       net: globalThis.fetch.bind(globalThis),

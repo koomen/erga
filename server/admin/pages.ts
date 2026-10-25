@@ -8,7 +8,7 @@
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
 //   GET /admin/auth/status     the same as JSON {here, other} (server/auth.ts, AuthStatus: never a secret), with live checks
-//   POST /admin/auth           server (here or other), and do=save (clientId, secret), do=discard (the values that wait for a test sign-in) or do=clear (force=1: even if sign-in would stop)
+//   POST /admin/auth           server (here or other), provider (github or google), and do=save (clientId, secret), do=discard (the values that wait for a test sign-in), do=clear (force=1: even if sign-in would stop) or do=providers (provider, on: 1 or 0)
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
 //   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
@@ -42,7 +42,7 @@ import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { adminResponse } from "./layout.ts";
-import { authOps, AuthError, ScopeError, type AuthStatus, type CheckState, type OtherStatus } from "../identity/index.ts";
+import { authOps, AuthError, PROVIDERS, ScopeError, type AuthOps, type AuthStatus, type CheckState, type OtherStatus, type Provider } from "../identity/index.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -50,7 +50,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   const url = new URL(request.url);
   const read = request.method == "GET" || request.method == "HEAD";
   if (!session && read) {
-    return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname)}` } });
+    return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(url.pathname)}` } });
   }
   const who = session && whoOf(session);
   // Only the person themselves, in a browser (which comes with admin power): an agent with their token isn't an admin here.
@@ -92,12 +92,14 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     if (url.pathname == "/admin/auth") {
       const auth = authOps(platform, url.origin);
       const server = field("server") == "other" ? "other" : "here";
+      const provider: Provider = field("provider") == "google" ? "google" : "github";
       // The answers say what the page shows: never the secret.
       switch (field("do")) {
-        case "save": return Response.json({ result: await auth.save(who!, server, { clientId: field("clientId"), secret: field("secret") }) });
-        case "discard": return Response.json({ result: await auth.discard(who!, server) });
-        case "clear": return Response.json({ result: await auth.clear(who!, server, field("force") == "1") });
-        default: return Response.json({ error: "do= save, discard or clear" }, { status: 400 });
+        case "save": return Response.json({ result: await auth.save(who!, server, { clientId: field("clientId"), secret: field("secret") }, provider) });
+        case "discard": return Response.json({ result: await auth.discard(who!, server, provider) });
+        case "clear": return Response.json({ result: await auth.clear(who!, server, field("force") == "1", provider) });
+        case "providers": return Response.json({ providers: await auth.setProvider(who!, provider, field("on") == "1") });
+        default: return Response.json({ error: "do= save, discard, clear or providers" }, { status: 400 });
       }
     }
     if (url.pathname == "/admin/settings") {
@@ -291,9 +293,11 @@ function eventItem(c: SettingChange): string {
   }
   if (c.signIn) {
     const a = c.signIn, server = a.target ? `${esc(a.target)}'s` : "the";
+    const name = a.provider == "google" ? "Google" : "GitHub";
+    if (a.event == "on" || a.event == "off") return `<li><span class="key">sign-in</span> sign-in with ${name} turned ${a.event}</li>`;
     const what = a.event == "set" ? `in use: client ID <code>${esc(a.clientId ?? "")}</code>` : a.event == "pending" ? `client ID <code>${esc(a.clientId ?? "")}</code> waits for a test sign-in`
       : a.event == "tested" ? `client ID <code>${esc(a.clientId ?? "")}</code> in use after a test sign-in` : a.event == "discarded" ? `new values discarded` : "cleared: the deploy's values again";
-    return `<li><span class="key">sign-in</span> ${server} GitHub app ${what}</li>`;
+    return `<li><span class="key">sign-in</span> ${server} ${name} app ${what}</li>`;
   }
   if (c.token) return `<li><span class="key">token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked</li>`;
   const sha = (s: unknown) => `<code class="sha" title="${esc(String(s))}">${esc(String(s).slice(0, 7))}</code>`;
@@ -500,8 +504,9 @@ const STATE_LABEL: Record<CheckState, string> = { working: "Working", misconfigu
 const who_ = (by: string, via?: string | null) => esc(byLine(by, via));
 
 /** One server's card: its state, its app's values, what waits for a test, how to make an app, and the form to set one. */
-function serverCard(s: AuthStatus | OtherStatus, o: { server: "here" | "other"; label: string; editable: boolean; session: Session; here: AuthStatus }): string {
+function serverCard(s: AuthStatus | OtherStatus, o: { server: "here" | "other"; label: string; editable: boolean; session: Session; here: AuthStatus; provider?: Provider; on?: boolean }): string {
   const host = new URL(s.origin).host;
+  const provider: Provider = o.provider ?? "github", name = PROVIDERS[provider].label;
   const head = (state: CheckState | null, text: string) => `<header><h3>${esc(o.label)}<small>${esc(host)}</small></h3>${state ? `<span class="state ${state}">${esc(text)}</span>` : ""}</header>`;
   if ("error" in s) {
     return `<section class="server" data-server="${o.server}" data-state="unreachable">${head("unknown", "Can't reach it")}
@@ -518,9 +523,11 @@ function serverCard(s: AuthStatus | OtherStatus, o: { server: "here" | "other"; 
       <dt>Callback URL</dt><dd><code class="callback">${esc(s.callbackUrl)}</code>${copy(s.callbackUrl)}</dd>
     </dl>`;
   const deployNote = s.inUse.source == "page" ? `<p class="note">The deploy's values: ${s.deploy.clientId ? `client ID <code>${esc(s.deploy.clientId)}</code>` : "no client ID"}, ${s.deploy.secretSet ? "a secret" : "no secret"}. Clear goes back to them.</p>` : "";
-  const devNote = s.dev ? `<p class="note">Local development: everyone signs in as the dev login, without GitHub, so this server doesn't use these values. A hosted server does.</p>` : "";
+  const devNote = s.dev ? `<p class="note">Local development: everyone signs in as the dev login, without ${name}, so this server doesn't use these values. A hosted server does.</p>` : "";
   // A real sign-in is what checks the callback URL: on this server a link, on the other a link to its own sign-in.
-  const testUrl = `${o.server == "here" ? "" : s.origin}/auth/github?app=pending&next=/admin/auth`;
+  const testUrl = `${o.server == "here" ? "" : s.origin}/auth/${provider}?app=pending&next=/admin/auth`;
+  // A provider that's off: an admin's sign-in with the values in use checks them before anyone else uses them.
+  const offTest = o.on === false && s.inUse.clientId && !s.pending ? `<p class="note">Sign-in with ${name} is off. <a class="pill test-off" href="${esc(link(`/auth/${provider}?app=test&next=/admin/auth`, o.session))}">Test sign-in</a> checks these values with your own sign-in; then turn ${name} on above.</p>` : "";
   const test = s.pending?.test && !s.pending.test.ok ? `<p class="failed">The last test sign-in failed, ${esc(setAt(s.pending.test.at))}: ${esc(s.pending.test.error ?? "")}</p>` : "";
   const pending = s.pending ? `<div class="pending">
       <p><b>New values wait for a test sign-in.</b> Client ID <code>${esc(s.pending.clientId)}</code>, set by ${who_(s.pending.updatedBy, s.pending.updatedVia)}, ${esc(setAt(s.pending.updated))}. ${s.pendingCheck ? esc(s.pendingCheck.summary) : ""} Sign-in keeps the values in use until an admin signs in with the new ones.</p>
@@ -528,49 +535,63 @@ function serverCard(s: AuthStatus | OtherStatus, o: { server: "here" | "other"; 
       <div class="row">${o.server == "here" || s.target ? `<a class="pill test" href="${esc(o.server == "here" ? link(testUrl, o.session) : testUrl)}">Test sign-in${o.server == "here" ? "" : ` on ${esc(host)}`}</a>` : ""}${o.editable ? `<button type="button" class="pill discard">Discard</button>` : ""}</div>
     </div>` : "";
   const reasons = s.check.reasons.length && s.check.state != "working" ? `<ul class="reasons">${s.check.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : "";
-  const steps = s.setup ? `<details class="setup"${s.check.state == "not_set_up" ? " open" : ""}><summary>How to make ${s.check.state == "not_set_up" ? "its" : "a new"} GitHub OAuth app</summary><ol class="steps">${s.setup.map((x) => `<li>${esc(x).replace(/https:\/\/github\.com\/settings\/applications\/new/, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)}</li>`).join("")}</ol></details>` : "";
+  const steps = s.setup ? `<details class="setup"${s.check.state == "not_set_up" ? " open" : ""}><summary>How to make ${s.check.state == "not_set_up" ? "its" : "a new"} ${name} OAuth ${provider == "google" ? "client" : "app"}</summary><ol class="steps">${s.setup.map((x) => `<li>${esc(x).replace(/https:\/\/(github\.com\/settings\/applications\/new|console\.cloud\.google\.com\/apis\/credentials)/, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)}</li>`).join("")}</ol></details>` : "";
   // Where the other server's values are set, when not here.
   const elsewhere = !o.editable && o.server == "other" ? `<p class="note">${esc(host)}'s sign-in is set on its own Authentication page: <a href="${esc(s.origin)}/admin/auth">${esc(s.origin)}/admin/auth</a>.</p>` : "";
   const cannot = !o.editable && o.server == "here" && !s.canStore ? `<p class="note">This server has no FACTORY_KEY to encrypt a secret with, so its values are set only in the deploy.</p>` : "";
   const form = o.editable ? `<form class="configure" method="post" action="${esc(link("/admin/auth", o.session))}">
-      <p class="lede">${s.check.state == "working" ? "Paste another app's values to replace these. GitHub must accept them first, and they wait for a test sign-in before anyone else uses them." : "Paste the app's values. GitHub must accept them first; then sign-in uses them at once."}</p>
+      <p class="lede">${s.check.state == "working" ? `Paste another app's values to replace these. ${name} must accept them first, and they wait for a test sign-in before anyone else uses them.` : `Paste the app's values. ${name} must accept them first; then sign-in uses them at once.`}</p>
       <input type="hidden" name="server" value="${o.server}">
-      <label>Client ID<input class="input" name="clientId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Ov23li…" required></label>
+      <input type="hidden" name="provider" value="${provider}">
+      <label>Client ID<input class="input" name="clientId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${provider == "google" ? "1234…apps.googleusercontent.com" : "Ov23li…"}" required></label>
       <label>Client secret<input class="input" type="password" name="secret" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the secret" required></label>
       <div class="row"><button class="pill save">Save</button>${s.page ? `<button type="button" class="pill clear">Clear</button>` : ""}</div>
     </form>` : "";
-  return `<section class="server" data-server="${o.server}" data-target="${esc(s.target ?? "")}" data-state="${s.check.state}">${head(s.check.state, STATE_LABEL[s.check.state])}
+  return `<section class="server" data-provider="${provider}" data-server="${o.server}" data-target="${esc(s.target ?? "")}" data-state="${s.check.state}">${head(s.check.state, STATE_LABEL[s.check.state])}
     <p class="summary">${esc(s.check.summary)}</p>${reasons}
-    ${rows}${deployNote}${devNote}${pending}${steps}${elsewhere}${cannot}${form}
+    ${rows}${deployNote}${devNote}${offTest}${pending}${steps}${elsewhere}${cannot}${form}
     <p class="hint" role="status"></p>
   </section>`;
 }
 
 /** /admin/auth: how people sign in, on this server and on the other deploy target. */
-function authPage(session: Session, status: { here: AuthStatus; other: OtherStatus | null }): Response {
-  const { here, other } = status;
+function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]>>): Response {
+  const { here, other, google, providers } = status;
   const name = (t: string | null) => (t ? t[0].toUpperCase() + t.slice(1) : "This server");
   const otherCard = other ? serverCard(other, { server: "other", label: name(other.target), editable: !("error" in other) && other.takesFrom == here.target && other.canStore, session, here }) : "";
   return adminResponse({ session, title: "Authentication", here: "auth", body: `
   <section aria-labelledby="auth-head" class="auth">
     <h2 id="auth-head">Authentication</h2>
-    <p class="lede">People sign in with GitHub. Each server needs a GitHub OAuth app of its own, with its own callback URL. The deploy sets each app; values pasted here win over the deploy's while they are set. The client secret is kept encrypted and shown to nobody. A change never signs out anyone who is signed in.</p>
-    ${serverCard(here, { server: "here", label: here.target ? `${name(here.target)} (this server)` : "This server", editable: here.canStore, session, here })}
+    <p class="lede">People sign in with GitHub, Google or both: choose which here. Each server needs an OAuth app of its own for each, with its own callback URL. The deploy sets each app; values pasted here win over the deploy's while they are set. The client secret is kept encrypted and shown to nobody. A change never signs out anyone who is signed in.</p>
+    <section class="providers" aria-label="Sign-in providers">
+      ${(["github", "google"] as const).map((p) => `<label class="switch provider" title="${esc(`Sign-in with ${PROVIDERS[p].label}`)}"><input type="checkbox" role="switch" data-provider="${p}" aria-label="Sign-in with ${PROVIDERS[p].label}"${providers[p] ? " checked" : ""}><span class="track" aria-hidden="true"></span><span>${PROVIDERS[p].label}</span></label>`).join("\n      ")}
+      <p class="hint" id="providers-hint" role="status"></p>
+    </section>
+    <h3 class="provider-head">GitHub</h3>
+    ${serverCard(here, { server: "here", label: here.target ? `${name(here.target)} (this server)` : "This server", editable: here.canStore, session, here, provider: "github", on: providers.github })}
     ${otherCard}
+    <h3 class="provider-head">Google</h3>
+    ${serverCard(google, { server: "here", label: google.target ? `${name(google.target)} (this server)` : "This server", editable: google.canStore, session, here, provider: "google", on: providers.google })}
   </section>
 <script>
   ${POST_SCRIPT}
+  const providersHint = document.getElementById("providers-hint");
+  for (const box of document.querySelectorAll("section.providers input[data-provider]")) box.addEventListener("change", async () => {
+    say(providersHint, "Saving\u2026");
+    try { await post(${JSON.stringify(link("/admin/auth", session))}, { do: "providers", provider: box.dataset.provider, on: box.checked ? "1" : "0" }); reload(); }
+    catch (err) { box.checked = !box.checked; say(providersHint, err.message, true); }
+  });
   for (const card of document.querySelectorAll("section.server")) {
-    const hint = card.querySelector(".hint"), server = card.dataset.server;
+    const hint = card.querySelector(".hint"), server = card.dataset.server, provider = card.dataset.provider;
     for (const b of card.querySelectorAll("button.copy")) b.addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); } catch {}
     });
     const form = card.querySelector("form.configure");
     form?.addEventListener("submit", async (e) => {
       e.preventDefault();
-      say(hint, "Checking the values with GitHub\u2026");
+      say(hint, "Checking the values\u2026");
       try {
-        const { result } = await post(form.action, { do: "save", server, clientId: form.elements.clientId.value, secret: form.elements.secret.value });
+        const { result } = await post(form.action, { do: "save", server, provider, clientId: form.elements.clientId.value, secret: form.elements.secret.value });
         form.reset();
         say(hint, result.message);
         setTimeout(reload, 1200);
@@ -578,15 +599,15 @@ function authPage(session: Session, status: { here: AuthStatus; other: OtherStat
     });
     card.querySelector("button.discard")?.addEventListener("click", async () => {
       if (!confirm("Discard the new values? Sign-in keeps the values in use.")) return;
-      try { await post(form.action, { do: "discard", server }); reload(); } catch (err) { say(hint, err.message, true); }
+      try { await post(form.action, { do: "discard", server, provider }); reload(); } catch (err) { say(hint, err.message, true); }
     });
     card.querySelector("button.clear")?.addEventListener("click", async () => {
       if (!confirm("Clear the values set on this page? Sign-in goes back to the deploy's values.")) return;
       say(hint, "Clearing\u2026");
-      try { await post(form.action, { do: "clear", server }); reload(); }
+      try { await post(form.action, { do: "clear", server, provider }); reload(); }
       catch (err) {
         if (!/force/.test(err.message) || !confirm(err.message + "\\n\\nClear anyway?")) { say(hint, err.message, true); return; }
-        try { await post(form.action, { do: "clear", server, force: "1" }); reload(); } catch (err2) { say(hint, err2.message, true); }
+        try { await post(form.action, { do: "clear", server, provider, force: "1" }); reload(); } catch (err2) { say(hint, err2.message, true); }
       }
     });
   }

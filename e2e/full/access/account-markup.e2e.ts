@@ -53,8 +53,8 @@ test("signed out, /docs asks you to sign in first, and the front page's corner o
   const root = (await servers.main()).root, get = getter(root);
   const out = await get("/auth/logout", { method: "POST", headers: { Origin: root } });
   const cookie = out.headers.getSetCookie().map((s) => s.split(";")[0]).join("; ");
-  expect((await get("/docs", { headers: { Cookie: cookie } })).headers.get("location")).toBe("/auth/github?next=%2Fdocs");
+  expect((await get("/docs", { headers: { Cookie: cookie } })).headers.get("location")).toBe("/auth/sign-in?next=%2Fdocs");
   const front = await (await get("/", { headers: { Cookie: cookie } })).text();
   expect(front).toContain('data-erga-account="out"');
-  expect(front).toContain('href="/auth/github?next=%2F"');
+  expect(front).toContain('href="/auth/sign-in?next=%2F"');
 });

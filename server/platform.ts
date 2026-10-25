@@ -122,6 +122,10 @@ export interface Platform {
     app: AppValues;
     /** GitHub's origin (the tests' stand-in for it; its API is api.github.com, or the stand-in's /api). */
     github: string;
+    /** The deploy's Google OAuth client (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET); the values an admin sets on /admin/auth win while set. */
+    googleApp?: AppValues;
+    /** A stand-in for Google's sign-in endpoints (the tests'); null or absent: Google's own. */
+    google?: string | null;
     /** An install's server: erga.dev's control Worker, whose GitHub callback (the App's one) relays the sign-in here (server/source/github.ts); null elsewhere. */
     relay: string | null;
     /** Local development: the login signed in without GitHub; null elsewhere. */

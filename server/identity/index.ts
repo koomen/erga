@@ -3,13 +3,13 @@
 // app imports identity through this file.
 
 export { sessionOf } from "./session.ts";
-export { finishSignIn, mintTestToken, signOut, startSignIn, testSignIn } from "./sign-in.ts";
+export { chooseSignIn, finishGoogleSignIn, finishSignIn, mintTestToken, signOut, startGoogleSignIn, startSignIn, testSignIn } from "./sign-in.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";
-export { authOps, isSignInPath, signInDoor } from "./settings.ts";
+export { authOps, isSignInPath, providersOn, signInDoor } from "./settings.ts";
 export { isPeer } from "./peer.ts";
 export { adminsOnlyGate } from "./admins-only.ts";
 export { tokenPath } from "./token-paths.ts";
 export { cookieName, cookies } from "./cookies.ts";
 export { LOCKED, NotAllowed, Users, type Actor, type ServerRole, type User } from "../directory/index.ts";
 export { LABEL_MAX, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, SHARE_ADMIN_HOURS, Tokens, type AgentToken, type Scope } from "./tokens.ts";
-export { AuthError, type AppValues, type AuthOps, type AuthStatus, type AuthStorage, type CheckState, type OtherStatus, type SignInChange } from "./apps.ts";
+export { AuthError, PROVIDERS, type AppValues, type AuthOps, type Provider, type ProvidersOn, type AuthStatus, type AuthStorage, type CheckState, type OtherStatus, type SignInChange } from "./apps.ts";

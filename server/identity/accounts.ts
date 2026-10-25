@@ -30,8 +30,8 @@ const JOIN_SECONDS = 30 * 60;
 /** Where a sign-in goes next. */
 export type Outcome =
   | { kind: "in"; login: string }
-  | { kind: "new"; suggestion: string }
-  | { kind: "refused"; login?: string };
+  | { kind: "new"; suggestion: string; taken?: string }
+  | { kind: "refused"; login?: string; taken?: string };
 
 /** Whether someone a provider vouched for may make a new account here. */
 export async function mayJoin(platform: Pick<Platform, "dev">, url: URL, _v: Vouched): Promise<boolean> {
@@ -49,6 +49,9 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
     await identities.used(v);
     return { kind: "in", login: user.login };
   }
+  // The account a GitHub login names, when it's another GitHub account's: someone renamed or deleted theirs, and this
+  // person took the login. They never get that account; the page says so.
+  let taken: string | undefined;
   if (v.provider == "github") {
     const row = await users.get(v.handle);
     if (row && (await identities.unclaimed(row.login))) {
@@ -56,9 +59,10 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
       const user = await users.signedIn(row.login, v.name, { create: o.create });
       return user ? { kind: "in", login: user.login } : { kind: "refused", login: row.login };
     }
+    if (row) taken = row.login;
   }
-  if (!o.join) return { kind: "refused" };
-  return { kind: "new", suggestion: await identities.suggest(v) };
+  if (!o.join) return taken ? { kind: "refused", taken } : { kind: "refused" };
+  return taken ? { kind: "new", suggestion: await identities.suggest(v), taken } : { kind: "new", suggestion: await identities.suggest(v) };
 }
 
 // ------------------------------------------------------------ after a provider's answer
@@ -67,17 +71,26 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
  * A provider vouched for someone: sign them in to their account, or on to the username step, or say why not.
  * `after`: what runs once they're in (a test sign-in's result), with their account's login.
  */
-export async function vouchedSignIn(platform: Platform, request: Request, v: Vouched, next: string, after?: (login: string) => Promise<void>): Promise<Response> {
+export async function vouchedSignIn(platform: Platform, request: Request, v: Vouched, next: string, o: { onlyAdmins?: boolean }, after?: (login: string) => Promise<void>): Promise<Response> {
   const url = new URL(request.url);
   const dev = platform.dev(url);
-  const outcome = await resolve(platform.directory, v, { join: await mayJoin(platform, url, v), create: dev });
-  if (outcome.kind == "refused") return refusedPage(v, outcome.login);
-  if (outcome.kind == "new") return toUsernameStep(platform, request, v, next);
+  const outcome = await resolve(platform.directory, v, { join: !o.onlyAdmins && (await mayJoin(platform, url, v)), create: dev });
+  if (outcome.kind == "refused") return outcome.taken ? takenPage(v, outcome.taken) : refusedPage(v, outcome.login);
+  if (outcome.kind == "new") return toUsernameStep(platform, request, v, next, outcome.taken);
+  // A provider that's off signs in only admins (their test sign-in, from /admin/auth).
+  if (o.onlyAdmins && !(await platform.directory.users.isAdmin(outcome.login))) return page(`${label(v.provider)} sign-in is off`, `This server doesn't take sign-in with ${esc(label(v.provider))}. <a href="/auth/sign-in?next=${encodeURIComponent(safeNext(next))}">Sign in another way</a>.`, 403);
   await after?.(outcome.login);
   return signIn(platform, request, sessionFor(outcome.login, v), safeNext(next));
 }
 
 const sessionFor = (login: string, v: Vouched): Session => ({ login, name: v.name?.trim().split(/\s+/)[0] || login });
+
+/** A GitHub login whose Erga account is someone else's (another GitHub id, or another provider). */
+const takenNote = (login: string) => `The Erga account <b>${esc(login)}</b> is someone else's: it doesn't sign in with this GitHub account. A GitHub login that changes hands never brings its Erga account with it.`;
+
+function takenPage(v: Vouched, login: string): Response {
+  return page("Not your account", `${takenNote(login)} You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>, and this server is invite-only: ask an admin to add you under another username.`, 403);
+}
 
 function refusedPage(v: Vouched, login?: string): Response {
   const who = login ?? v.handle;
@@ -86,13 +99,13 @@ function refusedPage(v: Vouched, login?: string): Response {
 
 // ------------------------------------------------------------ the username step
 
-interface Pending { v: Vouched; next: string; exp: number }
+interface Pending { v: Vouched; next: string; exp: number; taken?: string }
 
 const cookieFor = (request: Request, value: string, maxAge: number) =>
   `${cookieName(request, JOIN)}=${value}; Path=/auth; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
 
-async function toUsernameStep(platform: Platform, request: Request, v: Vouched, next: string): Promise<Response> {
-  const pending: Pending = { v, next: safeNext(next), exp: Math.floor(Date.now() / 1000) + JOIN_SECONDS };
+async function toUsernameStep(platform: Platform, request: Request, v: Vouched, next: string, taken?: string): Promise<Response> {
+  const pending: Pending = { v, next: safeNext(next), exp: Math.floor(Date.now() / 1000) + JOIN_SECONDS, ...(taken ? { taken } : {}) };
   const value = await sign(platform.secret, `join:${b64(new TextEncoder().encode(JSON.stringify(pending)))}`);
   const headers = new Headers({ Location: "/auth/username", "Cache-Control": "no-store" });
   headers.append("Set-Cookie", cookieFor(request, value, JOIN_SECONDS));
@@ -119,9 +132,9 @@ export async function usernameStep(platform: Platform, request: Request): Promis
     const problem = await platform.directory.identities.usernameProblem(url.searchParams.get("check") ?? "");
     return Response.json(problem ? { problem } : { ok: true }, { headers: { "Cache-Control": "no-store" } });
   }
-  if (!pending) return page("Sign-in expired", "This sign-in waited too long, or it finished already. <a href=\"/auth/github\">Sign in again</a>.", 400);
+  if (!pending) return page("Sign-in expired", "This sign-in waited too long, or it finished already. <a href=\"/auth/sign-in\">Sign in again</a>.", 400);
   const { v } = pending;
-  if (request.method == "GET") return usernamePage(v, await platform.directory.identities.suggest(v), null);
+  if (request.method == "GET") return usernamePage(v, await platform.directory.identities.suggest(v), null, pending.taken);
   if (request.method != "POST") return new Response("Not allowed", { status: 405 });
   if (request.headers.get("origin") != url.origin) return new Response("Forbidden", { status: 403 });
   const form = await request.formData().catch(() => null);
@@ -134,13 +147,13 @@ export async function usernameStep(platform: Platform, request: Request): Promis
     answer.headers.append("Set-Cookie", cookieFor(request, "", 0));
     return answer;
   } catch (e) {
-    if (e instanceof NotAllowed) return usernamePage(v, wanted, e.message);
+    if (e instanceof NotAllowed) return usernamePage(v, wanted, e.message, pending.taken);
     throw e;
   }
 }
 
-function usernamePage(v: Vouched, value: string, error: string | null): Response {
-  const body = `Welcome. You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
+function usernamePage(v: Vouched, value: string, error: string | null, taken?: string): Response {
+  const body = `${taken ? `${takenNote(taken)}</p><p>` : ""}Welcome. You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
 <form method="post" action="/auth/username" class="username" novalidate>
   <label for="username">Username</label>
   <p class="row"><input class="input" id="username" name="username" value="${esc(value)}" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="39" required autofocus>
@@ -187,5 +200,5 @@ export async function devSignIn(platform: Platform, request: Request): Promise<R
   const handle = q.get("handle")?.trim();
   if (!subject || !handle) return page("Not enough", "Give the pretend identity's subject= and handle=.", 400);
   const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
-  return vouchedSignIn(platform, request, { provider, subject, handle, name: q.get("name") || null, emails }, q.get("next") ?? "/");
+  return vouchedSignIn(platform, request, { provider, subject, handle, name: q.get("name") || null, emails }, q.get("next") ?? "/", {});
 }

@@ -199,7 +199,7 @@ export class Deployer extends DurableObject<Env> {
         if (!made.ok) throw new DeployError(`The install's repository (a fork of Erga's) couldn't be made: ${made.error}`);
         run.result = await runInstall(new Cloudflare(t.token, net), release, plan, {
           sessionSecret: randomSecret(), controlSecret: randomSecret(), snapshotToken: randomSecret(), fork,
-          upstream: { origin, clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : ""), github: { clientId: github.clientId, slug: github.slug } },
+          upstream: { origin, clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : ""), github: { clientId: github.clientId, slug: github.slug }, ...(this.env.GOOGLE_APP_CLIENT_ID?.trim() ? { google: { clientId: this.env.GOOGLE_APP_CLIENT_ID.trim() } } : {}) },
           site: net,
           report: (id, status, detail) => {
             const step = run.steps.find((s) => s.id == id)!;

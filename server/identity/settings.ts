@@ -11,12 +11,13 @@
 // Staging's admins-only guard lets both through with the secret: production's page shows
 // staging's status, and sets staging's app while no admin can sign in to staging.
 
-import { type AppCheck, type AppContext, type AppValues, type AuthOps, type AuthStatus, AuthApps, AuthError, cachedCheck, checkGithubApp, clearApp, discardApp, inUse, type OtherStatus, type Provider, saveApp, statusOf } from "./apps.ts";
+import { type AppCheck, type AppContext, type AppValues, type AuthOps, type AuthStatus, AuthApps, AuthError, cachedCheck, checkGithubApp, checkGoogleApp, clearApp, discardApp, inUse, type OtherStatus, type Provider, PROVIDERS, type ProvidersOn, saveApp, statusOf } from "./apps.ts";
 import type { Act } from "../../shared/attribution.ts";
 import { TARGETS, targetNames, type TargetName } from "../../deploy/targets.ts";
 import type { Platform } from "../platform.ts";
 import { isPeer } from "./peer.ts";
 
+/** The provider the other server's page sets (production sets staging's): GitHub's, which staging's admins need to sign in at all. */
 const PROVIDER: Provider = "github";
 
 export const isSignInPath = (path: string) => path == "/api/sign-in/status" || path == "/api/sign-in/github";
@@ -35,21 +36,29 @@ const takesFrom = (t: TargetName | null): TargetName | null => (t ? TARGETS[t].s
 /** The page's values, in this server's own storage (not D1: apps.ts says why). */
 const appsOf = (platform: SignInPlatform) => new AuthApps(platform.own, platform.signIn.encryptionKey, targetOf(platform) ?? "");
 
-// One per isolate: a page that opens often asks GitHub at most once a minute for the same values.
-let checks: { origin: string; check: (v: AppValues) => Promise<AppCheck> } | null = null;
-const checkOf = (platform: SignInPlatform) => {
-  // An install's server signs in with Erga's GitHub App through erga.dev: nothing to check here, and nothing to paste.
-  if (platform.signIn.relay) return async (): Promise<AppCheck> => ({ state: "working", summary: `Sign-in uses Erga's GitHub App, through ${platform.signIn.relay}.`, reasons: [], at: Date.now() });
-  const origin = platform.signIn.github;
-  if (checks?.origin != origin) checks = { origin, check: cachedCheck((v) => checkGithubApp(v, { origin })) };
-  return checks.check;
+// One per isolate and provider: a page that opens often asks GitHub or Google at most once a minute for the same values.
+const checks = new Map<Provider, { origin: string; check: (v: AppValues) => Promise<AppCheck> }>();
+const checkOf = (platform: SignInPlatform, provider: Provider) => {
+  // An install's server signs in with Erga's apps through erga.dev: nothing to check here, and nothing to paste.
+  if (platform.signIn.relay) return async (v: AppValues): Promise<AppCheck> => (v.clientId
+    ? { state: "working", summary: `Sign-in uses Erga's ${PROVIDERS[provider].label} app, through ${platform.signIn.relay}.`, reasons: [], at: Date.now() }
+    : { state: "not_set_up", summary: `This server has no client ID for Erga's ${PROVIDERS[provider].label} app.`, reasons: [`${PROVIDERS[provider].idEnv} isn't set.`], at: Date.now() });
+  const origin = provider == "github" ? platform.signIn.github : platform.signIn.google ?? "";
+  const had = checks.get(provider);
+  if (had?.origin == origin) return had.check;
+  const check = cachedCheck((v) => (provider == "github" ? checkGithubApp(v, { origin }) : checkGoogleApp(v, { origin: origin || null })));
+  checks.set(provider, { origin, check });
+  return check;
 };
 
-const contextOf = (platform: SignInPlatform): AppContext => ({
+/** The deploy's values for a provider's app. */
+const deployOf = (platform: SignInPlatform, provider: Provider): AppValues => (provider == "github" ? platform.signIn.app : platform.signIn.googleApp ?? { clientId: "", secret: "" });
+
+const contextOf = (platform: SignInPlatform, provider: Provider = PROVIDER): AppContext => ({
   apps: appsOf(platform),
-  provider: PROVIDER,
-  deploy: platform.signIn.app,
-  check: checkOf(platform),
+  provider,
+  deploy: deployOf(platform, provider),
+  check: checkOf(platform, provider),
   log: async (by, change) => {
     try { await platform.directory.config.record(by.login, [{ key: "sign-in", from: null, to: null, signIn: change }], Date.now(), by.via ?? null); }
     catch (e) { console.log(`couldn't write the change log: ${e}`); }
@@ -60,11 +69,11 @@ const contextOf = (platform: SignInPlatform): AppContext => ({
  * The app sign-in uses: the values in use (the page's, else the deploy's), or those waiting for a
  * test sign-in (null if none). A server whose own storage doesn't answer signs in with the deploy's.
  */
-export async function signInApp(platform: SignInPlatform, which: "active" | "pending"): Promise<AppValues | null> {
-  const deploy = platform.signIn.app;
+export async function signInApp(platform: SignInPlatform, which: "active" | "pending", provider: Provider = PROVIDER): Promise<AppValues | null> {
+  const deploy = deployOf(platform, provider);
   try {
     const apps = appsOf(platform);
-    return which == "active" ? await inUse({ apps, provider: PROVIDER, deploy }) : await apps.values(PROVIDER, "pending");
+    return which == "active" ? await inUse({ apps, provider, deploy }) : await apps.values(provider, "pending");
   } catch (e) {
     console.log(`couldn't read the sign-in values set on /admin/auth, so the deploy's stand: ${e instanceof Error ? e.message : e}`);
     return which == "active" ? deploy : null;
@@ -75,27 +84,73 @@ export async function signInApp(platform: SignInPlatform, which: "active" | "pen
  * A test sign-in with the pending values ended: an admin's that worked puts them in use; anything
  * else leaves the values in use as they are, and the page says why.
  */
-export async function testedSignIn(platform: SignInPlatform, clientId: string, o: { ok: boolean; login?: string; admin?: boolean; error?: string }): Promise<boolean> {
-  const c = contextOf(platform);
+export async function testedSignIn(platform: SignInPlatform, clientId: string, o: { ok: boolean; login?: string; admin?: boolean; error?: string }, provider: Provider = PROVIDER): Promise<boolean> {
+  const c = contextOf(platform, provider);
   const at = Date.now();
   if (o.ok && o.admin && o.login) {
-    if (!(await c.apps.promote(PROVIDER, clientId))) return false;
-    await c.log({ login: o.login }, { provider: PROVIDER, target: targetOf(platform) ?? "", event: "tested", clientId });
+    if (!(await c.apps.promote(provider, clientId))) return false;
+    await c.log({ login: o.login }, { provider, target: targetOf(platform) ?? "", event: "tested", clientId });
     return true;
   }
-  const error = o.ok ? `${o.login ?? "Someone"} signed in, but only an admin's sign-in puts new values in use.` : o.error ?? "GitHub didn't sign them in.";
+  const error = o.ok ? `${o.login ?? "Someone"} signed in, but only an admin's sign-in puts new values in use.` : o.error ?? `${PROVIDERS[provider].label} didn't sign them in.`;
   // Nothing changed, so the change log has no line for it: the page shows it beside the pending values.
-  await c.apps.noteTest(PROVIDER, clientId, { at, ok: false, by: o.login, error });
+  await c.apps.noteTest(provider, clientId, { at, ok: false, by: o.login, error });
   return false;
 }
 
+// ------------------------------------------------------------ which providers are on
+
+const ON_KEY = "auth:providers";
+const DEFAULT_ON: ProvidersOn = { github: true, google: false };
+
+/**
+ * Which providers people may sign in with here, as an admin chose on /admin/auth: kept in the server's own storage, as
+ * the apps are (a copy of production's data never changes staging's). GitHub alone until an admin chooses.
+ */
+export async function providersOn(platform: Pick<Platform, "own">): Promise<ProvidersOn> {
+  try {
+    const kept = (await platform.own.get(ON_KEY)) as Partial<ProvidersOn> | undefined;
+    return { github: kept?.github ?? DEFAULT_ON.github, google: kept?.google ?? DEFAULT_ON.google };
+  } catch (e) {
+    console.log(`couldn't read which sign-in providers are on, so GitHub alone: ${e instanceof Error ? e.message : e}`);
+    return DEFAULT_ON;
+  }
+}
+
+/**
+ * Turns sign-in with a provider on or off. The rules, so nobody is locked out: a provider goes on only while its app
+ * works; one goes off only while the other is on and works, and the admin who turns it off can sign in with the other.
+ */
+async function setProvider(platform: SignInPlatform, by: Act, provider: Provider, on: boolean): Promise<ProvidersOn> {
+  if (!(provider in PROVIDERS)) throw new AuthError(`"${provider}" isn't a sign-in provider: github or google.`);
+  const now = await providersOn(platform);
+  if (now[provider] == on) return now;
+  const label = PROVIDERS[provider].label;
+  // Local development signs in without a provider: anything works there.
+  const works = async (p: Provider) => platform.signIn.devLogin != null
+    || (await contextOf(platform, p).check((await signInApp(platform, "active", p)) ?? { clientId: "", secret: "" })).state == "working";
+  if (on && !(await works(provider))) throw new AuthError(`${label}'s app doesn't work on this server yet: set its values below, and turn it on when the check says it works. Nothing changed.`);
+  if (!on) {
+    const other: Provider = provider == "github" ? "google" : "github", otherLabel = PROVIDERS[other].label;
+    if (!now[other]) throw new AuthError(`Sign-in with ${label} is the only one on: turn on ${otherLabel} first, so people can still sign in. Nothing changed.`);
+    if (!(await works(other))) throw new AuthError(`${otherLabel}'s app doesn't work now, so turning ${label} off would stop sign-in. Nothing changed.`);
+    // An account with no identity yet signs in with GitHub by its login (accounts.ts), once.
+    const mine = await platform.directory.identities.of(by.login);
+    if (!mine.some((i) => i.provider == other) && !(other == "github" && mine.length == 0)) throw new AuthError(`You sign in only with ${label}: link your ${otherLabel} account on /settings first, or you couldn't sign in again. Nothing changed.`);
+  }
+  const next = { ...now, [provider]: on };
+  await platform.own.put(ON_KEY, next);
+  await contextOf(platform, provider).log(by, { provider, target: targetOf(platform) ?? "", event: on ? "on" : "off" });
+  return next;
+}
+
 /** This server's own status. `origin`: where it's reached (the callback URL is under it). */
-async function localStatus(platform: SignInPlatform, origin: string): Promise<AuthStatus> {
-  const target = targetOf(platform), from = takesFrom(target);
+async function localStatus(platform: SignInPlatform, origin: string, provider: Provider = PROVIDER): Promise<AuthStatus> {
+  const target = targetOf(platform), from = provider == PROVIDER ? takesFrom(target) : null;
   const pagePlace = from
     ? `on ${from}'s Authentication page (${platform.deploy.originOf(from)}/admin/auth), in the ${target} section`
     : `on this server's Authentication page (${origin}/admin/auth)`;
-  return statusOf(contextOf(platform), { origin: target && !platform.signIn.devLogin ? `https://${TARGETS[target].host}` : origin, target, dev: platform.dev(new URL(origin)), takesFrom: from, worker: target ? TARGETS[target].worker : undefined, pagePlace });
+  return statusOf(contextOf(platform, provider), { origin: target && !platform.signIn.devLogin ? `https://${TARGETS[target].host}` : origin, target, dev: platform.dev(new URL(origin)), takesFrom: from, worker: target ? TARGETS[target].worker : undefined, pagePlace });
 }
 
 /** The other target's server, asked with the shared secret; its answer, or why there's none. */
@@ -132,14 +187,21 @@ export function authOps(platform: SignInPlatform, origin: string): AuthOps {
     async status(by) {
       await mustAdmin(by);
       const o = otherOf(platform);
-      const [here, there] = await Promise.all([
+      const [here, there, google, providers] = await Promise.all([
         localStatus(platform, origin),
         o ? askPeer<{ status: AuthStatus }>(platform, o, "/api/sign-in/status").then((r) => r.status, (e: unknown): OtherStatus => ({ target: o, origin: `https://${TARGETS[o].host}`, error: (e as Error).message })) : null,
+        localStatus(platform, origin, "google"),
+        providersOn(platform),
       ]);
-      return { here, other: there };
+      return { here, other: there, google, providers };
     },
-    async save(by, server, input) {
+    async setProvider(by, provider, on) {
       await mustAdmin(by);
+      return setProvider(platform, by, provider, on);
+    },
+    async save(by, server, input, provider = PROVIDER) {
+      await mustAdmin(by);
+      if (provider != PROVIDER) return saveApp(contextOf(platform, provider), target(), input, by);
       if (server == "here") return saveApp(contextOf(platform), target(), input, by);
       const o = other("set");
       // The secret goes to the other server only, over HTTPS; nothing here keeps or logs it.
@@ -147,16 +209,18 @@ export function authOps(platform: SignInPlatform, origin: string): AuthOps {
       await contextOf(platform).log(by, { provider: PROVIDER, target: o, event: r.result.kept == "active" ? "set" : "pending", clientId: String(input.clientId ?? "").trim() });
       return r.result;
     },
-    async discard(by, server) {
+    async discard(by, server, provider = PROVIDER) {
       await mustAdmin(by);
+      if (provider != PROVIDER) return discardApp(contextOf(platform, provider), target(), by);
       if (server == "here") return discardApp(contextOf(platform), target(), by);
       const o = other("changed");
       const r = await askPeer<{ result: { discarded: boolean } }>(platform, o, "/api/sign-in/github", { method: "POST", body: { do: "discard", ...passedOn(by) } });
       if (r.result.discarded) await contextOf(platform).log(by, { provider: PROVIDER, target: o, event: "discarded" });
       return r.result;
     },
-    async clear(by, server, force) {
+    async clear(by, server, force, provider = PROVIDER) {
       await mustAdmin(by);
+      if (provider != PROVIDER) return clearApp(contextOf(platform, provider), target(), by, force);
       if (server == "here") return clearApp(contextOf(platform), target(), by, force);
       const o = other("changed");
       const r = await askPeer<{ result: { cleared: boolean; message: string } }>(platform, o, "/api/sign-in/github", { method: "POST", body: { do: "clear", force: force === true, ...passedOn(by) } });

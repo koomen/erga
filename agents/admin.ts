@@ -235,6 +235,7 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   clear_api_key: ["Clearing", "Cleared"],
   get_sign_in_status: ["Reading how people sign in", "Read how people sign in"],
   clear_sign_in_app: ["Clearing the sign-in values of", "Cleared the sign-in values of"],
+  switch_sign_in_provider: ["Changing sign-in with", "Changed sign-in with"],
   list_branches: ["Reading staging and main", "Read staging and main"],
   deploy_production: ["Deploying production", "Deployed production"],
   github_status: ["Reading the GitHub connection", "Read the GitHub connection"],
@@ -283,9 +284,11 @@ For the server (the admin pages, /admin), you act as ${owner}, with their admin 
   are set only on /admin/api-keys: if ${owner} wants to set one, tell them to paste it
   there, never in this conversation. If they paste a key or token here anyway, don't use
   it or repeat it: tell them to set it on the page and to replace it, as it is no longer secret.
-- get_sign_in_status reads how people sign in (/admin/auth): the GitHub OAuth app of this
-  server and of the other deploy target, a live check of each, and how to make one where
-  it's missing. clear_sign_in_app clears the values set on /admin/auth (back to the
+- get_sign_in_status reads how people sign in (/admin/auth): which providers are on
+  (GitHub, Google), the GitHub OAuth app of this server and of the other deploy target,
+  this server's Google OAuth client, a live check of each, and how to make one where
+  it's missing. switch_sign_in_provider turns sign-in with GitHub or Google on or off.
+  clear_sign_in_app clears a provider's values set on /admin/auth (back to the
   deploy's), or with what: "pending" discards new values that wait for a test sign-in.
   An app's client ID and secret are pasted only on /admin/auth, never here: if ${owner}
   wants an app set, give them the steps and send them to that page.
@@ -389,7 +392,8 @@ function about(name: string, args: unknown): string | null {
   if (typeof a.key == "string") return a.key;
   if (typeof a.target == "string") return a.target;
   if (name == "clear_api_key" && typeof a.name == "string") return a.name;
-  if (name == "clear_sign_in_app") return `${a.server == "other" ? "the other server" : "this server"}${a.what == "pending" ? " (pending)" : ""}`;
+  if (name == "clear_sign_in_app") return `${a.provider == "google" ? "Google on " : ""}${a.server == "other" ? "the other server" : "this server"}${a.what == "pending" ? " (pending)" : ""}`;
+  if (name == "switch_sign_in_provider") return `${a.provider == "google" ? "Google" : "GitHub"} (${a.on ? "on" : "off"})`;
   if (name == "deploy_production") return typeof a.commit == "string" && a.commit ? `main to ${a.commit.slice(0, 10)}` : "main to staging";
   if (name == "resolve_conflict_file" && typeof a.path == "string") return a.path;
   if ((name == "add_domain" || name == "remove_domain") && typeof a.hostname == "string") return `${a.hostname} (${a.target})`;
@@ -545,8 +549,8 @@ ${o.origin}/mcp, and \`GET ${api}/ext\` is the whole guide to them.
     list_users, add_user, set_user_role,        the users and their roles (/admin/users); nobody may demote or remove the last
       set_user_deploy, remove_user              admin, nor a bootstrap admin
     list_api_keys, clear_api_key                which API keys are set (never a key), and clearing one (/admin/api-keys)
-    get_sign_in_status, clear_sign_in_app       how people sign in, here and on the other server (never a secret), and
-                                                clearing the GitHub app values set on /admin/auth
+    get_sign_in_status, clear_sign_in_app,      how people sign in, here and on the other server (never a secret),
+      switch_sign_in_provider                   clearing the app values set on /admin/auth, and GitHub or Google on or off
     list_tokens, revoke_token                   ${o.owner}'s agent tokens (/tokens), this one too
     whoami, list_documents, ...                 ${o.owner}'s documents, as on ${o.origin}/docs
 

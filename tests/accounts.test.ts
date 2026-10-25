@@ -26,7 +26,8 @@ test("a linked identity signs in to its account by its id, whatever its GitHub l
   expect(await resolve(dir, github(7, "ada"), { join: false })).toEqual({ kind: "in", login: "ada" });
   // Ada renames herself on GitHub: still ada here. Someone else who takes the login "ada" on GitHub is not her.
   expect(await resolve(dir, github(7, "ada-lovelace"), { join: false })).toEqual({ kind: "in", login: "ada" });
-  expect(await resolve(dir, github(8, "ada"), { join: false })).toEqual({ kind: "refused" });
+  // A stranger who took the login "ada" on GitHub is refused, and told the account is another GitHub account's.
+  expect(await resolve(dir, github(8, "ada"), { join: false })).toEqual({ kind: "refused", taken: "ada" });
   expect((await dir.identities.find("github", "7"))?.handle).toBe("ada-lovelace");
 });
 
@@ -37,13 +38,13 @@ test("an account with no identity (from before, or added by an admin) is claimed
   expect(await resolve(dir, github(1, "koomen"), { join: false })).toEqual({ kind: "in", login: "koomen" });
   expect((await dir.users.get("koomen"))?.created).toBeGreaterThan(0);
   // Claimed once: another GitHub account with that login later is a stranger.
-  expect(await resolve(dir, github(21, "bo"), { join: false })).toEqual({ kind: "refused" });
+  expect(await resolve(dir, github(21, "bo"), { join: false })).toEqual({ kind: "refused", taken: "bo" });
 });
 
 test("an account made with Google is never claimed by a GitHub login of the same name", async () => {
   const dir = new Directory(memory());
   expect(await dir.identities.createAccount("carol", google("g-1", "carol@example.com"))).toBe("carol");
-  expect(await resolve(dir, github(30, "carol"), { join: false })).toEqual({ kind: "refused" });
+  expect(await resolve(dir, github(30, "carol"), { join: false })).toEqual({ kind: "refused", taken: "carol" });
   expect((await resolve(dir, github(30, "carol"), { join: true })).kind).toBe("new");
 });
 
@@ -90,4 +91,32 @@ test("two people who choose one username at once can't both have it; one identit
   expect([a.status, b.status].sort()).toEqual(["fulfilled", "rejected"]);
   await expect(dir.identities.createAccount("jo2", google("g-a", "a@x.com"))).rejects.toThrow();
   expect((await dir.identities.of("jo")).length).toBe(1);
+});
+
+test("takeover by a login that changed hands: a row with a GitHub id never goes to another id; one without matches by login once, then keeps the id", async () => {
+  const sql = memory({ at: "0210", run: (db) => {
+    // ann signed in since 0160 (her id kept); ben hasn't (no id yet).
+    db.exec("INSERT INTO users (login, name, role, created, github_id) VALUES ('ann', 'Ann', 'user', 1, 500), ('ben', 'Ben', 'user', 2, NULL)");
+  } });
+  const dir = new Directory(sql);
+  // ann renamed or deleted her GitHub account, and a stranger registered "ann": refused, or a new account under another name.
+  expect(await resolve(dir, github(999, "ann"), { join: false })).toEqual({ kind: "refused", taken: "ann" });
+  const joined = await resolve(dir, github(999, "ann"), { join: true });
+  expect(joined).toMatchObject({ kind: "new", taken: "ann" });
+  expect((joined as { suggestion: string }).suggestion).not.toBe("ann");
+  expect(await resolve(dir, github(500, "ann-new-name"), { join: false })).toEqual({ kind: "in", login: "ann" });
+  // ben: his login matches one last time, which keeps his id; after that only the id does.
+  expect(await resolve(dir, github(600, "ben"), { join: false })).toEqual({ kind: "in", login: "ben" });
+  expect((await dir.identities.find("github", "600"))?.login).toBe("ben");
+  expect(await resolve(dir, github(601, "ben"), { join: false })).toEqual({ kind: "refused", taken: "ben" });
+});
+
+test("Google: the sub, never the email, after the first link", async () => {
+  const dir = new Directory(memory());
+  await dir.identities.createAccount("cleo", google("sub-cleo", "cleo@example.com"));
+  // Her email changes at Google: still cleo.
+  expect(await resolve(dir, google("sub-cleo", "cleo@new.example.com"), { join: false })).toEqual({ kind: "in", login: "cleo" });
+  // Another Google account that now has her old email: not cleo.
+  expect(await resolve(dir, google("sub-other", "cleo@example.com"), { join: false })).toEqual({ kind: "refused" });
+  expect((await resolve(dir, google("sub-other", "cleo@example.com"), { join: true })).kind).toBe("new");
 });

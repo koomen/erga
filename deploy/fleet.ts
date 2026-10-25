@@ -32,7 +32,7 @@ export interface Fleet {
 /** The settings an install's control Worker carries about itself (deploy/install.ts set them), which its upgrades send on; and its secrets staging is given. */
 export interface InstallEnv extends FleetEnv {
   UPSTREAM?: string; INSTALL?: string; CHANNEL?: string;
-  ADMINS?: string; APP_URL?: string; GITHUB_APP_CLIENT_ID?: string; GITHUB_APP_SLUG?: string; CLOUDFLARE_OAUTH_CLIENT_ID?: string;
+  ADMINS?: string; APP_URL?: string; GITHUB_APP_CLIENT_ID?: string; GITHUB_APP_SLUG?: string; CLOUDFLARE_OAUTH_CLIENT_ID?: string; GOOGLE_APP_CLIENT_ID?: string;
   SESSION_SECRET?: string;
 }
 
@@ -62,6 +62,7 @@ export function installFleet(env: InstallEnv): Fleet | null {
       // What the control Worker tells itself, sent again on each upgrade (a text setting goes with each upload).
       const controlVars = {
         ADMINS: env.ADMINS ?? "", CLOUDFLARE_ACCOUNT_ID: accountId, APP_URL: env.APP_URL ?? `https://${hosts.production}`, GITHUB_APP_CLIENT_ID: env.GITHUB_APP_CLIENT_ID ?? "", GITHUB_APP_SLUG: env.GITHUB_APP_SLUG ?? "",
+        ...(env.GOOGLE_APP_CLIENT_ID?.trim() ? { GOOGLE_APP_CLIENT_ID: env.GOOGLE_APP_CLIENT_ID.trim() } : {}),
         CLOUDFLARE_OAUTH_CLIENT_ID: env.CLOUDFLARE_OAUTH_CLIENT_ID ?? "", UPSTREAM: upstream, INSTALL: env.INSTALL!, ...(env.CHANNEL?.trim() ? { CHANNEL: env.CHANNEL.trim() } : {}),
       };
       if (name == "control") {
@@ -72,7 +73,7 @@ export function installFleet(env: InstallEnv): Fleet | null {
         };
       }
       // Sign-in on the app Workers: Erga's GitHub App, through upstream's callback (the relay).
-      const appVars = { ADMINS: env.ADMINS ?? "", GITHUB_CLIENT_ID: env.GITHUB_APP_CLIENT_ID ?? "", SIGN_IN_RELAY: upstream, SERVER_CONFIG: "{}", CLOUDFLARE_OAUTH_CLIENT_ID: "", CONTROL_URL: `https://${hosts.control}` };
+      const appVars = { ADMINS: env.ADMINS ?? "", GITHUB_CLIENT_ID: env.GITHUB_APP_CLIENT_ID ?? "", ...(env.GOOGLE_APP_CLIENT_ID?.trim() ? { GOOGLE_CLIENT_ID: env.GOOGLE_APP_CLIENT_ID.trim() } : {}), SIGN_IN_RELAY: upstream, SERVER_CONFIG: "{}", CLOUDFLARE_OAUTH_CLIENT_ID: "", CONTROL_URL: `https://${hosts.control}` };
       if (name == "staging") {
         // Staging's secrets go with each deploy (the install made none for it): its own session key, derived from the
         // control Worker's, and the token the copy of production's data goes through (sign-in needs no secret: the relay).
