@@ -6,23 +6,17 @@
 //   POST /__erga/migrate           brings the local D1 up to date with server/migrations/ (as it starts)
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
-//   /__erga/site/<host>/<path>     a site on the pretend Cloudflare (ERGA_DEPLOY_MOCK=1), as a reader would see it
 
 import { idShaped, OWNER, slugify } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
 import { isDev } from "./platform";
-import { mockSiteFile } from "./sites";
 import { documentOf } from "./document-host";
 
 /** The dev server's routes: null for a path that isn't one of them; refused unless it's local development and the request carries the secret (?link=). */
 export async function devRoutes(request: Request, env: Env, platform: Platform, url: URL): Promise<Response | null> {
   if (!url.pathname.startsWith("/__erga/")) return null;
-  if (url.pathname.startsWith("/__erga/site/") && isDev(env, url)) {
-    const [, host, rest] = /^\/__erga\/site\/([^/]+)(\/.*)?$/.exec(url.pathname) ?? [];
-    return (host && mockSiteFile(env, host, rest ?? "/")) || new Response("Not found", { status: 404 });
-  }
   if (!isDev(env, url) || !env.ERGA_LINK_SECRET || url.searchParams.get("link") != env.ERGA_LINK_SECRET) return new Response("Not found", { status: 404 });
   const directory = directoryOf(env);
   if (url.pathname == "/__erga/migrate" && request.method == "POST") {

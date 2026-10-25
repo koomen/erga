@@ -33,7 +33,7 @@ test("Edit on a version: shown on hover at once and on focus, not on the current
     const opacity = (sel: string) => s.eval<string>(`getComputedStyle(document.querySelector(${JSON.stringify(sel)})).opacity`);
     expect(await s.eval<boolean>(`!!document.querySelector(${JSON.stringify(edit(12))})`)).toBe(false);
     expect(await opacity(edit(9))).toBe("0");
-    // The popover scrolls (the Custom domain section above can push the list below its fold): the row in view first.
+    // The popover scrolls (the sections above can push the list below its fold): the row in view first.
     await s.eval(`document.querySelector('#ds-list li[data-n="9"]').scrollIntoView({ block: "nearest" })`);
     const row = (await s.steadyRect(`#ds-list li[data-n="9"]`))!;
     await tab.page.mouse.move(row.left + 60, row.y);

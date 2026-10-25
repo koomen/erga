@@ -146,6 +146,8 @@ type TreeModule = { mountTree: typeof mountTree };
   const asked = new URLSearchParams(location.search).get("user")?.trim();
   const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
   let info: DocInfo | null = null;
+  /** A document (one page) or a project (pages), as the host last said: the breadcrumb shows a project's pages (applyKind). */
+  let docKind: "document" | "project" = "project";
   // What this page kept of itself before it reloaded for a new release, if it did.
   const back = restoredFor<EditorKept>("editor");
 
@@ -170,7 +172,9 @@ type TreeModule = { mountTree: typeof mountTree };
     },
   }, asked ? { user: asked } : {});
   try {
-    info = (await Promise.race([collab.hello, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the room didn't answer")), 8000))])).info;
+    const first = await Promise.race([collab.hello, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the room didn't answer")), 8000))]);
+    info = first.info;
+    docKind = first.tree.kind ?? "project";
     performance.mark("erga:hello");
   } catch (e) {
     $("welcome").hidden = false;
@@ -304,7 +308,7 @@ type TreeModule = { mountTree: typeof mountTree };
     docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
-    titleBtn.setAttribute("aria-label", `${n.title}: its pages`);
+    titleBtn.setAttribute("aria-label", docKind == "project" ? `${n.title}: its pages` : `${n.title}: rename`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
     tree?.setRootTitle(n.title);
@@ -352,7 +356,22 @@ type TreeModule = { mountTree: typeof mountTree };
     titleIn.focus();
     titleIn.select();
   }
-  titleBtn.addEventListener("click", () => (naming.hidden ? togglePages() : toggleNaming(false)));
+  // A project's title opens its pages; a document's (one page: nothing to open) its name, to rename it.
+  titleBtn.addEventListener("click", () => (!naming.hidden ? toggleNaming(false) : docKind == "project" ? togglePages() : toggleNaming(true)));
+  /**
+   * The kind as the host says it now (the hello, or a "tree" event: the settings' switch in any tab, or an agent):
+   * a project's title has the caret and opens its pages, a document's has none. At once, with no reload.
+   */
+  function applyKind(kind: "document" | "project" | undefined) {
+    if (!kind) return;
+    docKind = kind;
+    const project = kind == "project";
+    titleBtn.classList.toggle("project", project);
+    titleBtn.setAttribute("aria-controls", project ? "pages" : "naming");
+    if (docName) titleBtn.setAttribute("aria-label", project ? `${docName.title}: its pages` : `${docName.title}: rename`);
+    if (!project && !pagesCard.hidden) togglePages(false);
+  }
+  applyKind(docKind);
   $("naming-cancel").addEventListener("click", () => toggleNaming(false));
   // An address that follows the title follows it here too, until it's typed in.
   titleIn.addEventListener("input", () => { if (!docName!.slugSet && !slugTouched) slugIn.value = slugify(titleIn.value) || docName!.slug; namingHint(); });
@@ -437,7 +456,8 @@ type TreeModule = { mountTree: typeof mountTree };
   }
   function togglePages(force?: boolean) {
     const open = typeof force == "boolean" ? force : pagesCard.hidden;
-    if (open && !docName) return;
+    // A document has one page: no pages to open.
+    if (open && (!docName || docKind != "project")) return;
     if (open != pagesCard.hidden) return;
     pagesCard.hidden = !open;
     titleBtn.setAttribute("aria-expanded", String(open || !naming.hidden));
@@ -583,14 +603,15 @@ type TreeModule = { mountTree: typeof mountTree };
   // state with its transcript, which this catches up from.
   let greeted = false;
   function socketEvent(m: SocketEvent) {
-    const msg = m as { type: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string; path?: string; state?: AgentState };
+    const msg = m as { type: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string; path?: string; state?: AgentState; kind?: "document" | "project" };
     if (msg.type == "hello") {
       const h = m as Hello;
       // The body's erga-listening class: this tab hears its agent (and open_page counts it). Tests wait on it.
       document.body.classList.add("erga-listening");
       if (h.info.docName && docName) showName(h.info.docName);
-      if (greeted) { docSettings?.event("versions"); docSettings?.event("home"); docSettings?.event("site"); }
+      if (greeted) { docSettings?.event("versions"); docSettings?.event("home"); docSettings?.event("tree"); }
       greeted = true;
+      applyKind(h.tree.kind);
       stillHere(h.tree);
     }
     else if (msg.type == "agent-state" && msg.state) agentState(msg.state);
@@ -599,8 +620,8 @@ type TreeModule = { mountTree: typeof mountTree };
     else if (msg.type == "view" && msg.id && msg.req?.live) answerLive(msg.id, msg.req.live);
     else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
     else if (msg.type == "name" && msg.name) showName(msg.name);
-    else if (msg.type == "versions" || msg.type == "home" || msg.type == "site") docSettings?.event(msg.type);
-    else if (msg.type == "tree") treeChanged(msg);
+    else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
+    else if (msg.type == "tree") { applyKind(msg.kind); treeChanged(msg); docSettings?.event("tree"); }
     // Your agent (or an external one, as you) opened another page: go there (open_page).
     else if (msg.type == "open" && msg.path && msg.path != info!.path) openPage(msg.path);
   }
@@ -965,7 +986,7 @@ Once you've read the guide, await further instructions.`;
     clearTimeout(copiedTimer);
     copiedTimer = window.setTimeout(() => { copied.textContent = linkHint; }, 2000);
   });
-  // Document settings (publishing, versions, the homepage): the gear opens
+  // Document settings (document or project, the homepage, versions): the gear opens
   // them, a popover under it. Their code
   // loads only when the gear is reached for: hovered, focused or clicked.
   const settingsBtn = $("btn-settings");
@@ -973,7 +994,7 @@ Once you've read the guide, await further instructions.`;
   function loadSettings(): Promise<Settings | null> {
     return settingsLoading ??= import("./settings").then(() => {
       docSettings = window.ergaSettings?.mount({
-        docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin,
+        docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin, kind: () => docKind, onKind: applyKind,
         onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); } },
       }) ?? null;
       return docSettings;
@@ -1980,18 +2001,6 @@ Once you've read the guide, await further instructions.`;
     if (back.help) toggleHelp(true);
     if (back.files?.length) agentFiles.restore(back.files);
   }
-  // Back from Cloudflare's consent without its popup (a browser that blocked it): the settings open at Custom domain.
-  {
-    const q = new URL(location.href);
-    if (q.searchParams.has("cloudflare") || q.searchParams.has("cloudflare_error")) {
-      const error = q.searchParams.get("cloudflare_error");
-      q.searchParams.delete("cloudflare");
-      q.searchParams.delete("cloudflare_error");
-      window.history.replaceState(window.history.state, "", q.pathname + q.search + q.hash);
-      void loadSettings().then((s) => s?.consented(error));
-    }
-  }
-
   // ---------------------------------------------------------------- another page
 
   // Another of the document's pages, opened while editing (the pages card, a link on the page, your agent's open_page),

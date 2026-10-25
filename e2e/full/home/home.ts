@@ -33,6 +33,10 @@ export const editOf = (html: string) => /href="([^"?]+)\?edit"/.exec(html)?.[1] 
 /** The landing_document setting as /admin shows it (the document's address). */
 export const landingSetting = async (server: Server) => (await (await get(server, "/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
 
+/** Makes a document the homepage, as an admin does on /admin (landing_document): the setting's answer, or its error. */
+export const setLanding = async (server: Server, id: string) =>
+  (await (await get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(id) }) })).json()) as { entry?: { value: unknown }; error?: string };
+
 /** Unsets landing_document: the next / makes a fresh front page from assets/landing/. */
 export const resetLanding = (server: Server) => get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", reset: "1" }) });
 

@@ -45,7 +45,6 @@ import { ConfigError, ServerConfig } from "./settings.ts";
 
 import { NotAllowed, Users } from "./users.ts";
 import { Credentials } from "./api-keys.ts";
-import { CloudflareGrants, Sites } from "../sites/index.ts";
 import { isDocKind, type DocKind } from "../../document/pages.ts";
 
 
@@ -194,10 +193,6 @@ export class Directory {
   readonly config: ServerConfig;
   /** The API keys admins enter, encrypted. */
   readonly credentials: Credentials;
-  /** Each person's Cloudflare connection, encrypted. */
-  readonly cloudflare: CloudflareGrants;
-  /** Documents published to a domain in their person's Cloudflare account. */
-  readonly sites: Sites;
 
   /**
    * `admins`: the deploy's bootstrap admins. `locked`: settings
@@ -212,8 +207,6 @@ export class Directory {
     this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
     this.users = new Users(sql, opts.admins);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
-    this.cloudflare = new CloudflareGrants(sql, opts.credentialSecret ?? null);
-    this.sites = new Sites(sql);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       changed: opts.changed,

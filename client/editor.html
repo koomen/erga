@@ -419,6 +419,8 @@
     /* The title's caret: it opens the document's pages (the tree, document/pages.ts), where the document is renamed too. */
     .nav-title .nav-caret { flex: none; align-self: center; width: 14px; height: 14px; margin: 1px -2px 0 3px; fill: none; stroke: var(--chrome); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
     .nav-title[aria-expanded="true"] .nav-caret { transform: rotate(180deg); }
+    /* A document (one page) has no pages to open: its title has no caret, and opens its name (main.ts, applyKind). */
+    .nav-title:not(.project) .nav-caret { display: none; }
     .help.pages { width: min(320px, calc(100vw - 28px)); padding: 8px; }
     .help.naming { right: auto; left: max(14px, var(--safe-l), calc(var(--frame-l) + 6px)); width: min(340px, calc(100vw - 28px)); transition: left var(--agent-ms) var(--agent-ease); }
     .naming label { display: block; margin: 0 0 4px; font-size: 12px; color: var(--soft); }

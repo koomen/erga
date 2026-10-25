@@ -76,8 +76,8 @@ class World {
         attach: (opened) => this.tabs.attachAll(opened),
         detach: () => this.tabs.detachAll(),
       },
-      agentSettings: async () => ({ missing: "no key in the tests" }), serverTools: async () => [], takeDownSite: async () => null,
-      home: { forget: async () => {}, changed: async () => {} }, siteChanged: async () => {},
+      agentSettings: async () => ({ missing: "no key in the tests" }), serverTools: async () => [],
+      home: { forget: async () => {}, changed: async () => {} },
       timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
       background: () => {}, log: () => {},
     };

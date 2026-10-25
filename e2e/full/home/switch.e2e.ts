@@ -1,7 +1,7 @@
 // Making another document the homepage: its deploys, its files, isolation from the controls, and who may.
 import { expect, servers, SHORT, test } from "../../fixtures";
 import { events, someone } from "../versions/versions";
-import { adminToken, deployed, fresh, front, get, home, post, publish, resetLanding } from "./home";
+import { adminToken, deployed, fresh, front, get, home, post, publish, resetLanding, setLanding } from "./home";
 
 await servers.short();
 test.afterEach(async () => { await resetLanding(await servers.short()); });
@@ -20,29 +20,32 @@ const page = (text: string, extra = "") => `<!doctype html>
 </body></html>`;
 const files = { "index.html": page("Second home"), "style.css": "h1 { color: rgb(1, 2, 3) !important; }", "img/dot.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#123"/></svg>`, "data.json": `{"ok":"yes"}` };
 
-/** A second document of DEV_LOGIN's (published with an admin token), made the homepage. */
+/** A second document of DEV_LOGIN's (published with an admin token), made the homepage on /admin (landing_document). */
 async function secondHome() {
   const server = await servers.short();
   const landing = await fresh(server);
   const token = await adminToken(server);
   const { id } = await publish(server, token, files, { title: "Second home" });
-  const set = (await (await post(server, `/api/docs/${id}/home`, { isHome: true })).json()) as { isHome: boolean };
-  expect(set.isHome).toBe(true);
+  expect((await setLanding(server, id)).error).toBeUndefined();
+  expect((await home(server, id)).isHome).toBe(true);
   await expect.poll(async () => { const f = await front(server); return f.direct && f.html.includes("<h1>Second home</h1>"); }).toBe(true);
   return { server, token, id, landing };
 }
 
-test("isHome: true makes another document the homepage (landing_document), deployed at once, and its tabs hear of it", async () => {
+test("landing_document makes another document the homepage, deployed at once, and its tabs hear of it", async () => {
   const server = await servers.short();
   const landing = await fresh(server);
   await deployed(server);
   const { id } = await publish(server, await adminToken(server), files, { title: "Second home" });
-  expect(await home(server, id)).toMatchObject({ isHome: false, canSet: true, blocked: null, deploy: { state: "idle" } });
+  expect(await home(server, id)).toMatchObject({ isHome: false, canDeploy: false, deploy: { state: "idle" } });
+  // The document's own API only says so, and deploys it: the homepage is chosen on /admin.
+  expect((await post(server, `/api/docs/${id}/home`, { isHome: true })).status).toBe(405);
   const heard = await events(server, id);
   try {
-    const set = (await (await post(server, `/api/docs/${id}/home`, { isHome: true })).json()) as { isHome: boolean; deploy: { state: string } };
-    expect(set.isHome).toBe(true);
-    expect(["deploying", "deployed"]).toContain(set.deploy.state);
+    expect((await setLanding(server, id)).error).toBeUndefined();
+    const set = await home(server, id);
+    expect(set).toMatchObject({ isHome: true, canDeploy: true });
+    expect(["scheduled", "deploying", "deployed"]).toContain(set.deploy.state);
     expect((await home(server, landing.id)).isHome).toBe(false);
     await expect.poll(async () => { const f = await front(server); return f.direct && f.html.includes("<h1>Second home</h1>"); }).toBe(true);
     await expect.poll(() => heard.of("home").length).toBeGreaterThanOrEqual(2);
@@ -97,10 +100,9 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   // Someone of this test's own, so making them an admin touches no other test.
   const bo = someone("bo");
   const share = async (doc: string, login: string, role: string) => (await (await get(server, "/docs/share", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ id: doc, login, role }) })).json()) as { error?: string };
-  expect((await post(server, `/api/docs/${id}/home`, { isHome: false }, bo)).status).toBe(404);
+  expect((await get(server, `/api/docs/${id}/home?user=${bo}`)).status).toBe(404);
   await share(id, bo, "viewer");
-  expect(await home(server, id, bo)).toMatchObject({ isHome: true, canSet: false });
-  expect((await post(server, `/api/docs/${id}/home`, { isHome: false }, bo)).status).toBe(403);
+  expect(await home(server, id, bo)).toMatchObject({ isHome: true, canDeploy: false });
   expect((await post(server, `/api/docs/${id}/home/deploy`, undefined, bo)).status).toBe(403);
   expect((await share(id, bo, "editor")).error).toMatch(/only admins may edit it/);
   expect((await share(id, "*", "editor")).error).toMatch(/only admins may edit it/);
@@ -108,10 +110,9 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   // A document someone else may edit can't become the homepage.
   const third = await publish(server, token, { "index.html": "<!doctype html><title>Third</title><h1>Third</h1>" }, { title: "Third" });
   await share(third.id, bo, "editor");
-  expect((await home(server, third.id)).blocked).toMatch(new RegExp(`${bo} may edit this document`));
-  const refused = await post(server, `/api/docs/${third.id}/home`, { isHome: true });
-  expect(refused.status).toBe(403);
-  expect(((await refused.json()) as { error?: string }).error).toMatch(/Only admins may edit the front page/);
+  const refused = await setLanding(server, third.id);
+  expect(refused.error).toMatch(/Only admins may edit the front page/);
+  expect(refused.error).toMatch(new RegExp(`${bo} may edit this document`));
   // An admin may be its editor; made a user again, they only view it.
   const role = (r: string) => get(server, "/admin/users", { method: "POST", headers: { Origin: server.root, Accept: "application/json" }, body: new URLSearchParams({ do: "role", login: bo, role: r }) });
   await role("admin");
@@ -167,10 +168,10 @@ test("Redeploy now deploys at once; a failed deploy says why and the last good o
   await expect.poll(async () => (await home(server, id)).deploy.state == "deployed" && (await front(server)).html.includes("<h1>Fixed</h1>")).toBe(true);
 });
 
-test("isHome: false clears it: the next / makes a fresh homepage from assets/landing/ and deploys it", async () => {
+test("a reset landing_document clears it: the next / makes a fresh homepage from assets/landing/ and deploys it", async () => {
   const { server, id } = await secondHome();
-  const cleared = (await (await post(server, `/api/docs/${id}/home`, { isHome: false })).json()) as { isHome: boolean; deploy: { state: string } };
-  expect(cleared).toMatchObject({ isHome: false, deploy: { state: "idle" } });
+  await resetLanding(server);
+  expect(await home(server, id)).toMatchObject({ isHome: false, deploy: { state: "idle" } });
   await expect.poll(async () => { const f = (await front(server)).html; return !f.includes("Second home") && (f.includes(`<h1 class="logo"`) || f.includes('<iframe id="frame"')); }).toBe(true);
   await expect.poll(async () => { const f = await front(server); return f.direct && f.html.includes(`<h1 class="logo"`); }).toBe(true);
 });

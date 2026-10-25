@@ -12,7 +12,6 @@ import type { Env } from "./env";
 import { counted } from "./timing";
 import { isAdminsOnly, isTargetName, TARGETS, type TargetName } from "../deploy/targets";
 import { MOCK_HOOK_SECRET } from "../deploy/mock-cloudflare";
-import { siteOps } from "./sites";
 import { sourceService } from "./source";
 import type { App } from "../control/index";
 import type { SourceService } from "../server/source/index.ts";
@@ -151,7 +150,6 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },
       homeRecheckMs: env.ERGA_HOME_RECHECK_MS ? Number(env.ERGA_HOME_RECHECK_MS) || 0 : 5000,
     },
-    sites: (origin) => siteOps(env, origin),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
       publish: (doc, files, remove, by) => counted("doc", () => host(doc).publish(files, remove, by)),

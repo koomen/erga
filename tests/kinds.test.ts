@@ -1,6 +1,7 @@
 // Documents and projects (document/pages.ts, DocKind): a document is one page (index.html) and any files beside it; a
 // project is a folder of pages. A document refuses a second page however it comes (the tree, a move, an upload, an
 // agent's write, a publish), saying how to make it a project; make_project does, in its object and in the directory.
+// make_document turns a project back, only while it has one page: else it says how many it has, and what to delete.
 // One from before kinds decides its kind as it opens. The documents list shows a project's chevron, and none for a document.
 
 import { expect, test } from "bun:test";
@@ -64,6 +65,30 @@ test("make_project: the document becomes a project, in its object and in the dir
   expect((await tool("write", { path: "blog/post.html", content: "<h1>Post</h1>" })).body.ok).toBe(true);
   // Again: nothing to do.
   expect((await treeOp({ op: "make_project" })).status).toBe(200);
+});
+
+test("make_document: a project with one page becomes a document again; with more, it says how many and which to delete", async () => {
+  const { treeOp, tool, dir, kind } = await withTree();
+  expect((await treeOp({ op: "make_project" })).status).toBe(200);
+  expect((await treeOp({ op: "new_page", path: "about" })).status).toBe(200);
+  expect((await treeOp({ op: "new_page", path: "blog/post" })).status).toBe(200);
+  // Three pages: refused, in words, and nothing changes.
+  const no = await treeOp({ op: "make_document" });
+  expect(no.status).toBe(409);
+  expect(no.body.error).toBe("It has 3 pages, and a document has one. Delete the others first: about.html, blog/post.html.");
+  expect(await kind()).toBe("project");
+  const agent = await tool("make_document", {});
+  expect(agent.body.ok).toBe(false);
+  expect(JSON.stringify(agent.body)).toContain("It has 3 pages");
+  // The others gone (a file that isn't a page may stay): a document, in its object and in the directory, which refuses a second page again.
+  expect((await treeOp({ op: "delete", path: "about.html" })).status).toBe(200);
+  expect((await treeOp({ op: "delete", path: "blog" })).status).toBe(200);
+  expect((await tool("make_document", {})).body.ok).toBe(true);
+  expect(await kind()).toBe("document");
+  expect((await dir.get("doc12345"))!.kind).toBe("document");
+  expect((await treeOp({ op: "new_page", path: "about" })).status).toBe(409);
+  // Again: nothing to do.
+  expect((await treeOp({ op: "make_document" })).status).toBe(200);
 });
 
 test("a document from before kinds decides its kind as it opens: a project if it has more than one page; the directory hears it", async () => {

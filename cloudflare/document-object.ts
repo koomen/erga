@@ -31,7 +31,6 @@ import { platform } from "./platform";
 import { CALLS, DeployGate, DEPLOYED_HEADER, deployedOf, STALE, staleResponse, type Call } from "./document-host";
 import { DiskLink } from "../dev/disk-storage";
 import { homeChanged } from "./current-files";
-import { siteChanged, siteOps } from "./sites";
 import type { Env } from "./env";
 import { blobsOf } from "./blobs";
 
@@ -81,13 +80,11 @@ export class DocumentObject extends DurableObject<Env> {
       },
       agentSettings: () => platform(env).agentSettings(),
       // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
-      serverTools: (person, here) => agentToolsFor({ dir: directoryOf(env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here, platform: platform(env), sites: siteOps(env, "") }),
-      takeDownSite: (site) => env.SITES.getByName(site.docId).remove(site.docId, site),
+      serverTools: (person, here) => agentToolsFor({ dir: directoryOf(env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here, platform: platform(env) }),
       home: {
         forget: (docId) => env.HOME.getByName("home").forget(docId),
         changed: (docId) => homeChanged(env, docId),
       },
-      siteChanged: (docId) => siteChanged(env, docId),
       disk: { storage: (only) => this.disk.storage(this.ctx.storage, only) },
       timing: {
         idleMs: Number(env.ERGA_VERSION_IDLE_MS) || 30_000,

@@ -33,7 +33,7 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   await dir.users.add({ login: "root", admin: true }, "bo");
   const names = async (who: Who) => (await toolsFor(dir, who)).map((t) => t.name);
   expect(await names({ login: "root", admin: true })).toContain("set_setting");
-  expect(await names({ login: "bo" })).toEqual(["document_access", "share_document", "list_documents", "create_document", "delete_document", "domain_status", "publish_to_domain", "deploy_domain", "remove_domain", "disconnect_cloudflare"]);
+  expect(await names({ login: "bo" })).toEqual(["document_access", "share_document", "list_documents", "create_document", "delete_document"]);
   expect(await names({ login: "root", test: true })).not.toContain("list_users");
   const e = await failure(run({ dir, who: { login: "bo" } }, "list_settings"));
   expect(e).toBeInstanceOf(ToolError);

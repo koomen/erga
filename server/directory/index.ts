@@ -2,7 +2,7 @@
 // (directory.ts), the users (users.ts), the settings and their change log
 // (settings.ts), the API keys admins store (api-keys.ts); the tables are
 // server/migrations/. Reached through Directory (dir.users, dir.config,
-// dir.credentials, dir.sites, dir.cloudflare), whose admin-only calls check
+// dir.credentials), whose admin-only calls check
 // who's asking themselves. The rest of the app imports the directory through
 // this file.
 

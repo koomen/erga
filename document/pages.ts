@@ -18,7 +18,8 @@
 // A document is one of two kinds. A "document" has one page (index.html) and any other files beside
 // it; a "project" is a folder of pages, each with its own address. A document becomes a project only
 // when someone asks (make_project), never as a side effect of a write: so a new page, or a file that
-// would be one, is refused in a document with a message that says how (pageRefusal).
+// would be one, is refused in a document with a message that says how (pageRefusal). A project with
+// one page becomes a document again the same way (make_document).
 //
 // Shared by the host (document/host.ts: the tree's API and its operations), the front
 // door (server/documents/front-door.ts: which page an address is) and the browser (the editor and
@@ -33,7 +34,8 @@ export type TreeOp =
   | { op: "new_folder"; path: string }
   | { op: "move"; from: string; to: string }
   | { op: "delete"; path: string }
-  | { op: "make_project" };
+  | { op: "make_project" }
+  | { op: "make_document" };
 
 /** A document (one page, index.html, and other files) or a project (a folder of pages). */
 export type DocKind = "document" | "project";
@@ -52,7 +54,7 @@ export const kindOf = (paths: Iterable<string>): DocKind => {
  */
 export function pageRefusal(kind: DocKind, path: string, index: string): string | null {
   if (kind != "document" || !isPage(path) || path == index) return null;
-  return `This is a document: its one page is ${index}, so ${path} can't be a page of it. To have more pages, make it a project first (Make a project in the pages card, or the make_project tool).`;
+  return `This is a document: its one page is ${index}, so ${path} can't be a page of it. To have more pages, make it a project first (Project in the document's settings, or the make_project tool).`;
 }
 
 /** A tree operation that can't be done, with why, in words for a person or an agent. */

@@ -11,7 +11,6 @@ import type { SourceService } from "./source/index.ts";
 import type { AdminAgentObject, DashboardDeploys } from "./admin/index.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
-import type { SiteOps } from "./sites/index.ts";
 import type { RestoreResult, VersionsState } from "../document/versions.ts";
 import type { FileData, ViewAnswer } from "../document/document.ts";
 import type { DocKind } from "../document/pages.ts";
@@ -160,8 +159,6 @@ export interface Platform {
    * replaces (the sign-in values set on /admin/auth live here, not in the database).
    */
   own: AuthStorage;
-  /** Documents' sites on their person's Cloudflare account, as `origin`'s server, where the platform has them. */
-  sites?(origin: string): SiteOps;
   docs: {
     /**
      * Makes the host of a document already in the directory, from a

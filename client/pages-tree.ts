@@ -7,8 +7,8 @@
 // viewer nothing.
 //
 // index.html is the home page; the others sit under it. A document (one
-// page) shows only that page, and Make a project at the foot: a project is a
-// folder of pages, and only a project has more. A project's tree shows its
+// page) shows only that page: a project is a folder of pages, and only a
+// project has more (the document's settings switch between the two). A project's tree shows its
 // pages, its other files (stylesheets, scripts, images, PDFs: each opens in
 // the files view) and its folders. To an agent either is one folder of files. A page shows by its
 // title when known, else by its name made readable ("spring-migration" is
@@ -310,24 +310,11 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   const foot = el("div", { className: "et-foot", hidden: true });
   const addPage = el("button", { type: "button", className: "et-add" }, svg(ICONS.newPage), "New page");
   const addFolder = el("button", { type: "button", className: "et-add" }, svg(ICONS.newFolder), "New folder");
-  // A document's foot: it becomes a project (make_project), which can have more pages. It can't go back, so it asks once.
-  const makeProject = el("button", { type: "button", className: "et-add" }, svg(ICONS.newFolder), "Make a project");
-  foot.append(addPage, addFolder, makeProject);
+  foot.append(addPage, addFolder);
   root.append(bannerEl, rows, foot);
   container.append(root);
   addPage.addEventListener("click", () => startNew("", "page"));
   addFolder.addEventListener("click", () => startNew("", "folder"));
-  makeProject.addEventListener("click", async () => {
-    if (makeProject.dataset.sure != "1") {
-      makeProject.dataset.sure = "1";
-      makeProject.lastChild!.textContent = "Make it a project: more pages, for good?";
-      return;
-    }
-    delete makeProject.dataset.sure;
-    makeProject.lastChild!.textContent = "Make a project";
-    if (await change(null, { op: "make_project" })) say("It's a project now: add pages with New page.", true);
-  });
-  makeProject.addEventListener("blur", () => { if (makeProject.dataset.sure) { delete makeProject.dataset.sure; makeProject.lastChild!.textContent = "Make a project"; } });
 
   /** Where a page opens: its address, and ?edit in the editor (an address always names a page, so one may be called "edit"). */
   const href = (path: string) => pageUrl(base, path) + query + (opts.editing ? (query ? "&edit" : "?edit") : "");
@@ -543,9 +530,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const want = focusPath ?? had;
     const typing = document.activeElement?.classList.contains("et-input");
     rows.replaceChildren();
-    foot.hidden = !entries || !canEdit;
-    addPage.hidden = addFolder.hidden = kind == "document";
-    makeProject.hidden = kind != "document";
+    foot.hidden = !entries || !canEdit || kind == "document";
     if (!entries) {
       if (loadError) {
         say(null);

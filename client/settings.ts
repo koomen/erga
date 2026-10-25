@@ -4,40 +4,31 @@
 // costs viewing and opening the editor nothing.
 //
 // Readers always see the document as it is now. It holds, top to bottom:
-//   - Homepage (for admins, and on the homepage itself): whether this is the
-//     server's homepage, how its deploy is going, and Redeploy now.
-//   - Custom domain: the document at a domain of the person's own,
-//     from their Cloudflare account: Connect Cloudflare if they haven't
-//     (Cloudflare's consent page in a popup; when it's done, the popup tells
-//     this panel on a BroadcastChannel), else a name and one of their domains,
-//     and once it's up, the site's address, how its deploy is going, Deploy
-//     now and Remove.
+//   - Kind: Document (one page, and files beside it) or Project (pages, each
+//     with its own address), a switch (the tree's make_project and
+//     make_document). A project with more than one page says, in place, why
+//     it can't be a document yet.
+//   - Homepage, only on the homepage: a note that says so, how its deploy is
+//     going, and Redeploy now (admins). The homepage is chosen on /admin
+//     (the landing_document setting), never here.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
 //     current one marked; Show older versions loads ten more. Edit, on hover or
 //     focus, makes a copy of a version the current one (POST .../versions/<id>/restore).
 //
-// It talks to the server's API as the shared contract says (document/versions.ts
-// server/home/api.ts and server/sites/api.ts), and refreshes on the event channel's
-// { type: "versions" }, { type: "home" } and { type: "site" } (main.ts passes them on).
+// It talks to the server's API as the shared contract says (document/versions.ts,
+// server/home/api.ts, and the tree's API: document/host.ts), and refreshes on the event channel's
+// { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only.
 
 import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
-/** GET /api/docs/<id>/home. `blocked`: why this document can't be made the homepage (others may edit it), or null. */
-export interface Home { isHome: boolean; canSet: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; blocked?: string | null; deploy: Deploy }
-
-/** GET /api/docs/<id>/site. */
-export interface SiteState {
-  canEdit: boolean;
-  connection: { connected: boolean; accounts: { id: string; name: string }[]; canStore: boolean; unreadable: boolean; error: string | null };
-  site: { hostname: string; url: string; zone: string; by: string; created: string; dashboard: string } | null;
-  deploy: Deploy & { by?: string | null };
-  zones?: { id: string; name: string; account: { id: string; name: string } }[];
-  zonesError?: string;
-  warning?: string;
-}
+/** GET /api/docs/<id>/home. */
+export interface Home { isHome: boolean; canDeploy: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; deploy: Deploy }
+export type DocKind = "document" | "project";
+/** GET /api/docs/<id>/tree, as far as this panel reads it. */
+interface Tree { entries: { path: string; type: string }[]; canEdit?: boolean; kind?: DocKind }
 
 export interface SettingsHost {
   /** The document's id (its /d/<id>). */
@@ -46,8 +37,12 @@ export interface SettingsHost {
   query: string;
   /** The gear. */
   anchor: HTMLElement;
-  /** Whether you're an admin (the homepage is theirs to choose). */
+  /** Whether you're an admin (the homepage's deploy is theirs). */
   admin: boolean;
+  /** The document's kind as the editor knows it now (its hello, or the last "tree" event). */
+  kind(): DocKind;
+  /** The kind changed here: the editor shows it at once (the breadcrumb), before the event comes. */
+  onKind(kind: DocKind): void;
   /** The popover opened or closed. */
   onToggle(open: boolean): void;
 }
@@ -57,12 +52,10 @@ export interface Settings {
   isOpen(): boolean;
   /** Escape: closes the popover. False if it wasn't open. */
   escape(): boolean;
-  /** An event from the channel ("versions", "home"). */
+  /** An event from the channel ("versions", "home", "tree"). */
   event(type: string): void;
   /** Whether a node is part of the popover. */
   contains(node: Node): boolean;
-  /** Back from Cloudflare's consent without the popup: opens at Custom domain, with the refusal if there was one. */
-  consented(error: string | null): void;
 }
 
 declare global { interface Window { ergaSettings?: { mount(host: SettingsHost): Settings } } }
@@ -76,16 +69,6 @@ const CSS = `
 .ds h2 { margin: 0; padding: 14px 16px 0; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .ds h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font: 600 12px/1.3 var(--font-text); color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
 .ds h3 small { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--chrome); }
-.ds-field { display: grid; grid-template-columns: 1fr; gap: 5px; margin: 0 0 6px; }
-.ds-field + .ds-field { margin-top: 12px; }
-.ds-label { font-size: 12px; color: var(--soft); }
-.ds-select {
-  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; box-sizing: border-box; padding: 6px 10px 6px 11px;
-  border: 1px solid var(--panel-border); border-radius: 9px; background: var(--code-bg); color: var(--fg-strong, var(--fg));
-  font: 500 13.5px/1.3 var(--font-text); text-align: left; cursor: pointer; transition: border-color 120ms ease, background-color 120ms ease;
-}
-.ds-select:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
-.ds-select:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-n { flex: none; font: 600 12px/1.3 var(--font-mono); color: var(--soft); font-feature-settings: "tnum"; }
 .ds-explain { margin: 6px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--soft); }
 .ds-explain:empty, .ds-error:empty { display: none; }
@@ -114,14 +97,18 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-foot { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; font-size: 11.5px; color: var(--chrome); }
 .ds-skel { height: 12px; border-radius: 6px; background: var(--code-bg); margin: 10px 0; animation: ds-pulse 1.1s ease-in-out infinite alternate; }
 @keyframes ds-pulse { from { opacity: 0.5; } to { opacity: 1; } }
-.ds-switch-row { display: flex; align-items: center; gap: 12px; }
-.ds-switch-row label { flex: 1; font-size: 13.5px; color: var(--fg-strong, var(--fg)); cursor: pointer; }
-.ds-switch { position: relative; flex: none; width: 36px; height: 21px; padding: 0; border: 0; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 45%, transparent); cursor: pointer; transition: background-color 160ms ease; }
-.ds-switch::after { content: ""; position: absolute; top: 2.5px; left: 2.5px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.25); transition: transform 180ms var(--agent-ease, ease); }
-.ds-switch[aria-checked="true"] { background: var(--caret); }
-.ds-switch[aria-checked="true"]::after { transform: translateX(15px); }
-.ds-switch:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
-.ds-switch[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+/* Document or Project: two halves of one control, the chosen one raised. */
+.ds-kind { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; border-radius: 9px; background: var(--code-bg); border: 1px solid var(--panel-border); }
+.ds-kind button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--soft); font: 600 13px/1.2 var(--font-text); cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
+.ds-kind button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ds-kind button:hover { color: var(--fg); }
+.ds-kind button[aria-checked="true"] { background: var(--bg); color: var(--fg-strong, var(--fg)); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.ds-kind button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+.ds-kind button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.ds-kind button[aria-disabled="true"]:hover { color: var(--soft); }
+/* The homepage: a note, only on the homepage. */
+.ds-home-note { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13.5px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
+.ds-home-note svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ds-deploy { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 9px 10px 9px 11px; border-radius: 9px; background: var(--code-bg); }
 .ds-status { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 12.5px; line-height: 1.4; color: var(--fg); }
 .ds-status span { min-width: 0; }
@@ -135,32 +122,8 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-btn:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
 .ds-btn:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-btn[aria-disabled="true"] { opacity: 0.5; cursor: default; }
-#ds-site-body > .ds-explain:first-child { margin-top: 0; }
-.ds-site-row { display: flex; align-items: stretch; gap: 6px; }
-.ds-input {
-  flex: 1 1 40%; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--panel-border); border-radius: 9px;
-  background: var(--code-bg); color: var(--fg-strong, var(--fg)); font: 500 13.5px/1.3 var(--font-text); text-align: right;
-}
-.ds-input::placeholder { color: var(--chrome); font-weight: 400; }
-.ds-input:focus { outline: 2px solid var(--caret); outline-offset: 1px; border-color: var(--caret); }
-.ds-dot-sep { align-self: center; font: 600 14px var(--font-text); color: var(--soft); }
-select.ds-select { flex: 1 1 60%; min-width: 0; appearance: none; padding-right: 26px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5l3-3' fill='none' stroke='%23999' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; background-size: 12px; }
-.ds-site-go { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
-.ds-btn.primary { background: var(--caret); border-color: var(--caret); color: #fff; }
-.ds-btn.primary:hover { border-color: var(--caret); filter: brightness(1.06); }
-.ds-site-live { display: flex; align-items: center; gap: 8px; min-width: 0; font: 600 14px/1.3 var(--font-text); }
-.ds-site-live a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); text-decoration: none; }
-.ds-site-live a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
-.ds-site-live svg { flex: none; width: 12px; height: 12px; fill: none; stroke: var(--soft); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.ds-site-acts { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
-.ds-site-acts .ds-quiet { margin-left: auto; }
 .ds-quiet { font: 500 12px var(--font-text); color: var(--soft); background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 0.2em; }
 .ds-quiet:hover { color: var(--fg); }
-.ds-quiet.armed { color: #b42318; text-decoration-color: currentColor; }
-.ds-site-foot { margin: 8px 0 0; font-size: 11.5px; color: var(--chrome); }
-.ds-site-foot a { color: inherit; }
-a.ds-btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
-a.ds-btn svg { width: 14px; height: 14px; }
 @media (max-width: 520px) {
   .help.ds { z-index: 22; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: min(82vh, calc(100% - var(--top-clear))); border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom); animation: ds-sheet 240ms var(--agent-ease, ease); }
   .ds section { padding: 14px 18px; }
@@ -168,7 +131,7 @@ a.ds-btn svg { width: 14px; height: 14px; }
 }
 .ds-sheet-grip { display: none; }
 @keyframes ds-sheet { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
-@media (pointer: coarse) { .ds-select { min-height: 42px; } }
+@media (pointer: coarse) { .ds-kind button { min-height: 38px; } }
 @media (prefers-reduced-motion: reduce) { .ds-dot.deploying, .ds-skel { animation-duration: 3s; } .help.ds { animation: none; } }
 `;
 
@@ -186,24 +149,23 @@ function mount(host: SettingsHost): Settings {
   pop.setAttribute("aria-labelledby", "ds-title");
   pop.innerHTML = `<div class="ds-sheet-grip" aria-hidden="true"></div>
     <h2 id="ds-title">Document settings</h2>
-    <section class="ds-home" id="ds-home" hidden aria-label="Homepage">
-      <div class="ds-switch-row">
-        <label id="ds-home-label" for="ds-home-switch">This is the homepage</label>
-        <button type="button" class="ds-switch" id="ds-home-switch" role="switch" aria-checked="false" aria-describedby="ds-home-explain"></button>
+    <section class="ds-kind-sec" aria-labelledby="ds-kind-title">
+      <h3 id="ds-kind-title">Kind</h3>
+      <div class="ds-kind" id="ds-kind" role="radiogroup" aria-labelledby="ds-kind-title" aria-describedby="ds-kind-explain">
+        <button type="button" role="radio" data-kind="document" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>Document</button>
+        <button type="button" role="radio" data-kind="project" aria-checked="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>Project</button>
       </div>
+      <p class="ds-explain" id="ds-kind-explain"></p>
+      <p class="ds-error" id="ds-kind-error" role="alert"></p>
+    </section>
+    <section class="ds-home" id="ds-home" hidden aria-labelledby="ds-home-note">
+      <p class="ds-home-note" id="ds-home-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11 12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/></svg>This is the homepage</p>
       <p class="ds-explain" id="ds-home-explain"></p>
-      <div class="ds-deploy" id="ds-deploy" hidden>
+      <div class="ds-deploy" id="ds-deploy">
         <div class="ds-status" id="ds-status" role="status" aria-live="polite"></div>
         <button type="button" class="ds-btn" id="ds-redeploy">Redeploy now</button>
       </div>
       <p class="ds-error" id="ds-home-error" role="alert"></p>
-    </section>
-    <section class="ds-site" id="ds-site" hidden aria-labelledby="ds-site-label">
-      <div class="ds-field">
-        <span class="ds-label" id="ds-site-label">Custom domain</span>
-        <div id="ds-site-body"></div>
-      </div>
-      <p class="ds-error" id="ds-site-error" role="alert"></p>
     </section>
     <section class="ds-history" aria-labelledby="ds-history-title">
       <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
@@ -214,9 +176,9 @@ function mount(host: SettingsHost): Settings {
   document.body.append(pop);
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => pop.querySelector<T>(`#${id}`)!;
   const list = $("ds-list"), totalEl = $("ds-total"), foot = $("ds-foot"), footText = $("ds-foot-text"), olderBtn = $("ds-older"), histError = $("ds-hist-error");
-  const homeSec = $("ds-home"), homeSwitch = $("ds-home-switch"), homeExplain = $("ds-home-explain");
-  const deployBox = $("ds-deploy"), statusEl = $("ds-status"), redeploy = $("ds-redeploy"), homeError = $("ds-home-error");
-  const siteSec = $("ds-site"), siteBody = $("ds-site-body"), siteError = $("ds-site-error");
+  const homeSec = $("ds-home"), homeExplain = $("ds-home-explain");
+  const statusEl = $("ds-status"), redeploy = $("ds-redeploy"), homeError = $("ds-home-error");
+  const kindBox = $("ds-kind"), kindExplain = $("ds-kind-explain"), kindError = $("ds-kind-error");
 
   // ------------------------------------------------------------ the server
 
@@ -249,11 +211,11 @@ function mount(host: SettingsHost): Settings {
   let loaded = new Map<number, Version>();
   let home: Home | null = null;
   let homeBusy = false;
-  let loadSeq = 0, homeSeq = 0, siteSeq = 0;
-  let site: SiteState | null = null;
-  let siteBusy = false, removeArmed = false, consenting = false;
-  /** What's typed in the name, kept across redraws. */
-  let siteName = "", siteZone = "";
+  let loadSeq = 0, homeSeq = 0, treeSeq = 0;
+  /** The tree as last read: its pages (a project with more than one can't be a document yet) and whether you may change it. */
+  let tree: Tree | null = null;
+  /** The kind being switched to, while the server does it. */
+  let kindBusy: DocKind | null = null;
 
   const add = (vs: Version[]) => { for (const v of vs) loaded.set(v.n, v); };
   /** The loaded versions, newest first. */
@@ -299,13 +261,12 @@ function mount(host: SettingsHost): Settings {
     renderHome();
   }
 
-  async function loadSite() {
-    const seq = ++siteSeq;
-    let st: SiteState | null = null;
-    try { st = await call<SiteState>("site", undefined, { zones: "1" }); } catch (e) { if (seq == siteSeq) siteError.textContent = `Couldn't load the custom domain: ${(e as Error).message}`; }
-    if (seq != siteSeq) return;
-    if (st) { site = st; siteError.textContent = ""; }
-    renderSite();
+  async function loadTree() {
+    const seq = ++treeSeq;
+    const t = await call<Tree>("tree").catch(() => null);
+    if (seq != treeSeq) return;
+    if (t) { tree = t; if (t.kind) host.onKind(t.kind); }
+    renderKind();
   }
 
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
@@ -370,24 +331,12 @@ function mount(host: SettingsHost): Settings {
     if (loadingOlder) olderBtn.setAttribute("aria-disabled", "true"); else olderBtn.removeAttribute("aria-disabled");
   }
 
+  /** Only on the homepage: a note that says so, and its deploy (Redeploy for admins). Nothing elsewhere. */
   function renderHome() {
-    homeSec.hidden = !home || !(home.isHome || home.canSet || host.admin);
-    if (!home || homeSec.hidden) return;
+    homeSec.hidden = !home?.isHome;
+    if (!home || !home.isHome) return;
     const d = home.deploy;
-    homeSwitch.setAttribute("aria-checked", String(home.isHome));
-    const blocked = !home.isHome && home.blocked ? home.blocked : null;
-    const locked = !home.canSet || !!blocked || homeBusy;
-    if (locked) homeSwitch.setAttribute("aria-disabled", "true"); else homeSwitch.removeAttribute("aria-disabled");
-    homeExplain.textContent = !host.admin ? "Only admins can choose the homepage."
-      : home.locked ? "This token has no admin power. Make a token with the admin scope at /tokens to change the homepage or deploy it."
-      : blocked ? blocked
-      : !home.canSet && d.state == "deploying" ? "You can change this once the deploy finishes."
-      : !home.canSet ? "You can't change the homepage here: the server's configuration fixes it, or you can't edit this document."
-      : home.isHome ? "The site's front page shows this document. Each new version goes live a few minutes later."
-      : "Turn on to make this the site's front page, in place of the current one.";
-
-    deployBox.hidden = !home.isHome;
-    if (!home.isHome) return;
+    homeExplain.textContent = "The site's front page shows this document. Each new version goes live a few minutes later.";
     const live = d.version != null ? ` · version ${d.version}` : "";
     const last = d.at ? `Last deployed ${esc(clock(d.at))}${live}.` : "Not deployed yet.";
     const line = d.state == "deploying" ? `<b>Deploying…</b>`
@@ -395,31 +344,66 @@ function mount(host: SettingsHost): Settings {
       : d.state == "failed" ? `<span><b>Failed:</b> ${esc(d.error || "the deploy didn't finish.")} ${d.at ? last : ""}</span>`
       : d.at ? `<span><b>Deployed</b> at ${esc(clock(d.at))}${live}</span>` : `<span>Not deployed yet</span>`;
     statusEl.innerHTML = `<span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}`;
-    const can = host.admin && !home.locked && d.state != "deploying" && !homeBusy;
+    // Redeploy is an admin's: others see how the deploy goes, and no button.
+    redeploy.hidden = !host.admin;
+    const can = home.canDeploy && d.state != "deploying" && !homeBusy;
     if (can) { redeploy.removeAttribute("aria-disabled"); redeploy.title = "Deploy the document as it is now"; }
-    else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = !host.admin ? "Only admins can redeploy the homepage." : home.locked ? "This token has no admin power." : "A deploy is running."; }
+    else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = home.locked ? "This token has no admin power." : "A deploy is running."; }
     redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Redeploy now";
   }
-  function until(iso: string, seconds = false): string {
+
+  /** Document or Project: the kind now, whether you may switch, and why a project can't be a document yet. */
+  function renderKind() {
+    const kind = kindBusy ?? tree?.kind ?? host.kind();
+    const canEdit = tree?.canEdit ?? false;
+    const pages = (tree?.entries ?? []).filter((e) => e.type == "page");
+    // A document has one page: a project with more can't be one until the others go (nothing is deleted for you).
+    const blocked = kind == "project" && pages.length > 1 ? `It has ${pages.length} pages, and a document has one. Delete the others first.` : null;
+    for (const b of kindBox.querySelectorAll<HTMLElement>("[data-kind]")) {
+      const on = b.dataset.kind == kind;
+      b.setAttribute("aria-checked", String(on));
+      b.tabIndex = on ? 0 : -1;
+      const off = !canEdit || !!kindBusy || (b.dataset.kind == "document" && !on && !!blocked);
+      if (off) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled");
+    }
+    kindExplain.textContent = blocked ?? (kind == "project" ? "Pages, each with its own address. The title, top left, opens them."
+      : "One page, with its files beside it. A project has more pages.");
+    if (tree && !canEdit) kindExplain.textContent += " Only its editors can change this.";
+  }
+  async function switchKind(want: DocKind) {
+    const now = tree?.kind ?? host.kind();
+    if (want == now || kindBusy || !tree?.canEdit) return;
+    kindBusy = want;
+    kindError.textContent = "";
+    renderKind();
+    try {
+      await call("tree", { method: "POST", body: JSON.stringify({ op: want == "project" ? "make_project" : "make_document" }) });
+      tree = { ...tree, kind: want };
+      host.onKind(want);
+    } catch (e) { kindError.textContent = `Couldn't make it a ${want}: ${(e as Error).message}`; }
+    kindBusy = null;
+    renderKind();
+    loadTree();
+  }
+  kindBox.addEventListener("click", (e) => {
+    const b = (e.target as Element).closest<HTMLElement>("[data-kind]");
+    if (b && b.getAttribute("aria-disabled") != "true") switchKind(b.dataset.kind as DocKind);
+  });
+  // A radio group's keys: the arrows move to the other choice and choose it.
+  kindBox.addEventListener("keydown", (e) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+    e.preventDefault();
+    const other = kindBox.querySelector<HTMLElement>(`[data-kind="${(tree?.kind ?? host.kind()) == "document" ? "project" : "document"}"]`)!;
+    if (other.getAttribute("aria-disabled") == "true") return;
+    other.focus();
+    switchKind(other.dataset.kind as DocKind);
+  });
+  function until(iso: string): string {
     const ms = Date.parse(iso) - Date.now();
-    if (seconds && ms < 90_000) return ms <= 1000 ? "any moment" : `in ${plural(Math.round(ms / 1000), "second")}`;
     const m = Math.round(ms / 60000);
     return m <= 0 ? "any moment" : `in ${plural(m, "minute")}`;
   }
 
-  homeSwitch.addEventListener("click", async () => {
-    if (!home || homeSwitch.getAttribute("aria-disabled") == "true") { if (home && !host.admin) homeError.textContent = "Only admins can choose the homepage."; return; }
-    const want = !home.isHome;
-    homeBusy = true;
-    homeError.textContent = "";
-    home = { ...home, isHome: want };
-    renderHome();
-    try { home = await call<Home>("home", { method: "POST", body: JSON.stringify({ isHome: want }) }); }
-    catch (e) { home = { ...home, isHome: !want }; homeError.textContent = `Couldn't ${want ? "make this the homepage" : "stop this being the homepage"}: ${(e as Error).message}`; }
-    homeBusy = false;
-    renderHome();
-    loadHome();
-  });
   redeploy.addEventListener("click", async () => {
     if (redeploy.getAttribute("aria-disabled") == "true") return;
     homeBusy = true;
@@ -431,131 +415,6 @@ function mount(host: SettingsHost): Settings {
     homeBusy = false;
     loadHome();
   });
-
-  // ------------------------------------------------------------ custom domain
-
-  const EXT = `<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5h-2v7h7v-2M7 2.5h2.5V5M9.5 2.5 5.5 6.5"/></svg>`;
-  function renderSite() {
-    siteSec.hidden = !site || (!site.site && !site.canEdit);
-    if (!site || siteSec.hidden) return;
-    const st = site, d = st.deploy;
-    if (st.site) {
-      const live = d.version != null ? ` · version ${d.version}` : "";
-      const line = d.state == "deploying" ? `<b>Deploying…</b>`
-        : d.state == "scheduled" && d.scheduledFor ? `<span><b>New version goes live ${esc(until(d.scheduledFor, true))}.</b>${d.at ? ` Live now${live}.` : ""}</span>`
-        : d.state == "failed" ? `<span><b>Failed:</b> ${esc(d.error || "the deploy didn't finish.")}${d.at ? ` The last good deploy${live} is still live.` : ""}</span>`
-        : d.at ? `<span><b>Live</b>${live} · ${esc(ago(d.at))}</span>` : `<span>Not deployed yet</span>`;
-      const can = st.canEdit && !siteBusy && d.state != "deploying";
-      // The deploy failed on the connection (gone, or Cloudflare refused it): connect again here, then Deploy now.
-      const reconnect = st.canEdit && (!st.connection.connected || (d.state == "failed" && /Cloudflare connection|connects? Cloudflare again/i.test(d.error ?? "")));
-      siteBody.innerHTML = `<div class="ds-site-live"><a href="${esc(st.site.url)}" target="_blank" rel="noopener" id="ds-site-link">${esc(st.site.hostname)}</a>${EXT}</div>
-        <div class="ds-deploy"><div class="ds-status" role="status" aria-live="polite"><span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}</div></div>
-        ${st.canEdit ? `<div class="ds-site-acts">
-          ${reconnect ? `<button type="button" class="ds-btn primary" id="ds-site-connect"${consenting ? ` aria-disabled="true"` : ""}>${consenting ? "Waiting for Cloudflare…" : "Connect Cloudflare again"}</button>` : ""}
-          <button type="button" class="ds-btn" id="ds-site-deploy"${can ? "" : ` aria-disabled="true"`}>${d.state == "deploying" ? "Deploying…" : "Deploy now"}</button>
-          <a class="ds-btn" href="${esc(st.site.dashboard)}" target="_blank" rel="noopener">Open in Cloudflare</a>
-          <button type="button" class="ds-quiet${removeArmed ? " armed" : ""}" id="ds-site-remove"${siteBusy ? ` aria-disabled="true"` : ""}>${removeArmed ? "Click again to take it down" : "Remove"}</button>
-        </div>` : ""}
-        <p class="ds-site-foot">From ${esc(st.site.by)}’s Cloudflare account. Each new version goes live there within a minute.</p>`;
-      return;
-    }
-    const c = st.connection;
-    if (!c.connected) {
-      siteBody.innerHTML = `<p class="ds-explain">Publish this document at a domain of yours, such as <b>notes.example.com</b>. It is served from your own Cloudflare account, and follows each new version.</p>
-        ${c.error ? `<p class="ds-explain">Your Cloudflare connection stopped working: ${esc(c.error)}.</p>` : ""}
-        <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-connect"${consenting ? ` aria-disabled="true"` : ""}>${consenting ? "Waiting for Cloudflare…" : c.unreadable || c.error ? "Connect Cloudflare again" : "Connect Cloudflare"}</button></div>
-        <p class="ds-explain">Cloudflare asks you to allow Erga to put Workers on your domains, and to read your accounts and domains.</p>`;
-      return;
-    }
-    const zones = st.zones ?? [];
-    if (!zones.length) {
-      // No domains (or they couldn't be read): add one on Cloudflare (the only place), then Check again here; or connect
-      // again when the connection is what failed.
-      siteBody.innerHTML = `<p class="ds-explain">${esc(st.zonesError ? `Erga couldn't read your domains: ${st.zonesError}` : "Your Cloudflare account has no domains yet. Add one on Cloudflare, then check again.")}</p>
-        <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-recheck">Check again</button>${st.zonesError ? `<button type="button" class="ds-btn" id="ds-site-connect"${consenting ? ` aria-disabled="true"` : ""}>${consenting ? "Waiting for Cloudflare…" : "Connect Cloudflare again"}</button>` : `<a class="ds-btn" href="https://dash.cloudflare.com/?to=/:account/add-site" target="_blank" rel="noopener">Add a domain on Cloudflare</a>`}</div>`;
-      return;
-    }
-    if (!zones.some((z) => z.id == siteZone)) siteZone = zones[0].id;
-    const accounts = new Set(zones.map((z) => z.account.id)).size > 1;
-    siteBody.innerHTML = `<div class="ds-site-row">
-        <input class="ds-input" id="ds-site-name" placeholder="name" aria-label="Name (leave empty for the domain itself)" autocomplete="off" spellcheck="false" value="${esc(siteName)}">
-        <span class="ds-dot-sep" aria-hidden="true">.</span>
-        <select class="ds-select" id="ds-site-zone" aria-label="Your domain">${zones.map((z) => `<option value="${esc(z.id)}"${z.id == siteZone ? " selected" : ""}>${esc(z.name)}${accounts ? ` (${esc(z.account.name)})` : ""}</option>`).join("")}</select>
-      </div>
-      <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-publish"${siteBusy ? ` aria-disabled="true"` : ""}>${siteBusy ? "Publishing…" : `Publish to ${esc(hostnameNow() ?? "")}`}</button></div>
-      <p class="ds-explain">Cloudflare serves the document from your account (${esc(c.accounts.map((a) => a.name).join(", "))}). Leave the name empty to use the domain itself.</p>`;
-  }
-  function hostnameNow(): string | null {
-    const zone = site?.zones?.find((z) => z.id == siteZone);
-    if (!zone) return null;
-    const name = siteName.trim().toLowerCase().replace(/\.+$/, "");
-    return name ? `${name}.${zone.name}` : zone.name;
-  }
-  siteBody.addEventListener("input", (e) => {
-    const t = e.target as HTMLElement;
-    if (t.id == "ds-site-name") siteName = (t as HTMLInputElement).value;
-    const b = siteBody.querySelector<HTMLElement>("#ds-site-publish");
-    if (b && !siteBusy) b.textContent = `Publish to ${hostnameNow() ?? ""}`;
-  });
-  siteBody.addEventListener("change", (e) => {
-    const t = e.target as HTMLElement;
-    if (t.id == "ds-site-zone") { siteZone = (t as HTMLSelectElement).value; const b = siteBody.querySelector<HTMLElement>("#ds-site-publish"); if (b && !siteBusy) b.textContent = `Publish to ${hostnameNow() ?? ""}`; }
-  });
-  siteBody.addEventListener("keydown", (e) => { if (e.key == "Enter" && (e.target as HTMLElement).id == "ds-site-name") { e.preventDefault(); publishSite(); } });
-  async function siteCall(path: string, init: RequestInit, failed: string) {
-    siteBusy = true;
-    siteError.textContent = "";
-    renderSite();
-    try {
-      const st = await call<SiteState>(path, init);
-      site = { ...st, zones: site?.zones };
-      if (st.warning) siteError.textContent = st.warning;
-    } catch (e) { siteError.textContent = `${failed}: ${(e as Error).message}`; }
-    siteBusy = false;
-    renderSite();
-    // The deploy may have finished before this answer came back (its event refreshed first): read it again.
-    loadSite();
-  }
-  async function publishSite() {
-    const hostname = hostnameNow();
-    if (!hostname || siteBusy) return;
-    await siteCall("site", { method: "POST", body: JSON.stringify({ hostname }) }, `Couldn't publish to ${hostname}`);
-  }
-  siteBody.addEventListener("click", async (e) => {
-    const b = (e.target as Element).closest<HTMLElement>("button");
-    if (!b || b.getAttribute("aria-disabled") == "true") return;
-    if (b.id == "ds-site-publish") return publishSite();
-    if (b.id == "ds-site-connect") return connectCloudflare();
-    if (b.id == "ds-site-recheck") return loadSite();
-    if (b.id == "ds-site-deploy") return siteCall("site/deploy", { method: "POST" }, "Couldn't deploy");
-    if (b.id == "ds-site-remove") {
-      if (!removeArmed) { removeArmed = true; renderSite(); setTimeout(() => { removeArmed = false; renderSite(); }, 4000); return; }
-      removeArmed = false;
-      await siteCall("site", { method: "DELETE" }, "Couldn't take the site down");
-    }
-  });
-  // Connect Cloudflare: Cloudflare's consent page in a popup, so this panel stays as it is. The popup's last page
-  // (/auth/cloudflare/callback) says how it went on a BroadcastChannel (and to its opener, where it still has one).
-  // A browser that blocks the popup goes there itself, and comes back to this document.
-  function connectCloudflare() {
-    siteError.textContent = "";
-    const back = location.pathname + location.search + location.hash;
-    const win = window.open(`/auth/cloudflare/start?popup=1&return=${encodeURIComponent(back)}`, "erga-cloudflare", "popup,width=560,height=760");
-    if (!win) { location.href = `/auth/cloudflare/start?return=${encodeURIComponent(back)}`; return; }
-    consenting = true;
-    renderSite();
-    const watch = window.setInterval(() => { if (win.closed) { clearInterval(watch); if (consenting) { consenting = false; loadSite(); } } }, 700);
-  }
-  function consented(m: unknown) {
-    const r = m as { type?: string; ok?: boolean; error?: string } | null;
-    if (r?.type != "erga-cloudflare") return;
-    consenting = false;
-    loadSite().then(() => { if (!r.ok) siteError.textContent = r.error || "Cloudflare didn't connect."; });
-  }
-  try { new BroadcastChannel("erga-cloudflare").onmessage = (e) => consented(e.data); } catch { /* the popup's opener message, and the focus, are enough */ }
-  window.addEventListener("message", (e) => { if (e.origin == location.origin) consented(e.data); });
-  // Back from Cloudflare (the popup closed, or another tab): the section shows the domains.
-  window.addEventListener("focus", () => { if (!pop.hidden && site && !site.connection.connected) loadSite(); });
 
   // ------------------------------------------------------------ the popover
 
@@ -577,20 +436,15 @@ function mount(host: SettingsHost): Settings {
     position();
     homeError.textContent = "";
     histError.textContent = "";
-    siteError.textContent = "";
+    kindError.textContent = "";
     render();
     renderHome();
-    renderSite();
+    renderKind();
     loadVersions();
     loadHome();
-    loadSite();
-    // Relative times ("4 min ago", "in 3 minutes") move on while it's open.
-    // The site's countdown ("goes live in 20 seconds") every 5 seconds, the rest every 30.
-    let tick = 0;
-    ticker = window.setInterval(() => {
-      if (++tick % 6 == 0) { render(); renderHome(); }
-      if (!siteBusy && !siteBody.contains(document.activeElement)) renderSite();
-    }, 5_000);
+    loadTree();
+    // Relative times ("4 min ago", "in 3 minutes") move on while it's open, every 30 seconds.
+    ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
     pop.tabIndex = -1;
     pop.focus();
   }
@@ -616,16 +470,11 @@ function mount(host: SettingsHost): Settings {
     event(type) {
       if (pop.hidden) { if (type == "versions") data = null; return; }
       // A burst (a version cut, then its description) is one refresh.
-      if (type != "home" && type != "versions" && type != "site") return;
+      if (type != "home" && type != "versions" && type != "tree") return;
       clearTimeout(pending[type]);
-      pending[type] = window.setTimeout(() => (type == "home" ? loadHome() : type == "site" ? loadSite() : loadVersions()), 120);
+      pending[type] = window.setTimeout(() => (type == "home" ? loadHome() : type == "tree" ? loadTree() : loadVersions()), 120);
     },
     contains,
-    consented(error) {
-      toggle(true);
-      consented({ type: "erga-cloudflare", ok: !error, error });
-      siteSec.scrollIntoView({ block: "nearest" });
-    },
   };
 }
 
