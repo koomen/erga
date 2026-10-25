@@ -55,7 +55,7 @@ test("rules: a Workspace with write, a GitHub organization with read, everybody'
   await signIn(`provider=github&subject=${Date.now()}&handle=dee-${id}&org=acme`);
   await join(`dee${id}`);
   expect((await page.goto(`${root}/new`))?.status()).toBe(403);
-  expect(await page.textContent("main")).toContain("not make or edit them");
+  expect(await page.textContent("main")).toContain("not make or edit documents");
   // Not a member: refused, told what GitHub said.
   await signIn(`provider=github&subject=${Date.now() + 1}&handle=eve-${id}&org=other`);
   expect(await page.textContent("main")).toContain("an active member of other");

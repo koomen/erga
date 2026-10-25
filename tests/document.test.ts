@@ -126,6 +126,8 @@ test("the document decides who may do what from its own copy of its permissions,
   expect((await as("ada")).status).toBe(200);
   expect((await as("bo")).status).toBe(403);
   // Shared, then not: the directory tells the document at once, and it decides with what it heard.
+  // Bo may sign in here (a share goes only to someone who may).
+  await dir.users.add({ login: "ada", admin: true }, "bo");
   await dir.share({ login: "ada" }, "perm1234", "bo", "viewer");
   expect(pushed).toEqual(["perm1234"]);
   expect((await as("bo")).status).toBe(200);

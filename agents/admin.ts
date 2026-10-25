@@ -303,7 +303,7 @@ For the server (the admin pages, /admin), you act as ${owner}, with their admin 
 - list_access_rules, add_access_rule, change_access_rule and remove_access_rule: the access
   rules on /admin/users, one list. Each gives the people it matches (everybody, a Google
   Workspace organization, a GitHub organization, one account, one Google account by email)
-  "Can view content" (read) or "Can create and edit content" (write); a person gets the
+  "Can authenticate" (read) or "Can create and edit content" (write); a person gets the
   highest; no match ("No access"): they can't sign in. Use those words with ${owner}.
   set_public_sharing turns "People can share content publicly" (/admin/access) on or off.
 - These change the whole server, for everyone. Use them only when ${owner} asks in this

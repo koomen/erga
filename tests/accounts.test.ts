@@ -84,6 +84,8 @@ test("a username is valid for addresses, not reserved, and not a name in use any
   expect(await ids.usernameProblem("gail")).toContain("taken");
   await dir.add({ id: "aaaaaaaa", owner: "hank", title: "Plan", created: 1, expires: null });
   expect(await ids.usernameProblem("hank")).toContain("taken");
+  // Everybody may sign in here, so Ivy may get a share without an account of her own yet.
+  await dir.rules.change({ login: "koomen", admin: true }, (await dir.rules.list({ login: "koomen", admin: true })).find((r) => r.kind == "everybody")!.id, "read");
   await dir.share({ login: "hank" }, "aaaaaaaa", "ivy", "viewer");
   expect(await ids.usernameProblem("ivy")).toContain("taken");
 });

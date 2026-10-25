@@ -5,7 +5,7 @@
 //   /admin                     the Settings page (GET /admin/settings redirects here)
 //   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
 //   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined and last came, remove
-//   /admin/access              the Access page: the access rules (who, and No access, Can view content or Can create and edit
+//   /admin/access              the Access page: the access rules (who, and No access, Can authenticate or Can create and edit
 //                              content), and whether people can share content publicly
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
