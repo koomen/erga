@@ -30,6 +30,8 @@ export interface Identity {
   lastUsed: number | null;
   /** A GitHub identity's organizations at its last sign-in (lowercase logins); null when not checked. */
   orgs: string[] | null;
+  /** A Google identity's Workspace (the hd claim: its domain) at its last sign-in; null for a personal account. */
+  hd: string | null;
 }
 
 /** Who a provider says someone is, at a sign-in. */
@@ -45,6 +47,8 @@ export interface Vouched {
   emails: { email: string; verified: boolean }[];
   /** A GitHub account's organizations, as GitHub answered at this sign-in; null or absent: not asked, or no answer. */
   orgs?: string[] | null;
+  /** A Google Workspace account's organization: the ID token's hd claim (its domain). Absent for a personal account. */
+  hd?: string | null;
 }
 
 /**
@@ -57,13 +61,16 @@ export function vouchedEmails(v: Pick<Vouched, "provider" | "emails">): string[]
     .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && !e.endsWith("@users.noreply.github.com")))];
 }
 
+/** A Google Workspace account's domain (the hd claim), lowercase; null for anything else. */
+export const workspaceOf = (v: Pick<Vouched, "provider" | "hd">): string | null => (v.provider == "google" && v.hd?.trim() ? v.hd.trim().toLowerCase() : null);
+
 export const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 /** Names no account may take, besides the app's addresses (RESERVED): people would read them as Erga's. */
 const NOT_A_USERNAME = new Set(["anyone", "admins", "erga", "root", "system", "support", "security", "staff", "www", "mail", "ops", "git", "deploy", "install", "me", "you", "everyone", "null", "undefined"]);
 
-interface Row { provider: SignInProvider; subject: string; login: string; handle: string | null; created: number; last_used: number | null; orgs?: string | null }
+interface Row { provider: SignInProvider; subject: string; login: string; handle: string | null; created: number; last_used: number | null; orgs?: string | null; hd?: string | null }
 const orgsOf = (raw: string | null | undefined): string[] | null => { try { const v = raw ? JSON.parse(raw) : null; return Array.isArray(v) ? v.map(String) : null; } catch { return null; } };
-const fromRow = (r: Row): Identity => ({ provider: r.provider, subject: String(r.subject), login: r.login, handle: r.handle, created: Number(r.created), lastUsed: r.last_used == null ? null : Number(r.last_used), orgs: orgsOf(r.orgs) });
+const fromRow = (r: Row): Identity => ({ provider: r.provider, subject: String(r.subject), login: r.login, handle: r.handle, created: Number(r.created), lastUsed: r.last_used == null ? null : Number(r.last_used), orgs: orgsOf(r.orgs), hd: r.hd ?? null });
 
 export class Identities {
   constructor(private sql: Sql, private users: Users) {}
@@ -100,7 +107,7 @@ export class Identities {
   /** The statement that links an identity to an account (with `link`, or in a batch that makes the account). */
   private linkStatement(login: string, v: Vouched, at: number): Statement {
     const orgs = v.orgs ? JSON.stringify(v.orgs) : null;
-    return ["INSERT INTO identities (provider, subject, login, handle, created, last_used, orgs, orgs_checked) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)", v.provider, v.subject, login.toLowerCase(), v.handle || null, at, orgs, orgs ? at : null];
+    return ["INSERT INTO identities (provider, subject, login, handle, created, last_used, orgs, orgs_checked, hd) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8)", v.provider, v.subject, login.toLowerCase(), v.handle || null, at, orgs, orgs ? at : null, workspaceOf(v)];
   }
 
   /**
@@ -120,9 +127,10 @@ export class Identities {
   }
 
   /** An identity signed in again: when, and what the provider calls them now. */
-  async used(v: Pick<Vouched, "provider" | "subject" | "handle" | "orgs">): Promise<void> {
+  async used(v: Pick<Vouched, "provider" | "subject" | "handle" | "orgs" | "hd">): Promise<void> {
     const at = Date.now();
-    await this.sql.run("UPDATE identities SET last_used = ?3, handle = COALESCE(?4, handle) WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, at, v.handle || null);
+    // Its Workspace as Google says now (none: a personal account); a GitHub identity has none.
+    await this.sql.run("UPDATE identities SET last_used = ?3, handle = COALESCE(?4, handle), hd = ?5 WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, at, v.handle || null, workspaceOf(v));
     // Its organizations, when GitHub answered this time: recorded, the old answer replaced.
     if (v.orgs) await this.sql.run("UPDATE identities SET orgs = ?3, orgs_checked = ?4 WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, JSON.stringify(v.orgs), at);
   }
@@ -168,10 +176,10 @@ export class Identities {
 
   /**
    * A new account, under the username its person chose, with the identity that signed them in: both or neither.
-   * Unlisted unless `listed` (an admin's invitation, with its `role`): the access rules say what an unlisted one may do.
+   * The access rules say what it may do (a rule for this one account is the admin's, or local development's: `extra`).
    * The username must have no problem (usernameProblem); two people who choose one at once can't both have it.
    */
-  async createAccount(username: string, v: Vouched, o: { listed?: boolean; role?: "user" | "admin"; extra?: Statement[] } = {}): Promise<string> {
+  async createAccount(username: string, v: Vouched, o: { role?: "user" | "admin"; extra?: Statement[] } = {}): Promise<string> {
     const login = username.trim().toLowerCase();
     const problem = await this.usernameProblem(login);
     if (problem) throw new NotAllowed(problem);
@@ -179,7 +187,7 @@ export class Identities {
     const at = Date.now(), name = v.name?.trim().slice(0, 100) || login;
     try {
       await this.sql.batch([
-        ["INSERT INTO users (login, name, role, created, added_by, last_seen, listed) VALUES (?1, ?2, ?4, ?3, NULL, ?3, ?5)", login, name, at, o.role ?? "user", o.listed ? 1 : 0],
+        ["INSERT INTO users (login, name, role, created, added_by, last_seen) VALUES (?1, ?2, ?4, ?3, NULL, ?3)", login, name, at, o.role ?? "user"],
         this.linkStatement(login, v, at),
         ...this.emailStatements(login, v, at),
         ...(o.extra ?? []),
@@ -188,6 +196,7 @@ export class Identities {
       throw new NotAllowed(`"${login}" is taken: choose another.`);
     }
     this.users.forget(login);
+    if (o.extra?.length) this.users.rulesChanged();
     return login;
   }
 }

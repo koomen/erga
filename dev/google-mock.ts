@@ -4,9 +4,9 @@
 //   GET  /o/oauth2/v2/auth     Google's sign-in page: answers at once, back to redirect_uri with a code (as `user`)
 //   POST /token                the code for an access token (the client's id, secret and redirect_uri checked);
 //                              a code that can't be real answers invalid_grant, as Google does
-//   GET  /v1/userinfo          who the token is: sub, email, email_verified, name
+//   GET  /v1/userinfo          who the token is: sub, email, email_verified, name, and hd for a Workspace account
 
-export interface MockGoogleUser { sub: string; email: string; email_verified: boolean; name: string }
+export interface MockGoogleUser { sub: string; email: string; email_verified: boolean; name: string; hd?: string }
 export interface MockGoogleOptions {
   clientId: string; clientSecret: string;
   /** The redirect URIs the client allows. */

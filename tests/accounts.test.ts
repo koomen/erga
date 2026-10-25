@@ -11,6 +11,9 @@ const ADMIN = { login: "koomen", admin: true };
 export const github = (id: number, login: string, orgs: string[] | null = null): Vouched => ({ provider: "github", subject: String(id), handle: login, name: login, emails: [], orgs });
 export const google = (sub: string, email: string, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: email.split("@")[0], emails: [{ email, verified }] });
 
+/** A rule for one account, with write, made with it (as an admin's rule, or local development's, would be). */
+const writes = (login: string) => ({ extra: [["INSERT INTO access_rules (kind, value, access, created) VALUES ('account', ?1, 'write', 1)", login] as [string, string]] });
+
 test("the migration gives each account with a GitHub id its identity, kept by the id", async () => {
   const sql = memory({ at: "0210", run: (db) => {
     db.exec("INSERT INTO users (login, name, role, created, github_id) VALUES ('ada', 'Ada', 'user', 1, 583231), ('bo', 'Bo', 'user', 2, NULL)");
@@ -43,7 +46,7 @@ test("an account with no identity (from before, or added by an admin) is claimed
 
 test("an account made with Google is never claimed by a GitHub login of the same name", async () => {
   const dir = new Directory(memory());
-  expect(await dir.identities.createAccount("carol", google("g-1", "carol@example.com"), { listed: true })).toBe("carol");
+  expect(await dir.identities.createAccount("carol", google("g-1", "carol@example.com"), writes("carol"))).toBe("carol");
   expect(await resolve(dir, github(30, "carol"), { join: false })).toEqual({ kind: "refused", taken: "carol" });
   expect((await resolve(dir, github(30, "carol"), { join: true })).kind).toBe("new");
 });
@@ -62,7 +65,7 @@ test("someone new may join only where the rules say: then they choose a username
   const dir = new Directory(memory());
   expect(await resolve(dir, google("g-2", "Erin.Smith@example.com"), { join: false })).toEqual({ kind: "refused" });
   expect(await resolve(dir, google("g-2", "Erin.Smith@example.com"), { join: true })).toEqual({ kind: "new", suggestion: "erin-smith" });
-  await dir.identities.createAccount("erin-smith", google("g-3", "e@example.com"), { listed: true });
+  await dir.identities.createAccount("erin-smith", google("g-3", "e@example.com"), writes("erin-smith"));
   expect(await resolve(dir, google("g-2", "Erin.Smith@example.com"), { join: true })).toEqual({ kind: "new", suggestion: "erin-smith2" });
   // Nothing is written until they choose.
   expect(await dir.identities.find("google", "g-2")).toBeNull();
@@ -87,9 +90,9 @@ test("a username is valid for addresses, not reserved, and not a name in use any
 
 test("two people who choose one username at once can't both have it; one identity makes one account", async () => {
   const dir = new Directory(memory());
-  const [a, b] = await Promise.allSettled([dir.identities.createAccount("jo", google("g-a", "a@x.com"), { listed: true }), dir.identities.createAccount("jo", google("g-b", "b@x.com"), { listed: true })]);
+  const [a, b] = await Promise.allSettled([dir.identities.createAccount("jo", google("g-a", "a@x.com"), writes("jo")), dir.identities.createAccount("jo", google("g-b", "b@x.com"), writes("jo"))]);
   expect([a.status, b.status].sort()).toEqual(["fulfilled", "rejected"]);
-  await expect(dir.identities.createAccount("jo2", google("g-a", "a@x.com"), { listed: true })).rejects.toThrow();
+  await expect(dir.identities.createAccount("jo2", google("g-a", "a@x.com"), writes("jo2"))).rejects.toThrow();
   expect((await dir.identities.of("jo")).length).toBe(1);
 });
 
@@ -113,7 +116,7 @@ test("takeover by a login that changed hands: a row with a GitHub id never goes 
 
 test("Google: the sub, never the email, after the first link", async () => {
   const dir = new Directory(memory());
-  await dir.identities.createAccount("cleo", google("sub-cleo", "cleo@example.com"), { listed: true });
+  await dir.identities.createAccount("cleo", google("sub-cleo", "cleo@example.com"), writes("cleo"));
   // Her email changes at Google: still cleo.
   expect(await resolve(dir, google("sub-cleo", "cleo@new.example.com"), { join: false })).toEqual({ kind: "in", login: "cleo" });
   // Another Google account that now has her old email: not cleo.
@@ -125,15 +128,15 @@ test("Google: the sub, never the email, after the first link", async () => {
 
 test("a Google account and a GitHub account with the same email are two accounts: an email never finds or links one", async () => {
   const dir = new Directory(memory());
-  await dir.identities.createAccount("una", { ...github(1, "una"), emails: [{ email: "una@example.com", verified: true }] }, { listed: true });
+  await dir.identities.createAccount("una", { ...github(1, "una"), emails: [{ email: "una@example.com", verified: true }] }, writes("una"));
   expect((await resolve(dir, google("g-u", "una@example.com"), { join: true })).kind).toBe("new");
   expect((await resolve(dir, google("g-u", "una@example.com"), { join: false })).kind).toBe("refused");
   expect(await dir.identities.find("google", "g-u")).toBeNull();
   // A GitHub account's email is never kept (GitHub vouches for none); Google's only when verified, never a noreply one.
   expect(await dir.identities.emailsOf("una")).toEqual([]);
-  await dir.identities.createAccount("vic", google("g-v", "vic@example.com", false), { listed: true });
+  await dir.identities.createAccount("vic", google("g-v", "vic@example.com", false), writes("vic"));
   expect(await dir.identities.emailsOf("vic")).toEqual([]);
-  await dir.identities.createAccount("wes", google("g-w", "wes@example.com"), { listed: true });
+  await dir.identities.createAccount("wes", google("g-w", "wes@example.com"), writes("wes"));
   expect(await dir.identities.emailsOf("wes")).toEqual(["wes@example.com"]);
   // Its kept email follows Google's at each sign-in; the account stays the one the sub names.
   expect(await resolve(dir, google("g-w", "wes@new.example"), { join: false })).toEqual({ kind: "in", login: "wes" });

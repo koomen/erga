@@ -21,12 +21,12 @@
 //   GET  /auth/username            the username step: a username to choose, for a new account
 //   GET  /auth/username ?check=    whether a username is free: {ok} or {problem}
 //   POST /auth/username            username: makes the account, signs in, goes on to `next`
-//   GET  /auth/dev                 ?provider=&subject=&handle=&name=&email=&verified=&org=:
+//   GET  /auth/dev                 ?provider=&subject=&handle=&name=&email=&verified=&org=&hd=:
 //                                  local development only: a pretend provider's sign-in, through the same steps
 
 import type { Platform, Session } from "../platform.ts";
 import { esc, page, safeNext } from "../pages/index.ts";
-import { type Directory, label, NotAllowed, ruleLets, vouchedEmails, type SignInProvider, type Vouched } from "../directory/index.ts";
+import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
 import { cookieName, cookies } from "./cookies.ts";
 import { b64, sign, unb64, unsign } from "./session.ts";
 import { clearCookie, signIn } from "./sign-in.ts";
@@ -41,14 +41,14 @@ export type Outcome =
   | { kind: "refused"; login?: string; taken?: string };
 
 /**
- * Whether someone a provider vouched for may make a new account here. Local development stands in for an admin's add
- * while the read rule lets in listed accounts only (the default): everyone may join there. A rule an admin set with
- * domains or organizations decides there as anywhere.
+ * Whether someone a provider vouched for may make a new account here: a rule matches them with read or write. Local
+ * development stands in for an admin while the rules let in only accounts one by one (the list after a fresh start):
+ * everyone may join there, and gets a rule for their account. Rules for organizations or emails decide there as anywhere.
  */
 export async function mayJoin(platform: Pick<Platform, "dev" | "directory">, url: URL, v: Vouched): Promise<boolean> {
   if (await platform.directory.mayJoin(v)) return true;
-  const rule = await platform.directory.config.get("access_read");
-  return platform.dev(url) && rule.mode == "some" && !rule.domains.length && !rule.orgs.length;
+  if (!platform.dev(url)) return false;
+  return (await platform.directory.rules.all()).every((r) => r.kind == "account" || (r.kind == "everybody" && r.access == "none"));
 }
 
 /**
@@ -109,19 +109,20 @@ function takenPage(v: Vouched, login: string): Response {
   return page("Not your account", `${takenNote(login)} You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>, and this server is invite-only: ask an admin to add you under another username.`, 403);
 }
 
-/** Who the read rule lets in, and why this person isn't one of them: in place, so they know what to ask for. */
+/** Who the access rules let in, and why this person isn't one of them: in place, so they know what to ask for. */
 async function refusedPage(platform: Platform, v: Vouched, login?: string): Promise<Response> {
   const who = login ?? v.handle;
-  const rule = await platform.directory.config.get("access_read").catch(() => null);
-  const ways = ["accounts an admin listed"];
-  if (rule?.domains.length) ways.push(`Google accounts with a verified email on ${rule.domains.map((d) => `<b>${esc(d)}</b>`).join(" or ")}`);
-  if (rule?.orgs.length) ways.push(`GitHub accounts in the organization${rule.orgs.length > 1 ? "s" : ""} ${rule.orgs.map((o) => `<b>${esc(o)}</b>`).join(" or ")}`);
+  const rules = await platform.directory.rules.all().catch(() => []);
+  const workspaces = rules.filter((r) => r.kind == "workspace" && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
+  const orgs = rules.filter((r) => r.kind == "github_org" && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
+  const ways = ["accounts an admin added"];
+  if (workspaces.length) ways.push(`Google Workspace accounts of ${workspaces.join(" or ")}`);
+  if (orgs.length) ways.push(`members of the GitHub organization${orgs.length > 1 ? "s" : ""} ${orgs.join(" or ")}`);
   let why = `<b>${esc(who)}</b> (${esc(label(v.provider))}) isn't one of them.`;
-  if (v.provider == "github" && rule?.orgs.length) {
-    why += ` GitHub says this account is an active member of ${v.orgs?.length ? v.orgs.map((o) => esc(o)).join(", ") : "none of the organizations Erga can see"}. If you are a member, the organization may not let Erga see it yet: an owner of the organization approves Erga on GitHub.`;
+  if (v.provider == "github" && orgs.length) {
+    why += ` GitHub says this account is an active member of ${v.orgs?.length ? v.orgs.map((o) => esc(o)).join(", ") : "no organization Erga can see"}. If you are a member, the organization may not let Erga see it yet: an owner of the organization approves Erga on GitHub.`;
   }
-  if (v.provider == "google" && rule?.domains.length && !v.emails.some((e) => e.verified)) why += " Google didn't say your email is verified.";
-  if (v.provider == "github" && rule?.domains.length && !rule.orgs.length) why += " Email domains count for Google accounts only: GitHub doesn't vouch for an email at sign-in.";
+  if (v.provider == "google" && workspaces.length) why += v.hd ? ` Google says this account is in the Workspace ${esc(v.hd)}.` : " This is a personal Google account: it's in no Google Workspace organization.";
   return page("Not on this server", `This server lets in ${ways.join(", ")}. ${why} An admin can add you on the Users page.`, 403);
 }
 
@@ -175,14 +176,11 @@ export async function usernameStep(platform: Platform, request: Request): Promis
   // Who may join is asked again: a rule could have changed while they chose.
   if (!(await mayJoin(platform, url, v))) return refusedPage(platform, v);
   try {
-    // Listed when an admin invited their address (with the invitation's role), or when only local development let them
-    // join (everyone may there); unlisted when a rule (anyone, domains) did.
-    const dir = platform.directory, emails = vouchedEmails(v);
-    const invite = await dir.users.invitationFor(emails);
-    const byRule = ruleLets(await dir.config.get("access_read"), { emails, orgs: v.provider == "github" ? v.orgs ?? [] : [] });
+    // A rule let them in, or local development did (everyone may there): then a rule for this one account, with
+    // write, as an admin's would be.
+    const dir = platform.directory, byRule = await dir.mayJoin(v);
     const login = await dir.identities.createAccount(wanted, v, {
-      listed: !!invite || !byRule, role: invite?.role ?? "user",
-      extra: invite ? [["DELETE FROM invites WHERE email = ?1", invite.email]] : [],
+      extra: byRule ? [] : [["INSERT OR IGNORE INTO access_rules (kind, value, access, created) VALUES ('account', ?1, 'write', ?2)", wanted, Date.now()]],
     });
     const answer = await signIn(platform, request, sessionFor(login, v), pending.next);
     answer.headers.append("Set-Cookie", cookieFor(request, "", 0));
@@ -242,5 +240,6 @@ export async function devSignIn(platform: Platform, request: Request): Promise<R
   if (!subject || !handle) return page("Not enough", "Give the pretend identity's subject= and handle=.", 400);
   const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
   const orgs = provider == "github" ? q.getAll("org").filter(Boolean).map((o) => o.toLowerCase()) : null;
-  return vouchedSignIn(platform, request, { provider, subject, handle, name: q.get("name") || null, emails, orgs }, q.get("next") ?? "/", {});
+  const hd = provider == "google" ? q.get("hd")?.toLowerCase() || null : null;
+  return vouchedSignIn(platform, request, { provider, subject, handle, name: q.get("name") || null, emails, orgs, hd }, q.get("next") ?? "/", {});
 }

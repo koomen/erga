@@ -27,7 +27,7 @@
 //   /auth/github/callback                GitHub's answer: a code, traded for who they are
 //   /auth/google[?next=][&app=pending]   off to Google, the same way
 //   /auth/google/callback                Google's answer: a code, traded for who they are (their sub, their email
-//                                        and whether Google verified it)
+//                                        and whether Google verified it, their Workspace: hd)
 //   /auth/logout                         signs out (another site's link to it asks first)
 //   /auth/test?token=&as=                a test person, signed in with a test token
 
@@ -137,12 +137,10 @@ const nothingToTest = () => page("Nothing to test", `No new sign-in values wait 
 /** The sign-in routes on a server with no GitHub OAuth app (GITHUB_CLIENT_ID empty): a page saying what an admin does. */
 const noOAuthApp = (origin: string) => page("Sign-in isn't set up", `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin makes an OAuth app on GitHub (homepage ${escape(origin)}, callback ${escape(origin)}/auth/github/callback), and pastes its Client ID and client secret on the Authentication page (/admin/auth; staging's are set on production's). Or they put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`, 503);
 
-/** The GitHub organizations the access rules name (read's and write's). */
+/** The GitHub organizations the access rules name. */
 async function orgRules(platform: Pick<Platform, "directory">): Promise<string[]> {
-  try {
-    const [read, write] = await Promise.all([platform.directory.config.get("access_read"), platform.directory.config.get("access_write")]);
-    return [...new Set([...(read?.orgs ?? []), ...(write?.orgs ?? [])])];
-  } catch { return []; }
+  try { return (await platform.directory.rules.all()).filter((r) => r.kind == "github_org").map((r) => r.value); }
+  catch { return []; }
 }
 
 /**
@@ -254,6 +252,9 @@ export async function googleToken(endpoints: { token: string }, app: AppValues, 
   }).then((r) => r.json() as Promise<{ access_token?: string; error?: string; error_description?: string }>, (e: Error) => ({ error: "unreachable", error_description: e.message }));
 }
 
+/** Who Google's userinfo says someone is (OpenID Connect's claims; hd only for a Google Workspace account). */
+interface GoogleUser { sub?: string; email?: string; email_verified?: boolean | string; name?: string; hd?: string }
+
 /** /auth/google/callback: Google sends the person back with a code to trade for who they are. */
 export async function finishGoogleSignIn(platform: Platform, request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -283,11 +284,15 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
   }
   // Google's access token reads who they are, once, and is never stored.
   const user = await fetch(endpoints.userinfo, { headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/json" } })
-    .then((r) => r.json() as Promise<{ sub?: string; email?: string; email_verified?: boolean | string; name?: string }>, () => ({} as { sub?: string; email?: string; email_verified?: boolean | string; name?: string }));
+    .then((r) => r.json() as Promise<GoogleUser>, () => ({} as GoogleUser));
   if (!user.sub) return page("Sign-in failed", "Google didn't say who you are. <a href=\"/auth/sign-in\">Try again</a>.", 400);
   const email = user.email?.trim().toLowerCase() ?? "";
   // Only an email Google says is verified ever passes a domain rule; none ever finds an account.
-  const v: Vouched = { provider: "google", subject: String(user.sub), handle: email || String(user.sub), name: user.name?.trim() || null, emails: email ? [{ email, verified: user.email_verified === true || user.email_verified === "true" }] : [] };
+  // hd: the Google Workspace organization of a Workspace account (a personal one has none), for the access rules.
+  const v: Vouched = {
+    provider: "google", subject: String(user.sub), handle: email || String(user.sub), name: user.name?.trim() || null,
+    emails: email ? [{ email, verified: user.email_verified === true || user.email_verified === "true" }] : [], hd: user.hd?.trim().toLowerCase() || null,
+  };
   const onlyAdmins = !(await providersOn(platform)).google;
   return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
     if (testing) await testedSignIn(platform, app.clientId, { ok: true, login, admin: await platform.directory.users.isAdmin({ login }) }, "google");

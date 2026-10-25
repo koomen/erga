@@ -1,116 +1,124 @@
-// The access rules (server/directory/directory.ts, "the access rules"): read (who may sign in) and write (who may
-// make and edit documents), each anyone or only some: listed accounts, Google accounts with a verified email on given
-// domains, GitHub accounts in given organizations. Admins always pass. On an in-memory database with D1's migrations.
+// The access rules (server/directory/access.ts): one list, each rule WHO (everybody, a Google Workspace organization by
+// the hd claim, a GitHub organization, one account, one Google account by email) and ACCESS (read, write). A person
+// gets the highest access of the rules that match them; none: they can't sign in. Admins always have write. On an
+// in-memory database with D1's migrations, 0240's translation of the invite list included.
 
 import { expect, test } from "bun:test";
-import { accessRule, ConfigError, Directory, type Vouched } from "../server/directory/index.ts";
+import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
 import { memory } from "./memory-sql.ts";
 
 const ADMIN = { login: "koomen", admin: true };
-const google = (sub: string, email: string, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: null, emails: [{ email, verified }] });
+const google = (sub: string, email: string, hd: string | null = null, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: null, emails: [{ email, verified }], hd });
 const github = (id: number, login: string, orgs: string[] | null = null): Vouched => ({ provider: "github", subject: String(id), handle: login, name: null, emails: [], orgs });
 const fresh = () => new Directory(memory(), { admins: ["koomen"] });
-/** An account someone made themselves (unlisted), as the username step makes it when a rule let them in. */
-const joined = (dir: Directory, name: string, v: Vouched) => dir.identities.createAccount(name, v, { listed: false });
-const setRule = (dir: Directory, which: "read" | "write", rule: unknown) => dir.config.set(ADMIN, which == "read" ? "access_read" : "access_write", rule);
+/** An account someone made at their first sign-in (no rule of its own). */
+const joined = (dir: Directory, name: string, v: Vouched) => dir.identities.createAccount(name, v);
+const everybody = async (dir: Directory, access: string) => dir.rules.change(ADMIN, (await dir.rules.list(ADMIN)).find((r) => r.kind == "everybody")!.id, access);
+const accessOf = async (dir: Directory, login: string) => dir.accessOf((await dir.users.get(login))!);
 
-test("a rule as given: anyone, or some with domains and organizations, each checked", () => {
-  expect(accessRule("anyone")).toEqual({ mode: "anyone", domains: [], orgs: [] });
-  expect(accessRule({ mode: "some", domains: "Example.com, @example.org", orgs: ["My-Org"] })).toEqual({ mode: "some", domains: ["example.com", "example.org"], orgs: ["my-org"] });
-  expect(accessRule("listed")).toEqual({ mode: "some", domains: [], orgs: [] });
-  expect(() => accessRule({ mode: "some", domains: ["not a domain"] })).toThrow(ConfigError);
-  expect(() => accessRule({ mode: "some", orgs: ["-bad"] })).toThrow(ConfigError);
-  expect(() => accessRule("everyone")).toThrow(ConfigError);
-});
-
-test("by default only listed accounts sign in (as before), and anyone of them may write; admins always pass", async () => {
-  const dir = fresh();
-  await dir.users.add(ADMIN, "ada");
-  await joined(dir, "bo", google("g-bo", "bo@example.com"));
+test("0240 translates the invite list: everybody none, and each account on it a rule with write", async () => {
+  const dir = new Directory(memory({ at: "0240", run: (db) => {
+    db.exec("INSERT INTO users (login, name, role, created, added_by) VALUES ('ada', 'Ada', 'user', 1, 'koomen'), ('bo', 'Bo', 'admin', 2, NULL)");
+    db.exec("INSERT INTO invites (email, role, created) VALUES ('cy@example.com', 'user', 3)");
+  } }), { admins: ["koomen"] });
+  const rules = (await dir.rules.list(ADMIN)).map((r) => `${r.kind}:${r.value}:${r.access}`);
+  expect(rules).toEqual(["everybody::none", "account:ada:write", "account:bo:write", "email:cy@example.com:write"]);
   expect(await dir.users.allowed("ada")).toBe(true);
-  expect(await dir.users.allowed("bo")).toBe(false);
-  expect(await dir.users.allowed("koomen")).toBe(true);
-  expect(await dir.mayJoin(google("g-new", "x@example.com"))).toBe(false);
-  // An admin lists bo: in.
-  await dir.users.setListed(ADMIN, "bo", true);
-  expect(await dir.users.allowed("bo")).toBe(true);
 });
 
-test("read anyone: every account, and anyone may make one", async () => {
+test("the highest access of the rules that match; none signs in nowhere; admins always write", async () => {
   const dir = fresh();
-  await setRule(dir, "read", "anyone");
-  await joined(dir, "bo", google("g-bo", "bo@example.com"));
-  expect(await dir.users.allowed("bo")).toBe(true);
-  expect(await dir.mayJoin(google("g-new", "x@elsewhere.example", false))).toBe(true);
-  expect(await dir.mayJoin(github(9, "someone"))).toBe(true);
-});
-
-test("domains: a Google account's verified email on one of them (exactly); never a GitHub account's", async () => {
-  const dir = fresh();
-  await setRule(dir, "read", { mode: "some", domains: ["example.com"] });
-  expect(await dir.mayJoin(google("g1", "a@example.com"))).toBe(true);
-  expect(await dir.mayJoin(google("g2", "a@example.com", false))).toBe(false);
-  expect(await dir.mayJoin(google("g3", "a@sub.example.com"))).toBe(false);
-  expect(await dir.mayJoin({ ...github(1, "gh"), emails: [{ email: "gh@example.com", verified: true }] })).toBe(false);
-  await joined(dir, "cy", google("g1", "cy@example.com"));
-  expect(await dir.users.allowed("cy")).toBe(true);
-  // Google says another email at the next sign-in: the rule reads that one now.
-  expect((await resolve(dir, google("g1", "cy@other.example"), { join: false })).kind).toBe("refused");
-  expect(await dir.users.allowed("cy")).toBe(false);
-});
-
-test("organizations: a GitHub account in one of them, as GitHub answered at its last sign-in, recorded", async () => {
-  const dir = fresh();
-  await setRule(dir, "read", { mode: "some", orgs: ["acme"] });
-  expect(await dir.mayJoin(github(1, "dee", ["acme", "other"]))).toBe(true);
-  expect(await dir.mayJoin(github(2, "eve", ["other"]))).toBe(false);
-  expect(await dir.mayJoin(github(3, "fay", null))).toBe(false);
   await joined(dir, "dee", github(1, "dee", ["acme"]));
-  expect((await dir.identities.find("github", "1"))?.orgs).toEqual(["acme"]);
-  expect(await resolve(dir, github(1, "dee", ["acme"]), { join: false })).toEqual({ kind: "in", login: "dee" });
-  // She left acme: her next sign-in records it, and she's refused.
-  expect((await resolve(dir, github(1, "dee", []), { join: false })).kind).toBe("refused");
+  expect(await accessOf(dir, "dee")).toBe("none");
+  expect(await dir.users.allowed("dee")).toBe(false);
+  await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "read" });
+  expect(await accessOf(dir, "dee")).toBe("read");
+  expect(await dir.users.allowed("dee")).toBe(true);
+  expect(await dir.mayWrite("dee")).toBe(false);
+  await everybody(dir, "write");
+  expect(await accessOf(dir, "dee")).toBe("write");
+  await everybody(dir, "none");
+  await dir.rules.add(ADMIN, { kind: "account", value: "dee", access: "write" });
+  expect(await accessOf(dir, "dee")).toBe("write");
+  expect(await accessOf(dir, "koomen")).toBe("write");
+});
+
+test("Google Workspace: the hd claim, never the email's domain; a personal account never matches", async () => {
+  const dir = fresh();
+  await dir.rules.add(ADMIN, { kind: "workspace", value: "Example.com", access: "write" });
+  expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "workspace" && r.value == "example.com")).toBe(true);
+  expect(await dir.mayJoin(google("g1", "a@example.com", "example.com"))).toBe(true);
+  // The email says example.com, but no hd: a personal account (or another Workspace's alias). No.
+  expect(await dir.mayJoin(google("g2", "a@example.com"))).toBe(false);
+  expect(await dir.mayJoin(google("g3", "a@gmail.com"))).toBe(false);
+  expect(await dir.mayJoin({ ...github(4, "gh"), hd: "example.com" })).toBe(false);
+  await joined(dir, "eve", google("g1", "eve@example.com", "example.com"));
+  expect(await accessOf(dir, "eve")).toBe("write");
+  // Her account leaves the Workspace (Google gives no hd now): her next sign-in records it, and she's refused.
+  expect((await resolve(dir, google("g1", "eve@example.com"), { join: false })).kind).toBe("refused");
+});
+
+test("GitHub organizations: as GitHub answered at each sign-in, recorded on the identity", async () => {
+  const dir = fresh();
+  await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "write" });
+  expect(await dir.mayJoin(github(1, "fay", ["acme", "other"]))).toBe(true);
+  expect(await dir.mayJoin(github(2, "gus", ["other"]))).toBe(false);
+  expect(await dir.mayJoin(github(3, "hal", null))).toBe(false);
+  await joined(dir, "fay", github(1, "fay", ["acme"]));
+  expect(await resolve(dir, github(1, "fay", ["acme"]), { join: false })).toEqual({ kind: "in", login: "fay" });
+  expect((await resolve(dir, github(1, "fay", []), { join: false })).kind).toBe("refused");
   expect((await dir.identities.find("github", "1"))?.orgs).toEqual([]);
-  // A Google account never passes an organization.
-  await joined(dir, "gus", google("g-gus", "gus@acme.example"));
-  expect(await dir.users.allowed("gus")).toBe(false);
 });
 
-test("write: someone it leaves out opens their documents and those shared with them as a viewer, and may not make one", async () => {
+test("one account, and one Google account by its verified email", async () => {
   const dir = fresh();
-  await setRule(dir, "read", "anyone");
-  await setRule(dir, "write", { mode: "some", domains: ["example.com"] });
-  await joined(dir, "hal", google("g-hal", "hal@elsewhere.example"));
+  await dir.rules.add(ADMIN, { kind: "email", value: "ida@example.com", access: "read" });
+  expect(await dir.mayJoin(google("g-ida", "ida@example.com"))).toBe(true);
+  expect(await dir.mayJoin(google("g-ida", "ida@example.com", null, false))).toBe(false);
+  expect(await dir.mayJoin({ ...github(5, "ida"), emails: [{ email: "ida@example.com", verified: true }] })).toBe(false);
   await joined(dir, "ida", google("g-ida", "ida@example.com"));
-  for (const [id, owner] of [["aaaaaaaa", "hal"], ["bbbbbbbb", "ida"]]) await dir.add({ id, owner, title: "Plan", created: 1, expires: null });
-  expect(await dir.access({ login: "hal" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
-  expect(await dir.access({ login: "ida" }, (await dir.get("bbbbbbbb"))!)).toBe("owner");
-  expect(await dir.mayWrite("hal")).toBe(false);
-  expect(await dir.mayWrite("ida")).toBe(true);
-  // An admin always may; listing hal lets him write.
-  expect(await dir.mayWrite("koomen")).toBe(true);
-  await dir.users.setListed(ADMIN, "hal", true);
-  expect(await dir.access({ login: "hal" }, (await dir.get("aaaaaaaa"))!)).toBe("owner");
+  expect(await accessOf(dir, "ida")).toBe("read");
+  // A rule for an account that hasn't signed in yet adds it: a GitHub account with that login claims it.
+  await dir.rules.add(ADMIN, { kind: "account", value: "jo", access: "read" });
+  expect(await resolve(dir, github(6, "jo"), { join: false })).toEqual({ kind: "in", login: "jo", claimed: true });
+  expect(await accessOf(dir, "jo")).toBe("read");
 });
 
-test("an invitation by email lets that Google address make an account, under any rule; it can't name a noreply address", async () => {
+test("write: someone with read opens their documents and those shared with them as a viewer, and makes none", async () => {
   const dir = fresh();
-  await dir.users.invite(ADMIN, "Jo@Example.com", "admin");
-  expect(await dir.mayJoin(google("g-jo", "jo@example.com"))).toBe(true);
-  expect(await dir.mayJoin(google("g-jo", "jo@example.com", false))).toBe(false);
-  expect((await dir.users.invites(ADMIN)).map((i) => [i.email, i.role])).toEqual([["jo@example.com", "admin"]]);
-  await expect(dir.users.invite(ADMIN, "1+x@users.noreply.github.com")).rejects.toThrow("noreply");
-  await expect(dir.users.invite({ login: "bo" }, "x@example.com")).rejects.toThrow("Only an admin");
-  await dir.users.uninvite(ADMIN, "jo@example.com");
-  expect(await dir.mayJoin(google("g-jo", "jo@example.com"))).toBe(false);
+  await everybody(dir, "read");
+  await joined(dir, "kit", google("g-kit", "kit@example.com"));
+  await dir.add({ id: "aaaaaaaa", owner: "kit", title: "Plan", created: 1, expires: null });
+  expect(await dir.access({ login: "kit" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
+  expect(await dir.mayWrite("kit")).toBe(false);
+  await dir.rules.add(ADMIN, { kind: "account", value: "kit", access: "write" });
+  expect(await dir.access({ login: "kit" }, (await dir.get("aaaaaaaa"))!)).toBe("owner");
 });
 
-test("only admins change the rules and the list; an admin can't be taken off the list", async () => {
+test("the rules' own rules: admins only; everybody's stays and alone may be none; values checked; a removed account's rule goes", async () => {
   const dir = fresh();
-  await expect(dir.config.set({ login: "bo" }, "access_read", "anyone")).rejects.toThrow();
-  await dir.users.add(ADMIN, "kit", { role: "admin" });
-  await expect(dir.users.setListed(ADMIN, "kit", false)).rejects.toThrow("is an admin");
+  await expect(dir.rules.add({ login: "bo" }, { kind: "workspace", value: "example.com", access: "read" })).rejects.toThrow("Only an admin");
+  const all = await dir.rules.list(ADMIN), every = all.find((r) => r.kind == "everybody")!;
+  await expect(dir.rules.remove(ADMIN, every.id)).rejects.toThrow("always there");
+  await expect(dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "none" })).rejects.toThrow();
+  await expect(dir.rules.add(ADMIN, { kind: "workspace", value: "not a domain", access: "read" })).rejects.toThrow("isn't a domain");
+  await expect(dir.rules.add(ADMIN, { kind: "email", value: "1+x@users.noreply.github.com", access: "read" })).rejects.toThrow();
+  const org = await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "read" });
+  expect((await dir.rules.change(ADMIN, org.id, "write")).access).toBe("write");
+  await dir.rules.remove(ADMIN, org.id);
+  expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "github_org")).toBe(false);
+  await dir.users.add(ADMIN, "lu");
+  expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "account" && r.value == "lu")).toBe(true);
+  await dir.users.remove(ADMIN, "lu");
+  expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "account" && r.value == "lu")).toBe(false);
+});
+
+test("suggestions: the Workspace domains and GitHub organizations of people who signed in here", async () => {
+  const dir = fresh();
+  await joined(dir, "mo", google("g-mo", "mo@example.com", "example.com"));
+  await joined(dir, "ned", github(7, "ned", ["acme", "zeta"]));
+  expect(await dir.rules.suggestions(ADMIN)).toEqual({ workspaces: ["example.com"], orgs: ["acme", "zeta"] });
 });
 
 test("a GitHub sign-in's organizations: active memberships only, as the pretend GitHub answers the person's token; none when it can't", async () => {
