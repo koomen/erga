@@ -5,7 +5,8 @@
 //   bun dev/format.ts --write    formats those lines in place (bun run format)
 //
 // A change is everything since the base: the merge base with ERGA_FORMAT_BASE (CI sets it), else
-// with origin/staging, else with origin/main. Uncommitted edits and new files count. Biome formats
+// with origin/staging, else with origin/main. Uncommitted edits and new files count; a moved file
+// counts only for the lines the move changed. Biome formats
 // each changed file; only the parts of its result that meet a changed line are kept, so the rest of
 // a file stays as it is and a branch's diff stays its own. `bun run test` runs the check.
 
@@ -31,18 +32,31 @@ function base(): string | undefined {
   return undefined;
 }
 
-/** Each changed file, with the line numbers (1-based) it changed: every line of a new file. */
+// Git marks the lines a change only moved (from one file to another, or within one) in a color of their own:
+// those aren't new code, so a move stays a move. `git diff` colors them by these settings, whatever the user's are.
+const MOVED = "\x1b[35m";
+const COLORS = ["-c", "color.diff.new=green", "-c", "color.diff.newMoved=magenta", "-c", "color.diff.newMovedAlternative=magenta"];
+const plain = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
+
+/** Each changed file, with the line numbers (1-based) of the lines it added: every line of a new file, none it only moved. */
 function changes(from: string): Map<string, Set<number>> {
   const out = new Map<string, Set<number>>();
-  let file = "";
-  for (const line of git("diff", "-U0", "--no-color", "--no-renames", "--diff-filter=AM", from, "--").stdout.split("\n")) {
-    if (line.startsWith("+++ ")) file = line.startsWith("+++ b/") ? line.slice(6) : "";
-    const hunk = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (hunk && CODE.test(file)) {
-      const start = Number(hunk[1]);
-      const count = hunk[2] == undefined ? 1 : Number(hunk[2]);
-      const set = out.get(file) ?? out.set(file, new Set()).get(file)!;
-      for (let n = start; n < start + count; n++) set.add(n);
+  const flags = ["-U0", "--src-prefix=a/", "--dst-prefix=b/", "--find-renames", "--color=always", "--color-moved=plain"];
+  const diff = git(...COLORS, "diff", ...flags, "--color-moved-ws=allow-indentation-change", from, "--");
+  let set: Set<number> | undefined;
+  let at = 0;
+  for (const raw of diff.stdout.split("\n")) {
+    const line = plain(raw);
+    if (line.startsWith("+++ ")) {
+      const file = line.startsWith("+++ b/") ? line.slice(6) : "";
+      set = CODE.test(file) ? (out.get(file) ?? out.set(file, new Set()).get(file)) : undefined;
+      continue;
+    }
+    const hunk = /^@@ -\S+ \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) at = Number(hunk[1]);
+    else if (set && line.startsWith("+")) {
+      if (!raw.startsWith(MOVED)) set.add(at);
+      at++;
     }
   }
   for (const file of git("ls-files", "--others", "--exclude-standard").stdout.split("\n")) {
