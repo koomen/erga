@@ -129,6 +129,7 @@ health checks and rollbacks work.
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
       api.ts          the HTTP API for outside agents: tokens, /api, /mcp, the guide, /tokens, /settings
       health.ts       the health check, GET /api/health
+      security.ts     the security headers on every answer of the app
       live.ts         open pages follow a redeploy
       directory/      the database: documents, owners and permissions (directory.ts), users, sign-in identities,
                       access rules, settings and their change log, the API keys admins store
@@ -158,8 +159,8 @@ health checks and rollbacks work.
                   page.ts), the room's socket (room-socket.ts), ... The browser's bundles may have shared/, and of
                   document/ only content.ts, pages.ts, merge.ts and api.ts's types: tests/browser-imports.test.ts keeps it so
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
-                  (main.ts the editor's shell, frame.ts the page editor, collab.ts the room, agent-chat.ts the agent's
-                  panel, files.ts, settings.ts, pages-tree.ts, admin-agent.ts, live.ts, ...)
+                  (main.ts and shell/ the editor's shell, frame.ts, editor.ts and page-editor/ the page editor, collab.ts
+                  the room, agent-chat.ts the agent's panel, files.ts, settings.ts, pages-tree.ts, admin-agent.ts, ...)
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
                   (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the Durable Objects (document-object.ts and objects/:
                   each gives its logic in server/, agents/ or document/ storage, alarms and sockets, and decides
@@ -174,9 +175,9 @@ health checks and rollbacks work.
                   (release.ts) and the release store (releases.ts), installs in other accounts (install.ts, forks.ts),
                   the targets (targets.json), the setup runbook (setup.ts), the settings a deploy locks
                   (locked-settings.ts), and the mock Cloudflare the tests use
-    dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, a Git server and a mock
-                  GitHub and Google for tests, and a document's files on disk as its Storage (disk-storage.ts, over
-                  the mirror the plugin serves)
+    dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, the formatter on changed
+                  lines (format.ts, `bun run format`), a Git server and a mock GitHub and Google for tests, and a
+                  document's files on disk as its Storage (disk-storage.ts, over the mirror the plugin serves)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     docs/         self-host.md (deploy your own Erga), operations.md (how a deployment deploys), the screenshot above
     tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full) and benchmarks (e2e/bench)
@@ -186,7 +187,7 @@ admin, source) is imported through its `index.ts`, its interface. Only
 `cloudflare/` and `control/` read the Worker's bindings; `server/` and
 `document/` never import them. The configs at the root are the ones their
 tools look for there: `cloudflare.config.ts` (the Worker and its bindings),
-`vite.config.ts`, `e2e.config.ts`, `tsconfig.json`.
+`vite.config.ts`, `e2e.config.ts`, `tsconfig.json`, `biome.json`.
 
 Building: `bun run build` (client/build.ts) writes the client's files to
 `.build/`; `bun run release` (deploy/release.ts) adds the Worker's release to
