@@ -181,6 +181,7 @@ health checks and rollbacks work.
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     docs/         self-host.md (deploy your own Erga), operations.md (how a deployment deploys), the screenshot above
     tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full) and benchmarks (e2e/bench)
+    .github/      the tests on each pull request and push (workflows/test.yml)
 
 Each area of `server/` (directory, identity, documents, pages, home,
 admin, source) is imported through its `index.ts`, its interface. Only

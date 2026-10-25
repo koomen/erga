@@ -26,6 +26,8 @@ tells the rest.
     bun run test:full   # every end-to-end test: before a large change
 
 - Run `bun run test` before every pull request. It must say "all passing".
+  GitHub runs the same tests on each pull request
+  (`.github/workflows/test.yml`).
 - If the format check fails, run `bun run format`. It formats only the
   lines that your change touches. Do not format whole files.
 - When you change a part of the app, run the end-to-end tests for that
