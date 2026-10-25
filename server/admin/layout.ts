@@ -29,7 +29,7 @@
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in server/app.ts; and each page's own door).
 
-import { appPage, asset, crumbs as trail, esc, ICON, link, page, scriptTag } from "../pages/index.ts";
+import { appPage, asset, crumbs as trail, esc, ICON, inlineCall, inlineScript, link, page, scriptTag } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { MARK } from "../../assets/logo/logo.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
@@ -94,70 +94,20 @@ const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent
 /** The admin pages' one stylesheet (server/admin/style.ts, built as admin.css): the same file on every admin page, the control Worker's too. */
 export const adminStyleTag = () => `<link rel="stylesheet" id="erga-admin-style" href="${asset("admin.css")}">`;
 
-/** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. And the first page's view: what its scripts stop when it goes. */
 /** The sidebar's remembered state, before it paints. */
-export const SIDEBAR_EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}</script>`;
+export const SIDEBAR_EARLY_SCRIPT = inlineScript("admin-sidebar-early");
 /** The first page's view (window.ergaView): what its scripts stop when it goes. Every page's scripts read it (the Ops page's too). */
-export const VIEW_SCRIPT = `<script>window.ergaView = (() => { const c = new AbortController(), fns = []; return { signal: c.signal, onLeave: (fn) => { if (c.signal.aborted) fn(); else fns.push(fn); }, leave: () => { c.abort(); for (const fn of fns.splice(0)) try { fn(); } catch (e) { console.error(e); } } }; })();</script>`;
-/**
- * The agent's side and width as this browser keeps them (client/layout.ts: PANE_KEY, paneWidth; tests/layout.test.ts
- * checks the two agree), put on the workspace as it's parsed, before it paints: mountPaneLayout, later, finds them so.
- * Without it the board moved once admin-agent.js ran, for anyone whose agent isn't the default (380 px, at the left).
- */
-export const PANE_EARLY_SCRIPT = `<script>try { const w = document.currentScript.parentElement, l = JSON.parse(localStorage.getItem("erga:factory-layout:v1") || "null");
-  if (l && l.side == "right") w.classList.add("agent-right");
-  if (l && typeof l.width == "number" && isFinite(l.width)) w.style.setProperty("--agent-w", Math.min(Math.max(Math.round(l.width), 300), Math.max(300, Math.min(760, w.clientWidth - 20 - 480))) + "px");
-} catch {}</script>`;
-const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}<script>try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}</script>`;
+export const VIEW_SCRIPT = inlineScript("admin-view");
+/** The agent's side and width as this browser keeps them, on the workspace as it's parsed (in it: client/inline/admin-pane-early.ts). */
+export const PANE_EARLY_SCRIPT = inlineScript("admin-pane-early");
+const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}${inlineScript("admin-agent-early")}`;
 
-/** The agent's collapse and expand: its button, the round one, Esc in the panel, ⌘J; remembered on a wide window. */
-const AGENT_SCRIPT = `<script>
-(() => {
-  const root = document.documentElement, pane = document.getElementById("agent"), fab = document.getElementById("agent-fab");
-  const narrow = matchMedia("(max-width: 999.98px)");
-  const sync = () => { const open = !root.classList.contains("agent-closed"); pane.inert = !open; fab.setAttribute("aria-expanded", String(open)); };
-  const keep = (open) => { root.classList.toggle("agent-closed", !open); if (!narrow.matches) try { localStorage.setItem("erga:admin-agent", open ? "open" : "closed"); } catch {} sync(); };
-  const show = (open) => {
-    keep(open);
-    // On a wide window the server keeps it too, for the admin's other browsers.
-    if (!narrow.matches) window.dispatchEvent(new CustomEvent("erga:agent-toggled", { detail: { open } }));
-    if (open) window.dispatchEvent(new Event("erga:agent-shown"));
-    else fab.focus();
-  };
-  // set: as the server says the admin left it, on a wide window, without moving the focus.
-  window.ergaAgent = { show, set: (open) => { if (!narrow.matches && open == root.classList.contains("agent-closed")) keep(open); }, open: () => !root.classList.contains("agent-closed") };
-  document.getElementById("agent-close").addEventListener("click", () => show(false));
-  fab.addEventListener("click", () => show(true));
-  pane.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); show(false); } });
-  document.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "j") { e.preventDefault(); show(root.classList.contains("agent-closed")); }
-  });
-  sync();
-  // The panel's and the sidebar's toggles, Share and Copy act as the press starts (shared/fast-click.ts), on every page
-  // admin-nav.js brings in too. Save, Clear, Remove and the rest keep a deliberate click.
-  ${fastClickScript("document", "#agent-fab, #agent-close, #side-toggle, #btn-share, button.copy")}
-  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("agent-ready")));
-})();
-</script>`;
-export const SIDEBAR_SCRIPT = `<script>
-(() => {
-  const root = document.documentElement, toggle = document.getElementById("side-toggle");
-  const sync = () => {
-    const closed = root.classList.contains("side-closed");
-    toggle.setAttribute("aria-expanded", String(!closed));
-    toggle.setAttribute("aria-label", closed ? "Expand the sidebar" : "Collapse the sidebar");
-    toggle.title = closed ? "Expand the sidebar" : "Collapse the sidebar";
-    for (const a of document.querySelectorAll(".admin-side a")) a.title = closed ? a.textContent.trim() : "";
-  };
-  toggle.addEventListener("click", () => {
-    root.classList.toggle("side-closed");
-    try { localStorage.setItem("erga:admin-sidebar", root.classList.contains("side-closed") ? "closed" : "open"); } catch {}
-    sync();
-  });
-  sync();
-  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("side-ready")));
-})();
-</script>`;
+/** The agent's collapse and expand (client/inline/admin-agent.ts). The panel's and the sidebar's toggles, Share and Copy act as
+ * the press starts (shared/fast-click.ts), on every page admin-nav.js brings in too; Save, Clear, Remove and the rest keep a
+ * deliberate click. */
+const AGENT_SCRIPT = `<script>${inlineCall("admin-agent")}${fastClickScript("document", "#agent-fab, #agent-close, #side-toggle, #btn-share, button.copy")}</script>`;
+/** The sidebar's toggle (client/inline/admin-sidebar.ts). */
+export const SIDEBAR_SCRIPT = inlineScript("admin-sidebar");
 
 /** An admin page, whole: the header, the sidebar and the page's own body. */
 export function adminLayout(o: AdminLayout): string {

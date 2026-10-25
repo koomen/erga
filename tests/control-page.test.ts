@@ -9,7 +9,7 @@ test("the Ops page on the control Worker sets window.ergaView before its script 
   const session = { login: "ada", name: "Ada" } as unknown as Session;
   const r = adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", layout: controlLayout("https://erga.test") });
   const html = await r.text();
-  const set = html.indexOf("window.ergaView =");
+  const set = html.search(/window\.ergaView\s*=/);
   const read = html.indexOf("const pageView = window.ergaView");
   expect(read).toBeGreaterThan(0);
   expect(set).toBeGreaterThan(0);
