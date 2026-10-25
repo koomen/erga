@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 // Seeds Erga's repository (once): every commit of a branch of an existing
-// repository (GitHub's, by default), pushed through Erga's Git endpoint to
+// repository (a clone URL, or a local checkout), pushed through Erga's Git endpoint to
 // both main and staging. Through Erga, not straight into Artifacts, so Erga
 // indexes the whole history as it lands.
 //
-//   ERGA_TOKEN=erga_... bun server/source/import.ts <server> [--from <repo or path>] [--branch main]
+//   ERGA_TOKEN=erga_... bun server/source/import.ts <server> --from <repo or path> [--branch main]
 //
-//   <server>        the Erga server, e.g. https://erga.dev (or http://127.0.0.1:4400 locally)
-//   --from          where the history comes from: https://github.com/koomen/erga.git by default,
+//   <server>        the Erga server, e.g. https://ops.example.com (or http://127.0.0.1:4400 locally)
+//   --from          where the history comes from (required): a repository's clone URL,
 //                   or a local checkout (".")
 //   --branch        which of its branches (main)
 //
@@ -26,11 +26,11 @@ if (!args.length || args.includes("--help") || args.includes("-h")) {
   process.exit(args.length ? 0 : 2);
 }
 const flag = (name: string, fallback: string) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : fallback; };
-const from = flag("--from", "https://github.com/koomen/erga.git");
+const from = flag("--from", "");
 const branch = flag("--branch", "main");
 const server = args.find((a) => !a.startsWith("--"))?.replace(/\/+$/, "");
 const token = process.env.ERGA_TOKEN;
-if (!server || !token) { console.error("usage: ERGA_TOKEN=erga_... bun server/source/import.ts <server> [--from <repo>] [--branch main]"); process.exit(2); }
+if (!server || !token || !from) { console.error("usage: ERGA_TOKEN=erga_... bun server/source/import.ts <server> --from <repo or path> [--branch main]"); process.exit(2); }
 
 const remote = `${server}/git/erga.git`;
 // The token as HTTP Basic's password, in a header, so it's never in a URL or the repository's config.

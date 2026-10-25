@@ -30,7 +30,8 @@ import { installFleet } from "../deploy/fleet";
 import type { UpdateResult } from "../server/source/index.ts";
 import { runInstall } from "../deploy/install";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
-import { TARGETS } from "../deploy/targets";
+import { ACCOUNT, ADMINS, CONTROL, SOURCE, TARGETS } from "../deploy/targets";
+import { controlConfig, controlWranglerConfig } from "../deploy/release";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;
@@ -1093,9 +1094,10 @@ describe("the one-time setup", () => {
   test("deploy/run.ts refuses production's names for staging, and needs credentials", () => {
     const r = Bun.spawnSync(["bun", join(ROOT, "deploy/run.ts"), "nowhere"], { cwd: ROOT });
     expect(r.exitCode).toBe(2);
-    const noCreds = Bun.spawnSync(["bun", join(ROOT, "deploy/run.ts"), "staging", "--yes"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
+    // (A wrong account, so a cf CLI login on this machine can't take it any further.)
+    const noCreds = Bun.spawnSync(["bun", join(ROOT, "deploy/run.ts"), "staging", "--yes"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "not-an-account" } });
     expect(noCreds.exitCode).toBe(1);
-    expect(noCreds.stderr.toString()).toContain("Set CLOUDFLARE_ACCOUNT_ID");
+    expect(noCreds.stderr.toString()).toContain("Set the account");
   });
 });
 
@@ -1534,6 +1536,22 @@ describe("the release cache", () => {
     const worker = readFileSync(join(ROOT, "control/builder/worker.ts"), "utf8").match(/BUILDER_BUN = "([\d.]+)"/)?.[1];
     expect(worker).toBe(docker!);
     expect(readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8")).toContain('"version_metadata": { "binding": "CF_VERSION_METADATA" }');
+  });
+});
+
+describe("one config file names the deployment (docs/self-host.md)", () => {
+  test("control/wrangler.jsonc names nothing of the deployment: deploy/targets.json fills it in", () => {
+    const wrangler = readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    for (const v of [ACCOUNT, ADMINS, CONTROL.host, CONTROL.worker, CONTROL.releases, ...Object.values(CONTROL.vars)]) expect(wrangler).not.toContain(v);
+    const w = controlWranglerConfig("db-id") as { name: string; routes: unknown; d1_databases: unknown; artifacts: unknown; r2_buckets: unknown; vars: Record<string, string> };
+    expect(w.name).toBe(CONTROL.worker);
+    expect(w.routes).toEqual([{ pattern: CONTROL.host, custom_domain: true }]);
+    expect(w.d1_databases).toEqual([{ binding: "DB", database_name: TARGETS.production.database, database_id: "db-id" }]);
+    expect(w.artifacts).toEqual([{ binding: "ARTIFACTS", namespace: SOURCE.namespace }]);
+    expect(w.r2_buckets).toEqual([{ binding: "RELEASES", bucket_name: CONTROL.releases }]);
+    expect(w.vars).toEqual({ ADMINS, CLOUDFLARE_ACCOUNT_ID: ACCOUNT, APP_URL: `https://${TARGETS.production.host}`, ...CONTROL.vars });
+    // The release's copy of it has no database id: the pipeline finds the database by name.
+    expect(controlConfig(controlWranglerConfig()).d1).toEqual([{ name: "DB", databaseName: TARGETS.production.database }]);
   });
 });
 

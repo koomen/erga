@@ -68,7 +68,7 @@ export interface Env {
   CLOUDFLARE_OAUTH_CLIENT_SECRET?: string;
   /**
    * Where documents' pages run: one origin each under this domain
-   * (<id>-<owner>.<PAGES_DOMAIN>, a wildcard route), erga-pages.dev when
+   * (<id>-<owner>.<PAGES_DOMAIN>, a wildcard route), production's pages domain (deploy/targets.json) when
    * unset; or PAGES_HOST, one host they all share (a server on workers.dev,
    * which has no wildcards; deploy/pipeline.ts sets one or the other).
    */

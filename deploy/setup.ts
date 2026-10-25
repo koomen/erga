@@ -2,10 +2,11 @@
 // One-time setup of the control Worker (erga-control, control/), its secrets
 // and the one deploy token Erga deploys with: the runbook, as a script. It
 // says what it will do first, then does each step only after you say yes.
-// It never deploys erga.dev's app. On the app Workers it sets one secret
-// (SNAPSHOT_TOKEN, shared with the control Worker).
+// It never deploys production's app (bun deploy/run.ts production does). On
+// the app Workers it sets one secret (SNAPSHOT_TOKEN, shared with the control
+// Worker). Every name it uses is in deploy/targets.json (docs/self-host.md).
 //
-//   CLOUDFLARE_ACCOUNT_ID=… bun deploy/setup.ts
+//   bun deploy/setup.ts                    (the account is deploy/targets.json's; CLOUDFLARE_ACCOUNT_ID overrides it)
 //   bun deploy/setup.ts --dry-run          (says what it would do, asks nothing, changes nothing)
 //   bun deploy/setup.ts --control          (deploy the control Worker again: after control/ or its image changed)
 //   bun deploy/setup.ts --oauth            (only step 7: the OAuth client's secret, if it has one, from CLOUDFLARE_OAUTH_CLIENT_SECRET)
@@ -19,10 +20,10 @@
 // DNS, Zone read and Artifacts (the cf CLI's login has them).
 //
 // The control Worker's Cloudflare credential is an OAuth grant, not a token
-// anyone assembles: once it runs, an admin opens https://ops.erga.dev/install
-// and consents in the browser (deploy/credential.ts). Erga's OAuth client
-// ("Erga", public, PKCE) is made once on the dashboard (Manage account ›
-// OAuth clients) and its id goes in control/wrangler.jsonc; nothing here
+// anyone assembles: once it runs, an admin clicks Connect Cloudflare on the
+// Ops page and consents in the browser (deploy/credential.ts). Erga's OAuth
+// client ("Erga", public, PKCE) is made once on the dashboard (Manage account ›
+// OAuth clients) and its id goes in deploy/targets.json; nothing here
 // makes tokens. (Making account API tokens through the API was refused on
 // 2026-10-12, 403 9109, with the right permission: that way is gone.)
 //
@@ -30,15 +31,16 @@
 // account, with --yes taking the defaults: the tests run it so.
 
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTROL_OAUTH_SCOPES } from "./credential";
-import { Cloudflare, DeployError, zoneIdOf, type Fetch } from "./pipeline";
+import { Cloudflare, DeployError, findDatabase, zoneIdOf, type Fetch } from "./pipeline";
 import { machineCredential } from "./local-credential";
 import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock-cloudflare";
 import { ask, deployFromMachine } from "./run";
-import { CONTROL, SOURCE, TARGETS } from "./targets";
+import { controlWranglerConfig } from "./release";
+import { ACCOUNT, CONTROL, SOURCE, TARGETS } from "./targets";
 
 const args = process.argv.slice(2);
 const flag = (f: string) => args.includes(f);
@@ -50,35 +52,33 @@ const secret = () => randomBytes(32).toString("hex");
 /** The wrangler that deploys the control Worker (its containers need a recent one). */
 export const WRANGLER = "wrangler@4.147.0";
 const CONTROL_DIR = new URL("../control/", import.meta.url).pathname;
-/** The release store's bucket (control/wrangler.jsonc: RELEASES; deploy/releases.ts). */
-const RELEASES_BUCKET = "erga-releases";
+/** The release store's bucket (the control Worker's RELEASES; deploy/releases.ts). */
+const RELEASES_BUCKET = CONTROL.releases;
+/** The filled-in config wrangler deploys (controlWranglerConfig), next to control/wrangler.jsonc so its paths hold; deleted after. */
+const DEPLOY_CONFIG = join(CONTROL_DIR, "wrangler.deploy.json");
+/** The account: CLOUDFLARE_ACCOUNT_ID if set, else deploy/targets.json's. */
+const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || ACCOUNT;
 
-/** The control Worker's GitHub OAuth app's Client ID, as control/wrangler.jsonc has it (JSONC: comments stripped). */
-/** One of control/wrangler.jsonc's vars (its GitHub app's and OAuth client's ids), or "". */
-function controlVar(name: string): string {
-  try {
-    const text = readFileSync(join(CONTROL_DIR, "wrangler.jsonc"), "utf8").replace(/^\s*\/\/.*$/gm, "");
-    return String((JSON.parse(text) as { vars?: Record<string, string> }).vars?.[name] ?? "").trim();
-  } catch { return ""; }
-}
+/** One of the control Worker's vars in deploy/targets.json (control.vars: its GitHub App's and OAuth client's ids), or "". */
+const controlVar = (name: string): string => String(CONTROL.vars[name] ?? "").trim();
 const controlClientId = () => controlVar("GITHUB_APP_CLIENT_ID");
 
 const PLAN = [
   `Check the credential, the account, and its zones ${[...new Set([CONTROL.zone, STAGING.zone, PROD.pages.zone, STAGING.pages.zone])].join(", ")} (reads only).`,
   `Erga's source: the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (made if it isn't there). The control Worker reaches it through its Artifacts binding, not a token. And the release store's R2 bucket, ${RELEASES_BUCKET} (made if it isn't there), which the control Worker binds.`,
-  `The control Worker's GitHub OAuth app: its Client ID in control/wrangler.jsonc (homepage https://${CONTROL.host}, callback https://${CONTROL.host}/auth/github/callback).`,
+  `The control Worker's GitHub App: its id, slug and client id in deploy/targets.json (control.vars; homepage https://${CONTROL.host}, callback https://${CONTROL.host}/auth/github/callback).`,
   `The control Worker (${CONTROL.worker}, control/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its container image) if it isn't there, or with --control. It gets ${CONTROL.host}.`,
   `The control Worker's secrets: a SESSION_SECRET (kept if it has one), its GitHub app's client secret, a GitHub mirror token if you want the mirror, and SNAPSHOT_TOKEN, which it shares with ${APP_WORKERS.join(" and ")} (set on all three: staging's data copy goes through it).`,
   `Staging's first deploy, from this machine, only if ${STAGING.worker} isn't there: build HEAD, make it and its database with a copy of production's data.`,
-  `The Cloudflare credential: an OAuth grant, by an admin's consent at https://${CONTROL.host}/install once the Worker runs (nothing is made here). Erga's OAuth client's id is in control/wrangler.jsonc; its secret, if the client has one, from CLOUDFLARE_OAUTH_CLIENT_SECRET.`,
+  `The Cloudflare credential: an OAuth grant, by an admin's consent at https://${CONTROL.host}/install once the Worker runs (nothing is made here). Erga's OAuth client's id is in deploy/targets.json (control.vars); its secret, if the client has one, from CLOUDFLARE_OAUTH_CLIENT_SECRET.`,
   `Check it: https://${CONTROL.host}/api/health answers, and each target answers its version.`,
 ];
 const OAUTH_STEPS = [1, 7];
 
 // --hook-secret: a new DEPLOY_HOOK_SECRET, set on both app Workers, for the sign-in settings they share server to server.
 if (flag("--hook-secret")) {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "", cred = mock ? null : machineCredential();
-  if (mock || !/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("--hook-secret: set CLOUDFLARE_ACCOUNT_ID and log in with `bunx cf auth login` (not under the mock)."); process.exit(1); }
+  const accountId = ACCOUNT_ID, cred = mock ? null : machineCredential();
+  if (mock || !/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("--hook-secret: set the account (deploy/targets.json, or CLOUDFLARE_ACCOUNT_ID) and log in with `bunx cf auth login` (not under the mock)."); process.exit(1); }
   console.log(`A new DEPLOY_HOOK_SECRET for ${APP_WORKERS.join(" and ")} (not printed, not kept here).`);
   if (!ask("Go on?", yes)) process.exit(1);
   const value = secret(), cf = new Cloudflare(cred.token);
@@ -95,9 +95,9 @@ console.log(`\nThe credential's scopes (what an admin consents to at /install): 
 if (dry) { console.log("--dry-run: nothing done."); process.exit(0); }
 if (!ask("Start? (each step asks again before it changes anything)", yes)) process.exit(1);
 
-const accountId = mock ? "0123456789abcdef0123456789abcdef" : process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+const accountId = mock ? "0123456789abcdef0123456789abcdef" : ACCOUNT_ID;
 const cred = mock ? { token: "mock-setup-token", from: "the mock" } : machineCredential();
-if (!/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("Set CLOUDFLARE_ACCOUNT_ID, and CLOUDFLARE_API_TOKEN or log in with `bunx cf auth login` (see the top of this file)."); process.exit(1); }
+if (!/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("Set the account (deploy/targets.json's account, or CLOUDFLARE_ACCOUNT_ID), and CLOUDFLARE_API_TOKEN or log in with `bunx cf auth login` (see the top of this file)."); process.exit(1); }
 const token = cred.token;
 const net: Fetch = mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis);
 const cf = new Cloudflare(token, net);
@@ -126,16 +126,19 @@ if (flag("--cleanup")) {
   process.exit(0);
 }
 
-/** `bunx wrangler deploy` in control/: the image (Docker), the Worker, its address. The image caches the checkout's dependencies (deps/, for the build only). */
-function deployControl() {
+/** `bunx wrangler deploy` in control/, on the filled-in config: the image (Docker), the Worker, its address. The image caches the checkout's dependencies (deps/, for the build only). */
+async function deployControl() {
+  const databaseId = await findDatabase(cf, acc, PROD.database);
+  if (!databaseId) throw new DeployError(`The account has no D1 database called ${PROD.database} (production's: the control Worker binds it). Deploy production first: bun deploy/run.ts production.`);
+  writeFileSync(DEPLOY_CONFIG, JSON.stringify(controlWranglerConfig(databaseId), null, 2));
   const deps = join(CONTROL_DIR, "builder/deps");
   mkdirSync(deps, { recursive: true });
   for (const f of ["package.json", "bun.lock"]) copyFileSync(new URL(`../${f}`, import.meta.url).pathname, join(deps, f));
   // An empty config dir: wrangler must use this token, not its own older login (which can't write containers).
   const xdg = mkdtempSync(join(tmpdir(), "erga-wrangler-"));
   let p;
-  try { p = Bun.spawnSync(["bunx", WRANGLER, "deploy"], { cwd: CONTROL_DIR, stdout: "inherit", stderr: "inherit", env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId, XDG_CONFIG_HOME: xdg, WRANGLER_SEND_METRICS: "false" } }); }
-  finally { rmSync(deps, { recursive: true, force: true }); rmSync(xdg, { recursive: true, force: true }); }
+  try { p = Bun.spawnSync(["bunx", WRANGLER, "deploy", "--config", DEPLOY_CONFIG], { cwd: CONTROL_DIR, stdout: "inherit", stderr: "inherit", env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId, XDG_CONFIG_HOME: xdg, WRANGLER_SEND_METRICS: "false" } }); }
+  finally { rmSync(deps, { recursive: true, force: true }); rmSync(xdg, { recursive: true, force: true }); rmSync(DEPLOY_CONFIG, { force: true }); }
   if (p.exitCode != 0) throw new DeployError(`${CONTROL.worker} didn't deploy (see above). Is OrbStack (Docker) running?`);
 }
 
@@ -145,7 +148,7 @@ try {
   const account = await cf.call<{ name: string }>("GET", acc, "read the account");
   for (const z of new Set([CONTROL.zone, PROD.pages.zone, STAGING.pages.zone])) await zoneIdOf(cf, accountId, z);
   let scripts = await scriptsNow();
-  if (!scripts.includes(PROD.worker)) throw new DeployError(`There's no Worker called ${PROD.worker} in this account: is it erga.dev's?`);
+  if (!scripts.includes(PROD.worker)) throw new DeployError(`There's no Worker called ${PROD.worker} in this account: is it ${PROD.host}'s? Deploy production first (bun deploy/run.ts production), or check deploy/targets.json's account.`);
   console.log(`   ${account?.name}: the zones are there; so is production's Worker${scripts.includes(STAGING.worker) ? `, and ${STAGING.worker}` : ""}${scripts.includes(CONTROL.worker) ? `, and ${CONTROL.worker}` : ""}.`);
 
   if (!oauthOnly) {
@@ -166,17 +169,17 @@ try {
 
     step(3);
     const clientId = controlClientId() || (mock ? "Iv1.mockgithubapp0" : "");
-    if (clientId) console.log(`   The GitHub App's client id is ${clientId} (control/wrangler.jsonc: GITHUB_APP_ID, GITHUB_APP_SLUG, GITHUB_APP_CLIENT_ID).`);
+    if (clientId) console.log(`   The GitHub App's client id is ${clientId} (deploy/targets.json control.vars: GITHUB_APP_ID, GITHUB_APP_SLUG, GITHUB_APP_CLIENT_ID).`);
     else {
       console.log(`   None yet: signing in to ${CONTROL.host} won't work until there is one (admin-scope tokens work). Make a GitHub App (github.com/settings/apps/new; public):`);
       console.log(`   callback https://${CONTROL.host}/auth/github/callback (request user authorization during installation), webhook https://${CONTROL.host}/github/webhook (push events),`);
-      console.log(`   permissions Contents read and write, Metadata read, Administration read and write. Put its id, slug and client id in control/wrangler.jsonc, run this again with --control, and give its secrets at step 5.`);
+      console.log(`   permissions Contents read and write, Metadata read, Administration read and write. Put its id, slug and client id in deploy/targets.json (control.vars), run this again with --control, and give its secrets at step 5.`);
     }
 
     step(4);
     if (scripts.includes(CONTROL.worker) && !flag("--control")) console.log("   It's there (--control deploys it again).");
     else if (mock) console.log("   (mock) It's there.");
-    else if (ask(`   Deploy it now (\`bunx ${WRANGLER} deploy\` in control/; needs Docker running)?`, yes)) { deployControl(); scripts = await scriptsNow(); }
+    else if (ask(`   Deploy it now (\`bunx ${WRANGLER} deploy\` in control/; needs Docker running)?`, yes)) { await deployControl(); scripts = await scriptsNow(); }
     else console.log("   Skipped: nothing deploys until it's there.");
 
     step(5);
@@ -232,8 +235,8 @@ try {
   {
     const secret = read("CLOUDFLARE_OAUTH_CLIENT_SECRET");
     const clientId = controlVar("CLOUDFLARE_OAUTH_CLIENT_ID");
-    if (!clientId) console.log(`   No OAuth client yet: make "Erga" on the dashboard (Manage account › OAuth clients; public, PKCE, redirect https://${CONTROL.host}/install/callback, the scopes above), put its client id in control/wrangler.jsonc (CLOUDFLARE_OAUTH_CLIENT_SECRET only if it has a secret), and deploy the control Worker (--control, or a push to main).`);
-    else console.log(`   The OAuth client ${clientId} (control/wrangler.jsonc).`);
+    if (!clientId) console.log(`   No OAuth client yet: make "Erga" on the dashboard (Manage account › OAuth clients; public, PKCE, redirect https://${CONTROL.host}/install/callback, the scopes above), put its client id in deploy/targets.json (control.vars; CLOUDFLARE_OAUTH_CLIENT_SECRET only if it has a secret), and deploy the control Worker (--control, or a push to main).`);
+    else console.log(`   The OAuth client ${clientId} (deploy/targets.json).`);
     if (secret && scripts.includes(CONTROL.worker)) { await putSecret(CONTROL.worker, "CLOUDFLARE_OAUTH_CLIENT_SECRET", secret); console.log(`   Stored its secret on ${CONTROL.worker} as CLOUDFLARE_OAUTH_CLIENT_SECRET (not printed).`); }
     else if (secret) console.log(`   There's no ${CONTROL.worker} to store the client secret on yet.`);
     const status = await (await net(`https://${CONTROL.host}/api/install`, { headers: { Authorization: `Bearer ${token}` } })).json().catch(() => null) as { connected?: boolean; by?: string; problem?: string } | null;

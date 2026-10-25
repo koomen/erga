@@ -1,6 +1,6 @@
 // Erga's GitHub App, as a Worker has it (server/source/github.ts): erga.dev's
 // control Worker has the App whole (its id, slug and client id in
-// control/wrangler.jsonc; the client secret, the private key and the webhook
+// deploy/targets.json, control.vars; the client secret, the private key and the webhook
 // secret as its secrets). An install's control Worker has only the public
 // parts (its install set them), and reaches the rest through erga.dev over
 // its fork's secret (deploy/forks.ts): installation tokens, the uninstall,

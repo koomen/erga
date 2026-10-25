@@ -1,4 +1,5 @@
 {
+  "account": "c24e663b6f522eb02c60b6ce88ec4493",
   "admins": "koomen,dsiroker",
   "source": {
     "namespace": "erga",
@@ -8,7 +9,14 @@
     "branch": "main",
     "worker": "erga-control",
     "host": "ops.erga.dev",
-    "zone": "erga.dev"
+    "zone": "erga.dev",
+    "releases": "erga-releases",
+    "vars": {
+      "GITHUB_APP_ID": "5354935",
+      "GITHUB_APP_SLUG": "erga-editor",
+      "GITHUB_APP_CLIENT_ID": "Iv23liSAkdrgzW0esRBO",
+      "CLOUDFLARE_OAUTH_CLIENT_ID": "62d43878d5673b62dd0453086a5f4fe9"
+    }
   },
   "targets": {
     "production": {

@@ -202,7 +202,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   }
   // The deploy page: installs in your own account. It checks who may use it itself (the deploy_page setting).
   if (c.deploy && (path == "/deploy" || path.startsWith("/deploy/"))) return c.deploy(request);
-  if (path == "/deploy" || path.startsWith("/deploy/")) return wantsPageAt(request, path) ? page("Not here", `Installs are made from Erga's own control Worker, not from an install's. <a href="/">Ops</a>.`, 404) : json({ error: "Not here: installs are made from erga.dev's control Worker." }, 404);
+  if (path == "/deploy" || path.startsWith("/deploy/")) return wantsPageAt(request, path) ? page("Not here", `Installs are made from Erga's own control Worker, not from an install's. <a href="/">Ops</a>.`, 404) : json({ error: "Not here: installs are made from Erga's own control Worker, not from an install's." }, 404);
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
   // A downstream's control Worker, with its fork's secret: its repository's token, and builds of its commits.
@@ -262,7 +262,7 @@ async function domainRoutes(request: Request, url: URL, c: Control, session: Adm
 async function forkRoutes(request: Request, path: string, c: Control): Promise<Response> {
   const m = /^\/forks\/([a-z0-9-]{4,40})\/(token|builder\/build|builder\/cancel|github\/token|github\/uninstall|hosts)$/.exec(path);
   if (!m || request.method != "POST") return json({ error: "Not found" }, 404);
-  if (!c.forks) return json({ error: "This control Worker hosts no forks: forks live at erga.dev's." }, 404);
+  if (!c.forks) return json({ error: "This control Worker hosts no forks: forks live at upstream's." }, 404);
   const secret = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
   if (!secret) return json({ error: "This fork's secret (FORK_SECRET) goes as the Bearer token." }, 401);
   const [, id, what] = m;
@@ -566,7 +566,7 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   // cookie (the PKCE verifier).
   if (path == "/install/start" && (method == "POST" || method == "GET")) {
     const popup = url.searchParams.get("popup") == "1";
-    if (!c.oauth.clientId && !c.oauth.mock) return done({ ok: false, error: "This control Worker has no OAuth client yet: CLOUDFLARE_OAUTH_CLIENT_ID in control/wrangler.jsonc is empty." }, popup);
+    if (!c.oauth.clientId && !c.oauth.mock) return done({ ok: false, error: "This control Worker has no OAuth client yet: CLOUDFLARE_OAUTH_CLIENT_ID in deploy/targets.json (control.vars) is empty." }, popup);
     const state = c.oauth.relay ? relayState(url.origin, randomToken(16)) : randomToken(16), { verifier, challenge } = await pkce();
     const to = authorizeUrl({ ...(c.oauth.mock ? { authorize: `${url.origin}/install/mock/consent` } : {}), clientId: c.oauth.clientId || "mock", redirect, state, challenge });
     const consent: Consent = { state, verifier, popup };
@@ -645,7 +645,7 @@ function installBody(s: CredentialStatus, c: Control, url: URL, ops: string): st
   const status = s.connected
     ? `<p class="state-line ok"><span class="dot"></span><span><b>Connected</b> by ${esc(s.by ?? "?")} on ${when(s.at)}.</span></p>`
     : `<p class="state-line bad"><span class="dot"></span><span><b>Not connected.</b> ${why}</span></p>`;
-  const client = c.oauth.clientId ? `<code>${esc(c.oauth.clientId)}</code>` : c.oauth.mock ? "the mock's" : "none yet: CLOUDFLARE_OAUTH_CLIENT_ID in control/wrangler.jsonc";
+  const client = c.oauth.clientId ? `<code>${esc(c.oauth.clientId)}</code>` : c.oauth.mock ? "the mock's" : "none yet: CLOUDFLARE_OAUTH_CLIENT_ID in deploy/targets.json (control.vars)";
   const details = `<details>
     <summary>Details</summary>
     <dl>

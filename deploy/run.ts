@@ -15,7 +15,8 @@
 //                                                        its Worker only; a new container image needs
 //                                                        bun deploy/setup.ts --control)
 //
-// It needs CLOUDFLARE_ACCOUNT_ID in the environment, your own credential for
+// It deploys to deploy/targets.json's account (CLOUDFLARE_ACCOUNT_ID in the
+// environment overrides it), with your own credential for
 // the account (CLOUDFLARE_API_TOKEN, else the cf CLI's login:
 // deploy/local-credential.ts), and
 // SNAPSHOT_TOKEN for staging (production's, to copy its documents). It
@@ -25,7 +26,7 @@
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's copy of Erga's account,
 // with .build/release/ for the build: nothing real is touched.
 //
-// To roll erga.dev back at once, with no build, to an earlier Worker version
+// To roll production back at once, with no build, to an earlier Worker version
 // (D1 stays as it is): bunx cf workers deployments create --worker erga
 // --strategy percentage --versions '[{"version_id":"<id>","percentage":100}]'
 
@@ -38,7 +39,7 @@ import { unpackRelease } from "./bundle";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, targetPagesShown, type Fetch, type Release, type Target } from "./pipeline";
 import { machineCredential } from "./local-credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock-cloudflare";
-import { isDeployName, specOf, type OwnDeployName } from "./targets";
+import { ACCOUNT, isDeployName, specOf, TARGETS, type OwnDeployName } from "./targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: ROOT }).stdout.toString().trim();
@@ -96,8 +97,8 @@ export async function buildHere(commit: string, log: (line: string) => void, moc
 export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   const log = o.log ?? console.log;
   const mock = process.env.ERGA_DEPLOY_MOCK == "1";
-  const accountId = o.accountId ?? (mock ? FLEET_ACCOUNT : process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "");
-  if (!/^[0-9a-f]{32}$/.test(accountId)) throw new Error("Set CLOUDFLARE_ACCOUNT_ID (the account's id: 32 hex digits).");
+  const accountId = o.accountId ?? (mock ? FLEET_ACCOUNT : process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || ACCOUNT);
+  if (!/^[0-9a-f]{32}$/.test(accountId)) throw new Error("Set the account: deploy/targets.json's account, or CLOUDFLARE_ACCOUNT_ID (the account's id: 32 hex digits).");
   const token = o.token ?? (mock ? "mock-machine-token" : machineCredential()?.token ?? "");
   const snapshotToken = o.snapshotToken ?? o.secrets?.SNAPSHOT_TOKEN ?? (mock ? MOCK_SNAPSHOT_TOKEN : process.env.SNAPSHOT_TOKEN?.trim() ?? "");
   if (!token) throw new Error("Set CLOUDFLARE_API_TOKEN, or log in with `bunx cf auth login` (see deploy/local-credential.ts).");
@@ -118,7 +119,7 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   if (Object.keys(target.secrets).length) log(`  secrets set: ${Object.keys(target.secrets).join(", ")}`);
   if (o.name == "production") {
     if (!o.yes) {
-      const typed = prompt('This deploys erga.dev. Type "production" to go on:');
+      const typed = prompt(`This deploys ${TARGETS.production.host}. Type "production" to go on:`);
       if (typed?.trim() != "production") { log("Not deployed."); return false; }
     }
   } else if (!ask("Go on?", o.yes)) { log("Not deployed."); return false; }

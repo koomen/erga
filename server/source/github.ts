@@ -53,7 +53,7 @@ const enc = new TextEncoder();
 const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-const UA = "erga.dev";
+const UA = "Erga";
 
 /** GitHub's origins from the App's setting: github.com and api.github.com, or the pretend GitHub (one origin, its API under /api). */
 export function githubOrigins(standIn?: string | null): { www: string; api: string } {

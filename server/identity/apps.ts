@@ -128,7 +128,7 @@ export async function checkGithubApp(v: AppValues, o: { fetch?: typeof fetch; or
     r = await Promise.race([
       f(`${o.origin ?? "https://github.com"}/login/oauth/access_token`, {
         method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "erga.dev" },
+        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Erga" },
         body: JSON.stringify({ client_id: v.clientId, client_secret: v.secret, code: `erga-check-${crypto.randomUUID()}` }),
       }),
       new Promise<null>((ok) => setTimeout(() => ok(null), o.timeoutMs ?? 8000)),

@@ -65,7 +65,7 @@
 import { esc, page as plainPage } from "../pages/index.ts";
 import type { Session } from "../platform";
 import { adminResponse, type AdminLayout } from "../admin/index.ts";
-import { CONTROL, TARGETS } from "../../deploy/targets.ts";
+import { CONTROL, SOURCE, TARGETS } from "../../deploy/targets.ts";
 
 export interface SourcePageConfig {
   session: Session;
@@ -87,11 +87,11 @@ function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
     return `<div class="pane-head"><h2>Git Repository</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. The steps:</p>
-  <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
+  <ol><li>Make the Artifacts repo <code>${esc(SOURCE.repo)}</code> in the namespace <code>${esc(SOURCE.namespace)}</code> (deploy/targets.json: source).</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=${esc(SOURCE.namespace)}</code>, which adds the binding.</li><li>Push the history in: <code>bun server/source/import.ts</code>.</li></ol></div>`;
   }
   const remote = `${c.origin}/git/erga.git`;
   const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
-  const upstreamName = c.upstream ? esc(c.upstream.replace(/^https?:\/\//, "").replace(/^ops\./, "")) : "erga.dev";
+  const upstreamName = c.upstream ? esc(c.upstream.replace(/^https?:\/\//, "").replace(/^ops\./, "")) : "upstream";
   const target = (name: string, label: string, host: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Loading"><b>${label}</b><span class="host">${esc(host)}</span><span class="st"><i></i><span>…</span></span></button></div>`;
   const env = (name: string, label: string, host: string) => `<div class="env" id="env-${name}" data-target="${name}"><div class="env-top"><b>${label}</b><a class="host" href="https://${esc(host)}" target="_blank" rel="noopener">${esc(host)}</a></div><span class="st"><i></i><span>…</span></span><span class="env-more"><code class="env-commit"></code><button class="env-retry" type="button" data-retry="${name}" hidden title="Deploys this environment's branch head again">Retry</button><button class="env-log" type="button" data-target="${name}" hidden>Log</button></span><div class="env-domains" id="domains-${name}" hidden></div></div>`;
   return `
@@ -240,7 +240,7 @@ const SOURCE_SCRIPT = `
     if (channels && channels.edge && channels.edge.latest && sha.startsWith(channels.edge.latest) && !tags.length) out.push('<span class="rel edge-only" title="edge: the newest commit of main in the release store">edge</span>');
     return out.join("");
   }
-  const upstreamName = () => String(view?.upstream?.origin || "erga.dev").replace(/^https?:\\/\\//, "").replace(/^ops\\./, "");
+  const upstreamName = () => String(view?.upstream?.origin || "upstream").replace(/^https?:\\/\\//, "").replace(/^ops\\./, "");
   function render() {
     if (!view) return;
     const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");

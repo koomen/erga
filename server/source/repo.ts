@@ -66,6 +66,7 @@ import { BrowseError, cleanPath, list, read, search, snapshotOf, view, type Snap
 import { isBinary, mergeTrees, type Conflict } from "./merge.ts";
 import { GithubError, githubRemote as asRemote, type GithubLink, type PushEvent } from "./github.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
+import { TARGETS } from "../../deploy/targets.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
 export type Branch = (typeof BRANCHES)[number];
@@ -488,7 +489,7 @@ export class SourceRepo {
    */
   async update(who: Actor): Promise<UpdateResult> {
     const up = this.deps.upstream?.();
-    if (!up) throw new SourceError("This is erga.dev's own repository: it has no upstream to update from.", 409);
+    if (!up) throw new SourceError("This repository has no upstream to update from: it is not an install's fork.", 409);
     return this.locked(async () => {
       const remote = await this.deps.artifacts();
       const { refs } = await lsRefs(remote);
@@ -577,7 +578,7 @@ export class SourceRepo {
   /** A commit object by `who`, now. */
   private commitObject(o: { tree: string; parents: string[]; who: Actor; message: string }): GitObject {
     const time = Math.floor(this.now() / 1000);
-    const person = { name: o.who.name || o.who.login, email: o.who.login == SYSTEM ? "noreply@erga.dev" : `${o.who.login}@users.noreply.github.com`, time, tz: "+0000" };
+    const person = { name: o.who.name || o.who.login, email: o.who.login == SYSTEM ? `noreply@${TARGETS.production.host}` : `${o.who.login}@users.noreply.github.com`, time, tz: "+0000" };
     return { type: "commit", data: commitBytes({ tree: o.tree, parents: o.parents, author: person, committer: person, message: o.message }) };
   }
 

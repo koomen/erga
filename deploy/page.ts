@@ -5,6 +5,7 @@
 // /deploy/api/* and redraws.
 
 import { appPage, crumbs, esc } from "../server/pages/index.ts";
+import { TARGETS } from "./targets.ts";
 
 export interface DeployPageConfig {
   login: string;
@@ -130,9 +131,9 @@ export function deployPage(c: DeployPageConfig): string {
             <span class="row"><select id="app-zone" aria-label="Domain for the app"></select><input class="input mono" id="app-host" placeholder="erga.example.com" aria-label="Hostname for the app" autocomplete="off" spellcheck="false"></span></span></label>
         </fieldset>
         <fieldset><legend>Where documents' pages run</legend>
-          <p class="muted">A page's own scripts never run on the app's address, so they can't act as whoever views them. erga.dev gives each document an origin of its own on a second domain (erga-pages.dev).</p>
+          <p class="muted">A page's own scripts never run on the app's address, so they can't act as whoever views them. ${esc(TARGETS.production.host)} gives each document an origin of its own on a second domain (${esc(TARGETS.production.pages.domain)}).</p>
           <label class="choice"><input type="radio" name="pages" value="shared" checked><span><b id="pages-wd">erga-pages.…workers.dev</b><span class="muted">One address every document's pages share (workers.dev has no wildcards). Pages stay away from the app, but not from each other: fine to try Erga out, or for people who trust each other.</span></span></label>
-          <label class="choice" id="pages-zone-choice"><input type="radio" name="pages" value="zone"><span><b>A second domain of yours</b><span class="muted">Each document gets its own origin under it, as on erga.dev (a wildcard route and DNS record). Not the app's domain.</span>
+          <label class="choice" id="pages-zone-choice"><input type="radio" name="pages" value="zone"><span><b>A second domain of yours</b><span class="muted">Each document gets its own origin under it, as on ${esc(TARGETS.production.host)} (a wildcard route and DNS record). Not the app's domain.</span>
             <span class="row"><select id="pages-zone" aria-label="Domain for documents' pages"></select></span></span></label>
         </fieldset>
         <details id="buy"><summary>Get a new domain</summary>
@@ -149,7 +150,7 @@ export function deployPage(c: DeployPageConfig): string {
       <h2>Sign-in and the agent <a class="change" href="#" data-goto="agent" hidden>Change</a></h2>
       <p class="summary" id="sum-agent"></p>
       <div class="body">
-        <p>People sign in to your Erga with GitHub, through Erga's own GitHub App (erga.dev relays the sign-in to your server). Nothing to make, nothing to paste. On its Ops page you can connect a GitHub repository of yours the same way.</p>
+        <p>People sign in to your Erga with GitHub, through Erga's own GitHub App (${esc(TARGETS.production.host)} relays the sign-in to your server). Nothing to make, nothing to paste. On its Ops page you can connect a GitHub repository of yours the same way.</p>
         <label class="field">Anthropic API key (optional: turns on the agent in the editor; add it later as a secret if you like)<input class="input mono" id="anthropic" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"></label>
         <p class="error" id="agent-error"></p>
         <p class="row"><button class="new" id="agent-next">Continue</button></p>

@@ -68,7 +68,7 @@ export interface DashboardOps {
   domains(): Promise<object>;
   addDomain(target: string, hostname: string): Promise<object>;
   removeDomain(target: string, hostname: string): Promise<object>;
-  /** A downstream: Update from upstream (erga.dev) into staging. */
+  /** A downstream: Update from upstream into staging. */
   updateFromUpstream(): Promise<object>;
   /** The merge waiting on conflicts (from upstream, or from GitHub): one file resolved; the merge finished; or dropped. */
   resolveConflictFile(path: string, content: string | null): Promise<object>;
@@ -143,7 +143,7 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
     tool("remove_domain", "Remove a domain from an environment", "Takes a hostname off an environment's Worker (never its own address), as the × on the Ops page does. Only when the admin asks in this conversation.",
       Type.Object({ target: Type.String({ description: "The environment: production, staging or control" }), hostname: Type.String({ description: "The hostname to remove" }) }),
       (a) => ops.removeDomain(String(a.target ?? ""), String(a.hostname ?? ""))),
-    tool("update_from_upstream", "Update from erga.dev", "On an Erga installed on its own domain (a downstream of erga.dev): brings erga.dev's newest release (the channel this install follows: stable, or edge for main's head) into staging, as Update from erga.dev on the Ops page does. A fast-forward when this install has no commits of its own past it; else a merge commit. When files conflict, staging stays and the answer lists the files: the merge waits on the branch upstream-merge/<version>. Then read each file with read_source (ref: that branch), decide the resolution, write it with resolve_conflict_file, and finish_waiting_merge. Production follows only through deploy_production. Only when the admin asks in this conversation to update, upgrade or pull from erga.dev (list_branches shows upstream: how far behind, and conflict: any merge waiting).",
+    tool("update_from_upstream", "Update from upstream", "On an Erga installed on its own domain (a downstream of another Erga, its upstream): brings upstream's newest release (the channel this install follows: stable, or edge for main's head) into staging, as Update from upstream on the Ops page does. A fast-forward when this install has no commits of its own past it; else a merge commit. When files conflict, staging stays and the answer lists the files: the merge waits on the branch upstream-merge/<version>. Then read each file with read_source (ref: that branch), decide the resolution, write it with resolve_conflict_file, and finish_waiting_merge. Production follows only through deploy_production. Only when the admin asks in this conversation to update, upgrade or pull from erga.dev (list_branches shows upstream: how far behind, and conflict: any merge waiting).",
       Type.Object({}), () => ops.updateFromUpstream()),
     tool("resolve_conflict_file", "Resolve a conflicted file", "Writes one file of the merge waiting on conflicts (update_from_upstream's, on upstream-merge/<version>; or GitHub's, on github-merge/<commit>: list_branches shows it as conflict), resolved: the whole file's content, with no conflict markers left (<<<<<<<, =======, >>>>>>>); null deletes the file. Read it first with read_source at the merge branch, keep both sides' intent, and keep what this server changed on purpose. Answers the files that still carry markers.",
       Type.Object({ path: Type.String({ description: "The file's path, as the conflict lists it" }), content: Type.Union([Type.String(), Type.Null()], { description: "The resolved file, whole; null to delete the file" }) }),
@@ -258,7 +258,7 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   list_domains: ["Reading the domains", "Read the domains"],
   add_domain: ["Adding the domain", "Added the domain"],
   remove_domain: ["Removing the domain", "Removed the domain"],
-  update_from_upstream: ["Updating from erga.dev", "Updated from erga.dev"],
+  update_from_upstream: ["Updating from upstream", "Updated from upstream"],
   resolve_conflict_file: ["Resolving", "Resolved"],
   finish_waiting_merge: ["Finishing the waiting merge", "Finished the waiting merge"],
   drop_waiting_merge: ["Dropping the waiting merge", "Dropped the waiting merge"],
@@ -320,7 +320,7 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
   error); sync_github syncs now; disconnect_github forgets the repository. Connecting is
   a consent on GitHub's own page: when nothing is connected, a Connect GitHub button
   shows under github_status in this panel. Tell ${owner} to click it; never ask for a token.
-- A merge waiting on conflicts (from erga.dev's Update, or from a push on GitHub):
+- A merge waiting on conflicts (from upstream's Update, or from a push on GitHub):
   read each file at its branch with read_source, write the resolution with
   resolve_conflict_file, then finish_waiting_merge; or drop_waiting_merge.
 - list_deploys reads each target's deploys (staging, production); deploy_log reads a
@@ -340,10 +340,10 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
 - list_domains reads each environment's domains (production, staging, control: its own
   address, and those added); add_domain and remove_domain attach a hostname on one of
   the account's Cloudflare zones to an environment, or take one off.
-- On an Erga installed on its own domain (list_branches has upstream: erga.dev's release this
+- On an Erga installed on its own domain (list_branches has upstream: the upstream Erga's release this
   install follows, how many of its commits are missing here, how many commits are this
   install's own, and a merge waiting on conflicts, if any): update_from_upstream brings
-  erga.dev's release into staging (a fast-forward, or a merge commit). When files
+  upstream's release into staging (a fast-forward, or a merge commit). When files
   conflict, the merge waits on upstream-merge/<version>: read each listed file there
   (read_source with that ref), resolve it keeping both sides' intent, write it with
   resolve_upstream_file, then finish_upstream_merge; abandon_upstream_merge drops it.

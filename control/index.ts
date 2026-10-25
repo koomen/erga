@@ -4,7 +4,7 @@
 // to fix it down with it. It deploys every target (deploy/targets.json); the
 // app Workers hold no repository, no pipeline and no deploy token.
 //
-// Deployed with wrangler from this folder (control/wrangler.jsonc: its
+// Deployed with wrangler from this folder (control/wrangler.jsonc, filled in from deploy/targets.json: its
 // container image needs Docker), by deploy/setup.ts --control. The way past
 // a broken control Worker is Cloudflare itself: its dashboard or API, with
 // the person's own login (a rollback there is a deployment of an older
