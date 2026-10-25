@@ -11,11 +11,12 @@ test("a broken page says what's wrong by itself, with a fix button that, with th
   // The page's script error is the point.
   const ed = await openEditor(tab, await servers.main(), "broken", { allowErrors: true });
   await expect.poll(async () => (await toast(ed)).shown).toBe(true);
+  // The button says "Connecting to the agent…" until the agent's state comes, which can be after the page's problems.
+  await expect.poll(async () => (await toast(ed)).fixTitle).toMatch(/agent is off/i);
   const first = await toast(ed);
   expect(first.text).toMatch(/missing\.css|drawTheChart/);
   expect(first.fix).toBe(true);
   expect(first.fixDisabled).toBe("true");
-  expect(first.fixTitle).toMatch(/agent is off/i);
   await ed.eval(`document.querySelector("#toast .toast-fix").click()`);
   await expect.poll(async () => (await toast(ed)).text).toMatch(/agent is off/i);
 });

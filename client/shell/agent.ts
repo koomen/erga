@@ -357,6 +357,7 @@ export function mountAgent(shell: Shell) {
     if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; shell.room.setAgentBusy(a.log.busy || shell.people.busyAgents().length > 0); }
     renderLog();
     renderUndo();
+    shell.toast.syncFix();
   }
   return {
     agentState, agentEvent, renderModel, toggleAgent, showAgent, stopVoice, fixWithAgent, fixReported, editorContext, log,
