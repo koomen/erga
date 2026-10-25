@@ -16,13 +16,14 @@
 // the module and file names), bundle/ (the Worker's modules), assets/ (the
 // editor's files, as .build has them), migrations/ (server/migrations/) and
 // control/ (the control Worker's modules, bundled here from control/index.ts
-// with its config from control/wrangler.jsonc in release.json: the control
+// with its config from control/wrangler.jsonc and deploy/targets.json in release.json: the control
 // Worker deploys itself from it, deploy/control.ts). (The landing project
 // is built into the Worker itself.)
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { ControlConfig, ReleaseIndex } from "./pipeline.ts";
+import { controlWrangler } from "./targets.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SITE = join(ROOT, ".build"), OUT = join(SITE, "release");
@@ -76,10 +77,10 @@ export async function makeRelease(): Promise<ReleaseIndex> {
 /**
  * The control Worker's modules, bundled into `out` (one module, index.js:
  * control/index.ts and everything it imports, the runtime's own modules left
- * out), and its config from control/wrangler.jsonc.
+ * out), and its config (controlWranglerConfig).
  */
 export async function bundleControl(out: string): Promise<NonNullable<ReleaseIndex["control"]>> {
-  const config = controlConfig(readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8"));
+  const config = controlConfig(controlWranglerConfig());
   const built = await Bun.build({
     entrypoints: [join(ROOT, "control/index.ts")], outdir: out, naming: "index.js",
     format: "esm", target: "browser", external: ["cloudflare:*", "node:*"], minify: false, sourcemap: "none",
@@ -88,9 +89,14 @@ export async function bundleControl(out: string): Promise<NonNullable<ReleaseInd
   return { config, mainModule: "index.js", modules: files(out) };
 }
 
-/** control/wrangler.jsonc as the pipeline's ControlConfig (the comments stripped). */
-export function controlConfig(jsonc: string): ControlConfig {
-  const w = JSON.parse(stripComments(jsonc)) as {
+/** control/wrangler.jsonc (the comments stripped) with deploy/targets.json's names filled in (targets.ts controlWrangler): what wrangler deploys. */
+export function controlWranglerConfig(databaseId?: string): Record<string, unknown> {
+  return controlWrangler(JSON.parse(stripComments(readFileSync(join(ROOT, "control/wrangler.jsonc"), "utf8"))), databaseId);
+}
+
+/** The control Worker's wrangler config (controlWranglerConfig) as the pipeline's ControlConfig. */
+export function controlConfig(config: Record<string, unknown>): ControlConfig {
+  const w = config as {
     name: string; compatibility_date: string; compatibility_flags?: string[];
     containers?: { class_name: string; name?: string }[]; durable_objects?: { bindings?: { name: string; class_name: string }[] };
     d1_databases?: { binding: string; database_name: string }[]; artifacts?: { binding: string; namespace: string }[];

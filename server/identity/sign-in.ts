@@ -151,7 +151,7 @@ async function orgRules(platform: Pick<Platform, "directory">): Promise<string[]
  */
 export async function memberships(api: string, token: string): Promise<string[]> {
   const r = await fetch(`${api}/user/memberships/orgs?state=active&per_page=100`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "Erga" },
   }).catch(() => null);
   if (!r?.ok) { console.log(`GitHub's /user/memberships/orgs answered ${r?.status ?? "nothing"}: no organizations for this sign-in`); return []; }
   const list = (await r.json().catch(() => [])) as { state?: string; organization?: { login?: string } }[];
@@ -177,10 +177,10 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
   // The token: relayed from erga.dev (an install: sealed under the state's nonce), or the code traded here.
   const relayed = url.searchParams.get("relay");
   const token = relayed
-    ? (await openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) => (o ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error } : { error: "relay", error_description: "the answer relayed from erga.dev didn't open: it was for another sign-in" })))
+    ? (await openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) => (o ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error } : { error: "relay", error_description: "the answer relayed from upstream didn't open: it was for another sign-in" })))
     : await fetch(`${www}/login/oauth/access_token`, {
       method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "erga.dev" },
+      headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Erga" },
       body: JSON.stringify({ client_id: app?.clientId ?? platform.signIn.app.clientId, client_secret: app?.secret ?? platform.signIn.app.secret, code: url.searchParams.get("code"), redirect_uri: `${url.origin}/auth/github/callback` }),
     }).then((r) => r.json() as Promise<{ access_token?: string; error?: string; error_description?: string }>);
   if (!token.access_token) {
@@ -195,7 +195,7 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
   }
   // GitHub's access token reads who they are, once, and is never stored.
   const user = await fetch(`${api}/user`, {
-    headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
+    headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "Erga" },
   }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
   if (!user.login || typeof user.id != "number") return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
   // No email: GitHub's profile email isn't one it vouches for, so a GitHub account never matches a domain rule. Its
@@ -271,7 +271,7 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
   // The token: relayed from erga.dev (an install: sealed under the state's nonce), or the code traded here.
   const relayed = url.searchParams.get("relay");
   const token = refused ? { error: refused, error_description: refused == "access_denied" ? "you didn't allow it" : refused }
-    : relayed ? await openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) => (o ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error } : { error: "relay", error_description: "the answer relayed from erga.dev didn't open: it was for another sign-in" }))
+    : relayed ? await openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) => (o ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error } : { error: "relay", error_description: "the answer relayed from upstream didn't open: it was for another sign-in" }))
     : await googleToken(endpoints, app, url.searchParams.get("code") ?? "", `${url.origin}/auth/google/callback`);
   if (!token.access_token) {
     console.log(`Google sign-in failed: ${token.error}: ${token.error_description}`);

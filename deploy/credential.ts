@@ -18,7 +18,7 @@
 //
 // Nothing here is a person's hand-made token: no permission list to assemble,
 // no value to paste. The OAuth client itself ("Erga", public, PKCE) is made
-// once on erga.dev's account (control/wrangler.jsonc names its client id),
+// once on erga.dev's account (deploy/targets.json control.vars names its client id),
 // and serves every install (the same consent on erga.dev installs Erga into
 // another account: later).
 //

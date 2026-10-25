@@ -83,8 +83,8 @@ const noDeploys: Platform["deploys"] = (() => {
   return { status: none, logOf: none, redeploy: none, redeployWith: none, rollback: none, releases: none, promoteRelease: none, withdrawRelease: none } as unknown as Platform["deploys"];
 })();
 
-/** Where documents' pages run: an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
-const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
+/** Where documents' pages run: an origin each under PAGES_DOMAIN (production's pages domain when unset: deploy/targets.json), or the one PAGES_HOST. */
+const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || TARGETS.production.pages.domain;
 
 
 /**

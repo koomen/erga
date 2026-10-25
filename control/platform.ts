@@ -24,7 +24,7 @@ import type { Platform } from "../server/platform";
 import type { Builder } from "./builder/worker";
 import type { Deployer } from "../cloudflare/deploy-session";
 
-/** The control Worker's bindings (control/wrangler.jsonc); its secrets are set by deploy/setup.ts --control. */
+/** The control Worker's bindings (control/wrangler.jsonc, with deploy/targets.json's names and vars); its secrets are set by deploy/setup.ts --control. */
 export interface ControlEnv {
   /** Production's database: users (who is an admin) and agent tokens. Read, and the change log written (a production deploy). */
   DB: D1Database;

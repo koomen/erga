@@ -91,10 +91,10 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/source/github/disconnect", domain: "admin", action: "Disconnect GitHub: forget the repository, uninstall the App (Ops, the GitHub card)", tool: "disconnect_github" },
   { route: "GET /github/connect", domain: "none", action: "Connect GitHub: the App's install page on GitHub, in a popup (Ops, the GitHub card; the button under the agent's github_status)", exempt: "a secret: the consent gives Erga's GitHub App access to the person's repositories, only on GitHub's own page in their browser, never in a conversation (the agent offers the button)" },
   { route: "POST /github/connect/pick", domain: "none", action: "Pick the repository, or have Erga make one, in the popup after GitHub's install page", exempt: "the consent's own pages: it acts with the person's GitHub token, which only the popup holds" },
-  { route: "POST /github/webhook", domain: "none", action: "GitHub tells Erga of a push (the App's webhook): the repository syncs in", exempt: "server to server: GitHub's, signed with the webhook secret (or relayed from erga.dev, signed with the fork's secret)" },
+  { route: "POST /github/webhook", domain: "none", action: "GitHub tells Erga of a push (the App's webhook): the repository syncs in", exempt: "server to server: GitHub's, signed with the webhook secret (or relayed from upstream, signed with the fork's secret)" },
   { route: "POST /api/source/release", domain: "admin", action: "Cut a release: a version tag on main's head (Ops)", tool: "cut_release" },
-  // A downstream (an Erga on its own domain): its position against erga.dev, and Update from erga.dev (server/source/repo.ts).
-  { route: "POST /api/source/update", domain: "admin", action: "Update from erga.dev: upstream's release merged into staging (Ops)", tool: "update_from_upstream" },
+  // A downstream (an Erga on its own domain): its position against upstream, and Update from upstream (server/source/repo.ts).
+  { route: "POST /api/source/update", domain: "admin", action: "Update from upstream: upstream's release merged into staging (Ops)", tool: "update_from_upstream" },
   { route: "POST /api/source/update/resolve", domain: "admin", action: "Resolve one conflicted file of the merge waiting on conflicts, from upstream or from GitHub (the agent's way out of a conflict)", tool: "resolve_conflict_file" },
   { route: "POST /api/source/update/finish", domain: "admin", action: "Finish the resolved merge: staging moves (Ops)", tool: "finish_waiting_merge" },
   { route: "POST /api/source/update/abandon", domain: "admin", action: "Drop the waiting merge and its branch (Ops)", tool: "drop_waiting_merge" },
@@ -112,7 +112,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /forks/<id>/token", domain: "none", action: "A downstream's control Worker gets a token for its fork's repository", exempt: "server to server, with the fork's secret" },
   { route: "POST /forks/<id>/builder/build|cancel", domain: "none", action: "A downstream's control Worker has one of its commits built here", exempt: "server to server, with the fork's secret" },
   { route: "POST /forks/<id>/github/token|uninstall", domain: "none", action: "A downstream's control Worker gets a GitHub installation token for its connected repository, or has the App uninstalled", exempt: "server to server, with the fork's secret" },
-  { route: "POST /forks/<id>/hosts", domain: "none", action: "A downstream's control Worker tells erga.dev its hosts (its domains changed)", exempt: "server to server, with the fork's secret" },
+  { route: "POST /forks/<id>/hosts", domain: "none", action: "A downstream's control Worker tells upstream its hosts (its domains changed)", exempt: "server to server, with the fork's secret" },
   // The release store (control/routes.ts, deploy/releases.ts): the channels edge and stable.
   { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Ops page marks them on the log)", tool: "list_releases" },
   { route: "GET /api/releases", domain: "admin", action: "Read both channels (Ops)", tool: "list_releases" },

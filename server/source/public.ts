@@ -20,7 +20,7 @@ export const isPublicSourcePath = (path: string) => {
 };
 
 const BRANCHES = [
-  { name: "main", about: "what erga.dev runs" },
+  { name: "main", about: "what production runs" },
   { name: "staging", about: "the changes that come next" },
 ];
 
