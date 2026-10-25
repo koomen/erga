@@ -154,12 +154,13 @@ const PAGES_STYLE = `
   .unpick:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 18%, transparent); }
   .unpick svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 
-  /* A switch (a setting, a user's role): the track, and On or Off beside it where the row says it. */
+  /* A switch (a setting, a user's role): the track, and On or Off beside it where the row says it. Blue when on, grey when
+     off: the editor's colours (its switches and buttons, client/editor.html .fmt-switch), light or dark. */
   .switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--soft); user-select: none; }
   .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
-  .switch .track { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 45%, transparent); transition: background-color 150ms ease; }
+  .switch .track { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: var(--rule); transition: background-color 150ms ease; }
   .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); transition: transform 150ms ease; }
-  .switch input:checked + .track { background: var(--fg-strong); }
+  .switch input:checked + .track { background: var(--caret); }
   .switch input:checked + .track::after { transform: translateX(14px); }
   .switch input:focus-visible + .track { outline: 2px solid var(--caret); outline-offset: 2px; }
   .switch .state { min-width: 2em; }
