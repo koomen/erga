@@ -21,14 +21,15 @@
 //
 // In the browser the admin pages are one page (admin-nav.js, built from
 // client/admin-nav.ts): a link to another admin page changes only <main>
-// (and the title, the style, the breadcrumb and the sidebar's mark), so the
-// agent panel and its conversation stay. Each page is still made whole here,
-// for a deep link or a reload.
+// (and the title, the breadcrumb and the sidebar's mark), so the agent panel
+// and its conversation stay. Each page is still made whole here, for a deep
+// link or a reload. Every page has the same look: the one stylesheet,
+// admin.css (server/admin/style.ts), and no style of its own.
 //
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in server/app.ts; and each page's own door).
 
-import { appPage, crumbs as trail, esc, ICON, link, page, scriptTag } from "../pages/index.ts";
+import { appPage, asset, crumbs as trail, esc, ICON, link, page, scriptTag } from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { MARK } from "../../assets/logo/logo.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
@@ -62,8 +63,6 @@ export interface AdminLayout {
   title: string;
   /** Which sidebar link is this page. */
   here?: AdminSection;
-  /** The page's own style, after the layout's. */
-  style?: string;
   /** What goes in <main>. */
   body: string;
   /** The page uses the whole width (the Ops page); otherwise a column. */
@@ -91,100 +90,8 @@ const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent
   </div></aside></div>
 <button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${MARK}</button>`;
 
-export const LAYOUT_STYLE = `
-  /* The header: the breadcrumbs upper left; Share with agent left of the account corner upper right. */
-  /* The header bar: left of your avatar, as the editor's icons are; it scrolls with the page, as the avatar does. */
-  .chrome-top { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 38px); }
-  /* The sidebar beside the page. */
-  .admin-body { flex: 1; display: flex; align-items: flex-start; min-width: 0; padding: 62px 0 0 max(8px, env(safe-area-inset-left)); }
-  .admin-side { position: sticky; top: 12px; flex: none; box-sizing: border-box; width: 196px; padding: 0 12px 0 4px; overflow: hidden;
-    transition: width 240ms cubic-bezier(0.2, 0.7, 0.2, 1), padding 240ms cubic-bezier(0.2, 0.7, 0.2, 1); }
-  .admin-side ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .admin-side a, .side-toggle { box-sizing: border-box; display: flex; align-items: center; gap: 11px; height: 34px; padding: 0 9px; border-radius: 8px; white-space: nowrap;
-    color: var(--soft); text-decoration: none; font-size: 13.5px; font-weight: 500; transition: background-color 120ms ease, color 120ms ease; }
-  .admin-side a:hover, .side-toggle:hover { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  .admin-side a[aria-current="page"] { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 16%, transparent); }
-  .admin-side svg { flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  .admin-side .label { transition: opacity 180ms ease; }
-  .side-toggle { width: 36px; padding: 0 9px; border: 0; background: transparent; cursor: pointer; font: inherit; }
-  :is(.admin-side a, .side-toggle):focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-  /* Collapsed: a rail of icons, so the page gets the width. */
-  .side-closed .admin-side { width: 52px; padding-right: 4px; }
-  .side-closed .admin-side .label { opacity: 0; }
-  /* No animation as the page opens in the state it remembers: only when it's toggled. */
-  :root:not(.side-ready) .admin-side, :root:not(.side-ready) .admin-side .label { transition: none; }
-  @media (prefers-reduced-motion: reduce) { .admin-side, .admin-side .label { transition: none; } }
-  /* The admin's agent and the page: a grid of two, the agent on the left, as the editor's card, or on the right. As in the
-     editor, the user drags the agent by its head to the other side, and its inner edge to resize it (client/layout.ts,
-     mountPaneLayout, sets --agent-w and .agent-right; the grip and the ghost are style.css's). Collapsed, the agent is a
-     round button in the lower corner on its side; expanding grows the card out of that corner (a clip-path from the
-     button's circle), and the page slides over. */
-  :root { --agent-fab: 44px; --agent-ms: 480ms; --agent-ease: cubic-bezier(0.45, 0, 0.15, 1); }
-  .admin-work { --agent-w: 380px; flex: 1; min-width: 0; display: grid; grid-template-columns: var(--agent-w) minmax(0, 1fr); column-gap: 20px; align-items: start;
-    transition: grid-template-columns var(--agent-ms) var(--agent-ease), column-gap var(--agent-ms) var(--agent-ease); }
-  .admin-work.agent-right { grid-template-columns: minmax(0, 1fr) var(--agent-w); }
-  .agent-closed .admin-work { grid-template-columns: 0px minmax(0, 1fr); column-gap: 0px; }
-  .agent-closed .admin-work.agent-right { grid-template-columns: minmax(0, 1fr) 0px; }
-  .agent-dock { grid-row: 1; grid-column: 1; position: sticky; top: 12px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; min-width: 0; }
-  .admin-work > main { grid-row: 1; grid-column: 2; }
-  .admin-work.agent-right .agent-dock { grid-column: 2; }
-  .admin-work.agent-right > main { grid-column: 1; }
-  .agent-dock.layout-dragged { position: fixed; z-index: 40; }
-  .agent-dock.layout-dragged .agent-card { box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08); }
-  .agent-dock .agent-head { cursor: grab; user-select: none; touch-action: none; }
-  .agent-closed .agent-dock .agent-resize { display: none; }
-  body.layout-resizing :is(.admin-work, .admin-work *), body.layout-dragging .admin-work { transition: none !important; }
-  body.layout-resizing iframe, body.layout-dragging iframe { pointer-events: none; }
-  .admin-agent { position: absolute; inset: 0; filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.09)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.05)); transition: visibility 0s; }
-  .admin-agent .agent-card { position: absolute; top: 0; bottom: 0; left: 0; width: var(--agent-w); display: flex; flex-direction: column; box-sizing: border-box;
-    background: var(--bg); border: 1px solid var(--panel-border); border-radius: 18px; font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden;
-    clip-path: inset(0 0 0 0 round 18px); opacity: 1; transition: clip-path var(--agent-ms) var(--agent-ease), opacity 0s; }
-  .agent-right .admin-agent .agent-card { left: auto; right: 0; }
-  .admin-agent .agent-head .title { white-space: nowrap; }
-  .admin-agent .agent-card > * { transition: opacity 280ms ease 200ms; }
-  .agent-closed .admin-agent { visibility: hidden; transition: visibility 0s linear var(--agent-ms); }
-  .agent-closed .admin-agent .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) calc(100% - var(--agent-fab)) 0 0 round calc(var(--agent-fab) / 2)); opacity: 0;
-    transition: clip-path var(--agent-ms) var(--agent-ease), opacity 180ms ease 200ms; }
-  .agent-closed .agent-right .admin-agent .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) 0 0 calc(100% - var(--agent-fab)) round calc(var(--agent-fab) / 2)); }
-  .agent-closed .admin-agent .agent-card > * { opacity: 0; transition: opacity 120ms ease; }
-  .admin-fab { position: fixed; left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 21;
-    width: var(--agent-fab); height: var(--agent-fab); border-radius: 50%; border: 1px solid var(--panel-border); display: grid; place-items: center; padding: 0; cursor: pointer;
-    background: var(--panel-bg, var(--bg)); color: var(--chrome-hover); box-shadow: var(--shadow, 0 6px 24px rgba(0, 0, 0, 0.1)); opacity: 0; pointer-events: none; transition: opacity 200ms ease, box-shadow 200ms ease; }
-  .agent-right .admin-fab { left: auto; right: max(16px, env(safe-area-inset-right)); }
-  .admin-fab:hover { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.06); }
-  .admin-fab:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
-  .admin-fab svg { width: 22px; height: 22px; }
-  .admin-fab.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: admin-agent-spin 0.9s linear infinite; }
-  @keyframes admin-agent-spin { to { transform: rotate(360deg); } }
-  .agent-closed .admin-fab { opacity: 1; pointer-events: auto; transition: opacity 200ms ease 220ms, box-shadow 200ms ease; }
-  :root:not(.agent-ready) :is(.admin-work, .admin-agent, .admin-agent .agent-card, .admin-agent .agent-card > *, .admin-fab) { transition: none !important; }
-  @media (prefers-reduced-motion: reduce) { :is(.admin-work, .admin-agent, .admin-agent .agent-card, .admin-agent .agent-card > *, .admin-fab) { transition: none !important; } }
-  /* Narrower, it covers the page while it's open, from the lower left; no dragging or resizing. */
-  @media (max-width: 999.98px) {
-    .admin-work, .admin-work.agent-right { display: block; }
-    .agent-dock, .agent-closed .agent-dock { position: fixed; z-index: 22; top: max(56px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left));
-      width: min(380px, calc(100vw - 24px)); height: auto; min-height: 0; }
-    .agent-dock .agent-head { cursor: auto; }
-    .agent-dock .agent-resize { display: none; }
-    .admin-agent .agent-card, .agent-right .admin-agent .agent-card { width: 100%; left: 0; right: auto; }
-    .agent-closed .agent-right .admin-agent .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) calc(100% - var(--agent-fab)) 0 0 round calc(var(--agent-fab) / 2)); }
-    .agent-right .admin-fab { left: max(16px, env(safe-area-inset-left)); right: auto; }
-  }
-  main.admin-main { min-width: 0; max-width: 880px; margin: 0 auto; padding: 8px 24px 96px; }
-  main.admin-main.wide { max-width: none; margin: 0; padding: 0 max(16px, env(safe-area-inset-right)) 24px 8px; }
-  /* Room on the right, for the agent docked there; the wide page (the Ops page) has none of its own then. */
-  @media (min-width: 1000px) { .admin-body { padding-right: max(16px, env(safe-area-inset-right)); } main.admin-main.wide { padding-right: 0; } }
-  main.admin-main > header { margin-bottom: 24px; }
-  /* A phone: the links in a row above the page, always with their labels. */
-  @media (max-width: 720px) {
-    .admin-body { flex-direction: column; align-items: stretch; padding: 58px 0 0; }
-    .admin-side, .side-closed .admin-side { position: static; width: auto; padding: 0 12px 8px; }
-    .admin-side ul { flex-direction: row; margin: 0; overflow-x: auto; }
-    .side-closed .admin-side .label { opacity: 1; }
-    .side-toggle { display: none; }
-    main.admin-main, main.admin-main.wide { padding: 8px 16px 64px; }
-  }
-`;
+/** The admin pages' one stylesheet (server/admin/style.ts, built as admin.css): the same file on every admin page, the control Worker's too. */
+export const adminStyleTag = () => `<link rel="stylesheet" id="erga-admin-style" href="${asset("admin.css")}">`;
 
 /** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. And the first page's view: what its scripts stop when it goes. */
 /** The sidebar's remembered state, before it paints. */
@@ -257,7 +164,7 @@ export function adminLayout(o: AdminLayout): string {
   // Share with agent: the editor's icon button (client/editor.html, .chrome-top), the card from admin-share.js.
   const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
   const side = adminSidebar(o.here, (path) => link(path, o.session));
-  return appPage(o.title, LAYOUT_STYLE + (o.style ?? ""), `${EARLY_SCRIPT}
+  return appPage(o.title, "", `${adminStyleTag()}${EARLY_SCRIPT}
 ${crumbs}${bar}
 <div class="admin-body">
 ${side}

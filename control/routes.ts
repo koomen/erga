@@ -67,7 +67,7 @@ import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/
 import { open, seal, type Sealed } from "../deploy/seal.ts";
 import { createRepo, exchangeUserCode, GithubError, installationOf, installationRepos, installUrl, linkOf, openRelay, randomNonce, relayNonce, relayOrigin, relaySignature, relayState, sealRelay, userOf, verifyRelay, verifyWebhook, type GithubApp, type GithubRepo, type PushEvent, type UserToken } from "../server/source/index.ts";
 import { byLine } from "../shared/attribution.ts";
-import { adminSidebar, LAYOUT_STYLE, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
+import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
@@ -528,7 +528,7 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
   };
   if (path == "/api/install" && (method == "GET" || method == "HEAD")) return json(await c.deploys.credentialStatus());
   if (path == "/install" && (method == "GET" || method == "HEAD")) {
-    return c.layout({ title: "Cloudflare", here: "ops", session, style: INSTALL_STYLE, body: installBody(await c.deploys.credentialStatus(), c, url, c.page ?? "/") });
+    return c.layout({ title: "Cloudflare", here: "ops", session, body: installBody(await c.deploys.credentialStatus(), c, url, c.page ?? "/") });
   }
   if (method == "POST" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   // Connect Cloudflare: a GET too, so the Ops page (here, or on the app, another origin) opens it in a popup
@@ -597,28 +597,6 @@ ${o.ok && !warnings.length ? "setTimeout(() => window.close(), 300);" : ""}
 </script>`, o.ok ? 200 : 400);
 }
 
-const INSTALL_STYLE = `
-  .install { max-width: 620px; }
-  .install .back { margin: 0 0 10px; font-size: 13.5px; }
-  .install .back a { color: var(--soft); text-decoration: none; }
-  .install .back a:hover { color: var(--fg-strong); }
-  .install h2 { margin: 0 0 18px; font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
-  .install .state-line { display: flex; align-items: baseline; gap: 10px; margin: 0 0 18px; font-size: 15px; color: var(--fg); }
-  .install .state-line b { color: var(--fg-strong); font-weight: 600; }
-  .install .dot { flex: none; position: relative; top: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--chrome); }
-  .install .ok .dot { background: #1f9d55; } .install .bad .dot { background: #d64545; }
-  .install .msg { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: 10px; font-size: 14px; line-height: 1.5; color: var(--fg); background: color-mix(in srgb, var(--chrome) 6%, transparent); }
-  .install .msg.bad { border-color: color-mix(in srgb, #d64545 45%, var(--rule)); color: var(--fg-strong); }
-  .install .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 28px; }
-  .install details { font-size: 13.5px; color: var(--soft); }
-  .install summary { width: max-content; cursor: pointer; color: var(--soft); border-radius: 6px; }
-  .install summary:hover { color: var(--fg-strong); }
-  .install summary:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
-  .install dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; margin: 14px 0 0; }
-  .install dt { color: var(--soft); } .install dd { margin: 0; min-width: 0; color: var(--fg); }
-  .install code { font-size: 12.5px; overflow-wrap: anywhere; }
-  @media (max-width: 520px) { .install dl { grid-template-columns: 1fr; gap: 2px; } .install dt { margin-top: 8px; } }`;
-
 const when = (ms: number | null) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "");
 
 /** The page: one status line, what the last consent said, one button (and Disconnect when connected), the details folded. */
@@ -661,7 +639,7 @@ function installBody(s: CredentialStatus, c: Control, url: URL, ops: string): st
 }
 
 /**
- * The control Worker's own page shell: the admin pages' look (server/admin/layout.ts). The breadcrumbs upper left
+ * The control Worker's own page shell: the admin pages' look (server/admin/layout.ts), their one stylesheet (admin.css) too. The breadcrumbs upper left
  * (Erga › Admin › the page; the wordmark and Admin go to the app), the account corner upper right, the same sidebar (its
  * links to the app's admin pages, Ops here), and the page in a column, or the whole width (Ops).
  * No agent: the admin's agent lives in the app.
@@ -671,7 +649,7 @@ export function controlLayout(app: string): (o: AdminLayout) => Response {
     const trail = crumbs(o.session, [{ label: "Admin", href: `${app}/admin` }, { label: o.title }], "h1", app);
     const side = adminSidebar(o.here, (path) => (path == "/admin/ops" ? "/" : `${app}${path}`));
     const corner = accountHtml(accountOf(o.session, true), "/");
-    return new Response(appPage(o.title, LAYOUT_STYLE + CONTROL_STYLE + (o.style ?? ""), `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}
+    return new Response(appPage(o.title, "", `${adminStyleTag()}${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}
 ${trail}
 <div class="admin-body">
 ${side}
@@ -683,10 +661,3 @@ ${SIDEBAR_SCRIPT}
 ${corner}`, false), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   };
 }
-
-/** The page beside the sidebar, without the agent's grid: a centred column, or the whole width. */
-const CONTROL_STYLE = `
-  .admin-body > main.admin-main { flex: 1; }
-  .admin-body > main.admin-main:not(.wide) { margin: 0 auto; }
-  @media (max-width: 720px) { .admin-body > main.admin-main { padding-top: 12px; } }
-`;
