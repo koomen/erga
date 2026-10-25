@@ -1,5 +1,7 @@
 // The multiplayer suite in real tabs: a paragraph broken by bad markup explains
-// itself, and its button asks the agent to fix it. (How soon the prompt shows is a bench: browser-broken.bench.e2e.ts.)
+// itself, and its button asks the agent to fix it: in the shell's own words, with the problem as a page-report the
+// agent reads as data (shared/page-report.ts). (How soon the prompt shows is a bench: browser-broken.bench.e2e.ts.)
+import { FIX_REPORTED } from "../../../shared/page-report";
 import { expect, until } from "./harness";
 import { browserTest, noErrors, openAs } from "./suite";
 
@@ -21,14 +23,41 @@ browserTest("e2e/full/suite/browser-broken.e2e.ts", "a paragraph broken by bad m
   expect(!(await a.eval<boolean>(`document.body.classList.contains("agent-open")`)), "the agent panel is closed");
   // Watch the note frame by frame as it goes: it fades as it is, nothing jumps.
   await a.eval(`window.__frames = []; (function tick(n) { const t = document.getElementById("toast"); const r = t.getBoundingClientRect(); __frames.push({ op: +getComputedStyle(t).opacity, btn: !!t.querySelector(".toast-fix"), w: Math.round(r.width), h: Math.round(r.height) }); if (n < 40) requestAnimationFrame(() => tick(n + 1)); })(0)`);
+  const sent = tab.page.waitForRequest((r) => r.method() == "POST" && new URL(r.url()).pathname.endsWith("/api/agent"));
   await a.eval(`document.querySelector("#toast .toast-fix").click()`);
   await until(() => a.eval<boolean>(`document.body.classList.contains("agent-open")`), 5000, "the agent panel opens");
-  await until(() => a.eval<boolean>(`[...document.querySelectorAll("#agent-log .msg-user")].some((e) => e.textContent.includes("stray </h2>"))`), 5000, "the prompt shows in the panel");
-  await until(async () => {
-    const log = (await (await d.fetch("/api/agent?user=Ada", {}, "Ada")).json()) as { log: { items: { kind: string; text?: string }[] } };
-    return log.log.items.some((i) => i.kind == "user" && /stray <\/h2>/.test(i.text ?? "") && /Where the leads go/.test(i.text ?? "") && /line \d+/.test(i.text ?? ""));
-  }, 5000, "Ada's agent gets a prompt naming the problem, the paragraph and its line");
-  await until(() => a.eval<boolean>(`!!document.querySelector("#agent-log .msg-assistant") && !document.querySelector("#agent-log .msg-user.pending")`), 5000, "and its answer streams into the panel, like any message");
+  await until(
+    () =>
+      a.eval<boolean>(
+        `[...document.querySelectorAll("#agent-log .msg-user")].some((e) => e.textContent.includes(${JSON.stringify(FIX_REPORTED)}))`
+      ),
+    5000,
+    "the prompt shows in the panel"
+  );
+  const body = JSON.parse((await sent).postData() ?? "{}") as { text: string; context: string };
+  expect(body.text == FIX_REPORTED, "the prompt is the shell's own words", body.text);
+  const report = /<page-report>\n([\s\S]*)\n<\/page-report>/.exec(body.context)?.[1] ?? "";
+  expect(
+    /stray ‹\/h2›/.test(report) && /Where the leads go/.test(report) && /line \d+/.test(report),
+    "the page-report names the problem, the paragraph and its line",
+    report
+  );
+  await until(
+    async () => {
+      const log = (await (await d.fetch("/api/agent?user=Ada", {}, "Ada")).json()) as {
+        log: { items: { kind: string; text?: string }[] };
+      };
+      return log.log.items.some((i) => i.kind == "user" && i.text == FIX_REPORTED);
+    },
+    5000,
+    "Ada's agent gets the prompt"
+  );
+  await until(
+    () =>
+      a.eval<boolean>(`!!document.querySelector("#agent-log .msg-assistant") && !document.querySelector("#agent-log .msg-user.pending")`),
+    5000,
+    "and its answer streams into the panel, like any message"
+  );
   // The 41 frames sampled are done (a frame each, so a second or less, unless the tab is in the background).
   await until(() => a.eval<boolean>(`__frames.length > 40`), 5000, "the note's frames are in");
   const frames = await a.eval<{ op: number; btn: boolean; w: number; h: number }[]>(`__frames`);
