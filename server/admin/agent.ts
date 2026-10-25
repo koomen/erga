@@ -242,6 +242,15 @@ export class AdminAgents {
       },
       agentTokens: async () => (await this.platform.tokens.list(login)).map((t) => ({ id: t.id, label: t.label, kind: t.kind, scope: t.scope, docId: t.docId, created: t.created, expires: t.expires, lastUsed: t.lastUsed })),
       revokeAgentToken: (id) => this.platform.tokens.revoke(login, id, VIA.admin),
+      signIns: async () => {
+        const dir = this.platform.directory;
+        const [identities, emails] = await Promise.all([dir.identities.of(login), dir.identities.emailsOf(login)]);
+        return { identities: identities.map((i) => ({ provider: i.provider, handle: i.handle, linked: new Date(i.created).toISOString(), lastSignIn: i.lastUsed ? new Date(i.lastUsed).toISOString() : null })), verifiedEmails: emails };
+      },
+      unlinkSignIn: async (provider) => {
+        const left = await this.platform.directory.identities.unlink({ login, admin: true, via: VIA.admin }, login, provider);
+        return { unlinked: provider, signsInWith: left.map((i) => i.provider) };
+      },
     };
   }
 

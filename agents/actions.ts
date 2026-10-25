@@ -135,6 +135,9 @@ export const AGENT_ACTIONS: AgentAction[] = [
 
   // ------------------------------------------------------------ /settings: the person's agent tokens
   { route: "GET /settings", domain: "admin", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_agent_tokens" },
+  { route: "GET /settings", domain: "admin", action: "Read how you sign in: GitHub, Google, your verified emails (/settings)", tool: "list_sign_ins" },
+  { route: "POST /settings/unlink", domain: "admin", action: "Unlink GitHub or Google from your account (/settings, Sign-in)", tool: "unlink_sign_in" },
+  { route: "GET /auth/github?link=1", domain: "none", action: "Link GitHub or Google to your account: a consent on the provider's own page (/settings, Sign-in)", exempt: "a consent on the provider's own page, in the person's browser: the agent reads it (list_sign_ins) and tells them to click Link" },
   { route: "POST /tokens/revoke", domain: "admin", action: "Revoke an agent token, Share with agent's too (/settings)", tool: "revoke_agent_token" },
   { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (/settings)", exempt: SECRET },
   { route: "POST /tokens/approve", domain: "admin", action: "Approve an agent's request for a token (/settings)", exempt: `${SECRET} (it hands a new token to an outside agent)` },
