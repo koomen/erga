@@ -66,6 +66,9 @@ export interface ControlEnv {
   GITHUB_APP_CLIENT_SECRET?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_WEBHOOK_SECRET?: string;
+  /** Erga's Google OAuth client: installs sign in with Google through it (the secret only on erga.dev's control Worker). */
+  GOOGLE_APP_CLIENT_ID?: string;
+  GOOGLE_APP_CLIENT_SECRET?: string;
   /** Local development only: the pretend GitHub (dev/github-mock.ts), at the dev server. */
   ERGA_GITHUB_ORIGIN?: string;
   /** Signs this Worker's own session cookies (not production's secret). */

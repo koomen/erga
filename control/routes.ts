@@ -15,6 +15,9 @@
 //   /auth/github[/callback], /auth/logout   signing in (Erga's GitHub App: its user authorization) and out. The callback is the
 //                               App's one: an install's consent (its origin in the state) is relayed to it from here, and
 //                               Connect GitHub comes back to it too (installation_id)
+//   /auth/google/callback       Erga's Google OAuth client's callback for installs: an install's sign-in with Google (its
+//                               origin in the state) comes back here, the code is traded with the client's secret, and the
+//                               token goes on to the install sealed, as GitHub's does
 //   GET  /github/connect        Connect GitHub (admins; the Ops page opens it in a popup, ?popup=1): to the App's install page
 //                               on GitHub, where the person picks the account and the repositories. Back at the callback,
 //                               the one repository the App reaches is linked; several, or none: a pick page in the popup
@@ -64,6 +67,8 @@ import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "../deploy/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
 import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
+import { googleEndpoints } from "../server/identity/apps.ts";
+import { googleToken } from "../server/identity/sign-in.ts";
 import { open, seal, type Sealed } from "../deploy/seal.ts";
 import { createRepo, exchangeUserCode, GithubError, installationOf, installationRepos, installUrl, linkOf, openRelay, randomNonce, relayNonce, relayOrigin, relaySignature, relayState, sealRelay, userOf, verifyRelay, verifyWebhook, type GithubApp, type GithubRepo, type PushEvent, type UserToken } from "../server/source/index.ts";
 import { byLine } from "../shared/attribution.ts";
@@ -99,6 +104,8 @@ export interface Control {
   };
   /** Erga's GitHub App (cloudflare/github-app.ts): whole on erga.dev's control Worker (its secrets), the public parts on an install's; null where none is set. */
   github: GithubApp | null;
+  /** Erga's Google OAuth client, on erga.dev's control Worker (GOOGLE_APP_CLIENT_ID, GOOGLE_APP_CLIENT_SECRET): installs sign in with Google through it. */
+  google?: { clientId: string; secret: string; origin?: string | null } | null;
   /** An install's control Worker: its fork secret's hash, the key relayed webhooks are signed with. */
   forkSecretHash?: string;
   /** This Worker's sealing key (deploy/seal.ts): the person's GitHub token between the connect popup's pages (from its session secret unless given). */
@@ -164,6 +171,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
 
   if (path == "/auth/github") return startSignIn(p, request);
   if (path == "/auth/github/callback") return githubCallback(request, url, c);
+  if (path == "/auth/google/callback") return googleRelay(request, url, c);
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/github/webhook" && method == "POST") return githubWebhook(request, url, c);
   if (path == "/api/health" && read) {
@@ -326,6 +334,28 @@ async function githubCallback(request: Request, url: URL, c: Control): Promise<R
   }
   if (q.get("installation_id") || q.get("setup_action")) return githubConnectFinish(request, url, c, consent);
   return finishSignIn(c.platform, request);
+}
+
+/**
+ * /auth/google/callback: an install's sign-in with Erga's Google client (the state names its origin). The code is traded
+ * here, with the client's secret, and the token relayed to the install sealed under the state's nonce, as GitHub's is.
+ */
+async function googleRelay(request: Request, url: URL, c: Control): Promise<Response> {
+  const q = url.searchParams, state = q.get("state");
+  const to = relayOrigin(state);
+  if (!to || to == url.origin || !c.forks || !c.google?.secret) return page("Not here", "Sign-in with Google comes back here only for an install's server.", 404);
+  if (!(await c.deploys.isInstall(to))) return page("Not an install", `This sign-in names ${esc(to)}, which isn't a server installed from here.`, 400);
+  const payload: { token?: string; error?: string } = {};
+  if (q.get("error")) payload.error = q.get("error") == "access_denied" ? "You didn't allow Erga on Google's page, so nothing changed." : `Google didn't sign you in: ${q.get("error")}`;
+  else {
+    const t = await googleToken(googleEndpoints(c.google.origin ?? null), c.google, q.get("code") ?? "", `${url.origin}/auth/google/callback`, netOf(c));
+    if (t.access_token) payload.token = t.access_token;
+    else payload.error = `Google gave no token (${t.error_description || t.error || "no answer"}).`;
+  }
+  const back = new URL(`${to}/auth/google/callback`);
+  back.searchParams.set("state", state!);
+  back.searchParams.set("relay", await sealRelay(relayNonce(state!), payload));
+  return new Response(null, { status: 302, headers: { Location: back.toString(), "Cache-Control": "no-store" } });
 }
 
 /** The end of Connect GitHub: the popup's last page tells the Ops page that opened it and closes; an error stays, with Try again. */

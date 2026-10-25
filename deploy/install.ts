@@ -98,13 +98,15 @@ export interface Upstream {
   clientId: string;
   /** Erga's GitHub App (its client id and slug): the install's sign-in and Connect GitHub, through erga.dev. */
   github: { clientId: string; slug: string };
+  /** Erga's Google OAuth client (its client id): the install's sign-in with Google, through erga.dev. */
+  google?: { clientId: string };
 }
 
 export interface Installed { url: string; pages: string; database: string; worker: string; control: string; staging: string }
 
 /** The app's target: /deploy's, plus the control Worker beside it (its service binding and address), and the token staging's copies go through. */
 export function installAppTarget(plan: DeployPlan, sessionSecret: string, controlHost: string, upstream: Upstream, snapshotToken?: string): Target {
-  const t = targetOfPlan(plan, sessionSecret, { clientId: upstream.github.clientId, relay: upstream.origin });
+  const t = targetOfPlan(plan, sessionSecret, { clientId: upstream.github.clientId, relay: upstream.origin, googleClientId: upstream.google?.clientId });
   return { ...t, vars: { ...t.vars, CONTROL_URL: `https://${controlHost}` }, secrets: { ...t.secrets, ...(snapshotToken ? { SNAPSHOT_TOKEN: snapshotToken } : {}) }, services: { CONTROL: { service: INSTALL_CONTROL_WORKER, entrypoint: CONTROL_ENTRYPOINT } } };
 }
 
@@ -141,6 +143,7 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   const vars = {
     ADMINS: plan.admin.toLowerCase(), CLOUDFLARE_ACCOUNT_ID: plan.accountId, APP_URL: `https://${appHost}`,
     GITHUB_APP_CLIENT_ID: o.upstream.github.clientId, GITHUB_APP_SLUG: o.upstream.github.slug, CLOUDFLARE_OAUTH_CLIENT_ID: o.upstream.clientId,
+    ...(o.upstream.google?.clientId ? { GOOGLE_APP_CLIENT_ID: o.upstream.google.clientId } : {}),
     UPSTREAM: o.upstream.origin, INSTALL: JSON.stringify(spec),
   };
   const form = new FormData();

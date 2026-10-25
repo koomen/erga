@@ -117,5 +117,5 @@ test("signed out, the front page's + says you sign in first, and a template goes
   const href = await page.evaluate(`${ROOT_OF}.querySelector('.erga-new-menu a[data-template="page"]').getAttribute("href")`) as string;
   const r = await fetch(s.root + href, { redirect: "manual", headers: { Cookie: out } });
   expect(r.status).toBe(302);
-  expect(r.headers.get("location")).toBe(`/auth/github?next=${encodeURIComponent("/new?template=page")}`);
+  expect(r.headers.get("location")).toBe(`/auth/sign-in?next=${encodeURIComponent("/new?template=page")}`);
 });

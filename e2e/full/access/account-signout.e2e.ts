@@ -21,7 +21,7 @@ test("signed out: a person in a circle whose menu has only Sign in, which comes 
   await clickOn(page, "[data-erga-account] button");
   c = await corner(page);
   expect(c.open).toBe(true);
-  expect(c.links).toEqual([{ text: "Sign in", href: "/auth/github?next=%2Fnobody-here" }]);
+  expect(c.links).toEqual([{ text: "Sign in", href: "/auth/sign-in?next=%2Fnobody-here" }]);
   // Dark, on a phone, it opens too.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.setViewportSize({ width: 390, height: 760 });

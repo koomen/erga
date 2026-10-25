@@ -11,8 +11,9 @@
 //
 // What gets in without an admin, and why (each one checks its own credential):
 //
-//   /auth/github[/callback], /auth/logout
-//                                   signing in and out: an admin must be able to sign in
+//   /auth/sign-in, /auth/github[/callback], /auth/google[/callback], /auth/logout
+//                                   signing in and out: an admin must be able to sign in. Not /auth/username: a new
+//                                   account is never an admin, so staging makes none
 //   the editor's static files       /_erga/... (its code, styles, typeface and page, each named by its content's hash)
 //                                   and /logo.png: the app's own code, public in its repository, holding no data; the
 //                                   sign-in page and an admin's frame on the pages origin load them without a session.
@@ -55,7 +56,7 @@ import { tokenPath } from "./token-paths.ts";
 function exempt(request: Request, base: Platform, url: URL): boolean {
   const path = url.pathname;
   const method = request.method;
-  if (path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/logout") return true;
+  if (path == "/auth/sign-in" || path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/google" || path == "/auth/google/callback" || path == "/auth/logout") return true;
   if (isAssetPath(path) || path == "/logo.png") return method == "GET" || method == "HEAD";
   if (path == "/api/deploys/version" || path == "/api/health") return method == "GET" || method == "HEAD";
   if (isSignInPath(path) && isPeer(request, base)) return true;
@@ -110,7 +111,7 @@ export async function adminsOnlyGate(request: Request, base: Platform, url: URL)
   const production = `https://${TARGETS.production.host}`;
   const refusal = signedIn
     ? page("Staging is for Erga's admins only", `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one. Erga itself is at <a href="${production}">${TARGETS.production.host}</a>. <a href="/auth/logout">Sign out</a>`, 403)
-    : page("Staging is for admins: sign in", `This is staging, a test copy of Erga for its admins. Admins sign in with GitHub (staging's own GitHub app). Erga itself is at <a href="${production}">${TARGETS.production.host}</a>.</p><p><a class="new sign-in" href="/auth/github?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in with GitHub</a>`, 403);
+    : page("Staging is for admins: sign in", `This is staging, a test copy of Erga for its admins. Admins sign in with staging's own GitHub app, or Google's where it is on. Erga itself is at <a href="${production}">${TARGETS.production.host}</a>.</p><p><a class="new sign-in" href="/auth/sign-in?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in</a>`, 403);
   refusal.headers.set("Cache-Control", "no-store");
   return refusal;
 }

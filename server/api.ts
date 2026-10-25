@@ -628,7 +628,7 @@ async function pollForToken(request: Request, platform: Platform): Promise<Respo
 export async function tokensDoor(request: Request, platform: Platform): Promise<Response> {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, "");
   const session = await platform.sessionOf(request);
-  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(safeNext(path + url.search))}` } });
+  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(safeNext(path + url.search))}` } });
   if (session.agent) return page("Not for agents", "Tokens are made and approved by people, signed in.", 403);
   if (session.test) return page("Not for test people", "Sign in as yourself to make a token.", 403);
   const post = request.method == "POST";

@@ -46,6 +46,9 @@ export interface Env {
   /** Sign-in's GitHub OAuth app: the deploy's values; an admin's on /admin/auth win while set. */
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  /** Sign-in's Google OAuth client: the deploy's values; an admin's on /admin/auth win while set. */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
   /** Signs session cookies. */
   SESSION_SECRET: string;
   /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (server/directory/api-keys.ts; read through withKeys). */
@@ -121,6 +124,8 @@ export interface Env {
   ERGA_REMOTE_LATENCY_MS?: string;
   /** Local development only (the tests): a stand-in for github.com that sign-in's live check asks. */
   ERGA_GITHUB_ORIGIN?: string;
+  /** Local development only: a stand-in for Google's sign-in endpoints. */
+  ERGA_GOOGLE_ORIGIN?: string;
   /** Local development only (the tests): the other deploy target's server, in place of https://<its host>. */
   ERGA_PEER_ORIGIN?: string;
   /** Local development only: the repository's object ("erga"), hosted by the app in place of the control Worker. */
@@ -138,6 +143,8 @@ export interface Env {
   GITHUB_APP_ID?: string;
   GITHUB_APP_SLUG?: string;
   GITHUB_APP_CLIENT_ID?: string;
+  /** Erga's Google OAuth client's id, for installs (their sign-in with Google goes through erga.dev's control Worker). */
+  GOOGLE_APP_CLIENT_ID?: string;
   GITHUB_APP_CLIENT_SECRET?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_WEBHOOK_SECRET?: string;

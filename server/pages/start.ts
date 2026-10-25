@@ -9,7 +9,7 @@ export async function startPage(platform: Platform, session: Session | null): Pr
   const signedIn = session && !session.test;
   const actions = signedIn
     ? `<a class="new" href="${esc(link("/docs", session))}">Your documents</a><a class="pill" href="${esc(link("/new", session))}">New document</a>`
-    : `<a class="new" href="/auth/github?next=%2Fdocs">Sign in</a>`;
+    : `<a class="new" href="/auth/sign-in?next=%2Fdocs">Sign in</a>`;
   const style = `
   .start { padding-top: 22vh; }
   .start p { margin: 0 0 22px; color: var(--soft); }

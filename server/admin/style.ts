@@ -174,6 +174,10 @@ const PAGES_STYLE = `
   .state-line.bad .dot { background: var(--bad); }
 
   /* Authentication: a card for each server. */
+  .providers { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; margin: 4px 0 22px; }
+  .providers .switch { font-size: 14px; color: var(--fg-strong); }
+  .providers .hint { flex-basis: 100%; margin: 0; }
+  .provider-head { margin: 26px 0 10px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
   .server { margin: 0 0 22px; padding: 18px 20px 20px; border: 1px solid var(--rule); border-radius: 12px; }
   .server > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0 0 6px; }
   .server h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
