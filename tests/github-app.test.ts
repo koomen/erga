@@ -14,6 +14,9 @@ import { api, appJwt, GithubError, installationToken, openRelay, relayNonce, rel
 import { TEST_APP, testPrivateKey } from "./source-fixture";
 import { Directory } from "../server/directory/index.ts";
 import { memory } from "./memory-sql.ts";
+import { quietConsole } from "./quiet.ts";
+
+quietConsole();
 
 const OPS = "https://ops.erga.test", INSTALL = "https://ops.install.test";
 let gh: MockGithub, server: ReturnType<typeof Bun.serve>, www: string, app: GithubApp, key: string;

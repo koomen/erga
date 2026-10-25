@@ -18,6 +18,9 @@ import { ASSET_PREFIX, type AssetManifest } from "../shared/assets.ts";
 import { open, seal } from "../deploy/seal";
 import { pagesHost, pagesOrigin, pagesToken } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
+import { quietConsole } from "./quiet.ts";
+
+quietConsole();
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const ACC = "0123456789abcdef0123456789abcdef";

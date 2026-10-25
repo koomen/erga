@@ -32,6 +32,9 @@ import { runInstall } from "../deploy/install";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
 import { ACCOUNT, ADMINS, CONTROL, SOURCE, TARGETS } from "../deploy/targets";
 import { controlConfig, controlWranglerConfig } from "../deploy/release";
+import { quietConsole } from "./quiet.ts";
+
+quietConsole();
 
 const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;

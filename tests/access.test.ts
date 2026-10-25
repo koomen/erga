@@ -7,6 +7,9 @@ import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
 import { memory } from "./memory-sql.ts";
+import { quietConsole } from "./quiet.ts";
+
+quietConsole();
 
 const ADMIN = { login: "koomen", admin: true };
 const google = (sub: string, email: string, hd: string | null = null, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: null, emails: [{ email, verified }], hd });
