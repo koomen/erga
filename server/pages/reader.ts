@@ -14,9 +14,16 @@
 // this one document: that's the boundary (PAGE_SANDBOX).
 
 import { EVENT_TYPES, liveWatch } from "../../shared/live-page.ts";
-import { EDITING_API, insertHead, PROBLEM_WATCH, type ReaderConfig, TEXT_GUARD } from "../../shared/page.ts";
+import { insertHead, type ReaderConfig } from "../../shared/page.ts";
 import { asset, frameScripts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
+
+/** The page's problems, from before its first script (client/inline/page-problems.ts). */
+const PROBLEM_WATCH = inlineCall("page-problems");
+/** The text guard, while the editor is on the page (client/inline/page-text-guard.ts). */
+const TEXT_GUARD = inlineCall("page-text-guard");
+/** ergaEditor, for the page's own script (client/inline/page-editing-api.ts). */
+const EDITING_API = inlineCall("page-editing-api");
 
 /**
  * What a document's page may do in its frame, for readers and editors alike.

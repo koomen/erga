@@ -234,7 +234,7 @@ export abstract class EditorRender extends EditorMarks {
     return rects.length ? rects[at.offset < len ? 0 : rects.length - 1].top : null;
   }
 
-  /** Hands the page's problems (see PROBLEM_WATCH) to the shell, as they happen. */
+  /** Hands the page's problems (client/inline/page-problems.ts) to the shell, as they happen. */
   protected watchProblems(): void {
     const win = this.win as (Window & { __ergaProblems?: RawProblem[]; __ergaReport?: (p: RawProblem) => void }) | null;
     if (!win) return;
