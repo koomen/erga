@@ -14,7 +14,7 @@
 // pointer: the caret jumps away and other text gets selected. The page still
 // gets the press and pans; the caret stays where it was.
 //
-// TEXT_GUARD (shared/page.ts) goes first in the page's <head>, before the
+// The page's text guard (client/inline/page-text-guard.ts) goes first in the page's <head>, before the
 // page's scripts (the pages origin puts it there for whoever may edit): its
 // listeners on the window, in the capture phase, run before any of theirs. It
 // guards only while the editor is on the page (data-erga-editing).
@@ -26,7 +26,7 @@ type OwnWindow = Window & { __ergaOwn?: Record<string, Listener[]> };
 
 /**
  * Listens on the page's document for the editor (doc.addEventListener), and also during a press on the text,
- * which TEXT_GUARD keeps from the page's own handlers. Returns what stops it.
+ * which the page's text guard keeps from the page's own handlers. Returns what stops it.
  */
 export function listenAsEditor(doc: Document, type: string, f: Listener, opts?: AddEventListenerOptions | boolean): () => void {
   doc.addEventListener(type, f, opts);

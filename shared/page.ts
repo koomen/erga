@@ -51,45 +51,18 @@ export function insertHead(html: string, inject: string): string {
   return doctype ? doctype[0] + inject + html.slice(doctype[0].length) : inject + html;
 }
 
-/**
- * Catches the page's script errors and files that fail to load, from before its first script, and hands them to the
- * editor once it's there (`__ergaReport`).
- */
-export const PROBLEM_WATCH = `(function(){var q=window.__ergaProblems=[];function r(p){window.__ergaReport?window.__ergaReport(p):q.push(p)}addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.tagName){var u=t.getAttribute("src")||t.getAttribute("href");if(u)r({kind:"resource",tag:t.tagName.toLowerCase(),url:u})}else r({kind:"script",message:String(e.message||"Script error"),file:e.filename||"",line:e.lineno||0})},true);addEventListener("unhandledrejection",function(e){r({kind:"script",message:"Unhandled promise rejection: "+String(e.reason&&e.reason.message||e.reason),file:"",line:0})})})();`;
-
-/**
- * `ergaEditor`, for the page's own script: whether the editor is on it now (`editing`, and data-erga-editing on its
- * <html>, which the editor sets and takes off: client/frame.ts), with the event erga-editing on the window as it
- * changes, and `apply(edits)` for its custom edits (editor-agent/PROMPT.md, "Custom edits"), which waits for the editor.
- */
-export const EDITING_API = `(function(){var q=[];window.__ergaApplyQueue=q;window.ergaEditor=Object.freeze({get editing(){return document.documentElement.hasAttribute("data-erga-editing")},apply:function(ops){return new Promise(function(done){window.__ergaApply?done(window.__ergaApply(ops)):q.push([ops,done])})}})})();`;
-
 /** Where a press is the editor's: in a text block (data-erga-id) that takes edits, not in a widget or a form field. */
 export const GUARD_TEXT = "[data-erga-id]";
 export const GUARD_NOT_TEXT = '.erga-locked, [data-erga-noedit], [contenteditable="false"], input, textarea, select, button';
 /** What keeps the browser's own press (a link, a form field, an editable part the page made itself, a video's controls). */
-const GUARD_INTERACTIVE = 'a[href], button, input, textarea, select, label, summary, video, audio, iframe, [tabindex], [draggable="true"], [contenteditable]:not([contenteditable="false"])';
+export const GUARD_INTERACTIVE =
+  'a[href], button, input, textarea, select, label, summary, video, audio, iframe, [tabindex], [draggable="true"], [contenteditable]:not([contenteditable="false"])';
 /** The cursors that say a drag here moves the page. */
-const GUARD_GRAB = "^(grab|grabbing|move|all-scroll)$";
+export const GUARD_GRAB = "^(grab|grabbing|move|all-scroll)$";
 /** The press, its moves and its release, for the mouse, a pen and a touch. */
 export const GUARD_DOWN = ["pointerdown", "mousedown", "touchstart"];
 export const GUARD_MOVE = ["pointermove", "mousemove", "touchmove"];
 export const GUARD_UP = ["pointerup", "pointercancel", "mouseup", "touchend", "touchcancel"];
 /** The release that ends a press: a mouse's (a pen's and a tap's come as mouse events too, last), or a touch's. */
-const GUARD_END = ["mouseup", "touchend", "touchcancel"];
+export const GUARD_END = ["mouseup", "touchend", "touchcancel"];
 
-/**
- * The text guard (client/text-guard.ts says what it does), while the editor is on the page (data-erga-editing):
- * first, so its listeners on the window, in the capture phase, run before any of the page's.
- */
-export const TEXT_GUARD = `(function(TEXT,NOT_TEXT,INTERACTIVE,GRAB,DOWN,MOVE,UP,END){
-var own=window.__ergaOwn={},pressed=false,opts={capture:true,passive:false},grab=new RegExp(GRAB),root=document.documentElement;
-function on(){return root.hasAttribute("data-erga-editing")}
-function elOf(e){var t=e.target;return t&&(t.nodeType==1?t:t.parentElement)}
-function onText(e){var el=elOf(e);return !!(el&&el.closest&&el.closest(TEXT))&&!el.closest(NOT_TEXT)}
-function pans(e){var el=elOf(e);if(!el||!el.closest||el.closest(INTERACTIVE))return false;if(grab.test(getComputedStyle(el).cursor))return true;for(var a=el;a;a=a.parentElement)if(getComputedStyle(a).touchAction=="none")return true;return false}
-function take(e){var fs=(own[e.type]||[]).slice();for(var i=0;i<fs.length;i++){try{fs[i](e)}catch(x){setTimeout(function(){throw x})}}e.stopImmediatePropagation()}
-DOWN.forEach(function(type){addEventListener(type,function(e){if(e.button||!on()){pressed=false;return}pressed=onText(e);if(pressed)take(e);else if(type=="mousedown"&&pans(e))e.preventDefault()},opts)});
-MOVE.forEach(function(type){addEventListener(type,function(e){if(pressed)take(e)},opts)});
-UP.forEach(function(type){addEventListener(type,function(e){if(!pressed)return;if(END.indexOf(type)>=0)pressed=false;take(e)},opts)});
-})(${[GUARD_TEXT, GUARD_NOT_TEXT, GUARD_INTERACTIVE, GUARD_GRAB, GUARD_DOWN, GUARD_MOVE, GUARD_UP, GUARD_END].map((v) => JSON.stringify(v)).join(",")});`;
