@@ -29,7 +29,19 @@
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in server/app.ts; and each page's own door).
 
-import { appPage, asset, crumbs as trail, esc, ICON, inlineCall, inlineScript, link, page, scriptTag } from "../pages/index.ts";
+import {
+  appPage,
+  asset,
+  crumbs as trail,
+  esc,
+  ICON,
+  imgFallbackScript,
+  inlineCall,
+  inlineScript,
+  link,
+  page,
+  scriptTag,
+} from "../pages/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { MARK } from "../../assets/logo/logo.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
@@ -100,7 +112,7 @@ export const SIDEBAR_EARLY_SCRIPT = inlineScript("admin-sidebar-early");
 export const VIEW_SCRIPT = inlineScript("admin-view");
 /** The agent's side and width as this browser keeps them, on the workspace as it's parsed (in it: client/inline/admin-pane-early.ts). */
 export const PANE_EARLY_SCRIPT = inlineScript("admin-pane-early");
-const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}${inlineScript("admin-agent-early")}`;
+const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}<script>${imgFallbackScript("document")}</script>${inlineScript("admin-agent-early")}`;
 
 /** The agent's collapse and expand (client/inline/admin-agent.ts). The panel's and the sidebar's toggles, Share and Copy act as
  * the press starts (shared/fast-click.ts), on every page admin-nav.js brings in too; Save, Clear, Remove and the rest keep a

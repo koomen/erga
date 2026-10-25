@@ -285,7 +285,9 @@ function byHtml(by: string, via?: string | null): string {
 function avatarHtml(by: string): string {
   if (!by || by == SYSTEM) return `<span class="avatar system" aria-hidden="true">•</span>`;
   const login = by.toLowerCase();
-  const pic = login.startsWith("test-") ? "" : `<img src="${esc(avatarUrl(login))}" alt="" loading="lazy" draggable="false" onerror="this.remove()">`;
+  const pic = login.startsWith("test-")
+    ? ""
+    : `<img src="${esc(avatarUrl(login))}" alt="" loading="lazy" draggable="false" data-erga-fallback>`;
   return `<span class="avatar" style="--c: ${colorFor(login)}" aria-hidden="true">${esc(login[0]?.toUpperCase() ?? "?")}${pic}</span>`;
 }
 

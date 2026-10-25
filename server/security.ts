@@ -9,7 +9,13 @@
 //     own files (a PDF in the files view), never another site's page this one;
 //   - on the site's own pages, a Content-Security-Policy: no plugins
 //     (object-src) and no <base> to another site, so a script that got in
-//     can't load code or send forms elsewhere by that.
+//     can't load code or send forms elsewhere by that;
+//   - and on the app's pages (`scripts`), only the scripts the server wrote
+//     in: each <script> gets this answer's nonce, and what they load
+//     themselves runs too ('strict-dynamic'). So text that got into a page
+//     as HTML can't run as a script: no inline handler (onclick=...), no
+//     javascript: link, no eval. A script that a page's script makes takes
+//     the page's nonce (scriptNonce, in the browser).
 //
 // An answer that has a policy of its own keeps it, with the frame rule added
 // if it lacks one: a document's own HTML here (its files at /d/<id>/..., in a
@@ -26,22 +32,40 @@ export const PAGE_POLICY = "frame-ancestors 'self'; object-src 'none'; base-uri 
 /** The policy of everything else on the site's own origin. */
 export const FRAME_POLICY = "frame-ancestors 'self'";
 
+/** The script rule of a page whose every <script> has the nonce. */
+export const scriptPolicy = (nonce: string) => `script-src 'nonce-${nonce}' 'strict-dynamic'`;
+
 /** Whose answer: the site's own origin's, or a document's pages origin's. */
 export type Kind = "site" | "pages";
 
 const isLocal = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" || url.hostname == "[::1]";
 
-/** The answer with the headers above. A WebSocket's (101) goes as it is. */
-export function withSecurity(response: Response, url: URL, kind: Kind): Response {
+/** The answer with the headers above, and with `scripts`, the script rule on a page. A WebSocket's (101) goes as it is. */
+export function withSecurity(response: Response, url: URL, kind: Kind, scripts = false): Response {
   if (response.status == 101) return response;
   const headers = new Headers(response.headers);
   if (url.protocol == "https:" && !isLocal(url)) headers.set("Strict-Transport-Security", HSTS);
-  if (kind == "site") {
+  // (A 304's headers replace those the browser kept with the page: its policy, with the nonce in the page, stays.)
+  if (kind == "site" && response.status != 304) {
     headers.set("X-Frame-Options", "SAMEORIGIN");
     const own = headers.get("content-security-policy");
     // Its own policy, and the frame rule as a second one if it has none (a browser keeps to both).
-    if (own != null) { if (!/\bframe-ancestors\b/.test(own)) headers.append("Content-Security-Policy", FRAME_POLICY); }
-    else headers.set("Content-Security-Policy", /^text\/html\b/i.test(headers.get("content-type") ?? "") ? PAGE_POLICY : FRAME_POLICY);
+    if (own != null) {
+      if (!/\bframe-ancestors\b/.test(own)) headers.append("Content-Security-Policy", FRAME_POLICY);
+    } else if (!/^text\/html\b/i.test(headers.get("content-type") ?? "")) headers.set("Content-Security-Policy", FRAME_POLICY);
+    else if (!scripts || !response.body) headers.set("Content-Security-Policy", PAGE_POLICY);
+    else {
+      const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+      headers.set("Content-Security-Policy", `${PAGE_POLICY}; ${scriptPolicy(nonce)}`);
+      const page = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      return new HTMLRewriter()
+        .on("script", {
+          element: (el) => {
+            el.setAttribute("nonce", nonce);
+          },
+        })
+        .transform(page);
+    }
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

@@ -13,6 +13,7 @@ import { asset, assetScripts, editorShell } from "./assets.ts";
 import { crumbsFont, esc, link, viewCrumbs } from "./chrome.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
+import { FAST_CLICK_DEFINE } from "../../shared/fast-click.ts";
 
 /** The viewer's Clone button (a copy of your own, at `href`): also the homepage's. */
 export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0345) translate(-12 -13.25)" stroke-width="1.5467"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></g></svg></a>`;
@@ -808,7 +809,11 @@ export function viewerPage(o: { title: string; docId: string; pages: string; src
   // Opened with ?edit, for whoever may edit: the page is the editor's from its first moment (editingHead, EDITING_BODY),
   // the page in the frame starts on its half of the editor at once (FRAME_SRC), and the editor's files are fetched as the
   // page parses, rather than one after another once its script runs (editBoot).
-  const opening = o.editable ? `${shellTemplate()}<script>${editingHead()}</script>` : "";
+  // (And the buttons that act as the press starts, for the editor's modules: shared/fast-click.ts.)
+  const opening = o.editable
+    ? `${shellTemplate()}<script>${editingHead()}
+${FAST_CLICK_DEFINE}</script>`
+    : "";
   // The page on its own origin, connected to from the start; it may play media only on the editor's say (EDITOR_ALLOW).
   const editing = o.editable && o.editing;
   const frame = `<iframe id="frame" class="erga-view" ${editing ? `data-src="${esc(o.src)}"` : `src="${esc(o.src)}"`} title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;

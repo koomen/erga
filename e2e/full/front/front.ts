@@ -40,7 +40,8 @@ export async function person(s: Server, login = freshLogin()) {
   const get = (path: string, init: RequestInit = {}) => fetch(base + path, { redirect: "manual", ...init, headers: { Cookie: cookie, ...(init.headers as Record<string, string>) } });
   const p = {
     login, cookie, base, origin, get,
-    docs: async () => (await get("/docs")).text(),
+    // (Without its script nonce, new at each answer: server/security.ts.)
+    docs: async () => (await (await get("/docs")).text()).replace(/ nonce="[^"]*"/g, ""),
     /** As someone else, by the dev server's ?user= (no cookie needed). */
     as: (who: string, path: string, init?: RequestInit) => get(`${path}${path.includes("?") ? "&" : "?"}user=${who}`, init),
     /** A document's title and address, from its host. */

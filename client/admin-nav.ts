@@ -29,6 +29,8 @@ declare global { interface Window { ergaView: View; ergaAdmin?: { go(url: string
 const main = document.getElementById("admin-panes")!;
 const isAdmin = (u: URL) => u.origin == location.origin && (u.pathname == "/admin" || u.pathname.startsWith("/admin/"));
 const here = () => location.pathname + location.search;
+/** This page's script nonce (server/security.ts), for the scripts of each page shown in it. */
+const NONCE = document.querySelector<HTMLScriptElement>("script[nonce]")?.nonce ?? "";
 
 /** A fresh view, for the page about to be shown; the last one's is left. */
 function newView(): View {
@@ -109,6 +111,8 @@ function swap(doc: Document, next: HTMLElement) {
     if (!old.type) old.removeAttribute("type");
     const s = document.createElement("script");
     for (const a of old.attributes) s.setAttribute(a.name, a.value);
+    // It runs under this page's policy, with this page's nonce (the one it came with was its own answer's: server/security.ts).
+    s.nonce = NONCE;
     if (old.src) s.async = false;
     else s.textContent = `(() => {\n${old.textContent}\n})();`;
     old.replaceWith(s);

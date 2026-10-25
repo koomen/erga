@@ -284,6 +284,8 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   // the list fetches little. A browser without speculation rules gets the files and the room only (the page itself is never
   // cached, so a plain prefetch of it would be thrown away).
   const SPECULATE = !!HTMLScriptElement.supports?.("speculationrules"), WARM_MAX = 6;
+  // The rules are a script: they take the page's nonce (server/security.ts).
+  const NONCE = document.currentScript?.nonce ?? "";
   const warmed = new Set();
   let warmTimes = [], filesWarmed = false;
   const warm = (a, edit) => {
@@ -294,7 +296,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
     if (warmTimes.length >= WARM_MAX) return;
     warmTimes.push(now);
     warmed.add(url);
-    if (SPECULATE) document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", textContent: JSON.stringify({ prefetch: [{ source: "list", urls: [url] }] }) }));
+    if (SPECULATE) document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", nonce: NONCE, textContent: JSON.stringify({ prefetch: [{ source: "list", urls: [url] }] }) }));
     if (edit && !filesWarmed) {
       filesWarmed = true;
       for (const href of ${editorScripts()}) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
