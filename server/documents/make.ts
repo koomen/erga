@@ -3,10 +3,10 @@
 
 import type { FileData } from "../../document/document.ts";
 import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
-import { type DocRow, type Grant, ID, newDocId, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
+import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
 import { type Listed, type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
-import { avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
+import { esc, avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
 
 /** A template's starting files (server/templates.ts: a folder under assets/templates/), and its page; null if this server hasn't them. */
 export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
@@ -45,6 +45,7 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
     return confirmAction("New document", params.get("from") ? "Make your copy of this page" : template ? `Make a new document: ${template.name}` : "Make a new document", `/new${url.search}`);
   }
+  if (!session.test && !(await platform.directory.mayWrite(session.login))) return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
   const wanted = params.get("id");
   const from = params.get("from");
   const start = await startingFiles(platform, from, whoOf(session), template);

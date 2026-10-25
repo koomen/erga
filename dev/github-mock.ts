@@ -8,7 +8,7 @@
 //   POST /login/oauth/access_token           the code for the person's token (the App's client id and secret checked)
 //   GET|POST /apps/<slug>/installations/new  the App's install page: which repositories; Install comes back to the callback
 //                                            with the installation's id (and a code: user authorization during installation)
-//   /api/...                                 api.github.com: the person (/user, /user/emails), their installations and the repositories each
+//   /api/...                                 api.github.com: the person (/user, /user/memberships/orgs), their installations and the repositories each
 //                                            reaches, a new repository, installation tokens (a JWT signed with the App's key),
 //                                            the App uninstalled, the webhook's deliveries
 //
@@ -207,7 +207,8 @@ ${state.repos.map((r) => `<label><input type="checkbox" name="repo" value="${r.i
     const me = userToken(request);
     if (!me) return json({ message: "Bad credentials" }, 401);
     if (p == "/user" && request.method == "GET") return json({ login: me.login, name: me.login == "ada" ? "Ada Lovelace" : me.login, id: 101 });
-    if (p == "/user/emails" && request.method == "GET") return json([{ email: `${me.login}@example.com`, verified: true, primary: true, visibility: "public" }, { email: `101+${me.login}@users.noreply.github.com`, verified: true, primary: false, visibility: null }]);
+    // Their organizations: the ones the person is in (opts.orgs), active; one more where their invitation still waits.
+    if (p.startsWith("/user/memberships/orgs") && request.method == "GET") return json([...(opts.orgs ?? []).map((o) => ({ state: "active", role: "member", organization: { login: o } })), { state: "pending", role: "member", organization: { login: "invited-org" } }]);
     if (p.startsWith("/user/installations") || p == "/user/repos" || p.startsWith("/orgs/")) {
       if (p == "/user/installations" && request.method == "GET") return json({ total_count: state.installations.length, installations: state.installations.map(installationView) });
       if ((m = /^\/user\/installations\/(\d+)\/repositories$/.exec(p)) && request.method == "GET") {

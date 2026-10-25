@@ -91,11 +91,11 @@ test("the switch's rules: on only with a working client; off only with the other
   (platform.signIn as { app: unknown }).app = { clientId: "", secret: "" };
   await expect(auth.setProvider(koomen, "google", false)).rejects.toThrow("would stop sign-in");
   (platform.signIn as { app: unknown }).app = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
-  // koomen has no Google identity: turning GitHub off would lock him out.
-  await expect(auth.setProvider(koomen, "github", false)).rejects.toThrow();
+  // koomen's account signs in with GitHub (no identity yet: by his login): turning GitHub off would lock him out.
+  await expect(auth.setProvider(koomen, "github", false)).rejects.toThrow("would lock you out");
+  // An admin whose account signs in with Google may.
   await directory.users.signedIn("koomen");
   await directory.identities.link("koomen", { provider: "google", subject: "k-1", handle: "koomen@example.com", name: null, emails: [] });
-  // Now he can sign in with Google, which works: GitHub may go off.
   await expect(auth.setProvider(koomen, "github", false)).resolves.toEqual({ github: false, google: true });
   await expect(auth.setProvider(koomen, "google", false)).rejects.toThrow("the only one on");
 });
@@ -106,8 +106,8 @@ test("a sign-in from start to session, by the sub; someone unknown is refused; G
   // Nobody has this Google account yet, and this server is invite-only.
   const refused = await signInWithGoogle(platform);
   expect(refused.status).toBe(403);
-  expect(await refused.text()).toContain("invite-only");
-  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] });
+  expect(await refused.text()).toContain("Not on this server");
+  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, { listed: true });
   const ok = await signInWithGoogle(platform);
   expect(ok.status).toBe(302);
   expect(ok.headers.get("location")).toBe("/docs");
@@ -148,7 +148,7 @@ test("an install signs in with Erga's Google client through erga.dev's callback,
   // The install has the client's id only (no secret): the relay has the rest.
   (platform.signIn as { googleApp: unknown }).googleApp = { clientId: APP.clientId, secret: "" };
   await platform.own.put("auth:providers", { github: true, google: true });
-  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] });
+  await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, { listed: true });
   const start = await startGoogleSignIn(platform, new Request(`${INSTALL}/auth/google?next=/docs`));
   const to = new URL(start.headers.get("location")!);
   expect(to.searchParams.get("redirect_uri")).toBe(`${OPS}/auth/google/callback`);

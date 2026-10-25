@@ -89,8 +89,9 @@ export function beyondPrompt(owner: string, names: string[]): string {
   in (switch_sign_in_provider turns sign-in with GitHub or Google on or off; clear_sign_in_app
   clears a provider's app values set on /admin/auth; they are set only
   there, never in this conversation), and list_users, add_user, set_user_role,
-  set_user_deploy and remove_user for who may sign in, who's an admin and who has the
-  deploy role. These change the whole server, for
+  set_user_deploy, remove_user, set_user_listed and invite_by_email for the users, who's an
+  admin and who has the deploy role, and get_access_rules and set_access_rule for who may
+  sign in and who may make and edit documents. These change the whole server, for
   everyone: use them only when ${owner} asks, and say exactly what you changed.`);
   return lines.length ? `\n${lines.join("\n")}` : "";
 }

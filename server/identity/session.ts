@@ -61,8 +61,8 @@ async function findSession(platform: Platform, request: Request): Promise<Sessio
   const as = dev ? url.searchParams.get("user")?.trim().slice(0, 40) : null;
   const session = as ? { login: loginOf(as), name: as, as }
     : (await cookieSession(platform, request, dev)) ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: platform.signIn.devLogin!, name: platform.signIn.devLogin! } : null);
-  // Locally everyone may sign in, and gets a user's row the first time (last seen, the next).
-  if (session && !session.test) await users.signedIn(session.login, dev ? session.name : null, { create: dev });
+  // Locally everyone may sign in, and gets a user's row the first time (last seen, the next). The read rule may say no.
+  if (session && !session.test && !(await users.signedIn(session.login, dev ? session.name : null, { create: dev }))) return null;
   // A signed-in browser session comes with admin power: Users.isAdmin decides whether that's any.
   if (session && !session.test) session.admin = true;
   return session;
@@ -79,7 +79,8 @@ async function cookieSession(platform: Platform, request: Request, dev: boolean)
     if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return null;
     // A test person's token was minted by a user, who must still be one.
     if (s.test) return (await users.allowed(s.test.by)) ? { login: s.login, name: s.name, test: { by: s.test.by } } : null;
-    return dev || (await users.allowed(s.login)) ? { login: s.login, name: s.name } : null;
+    // Locally, someone with no row yet gets one (findSession); anyone with one passes the access rules, as on a server.
+    return (dev && !(await users.get(s.login))) || (await users.allowed(s.login)) ? { login: s.login, name: s.name } : null;
   } catch { return null; }
 }
 

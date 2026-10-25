@@ -41,11 +41,18 @@
 // change here (`share`) is pushed to the host at once (`permissionsChanged`),
 // and the host reads them afresh when it has none, or an old copy.
 
-import { ConfigError, ServerConfig } from "./settings.ts";
+import { type AccessRule, ConfigError, ServerConfig } from "./settings.ts";
 
-import { NotAllowed, Users } from "./users.ts";
+import { NotAllowed, type User, Users } from "./users.ts";
+
+/**
+ * Whether a rule lets someone in by what a provider vouched for (listed accounts aside): anyone; or a Google-verified
+ * email on one of its domains (exactly: a subdomain is another domain); or membership of one of its GitHub organizations.
+ */
+export const ruleLets = (rule: AccessRule, facts: { emails: string[]; orgs: string[] }) =>
+  rule.mode == "anyone" || facts.emails.some((e) => rule.domains.includes(e.slice(e.lastIndexOf("@") + 1))) || facts.orgs.some((o) => rule.orgs.includes(o.toLowerCase()));
 import { Credentials } from "./api-keys.ts";
-import { Identities } from "./identities.ts";
+import { Identities, type Vouched, vouchedEmails } from "./identities.ts";
 import { isDocKind, type DocKind } from "../../document/pages.ts";
 
 
@@ -109,6 +116,9 @@ export interface Who {
   /** How they act, when not in person: through one of their agents. Recorded beside their login. */
   via?: string;
 }
+/** What making a document answers someone the write rule (/admin/users) leaves out. */
+export const NO_WRITE = "You may open documents on this server, but not make or edit them: the server's write rule (on its Users page) doesn't include your account. An admin can list you there.";
+
 /** The login a permission for anyone signed in (who has the link) is under. */
 export const ANYONE = "*";
 
@@ -210,6 +220,8 @@ export class Directory {
     this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
     this.users = new Users(sql, opts.admins);
     this.identities = new Identities(sql, this.users);
+    // The read rule decides who may sign in (Users.allowed, Users.signedIn).
+    this.users.gate = (user) => this.passes("read", user);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
@@ -540,7 +552,67 @@ export class Directory {
     if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
     const login = who.login.toLowerCase();
     const best = permissions.reduce<Role | null>((b, p) => (p.login != login && p.login != ANYONE) || (b && RANK[b] >= RANK[p.role]) ? b : p.role, null);
-    return this.homeLimit(who, doc.id, best);
+    const role = await this.homeLimit(who, doc.id, best);
+    // The write rule: someone it leaves out opens their documents, and those shared with them, as a viewer.
+    return (role == "owner" || role == "editor") && !(await this.mayWrite(login)) ? "viewer" : role;
+  }
+
+  // ------------------------------------------------------------ the access rules (/admin/users)
+  //
+  // Two rules (settings access_read and access_write; the Users page):
+  //
+  //   read    who may sign in, and so open the documents shared with them and the public ones
+  //           (Users.allowed: every session and token asks it)
+  //   write   who of those may make documents (/new, publish, an agent's create_document) and edit them: anyone
+  //           else opens their own documents and those shared with them as a viewer (decide, above)
+  //
+  // Each is anyone, or only some (ruleLets): accounts an admin listed (added on the Users page, or invited by an
+  // email address); Google accounts whose verified email (email_verified) is on one of the domains; GitHub accounts
+  // that are members of one of the organizations, as GitHub answered at their last sign-in (the person's token:
+  // GitHub vouches for no email, so domains are Google's only, and organizations GitHub's). For read, "anyone" also
+  // lets anyone make an account at their first sign-in; "some" lets in those the domains or organizations name.
+  //
+  // Admins always pass. On staging, the admins-only guard comes first, and wins.
+
+  private passed = new Map<string, { ok: boolean; at: number }>();
+
+  /** Whether an account passes a rule now (remembered for a few seconds, as the users are). */
+  async passes(kind: "read" | "write", user: User): Promise<boolean> {
+    if (user.role == "admin") return true;
+    const key = `${kind}:${user.login}:${user.listed ? 1 : 0}`, had = this.passed.get(key);
+    if (had && Date.now() - had.at < 10_000) return had.ok;
+    const rule = await this.config.get(kind == "read" ? "access_read" : "access_write");
+    const ok = user.listed || ruleLets(rule, await this.factsOf(user.login));
+    if (this.passed.size > 10_000) this.passed.clear();
+    this.passed.set(key, { ok, at: Date.now() });
+    return ok;
+  }
+
+  /** Forgets what was remembered of an account's access: a sign-in just recorded what its provider vouches for now. */
+  forgetAccess(login: string): void {
+    for (const kind of ["read", "write"]) for (const listed of [0, 1]) this.passed.delete(`${kind}:${login.toLowerCase()}:${listed}`);
+  }
+
+  /** What the rules read of an account: Google's verified emails, GitHub's organizations (at their last sign-in). */
+  private async factsOf(login: string): Promise<{ emails: string[]; orgs: string[] }> {
+    const [emails, identities] = await Promise.all([this.identities.emailsOf(login), this.identities.of(login)]);
+    return { emails, orgs: identities.flatMap((i) => (i.provider == "github" ? i.orgs ?? [] : [])) };
+  }
+
+  /**
+   * Whether `login` may make documents and edit them: they may sign in (read), and the write rule lets them. One with no
+   * account row isn't the write rule's to stop: it signs in nowhere (the read rule's matter).
+   */
+  async mayWrite(login: string): Promise<boolean> {
+    const user = await this.users.get(login);
+    return !user || ((await this.passes("read", user)) && (await this.passes("write", user)));
+  }
+
+  /** Whether someone with no account yet may make one at their first sign-in: the read rule, or an invitation. */
+  async mayJoin(v: Vouched): Promise<boolean> {
+    const rule = await this.config.get("access_read");
+    if (ruleLets(rule, { emails: vouchedEmails(v), orgs: v.provider == "github" ? v.orgs ?? [] : [] })) return true;
+    return (await this.users.invitationFor(vouchedEmails(v))) != null;
   }
 
   /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
