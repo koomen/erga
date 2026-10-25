@@ -315,7 +315,7 @@ export default function reader(C: ReaderConfig): void {
   }
   function whole(x: unknown, max: number) {
     const n = Math.floor(Number(x));
-    return isFinite(n) ? Math.max(0, Math.min(max, n)) : 0;
+    return Number.isFinite(n) ? Math.max(0, Math.min(max, n)) : 0;
   }
   function tellSteps() {
     const p = steps();
