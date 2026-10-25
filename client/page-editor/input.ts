@@ -9,7 +9,14 @@ import { isMac } from "./core";
 import { EditorClipboard } from "./clipboard";
 
 /** The selection moves a held arrow, Home or End key makes, if the editor doesn't take the key itself. */
-const MOVES: Record<string, [string, string]> = { ArrowLeft: ["backward", "character"], ArrowRight: ["forward", "character"], ArrowUp: ["backward", "line"], ArrowDown: ["forward", "line"], Home: ["backward", "lineboundary"], End: ["forward", "lineboundary"] };
+const MOVES: Record<string, [string, string]> = {
+  ArrowLeft: ["backward", "character"],
+  ArrowRight: ["forward", "character"],
+  ArrowUp: ["backward", "line"],
+  ArrowDown: ["forward", "line"],
+  Home: ["backward", "lineboundary"],
+  End: ["forward", "lineboundary"],
+};
 
 export abstract class EditorInput extends EditorClipboard {
   protected bind(): void {
@@ -17,22 +24,60 @@ export abstract class EditorInput extends EditorClipboard {
     const on = <K extends keyof DocumentEventMap>(type: K, f: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions) => {
       this.cleanup.push(listenAsEditor(doc, type, f as EventListener, opts));
     };
-    on("beforeinput", (e) => { if (!this.holdKey(e, { input: e.inputType, data: e.data })) this.beforeinput(e as InputEvent); });
-    on("keydown", (e) => { if (!this.holdKey(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey })) this.keydown(e); });
-    on("compositionstart", (e) => { if (this.ours(e)) this.composing = true; });
-    on("compositionend", (e) => { if (this.ours(e)) this.compositionend(); });
+    on("beforeinput", (e) => {
+      if (!this.holdKey(e, { input: e.inputType, data: e.data })) this.beforeinput(e as InputEvent);
+    });
+    on("keydown", (e) => {
+      if (!this.holdKey(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey })) this.keydown(e);
+    });
+    on("compositionstart", (e) => {
+      if (this.ours(e)) this.composing = true;
+    });
+    on("compositionend", (e) => {
+      if (this.ours(e)) this.compositionend();
+    });
     on("selectionchange", () => this.selectionchange());
-    on("paste", (e) => { if (this.ours(e) || this.spanning) this.paste(e); });
-    on("cut", (e) => { if (this.ours(e) || this.spanning) this.cut(e); });
-    on("copy", (e) => { if (this.ours(e) || this.spanning) this.copy(e); });
-    on("dragstart", (e) => { if (this.ours(e)) e.preventDefault(); });
-    on("drop", (e) => { if (this.ours(e)) e.preventDefault(); });
+    on("paste", (e) => {
+      if (this.ours(e) || this.spanning) this.paste(e);
+    });
+    on("cut", (e) => {
+      if (this.ours(e) || this.spanning) this.cut(e);
+    });
+    on("copy", (e) => {
+      if (this.ours(e) || this.spanning) this.copy(e);
+    });
+    on("dragstart", (e) => {
+      if (this.ours(e)) e.preventDefault();
+    });
+    on("drop", (e) => {
+      if (this.ours(e)) e.preventDefault();
+    });
     on("mousedown", (e) => this.mousedown(e));
     // What lets the page make custom edits (applyCustomEdits): the person's own clicks and keys, not a script's.
-    on("pointerdown", (e) => { if (e.isTrusted) this.lastGesture = performance.now(); }, { capture: true });
-    on("keydown", (e) => { if (e.isTrusted) this.lastGesture = performance.now(); }, { capture: true });
-    on("mousemove", (e) => { this.drag(e); this.config.onPointer?.(e); });
-    on("mouseup", () => { if (this.dragFrom) { this.dragFrom = null; this.settleSpan(); } });
+    on(
+      "pointerdown",
+      (e) => {
+        if (e.isTrusted) this.lastGesture = performance.now();
+      },
+      { capture: true }
+    );
+    on(
+      "keydown",
+      (e) => {
+        if (e.isTrusted) this.lastGesture = performance.now();
+      },
+      { capture: true }
+    );
+    on("mousemove", (e) => {
+      this.drag(e);
+      this.config.onPointer?.(e);
+    });
+    on("mouseup", () => {
+      if (this.dragFrom) {
+        this.dragFrom = null;
+        this.settleSpan();
+      }
+    });
   }
 
   protected unbind(): void {
@@ -65,7 +110,12 @@ export abstract class EditorInput extends EditorClipboard {
     }
     // So does text the document marked as not editable by hand (on a widget, the click is the widget's).
     const fixed = (e.target as Element).closest?.(`[${M.NO_EDIT_ATTR}]`);
-    if (fixed && !(e.target as Element).closest('button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe, [contenteditable="true"]')) {
+    if (
+      fixed &&
+      !(e.target as Element).closest(
+        'button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe, [contenteditable="true"]'
+      )
+    ) {
       this.config.onNotice?.("This part of the page is marked as not editable by hand. Ask the agent to change it.");
     }
     this.dragFrom = null;
@@ -106,7 +156,10 @@ export abstract class EditorInput extends EditorClipboard {
 
   protected selectionchange(): void {
     if (this.writingSelection || this.composing || !this.doc) return;
-    if (this.spanning && !this.dragFrom) { this.settleSpan(); return; }
+    if (this.spanning && !this.dragFrom) {
+      this.settleSpan();
+      return;
+    }
     const sel = this.readSelection();
     if (!sel) return;
     const main = this.state.selection.main;
@@ -124,8 +177,16 @@ export abstract class EditorInput extends EditorClipboard {
   protected keydown(e: KeyboardEvent): boolean {
     if (this.composing || e.isComposing) return false;
     // App shortcuts work anywhere in the page; editing keys only in manuscript.
-    if (this.config.onKey?.(e)) { e.preventDefault(); e.stopPropagation(); return true; }
-    if (this.spanning && this.spanKey(e)) { e.preventDefault(); e.stopPropagation(); return true; }
+    if (this.config.onKey?.(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return true;
+    }
+    if (this.spanning && this.spanKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return true;
+    }
     if (!this.spanning && (!this.activeUnit || !this.ours(e))) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
@@ -138,8 +199,11 @@ export abstract class EditorInput extends EditorClipboard {
     else if (mod && !e.altKey && !e.shiftKey && key == "b") handled = this.styleKey("strong");
     else if (mod && !e.altKey && !e.shiftKey && key == "i") handled = this.styleKey("em");
     else if (mod && !e.altKey && !e.shiftKey && key == "e") handled = this.styleKey("code");
-    else if (mod && !e.altKey && !e.shiftKey && key == "\\") { const why = this.clearStyles(); if (why) this.config.onNotice?.(why); handled = true; }
-    else if (mod && !e.altKey && !e.shiftKey && key == "a") handled = this.selectAll();
+    else if (mod && !e.altKey && !e.shiftKey && key == "\\") {
+      const why = this.clearStyles();
+      if (why) this.config.onNotice?.(why);
+      handled = true;
+    } else if (mod && !e.altKey && !e.shiftKey && key == "a") handled = this.selectAll();
     if (handled) {
       e.preventDefault();
       e.stopPropagation();
@@ -178,9 +242,23 @@ export abstract class EditorInput extends EditorClipboard {
   /** Applies a held key or input as if it came now, in the unit with the caret: the editor's own keys, else what the browser does with it. */
   protected replay(h: HeldInput): void {
     const base = () => ({ target: this.activeUnit ?? this.doc!.body, isComposing: false, preventDefault() {}, stopPropagation() {} });
-    const input = (inputType: string, data: string | null) => this.beforeinput({ ...base(), inputType, data, dataTransfer: null, getTargetRanges: () => [] } as unknown as InputEvent);
-    if ("input" in h) { input(h.input, h.data); return; }
-    if (this.keydown({ ...base(), key: h.key, shiftKey: h.shift, altKey: h.alt, ctrlKey: h.ctrl, metaKey: h.meta } as unknown as KeyboardEvent)) return;
+    const input = (inputType: string, data: string | null) =>
+      this.beforeinput({ ...base(), inputType, data, dataTransfer: null, getTargetRanges: () => [] } as unknown as InputEvent);
+    if ("input" in h) {
+      input(h.input, h.data);
+      return;
+    }
+    if (
+      this.keydown({
+        ...base(),
+        key: h.key,
+        shiftKey: h.shift,
+        altKey: h.alt,
+        ctrlKey: h.ctrl,
+        metaKey: h.meta,
+      } as unknown as KeyboardEvent)
+    )
+      return;
     if (h.ctrl || h.meta) return;
     if (h.key == "Backspace") input(h.alt ? "deleteWordBackward" : "deleteContentBackward", null);
     else if (h.key == "Delete") input(h.alt ? "deleteWordForward" : "deleteContentForward", null);
@@ -204,9 +282,18 @@ export abstract class EditorInput extends EditorClipboard {
       return true;
     }
     if (e.ctrlKey || e.metaKey) return false;
-    if (e.key == "Backspace" || e.key == "Delete") { this.deleteChar(e.key == "Delete"); return true; }
-    if (e.key == "Enter") { this.enter(e.shiftKey); return true; }
-    if ([...e.key].length == 1) { this.insertText(e.key, null); return true; }
+    if (e.key == "Backspace" || e.key == "Delete") {
+      this.deleteChar(e.key == "Delete");
+      return true;
+    }
+    if (e.key == "Enter") {
+      this.enter(e.shiftKey);
+      return true;
+    }
+    if ([...e.key].length == 1) {
+      this.insertText(e.key, null);
+      return true;
+    }
     return false;
   }
 
@@ -220,9 +307,18 @@ export abstract class EditorInput extends EditorClipboard {
     if (!sel?.anchorNode || !sel.focusNode || (!isMac && e.metaKey) || (isMac && e.ctrlKey)) return false;
     const vertical = e.key == "ArrowUp" || e.key == "ArrowDown";
     const dir = e.key == "ArrowLeft" || e.key == "ArrowUp" ? "backward" : "forward";
-    const gran = isMac && e.metaKey ? (vertical ? "documentboundary" : "lineboundary")
-      : vertical ? (e.ctrlKey || e.altKey ? "paragraphboundary" : "line")
-      : (isMac ? e.altKey : e.ctrlKey) ? "word" : "character";
+    const gran =
+      isMac && e.metaKey
+        ? vertical
+          ? "documentboundary"
+          : "lineboundary"
+        : vertical
+          ? e.ctrlKey || e.altKey
+            ? "paragraphboundary"
+            : "line"
+          : (isMac ? e.altKey : e.ctrlKey)
+            ? "word"
+            : "character";
     const { anchorNode, anchorOffset, focusNode, focusOffset } = sel;
     if (gran != "documentboundary") {
       sel.modify("extend", dir, gran);
@@ -244,26 +340,38 @@ export abstract class EditorInput extends EditorClipboard {
     if (!u) return false;
     const src = this.src;
     // The caret positions of a unit's text are the browser's; it stops at the ends of the text the page shows (M.textEnd).
-    const first = (x: M.Unit) => M.textStart(x), last = (x: M.Unit) => M.textEnd(x);
-    const go = (pos: number) => { this.dispatch({ selection: { anchor: pos }, userEvent: "select", scrollIntoView: true }); return true; };
+    const first = (x: M.Unit) => M.textStart(x),
+      last = (x: M.Unit) => M.textEnd(x);
+    const go = (pos: number) => {
+      this.dispatch({ selection: { anchor: pos }, userEvent: "select", scrollIntoView: true });
+      return true;
+    };
     if (e.key == "ArrowRight" || e.key == "ArrowLeft") {
       const forward = e.key == "ArrowRight";
-      const edge = forward ? sel.head >= last(u) && !STOPS.test(src.slice(sel.head, u.contentTo)) : sel.head <= first(u) && !STOPS.test(src.slice(u.contentFrom, sel.head));
+      const edge = forward
+        ? sel.head >= last(u) && !STOPS.test(src.slice(sel.head, u.contentTo))
+        : sel.head <= first(u) && !STOPS.test(src.slice(u.contentFrom, sel.head));
       if (!edge) return false;
       const next = this.units[u.id + (forward ? 1 : -1)];
       if (!next) return false;
       return go(forward ? first(next) : last(next));
     }
     const down = e.key == "ArrowDown";
-    const caret = this.coordsAtPos(sel.head), el = this.els[u.id];
+    const caret = this.coordsAtPos(sel.head),
+      el = this.els[u.id];
     if (!caret || !el) return false;
-    const r = el.getBoundingClientRect(), cs = this.doc!.defaultView!.getComputedStyle(el);
+    const r = el.getBoundingClientRect(),
+      cs = this.doc!.defaultView!.getComputedStyle(el);
     const h = caret.height || 16;
-    const onEdge = down ? caret.bottom + h * 0.6 >= r.bottom - parseFloat(cs.paddingBottom) : caret.top - h * 0.6 <= r.top + parseFloat(cs.paddingTop);
+    const onEdge = down
+      ? caret.bottom + h * 0.6 >= r.bottom - parseFloat(cs.paddingBottom)
+      : caret.top - h * 0.6 <= r.top + parseFloat(cs.paddingTop);
     if (!onEdge) return false;
-    const next = this.units[u.id + (down ? 1 : -1)], nel = next && this.els[next.id];
+    const next = this.units[u.id + (down ? 1 : -1)],
+      nel = next && this.els[next.id];
     if (!next || !nel) return false;
-    const nr = nel.getBoundingClientRect(), ncs = this.doc!.defaultView!.getComputedStyle(nel);
+    const nr = nel.getBoundingClientRect(),
+      ncs = this.doc!.defaultView!.getComputedStyle(nel);
     const y = down ? nr.top + parseFloat(ncs.paddingTop) + h / 2 : nr.bottom - parseFloat(ncs.paddingBottom) - h / 2;
     const range = this.doc!.caretRangeFromPoint?.(caret.left, y);
     let pos: number | null = null;
@@ -275,7 +383,10 @@ export abstract class EditorInput extends EditorClipboard {
     if (!this.ours(e)) return;
     const type = e.inputType;
     if (type == "insertCompositionText" || (this.composing && e.isComposing)) return;
-    if (this.rendering) { e.preventDefault(); return; }
+    if (this.rendering) {
+      e.preventDefault();
+      return;
+    }
     // Never fall back to the model's caret when the browser's can't be
     // mapped: that caret is somewhere else, maybe the top of the page, and
     // the edit would land there.
@@ -289,8 +400,14 @@ export abstract class EditorInput extends EditorClipboard {
       return;
     }
     switch (type) {
-      case "historyUndo": e.preventDefault(); this.undo(); return;
-      case "historyRedo": e.preventDefault(); this.redo(); return;
+      case "historyUndo":
+        e.preventDefault();
+        this.undo();
+        return;
+      case "historyRedo":
+        e.preventDefault();
+        this.redo();
+        return;
       case "insertText":
       case "insertReplacementText":
       case "insertFromYank": {
@@ -299,10 +416,22 @@ export abstract class EditorInput extends EditorClipboard {
         this.insertText(text, this.targetRange(e));
         return;
       }
-      case "insertParagraph": e.preventDefault(); this.enter(false); return;
-      case "insertLineBreak": e.preventDefault(); this.enter(true); return;
-      case "deleteContentBackward": e.preventDefault(); this.deleteChar(false); return;
-      case "deleteContentForward": e.preventDefault(); this.deleteChar(true); return;
+      case "insertParagraph":
+        e.preventDefault();
+        this.enter(false);
+        return;
+      case "insertLineBreak":
+        e.preventDefault();
+        this.enter(true);
+        return;
+      case "deleteContentBackward":
+        e.preventDefault();
+        this.deleteChar(false);
+        return;
+      case "deleteContentForward":
+        e.preventDefault();
+        this.deleteChar(true);
+        return;
       case "deleteWordBackward":
       case "deleteWordForward":
       case "deleteSoftLineBackward":
@@ -350,20 +479,27 @@ export abstract class EditorInput extends EditorClipboard {
       // An empty block: what the browser put there is all new, and takes the place of a placeholder <br>.
       const text = norm(nodes.map((n) => n.nodeValue!).join(""));
       if (!text) return;
-      const src = this.src, br = placeholderBr(src, u);
+      const src = this.src,
+        br = placeholderBr(src, u);
       const head = this.state.selection.main.head;
       const at = br ? br.from : head >= u.contentFrom && head <= u.contentTo ? head : u.contentFrom;
       const insert = M.escapeHtmlText(text);
       this.dispatch({ changes: { from: at, to: br ? br.to : at, insert }, selection: { anchor: at + insert.length }, userEvent });
       return;
     }
-    if (nodes.length != u.runs.length) { this.render(); return; }
+    if (nodes.length != u.runs.length) {
+      this.render();
+      return;
+    }
     const before = u.runs.map((r) => r.text).join("");
     const after = norm(nodes.map((n) => n.nodeValue!).join(""));
     // Offsets in the concatenated text -> source positions.
     const starts: number[] = [];
     let acc = 0;
-    for (const r of u.runs) { starts.push(acc); acc += r.text.length; }
+    for (const r of u.runs) {
+      starts.push(acc);
+      acc += r.text.length;
+    }
     const toPos = (k: number) => {
       let i = u.runs.length - 1;
       while (i > 0 && starts[i] > k) i--;
@@ -371,10 +507,15 @@ export abstract class EditorInput extends EditorClipboard {
     };
     const hint = this.state.selection.main.from;
     let hintK = 0;
-    for (let i = 0; i < u.runs.length; i++) if (u.runs[i].from <= hint && hint <= u.runs[i].to) hintK = starts[i] + M.runOffset(u.runs[i], hint);
+    for (let i = 0; i < u.runs.length; i++)
+      if (u.runs[i].from <= hint && hint <= u.runs[i].to) hintK = starts[i] + M.runOffset(u.runs[i], hint);
     const diff = findDiff(norm(before), after, hintK);
-    if (!diff) { this.syncDOMSelection(true); return; }
-    const from = toPos(diff.from), to = toPos(diff.toA);
+    if (!diff) {
+      this.syncDOMSelection(true);
+      return;
+    }
+    const from = toPos(diff.from),
+      to = toPos(diff.toA);
     const insert = M.escapeHtmlText(after.slice(diff.from, diff.toB));
     this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
   }

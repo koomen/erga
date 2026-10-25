@@ -55,7 +55,12 @@ export abstract class EditorMarks extends EditorCore {
    * started, with its author, mapped through later changes. The tracked diff
    * is computed from the text alone; its marks take their authors from here.
    */
-  protected tracking: { baseline: string; units: M.Unit[]; adds: { from: number; to: number; author: MarkAuthor | null }[]; dels: { pos: number; author: MarkAuthor | null }[] } | null = null;
+  protected tracking: {
+    baseline: string;
+    units: M.Unit[];
+    adds: { from: number; to: number; author: MarkAuthor | null }[];
+    dels: { pos: number; author: MarkAuthor | null }[];
+  } | null = null;
   protected overlay: HTMLElement | null = null;
   /** Other people's carets and selections, drawn over the page like the marks. */
   protected peers: Peer[] = [];
@@ -67,7 +72,9 @@ export abstract class EditorMarks extends EditorCore {
   protected diffQueued = false;
   protected fadeTimer = 0;
 
-  get isTracking(): boolean { return !!this.tracking; }
+  get isTracking(): boolean {
+    return !!this.tracking;
+  }
 
   /**
    * Track changes: on, every change from now on (yours, the agent's) stays
@@ -90,7 +97,8 @@ export abstract class EditorMarks extends EditorCore {
     const t = this.tracking;
     if (!t) return;
     t.adds = t.adds.flatMap((a) => {
-      const from = changes.mapPos(a.from, 1), to = changes.mapPos(a.to, -1);
+      const from = changes.mapPos(a.from, 1),
+        to = changes.mapPos(a.to, -1);
       return to > from ? [{ ...a, from, to }] : [];
     });
     for (const d of t.dels) d.pos = changes.mapPos(d.pos, -1);
@@ -106,17 +114,25 @@ export abstract class EditorMarks extends EditorCore {
   protected trackedAuthor(m: Mark): MarkAuthor | null {
     const t = this.tracking!;
     if (m.kind == "add") {
-      let best: MarkAuthor | null = null, most = 0;
+      let best: MarkAuthor | null = null,
+        most = 0;
       for (const a of t.adds) {
         const overlap = Math.min(a.to, m.to) - Math.max(a.from, m.from);
-        if (overlap > most) { most = overlap; best = a.author; }
+        if (overlap > most) {
+          most = overlap;
+          best = a.author;
+        }
       }
       return best;
     }
-    let best: MarkAuthor | null = null, dist = Infinity;
+    let best: MarkAuthor | null = null,
+      dist = Infinity;
     for (let i = t.dels.length - 1; i >= 0; i--) {
       const d = Math.abs(t.dels[i].pos - m.pos);
-      if (d < dist) { dist = d; best = t.dels[i].author; }
+      if (d < dist) {
+        dist = d;
+        best = t.dels[i].author;
+      }
     }
     return dist <= Math.max(8, m.text.length) ? best : null;
   }
@@ -125,7 +141,8 @@ export abstract class EditorMarks extends EditorCore {
     if (this.tracking || !this.marks.length) return;
     this.marks = this.marks.flatMap((m): Mark[] => {
       if (m.kind == "del") return [{ ...m, pos: changes.mapPos(m.pos, -1) }];
-      const from = changes.mapPos(m.from, 1), to = changes.mapPos(m.to, -1);
+      const from = changes.mapPos(m.from, 1),
+        to = changes.mapPos(m.to, -1);
       return to > from ? [{ ...m, from, to }] : [];
     });
   }
@@ -145,7 +162,9 @@ export abstract class EditorMarks extends EditorCore {
 
   /** Brief marks hold for a moment, then fade out step by step. */
   protected startFade(): void {
-    const HOLD = ms(2200), STEP = ms(110), LEVELS = 6;
+    const HOLD = ms(2200),
+      STEP = ms(110),
+      LEVELS = 6;
     const born = performance.now();
     for (const m of this.marks) m.born ??= born;
     if (this.fadeTimer) return;
@@ -153,7 +172,10 @@ export abstract class EditorMarks extends EditorCore {
       const now = performance.now();
       this.marks = this.marks.filter((m) => now - m.born! < HOLD + LEVELS * STEP);
       for (const m of this.marks) m.level = Math.max(0, Math.min(LEVELS - 1, Math.floor((now - m.born! - HOLD) / STEP) + 1));
-      if (!this.marks.length || this.tracking) { clearInterval(this.fadeTimer); this.fadeTimer = 0; }
+      if (!this.marks.length || this.tracking) {
+        clearInterval(this.fadeTimer);
+        this.fadeTimer = 0;
+      }
       this.paintMarks();
     }, 60);
   }
@@ -161,12 +183,16 @@ export abstract class EditorMarks extends EditorCore {
   protected queuePaint(): void {
     if (this.paintQueued || (!this.marks.length && !this.overlay && !this.peers.length && !this.peerLayer)) return;
     this.paintQueued = true;
-    requestAnimationFrame(() => { this.paintQueued = false; this.paintMarks(); });
+    requestAnimationFrame(() => {
+      this.paintQueued = false;
+      this.paintMarks();
+    });
   }
 
   /** Draws the marks: CSS highlights over added text (the DOM is untouched), notches in an overlay for removed text. */
   protected paintMarks(): void {
-    const doc = this.doc, win = this.win as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
+    const doc = this.doc,
+      win = this.win as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
     if (!doc || !win || this.rendering) return;
     const registry = (win.CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
     // One highlight per author colour and fade level: "erga-add-<level>" for
@@ -202,7 +228,12 @@ export abstract class EditorMarks extends EditorCore {
         if (m.author) notch.style.setProperty("--erga-del", m.author.color);
         notch.setAttribute("aria-label", `Deleted${m.author ? ` by ${m.author.name}` : ""}: ${m.text}`);
         const tip = doc.createElement("erga-tip");
-        if (m.author) { const who = doc.createElement("erga-who"); who.textContent = m.author.name; who.style.color = m.author.color; tip.append(who); }
+        if (m.author) {
+          const who = doc.createElement("erga-who");
+          who.textContent = m.author.name;
+          who.style.color = m.author.color;
+          tip.append(who);
+        }
         tip.append(m.text.length > 160 ? m.text.slice(0, 160) + "…" : m.text);
         notch.append(tip);
         this.overlay.append(notch);
@@ -221,10 +252,16 @@ export abstract class EditorMarks extends EditorCore {
       const nodes = this.textNodes(el);
       if (nodes.length != u.runs.length) continue;
       u.runs.forEach((run, i) => {
-        const s = Math.max(from, run.from), e = Math.min(to, run.to);
+        const s = Math.max(from, run.from),
+          e = Math.min(to, run.to);
         if (s >= e) return;
         const range = this.doc!.createRange();
-        try { range.setStart(nodes[i], M.runOffset(run, s)); range.setEnd(nodes[i], M.runOffset(run, e)); } catch { return; }
+        try {
+          range.setStart(nodes[i], M.runOffset(run, s));
+          range.setEnd(nodes[i], M.runOffset(run, e));
+        } catch {
+          return;
+        }
         out.push(range);
       });
     }
@@ -240,7 +277,9 @@ export abstract class EditorMarks extends EditorCore {
     if (!style || style.dataset.count != String(this.authorStyles.size)) {
       style ??= doc.head.appendChild(Object.assign(doc.createElement("style"), { id: "erga-authors" }));
       style.dataset.count = String(this.authorStyles.size);
-      style.textContent = [...this.authorStyles].map(([c, i]) => FADE.map((a, level) => `::highlight(erga-a${i}-${level}) { background-color: ${rgba(c, a * 0.9)}; }`).join("\n")).join("\n");
+      style.textContent = [...this.authorStyles]
+        .map(([c, i]) => FADE.map((a, level) => `::highlight(erga-a${i}-${level}) { background-color: ${rgba(c, a * 0.9)}; }`).join("\n"))
+        .join("\n");
     }
     return n;
   }
@@ -249,7 +288,8 @@ export abstract class EditorMarks extends EditorCore {
   reveal(pos: number): void {
     const win = this.win;
     const at = this.anchorAt(pos);
-    if (win && at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
+    if (win && at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight))
+      win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
   }
 
   /** Shows other people's carets and selections (positions in the current source). */
@@ -259,9 +299,14 @@ export abstract class EditorMarks extends EditorCore {
   }
 
   protected paintPeers(): void {
-    const doc = this.doc, win = this.win;
+    const doc = this.doc,
+      win = this.win;
     if (!doc || !win || this.rendering) return;
-    if (!this.peers.length) { this.peerLayer?.remove(); this.peerLayer = null; return; }
+    if (!this.peers.length) {
+      this.peerLayer?.remove();
+      this.peerLayer = null;
+      return;
+    }
     if (!this.peerLayer || !this.peerLayer.isConnected) {
       this.peerLayer = doc.createElement("erga-peers");
       doc.documentElement.append(this.peerLayer);
@@ -272,12 +317,14 @@ export abstract class EditorMarks extends EditorCore {
     for (const p of this.peers) {
       const anchor = Math.min(p.anchor, len);
       if (p.head != null && p.head != anchor) {
-        const from = Math.min(anchor, p.head), to = Math.min(len, Math.max(anchor, p.head));
-        for (const r of this.rangesIn(from, to)) for (const rect of r.getClientRects()) {
-          const box = doc.createElement("erga-peer-sel");
-          box.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;width:${rect.width}px;height:${rect.height}px;background:${rgba(p.color, 0.18)}`;
-          layer.append(box);
-        }
+        const from = Math.min(anchor, p.head),
+          to = Math.min(len, Math.max(anchor, p.head));
+        for (const r of this.rangesIn(from, to))
+          for (const rect of r.getClientRects()) {
+            const box = doc.createElement("erga-peer-sel");
+            box.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;width:${rect.width}px;height:${rect.height}px;background:${rgba(p.color, 0.18)}`;
+            layer.append(box);
+          }
       }
       // An agent's caret can sit between blocks (after an edit to the markup):
       // show it at the end of the text before, or the start of the text after.

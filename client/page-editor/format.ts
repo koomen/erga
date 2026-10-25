@@ -26,25 +26,37 @@ export abstract class EditorFormat extends EditorEdit {
     const segments: { u: M.Unit; from: number; to: number }[] = [];
     let why: string | null = null;
     for (const u of unitsIn(this.units, sel.from, sel.to)) {
-      if (u.tag == "pre") { why = "Text in a code block can't be styled."; continue; }
-      if (!this.verify(u)) { why = "That text is made by the page's script, so it can't be styled here."; continue; }
+      if (u.tag == "pre") {
+        why = "Text in a code block can't be styled.";
+        continue;
+      }
+      if (!this.verify(u)) {
+        why = "That text is made by the page's script, so it can't be styled here.";
+        continue;
+      }
       for (const r of u.runs) {
         if (!r.editable) continue;
-        let a = M.runOffset(r, Math.max(sel.from, r.from)), b = M.runOffset(r, Math.min(sel.to, r.to));
+        let a = M.runOffset(r, Math.max(sel.from, r.from)),
+          b = M.runOffset(r, Math.min(sel.to, r.to));
         while (a < b && /\s/.test(r.text[a])) a++;
         while (b > a && /\s/.test(r.text[b - 1])) b--;
         if (a < b) segments.push({ u, from: M.runPos(r, a), to: M.runPos(r, b) });
       }
     }
-    return { segments, why: segments.length ? null : why ?? "There's no text in the selection to style." };
+    return { segments, why: segments.length ? null : (why ?? "There's no text in the selection to style.") };
   }
 
   /** The element of one of `tags` that contains [from, to) of a unit, innermost first. */
   protected enclosing(u: M.Unit, tags: string[], from: number, to: number): M.ElementNode | null {
-    let node = u.node, found: M.ElementNode | null = null;
+    let node = u.node,
+      found: M.ElementNode | null = null;
     while (node) {
       let next: M.ElementNode | undefined;
-      for (const c of node.children) if (c.kind == "element" && !c.selfClosing && c.openTo <= from && to <= c.closeFrom) { next = c; break; }
+      for (const c of node.children)
+        if (c.kind == "element" && !c.selfClosing && c.openTo <= from && to <= c.closeFrom) {
+          next = c;
+          break;
+        }
       if (!next) break;
       if (tags.includes(next.tag)) found = next;
       node = next;
@@ -53,7 +65,9 @@ export abstract class EditorFormat extends EditorEdit {
   }
 
   /** Why the selection can't be styled, or null if it can (for the toolbar's disabled state). */
-  styleBlocker(): string | null { return this.styleSegments().why; }
+  styleBlocker(): string | null {
+    return this.styleSegments().why;
+  }
 
   /** Whether the whole selection already has the style (for the toolbar's pressed state). */
   hasStyle(style: InlineStyle): boolean {
@@ -84,8 +98,10 @@ export abstract class EditorFormat extends EditorEdit {
         byEl.set(el, r ? { from: Math.min(r.from, g.from), to: Math.max(r.to, g.to) } : { from: g.from, to: g.to });
       }
       for (const [el, r] of byEl) {
-        const open = src.slice(el.from, el.openTo), close = src.slice(el.closeFrom, el.to);
-        const atStart = !/\S/.test(src.slice(el.openTo, r.from)), atEnd = !/\S/.test(src.slice(r.to, el.closeFrom));
+        const open = src.slice(el.from, el.openTo),
+          close = src.slice(el.closeFrom, el.to);
+        const atStart = !/\S/.test(src.slice(el.openTo, r.from)),
+          atEnd = !/\S/.test(src.slice(r.to, el.closeFrom));
         if (atStart && atEnd) changes.push({ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to });
         else if (atStart) changes.push({ from: el.from, to: el.openTo }, { from: r.to, insert: open });
         else if (atEnd) changes.push({ from: r.from, insert: close }, { from: el.closeFrom, to: el.to });
@@ -95,15 +111,25 @@ export abstract class EditorFormat extends EditorEdit {
       // One wrapper when the selection is a single well-formed stretch with
       // none of the style inside, else one per stretch that lacks it.
       const tag = STYLE_TAGS[style][0];
-      const first = segments[0], last = segments[segments.length - 1];
+      const first = segments[0],
+        last = segments[segments.length - 1];
       const lacking = segments.filter((g) => !this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to));
       const inside = new RegExp(`<(${STYLE_TAGS[style].join("|")})[\\s>]`, "i");
-      if (first.u == last.u && lacking.length == segments.length && M.balanced(src, first.from, last.to) && !inside.test(src.slice(first.from, last.to))) {
+      if (
+        first.u == last.u &&
+        lacking.length == segments.length &&
+        M.balanced(src, first.from, last.to) &&
+        !inside.test(src.slice(first.from, last.to))
+      ) {
         changes.push({ from: first.from, insert: `<${tag}>` }, { from: last.to, insert: `</${tag}>` });
       } else for (const g of lacking) changes.push({ from: g.from, insert: `<${tag}>` }, { from: g.to, insert: `</${tag}>` });
     }
     const set = this.state.changes(changes);
-    this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
+    this.dispatch({
+      changes: set,
+      selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)),
+      userEvent: "input.format",
+    });
     return null;
   }
 
@@ -132,9 +158,14 @@ export abstract class EditorFormat extends EditorEdit {
     const set = this.state.changes(all);
     const after = set.apply(this.state.doc).toString();
     for (const u of spans.keys()) {
-      if (!M.balanced(after, set.mapPos(u.from, -1), set.mapPos(u.to, 1))) return "That selection crosses other markup; select text inside it, or around all of it.";
+      if (!M.balanced(after, set.mapPos(u.from, -1), set.mapPos(u.to, 1)))
+        return "That selection crosses other markup; select text inside it, or around all of it.";
     }
-    this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
+    this.dispatch({
+      changes: set,
+      selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)),
+      userEvent: "input.format",
+    });
     return null;
   }
 
@@ -148,7 +179,8 @@ export abstract class EditorFormat extends EditorEdit {
           if (c.kind != "element" || c.selfClosing || c.closeFrom <= from || c.openTo >= to) continue;
           if (FORMAT_TAGS.has(c.tag)) {
             // Take the element off the selected stretch: drop a tag at an end the selection reaches, else close or reopen it there.
-            const s = Math.max(from, c.openTo), e = Math.min(to, c.closeFrom);
+            const s = Math.max(from, c.openTo),
+              e = Math.min(to, c.closeFrom);
             if (hasText(c.openTo, s)) inserts.push({ at: s, insert: `</${c.tag}>`, order: -depth });
             else changes.push({ from: c.from, to: c.openTo });
             if (hasText(e, c.closeFrom)) inserts.push({ at: e, insert: src.slice(c.from, c.openTo), order: depth });
@@ -158,8 +190,15 @@ export abstract class EditorFormat extends EditorEdit {
         }
       };
       walk(u.node, 0);
-      if (/^h[1-6]$/.test(u.tag) && /^<h[1-6]/i.test(src.slice(u.openFrom, u.openFrom + 3)) && /^<\/h[1-6]/i.test(src.slice(u.contentTo, u.contentTo + 4))) {
-        changes.push({ from: u.openFrom + 1, to: u.openFrom + 3, insert: "p" }, { from: u.contentTo + 2, to: u.contentTo + 4, insert: "p" });
+      if (
+        /^h[1-6]$/.test(u.tag) &&
+        /^<h[1-6]/i.test(src.slice(u.openFrom, u.openFrom + 3)) &&
+        /^<\/h[1-6]/i.test(src.slice(u.contentTo, u.contentTo + 4))
+      ) {
+        changes.push(
+          { from: u.openFrom + 1, to: u.openFrom + 3, insert: "p" },
+          { from: u.contentTo + 2, to: u.contentTo + 4, insert: "p" }
+        );
       }
     }
     return { changes, inserts };
@@ -179,7 +218,8 @@ export abstract class EditorFormat extends EditorEdit {
     }
     // The selection's text, without the spaces at its ends.
     const { segments } = this.styleSegments();
-    const first = segments[0], last = segments[segments.length - 1];
+    const first = segments[0],
+      last = segments[segments.length - 1];
     if (!first || first.u != last.u) return null;
     const el = this.enclosing(first.u, ["a"], first.from, last.to);
     return el ? { u: first.u, el } : null;
@@ -192,10 +232,17 @@ export abstract class EditorFormat extends EditorEdit {
     const { u, el } = at;
     const open = this.state.doc.sliceString(el.from, el.openTo);
     let rect: DOMRect | null = null;
-    const a = this.domAtPos(el.openTo, 1), b = this.domAtPos(el.closeFrom, -1);
+    const a = this.domAtPos(el.openTo, 1),
+      b = this.domAtPos(el.closeFrom, -1);
     if (a && b && this.doc) {
       const r = this.doc.createRange();
-      try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); rect = r.getBoundingClientRect(); } catch { /* the page is rendering */ }
+      try {
+        r.setStart(a.node, a.offset);
+        r.setEnd(b.node, b.offset);
+        rect = r.getBoundingClientRect();
+      } catch {
+        /* the page is rendering */
+      }
     }
     return {
       href: attrOf(open, "href") ?? "",
@@ -215,7 +262,8 @@ export abstract class EditorFormat extends EditorEdit {
   setLink(edit: LinkEdit): string | null {
     let moved: SelectionRange | null = null;
     if (edit.at) {
-      const now = this.currentSelection(), clamp = (n: number) => Math.max(0, Math.min(this.state.doc.length, n));
+      const now = this.currentSelection(),
+        clamp = (n: number) => Math.max(0, Math.min(this.state.doc.length, n));
       if (now.anchor != edit.at.anchor || now.head != edit.at.head) {
         moved = now;
         this.dispatch({ selection: EditorSelection.single(clamp(edit.at.anchor), clamp(edit.at.head)), userEvent: "select" });
@@ -224,7 +272,7 @@ export abstract class EditorFormat extends EditorEdit {
     const done = this.applyLink(edit);
     // The caret stays where it went.
     if (moved) {
-      const map = (n: number) => done.changes ? done.changes.mapPos(n) : n;
+      const map = (n: number) => (done.changes ? done.changes.mapPos(n) : n);
       this.dispatch({ selection: EditorSelection.single(map(moved.anchor), map(moved.head)), userEvent: "select" });
     }
     return done.why;
@@ -250,11 +298,16 @@ export abstract class EditorFormat extends EditorEdit {
     } else {
       const { segments, why } = this.styleSegments();
       if (why) return { why };
-      const first = segments[0], last = segments[segments.length - 1];
+      const first = segments[0],
+        last = segments[segments.length - 1];
       if (first.u != last.u) return { why: "A link can't span paragraphs; select text within one." };
       if (!edit.url) return { why: null };
-      if (!M.balanced(src, first.from, last.to)) return { why: "That selection crosses other styling; select text inside it, or around all of it." };
-      changes.push({ from: first.from, insert: `<a href="${href}"${edit.self ? ' target="_self"' : ""}>` }, { from: last.to, insert: "</a>" });
+      if (!M.balanced(src, first.from, last.to))
+        return { why: "That selection crosses other styling; select text inside it, or around all of it." };
+      changes.push(
+        { from: first.from, insert: `<a href="${href}"${edit.self ? ' target="_self"' : ""}>` },
+        { from: last.to, insert: "</a>" }
+      );
       [textFrom, textTo] = [first.from, last.to];
     }
     // New text replaces the link's (and any styling inside it).
@@ -281,7 +334,8 @@ export abstract class EditorFormat extends EditorEdit {
     if (!u || u.tag == "pre" || !this.verify(u) || !this.editableAt(u, pos)) return false;
     const el = this.enclosing(u, ["a"], pos, pos) ?? linkEnding(u, pos);
     if (!el) return false;
-    const end = pos == el.closeFrom || pos == el.to, start = pos == el.from || pos == el.openTo;
+    const end = pos == el.closeFrom || pos == el.to,
+      start = pos == el.from || pos == el.openTo;
     if (!end && !start) return false;
     const join = end ? /^\S*/.exec(text)![0] : /\S*$/.exec(text)![0];
     const plain = end ? text.slice(join.length) : text.slice(0, text.length - join.length);
@@ -290,7 +344,7 @@ export abstract class EditorFormat extends EditorEdit {
     if (plain) changes.push({ from: outside, insert: M.escapeHtmlText(plain) });
     if (join) changes.push({ from: inside, insert: M.escapeHtmlText(join) });
     const set = this.state.changes(changes);
-    const caret = set.mapPos(end ? (plain ? outside : inside) : (join ? inside : outside), 1);
+    const caret = set.mapPos(end ? (plain ? outside : inside) : join ? inside : outside, 1);
     this.dispatch({ changes: set, selection: { anchor: caret }, userEvent, scrollIntoView: true });
     return true;
   }

@@ -9,7 +9,10 @@ import { HEADING, same, textIn } from "./source";
 import type { PausableWindow, RawProblem } from "./problems";
 
 /** The analysis of a source: its units, and its HTML with their marks (data-erga-id). */
-export interface Analysis { units: M.Unit[]; html: string }
+export interface Analysis {
+  units: M.Unit[];
+  html: string;
+}
 
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -91,9 +94,13 @@ export abstract class EditorCore {
   /** Splices the kept source string (see `src`) from `from` to `to`, the text after `changes`. */
   protected carrySrc(changes: ChangeSet, from: Source, to: Source): void {
     if (this.srcOf?.doc !== from || from === to) return;
-    let src = "", pos = 0;
+    let src = "",
+      pos = 0;
     const old = this.srcOf.src;
-    changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => { src += old.slice(pos, fromA) + inserted.toString(); pos = toA; });
+    changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      src += old.slice(pos, fromA) + inserted.toString();
+      pos = toA;
+    });
     this.srcOf = { doc: to, src: src + old.slice(pos) };
   }
 
@@ -102,7 +109,6 @@ export abstract class EditorCore {
     if (typeof this.domFrom != "string") this.domFrom = this.analyze(this.domFrom.toString()).html;
     return this.domFrom;
   }
-
 
   protected decoder: M.EntityDecoder = (ref) => {
     let v = this.decoderCache.get(ref);
@@ -120,16 +126,25 @@ export abstract class EditorCore {
   }
 
   /** The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture, in a frame of its own): its files where they are. */
-  renderedHtml(src = this.src): string { return insertHead(this.analyze(src).html, `<base href="${this.config.base}">`); }
+  renderedHtml(src = this.src): string {
+    return insertHead(this.analyze(src).html, `<base href="${this.config.base}">`);
+  }
 
   /** The page's title: its <title>, else its first heading. */
   title(): string {
     const t = this.doc?.title?.trim();
     if (t) return t;
-    for (const u of this.units) if (HEADING.test(u.tag) || u.tag == "p") { const s = u.runs.filter((r) => r.editable).map((r) => r.text).join("").trim(); if (s) return s; }
+    for (const u of this.units)
+      if (HEADING.test(u.tag) || u.tag == "p") {
+        const s = u.runs
+          .filter((r) => r.editable)
+          .map((r) => r.text)
+          .join("")
+          .trim();
+        if (s) return s;
+      }
     return "";
   }
-
 
   /**
    * Whether the page can be paused: it defines `window.ergaPause`, which the
@@ -140,7 +155,9 @@ export abstract class EditorCore {
     return typeof (this.win as PausableWindow | null)?.ergaPause == "function";
   }
 
-  get isPaused(): boolean { return this.paused; }
+  get isPaused(): boolean {
+    return this.paused;
+  }
 
   /** Pauses or resumes the page; false if it can't be paused. A render keeps it paused. */
   setPaused(on: boolean): boolean {
@@ -154,8 +171,16 @@ export abstract class EditorCore {
   protected tellPause(): void {
     const win = this.win as PausableWindow | null;
     if (typeof win?.ergaPause != "function") return;
-    try { (win.ergaPause as (paused: boolean) => void)(this.paused); }
-    catch (e) { this.reportRaw?.({ kind: "script", message: `window.ergaPause(${this.paused}) threw: ${e instanceof Error ? e.message : String(e)}`, file: "", line: 0 }); }
+    try {
+      (win.ergaPause as (paused: boolean) => void)(this.paused);
+    } catch (e) {
+      this.reportRaw?.({
+        kind: "script",
+        message: `window.ergaPause(${this.paused}) threw: ${e instanceof Error ? e.message : String(e)}`,
+        file: "",
+        line: 0,
+      });
+    }
   }
 
   protected collectEls(): void {
@@ -170,8 +195,15 @@ export abstract class EditorCore {
     if (!el.classList.contains("erga-locked") && !this.spanning) el.setAttribute("contenteditable", "true");
     // No spellcheck: these are technical documents, full of names a dictionary flags.
     el.setAttribute("spellcheck", "false");
-    for (const atom of el.querySelectorAll("*")) if (M.ATOMIC.has(atom.localName)) { this.keepOwn(atom); atom.setAttribute("contenteditable", "false"); }
-    for (const fixed of el.querySelectorAll(`[${M.NO_EDIT_ATTR}]`)) { this.keepOwn(fixed); fixed.setAttribute("contenteditable", "false"); }
+    for (const atom of el.querySelectorAll("*"))
+      if (M.ATOMIC.has(atom.localName)) {
+        this.keepOwn(atom);
+        atom.setAttribute("contenteditable", "false");
+      }
+    for (const fixed of el.querySelectorAll(`[${M.NO_EDIT_ATTR}]`)) {
+      this.keepOwn(fixed);
+      fixed.setAttribute("contenteditable", "false");
+    }
   }
 
   /** Notes how the page had an element's editability, the first time the editor changes it (stop gives it back). */
@@ -187,7 +219,6 @@ export abstract class EditorCore {
       el.classList.toggle("erga-empty", empty);
     }
   }
-
 
   protected textNodes(el: Element): Text[] {
     const out: Text[] = [];
@@ -219,21 +250,27 @@ export abstract class EditorCore {
   protected whyLocked(unit: M.Unit): { message: string; fix?: string } {
     const src = this.state.doc.sliceString(unit.contentFrom, unit.contentTo);
     const what = unit.tag == "p" ? "paragraph" : HEADING.test(unit.tag) ? "heading" : unit.tag == "li" ? "list item" : `<${unit.tag}>`;
-    const text = unit.runs.map((r) => r.text).join("").replace(/\s+/g, " ").trim();
+    const text = unit.runs
+      .map((r) => r.text)
+      .join("")
+      .replace(/\s+/g, " ")
+      .trim();
     const quote = text.length > 60 ? text.slice(0, 57).trimEnd() + "…" : text;
     const line = this.state.doc.lineAt(unit.from).number;
     // An end tag with nothing open to close: the browser drops it, so the
     // page's text no longer lines up with the file's.
     const open: string[] = [];
     for (const m of src.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*?(\/?)>/g)) {
-      const [, close, name, selfClose] = m, tag = name.toLowerCase();
+      const [, close, name, selfClose] = m,
+        tag = name.toLowerCase();
       if (selfClose || /^(br|img|wbr|hr|input|meta|link|source|area|col|embed|track)$/.test(tag)) continue;
       if (!close) open.push(tag);
       else if (open.at(-1) == tag) open.pop();
-      else return {
-        message: `This ${what} can't be edited: its HTML has a stray </${tag}> that the browser ignores, so the page's text no longer lines up with the file.`,
-        fix: `The ${what} “${quote}” (line ${line}) has a stray </${tag}> in its HTML, which the browser ignores, so I can't edit it on the page. Fix the markup so it's well-formed, keeping its text exactly as it is.`,
-      };
+      else
+        return {
+          message: `This ${what} can't be edited: its HTML has a stray </${tag}> that the browser ignores, so the page's text no longer lines up with the file.`,
+          fix: `The ${what} “${quote}” (line ${line}) has a stray </${tag}> in its HTML, which the browser ignores, so I can't edit it on the page. Fix the markup so it's well-formed, keeping its text exactly as it is.`,
+        };
     }
     return { message: `This text was changed by the page's script after it loaded, so it can't be edited here.` };
   }
@@ -259,7 +296,11 @@ export abstract class EditorCore {
     }
     const range = this.doc!.createRange();
     range.setStart(el, 0);
-    try { range.setEnd(node, offset); } catch { return u.contentFrom; }
+    try {
+      range.setEnd(node, offset);
+    } catch {
+      return u.contentFrom;
+    }
     let len = range.toString().length;
     for (let i = 0; i < nodes.length; i++) {
       const l = nodes[i].nodeValue!.length;
@@ -277,7 +318,8 @@ export abstract class EditorCore {
    */
   protected sameSpot(a: SelectionRange, b: SelectionRange): boolean {
     if (!a.empty || !b.empty || a.head == b.head) return false;
-    const from = Math.min(a.head, b.head), to = Math.max(a.head, b.head);
+    const from = Math.min(a.head, b.head),
+      to = Math.max(a.head, b.head);
     const u = M.unitAt(this.units, from);
     if (!u || u != M.unitAt(this.units, to)) return false;
     const between = this.state.doc.sliceString(from, to);
@@ -295,7 +337,10 @@ export abstract class EditorCore {
     let i = M.runAt(u, pos, side < 0);
     if (i < 0) {
       i = u.runs.findIndex((r) => r.from >= pos);
-      if (i < 0) { const last = u.runs.length - 1; return { node: nodes[last], offset: nodes[last].nodeValue!.length }; }
+      if (i < 0) {
+        const last = u.runs.length - 1;
+        return { node: nodes[last], offset: nodes[last].nodeValue!.length };
+      }
       return { node: nodes[i], offset: 0 };
     }
     return { node: nodes[i], offset: M.runOffset(u.runs[i], pos) };
@@ -307,7 +352,11 @@ export abstract class EditorCore {
    */
   protected posNear(node: Node, offset: number, after: boolean): number | null {
     const at = this.doc!.createRange();
-    try { at.setStart(node, offset); } catch { return null; }
+    try {
+      at.setStart(node, offset);
+    } catch {
+      return null;
+    }
     const units = after ? this.units : [...this.units].reverse();
     for (const u of units) {
       const el = this.els[u.id];
@@ -364,12 +413,17 @@ export abstract class EditorCore {
 
   /** Extends the DOM selection from `from` (the model's anchor if not given) to a point on the page, across units. */
   protected extendTo(x: number, y: number, from?: { node: Node; offset: number } | null): boolean {
-    const doc = this.doc!, sel = doc.getSelection();
+    const doc = this.doc!,
+      sel = doc.getSelection();
     const hit = doc.caretRangeFromPoint?.(x, y);
     from ??= this.domAtPos(this.state.selection.main.anchor);
     if (!sel || !hit || !from) return false;
     this.setSpanning(true);
-    try { sel.setBaseAndExtent(from.node, from.offset, hit.startContainer, hit.startOffset); } catch { return false; }
+    try {
+      sel.setBaseAndExtent(from.node, from.offset, hit.startContainer, hit.startOffset);
+    } catch {
+      return false;
+    }
     return true;
   }
 
@@ -377,7 +431,10 @@ export abstract class EditorCore {
   protected settleSpan(): void {
     if (!this.spanning) return;
     const sel = this.readSelection();
-    if (sel && !(sel.main.anchor == this.state.selection.main.anchor && sel.main.head == this.state.selection.main.head && this.told?.eq(sel.main))) {
+    if (
+      sel &&
+      !(sel.main.anchor == this.state.selection.main.anchor && sel.main.head == this.state.selection.main.head && this.told?.eq(sel.main))
+    ) {
       this.state = this.state.update({ selection: sel, userEvent: "select" }).state;
       this.notify({ docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
     }
@@ -401,15 +458,19 @@ export abstract class EditorCore {
     this.setSpanning(across);
     const anchor = this.domAtPos(main.anchor, main.empty ? main.assoc || 1 : main.anchor < main.head ? 1 : -1);
     if (!anchor) return;
-    const head = main.empty ? anchor : this.domAtPos(main.head, main.head > main.anchor ? -1 : 1) ?? anchor;
+    const head = main.empty ? anchor : (this.domAtPos(main.head, main.head > main.anchor ? -1 : 1) ?? anchor);
     const sel = doc.getSelection();
     if (!sel) return;
-    const host = (anchor.node.nodeType == 1 ? (anchor.node as Element) : anchor.node.parentElement)?.closest("[data-erga-id]") as HTMLElement | null;
+    const host = (anchor.node.nodeType == 1 ? (anchor.node as Element) : anchor.node.parentElement)?.closest(
+      "[data-erga-id]"
+    ) as HTMLElement | null;
     this.writingSelection = true;
     try {
       if (!across && host && host != doc.activeElement) host.focus({ preventScroll: true });
       sel.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     this.writingSelection = false;
   }
 
@@ -431,7 +492,9 @@ export abstract class EditorCore {
     try {
       range.setStart(at.node, at.offset);
       range.setEnd(at.node, at.offset);
-    } catch { return null; }
+    } catch {
+      return null;
+    }
     const rects = range.getClientRects();
     if (rects.length) return rects[0];
     return (at.node.nodeType == 1 ? (at.node as Element) : at.node.parentElement!).getBoundingClientRect();

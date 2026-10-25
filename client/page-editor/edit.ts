@@ -35,12 +35,17 @@ export abstract class EditorEdit extends EditorRender {
     // Edits from elsewhere (the source, an agent, the disk) and undo (a Transaction) stay as they are.
     if (!(spec instanceof Transaction) && tr.docChanged && !tr.isUserEvent("external")) {
       const added: [number, number][] = [];
-      tr.changes.iterChangedRanges((_fromA, _toA, from, to) => { if (to > from) added.push([from, to]); });
+      tr.changes.iterChangedRanges((_fromA, _toA, from, to) => {
+        if (to > from) added.push([from, to]);
+      });
       // (Typed text has no id: the whole text is read only when what was added could hold one.)
-      const drops = added.some(([from, to]) => M.ID_ATTR.test(tr.newDoc.sliceString(from, to))) ? M.duplicateIds(tr.newDoc.toString(), added) : [];
+      const drops = added.some(([from, to]) => M.ID_ATTR.test(tr.newDoc.sliceString(from, to)))
+        ? M.duplicateIds(tr.newDoc.toString(), added)
+        : [];
       if (drops.length) tr = this.state.update(spec, { changes: drops, sequential: true });
     }
-    const oldUnits = this.units, oldSrc = this.src;
+    const oldUnits = this.units,
+      oldSrc = this.src;
     this.carrySrc(tr.changes, tr.startState.doc, tr.newDoc);
     this.state = tr.state;
     if (tr.docChanged) {
@@ -52,7 +57,13 @@ export abstract class EditorEdit extends EditorRender {
     }
     this.syncDOMSelection(true);
     if (tr.docChanged || tr.scrollIntoView) this.scrollCaretIntoView();
-    this.notify({ docChanged: tr.docChanged, selectionSet: !!tr.selection, rendered: false, changes: tr.docChanged ? tr.changes : null, remote: false });
+    this.notify({
+      docChanged: tr.docChanged,
+      selectionSet: !!tr.selection,
+      rendered: false,
+      changes: tr.docChanged ? tr.changes : null,
+      remote: false,
+    });
   }
 
   protected scrollCaretIntoView(): void {
@@ -74,9 +85,11 @@ export abstract class EditorEdit extends EditorRender {
     const sel = this.currentSelection();
     // The browser's target range is a DOM caret; if it's the same spot as the model's, the model's wins (see sameSpot).
     if (range && range.from == range.to && this.sameSpot(EditorSelection.cursor(range.from), sel)) range = null;
-    const from = range ? range.from : sel.from, to = range ? range.to : sel.to;
-    const done = (from == to && (userEvent == "input.type" || userEvent == "input.paste") && this.typeAtLinkEdge(from, text, userEvent))
-      || this.replaceRange(from, to, text, userEvent);
+    const from = range ? range.from : sel.from,
+      to = range ? range.to : sel.to;
+    const done =
+      (from == to && (userEvent == "input.type" || userEvent == "input.paste") && this.typeAtLinkEdge(from, text, userEvent)) ||
+      this.replaceRange(from, to, text, userEvent);
     if (done && userEvent == "input.type" && (text == "*" || text == "_" || text == "`")) this.inputRule(this.state.selection.main.head);
     if (done && userEvent == "input.type" && text == " ") this.blockRule(this.state.selection.main.head);
     return done;
@@ -99,7 +112,8 @@ export abstract class EditorEdit extends EditorRender {
 
   /** The transaction replaceRange dispatches, or null if the range can't be replaced. */
   protected replaceSpec(from: number, to: number, text: string, userEvent: string): TransactionSpec | null {
-    const a = M.unitAt(this.units, from), b = M.unitAt(this.units, to);
+    const a = M.unitAt(this.units, from),
+      b = M.unitAt(this.units, to);
     if (!a || !b || !this.verify(a) || (a != b && !this.verify(b))) return null;
     if (!this.editableAt(a, from) || (text && !this.editableAt(a, from))) return null;
     const src = this.src;
@@ -107,7 +121,12 @@ export abstract class EditorEdit extends EditorRender {
     if (a == b) {
       // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
       const drops = insert ? this.placeholderDrops(src, [a], from, to, true) : [];
-      return { changes: [{ from, to, insert }, ...drops], selection: { anchor: from + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true };
+      return {
+        changes: [{ from, to, insert }, ...drops],
+        selection: { anchor: from + insert.length - dropped(drops, from) },
+        userEvent,
+        scrollIntoView: true,
+      };
     }
     // Across units.
     const between = this.units.slice(a.id, b.id + 1);
@@ -120,7 +139,11 @@ export abstract class EditorEdit extends EditorRender {
       let last = M.textEnd(a);
       for (const u of between.slice(1, -1)) {
         if (u.from < last || u.to > M.textStart(b)) continue;
-        if (!WHOLE_BLOCKS.test(u.tag)) { changes.push({ from: u.contentFrom, to: u.contentTo, insert: "" }); last = u.contentTo; continue; }
+        if (!WHOLE_BLOCKS.test(u.tag)) {
+          changes.push({ from: u.contentFrom, to: u.contentTo, insert: "" });
+          last = u.contentTo;
+          continue;
+        }
         // The whole element, with the indent and line break before it.
         const indent = /\n[ \t]*$/.exec(src.slice(last, u.from));
         changes.push({ from: indent ? u.from - indent[0].length : u.from, to: u.to, insert: "" });
@@ -145,7 +168,10 @@ export abstract class EditorEdit extends EditorRender {
    * block gets content (`hasContent`), all go; else all but the first.
    */
   protected placeholderDrops(src: string, units: M.Unit[], from: number, to: number, hasContent: boolean): { from: number; to: number }[] {
-    const left = units.map((u) => placeholderBr(src, u)).filter((br) => br && (br.to <= from || br.from >= to)) as { from: number; to: number }[];
+    const left = units.map((u) => placeholderBr(src, u)).filter((br) => br && (br.to <= from || br.from >= to)) as {
+      from: number;
+      to: number;
+    }[];
     return hasContent ? left : left.slice(1);
   }
 
@@ -164,23 +190,34 @@ export abstract class EditorEdit extends EditorRender {
     // One grapheme within the unit's text, skipping inline tag boundaries.
     let i = M.runAt(u, pos, !forward);
     if (i < 0) return false;
-    let run = u.runs[i], k = M.runOffset(run, pos);
+    let run = u.runs[i],
+      k = M.runOffset(run, pos);
     if (!forward && k == 0) {
-      do { i--; } while (i >= 0 && (!u.runs[i].text.length || !u.runs[i].editable));
+      do {
+        i--;
+      } while (i >= 0 && (!u.runs[i].text.length || !u.runs[i].editable));
       if (i < 0) return false;
       run = u.runs[i];
       k = run.text.length;
     } else if (forward && k >= run.text.length) {
-      do { i++; } while (i < u.runs.length && (!u.runs[i].text.length || !u.runs[i].editable));
+      do {
+        i++;
+      } while (i < u.runs.length && (!u.runs[i].text.length || !u.runs[i].editable));
       if (i >= u.runs.length) return false;
       run = u.runs[i];
       k = 0;
     }
     if (!run.editable) return false;
     const other = findClusterBreak(run.text, k, forward);
-    const from = M.runPos(run, Math.min(k, other)), to = M.runPos(run, Math.max(k, other));
+    const from = M.runPos(run, Math.min(k, other)),
+      to = M.runPos(run, Math.max(k, other));
     if (from == to) return false;
-    this.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: forward ? "delete.forward" : "delete.backward", scrollIntoView: true });
+    this.dispatch({
+      changes: { from, to },
+      selection: { anchor: from },
+      userEvent: forward ? "delete.forward" : "delete.backward",
+      scrollIntoView: true,
+    });
     return true;
   }
 
@@ -193,7 +230,8 @@ export abstract class EditorEdit extends EditorRender {
    * the other unit: the end of `prev`, or the start of `next`.
    */
   protected join(prevId: number, nextId: number, pos: number, forward: boolean): boolean {
-    const prev = this.units[prevId], next = this.units[nextId];
+    const prev = this.units[prevId],
+      next = this.units[nextId];
     if (!prev || !next) return false;
     const src = this.src;
     const changes = this.joinHtml(src, prev, next, pos);
@@ -202,7 +240,12 @@ export abstract class EditorEdit extends EditorRender {
       return true;
     }
     const set = this.state.changes(changes);
-    this.dispatch({ changes: set, selection: { anchor: set.mapPos(changes.at, -1) }, userEvent: forward ? "delete.forward" : "delete.backward", scrollIntoView: true });
+    this.dispatch({
+      changes: set,
+      selection: { anchor: set.mapPos(changes.at, -1) },
+      userEvent: forward ? "delete.forward" : "delete.backward",
+      scrollIntoView: true,
+    });
     return true;
   }
 
@@ -213,7 +256,12 @@ export abstract class EditorEdit extends EditorRender {
    * a rule between, only the rule goes. `at` is where the caret goes, before
    * the changes.
    */
-  protected joinHtml(src: string, prev: M.Unit, next: M.Unit, pos: number): (({ from: number; to?: number; insert?: string })[] & { at: number }) | null {
+  protected joinHtml(
+    src: string,
+    prev: M.Unit,
+    next: M.Unit,
+    pos: number
+  ): ({ from: number; to?: number; insert?: string }[] & { at: number }) | null {
     if (!this.verify(prev) || !this.verify(next)) return null;
     if (/^(td|th|caption)$/.test(prev.tag) || /^(td|th|caption)$/.test(next.tag)) return null;
     const between = M.gap(src, prev, next);
@@ -236,10 +284,15 @@ export abstract class EditorEdit extends EditorRender {
     const br = placeholderBr(src, prev);
     // The join: after prev's text, before the spaces and line breaks the page doesn't show, and before a <br> that ends it.
     let at = prev.contentTo;
-    const back = () => { if (!pre) while (at > prev.contentFrom && /\s/.test(src[at - 1])) at--; };
+    const back = () => {
+      if (!pre) while (at > prev.contentFrom && /\s/.test(src[at - 1])) at--;
+    };
     back();
     const lastBr = /<br\s*\/?>$/i.exec(src.slice(prev.contentFrom, at));
-    if (lastBr && !br) { at -= lastBr[0].length; back(); }
+    if (lastBr && !br) {
+      at -= lastBr[0].length;
+      back();
+    }
     let moved = "";
     if (contentIn(src, next, next.contentFrom, next.contentTo)) {
       moved = src.slice(next.contentFrom, next.contentTo);
@@ -266,16 +319,35 @@ export abstract class EditorEdit extends EditorRender {
     const src = this.src;
     const insertAt = (insert: string, caret: number) =>
       this.dispatch({ changes: { from: pos, insert }, selection: { anchor: caret }, userEvent: "input", scrollIntoView: true });
-    if (u.tag == "pre") { insertAt("\n", pos + 1); return true; }
-    if (shift || !BLOCK_SPLIT.has(u.tag)) { insertAt("<br>", pos + 4); return true; }
+    if (u.tag == "pre") {
+      insertAt("\n", pos + 1);
+      return true;
+    }
+    if (shift || !BLOCK_SPLIT.has(u.tag)) {
+      insertAt("<br>", pos + 4);
+      return true;
+    }
     // Enter in an empty last list item leaves the list: the item becomes a paragraph after it.
     const list = u.node.parent;
-    if (u.tag == "li" && list && (list.tag == "ul" || list.tag == "ol") && !/\S/.test(textIn([u], u.contentFrom, u.contentTo))
-      && !list.children.some((c) => c.kind == "element" && c.from > u.from)) {
+    if (
+      u.tag == "li" &&
+      list &&
+      (list.tag == "ul" || list.tag == "ol") &&
+      !/\S/.test(textIn([u], u.contentFrom, u.contentTo)) &&
+      !list.children.some((c) => c.kind == "element" && c.from > u.from)
+    ) {
       const indent = M.lineIndent(src, list.from);
       const before = src.slice(0, u.from).replace(/\s*$/, "").length;
       const para = `\n${indent}<p><br></p>`;
-      this.dispatch({ changes: [{ from: before, to: u.to }, { from: list.to, insert: para }], selection: { anchor: before + (list.to - u.to) + para.length - "<br></p>".length }, userEvent: "input", scrollIntoView: true });
+      this.dispatch({
+        changes: [
+          { from: before, to: u.to },
+          { from: list.to, insert: para },
+        ],
+        selection: { anchor: before + (list.to - u.to) + para.length - "<br></p>".length },
+        userEvent: "input",
+        scrollIntoView: true,
+      });
       return true;
     }
     const stack = M.inlineStackAt(src, u, pos);
@@ -289,13 +361,23 @@ export abstract class EditorEdit extends EditorRender {
     if (newTag != u.tag) {
       // The end of a heading: close it as it was written and start a new, empty paragraph.
       const head = brBefore + src.slice(pos, u.contentTo) + src.slice(u.contentTo, u.to) + `\n${indent}<${newTag}>`;
-      this.dispatch({ changes: { from: pos, to: u.to, insert: head + `${brAfter}</${newTag}>` }, selection: { anchor: pos + head.length }, userEvent: "input", scrollIntoView: true });
+      this.dispatch({
+        changes: { from: pos, to: u.to, insert: head + `${brAfter}</${newTag}>` },
+        selection: { anchor: pos + head.length },
+        userEvent: "input",
+        scrollIntoView: true,
+      });
       return true;
     }
     if (brBefore && !brAfter) {
       // At the start of the text: a blank block goes before, and the text stays in its block, with its id (dispatch).
       const insert = openTag + `<br></${u.tag}>\n${indent}`;
-      this.dispatch({ changes: { from: u.from, insert }, selection: { anchor: pos + insert.length }, userEvent: "input", scrollIntoView: true });
+      this.dispatch({
+        changes: { from: u.from, insert },
+        selection: { anchor: pos + insert.length },
+        userEvent: "input",
+        scrollIntoView: true,
+      });
       return true;
     }
     const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
@@ -317,7 +399,8 @@ export abstract class EditorEdit extends EditorRender {
   protected indentItem(out: boolean): boolean {
     const sel = this.currentSelection();
     if (!sel.empty) return false;
-    const pos = sel.head, u = M.unitAt(this.units, pos);
+    const pos = sel.head,
+      u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u) || pos < u.contentFrom || pos > M.textStart(u)) return false;
     const n = u.node;
     const elements = (e: M.ElementNode) => e.children.filter((c): c is M.ElementNode => c.kind == "element");
@@ -333,21 +416,42 @@ export abstract class EditorEdit extends EditorRender {
     const cut = (a: number, b: number) => (a <= pos && pos < b ? src.slice(a, pos) + CARET + src.slice(pos, b) : src.slice(a, b));
     const indent = (e: M.ElementNode) => M.lineIndent(src, e.from);
     const reindent = (text: string, from: string, to: string) =>
-      text.replace(/\n([ \t]*)/g, (_, w: string) => "\n" + (to.length >= from.length ? to.slice(from.length) + w : w.slice(Math.min(w.length, from.length - to.length))));
+      text.replace(
+        /\n([ \t]*)/g,
+        (_, w: string) =>
+          "\n" + (to.length >= from.length ? to.slice(from.length) + w : w.slice(Math.min(w.length, from.length - to.length)))
+      );
     const block = (e: M.ElementNode, to: string) => reindent(cut(e.from, e.to), indent(e), to);
     // An item with more items nested at its end: into its last list, or a new one after its text.
     const nest = (li: M.ElementNode, items: M.ElementNode[], tag: string) => {
-      const open = cut(li.from, li.openTo), close = src.slice(li.closeFrom, li.to), last = elements(li).at(-1);
+      const open = cut(li.from, li.openTo),
+        close = src.slice(li.closeFrom, li.to),
+        last = elements(li).at(-1);
       if (isList(last) && closed(last)) {
         const inner = indent(last) + "  ";
-        return cut(li.from, last.closeFrom).trimEnd() + items.map((e) => "\n" + inner + block(e, inner)).join("") + "\n" + indent(last) + cut(last.closeFrom, li.to);
+        return (
+          cut(li.from, last.closeFrom).trimEnd() +
+          items.map((e) => "\n" + inner + block(e, inner)).join("") +
+          "\n" +
+          indent(last) +
+          cut(last.closeFrom, li.to)
+        );
       }
-      const at = indent(li) + "  ", inner = at + "  ";
+      const at = indent(li) + "  ",
+        inner = at + "  ";
       const content = cut(li.openTo, li.closeFrom).trim();
       const text = elements(li).some((e) => !M.INLINE.has(e.tag)) ? content : `<p>${content}</p>`;
-      return open + text + `\n${at}<${tag}>` + items.map((e) => "\n" + inner + block(e, inner)).join("") + `\n${at}</${tag}>\n${indent(li)}` + close;
+      return (
+        open +
+        text +
+        `\n${at}<${tag}>` +
+        items.map((e) => "\n" + inner + block(e, inner)).join("") +
+        `\n${at}</${tag}>\n${indent(li)}` +
+        close
+      );
     };
-    const siblings = elements(list), i = siblings.indexOf(item);
+    const siblings = elements(list),
+      i = siblings.indexOf(item);
     let from: number, to: number, insert: string;
     if (!out) {
       const prev = siblings[i - 1];
@@ -364,11 +468,20 @@ export abstract class EditorEdit extends EditorRender {
       let content = cut(parent.openTo, a) + cut(b, parent.closeFrom);
       const lone = i == 0 && /^\s*<p>((?:(?!<\/?p[\s>])[\s\S])*)<\/p>\s*$/.exec(content);
       content = lone ? lone[1] : content.trimEnd() + "\n" + indent(parent);
-      ({ from, to, insert } = { from: parent.from, to: parent.to, insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + "\n" + indent(parent) + moved });
+      ({ from, to, insert } = {
+        from: parent.from,
+        to: parent.to,
+        insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + "\n" + indent(parent) + moved,
+      });
     }
     const caret = insert.indexOf(CARET);
     insert = insert.replace(CARET, "");
-    this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + Math.max(0, caret) }, userEvent: out ? "delete.dedent" : "input.indent", scrollIntoView: true });
+    this.dispatch({
+      changes: { from, to, insert },
+      selection: { anchor: from + Math.max(0, caret) },
+      userEvent: out ? "delete.dedent" : "input.indent",
+      scrollIntoView: true,
+    });
     return true;
   }
 
@@ -379,13 +492,19 @@ export abstract class EditorEdit extends EditorRender {
     const whole = M.textStart(u) == sel.from && M.textEnd(u) == sel.to;
     const editable = this.units.filter((x) => x.runs.some((r) => r.editable && r.text));
     if (!editable.length) return true;
-    const range = whole ? EditorSelection.single(M.textStart(editable[0]), M.textEnd(editable[editable.length - 1])) : EditorSelection.single(M.textStart(u), M.textEnd(u));
+    const range = whole
+      ? EditorSelection.single(M.textStart(editable[0]), M.textEnd(editable[editable.length - 1]))
+      : EditorSelection.single(M.textStart(u), M.textEnd(u));
     this.dispatch({ selection: range, userEvent: "select" });
     return true;
   }
 
-  undo(): boolean { return undo(this.target()); }
-  redo(): boolean { return redo(this.target()); }
+  undo(): boolean {
+    return undo(this.target());
+  }
+  redo(): boolean {
+    return redo(this.target());
+  }
 
   /** Replaces the whole document (an edit made on disk); not undoable. */
   replaceAll(text: string): void {
