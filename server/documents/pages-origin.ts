@@ -133,6 +133,9 @@ export async function pagesDoor(request: Request, url: URL, doc: { owner: string
   // checked against the file's: the file's own (stripped of ours) goes to the document.
   const ours = `.${readerVersion()}${claims.edit ? "w" : ""}`;
   const asked = new Headers(request.headers);
+  // This origin has no cookies of its own. Until erga-pages.dev is on the Public Suffix List (docs/psl-submission.md),
+  // one document's page can set a cookie for all of them: it goes no further than here.
+  asked.delete("cookie");
   const inm = asked.get("if-none-match");
   if (page && inm) {
     const theirs = inm.split(",").map((t) => t.trim().replace(/^W\//, "")).filter((t) => t.endsWith(`${ours}"`)).map((t) => t.slice(0, -ours.length - 1) + '"');

@@ -153,7 +153,7 @@ test("a document's page opened at the editor's own address runs in a sandbox: it
   for (const at of ["/doc/index.html", "/doc/"]) {
     const res = await page.goto(address + at);
     expect(res?.status(), at).toBe(200);
-    expect(res?.headers()["content-security-policy"], at).toBe("sandbox");
+    expect(res?.headers()["content-security-policy"], at).toMatch(/^sandbox\b/);
     expect(res?.headers()["x-content-type-options"], at).toBe("nosniff");
     expect(await page.textContent("h1")).toBe("Hi");
     expect(await page.title(), `${at}: the script didn't run`).toBe("Plain");

@@ -51,18 +51,20 @@ import { adminsOnlyGate, chooseSignIn, devSignIn, finishGoogleSignIn, finishSign
 import { releaseApi, withLive } from "./live.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
+import { withSecurity } from "./security.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (request: Request, url: URL) => Promise<Response | null>;
 
-/** The app's answer to a request: the route table, then what every page of the site's own gets (the account corner, live.js). */
+/** The app's answer to a request: the route table, then what every page of the site's own gets (the account corner, live.js, its security headers). */
 export async function handle(request: Request, platform: Platform, outside: Outside): Promise<Response> {
   const url = new URL(request.url);
   // The editor's files' addresses, for the pages below to name (pages/assets.ts).
   if (!isAsset(url.pathname)) await loadAssets(platform, url);
   const response = await route(request, platform, url, outside);
   // Every page of the site's own has who you are in its upper right; a document's pages origin, and its files, never do.
-  if (response.status == 101 || isPagesSite(url, platform)) return response;
+  if (response.status == 101) return response;
+  if (isPagesSite(url, platform)) return withSecurity(response, url, "pages");
   // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
   const own = response.headers.has(OWN_ACCOUNT);
   const page = await withAccount(response, async () => {
@@ -71,7 +73,8 @@ export async function handle(request: Request, platform: Platform, outside: Outs
     return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
   }, url.pathname + url.search);
   // And every page of the site's own follows a redeploy; not the editor's own files (editor.html is a part of a page).
-  return own || isAsset(url.pathname) ? page : withLive(page, request);
+  // Then what every answer says about how a browser may use it: HTTPS only, no other site's frame (security.ts).
+  return withSecurity(own || isAsset(url.pathname) ? page : await withLive(page, request), url, "site");
 }
 
 async function route(request: Request, p: Platform, url: URL, outside: Outside): Promise<Response> {

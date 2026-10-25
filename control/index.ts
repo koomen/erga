@@ -27,6 +27,7 @@ import { githubAppOf } from "../cloudflare/github-app";
 import { sealKeyFrom } from "../deploy/credential";
 import { hashSecret } from "../deploy/forks";
 import { remoteAssets } from "../server/pages/index.ts";
+import { withSecurity } from "../server/security.ts";
 
 export { Builder } from "./builder/worker";
 export { Pipeline } from "../cloudflare/pipeline";
@@ -85,7 +86,8 @@ export default {
     const upstream = env.UPSTREAM?.trim().replace(/\/+$/, "") || null;
     const fleet = installFleet(env);
     const hosts = fleet ? { production: fleet.specOf("production").host, staging: fleet.specOf("staging").host, control: fleet.specOf("control").host } : null;
-    return controlRoutes(request, {
+    // With the app's security headers (server/security.ts): HTTPS only, and no other site's frame.
+    return withSecurity(await controlRoutes(request, {
       platform,
       deploys: env.PIPELINE.getByName("deploys"),
       releases: releaseStoreOf(env as never),
@@ -121,6 +123,6 @@ export default {
         // An install's consent goes through erga.dev's callback (the one registered on the client), which relays it here.
         ...(upstream ? { relay: upstream } : {}),
       },
-    });
+    }), new URL(request.url), "site");
   },
 } satisfies ExportedHandler<ControlEnv>;
