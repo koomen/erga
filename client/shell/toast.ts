@@ -33,17 +33,29 @@ export function mountToast(shell: Shell) {
       b.type = "button";
       b.className = "toast-fix";
       b.textContent = "Fix with agent";
-      // aria-disabled, not disabled: it can still say why it can't.
-      if (shell.agent.off) { b.setAttribute("aria-disabled", "true"); b.title = shell.agent.off; }
       b.addEventListener("click", () => {
         if (shell.agent.off) { explain(shell.agent.off); return; }
         hideExplanation();
         shell.agent.fixReported(fix, key);
       });
       toast.append(b);
+      syncFix();
     }
     toast.classList.add("show");
     explaining = performance.now();
+  }
+  /**
+   * The fix button as the agent stands: off, and why, until it's on. The agent's state comes after the page can
+   * report a problem ("Connecting to the agent…" until then), so its arrival updates a button already up.
+   */
+  function syncFix() {
+    const b = toast.querySelector<HTMLButtonElement>(".toast-fix");
+    if (!b) return;
+    const off = shell.agent.off;
+    // aria-disabled, not disabled: it can still say why it can't.
+    if (off) b.setAttribute("aria-disabled", "true");
+    else b.removeAttribute("aria-disabled");
+    b.title = off ?? "";
   }
   function hideExplanation() {
     explaining = 0;
@@ -70,6 +82,7 @@ export function mountToast(shell: Shell) {
   // Capture phase, before whatever the click or key does (which may explain something new).
   for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, dismissExplanation, true);
   return {
+    syncFix,
     flash, explain, hideExplanation, dismissExplanation, reportProblem,
     clearProblems() { problemQueue.length = 0; if (explaining) hideExplanation(); },
   };
