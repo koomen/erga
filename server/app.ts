@@ -74,7 +74,8 @@ export async function handle(request: Request, platform: Platform, outside: Outs
   }, url.pathname + url.search);
   // And every page of the site's own follows a redeploy; not the editor's own files (editor.html is a part of a page).
   // Then what every answer says about how a browser may use it: HTTPS only, no other site's frame (security.ts).
-  return withSecurity(own || isAsset(url.pathname) ? page : await withLive(page, request), url, "site");
+  // (The script rule, a nonce in each <script>, on its pages: not the editor's files, which are as they were built.)
+  return withSecurity(own || isAsset(url.pathname) ? page : await withLive(page, request), url, "site", !isAsset(url.pathname));
 }
 
 async function route(request: Request, p: Platform, url: URL, outside: Outside): Promise<Response> {

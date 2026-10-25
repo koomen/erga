@@ -65,3 +65,33 @@ test("a cookie that one document's page set for every page (erga-pages.dev isn't
   expect(await r.text()).toBe("x");
   expect(seen!.headers.get("cookie")).toBeNull();
 });
+
+test("the app's pages run only the scripts the server wrote in: each <script> has this answer's nonce, new at each answer", async () => {
+  const page = () => withSecurity(html(), at("https://erga.dev/docs"), "site", true);
+  const made = (body: string) =>
+    withSecurity(new Response(body, { headers: { "Content-Type": "text/html" } }), at("https://erga.dev/docs"), "site", true);
+  const r = made(
+    `<head><script>a()</script><script type="module" src="/_erga/x.js"></script></head><body><p>&lt;script&gt;b()&lt;/script&gt;</p><script>var s = "<script>";</script></body>`
+  );
+  const policy = r.headers.get("content-security-policy")!;
+  const nonce = /'nonce-([^']+)'/.exec(policy)![1];
+  expect(policy).toBe(`${PAGE_POLICY}; script-src 'nonce-${nonce}' 'strict-dynamic'`);
+  const body = await r.text();
+  // (The last is the text in the last script's code.)
+  expect(body.match(/<script\b[^>]*>/g)).toEqual([
+    `<script nonce="${nonce}">`,
+    `<script type="module" src="/_erga/x.js" nonce="${nonce}">`,
+    `<script nonce="${nonce}">`,
+    "<script>",
+  ]);
+  // The text that only looks like a script (escaped, or in a script's own code) is left as it is.
+  expect(body).toContain("<p>&lt;script&gt;b()&lt;/script&gt;</p>");
+  expect(body).toContain(`var s = "<script>";`);
+  const other = /'nonce-([^']+)'/.exec(page().headers.get("content-security-policy")!)![1];
+  expect(other).not.toBe(nonce);
+  expect(nonce.length).toBeGreaterThanOrEqual(22);
+  // A 304's headers would replace the page's: none go on it.
+  expect(
+    withSecurity(new Response(null, { status: 304 }), at("https://erga.dev/docs"), "site", true).headers.get("content-security-policy")
+  ).toBeNull();
+});

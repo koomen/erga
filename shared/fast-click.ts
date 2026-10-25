@@ -68,6 +68,9 @@ const SOURCE = `function (root, selector) {
 /** A document, an element or a shadow root (typed loosely: the server has no DOM types). */
 type Root = object;
 
+/** For an inline script: defines window.ergaFastClick, for the editor's modules (fastClick) on a page that runs no eval. */
+export const FAST_CLICK_DEFINE = `window.ergaFastClick = window.ergaFastClick || ${SOURCE};`;
+
 /** For an inline script: makes `root`'s buttons that match `selector` act on press (`root` is a JS expression). */
 export const fastClickScript = (root: string, selector: string) =>
   `(window.ergaFastClick = window.ergaFastClick || ${SOURCE})(${root}, ${JSON.stringify(selector)});`;
@@ -75,6 +78,10 @@ export const fastClickScript = (root: string, selector: string) =>
 let made: ((root: Root, selector: string) => void) | null = null;
 /** Makes `root`'s buttons that match `selector` act on press. In a browser only. */
 export function fastClick(root: Root, selector: string): void {
-  made ??= new Function(`return (${SOURCE})`)() as (root: Root, selector: string) => void;
+  // The page's own, where one of its inline scripts made it: the site's pages run no eval (server/security.ts).
+  made ??= ((globalThis as { ergaFastClick?: typeof made }).ergaFastClick ?? new Function(`return (${SOURCE})`)()) as (
+    root: Root,
+    selector: string
+  ) => void;
   made(root, selector);
 }

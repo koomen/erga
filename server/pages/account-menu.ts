@@ -71,7 +71,7 @@ export function accountMarkup(account: Account | null, here: string): string {
   const s = account.session;
   return `<div class="erga-account" data-erga-account="in">
 <button type="button" class="erga-account-btn" style="--c: ${colorFor(account.login.toLowerCase())}" aria-label="${esc(`You (${account.name})`)}" data-tip="${esc(account.name)}" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">
-<span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" draggable="false" onerror="this.remove()">` : ""}
+<span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" draggable="false" data-erga-fallback>` : ""}
 </button>
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
@@ -145,8 +145,18 @@ export const ACCOUNT_STYLE = `<style>
   @media (pointer: coarse) { .erga-account-menu a { padding: 11px 12px; } }
 </style>`;
 
+/**
+ * For an inline script: a picture marked data-erga-fallback in `root` (a document or a shadow root) that doesn't load
+ * goes, and the initial under it shows. (Not an onerror attribute: the site's pages run no inline handler, server/security.ts.)
+ */
+export const imgFallbackScript = (root: string) => `((root) => {
+  for (const img of root.querySelectorAll("img[data-erga-fallback]")) if (img.complete && !img.naturalWidth) img.remove();
+  root.addEventListener("error", (e) => { if (e.target.matches?.("img[data-erga-fallback]")) e.target.remove(); }, true);
+})(${root});`;
+
 const ACCOUNT_SCRIPT = `<script>(() => {
   const root = document.currentScript.previousElementSibling.previousElementSibling, btn = root.querySelector("button"), menu = root.querySelector(".erga-account-menu");
+  ${imgFallbackScript("root")}
   const show = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
   btn.addEventListener("click", () => { show(menu.hidden); if (!menu.hidden) menu.querySelector("a")?.focus({ preventScroll: true }); });
   // It opens as the press starts (shared/fast-click.ts).

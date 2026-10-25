@@ -24,6 +24,16 @@ test("every kind of the site's own page sends frame-ancestors 'self', X-Frame-Op
     expect(csp, path).toContain("frame-ancestors 'self'");
     // The homepage is its authors' (only the frame rule); every other page has the site's whole policy.
     if (path != "/") expect(csp, path).toContain("object-src 'none'; base-uri 'self'");
+    // And only the scripts the server wrote in, each with this answer's nonce.
+    const nonce = /script-src 'nonce-([^']+)' 'strict-dynamic'/.exec(csp)?.[1];
+    if (path != "/") {
+      expect(nonce, path).toBeTruthy();
+      const html = await res.clone().text();
+      const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]);
+      expect(scripts.length, path).toBeGreaterThan(0);
+      for (const tag of scripts) expect(tag, path).toContain(`nonce="${nonce}"`);
+      expect(html, path).not.toMatch(/\son(error|load|click)=/);
+    }
     // Not over HTTPS here: no HSTS on this machine.
     expect(res.headers.get("strict-transport-security"), path).toBeNull();
     await res.body?.cancel();

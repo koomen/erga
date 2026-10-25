@@ -83,7 +83,7 @@ export function isTopLevelPage(req: IncomingMessage): boolean {
   return dest ? dest == "document" : /text\/html/.test(req.headers.accept ?? "");
 }
 
-/** Adds `tag` to the end of the response, if it turns out to be uncompressed HTML. */
+/** Adds `tag` to the end of the response, if it turns out to be uncompressed HTML (its scripts with the page's nonce). */
 export function inject(res: ServerResponse, tag: string) {
   const writeHead = res.writeHead.bind(res) as (...a: unknown[]) => ServerResponse;
   const end = res.end.bind(res) as (...a: unknown[]) => ServerResponse;
@@ -98,6 +98,9 @@ export function inject(res: ServerResponse, tag: string) {
     } else if (headers) for (const [k, v] of Object.entries(headers)) if (v !== undefined) res.setHeader(k, v as string);
     html = status == 200 && /text\/html/.test(String(res.getHeader("content-type") ?? "")) && !res.getHeader("content-encoding");
     if (html) res.removeHeader("content-length");
+    // A page that runs only its own scripts names their nonce (server/security.ts): the tag's scripts take it too.
+    const nonce = /'nonce-([^']+)'/.exec(String(res.getHeader("content-security-policy") ?? ""))?.[1];
+    if (html && nonce) tag = tag.replace(/<script\b/g, `<script nonce="${nonce}"`);
     return message ? writeHead(status, message) : writeHead(status);
   }) as typeof res.writeHead;
   res.end = ((...args: unknown[]) => {

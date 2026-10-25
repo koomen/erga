@@ -12,6 +12,7 @@
 // after changes; serve.ts serves it at /; api.ts is the homepage's API.
 
 import type { DocRow } from "../directory/index.ts";
+import { imgFallbackScript } from "../pages/index.ts";
 import { ACCOUNT_STYLE, accountMarkup, cloneButton, crumbsFont, editButton, esc, FADE, filesButton, link, NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, VIEW_STYLE, viewCrumbs, type Account } from "../pages/index.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
@@ -182,6 +183,7 @@ const HEADER_SCRIPT = `(() => {
   let root = host.shadowRoot;
   // A browser without declarative shadow roots: made here instead.
   if (!root) { const t = host.querySelector("template"); if (!t) return; root = host.attachShadow({ mode: "open" }); root.append(t.content); t.remove(); }
+  ${imgFallbackScript("root")}
   document.documentElement.append(host);
   const bar = () => host.style.setProperty("--erga-scrollbar", Math.max(0, innerWidth - document.documentElement.clientWidth) + "px");
   bar();
