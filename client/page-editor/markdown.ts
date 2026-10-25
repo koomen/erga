@@ -27,15 +27,27 @@ export abstract class EditorMarkdown extends EditorFormat {
     const rest = src.slice(pos, u.contentTo);
     const indent = M.lineIndent(src, u.from);
     let open: string, close: string;
-    if (kind == "heading") { open = `<h${mark.length}>`; close = `</h${mark.length}>`; }
-    else if (kind == "quote") { open = `<blockquote>\n${indent}  <p>`; close = `</p>\n${indent}</blockquote>`; }
-    else {
+    if (kind == "heading") {
+      open = `<h${mark.length}>`;
+      close = `</h${mark.length}>`;
+    } else if (kind == "quote") {
+      open = `<blockquote>\n${indent}  <p>`;
+      close = `</p>\n${indent}</blockquote>`;
+    } else {
       const list = kind == "ol" ? "ol" : "ul";
       const start = kind == "ol" && parseInt(mark) != 1 ? ` start="${parseInt(mark)}"` : "";
-      open = `<${list}${start}>\n${indent}  <li>`; close = `</li>\n${indent}</${list}>`;
+      open = `<${list}${start}>\n${indent}  <li>`;
+      close = `</li>\n${indent}</${list}>`;
     }
-    const change = { from: u.from, to: u.to, insert: open + rest + close }, caret = u.from + open.length;
-    this.dispatch({ changes: change, selection: { anchor: caret }, annotations: isolateHistory.of("full"), userEvent: "input.format", scrollIntoView: true });
+    const change = { from: u.from, to: u.to, insert: open + rest + close },
+      caret = u.from + open.length;
+    this.dispatch({
+      changes: change,
+      selection: { anchor: caret },
+      annotations: isolateHistory.of("full"),
+      userEvent: "input.format",
+      scrollIntoView: true,
+    });
   }
 
   /**
@@ -49,7 +61,8 @@ export abstract class EditorMarkdown extends EditorFormat {
     if (!u || u.tag == "pre" || !this.verify(u)) return;
     const i = M.runAt(u, pos, true);
     if (i < 0 || !u.runs[i].editable) return;
-    const run = u.runs[i], before = run.text.slice(0, M.runOffset(run, pos));
+    const run = u.runs[i],
+      before = run.text.slice(0, M.runOffset(run, pos));
     const src = this.src;
     if (M.inlineStackAt(src, u, pos).some((t) => t.tag == "code")) return;
     const rules: [RegExp, InlineStyle, number][] = [
@@ -67,16 +80,26 @@ export abstract class EditorMarkdown extends EditorFormat {
       const inner = src.slice(M.runPos(run, open + n), M.runPos(run, open + n + m[2].length));
       const tag = STYLE_TAGS[style][0];
       const insert = `<${tag}>${inner}</${tag}>`;
-      this.dispatch({ changes: { from, to: pos, insert }, selection: { anchor: from + insert.length }, annotations: isolateHistory.of("full"), userEvent: "input.format" });
+      this.dispatch({
+        changes: { from, to: pos, insert },
+        selection: { anchor: from + insert.length },
+        annotations: isolateHistory.of("full"),
+        userEvent: "input.format",
+      });
       return;
     }
   }
 
   protected findInline(u: M.Unit, tag: string, pos: number): M.ElementNode | null {
-    let node = u.node, found: M.ElementNode | null = null;
+    let node = u.node,
+      found: M.ElementNode | null = null;
     while (node) {
       let next: M.ElementNode | undefined;
-      for (const c of node.children) if (c.kind == "element" && !c.selfClosing && c.openTo <= pos && pos <= c.closeFrom) { next = c; break; }
+      for (const c of node.children)
+        if (c.kind == "element" && !c.selfClosing && c.openTo <= pos && pos <= c.closeFrom) {
+          next = c;
+          break;
+        }
       if (!next) break;
       if (next.tag == tag) found = next;
       node = next;

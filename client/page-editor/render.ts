@@ -36,7 +36,15 @@ export abstract class EditorRender extends EditorMarks {
     if (this.doc || sourceDigest(src) != this.config.source) {
       const b = this.viewBefore;
       let view: { pos: number; top: number } | null = null;
-      try { view = b ? { pos: b.changes ? b.changes.mapPos(b.pos, 1) : b.pos, top: b.top } : this.doc && this.win.scrollY > 0 ? this.topText() : null; } catch { view = null; }
+      try {
+        view = b
+          ? { pos: b.changes ? b.changes.mapPos(b.pos, 1) : b.pos, top: b.top }
+          : this.doc && this.win.scrollY > 0
+            ? this.topText()
+            : null;
+      } catch {
+        view = null;
+      }
       this.config.onReload(view);
       return;
     }
@@ -49,7 +57,7 @@ export abstract class EditorRender extends EditorMarks {
 
   /** Makes the page in the window editable: its text blocks, the editor's listeners and layers. */
   protected attach(src: string): void {
-    const doc = this.doc = this.win.document;
+    const doc = (this.doc = this.win.document);
     const style = doc.createElement("style");
     style.setAttribute("data-erga", "page");
     style.textContent = PAGE_STYLE;
@@ -61,7 +69,10 @@ export abstract class EditorRender extends EditorMarks {
     this.collectEls();
     this.bind();
     // A page starts live: tell it it's paused again, if it still can be.
-    if (this.paused) { if (this.canPause) this.tellPause(); else this.paused = false; }
+    if (this.paused) {
+      if (this.canPause) this.tellPause();
+      else this.paused = false;
+    }
     this.rendering = false;
     this.spanning = false;
     for (const el of this.els) if (el) this.prepareUnit(el);
@@ -76,7 +87,10 @@ export abstract class EditorRender extends EditorMarks {
       this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
     }
     this.notify({ docChanged: false, selectionSet: false, rendered: true, changes: null, remote: false });
-    if (this.pendingFlash.length) { this.flash(this.pendingFlash); this.pendingFlash = []; }
+    if (this.pendingFlash.length) {
+      this.flash(this.pendingFlash);
+      this.pendingFlash = [];
+    }
     this.markObserver?.disconnect();
     this.overlay = null;
     this.peerLayer = null;
@@ -117,11 +131,14 @@ export abstract class EditorRender extends EditorMarks {
     const registry = (this.win as Window & typeof globalThis).CSS?.highlights as Map<string, unknown> | undefined;
     if (registry) for (const name of [...registry.keys()]) if (/^erga-/.test(name)) registry.delete(name);
     for (const [el, [editable, spell]] of this.own) {
-      if (editable == null) el.removeAttribute("contenteditable"); else el.setAttribute("contenteditable", editable);
-      if (spell == null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", spell);
+      if (editable == null) el.removeAttribute("contenteditable");
+      else el.setAttribute("contenteditable", editable);
+      if (spell == null) el.removeAttribute("spellcheck");
+      else el.setAttribute("spellcheck", spell);
     }
     this.own.clear();
-    for (const el of doc.querySelectorAll(".erga-locked, .erga-empty, .erga-flash")) el.classList.remove("erga-locked", "erga-empty", "erga-flash");
+    for (const el of doc.querySelectorAll(".erga-locked, .erga-empty, .erga-flash"))
+      el.classList.remove("erga-locked", "erga-empty", "erga-flash");
     doc.documentElement.classList.remove("erga-span");
     doc.documentElement.removeAttribute("data-erga-editing");
     this.win.dispatchEvent(new Event("erga-editing"));
@@ -138,7 +155,9 @@ export abstract class EditorRender extends EditorMarks {
    * no text is (a picture, a widget).
    */
   protected topText(start = this.firstShown()): { pos: number; top: number } | null {
-    const doc = this.doc as (Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }) | null;
+    const doc = this.doc as
+      | (Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null })
+      | null;
     const win = this.win;
     if (!doc || !win) return null;
     for (let i = start; i < this.els.length; i++) {
@@ -147,13 +166,24 @@ export abstract class EditorRender extends EditorMarks {
       const r = el.getBoundingClientRect();
       if (r.bottom <= 0 || !r.height) continue;
       if (r.top >= win.innerHeight) return null;
-      const x = r.left + Math.min(8, r.width / 2), y = Math.max(r.top, 0) + 2;
-      let node: Node | null = null, offset = 0;
+      const x = r.left + Math.min(8, r.width / 2),
+        y = Math.max(r.top, 0) + 2;
+      let node: Node | null = null,
+        offset = 0;
       const p = doc.caretPositionFromPoint?.(x, y);
-      if (p) { node = p.offsetNode; offset = p.offset; }
-      else { const rg = doc.caretRangeFromPoint?.(x, y); if (rg) { node = rg.startContainer; offset = rg.startOffset; } }
+      if (p) {
+        node = p.offsetNode;
+        offset = p.offset;
+      } else {
+        const rg = doc.caretRangeFromPoint?.(x, y);
+        if (rg) {
+          node = rg.startContainer;
+          offset = rg.startOffset;
+        }
+      }
       if (!node || !el.contains(node)) return null;
-      const pos = this.posFromDOM(node, offset), top = pos == null ? null : this.textTop(pos);
+      const pos = this.posFromDOM(node, offset),
+        top = pos == null ? null : this.textTop(pos);
       return pos == null || top == null ? null : { pos, top };
     }
     return null;
@@ -177,8 +207,13 @@ export abstract class EditorRender extends EditorMarks {
       }
       return false;
     };
-    let lo = 0, hi = els.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (above(mid)) lo = mid + 1; else hi = mid; }
+    let lo = 0,
+      hi = els.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (above(mid)) lo = mid + 1;
+      else hi = mid;
+    }
     return lo;
   }
 
@@ -192,7 +227,9 @@ export abstract class EditorRender extends EditorMarks {
       if (at.offset < len) range.setStart(at.node, at.offset), range.setEnd(at.node, at.offset + 1);
       else if (len) range.setStart(at.node, len - 1), range.setEnd(at.node, len);
       else return null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
     const rects = [...range.getClientRects()].filter((r) => r.height > 0);
     return rects.length ? rects[at.offset < len ? 0 : rects.length - 1].top : null;
   }
@@ -213,13 +250,15 @@ export abstract class EditorRender extends EditorMarks {
     for (const raw of win.__ergaProblems ?? []) report(raw);
   }
 
-
   /** When the person last clicked or pressed a key on the page (performance.now()). */
   protected lastGesture = -Infinity;
 
   /** Takes the page's custom edits (`ergaEditor.apply`, see CUSTOM_EDITS_API): those it made before the editor was there, then each as it comes. */
   protected takeCustomEdits(): void {
-    type EditWindow = Window & { __ergaApply?: (ops: unknown) => { ok: boolean; error?: string }; __ergaApplyQueue?: [unknown, (r: unknown) => void][] };
+    type EditWindow = Window & {
+      __ergaApply?: (ops: unknown) => { ok: boolean; error?: string };
+      __ergaApplyQueue?: [unknown, (r: unknown) => void][];
+    };
     const win = this.win as EditWindow | null;
     if (!win) return;
     win.__ergaApply = (ops) => this.applyCustomEdits(win, ops);
@@ -234,21 +273,27 @@ export abstract class EditorRender extends EditorMarks {
    */
   protected applyCustomEdits(win: Window, ops: unknown): { ok: boolean; error?: string } {
     const refuse = (error: string) => {
-      this.config.onNotice?.(`The page asked for a custom edit that can't be made: ${error}.`, `The page's custom edits (ergaEditor.apply) asked for an edit the editor refused: “${error}”. Fix the page's script or markup so its custom edits work.`);
+      this.config.onNotice?.(
+        `The page asked for a custom edit that can't be made: ${error}.`,
+        `The page's custom edits (ergaEditor.apply) asked for an edit the editor refused: “${error}”. Fix the page's script or markup so its custom edits work.`
+      );
       return { ok: false, error };
     };
-    if (performance.now() - this.lastGesture > ms(GESTURE_MS)) return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
+    if (performance.now() - this.lastGesture > ms(GESTURE_MS))
+      return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
     if (win != this.win || this.rendering) return refuse("the page is being rendered again; try once more");
     if (!Array.isArray(ops)) return refuse("apply takes a list of custom edits");
     // A fresh analysis: its units match the page's data-erga-id numbers, and their elements are in one parse of the source as it is.
-    const src = this.src, fresh = M.analyzeHtml(src, this.decoder);
+    const src = this.src,
+      fresh = M.analyzeHtml(src, this.decoder);
     let root = fresh.units[0]?.node ?? M.parseHtml(src);
     while (root.parent) root = root.parent;
     const isEl = (x: unknown): x is Element => !!x && (x as Node).nodeType == 1;
     const resolved = ops.map((op) => {
       if (!op || typeof op != "object") return op;
       const out: Record<string, unknown> = { ...op };
-      for (const k of ["el", "before", "after", "into", "prepend"]) if (k in out) out[k] = isEl(out[k]) ? this.sourceOf(out[k] as Element, fresh.units) : null;
+      for (const k of ["el", "before", "after", "into", "prepend"])
+        if (k in out) out[k] = isEl(out[k]) ? this.sourceOf(out[k] as Element, fresh.units) : null;
       return out;
     }) as CustomEdit<M.ElementNode | null>[];
     const plan = planCustomEdits(src, root, resolved);
@@ -278,7 +323,8 @@ export abstract class EditorRender extends EditorMarks {
     const host = el.matches("[data-erga-id]") ? el : el.querySelector("[data-erga-id]");
     const unit = host && units[Number(host.getAttribute("data-erga-id"))];
     if (host && unit?.node && unit.tag == host.localName) {
-      let d: Element | null = host, n: M.ElementNode | null = unit.node;
+      let d: Element | null = host,
+        n: M.ElementNode | null = unit.node;
       while (d && n && d != el) {
         if (d.localName != n.tag) return null;
         d = d.parentElement;
@@ -302,16 +348,23 @@ export abstract class EditorRender extends EditorMarks {
   }
 
   /** Whether the page shows an older version of something outside the text blocks; render() fixes it. */
-  get stale(): boolean { return this.staleSince != null; }
+  get stale(): boolean {
+    return this.staleSince != null;
+  }
 
   /** The page shows the text exactly (nothing patching couldn't show: a page made from it would be this one). */
-  get upToDate(): boolean { return !this.stale && !this.unshown && !!this.domFrom && !this.rendering; }
-
+  get upToDate(): boolean {
+    return !this.stale && !this.unshown && !!this.domFrom && !this.rendering;
+  }
 
   protected shape(u: M.Unit, src: string): string {
     // Markup only: text between (or outside) tags removed.
-    let out = "", pos = u.contentFrom;
-    for (const r of u.runs) { out += src.slice(pos, r.from); pos = r.to; }
+    let out = "",
+      pos = u.contentFrom;
+    for (const r of u.runs) {
+      out += src.slice(pos, r.from);
+      pos = r.to;
+    }
     return u.tag + "|" + out + src.slice(pos, u.contentTo);
   }
 
@@ -328,8 +381,13 @@ export abstract class EditorRender extends EditorMarks {
   protected recheck(changes: ChangeSet): void {
     const units = new Set<M.Unit>();
     changes.iterChangedRanges((_fa, _ta, f, t) => {
-      let lo = 0, hi = this.units.length;
-      while (lo < hi) { const mid = (lo + hi) >> 1; if (this.units[mid].to < f) lo = mid + 1; else hi = mid; }
+      let lo = 0,
+        hi = this.units.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (this.units[mid].to < f) lo = mid + 1;
+        else hi = mid;
+      }
       for (let i = lo; i < this.units.length && this.units[i].from <= t; i++) units.add(this.units[i]);
     });
     for (const u of [...units].sort((a, b) => a.id - b.id)) {
@@ -395,7 +453,10 @@ export abstract class EditorRender extends EditorMarks {
       const els: (Element | undefined)[] = [];
       for (const u of newUnits) {
         const m = matched.get(u.id);
-        if (m) { els[u.id] = m.el; this.patchUnit(m.el, m.old, oldSrc, u, src); }
+        if (m) {
+          els[u.id] = m.el;
+          this.patchUnit(m.el, m.old, oldSrc, u, src);
+        }
       }
       const inserted: [number, number][] = [];
       tr.changes.iterChangedRanges((_fa, _ta, fromB, toB) => inserted.push([fromB, toB]));
@@ -408,7 +469,10 @@ export abstract class EditorRender extends EditorMarks {
         if (isNew(top)) while (top.parent && top.parent.parent && isNew(top.parent)) top = top.parent;
         const group = newUnits.filter((w) => !els[w.id] && w.from >= top.from && w.to <= top.to);
         const tpl = this.doc.createElement("template");
-        tpl.innerHTML = M.stamp(src.slice(top.from, top.to), group.map((w) => ({ ...w, openTo: w.openTo - top.from })));
+        tpl.innerHTML = M.stamp(
+          src.slice(top.from, top.to),
+          group.map((w) => ({ ...w, openTo: w.openTo - top.from }))
+        );
         const root = tpl.content.firstElementChild;
         if (!root) throw new Error("unit did not render");
         for (const w of group) {
@@ -420,10 +484,25 @@ export abstract class EditorRender extends EditorMarks {
         // Next to the nearest sibling that's a unit already on the page.
         const sibs = (top.parent?.children ?? []).filter((c): c is M.ElementNode => c.kind == "element");
         const i = sibs.indexOf(top);
-        const placedEl = (n: M.ElementNode | undefined) => { const w = n && unitOfNode.get(n); return w && els[w.id] && !group.includes(w) ? els[w.id] : undefined; };
+        const placedEl = (n: M.ElementNode | undefined) => {
+          const w = n && unitOfNode.get(n);
+          return w && els[w.id] && !group.includes(w) ? els[w.id] : undefined;
+        };
         let done = false;
-        for (let j = i - 1; j >= 0 && !done; j--) { const el = placedEl(sibs[j]); if (el) { el.after(root); done = true; } }
-        for (let j = i + 1; j < sibs.length && !done; j++) { const el = placedEl(sibs[j]); if (el) { el.before(root); done = true; } }
+        for (let j = i - 1; j >= 0 && !done; j--) {
+          const el = placedEl(sibs[j]);
+          if (el) {
+            el.after(root);
+            done = true;
+          }
+        }
+        for (let j = i + 1; j < sibs.length && !done; j++) {
+          const el = placedEl(sibs[j]);
+          if (el) {
+            el.before(root);
+            done = true;
+          }
+        }
         if (!done) throw new Error("no place for the new unit");
       }
       const keep = new Set(els);
@@ -449,7 +528,10 @@ export abstract class EditorRender extends EditorMarks {
     const splices: M.Splice[] = [];
     changes.iterChanges((fromA, toA, fromB, toB) => splices.push({ from: fromA, to: toA, length: toB - fromB }));
     // Every block it changes is on the page (else the whole patch finds where it goes).
-    for (const s of splices) { const u = M.unitAt(this.units, s.from); if (!u || !this.els[u.id]) return false; }
+    for (const s of splices) {
+      const u = M.unitAt(this.units, s.from);
+      if (!u || !this.els[u.id]) return false;
+    }
     const changed = M.editRuns(this.units, oldSrc, src, splices, this.decoder);
     if (!changed) return false;
     this.unshown = false;
@@ -465,7 +547,11 @@ export abstract class EditorRender extends EditorMarks {
     const doc = this.doc;
     if (!doc || !from) return false;
     let ops: ReturnType<typeof planMorph>;
-    try { ops = planMorph(doc, from, to); } catch { return false; }
+    try {
+      ops = planMorph(doc, from, to);
+    } catch {
+      return false;
+    }
     if (!ops) return false;
     const was = this.els;
     applyMorph(doc, ops);
@@ -482,7 +568,10 @@ export abstract class EditorRender extends EditorMarks {
     for (const u of this.units) {
       const el = this.els[u.id];
       if (!el) continue;
-      if (el.classList.contains("erga-locked")) { el.classList.remove("erga-locked"); this.lockReasons.delete(el); }
+      if (el.classList.contains("erga-locked")) {
+        el.classList.remove("erga-locked");
+        this.lockReasons.delete(el);
+      }
       this.prepareUnit(el);
       if (this.verify(u)) this.showSpaces(u, src);
     }
@@ -498,8 +587,13 @@ export abstract class EditorRender extends EditorMarks {
    * meanwhile, so the two don't both move the page.)
    */
   protected keepView(change: () => void, changes: ChangeSet | null): void {
-    const win = this.win, doc = this.doc, root = doc?.documentElement;
-    if (!win || !root || this.rendering || win.scrollY <= 0) { change(); return; }
+    const win = this.win,
+      doc = this.doc,
+      root = doc?.documentElement;
+    if (!win || !root || this.rendering || win.scrollY <= 0) {
+      change();
+      return;
+    }
     // First the text on the top line, by its source position (a long paragraph that starts above the window, edited
     // up there, keeps the line you're reading still); else the first block that's still there.
     const start = this.firstShown();
@@ -514,11 +608,17 @@ export abstract class EditorRender extends EditorMarks {
       held.push({ el, top: r.top });
       if (held.length == 8) break;
     }
-    if (!held.length && !text) { change(); return; }
-    const styled = root.hasAttribute("style"), before = root.style.overflowAnchor;
+    if (!held.length && !text) {
+      change();
+      return;
+    }
+    const styled = root.hasAttribute("style"),
+      before = root.style.overflowAnchor;
     root.style.overflowAnchor = "none";
     this.viewBefore = text ? { ...text, changes } : null;
-    try { change(); } finally {
+    try {
+      change();
+    } finally {
       this.viewBefore = null;
       const live = !this.rendering && this.doc == doc;
       const pos = live && text ? (changes ? changes.mapPos(text.pos, 1, MapMode.TrackDel) : text.pos) : null;
@@ -538,10 +638,16 @@ export abstract class EditorRender extends EditorMarks {
     const flush = () => {
       const whole = balanceWhitespace(line.map((r) => r.text).join(""));
       let pos = 0;
-      for (const r of line) { out.push(whole.slice(pos, pos + r.text.length)); pos += r.text.length; }
+      for (const r of line) {
+        out.push(whole.slice(pos, pos + r.text.length));
+        pos += r.text.length;
+      }
       line = [];
     };
-    u.runs.forEach((r, i) => { if (i && /<br\b/i.test(src.slice(u.runs[i - 1].to, r.from))) flush(); line.push(r); });
+    u.runs.forEach((r, i) => {
+      if (i && /<br\b/i.test(src.slice(u.runs[i - 1].to, r.from))) flush();
+      line.push(r);
+    });
     flush();
     return out;
   }
@@ -551,7 +657,10 @@ export abstract class EditorRender extends EditorMarks {
     const el = this.els[u.id];
     if (!el || el.classList.contains("erga-locked")) return;
     const nodes = this.textNodes(el);
-    if (nodes.length == u.runs.length) this.domTexts(u, src).forEach((t, i) => { if (nodes[i].nodeValue != t && same(nodes[i].nodeValue!, t)) nodes[i].nodeValue = t; });
+    if (nodes.length == u.runs.length)
+      this.domTexts(u, src).forEach((t, i) => {
+        if (nodes[i].nodeValue != t && same(nodes[i].nodeValue!, t)) nodes[i].nodeValue = t;
+      });
   }
 
   /** Patches one unit's element; returns true if anything changed. */
@@ -566,7 +675,12 @@ export abstract class EditorRender extends EditorMarks {
     if (nodes.length != u.runs.length) return this.rebuildUnit(el, u, src);
     const texts = this.domTexts(u, src);
     let changed = false;
-    nodes.forEach((n, i) => { if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) { n.nodeValue = texts[i]; changed = true; } });
+    nodes.forEach((n, i) => {
+      if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) {
+        n.nodeValue = texts[i];
+        changed = true;
+      }
+    });
     return changed;
   }
 
@@ -576,7 +690,10 @@ export abstract class EditorRender extends EditorMarks {
     this.prepareUnit(el);
     // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
     const nodes = this.textNodes(el);
-    if (nodes.length == u.runs.length) this.domTexts(u, src).forEach((t, i) => { if (nodes[i].nodeValue != t) nodes[i].nodeValue = t; });
+    if (nodes.length == u.runs.length)
+      this.domTexts(u, src).forEach((t, i) => {
+        if (nodes[i].nodeValue != t) nodes[i].nodeValue = t;
+      });
     return true;
   }
 }

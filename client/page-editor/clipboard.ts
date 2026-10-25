@@ -20,7 +20,10 @@ export abstract class EditorClipboard extends EditorMarkdown {
     const html = data?.getData("text/html") ?? "";
     const sel = this.currentSelection();
     const u = sel ? M.unitAt(this.units, sel.from) : null;
-    if (u?.tag == "pre") { if (text) this.insertText(text, null, "input.paste"); return; }
+    if (u?.tag == "pre") {
+      if (text) this.insertText(text, null, "input.paste");
+      return;
+    }
     // A URL pasted over selected text links the text (as the style bar's link does); where it can't, the URL replaces it.
     if (sel && !sel.empty && u && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink({ url: text.trim() }) == null) return;
     let blocks = html ? C.fromHtml(html) : [];
@@ -28,7 +31,10 @@ export abstract class EditorClipboard extends EditorMarkdown {
     if (!blocks.length) return;
     const one = blocks.length == 1 && blocks[0].tag == "p" ? blocks[0] : null;
     // Text alone, in one paragraph: as typed (it can extend a link at the caret).
-    if (one && !one.html.includes("<")) { this.insertText(one.text, null, "input.paste"); return; }
+    if (one && !one.html.includes("<")) {
+      this.insertText(one.text, null, "input.paste");
+      return;
+    }
     this.pasteBlocks(blocks);
   }
 
@@ -42,7 +48,9 @@ export abstract class EditorClipboard extends EditorMarkdown {
    */
   protected pasteBlocks(blocks: C.Block[]): void {
     const sel = this.currentSelection();
-    let state = this.state, before: ChangeSet | null = null, units = this.units;
+    let state = this.state,
+      before: ChangeSet | null = null,
+      units = this.units;
     if (!sel.empty) {
       const spec = this.replaceSpec(sel.from, sel.to, "", "input.paste");
       if (!spec) return;
@@ -54,7 +62,8 @@ export abstract class EditorClipboard extends EditorMarkdown {
       const at = M.unitAt(units, sel.from);
       if (!at || !this.verify(at) || !this.editableAt(at, sel.from)) return;
     }
-    const pos = state.selection.main.from, src = state.doc.toString();
+    const pos = state.selection.main.from,
+      src = state.doc.toString();
     const u = M.unitAt(units, pos);
     if (!u) return;
     const stack = M.inlineStackAt(src, u, pos);
@@ -64,15 +73,19 @@ export abstract class EditorClipboard extends EditorMarkdown {
       ? C.items(blocks).map((i) => ({ src: C.itemSource(i, indent), html: i.lists.length ? null : i.html }))
       : blocks.map((b) => ({ src: C.toSource([b], indent), html: b.tag == "p" ? b.html : null }));
     let insert: string, from: number, to: number, caret: number;
-    if (!inList && !SPLITS.test(u.tag) || (pieces.length == 1 && pieces[0].html != null)) {
+    if ((!inList && !SPLITS.test(u.tag)) || (pieces.length == 1 && pieces[0].html != null)) {
       // Into the block, inside the formatting at the caret; a link can't hold another.
       let inner = pieces.length == 1 && pieces[0].html != null ? pieces[0].html : C.flatHtml(blocks).join("<br>");
       if (stack.some((t) => t.tag == "a")) inner = inner.replace(/<\/?a\b[^>]*>/g, "");
       ({ insert, from, to, caret } = { insert: inner, from: pos, to: pos, caret: inner.length });
     } else {
-      const open = src.slice(u.openFrom, u.openTo), close = src.slice(u.contentTo, u.to), sep = "\n" + indent;
-      const hasHead = contentIn(src, u, u.contentFrom, pos), hasTail = contentIn(src, u, pos, u.contentTo);
-      const first = pieces[0].html, last = pieces.length > 1 ? pieces.at(-1)!.html : null;
+      const open = src.slice(u.openFrom, u.openTo),
+        close = src.slice(u.contentTo, u.to),
+        sep = "\n" + indent;
+      const hasHead = contentIn(src, u, u.contentFrom, pos),
+        hasTail = contentIn(src, u, pos, u.contentTo);
+      const first = pieces[0].html,
+        last = pieces.length > 1 ? pieces.at(-1)!.html : null;
       const middle = pieces.slice(first != null ? 1 : 0, last != null ? -1 : undefined);
       // The block's first half, ended with the first paragraph; it goes if it would be empty.
       const head = hasHead || first != null ? (hasHead ? M.closeTags(stack) : "") + (first ?? "") + close : "";
@@ -128,13 +141,15 @@ export abstract class EditorClipboard extends EditorMarkdown {
    * breaks, and writes list items as "- " and "1. ".
    */
   protected clipboard(): { text: string; html: string } | null {
-    const doc = this.doc, sel = doc?.getSelection();
+    const doc = this.doc,
+      sel = doc?.getSelection();
     if (!doc || !sel || sel.isCollapsed || !sel.rangeCount) return null;
     const range = sel.getRangeAt(0);
     const lines: C.Line[] = [];
     const taken: Element[] = [];
     // Widgets and text the page doesn't let you edit, and the editor's own marks.
-    const skip = (el: Element) => el.getAttribute("contenteditable") == "false" || el.localName.startsWith("erga-") || el.hasAttribute("data-erga");
+    const skip = (el: Element) =>
+      el.getAttribute("contenteditable") == "false" || el.localName.startsWith("erga-") || el.hasAttribute("data-erga");
     for (const u of this.units) {
       const el = this.els[u.id];
       if (!el?.isConnected || !range.intersectsNode(el) || taken.some((t) => t.contains(el))) continue;
@@ -147,9 +162,12 @@ export abstract class EditorClipboard extends EditorMarkdown {
       const out = C.inline(r.cloneContents(), { pre, heading: HEADING.test(u.tag), skip });
       if (!out.text.trim()) continue;
       // A list item, or the <p> that holds the text of an item with a list in it.
-      const item = u.tag == "li" ? el : el.parentElement?.localName == "li" && el.parentElement.firstElementChild == el ? el.parentElement : null;
+      const item =
+        u.tag == "li" ? el : el.parentElement?.localName == "li" && el.parentElement.firstElementChild == el ? el.parentElement : null;
       const list: ("ul" | "ol")[] = [];
-      if (item) for (let p = item.parentElement; p && p != doc.body; p = p.parentElement) if (p.localName == "ul" || p.localName == "ol") list.unshift(p.localName);
+      if (item)
+        for (let p = item.parentElement; p && p != doc.body; p = p.parentElement)
+          if (p.localName == "ul" || p.localName == "ol") list.unshift(p.localName);
       const tag = item ? "li" : pre || HEADING.test(u.tag) ? (u.tag as C.Line["tag"]) : "p";
       lines.push({ tag, list, quote: !!el.closest("blockquote"), html: out.html, text: pre ? out.text : out.text.trim() });
     }
