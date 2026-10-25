@@ -28,4 +28,17 @@ test("a link from one admin page to another shows the new page styled, in place"
     row: getComputedStyle(document.querySelector("ol.users > li")!).display,
   }));
   expect(users).toEqual({ stayed: true, track: "34px", row: "grid" });
+
+  // A switch is the editor's blue when on and its grey when off (the app's tokens --caret and --rule).
+  const colours = await page.evaluate(() => {
+    const token = (name: string) => { const el = document.body.appendChild(document.createElement("i")); el.style.background = `var(${name})`; const c = getComputedStyle(el).backgroundColor; el.remove(); return c; };
+    // One switch, on and then off (in the page only: no change event, so nothing is sent), without its transition.
+    const input = document.querySelector<HTMLInputElement>(".switch input:checked")!, track = input.nextElementSibling as HTMLElement;
+    track.style.transition = "none";
+    const on = getComputedStyle(track).backgroundColor;
+    input.checked = false;
+    return { on, off: getComputedStyle(track).backgroundColor, blue: token("--caret"), grey: token("--rule") };
+  });
+  expect(colours.on).toBe(colours.blue);
+  expect(colours.off).toBe(colours.grey);
 });
