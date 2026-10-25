@@ -165,6 +165,11 @@ export class Users {
     this.known.delete(login);
   }
 
+  /** Forgets what was remembered of `login` (a row written elsewhere: a new account, server/directory/identities.ts). */
+  forget(login: string): void {
+    this.known.delete(login.toLowerCase());
+  }
+
   // ------------------------------------------------------------ admin only
 
   /** Every user, bootstrap admins who haven't signed in yet included, by login. Admins only. */

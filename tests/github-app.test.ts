@@ -12,6 +12,8 @@ import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
 import { api, appJwt, GithubError, installationToken, openRelay, relayNonce, relayOrigin, relayState, sealRelay, signWebhook, verifyRelay, verifyWebhook, type GithubApp, type GithubLink, type GithubStatus, type PushEvent } from "../server/source/github";
 import { TEST_APP, testPrivateKey } from "./source-fixture";
+import { Directory } from "../server/directory/index.ts";
+import { memory } from "./memory-sql.ts";
 
 const OPS = "https://ops.erga.test", INSTALL = "https://ops.install.test";
 let gh: MockGithub, server: ReturnType<typeof Bun.serve>, www: string, app: GithubApp, key: string;
@@ -213,7 +215,7 @@ describe("Connect GitHub (control/routes.ts)", () => {
   test("the sign-in relay: an install's server sends people to GitHub with erga.dev's callback, and takes the token erga.dev relays", async () => {
     const upstream = control({ isInstall: (o) => o == INSTALL, forks: { installationSeen: async () => true } as never });
     const platform = {
-      secret: "install-secret", dev: () => false, directory: { users, config: { record: async () => {} } },
+      secret: "install-secret", dev: () => false, directory: new Directory(memory(), { admins: ["ada"] }),
       signIn: { app: { clientId: TEST_APP.clientId, secret: "" }, github: www, relay: OPS, devLogin: null, encryptionKey: null },
       own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
       deploy: { target: null },

@@ -8,5 +8,6 @@
 
 export * from "./api-keys.ts";
 export * from "./directory.ts";
+export * from "./identities.ts";
 export * from "./settings.ts";
 export * from "./users.ts";
