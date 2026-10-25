@@ -10,6 +10,7 @@
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { asset, assetScripts, editorShell } from "./assets.ts";
+import { inlineCall, inlineFunction } from "./inline.ts";
 import { crumbsFont, esc, link, viewCrumbs } from "./chrome.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
@@ -24,26 +25,6 @@ export const filesButton = (href: string) => `<a href="${esc(href)}" class="erga
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
-/**
- * For whoever may edit, at the top of a document's page. The page holds the
- * editor's shell already, inert (shellTemplate: its styles and its controls,
- * client/editor.html), so going into the editor fetches no page and waits
- * for no stylesheet. Opened with ?edit, it starts at once, as the page
- * parses: the shell's styles go on, the document's socket opens (ergaConnect:
- * the room and the person's events on one WebSocket, whose first messages
- * are the document's details and its whole text), and the editor's script
- * is fetched. (The page's background, remembered from last time, is
- * BAND_HEAD's.)
- *
- * Reloaded in the editor (by hand, or for a new release), the page opens as
- * the editor was, from its first frame, rather than as the viewer until the
- * editor's code has come: its layout (the agent's pane open or not, the
- * document beside it: what the editor kept, main.ts's "shell", restore.ts)
- * and its controls. The controls wait, inert, for the editor's code
- * (erga-restored; if that never comes, the viewer's controls come back),
- * and the document opens where it was scrolled to (FRAME_SRC, ?erga-y). Only
- * for the window's same size, and at the same address.
- */
 /** What a page kept for its reload (client/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";
 
@@ -56,185 +37,23 @@ export const shellTemplate = () => {
   return `<template id="erga-shell"><style>${s.style}</style>${s.body}</template>`;
 };
 
-export const editingHead = () => `window.ergaConnect = () => {
-  // The editor's start (its hello and the document's whole text: shared/room-socket.ts), on the connection this page
-  // came on, and the document's one socket, which needs a connection of its own: both at once. client/collab.ts takes
-  // them over (the socket with what came on it before then).
-  const was = window.ergaSocket;
-  if (was && was.readyState < 2) return was;
-  const base = document.querySelector('meta[name="erga-base"]').content, user = new URLSearchParams(location.search).get("user")?.trim();
-  window.ergaStart = fetch(base + "/api/start" + (user ? "?user=" + encodeURIComponent(user) : "")).then((r) => r.ok ? r.arrayBuffer() : null, () => null);
-  const ws = new WebSocket((location.protocol == "https:" ? "wss://" : "ws://") + location.host + base + "/api/room?events=1" + (user ? "&user=" + encodeURIComponent(user) : ""));
-  ws.binaryType = "arraybuffer";
-  ws.early = [];
-  ws.onmessage = (e) => ws.early.push(e.data);
-  return window.ergaSocket = ws;
-};
-window.ergaShellStyle = () => {
-  if (document.getElementById("erga-shell-style")) return;
-  const s = document.getElementById("erga-shell").content.querySelector("style").cloneNode(true);
-  s.id = "erga-shell-style";
-  document.documentElement.dataset.theme = "light";
-  document.head.append(s);
-};
-if (ergaEditAddress()) {
-  ergaConnect();
-  for (const href of ${editorScripts()}) document.head.append(Object.assign(document.createElement("link"), { rel: "modulepreload", href }));
-  ergaShellStyle();
-  try {
-    const s = JSON.parse(sessionStorage.getItem("${RESTORE_KEY}") || "null"), me = performance.timeOrigin;
-    const shell = s?.keep?.shell, root = document.documentElement;
-    if (shell && s.url == location.pathname + location.search && (s.used == null || s.used == me) && s.at <= me + 1000 && me - s.at < 60000
-      && (!s.hand || performance.getEntriesByType("navigation")[0]?.type == "reload") && shell.width == innerWidth && shell.height == innerHeight) {
-      window.ergaRestored = { body: shell.body, parts: shell.parts, editor: s.keep.editor };
-      root.style.cssText += ";" + shell.style;
-      root.classList.add(...shell.html);
-    }
-  } catch (e) {}
-}`;
+/** For whoever may edit, at the top of a document's page: the editor's start, at ?edit as the page parses (client/inline/viewer-editing-head.ts). */
+export const editingHead = () => inlineCall("viewer-editing-head", assetScripts("page.js"), RESTORE_KEY);
 
-/**
- * The editor's layout as this browser keeps it, put on the page as its body starts (opened with ?edit), so the first
- * frame already has the document where it stays: the agent open or not (main.ts, settings.agent), its side and width
- * (client/layout.ts: KEY, geometry, and mountLayout's variables; tests/layout.test.ts checks the two agree), and the
- * document's zoom (main.ts, ZOOM_KEY), which the frame takes (client/editor.html, html.erga-zoomed). The steps list isn't known yet: it takes no room.
- * Before, the page drew the document across the whole window, then moved it beside the agent once main.ts ran.
- */
-export const LAYOUT_EARLY = `try {
-  const root = document.documentElement, body = document.body, get = (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
-  const s = get("erga:settings:v1"), l = get("erga:layout:v1"), items = ["agent", "doc", "picker"];
-  const clamp = (n, lo, hi) => Math.min(Math.max(n, lo), hi), px = (n) => Math.round(n) + "px";
-  const order = l && Array.isArray(l.order) && l.order.length == 3 && items.every((i) => l.order.includes(i)) ? l.order : items;
-  const kept = l && typeof l.agentWidth == "number" && isFinite(l.agentWidth) ? clamp(Math.round(l.agentWidth), 300, 760) : 380;
-  const open = !(s && s.agent === false), right = order.indexOf("agent") > order.indexOf("doc");
-  const probe = document.createElement("div");
-  probe.style.cssText = "position: fixed; visibility: hidden; padding-left: var(--safe-l, 0px); padding-right: var(--safe-r, 0px)";
-  body.append(probe);
-  const cs = getComputedStyle(probe), sl = parseFloat(cs.paddingLeft) || 0, sr = parseFloat(cs.paddingRight) || 0, W = root.clientWidth || innerWidth;
-  probe.remove();
-  const narrow = W < 760;
-  const w = narrow ? Math.max(0, Math.min(kept, W - 32)) : clamp(kept, 300, Math.max(300, Math.min(760, W - sl - sr - 360 - 32)));
-  // Each panel's box: those before the document from the left edge, those after it from the right, each 16px from the next.
-  const box = { agent: 0, picker: 0 }, wide = { agent: w, picker: 220 }, d = order.indexOf("doc");
-  let x = sl + 16, frameL = sl, frameR = sr;
-  for (const p of order.slice(0, d)) { box[p] = x; if (p == "agent" && open) { x += w + 16; frameL = x; } }
-  x = W - sr - 16;
-  for (const p of order.slice(d + 1).reverse()) { box[p] = x - wide[p]; if (p == "agent" && open) { x -= w + 16; frameR = W - x; } }
-  // Narrower, the agent covers the page at its side, and the steps float over it: the page keeps the whole width.
-  if (narrow) { frameL = sl; frameR = sr; for (const p of ["agent", "picker"]) box[p] = order.indexOf(p) < d ? sl + 16 : W - sr - 16 - wide[p]; }
-  const fab = right ? box.agent + w - 44 : box.agent;
-  const vars = { "--agent-x": box.agent, "--agent-w": w, "--fab-x": fab, "--frame-l": frameL, "--frame-r": frameR, "--picker-x": box.picker, "--picker-w": 220,
-    "--cb-l": Math.max(frameL + 22, !open && !right ? fab + 44 + 14 : 0), "--cb-r": Math.max(frameR + 22, !open && right ? W - fab + 14 : 0) };
-  for (const k in vars) root.style.setProperty(k, px(vars[k]));
-  body.classList.toggle("agent-open", open);
-  body.classList.toggle("agent-right", right);
-  body.classList.toggle("layout-narrow", narrow);
-} catch (e) {}
-try {
-  const z = Number(localStorage.getItem("erga:zoom:v1:" + document.querySelector('meta[name="erga-doc"]').content) || 1);
-  if (isFinite(z) && z > 0 && z != 1) { document.documentElement.style.setProperty("--erga-zoom", String(z)); document.documentElement.classList.add("erga-zoomed"); }
-} catch (e) {}`;
+/** The editor's layout as this browser keeps it, as the page's body starts (client/inline/viewer-layout-early.ts). */
+export const LAYOUT_EARLY = inlineCall("viewer-layout-early");
 
-/**
- * ... and as its body starts: opened with ?edit, editing from the first frame, with the editor's controls (inert, and
- * out of sight until its code is in: editBoot) and its layout (LAYOUT_EARLY), unmoving until it's ready; reloaded in
- * the editor, shown as they were (editingHead).
- */
-export const EDITING_BODY = `window.ergaControls = () => {
-  let wrap = document.getElementById("erga-editor");
-  if (wrap) return wrap;
-  wrap = Object.assign(document.createElement("div"), { id: "erga-editor", inert: true });
-  for (const el of document.getElementById("erga-shell").content.children) if (el.tagName != "STYLE") wrap.append(document.importNode(el, true));
-  document.body.append(wrap);
-  return wrap;
-};
-if (ergaEditAddress()) {
-  document.body.classList.add("erga-editing");
-  const r = window.ergaRestored, wrap = ergaControls();
-  ${LAYOUT_EARLY}
-  if (r) {
-    document.body.classList.add(...r.body, "erga-restored", "erga-editor-ready", "no-motion");
-    for (const [id, html] of Object.entries(r.parts || {})) {
-      const t = document.createElement("template");
-      t.innerHTML = html;
-      const was = wrap.querySelector("#" + CSS.escape(id)), now = t.content.firstElementChild;
-      if (was && now?.id == id) was.replaceWith(now);
-    }
-  }
-}`;
+/** ... and as its body starts: editing from the first frame, with the editor's controls and layout (client/inline/viewer-editing-body.ts). */
+export const EDITING_BODY = inlineCall("viewer-editing-body");
 
-/**
- * The frame's address, opened with ?edit (its iframe has none until then): the editor's half starts loading with the
- * page (?erga-edit, pages/reader.ts), and reloaded in the editor scrolled down the page, it opens where it was (?erga-y).
- */
-export const FRAME_SRC = `{
-  const f = document.getElementById("frame"), kept = window.ergaRestored?.editor, y = kept?.mode == "text" ? Math.round(kept.scroll) : 0;
-  f.src = f.dataset.src + "?erga-edit" + (y > 0 ? "&erga-y=" + y : "");
-}`;
+/** The frame's address, opened with ?edit (client/inline/viewer-frame-src.ts). */
+export const FRAME_SRC = inlineCall("viewer-frame-src");
 
-/**
- * The document's frame, for every script on the page: the frame (#frame, the page on its pages origin), whether a
- * message came from it, and sending to it. And the page's address with ?edit or without (`ergaWithEdit`, the rest of
- * its query kept), and whether this one has it (`ergaEditAddress`).
- */
-export const framesScript = (pages: string) => `window.ergaFrames = (function () {
-  var pages = ${JSON.stringify(pages)};
-  return {
-    pages: pages,
-    get frame() { return document.getElementById("frame"); },
-    from: function (e) { var f = document.getElementById("frame"); return !!e.source && !!f && e.source == f.contentWindow && e.origin == pages; },
-    send: function (m) { var f = document.getElementById("frame"), w = f && f.contentWindow; if (w) w.postMessage(m, pages); },
-    /** How much larger than its own size the frame shows (the editor's zoom: client/zoom.ts). */
-    scale: function () { var f = document.getElementById("frame"), w = f && f.offsetWidth; return w ? f.getBoundingClientRect().width / w || 1 : 1; },
-  };
-})();
-window.ergaEditAddress = function () { return /[?&]edit(=|&|$)/.test(location.search); };
-window.ergaWithEdit = function (path, on) {
-  var q = location.search.replace(/^\\?/, "").split("&").filter(function (p) { return p && !/^edit(=|$)/.test(p); });
-  if (on) q.push("edit");
-  return path + (q.length ? "?" + q.join("&") : "");
-};`;
+/** The document's frame and the address with ?edit or without, for every script on the page (client/inline/viewer-frames.ts). */
+export const framesScript = (pages: string) => inlineCall("viewer-frames", pages);
 
-/**
- * Which of the document's pages is shown, for everyone on a document's page
- * (viewDocument): the frame says when the page in it goes to another of the
- * document's pages (a link followed: pages/reader.ts), and the address bar
- * follows, without a reload: /<owner>/<slug>/<page>, ?edit kept
- * while editing. `ergaPageAddress()` is the page's address now.
- */
-export const NAV_SCRIPT = `(() => {
-  const meta = (name) => document.querySelector('meta[name="' + name + '"]');
-  const suffix = (file) => {
-    let s = file.replace(/\\.html$/i, "");
-    s = s == "index" ? "" : s.replace(/\\/index$/, "");
-    return s ? "/" + s.split("/").map(encodeURIComponent).join("/") : "";
-  };
-  window.ergaPageAddress = () => meta("erga-address").content + (meta("erga-page") ? suffix(meta("erga-page").content) : "");
-  addEventListener("message", (e) => {
-    if (!ergaFrames.from(e) || e.data?.type != "erga-nav") return;
-    // A page's path in the document; "" for the document's own.
-    const path = e.data.path;
-    if (typeof path != "string" || (path && !/\\.html$/i.test(path)) || path.length > 1000 || (path && path.split("/").some((p) => !p || p == ".." || p.startsWith(".")))) return;
-    let m = meta("erga-page");
-    if (!m) { m = document.head.appendChild(document.createElement("meta")); m.name = "erga-page"; m.content = ""; }
-    if (m.content == path || (!path && !suffix(m.content))) return;
-    m.content = path;
-    // Viewing at the front page's address (/), its first page stays there.
-    if (location.pathname == "/" && !suffix(path)) return;
-    const here = ergaPageAddress();
-    if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
-    document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", ergaWithEdit(here, true));
-  });
-  // A link that leaves the document (reader.ts): a new tab (tab: "new"), or the whole tab when its author set it
-  // to open in this one (target="_self"), on the reader's click only. (A tab the page opened itself would have its sandbox.)
-  addEventListener("message", (e) => {
-    if (!ergaFrames.from(e) || e.data?.type != "erga-go") return;
-    const url = String(e.data.url ?? "");
-    if (!/^https?:\\/\\//i.test(url) || url.length > 4000 || navigator.userActivation?.isActive === false) return;
-    if (e.data.tab == "new") window.open(url, "_blank", "noopener,noreferrer");
-    else location.assign(url);
-  });
-})();`;
+/** Which of the document's pages is shown: the address bar follows the frame (client/inline/viewer-nav.ts). */
+export const NAV_SCRIPT = inlineCall("viewer-nav");
 
 /**
  * The band at the top of a document's page (viewDocument), where the
@@ -258,362 +77,18 @@ html.erga-band-wait #frame { opacity: 0; }
 .erga-canvas b { overflow: hidden; }
 .erga-canvas i { box-sizing: content-box; background-origin: content-box; }`;
 
-/** Sets the band's colour (ergaBand(id, colour)), or the one remembered for document `id` (ergaBand(id)); and the controls' tone to suit. Answers the tone. */
-export const BAND_HEAD = `window.ergaBand = function (id, color) {
-  var key = "erga:band:v1:" + id, root = document.documentElement, tone = "";
-  try {
-    if (color === undefined) { var b = JSON.parse(localStorage.getItem(key) || "null"); color = b && typeof b.bg == "string" ? b.bg : ""; }
-  } catch (e) { color = ""; }
-  if (color && !(window.CSS && CSS.supports("color", color))) color = "";
-  var rgb = color.match(/[\\d.]+/g);
-  if (color && /^rgba?\\(/.test(color) && rgb && rgb.length >= 3) tone = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45 ? "page-dark" : "page-light";
-  if (color) root.style.setProperty("--band", color); else root.style.removeProperty("--band");
-  root.classList.toggle("page-dark", tone == "page-dark");
-  root.classList.toggle("page-light", tone == "page-light");
-  if (arguments.length > 1) try { localStorage.setItem(key, JSON.stringify({ bg: color, tone: tone })); } catch (e) {}
-  return tone;
-};`;
+/** Sets the band's colour (ergaBand(id, colour)), or the one remembered for document `id` (ergaBand(id)): client/inline/viewer-band-head.ts. */
+export const BAND_HEAD = inlineCall("viewer-band-head");
 
-/** The band's colour, as the page tells it (pages/reader.ts); the page shows once that's painted, so a first visit's page shows only under its own colour. */
-export const BAND_BOOT = `(() => {
-  const id = document.querySelector('meta[name="erga-doc"]').content;
-  // The page's canvas (pages/reader.ts, canvas), behind the frame, reaching out from it over the band and the room beside
-  // the page, and scrolled with the page. Its layers are placed against the page's root box (the <i>'s content box), as
-  // the browser places the canvas's. A pattern ("tile") carries on in its tiles all round; anything else (a gradient
-  // across the page) carries on as the page's edges: the edge's row or column of pixels (a <b> that shows only that line),
-  // stretched out (scaled) over the band and the room beside. Below, it repeats, as the page itself does there. Until the
-  // frame says, the canvas this document had last time on this browser, if it was gradients only.
-  const room = document.querySelector(".erga-canvas"), sheet = room.firstElementChild, KEY = "erga:canvas:v1:" + id, FAR = 4000;
-  let canvas = null, urls = [], sx = 0, sy = 0;
-  const px = (n) => (Number.isFinite(n) ? n : 0) + "px";
-  // (At the page's scale, when the editor zooms it: client/zoom.ts.)
-  function scrolled() {
-    const k = canvas ? canvas.zoom : 1, at = canvas && !canvas.fixed ? \`translate(\${px(-sx * k)}, \${px(-sy * k)})\` : "";
-    sheet.style.transformOrigin = "0 0";
-    sheet.style.transform = k == 1 ? at : \`\${at} scale(\${k})\`;
-  }
-  function paintCanvas(c, files) {
-    for (const u of urls) URL.revokeObjectURL(u);
-    urls = [];
-    sheet.replaceChildren();
-    canvas = null;
-    if (!c || typeof c.image != "string" || !c.image) return scrolled();
-    let image = c.image;
-    // Its images: the files sent (erga-file:n), each at an address of this page's own; nothing else.
-    // (Gradients and colours only besides: no escapes, which could spell url( another way, and no other function.)
-    const rest = image.replace(/url\\("erga-file:\\d+"\\)/g, "");
-    if (/[\\\\]/.test(rest) || (rest.match(/[\\w-]+(?=\\()/g) || []).some((f) => !/^(repeating-)?(linear|radial|conic)-gradient$|^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|calc)$/i.test(f)) || /\\(/.test(rest.replace(/[\\w-]+\\(/g, ""))) return scrolled();
-    image = image.replace(/url\\("erga-file:(\\d+)"\\)/g, (_, n) => {
-      const f = files?.[n];
-      if (!(f instanceof Blob) || !/^image\\//.test(f.type)) return "none";
-      const u = URL.createObjectURL(f);
-      urls.push(u);
-      return \`url("\${u}")\`;
-    });
-    const look = { backgroundColor: c.color, backgroundImage: image, backgroundSize: c.size, backgroundPosition: c.position, backgroundRepeat: c.repeat };
-    const ok = { backgroundColor: "color", backgroundImage: "background-image", backgroundSize: "background-size", backgroundPosition: "background-position", backgroundRepeat: "background-repeat" };
-    for (const k in look) if (typeof look[k] != "string" || (look[k] && !CSS.supports(ok[k], look[k]))) look[k] = "";
-    if (!look.backgroundImage) return scrolled();
-    const x = Number(c.x), y = Number(c.y), w = Math.max(1, Number(c.w) || 0), h = Math.max(1, Number(c.h) || 0);
-    const sheetOf = (at, l, t, extra) => {
-      const i = document.createElement("i");
-      Object.assign(i.style, look, { left: px(l), top: px(t), width: px(w), height: px(h) }, extra);
-      at.append(i);
-      return i;
-    };
-    if (c.tile) sheetOf(sheet, x, y, { padding: px(FAR), margin: px(-FAR) });
-    else {
-      sheetOf(sheet, x, y, { paddingBottom: px(FAR) });
-      // Each edge: [left, top, width, height] of the line it shows, where the page is drawn in it, and which way it stretches.
-      for (const [l, t, bw, bh, dx, origin, scale] of [
-        [x, y - 1, w, 1, 0, "50% 100%", \`scaleY(\${FAR})\`],
-        [x - 1, y, 1, h, 0, "100% 50%", \`scaleX(\${FAR})\`],
-        [x + w, y, 1, h, 1 - w, "0 50%", \`scaleX(\${FAR})\`],
-        [x - 1, y - 1, 1, 1, 0, "100% 100%", \`scale(\${FAR})\`],
-        [x + w, y - 1, 1, 1, 1 - w, "0 100%", \`scale(\${FAR})\`],
-      ]) {
-        const b = document.createElement("b");
-        Object.assign(b.style, { left: px(l), top: px(t), width: px(bw), height: px(bh), transformOrigin: origin, transform: scale });
-        sheetOf(b, dx, 0);
-        sheet.append(b);
-      }
-    }
-    const zoom = Number(c.zoom);
-    canvas = { fixed: !!c.fixed, zoom: zoom >= 0.25 && zoom <= 5 ? zoom : 1 };
-    scrolled();
-  }
-  try { const kept = JSON.parse(localStorage.getItem(KEY) || "null"); if (kept) paintCanvas(kept, []); } catch (e) {}
-  addEventListener("message", (e) => {
-    if (!ergaFrames.from(e)) return;
-    if (e.data?.type == "erga-scroll") { sx = Number(e.data.sx) || 0; sy = Number(e.data.sy) || 0; return scrolled(); }
-    if (e.data?.type == "erga-canvas") {
-      const c = e.data.canvas;
-      // (In the page's own terms: the shell draws it at the scale it draws the page, the editor's zoom.)
-      if (c && typeof c == "object") c.zoom = ergaFrames.scale();
-      paintCanvas(c, c?.files);
-      try { if (c && !c.files?.length) localStorage.setItem(KEY, JSON.stringify({ ...c, files: [] })); else localStorage.removeItem(KEY); } catch (e) {}
-      return;
-    }
-    if (e.data?.type != "erga-band") return;
-    const c = e.data.color;
-    if (typeof c != "string" || c.length > 200 || /url\\(/i.test(c)) return;
-    window.ergaBand(id, c);
-    // Painted: the page shows (it waited, on a first visit: BAND_WAIT).
-    requestAnimationFrame(() => document.documentElement.classList.remove("erga-band-wait"));
-  });
-})();`;
+/** The band's colour and the page's canvas, as the page tells them (client/inline/viewer-band.ts). */
+export const BAND_BOOT = inlineCall("viewer-band");
 
-/**
- * Going into the editor and back, on a document's page (viewDocument), for
- * those who may: the pencil, the editor's eye, the browser's back and
- * forward, or a page opened with ?edit. Only the address's ?edit changes (pushState), never the page.
- * The first time, the editor's controls and styles (client/editor.html, in the
- * page already: shellTemplate) go on, its socket opens (ergaConnect) and its
- * code loads, which takes the socket over; it loads the editor's half into the page in the
- * frame, which stays as it is (client/remote.ts). The editor's controls fade
- * in over the viewer's once it's ready (main.ts calls ergaShell.ready), and
- * out again on the way back; the editor keeps running meanwhile (its half in the page stops),
- * so going back in is immediate. Viewing, it fetches the editor's files while the browser is
- * idle, so that first time is quick too.
- */
-export const editBoot = () => `(() => {
-  const scripts = ${editorScripts()}, script = scripts[0];
-  const body = document.body;
-  let editor = null, ready = false;
-  // Reloaded in the editor, its controls are up already (EDITING_BODY), shown as if it were ready (but inert) until it is.
-  const restored = window.ergaRestored;
-  if (restored) {
-    // (The editor's code not there in a while: the viewer's controls, with the pencil waiting, as on any way in.)
-    setTimeout(() => { if (!ready) { body.classList.remove("erga-restored", "no-motion"); sync(); } }, 8000);
-  }
-  const sync = () => {
-    const wrap = document.getElementById("erga-editor");
-    body.classList.toggle("erga-editor-ready", ready || (!!restored && body.classList.contains("erga-restored") && body.classList.contains("erga-editing")));
-    if (wrap) wrap.inert = !(ready && body.classList.contains("erga-editing"));
-  };
-  // Viewing, its room is woken ahead (prefetch): asking for its details opens it.
-  const base = document.querySelector('meta[name="erga-base"]').content;
-  const user = new URLSearchParams(location.search).get("user")?.trim();
-  const wake = () => fetch(base + "/api/doc" + (user ? "?user=" + encodeURIComponent(user) : "")).then((r) => r.body?.cancel(), () => {});
-  // Into the editor: its socket (opening already, at ?edit), its styles and controls (in the page: shellTemplate), then its code.
-  const load = () => editor ??= (() => {
-    // The editor's files this page uses from now on (live.ts compares them with the server's).
-    window.ergaBuilt = { "editor.html": ${JSON.stringify(asset("editor.html"))}, "frame.js": ${JSON.stringify(asset("frame.js"))} };
-    ergaConnect();
-    for (const href of scripts.slice(1)) document.head.append(Object.assign(document.createElement("link"), { rel: "modulepreload", href }));
-    ergaShellStyle();
-    body.append(ergaControls());
-    sync();
-    body.append(Object.assign(document.createElement("script"), { type: "module", src: script }));
-  })();
-  // Editing, unless on the way out (erga-closing: the editor's own actions closing back into the pencil, client/editor.html).
-  const editing = () => body.classList.contains("erga-editing") && !body.classList.contains("erga-closing");
-  let closing = 0;
-  function go(edit, push) {
-    // The editor already running on another page (the viewer went to it since): that page's editor, loaded afresh.
-    if (edit && window.ergaPage?.pagePath != null && window.ergaPage.pagePath != (document.querySelector('meta[name="erga-page"]')?.content || window.ergaPage.pagePath)) {
-      history.replaceState(null, "", ergaWithEdit(ergaPageAddress(), true));
-      location.reload();
-      return;
-    }
-    if (push) history.pushState(null, "", ergaWithEdit(location.pathname == "/" ? "/" : ergaPageAddress(), edit));
-    if (edit == editing() && push !== null) return;
-    clearTimeout(closing);
-    body.classList.remove("erga-closing");
-    if (!edit && ready && body.classList.contains("erga-editing") && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      // Out of the editor: its own actions close back into the pencil first (client/editor.html, .edit-group, 420ms), with the editor's
-      // row still up; then the viewer's, the same buttons in the same places, takes over.
-      body.classList.add("erga-closing");
-      closing = setTimeout(() => { body.classList.remove("erga-closing", "erga-editing"); sync(); }, 420);
-    } else body.classList.toggle("erga-editing", edit);
-    document.querySelector(".erga-edit-button")?.setAttribute("aria-pressed", String(edit));
-    window.ergaPage?.setEditing(edit);
-    sync();
-    if (edit) load();
-  }
-  // Whether the page was opened in the editor (with ?edit), rather than switched into it: main.ts restores
-  // the agent as it was left only then, and otherwise opens it the way it does on any later switch.
-  window.ergaShell = {
-    ready() {
-      ready = true;
-      sync();
-      // Its controls run now; what moves moves again from the next frame.
-      requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("erga-restored", "no-motion")));
-    },
-    loadedEditing: editing(),
-  };
-  document.addEventListener("click", (e) => {
-    const a = e.target.closest?.(".erga-edit-button, #btn-edit");
-    if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    e.preventDefault();
-    go(a.id != "btn-edit", true);
-  });
-  // Back and forward: editing follows the address.
-  addEventListener("popstate", () => go(ergaEditAddress(), false));
-  // Viewing, the editor's files are fetched ahead, at low priority, and its room woken (its details asked for): sooner when the
-  // pointer or focus comes to the pencil, else once the document has loaded (its frame and everything in it) and the browser is
-  // idle, so it never competes with the document itself. The page fetches its half of the editor ahead too.
-  let fetched = false;
-  const prefetch = () => {
-    if (fetched || editor) return;
-    fetched = true;
-    for (const href of scripts) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
-    ergaFrames.send({ type: "erga-prefetch" });
-    wake();
-  };
-  for (const type of ["pointerover", "focusin"]) document.addEventListener(type, (e) => { if (e.target.closest?.(".erga-edit-button")) prefetch(); });
-  if (editing()) go(true, null);
-  else {
-    const idle = () => (window.requestIdleCallback ?? setTimeout)(prefetch);
-    if (document.readyState == "complete") idle(); else addEventListener("load", idle, { once: true });
-  }
-})();`;
+/** Going into the editor and back, for those who may (client/inline/viewer-edit-boot.ts). */
+export const editBoot = () =>
+  inlineCall("viewer-edit-boot", assetScripts("page.js"), { "editor.html": asset("editor.html"), "frame.js": asset("frame.js") });
 
-/**
- * A presentation's steps, on a document's page (viewDocument), viewing and
- * editing alike: the page says when it has steps
- * (pages/reader.ts: erga-steps; editor-agent/PROMPT.md, "Presentations"), and this
- * shows back and forward under the page, the step it's at, and a list of the
- * steps that opens over its right side. The arrow keys step too, pressed here
- * or in the page, except in text. The list shows each step's
- * picture where the page draws them (erga-step-image), kept until the page
- * changes (another rev: an edit, another page), else its number and label.
- */
-export const STEPS_BOOT = `(() => {
-  const svg = (d) => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>';
-  const bar = document.createElement("div"), panel = document.createElement("div");
-  bar.className = "erga-steps"; bar.hidden = true;
-  bar.innerHTML = '<button type="button" class="erga-steps-toggle" aria-label="Steps" aria-expanded="false">' + svg("M5 6.5h14M5 12h14M5 17.5h14") + '</button>'
-    + '<button type="button" class="erga-steps-back" aria-label="Back">' + svg("M14.5 6.5L9 12l5.5 5.5") + '</button>'
-    + '<span class="erga-steps-at" aria-live="polite"></span>'
-    + '<button type="button" class="erga-steps-next" aria-label="Forward">' + svg("M9.5 6.5L15 12l-5.5 5.5") + '</button>';
-  // The list under a head: the editor docks it beside the page, and the head is where it's dragged from.
-  panel.className = "erga-steps-panel"; panel.hidden = true; panel.setAttribute("role", "region"); panel.setAttribute("aria-label", "Steps");
-  panel.innerHTML = '<div class="erga-steps-head">Steps</div><ol class="erga-steps-list"></ol>';
-  const list = panel.querySelector("ol");
-  document.body.append(panel, bar);
-  const [toggle, back, next] = bar.querySelectorAll("button"), at = bar.querySelector(".erga-steps-at");
-  // What the page says (null: no steps), the list's shape it was built for, and the steps' pictures: step -> { url, rev }.
-  let steps = null, shape = "", pics = new Map(), asked = new Set(), timer = 0;
-  const send = (m) => ergaFrames.send(m);
-  const open = () => !panel.hidden;
-  const items = () => panel.querySelectorAll(".erga-step");
-  const drop = () => { for (const p of pics.values()) URL.revokeObjectURL(p.url); pics.clear(); asked.clear(); };
-  function picture(i) {
-    const box = items()[i]?.querySelector(".erga-step-pic"), p = pics.get(i);
-    if (!box) return;
-    if (p) { let img = box.querySelector("img"); if (!img) { box.textContent = ""; img = box.appendChild(document.createElement("img")); img.alt = ""; } if (img.src != p.url) img.src = p.url; }
-    else if (box.querySelector("img") || !box.textContent) box.textContent = String(i + 1);
-  }
-  // The pictures of the steps in sight in the list, of this rev, that it hasn't yet: asked for once the page has stopped changing.
-  function ask() {
-    clearTimeout(timer);
-    if (!steps?.images || !open()) return;
-    timer = setTimeout(() => {
-      const r = ergaFrames.frame.getBoundingClientRect(), w = 384, h = Math.round(w * (r.height / r.width || 9 / 16)), view = list.getBoundingClientRect();
-      items().forEach((el, i) => {
-        const b = el.getBoundingClientRect(), key = steps.rev + ":" + i;
-        if (b.bottom < view.top - 200 || b.top > view.bottom + 200 || pics.get(i)?.rev == steps.rev || asked.has(key)) return;
-        asked.add(key);
-        send({ type: "erga-step-image", step: i, rev: steps.rev, width: w, height: h });
-      });
-    }, pics.size ? 400 : 0);
-  }
-  function build() {
-    list.textContent = "";
-    panel.classList.toggle("erga-steps-plain", !steps.images);
-    steps.labels.forEach((label, i) => {
-      const li = list.appendChild(document.createElement("li")), b = li.appendChild(document.createElement("button"));
-      b.type = "button"; b.className = "erga-step"; b.dataset.step = i;
-      b.setAttribute("aria-label", (label ? label + ", " : "") + "step " + (i + 1) + " of " + steps.count);
-      b.appendChild(document.createElement("span")).className = "erga-step-pic";
-      const name = b.appendChild(document.createElement("span")), n = name.appendChild(document.createElement("b"));
-      name.className = "erga-step-name"; n.textContent = i + 1;
-      name.appendChild(document.createElement("span")).textContent = label || "Step " + (i + 1);
-      picture(i);
-    });
-  }
-  function current() {
-    items().forEach((el, i) => { if (i == steps.current) el.setAttribute("aria-current", "step"); else el.removeAttribute("aria-current"); });
-    if (open()) items()[steps.current]?.scrollIntoView({ block: "nearest" });
-  }
-  function update(s) {
-    const was = steps;
-    steps = s && s.count > 0 ? s : null;
-    bar.hidden = !steps;
-    if (!steps) { panel.hidden = true; toggle.setAttribute("aria-expanded", "false"); shape = ""; drop(); return; }
-    // Other steps: the old pictures may be of other steps. Otherwise they stay up until the new ones come.
-    const now = steps.count + "\\n" + steps.labels.join("\\n") + "\\n" + steps.images;
-    if (now != shape) { shape = now; drop(); build(); }
-    at.textContent = (steps.current + 1) + " / " + steps.count;
-    bar.title = steps.labels[steps.current] || "";
-    back.disabled = steps.current <= 0;
-    next.disabled = steps.current >= steps.count - 1;
-    current();
-    if (!was || was.rev != steps.rev) ask();
-    place();
-  }
-  // Under the page and over its right side (its left, if the editor's layout has the list left of the page), wherever the editor puts
-  // the frame (the agent beside it), out of sight with it. Docked beside the page in the editor, the editor places the list.
-  function place() {
-    if (!steps) return;
-    const frame = ergaFrames.frame, r = frame.getBoundingClientRect(), hidden = getComputedStyle(frame).visibility == "hidden" || !r.width;
-    bar.style.visibility = panel.style.visibility = hidden ? "hidden" : "";
-    bar.style.left = r.left + r.width / 2 + "px";
-    bar.style.bottom = Math.max(12, innerHeight - r.bottom + 14) + "px";
-    const docked = panel.classList.contains("erga-docked") && document.body.classList.contains("erga-editing");
-    let left = false;
-    try { const o = JSON.parse(localStorage.getItem("erga:layout:v1") || "null")?.order; left = Array.isArray(o) && o.indexOf("picker") < o.indexOf("doc"); } catch {}
-    panel.style.left = docked || !left ? "" : Math.max(8, r.left + 12) + "px";
-    panel.style.right = docked ? "" : left ? "auto" : Math.max(8, innerWidth - r.right + 12) + "px";
-    panel.style.top = docked ? "" : r.top + 12 + "px";
-    // The pictures' shape is the frame's, as it is now (it changes with the window).
-    panel.style.setProperty("--ar", r.width && r.height ? r.width + " / " + r.height : "16 / 9");
-    panel.style.maxHeight = docked ? "" : Math.max(80, innerHeight - Math.max(12, innerHeight - r.bottom + 14) - 50 - r.top - 12) + "px";
-  }
-  function show(on) {
-    panel.hidden = !on;
-    toggle.setAttribute("aria-expanded", String(on));
-    if (on) { place(); current(); ask(); }
-  }
-  addEventListener("message", (e) => {
-    const m = e.data;
-    if (!ergaFrames.from(e) || !m) return;
-    if (m.type == "erga-steps") {
-      const s = m.steps, ok = s && Number.isInteger(s.count) && s.count >= 0 && s.count <= 1000 && Number.isInteger(s.current) && Number.isInteger(s.rev)
-        && Array.isArray(s.labels) && s.labels.length == s.count && s.labels.every((l) => typeof l == "string" && l.length <= 200);
-      update(ok ? { count: s.count, current: Math.min(s.current, s.count - 1), labels: s.labels, images: s.images === true, rev: s.rev } : null);
-    } else if (m.type == "erga-step-image" && steps && m.rev == steps.rev && Number.isInteger(m.step) && m.step < steps.count) {
-      const old = pics.get(m.step);
-      if (old) URL.revokeObjectURL(old.url);
-      if (m.blob instanceof Blob && /^image\\//.test(m.blob.type)) pics.set(m.step, { url: URL.createObjectURL(m.blob), rev: m.rev });
-      else pics.delete(m.step);
-      picture(m.step);
-    }
-  });
-  const go = (m) => { if (steps) send({ type: "erga-step", ...m }); };
-  back.addEventListener("click", () => go({ by: -1 }));
-  next.addEventListener("click", () => go({ by: 1 }));
-  toggle.addEventListener("click", () => show(!open()));
-  panel.addEventListener("click", (e) => { const b = e.target.closest?.(".erga-step"); if (b) go({ to: Number(b.dataset.step) }); });
-  list.addEventListener("scroll", ask, { passive: true });
-  document.addEventListener("keydown", (e) => {
-    const t = e.target;
-    if (!steps || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    if (e.key == "Escape" && open()) { show(false); return; }
-    if (e.key != "ArrowLeft" && e.key != "ArrowRight") return;
-    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "") || t.closest?.(".cm-editor"))) return;
-    e.preventDefault();
-    go({ by: e.key == "ArrowLeft" ? -1 : 1 });
-  });
-  new ResizeObserver(place).observe(ergaFrames.frame);
-  addEventListener("resize", place);
-  const watch = new MutationObserver(place);
-  watch.observe(document.body, { attributes: true, attributeFilter: ["class"], childList: true });
-  // (The frame shows once the band has its colour: BAND_WAIT's class on the root.)
-  watch.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-  document.addEventListener("transitionend", (e) => { if (e.target?.id == "frame") place(); });
-})();`;
+/** A presentation's steps, on a document's page, viewing and editing alike (client/inline/viewer-steps.ts). */
+export const STEPS_BOOT = inlineCall("viewer-steps");
 
 export const STEPS_STYLE = `
 <style>
@@ -651,91 +126,17 @@ export const STEPS_STYLE = `
   @media (max-width: 640px) { body.agent-open :is(.erga-steps, .erga-steps-panel) { display: none; } }
 </style>`;
 
-/**
- * The viewer's controls (Clone, Edit, who you are) fade once the page is
- * scrolled, on a document's page (viewDocument, FADE_BOOT) and on the
- * homepage alike: whole at the top of the page, faded (VIEW_STYLE,
- * FADED) anywhere below it, and whole again while the pointer is within
- * FADE_NEAR px of them, one of them has keyboard focus or your menu is open.
- * On a touch screen, with no pointer to come near, a tap near them brings
- * them back until the page scrolls again. It's a function of those alone:
- * the same scroll and pointer give the same look, and no timer changes it.
- *
- * `ergaFade(target, root)` (a page script) puts the class erga-faded on
- * `target` while they're faded; `root` is the document or shadow root they're
- * in. Its caller tells it where the page is scrolled to (scroll(y)) and where
- * the pointer is, in the window's coordinates (pointer(x, y, tap)), or that it
- * left the window (leave()).
- */
+/** How near the pointer brings the faded controls back (client/inline/fade.ts, NEAR: the same). */
 export const FADE_NEAR = 100;
 
 /** How see-through the faded controls are: faint, but still there to find. */
 export const FADED = 0.2;
 
-export const FADE = `function ergaFade(target, root) {
-  var NEAR = ${FADE_NEAR}, y = 0, mouse = null, tap = false, CONTROLS = ".erga-view-buttons, .erga-account, .erga-crumbs";
-  // How far (x, y) is from the nearest control (the account's button, not its menu).
-  function distance(x, y) {
-    var best = Infinity;
-    root.querySelectorAll(".erga-view-buttons > *, .erga-account-btn").forEach(function (el) {
-      var r = el.getBoundingClientRect();
-      if (!r.width || !r.height) return;
-      var dx = Math.max(r.left - x, 0, x - r.right), dy = Math.max(r.top - y, 0, y - r.bottom);
-      best = Math.min(best, Math.hypot(dx, dy));
-    });
-    return best;
-  }
-  function focused() {
-    var a = root.activeElement;
-    try { return !!(a && a.closest && a.closest(CONTROLS) && a.matches(":focus-visible")); } catch (e) { return false; }
-  }
-  function update() {
-    var whole = y <= 0 || tap || (mouse && distance(mouse.x, mouse.y) <= NEAR) || focused() || !!root.querySelector('.erga-account-btn[aria-expanded="true"]');
-    target.classList.toggle("erga-faded", !whole);
-  }
-  root.addEventListener("focusin", update);
-  root.addEventListener("focusout", function () { setTimeout(update); });
-  // The account's menu opening or closing.
-  new MutationObserver(update).observe(root, { subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
-  addEventListener("resize", update);
-  update();
-  return {
-    scroll: function (to) { to = Math.max(0, Number(to) || 0); if (to != y) tap = false; y = to; update(); },
-    pointer: function (x, py, isTap) {
-      if (!isFinite(x) || !isFinite(py)) return;
-      if (isTap) tap = distance(x, py) <= NEAR; else mouse = { x: x, y: py };
-      update();
-    },
-    leave: function () { mouse = null; update(); },
-    update: update,
-  };
-}`;
+/** The viewer's controls' fade, for a page script: `ergaFade(target, root)` (client/inline/fade.ts). Also the homepage's. */
+export const FADE = `var ergaFade=${inlineFunction("fade")};`;
 
-/**
- * The fade (FADE) on a document's page: the page scrolls in the frame, on its
- * own origin, so it says where it's scrolled to and where the pointer is over
- * it (pages/reader.ts: erga-scroll, erga-pointer). The pointer
- * over the band and the controls is this page's own.
- */
-export const FADE_BOOT = `(() => {
-  ${FADE}
-  const fade = ergaFade(document.documentElement, document);
-  addEventListener("message", (e) => {
-    const m = e.data;
-    if (!ergaFrames.from(e) || !m) return;
-    if (m.type == "erga-scroll") fade.scroll(m.y);
-    else if (m.type == "erga-pointer") { const r = ergaFrames.frame.getBoundingClientRect(), k = ergaFrames.scale(); fade.pointer(Number(m.x) * k + r.left, Number(m.y) * k + r.top, m.tap === true); }
-  });
-  document.addEventListener("pointermove", (e) => { if (e.pointerType == "mouse") fade.pointer(e.clientX, e.clientY, false); }, { passive: true });
-  document.addEventListener("pointerdown", (e) => { if (e.pointerType != "mouse") fade.pointer(e.clientX, e.clientY, true); }, { passive: true });
-  // Out of the window (not into the frame, which then says where the pointer is).
-  document.addEventListener("mouseout", (e) => {
-    if (e.relatedTarget) return;
-    const r = ergaFrames.frame.getBoundingClientRect();
-    if (e.clientX > r.left + 1 && e.clientX < r.right - 1 && e.clientY > r.top + 1 && e.clientY < r.bottom - 1) return;
-    fade.leave();
-  });
-})();`;
+/** The fade (FADE) on a document's page, from the frame's scroll and pointer (client/inline/viewer-fade.ts). */
+export const FADE_BOOT = inlineCall("viewer-fade");
 
 export const VIEW_STYLE = `
 <style>
@@ -839,8 +240,5 @@ ${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons"
   return { before, after };
 }
 
-/**
- * With no colour remembered for the document, its page waits out of sight until the band has its own (BAND_BOOT), half
- * a second at most: a dark page never shows under a white band. (Unseen, not hidden: the editor may give it the focus.)
- */
-export const BAND_WAIT = `if (!document.documentElement.style.getPropertyValue("--band")) { document.documentElement.classList.add("erga-band-wait"); setTimeout(() => document.documentElement.classList.remove("erga-band-wait"), 500); }`;
+/** With no colour remembered for the document, its page waits out of sight for the band's own (client/inline/viewer-band-wait.ts). */
+export const BAND_WAIT = inlineCall("viewer-band-wait");

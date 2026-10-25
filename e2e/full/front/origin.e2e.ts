@@ -74,11 +74,11 @@ test("a file has an ETag, is checked each time, and is a 304 with no body when u
   expect((await fetch(`${p.origin}/_erga/frame-none.js`)).headers.get("cache-control")).toBe("no-store");
   // The editor's shell is in the page (no page of its own to fetch); its script and chunks are preloaded, and its start
   // and socket asked for, as the page parses, opened with ?edit.
-  expect(viewer).toContain("if (ergaEditAddress()) {");
+  expect(viewer).toContain("ergaEditAddress()");
   expect(viewer).toContain('<template id="erga-shell"><style>');
   expect(viewer).not.toMatch(/\/_erga\/editor-[a-z0-9]+\.html","fetch"/);
   expect(viewer).toMatch(/\["\/_erga\/main-[a-z0-9]+\.js"(,"\/_erga\/chunk-[a-z0-9]+\.js")*\]/);
-  expect(viewer).toContain('rel: "modulepreload"');
+  expect(viewer).toMatch(/rel:\s*"modulepreload"/);
   expect(viewer).toContain('"/api/start"');
   expect((await framed(url)).headers.get("server-timing") ?? "").toContain("worker;dur=");
 });
