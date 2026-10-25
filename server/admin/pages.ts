@@ -329,13 +329,6 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
   </li>`;
 }
 
-const PAGE_STYLE = `
-  section { margin-bottom: 44px; }
-  h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
-  h2 small { font-size: 13px; font-weight: 400; color: var(--soft); }
-  .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
-  ol.rows > li .doc { cursor: default; }
-`;
 
 const POST_SCRIPT = `
   async function post(action, fields) {
@@ -349,52 +342,6 @@ const POST_SCRIPT = `
   const reload = () => window.ergaAdmin ? window.ergaAdmin.reload() : location.reload();
 `;
 
-/** The style of a setting's row (its key, description and control), on Settings and API keys. */
-const SETTING_STYLE = PAGE_STYLE + `
-  ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px; padding: 10px 2px; }
-  .setting .about { min-width: 0; }
-  .setting .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-  .setting .key { margin: 0; font-family: var(--font-mono); font-size: 13.5px; color: var(--fg-strong); }
-  .setting .desc { margin: 2px 0 0; font-size: 13px; color: var(--soft); }
-  .setting .meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 5px; font-size: 12px; color: var(--soft); }
-  .setting .meta .badge { margin: 0; }
-  .setting .meta time { margin: 0; font-size: inherit; }
-  .setting .meta a { color: inherit; }
-  .setting .meta .gone { color: #c2410c; }
-  .setting .value { display: flex; align-items: center; gap: 6px; }
-  .setting .value .input { width: 7.5em; text-align: right; font-feature-settings: "tnum"; }
-  .setting .value .input:not([type=number]) { width: 12em; text-align: left; }
-  .setting .value .amount { display: flex; align-items: center; gap: 6px; }
-  .setting .value .amount[hidden] { display: none; }
-  .setting .value .unit { font-size: 13.5px; color: var(--soft); }
-  .setting .set { margin: 3px 0 0; font-size: 12px; color: var(--chrome); }
-  .setting .hint { grid-column: 1 / -1; margin: 0; }
-  .switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--soft); user-select: none; }
-  .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
-  .switch .track { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 45%, transparent); transition: background-color 150ms ease; }
-  .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); transition: transform 150ms ease; }
-  .switch input:checked + .track { background: var(--fg-strong); }
-  .switch input:checked + .track::after { transform: translateX(14px); }
-  .switch input:focus-visible + .track { outline: 2px solid var(--caret); outline-offset: 2px; }
-  .switch .state { min-width: 2em; }
-  .switch:has(input:disabled) { cursor: default; opacity: 0.6; }
-  .setting .value select { min-width: 9em; height: 34px; }
-  .picker { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 26em; }
-  .chips { display: contents; list-style: none; margin: 0; padding: 0; }
-  .chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 10px; border-radius: 999px; font-size: 13px; color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
-  .chip:not(:has(button)) { padding-right: 10px; }
-  .unpick { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--chrome); cursor: pointer; }
-  .unpick:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 18%, transparent); }
-  .unpick svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-  .setting .value .input.pick { width: 9em; }
-  .mono { font-family: var(--font-mono); font-size: 12.5px; }
-  @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
-  .setting .state-line { margin: 3px 0 0; font-size: 12px; color: var(--chrome); }
-  .setting .state-line .on { color: var(--fg-strong); font-weight: 600; }
-  .setting .state-line .last4 { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg); }
-  .setting .value .input.secret { width: 15em; font-family: var(--font-mono); font-size: 12.5px; }
-  .setting .value [hidden] { display: none; }
-`;
 
 /** /admin: the server's settings. */
 async function settingsPage(platform: Platform, session: Session): Promise<Response> {
@@ -408,8 +355,7 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
   }));
   // Whether a setting takes null (never) as well as its kind of value.
   const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
-  const style = SETTING_STYLE;
-  return adminResponse({ session, title: "Settings", here: "settings", style, body: `
+  return adminResponse({ session, title: "Settings", here: "settings", body: `
   <section aria-labelledby="settings-head">
     <h2 id="settings-head">Settings</h2>
     <ol class="rows">
@@ -509,7 +455,7 @@ async function apiKeysPage(platform: Platform, session: Session): Promise<Respon
   const who = whoOf(session);
   const [credentials, deployed] = await Promise.all([platform.directory.credentials.list(who), platform.directory.credentials.deployed(who)]);
   const rows = credentials.map((c) => credentialRow(c, session));
-  return adminResponse({ session, title: "API keys", here: "keys", style: SETTING_STYLE, body: `
+  return adminResponse({ session, title: "API keys", here: "keys", body: `
   <section aria-labelledby="keys-head" class="credentials">
     <h2 id="keys-head">API keys</h2>
     <p class="lede">The keys Erga uses to call other services. The server keeps each key encrypted and shows it to nobody, this page included: only whether it is set, its last four characters, and who set it when. Without a key here, the server uses the deploy's Worker secret of the same name, if it has one.</p>
@@ -550,43 +496,6 @@ ${deployed.map(deploySecretRow).join("\n")}
 
 const STATE_LABEL: Record<CheckState, string> = { working: "Working", misconfigured: "Misconfigured", not_set_up: "Not set up", unknown: "Unknown" };
 
-const AUTH_STYLE = PAGE_STYLE + `
-  .server { margin: 0 0 22px; padding: 18px 20px 20px; border: 1px solid var(--rule); border-radius: 14px; }
-  .server > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0 0 6px; }
-  .server h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
-  .server h3 small { margin-left: 6px; font-size: 13px; font-weight: 400; color: var(--soft); }
-  .server .state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
-  .server .state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-  .state.working { color: #15803d; background: color-mix(in srgb, #15803d 13%, transparent); }
-  .state.misconfigured { color: #b91c1c; background: color-mix(in srgb, #b91c1c 12%, transparent); }
-  .state.not_set_up { color: #b45309; background: color-mix(in srgb, #b45309 13%, transparent); }
-  .state.unknown { color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
-  .server .summary { margin: 0 0 12px; font-size: 13.5px; color: var(--fg); }
-  .server .reasons { margin: -6px 0 12px; padding-left: 18px; font-size: 13px; color: var(--soft); }
-  .server dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 18px; margin: 0 0 4px; font-size: 13.5px; }
-  .server dt { color: var(--soft); }
-  .server dd { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; color: var(--fg-strong); }
-  .server dd code { font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
-  .server dd .src { font-size: 12px; color: var(--soft); }
-  .server .copy { height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--soft); font: inherit; font-size: 11.5px; cursor: pointer; }
-  .server .copy:hover { color: var(--fg-strong); }
-  .server .note { margin: 12px 0 0; font-size: 13px; color: var(--soft); }
-  .server .pending { margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font-size: 13.5px; }
-  .server .pending p { margin: 0 0 8px; }
-  .server .pending .failed { color: #b91c1c; }
-  .server .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .server .row a.pill { text-decoration: none; }
-  .server details { margin: 14px 0 0; font-size: 13.5px; }
-  .server details > summary { cursor: pointer; color: var(--fg-strong); font-weight: 500; }
-  .server ol.steps { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--fg); }
-  .server form.configure { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
-  .server form.configure label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--soft); }
-  .server form.configure .input { width: 100%; font-family: var(--font-mono); font-size: 12.5px; }
-  .server form.configure .lede { grid-column: 1 / -1; margin: 0; }
-  .server .hint { margin: 8px 0 0; font-size: 13px; color: var(--soft); }
-  .server .hint.error { color: #b91c1c; }
-  @media (max-width: 640px) { .server form.configure { grid-template-columns: 1fr; } .server dl { grid-template-columns: 1fr; gap: 2px; } .server dd { margin-bottom: 6px; } }
-`;
 
 const who_ = (by: string, via?: string | null) => esc(byLine(by, via));
 
@@ -642,7 +551,7 @@ function authPage(session: Session, status: { here: AuthStatus; other: OtherStat
   const { here, other } = status;
   const name = (t: string | null) => (t ? t[0].toUpperCase() + t.slice(1) : "This server");
   const otherCard = other ? serverCard(other, { server: "other", label: name(other.target), editable: !("error" in other) && other.takesFrom == here.target && other.canStore, session, here }) : "";
-  return adminResponse({ session, title: "Authentication", here: "auth", style: AUTH_STYLE, body: `
+  return adminResponse({ session, title: "Authentication", here: "auth", body: `
   <section aria-labelledby="auth-head" class="auth">
     <h2 id="auth-head">Authentication</h2>
     <p class="lede">People sign in with GitHub. Each server needs a GitHub OAuth app of its own, with its own callback URL. The deploy sets each app; values pasted here win over the deploy's while they are set. The client secret is kept encrypted and shown to nobody. A change never signs out anyone who is signed in.</p>
@@ -726,30 +635,7 @@ async function usersPage(platform: Platform, session: Session): Promise<Response
   const deployNote = deployPage == "admins" ? "Admins and users with the deploy role may use /deploy."
     : deployPage == "users" ? "Now anyone signed in may use /deploy (deploy_page is users): the deploy role matters only when deploy_page is admins."
     : "/deploy is off now (deploy_page is off): the deploy role matters only when deploy_page is admins.";
-  const style = PAGE_STYLE + `
-  .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
-  .add-user .input { flex: 1; }
-  #users-hint { margin: -6px 0 12px; }
-  .labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 7.5rem 4.5rem 4.5rem 34px; align-items: center; column-gap: 12px; }
-  .labels { padding: 0 4px 6px; font-size: 12px; color: var(--soft); }
-  .labels .c, ol.users .switch { justify-self: center; }
-  .labels .t, ol.users time { justify-self: start; margin: 0; }
-  ol.users > li { padding: 10px 4px; }
-  .who { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
-  .who .badge { align-self: center; }
-  .who .added { flex-basis: 100%; font-size: 12px; color: var(--chrome); }
-  .never { font-style: italic; }
-  .switch { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
-  .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
-  .switch .track { position: absolute; inset: 0; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 35%, transparent); transition: background-color 150ms ease; }
-  .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 150ms ease; }
-  .switch input:checked + .track { background: var(--fg-strong); }
-  .switch input:checked + .track::after { transform: translateX(16px); }
-  .switch input:focus-visible + .track { outline: 2px solid var(--caret); outline-offset: 2px; }
-  .switch:has(input:disabled) { cursor: default; opacity: 0.45; }
-  @media (max-width: 640px) { .labels .seen, ol.users time.seen { display: none; } .labels, ol.users > li { grid-template-columns: minmax(0, 1fr) 6.5rem 3.5rem 3.5rem 34px; } }
-`;
-  return adminResponse({ session, title: "Users", here: "users", style, body: `
+  return adminResponse({ session, title: "Users", here: "users", body: `
   <section aria-label="Users">
     <p class="lede">Only these GitHub logins can sign in: <span id="users-count">${users.length} user${users.length == 1 ? "" : "s"} · ${admins.length} admin${admins.length == 1 ? "" : "s"} · ${deployers} with deploy</span>. Admins may change the server's settings and its users. ${esc(deployNote)}</p>
     <form class="add-user" method="post" action="${esc(link("/admin/users", session))}">
@@ -807,40 +693,7 @@ async function changesPage(platform: Platform, session: Session, before?: number
   }))).flat());
   const last = history.versions.at(-1);
   const older = last && last.n > 1 && history.versions.length == CHANGES;
-  const style = `
-  .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
-  /* One row each, across the page: who (their avatar, and how), what changed (each change on its own line, in full), when. */
-  .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; }
-  .changes > li.change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: start; padding: 12px 4px; border-top: 1px solid var(--rule); font-size: 13.5px; line-height: 1.55; }
-  .changes > li.change:hover { background: color-mix(in srgb, var(--chrome) 5%, transparent); }
-  .changes > li.change > time { margin: 0; padding-top: 2px; font-size: 12.5px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; text-align: right; }
-  .changes .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .changes .who .by { color: var(--fg-strong); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .changes .who .via { flex: none; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
-  .changes .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
-    background: var(--c, var(--chrome)); color: #fff; font: 600 12.5px var(--font-text); }
-  .changes .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .changes .avatar.system { background: color-mix(in srgb, var(--chrome) 25%, transparent); color: var(--soft); }
-  .changes .what { list-style: none; margin: 0; padding: 4px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-  .changes .what > li { overflow-wrap: anywhere; }
-  @media (max-width: 720px) {
-    .changes { grid-template-columns: minmax(0, 1fr) max-content; }
-    .changes .what { grid-column: 1 / -1; grid-row: 2; padding: 6px 0 0 38px; }
-  }
-  .changes .key { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); margin-right: 4px; }
-  .changes .was { font-feature-settings: "tnum"; }
-  .changes .to { color: var(--soft); margin: 0 3px; }
-  .changes .badge { margin: 0 0 0 4px; }
-  .changes .sha { font-family: var(--font-mono); font-size: 12px; }
-  .changes .title { color: var(--fg-strong); }
-  .changes .commits { list-style: none; margin: 4px 0 2px; padding: 0 0 0 12px; border-left: 2px solid var(--rule); font-size: 12.5px; }
-  .changes .commits li { padding: 1px 0; }
-  .changes .commits .more { color: var(--soft); }
-  .changes details { display: inline; font-size: 12.5px; }
-  .changes details summary { display: inline; color: var(--soft); cursor: pointer; }
-  .changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
-`;
-  return adminResponse({ session, title: "Change log", here: "changes", wide: true, style, body: `
+  return adminResponse({ session, title: "Change log", here: "changes", wide: true, body: `
   <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
   ${history.versions.length ? `<ol class="changes">
 ${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}

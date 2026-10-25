@@ -13,7 +13,8 @@
 //    so they come back after a restart.
 //   - The editor's own files: page.js and frame.js are built by bun
 //     and served from .build/, so a change to client/,
-//     client/editor.html, client/style.css or client/fonts/ runs client/build.ts again.
+//     client/editor.html, client/style.css, client/fonts/ or the admin pages'
+//     stylesheet (server/admin/style.ts) runs client/build.ts again.
 //
 // Its routes, before the Worker's:
 //
@@ -436,7 +437,8 @@ class Mirror {
  * watchers also report files merely touched. Returns the way to stop.
  */
 function watchEditor(log: (line: string) => void, built: () => void): () => void {
-  const SOURCES = [["client", true], ["shared", true], ["document", true]] as const;
+  // With the admin pages' stylesheet, which the build writes as admin.css.
+  const SOURCES = [["client", true], ["shared", true], ["document", true], ["server/admin/style.ts", false], ["server/source/style.ts", false]] as const;
   /** The newest modification among the sources. */
   const newest = async () => {
     let t = 0;

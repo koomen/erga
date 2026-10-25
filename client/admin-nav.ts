@@ -6,7 +6,7 @@
 // whole, so each has its own address: a deep link, a reload and a new tab open
 // it as before, and back and forward go between the pages without a load.
 //
-// A page is fetched as the server makes it; its title, style, breadcrumb, the
+// A page is fetched as the server makes it; its title, breadcrumb, the
 // sidebar's mark and <main> are taken into this one, and its scripts run
 // again, each in a function of its own (so its consts don't clash with the
 // last page's). A page's script that keeps something running (an EventSource,
@@ -16,6 +16,10 @@
 // shows the page again, as it is now on the server, where the page used to
 // reload. Anything that isn't an admin page of the layout (a redirect to sign
 // in, an error, another kind of answer) opens as a whole page instead.
+//
+// Every admin page has the same stylesheet (admin.css, server/admin/style.ts)
+// and no style of its own, so a page brings none. A page of another build
+// names another admin.css: it opens whole, with that build's look.
 //
 // Built by client/build.ts to admin-nav.js.
 
@@ -57,7 +61,7 @@ async function go(url: string, opts: { push?: boolean; replace?: boolean; scroll
     if (!r.ok || !isAdmin(final) || !(r.headers.get("Content-Type") ?? "").includes("text/html")) return whole();
     const doc = new DOMParser().parseFromString(await r.text(), "text/html");
     const next = doc.getElementById("admin-panes");
-    if (!next) return whole();
+    if (!next || sheet(doc) != sheet(document)) return whole();
     if (ac.signal.aborted) return;
     final.hash = to.hash;
     if (opts.push !== false) {
@@ -77,13 +81,14 @@ async function go(url: string, opts: { push?: boolean; replace?: boolean; scroll
   }
 }
 
-/** The new page's parts into this one: its title, style, breadcrumb, sidebar mark and <main>, and its scripts run. */
+/** The address of a page's admin stylesheet (admin.css, by its hash). */
+const sheet = (d: Document) => d.getElementById("erga-admin-style")?.getAttribute("href") ?? null;
+
+/** The new page's parts into this one: its title, breadcrumb, sidebar mark and <main>, and its scripts run. */
 function swap(doc: Document, next: HTMLElement) {
   window.ergaView.leave();
   window.ergaView = newView();
   document.title = doc.title;
-  const style = document.querySelector("style"), nextStyle = doc.querySelector("style");
-  if (style && nextStyle && style.textContent != nextStyle.textContent) style.textContent = nextStyle.textContent;
   // Which code the page now shown carries: live.js asks the server about this one from now on.
   const build = document.querySelector('meta[name="erga-build"]'), nextBuild = doc.querySelector('meta[name="erga-build"]');
   if (build && nextBuild) build.setAttribute("content", nextBuild.getAttribute("content") ?? "");
