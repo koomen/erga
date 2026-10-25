@@ -42,14 +42,14 @@ export interface Chat {
 
 /**
  * A tool's offer, as a button under its call: Connect Cloudflare opens the consent in a popup (the control Worker's
- * /install/start, or the person's own /auth/cloudflare/start), Connect GitHub the App's install page (the control
- * Worker's /github/connect), and the button says how it ended when the popup tells this page.
- * Only those three addresses: the tool's code makes the offer, but the panel trusts nothing else.
+ * /install/start), Connect GitHub the App's install page (the control Worker's /github/connect), and the button says
+ * how it ended when the popup tells this page.
+ * Only those two addresses: the tool's code makes the offer, but the panel trusts nothing else.
  */
 function offerButton(offer: Offer): HTMLElement | null {
   let url: URL;
   try { url = new URL(offer.url, location.href); } catch { return null; }
-  if (!/^https?:$/.test(url.protocol) || !["/install/start", "/auth/cloudflare/start", "/github/connect"].includes(url.pathname) || url.searchParams.get("popup") != "1") return null;
+  if (!/^https?:$/.test(url.protocol) || !["/install/start", "/github/connect"].includes(url.pathname) || url.searchParams.get("popup") != "1") return null;
   const github = url.pathname == "/github/connect", service = github ? "GitHub" : "Cloudflare";
   const wrap = document.createElement("span");
   wrap.className = "offer";
@@ -62,7 +62,7 @@ function offerButton(offer: Offer): HTMLElement | null {
   };
   const onMessage = (e: MessageEvent) => {
     const m = e.data as { type?: string; ok?: boolean; error?: string } | null;
-    if (!m || (m.type != "erga-deploy-credential" && m.type != "erga-cloudflare" && m.type != "erga-github") || (e.origin != url.origin && e.origin != location.origin)) return;
+    if (!m || (m.type != "erga-deploy-credential" && m.type != "erga-github") || (e.origin != url.origin && e.origin != location.origin)) return;
     window.removeEventListener("message", onMessage);
     ended(m);
   };
@@ -71,7 +71,7 @@ function offerButton(offer: Offer): HTMLElement | null {
     if (!w) { note.textContent = `The browser blocked the ${service} window. Allow pop-ups for this page, then click again.`; return; }
     note.textContent = github ? "Waiting for GitHub: pick the account and the repository in the window that opened." : "Waiting for Cloudflare: finish the consent in the window that opened.";
     window.addEventListener("message", onMessage);
-    try { const bc = new BroadcastChannel(url.pathname == "/install/start" ? "erga-deploy-credential" : github ? "erga-github" : "erga-cloudflare"); bc.onmessage = (e) => { bc.close(); onMessage(new MessageEvent("message", { data: e.data, origin: location.origin })); }; } catch { /* no BroadcastChannel */ }
+    try { const bc = new BroadcastChannel(github ? "erga-github" : "erga-deploy-credential"); bc.onmessage = (e) => { bc.close(); onMessage(new MessageEvent("message", { data: e.data, origin: location.origin })); }; } catch { /* no BroadcastChannel */ }
   });
   wrap.append(button, note);
   return wrap;

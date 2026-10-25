@@ -6,7 +6,7 @@
 //      cloudflare/'s files directly.
 //   2. server/ and document/ never import cloudflare/: the app runs on the
 //      Platform alone (server/platform.ts), so the tests run it under bun.
-//   3. An area of server/ (directory, identity, documents, pages, home, sites,
+//   3. An area of server/ (directory, identity, documents, pages, home,
 //      admin, source) is imported from outside only through its index.ts, its
 //      interface; its other files are its own. Tests may look inside, and so
 //      may deploy/locked-settings.ts, which the Worker's config loads before
@@ -19,7 +19,7 @@ import { join, relative, resolve } from "node:path";
 import { expect, test } from "bun:test";
 
 const ROOT = resolve(import.meta.dir, "..");
-const AREAS = ["directory", "identity", "documents", "pages", "home", "sites", "admin", "source"];
+const AREAS = ["directory", "identity", "documents", "pages", "home", "admin", "source"];
 
 /** Every .ts file under these folders, as repo paths. */
 function files(dirs: string[]): string[] {

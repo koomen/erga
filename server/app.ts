@@ -13,14 +13,11 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out; /auth/github?app=pending, a test sign-in with the
 //                              GitHub app values that wait on /admin/auth
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
-//   /auth/cloudflare/start, /auth/cloudflare/callback   connecting your Cloudflare account: a consent on Cloudflare's
-//                              page, for a document at your own domain (server/sites/connect.ts)
 //   /api/sign-in/...           another of Erga's servers reads this one's sign-in status, or sets its GitHub app
 //                              (server/identity/settings.ts, with DEPLOY_HOOK_SECRET)
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
-//   /api/docs/<id>/home        whether a document is the homepage, setting it, and its deploys
-//   /api/docs/<id>/site        a document's site on its person's Cloudflare account
+//   /api/docs/<id>/home        whether a document is the homepage, and its deploys (/admin chooses it)
 //   /_home/<gen>/<path>        the homepage's files, as deployed
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
 //                              and /api/source/...; `outside` answers them (a redirect to the control Worker, or itself in local development)
@@ -50,7 +47,6 @@ import { adminsOnlyGate, finishSignIn, isSignInPath, signInDoor, signOut, startS
 import { releaseApi, withLive } from "./live.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
-import { cloudflareAuth, siteApi } from "./sites/index.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (request: Request, url: URL) => Promise<Response | null>;
@@ -93,7 +89,6 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (path == "/auth/github/callback") return finishSignIn(p, request);
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/auth/test") return testSignIn(p, request);
-  if (path.startsWith("/auth/cloudflare/")) return cloudflareAuth(request, p);
   // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
   if (assets) return isAssetPath(path) ? serveAsset(request, p) : p.assets(request);
   // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
@@ -118,12 +113,9 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
     if (home) return home;
   }
   if (path.startsWith("/_home/")) return serveHomeFile(request, p);
-  // Whether a document is the homepage, setting it, and its deploys.
+  // Whether a document is the homepage, and its deploys.
   const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
   if (homeId) return homeApi(request, p, homeId, (homeAction ?? "") as "" | "deploy");
-  // A document's site on its person's Cloudflare account, and its deploys.
-  const [, siteId, siteAction] = /^\/api\/docs\/([a-z0-9]{8})\/site(?:\/(deploy))?\/?$/.exec(path) ?? [];
-  if (siteId) return siteApi(request, p, siteId, (siteAction ?? "") as "" | "deploy");
   // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
   // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
   if (read && isHomeFilePath(path)) {

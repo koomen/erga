@@ -1,6 +1,7 @@
-// The homepage section of the settings: blocked, the switch, a new version scheduling a deploy, Redeploy now.
+// The homepage in the settings: a note only on the homepage (chosen on /admin), a new version scheduling a deploy, Redeploy now.
 // These change which document is the server's homepage (landing_document): each puts it back after.
 import { expect, servers, SHORT, test } from "../../fixtures";
+import { setLanding } from "../home/home";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 
 await servers.short();
@@ -13,37 +14,21 @@ test.afterEach(async () => {
 /** What / serves now: the homepage's deployed page. */
 const front = async () => (await fetch(`${(await servers.short()).root}/`)).text();
 
-test("a document someone who isn't an admin may edit can't be the homepage: the section says why, and the switch does nothing", async ({ tab }) => {
-  const server = await servers.short();
-  const doc = await draftDoc(server, "Shared notes", 2);
-  await doc.owner.share(doc.id, "bo", "editor");
-  tab.strict = true;
-  const s = await openDocEditor(tab.page, server, doc.address);
-  await s.open();
-  await expect.poll(() => s.eval<boolean>(`!document.getElementById("ds-home").hidden`)).toBe(true);
-  await expect.poll(() => s.text("#ds-home-explain")).toContain("Only admins may edit the front page");
-  expect(await s.text("#ds-home-explain")).toContain("bo may edit this document");
-  expect(await s.attr("#ds-home-switch", "aria-disabled")).toBe("true");
-  await s.clickOn("#ds-home-switch");
-  // Nothing to wait for, as nothing happens: the server says so after the click has been handled.
-  await s.ed.settle();
-  expect((await doc.owner.home(doc.id)).isHome).toBe(false);
-});
-
-test("the switch makes the document the homepage, deployed at once: Deploying, then Deployed with its version; / serves it", async ({ tab }) => {
+test("the homepage shows only on the homepage: a note, no switch; it comes when /admin makes it the homepage, deployed at once", async ({ tab }) => {
   const server = await servers.short();
   const doc = await draftDoc(server, "Front page", 3);
   tab.strict = true;
   const s = await openDocEditor(tab.page, server, doc.address);
   await s.open();
-  await expect.poll(() => s.eval<boolean>(`!document.getElementById("ds-home").hidden`)).toBe(true);
-  expect(await s.attr("#ds-home-switch", "aria-checked")).toBe("false");
-  expect(await s.rect("#ds-redeploy")).toBeNull();
+  // Not the homepage: nothing about it, and no switch anywhere.
+  await expect.poll(() => s.eval<boolean>(`document.getElementById("ds-home").hidden`)).toBe(true);
+  expect(await s.eval<boolean>(`!!document.querySelector("#doc-settings [role=switch]")`)).toBe(false);
+  // An admin chooses it on /admin: the open settings hear of it, with the note and the deploy.
   await s.watchStatus();
-  await s.clickOn("#ds-home-switch");
-  await expect.poll(async () => (await doc.owner.home(doc.id)).isHome).toBe(true);
+  expect((await setLanding(server, doc.id)).error).toBeUndefined();
+  await expect.poll(() => s.eval<boolean>(`!document.getElementById("ds-home").hidden`)).toBe(true);
+  expect(await s.text("#ds-home-note")).toBe("This is the homepage");
   await expect.poll(() => s.text("#ds-status")).toMatch(/^Deployed at .*version 3/);
-  expect((await s.seen()).some((t) => t.startsWith("Deploying"))).toBe(true);
   expect(await front()).toContain("Draft 3");
 });
 
@@ -51,7 +36,8 @@ test("the switch makes the document the homepage, deployed at once: Deploying, t
 test("a new version schedules a deploy, which runs by itself; Redeploy now deploys the document as it is", { timeout: 25_000 }, async ({ tab }) => {
   const server = await servers.short();
   const doc = await draftDoc(server, "Front page", 3);
-  expect((await (await doc.owner.get(`/api/docs/${doc.id}/home`, { method: "POST", headers: { Origin: server.root, "Content-Type": "application/json" }, body: JSON.stringify({ isHome: true }) })).json() as { isHome: boolean }).isHome).toBe(true);
+  expect((await setLanding(server, doc.id)).error).toBeUndefined();
+  expect((await doc.owner.home(doc.id)).isHome).toBe(true);
   await expect.poll(async () => (await doc.owner.home(doc.id)).deploy.state).toBe("deployed");
   tab.strict = true;
   const s = await openDocEditor(tab.page, server, doc.address);

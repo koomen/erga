@@ -60,8 +60,8 @@ export default defineConfig(({ mode }) => ({
       Home: exports.durableObject({ storage: "sqlite" }),
       // The server's own small storage (the sign-in values set on /admin/auth): one object, "own", which no copy of another server's data replaces.
       OwnStorage: exports.durableObject({ storage: "sqlite" }),
-      // Each document's site on its person's own Cloudflare account: one object per document that has one.
-      SiteHost: exports.durableObject({ storage: "sqlite" }),
+      // Each document's site on its person's own Cloudflare account (a document at a domain of its own): gone, with what it held.
+      SiteHost: exports.durableObject({ state: "deleted" }),
       // Each admin's agent, its conversation and panel: one object, "admin".
       AdminAgentHost: exports.durableObject({ storage: "sqlite" }),
       // Each person's conversations with the document agent, kept step by step: one object per person, named by their login.
@@ -84,7 +84,6 @@ export default defineConfig(({ mode }) => ({
       } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       OWN: bindings.durableObject({ worker: PROD.worker, exportName: "OwnStorage" }),
-      SITES: bindings.durableObject({ worker: PROD.worker, exportName: "SiteHost" }),
       ADMIN_AGENT: bindings.durableObject({ worker: PROD.worker, exportName: "AdminAgentHost" }),
       AGENTS: bindings.durableObject({ worker: PROD.worker, exportName: "PersonAgent" }),
       // The server's database: users, settings and the directory. The deploy pipeline finds it by name, or
@@ -127,8 +126,6 @@ export default defineConfig(({ mode }) => ({
         // The homepage's deploys: how long after a change the next runs, and how often / checks for one (tests shorten both).
         ERGA_HOME_DELAY_MS: bindings.text(process.env.ERGA_HOME_DELAY_MS ?? ""),
         ERGA_HOME_RECHECK_MS: bindings.text(process.env.ERGA_HOME_RECHECK_MS ?? ""),
-        // Documents' sites on Cloudflare: how long after a new version the next deploy runs.
-        ERGA_SITE_DELAY_MS: bindings.text(process.env.ERGA_SITE_DELAY_MS ?? ""),
         // When versions are cut: how long edits pause first, and the longest burst one version holds.
         ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),

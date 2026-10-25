@@ -34,7 +34,6 @@ export interface AgentAction {
 }
 
 const SECRET = "a secret: pasted or made only on the page, never in a conversation";
-const CONSENT = "a secret: the consent gives Erga a grant to the person's Cloudflare account, only on Cloudflare's own page in their browser, never in a conversation (the agent may disconnect it)";
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
 
@@ -127,21 +126,10 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },
   { route: "GET /api/snapshot/blob/<sha-256>", domain: "none", action: "Staging reads a blob its copy of production's documents needs", exempt: "server to server (staging's blob store, cloudflare/blobs.ts)" },
 
-  // ------------------------------------------------------------ the homepage (server/home.ts: in the editor's settings, admins only)
-  { route: "GET /api/docs/<id>/home", domain: "admin", action: "See whether a document is the homepage (editor's settings)", tool: "list_settings" },
-  { route: "POST /api/docs/<id>/home", domain: "admin", action: "Make a document the homepage, or not (editor's settings)", tool: "set_setting" },
-  { route: "POST /api/docs/<id>/home/deploy", domain: "admin", action: "Redeploy the homepage (editor's settings)", tool: "deploy_homepage" },
-
-  // ------------------------------------------------------------ a document at the person's own domain (server/sites/api.ts: in the editor's settings)
-  { route: "GET /api/docs/<id>/site", domain: "document", action: "See a document's custom domain, its deploys and your domains (editor's settings, Custom domain)", tool: "domain_status" },
-  { route: "POST /api/docs/<id>/site", domain: "document", action: "Publish a document at a domain of yours (editor's settings, Custom domain)", tool: "publish_to_domain" },
-  { route: "POST /api/docs/<id>/site/deploy", domain: "document", action: "Deploy to the domain now (editor's settings, Custom domain)", tool: "deploy_domain" },
-  { route: "DELETE /api/docs/<id>/site", domain: "document", action: "Take the site down (editor's settings, Custom domain)", tool: "remove_domain" },
-  { route: "GET /auth/cloudflare/start", domain: "document", action: "Connect your Cloudflare account: Cloudflare's consent page (editor's settings, Custom domain; /settings)", exempt: CONSENT },
-  { route: "GET /auth/cloudflare/callback", domain: "document", action: "Come back from Cloudflare's consent page", exempt: CONSENT },
-  { route: "GET /auth/cloudflare/mock/consent", domain: "none", action: "The pretend Cloudflare consent page (local development)", exempt: "the dev server's" },
-  { route: "POST /settings/cloudflare/disconnect", domain: "document", action: "Disconnect your Cloudflare account: revoke Erga's access (/settings)", tool: "disconnect_cloudflare" },
-  { route: "GET /__erga/site/<host>/<path>", domain: "none", action: "A site on the pretend Cloudflare (local development)", exempt: "the dev server's" },
+  // ------------------------------------------------------------ the homepage (server/home/api.ts: the editor's settings say which document it is;
+  // /admin's landing_document setting chooses it)
+  { route: "GET /api/docs/<id>/home", domain: "admin", action: "See whether a document is the homepage, and its deploy (editor's settings)", tool: "list_settings" },
+  { route: "POST /api/docs/<id>/home/deploy", domain: "admin", action: "Redeploy the homepage (editor's settings, on the homepage)", tool: "deploy_homepage" },
 
   // ------------------------------------------------------------ /settings: the person's agent tokens
   { route: "GET /settings", domain: "admin", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_agent_tokens" },
@@ -180,7 +168,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/docs/<id>/tree op=new_folder", domain: "document", action: "New folder (page tree)", tool: "mkdir" },
   { route: "POST /api/docs/<id>/tree op=move", domain: "document", action: "Rename or move a page or folder (page tree)", tool: "mv" },
   { route: "POST /api/docs/<id>/tree op=delete", domain: "document", action: "Delete a page or folder (page tree)", tool: "rm" },
-  { route: "POST /api/docs/<id>/tree op=make_project", domain: "document", action: "Make a document a project, which can have more pages (page tree, Make a project)", tool: "make_project" },
+  { route: "POST /api/docs/<id>/tree op=make_project", domain: "document", action: "Make a document a project, which can have more pages (editor's settings, Document/Project)", tool: "make_project" },
+  { route: "POST /api/docs/<id>/tree op=make_document", domain: "document", action: "Make a project with one page a document (editor's settings, Document/Project)", tool: "make_document" },
   { route: "GET /api/files", domain: "document", action: "See every file, its kind, size and time (the files view)", tool: "ls" },
   { route: "GET /api/viewers-agent", domain: "document", action: "See whether viewers may ask the agent, and what each used (Share card, the owner)", tool: "viewers_agent" },
   { route: "POST /api/viewers-agent", domain: "document", action: "Let viewers ask the agent, or not (Share card, the owner)", tool: "viewers_agent" },

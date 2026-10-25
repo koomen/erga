@@ -28,7 +28,7 @@ test("every migration applies, in order, to an empty database, and again to one 
   }
   expect(db.query("SELECT name FROM d1_migrations ORDER BY id").all().map((r: any) => r.name)).toEqual(files());
   const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r: any) => r.name);
-  expect(tables).toEqual(expect.arrayContaining(["users", "server_config", "documents", "permissions", "agent_tokens", "credentials", "sites"]));
+  expect(tables).toEqual(expect.arrayContaining(["users", "server_config", "documents", "permissions", "agent_tokens", "credentials"]));
 });
 
 test("a migration only adds: one that drops or renames says so on its first line (-- erga: destructive), with the reason", () => {

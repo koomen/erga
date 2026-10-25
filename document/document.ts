@@ -44,7 +44,6 @@ import * as Scope from "effect/Scope";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow, type Naming, type Role, type Who } from "../server/directory/index.ts";
-import type { SiteRow } from "../server/sites/index.ts";
 import { cleanRel, docFile, makeHost, typeOf, type ViewersReport } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, Hello } from "./api.ts";
@@ -101,12 +100,8 @@ export interface DocumentDeps {
   agentSettings: () => Promise<AgentSettings>;
   /** The tools beyond the document a person's agent may use now (sharing, the documents list, an admin's settings and users). */
   serverTools: (person: Person, here: string) => Promise<AgentTool[]>;
-  /** Takes down the document's site on its person's Cloudflare account; a refusal, or nothing. */
-  takeDownSite: (site: SiteRow) => Promise<string | null | undefined>;
   /** The homepage forgets a deleted document; and its next deploy is scheduled when the homepage has a new version. */
   home: { forget: (docId: string) => Promise<void>; changed: (docId: string) => Promise<void> };
-  /** The document's site, if it has one, deploys again a short time from now. */
-  siteChanged: (docId: string) => Promise<void>;
   /** Local development: this document's storage with its files on disk (dev/disk-storage.ts), for a document that is one. */
   disk?: { storage: (only: string | null) => Storage };
   /**
@@ -435,14 +430,15 @@ export class Document {
   }
 
   /**
-   * Makes the document a project (make_project: the pages card's Make a project, or an agent): from now on it may
-   * have more pages. Kept here, where the rule is checked, and in its row, which the documents list reads.
+   * Changes the document's kind (the switch in the document's settings, or an agent: make_project, make_document):
+   * a project may have more pages, a document one. The tree's operation checks a project has one page before it
+   * becomes a document. Kept here, where the rule is checked, and in its row, which the documents list reads.
    */
-  async makeProject(): Promise<void> {
+  async setKind(kind: DocKind): Promise<void> {
     const info = await this.readInfo();
-    if (!info || info.kind == "project") return;
-    await this.saveInfo({ ...info, kind: "project" });
-    await this.directory.setKind(info.id, "project");
+    if (!info || info.kind == kind) return;
+    await this.saveInfo({ ...info, kind });
+    await this.directory.setKind(info.id, kind);
   }
 
   /**
@@ -565,13 +561,6 @@ export class Document {
     await this.storage.deleteAlarm();
     await this.storage.deleteAll();
     this.forgetStorage();
-    // If it had a site on its person's Cloudflare account, the site comes down too.
-    const site = await this.directory.sites.get(info.id).catch(() => null);
-    if (site) {
-      const refused = await this.deps.takeDownSite(site).catch((e) => String(e));
-      if (refused) this.deps.log(`couldn't take down ${site.hostname}: ${refused}`);
-      await this.directory.sites.remove(site.docId);
-    }
     await this.directory.remove(info.id);
     // If it was the homepage, its snapshot goes too (the next / makes another).
     await this.deps.home.forget(info.id).catch((e) => this.deps.log(`couldn't tell the homepage: ${e}`));
@@ -1080,13 +1069,11 @@ export class Document {
     this.opened?.broadcast({ type: "versions" });
   }
 
-  /** A new version: the homepage and the document's site, which show the document as it is, deploy again soon. */
+  /** A new version: the homepage, which shows the document as it is, deploys again soon. */
   private versionCut(docId: string): void {
     // If it's the homepage, its next deploy is scheduled.
     this.deps.background(this.directory.homeId().then((home) => home == docId ? this.deps.home.changed(docId) : undefined)
       .catch((e) => this.deps.log(`couldn't schedule the homepage's deploy: ${e}`)));
-    // If it has a site on its person's Cloudflare account, the site's next deploy is scheduled.
-    this.deps.background(this.deps.siteChanged(docId).catch((e) => this.deps.log(`couldn't schedule ${docId}'s site deploy: ${e}`)));
   }
 
   /** Opens the document and waits for any cut under way (the first, when it opens, makes sure there is a version). */
@@ -1409,7 +1396,7 @@ export class Document {
       putFile: (path, bytes, by) => this.putFile(path, bytes, by),
       // One from before kinds is decided (below) before anyone reaches it.
       kind: () => this.info?.kind ?? "project",
-      makeProject: () => this.makeProject(),
+      setKind: (kind) => this.setKind(kind),
       viewers: {
         gate: (person, count) => this.viewerTurn(person.id, count),
         isOwner: (person) => person.id.toLowerCase() == info.owner,

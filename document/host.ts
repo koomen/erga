@@ -73,8 +73,8 @@ export interface HostOptions {
   readonly only?: string;
   /** A document (one page) or a project (pages): now. A project if not given. */
   readonly kind?: () => DocKind;
-  /** Makes the document a project (make_project): its kind, kept and told to the directory. */
-  readonly makeProject?: () => Promise<void>;
+  /** Changes the document's kind (make_project, make_document): kept and told to the directory. */
+  readonly setKind?: (kind: DocKind) => Promise<void>;
   /** Viewers and the embedded agent (its turns use the server's key): whether they may ask it, and what they used. */
   readonly viewers?: ViewersAgent;
   /** The document's title and address in the directory, read and changed as a person. */
@@ -220,15 +220,15 @@ export function makeHost(opts: HostOptions) {
   const moves: { from: string; to: string }[] = [];
   /** Does a tree operation, as a person or their agent; open tabs hear what moved or went, to follow a page that did. */
   const tree = async (op: unknown) => {
-    const done = await runTreeOp(room, op, { index: doc.path, only: opts.only, newPage: opts.newPage, kind: kindNow(), makeProject: opts.makeProject });
+    const done = await runTreeOp(room, op, { index: doc.path, only: opts.only, newPage: opts.newPage, kind: kindNow(), setKind: opts.setKind });
     if (done.op == "move") {
       moves.push({ from: done.from, to: done.to });
       if (moves.length > 50) moves.shift();
       sendAll({ type: "tree", moved: { from: done.from, to: done.to } });
     }
     else if (done.op == "delete") sendAll({ type: "tree", deleted: done.path });
-    // A project now: every tab reads the tree again, which says so (and the pages card offers New page).
-    else if (done.op == "make_project") sendAll({ type: "tree" });
+    // A project or a document now: every tab hears the kind (the breadcrumb shows its pages, or not) and reads the tree again.
+    else if (done.op == "make_project" || done.op == "make_document") sendAll({ type: "tree", kind: kindNow() });
     return done;
   };
   /** Every open tab, whoever's: the document's new title and address, so they show it and move to it. */
@@ -668,8 +668,8 @@ export type TreeDone = TreeOp;
  * holds). The document's own page can't be moved or deleted. Throws a
  * TreeError saying what's wrong.
  */
-export async function runTreeOp(room: Room, raw: unknown, o: { index: string; only?: string; newPage?: string; kind?: DocKind; makeProject?: () => Promise<void> }): Promise<TreeDone> {
-  if (!raw || typeof raw != "object" || Array.isArray(raw)) throw new TreeError('Send the operation as JSON: {"op": "new_page" | "new_folder" | "move" | "delete" | "make_project", ...}.');
+export async function runTreeOp(room: Room, raw: unknown, o: { index: string; only?: string; newPage?: string; kind?: DocKind; setKind?: (kind: DocKind) => Promise<void> }): Promise<TreeDone> {
+  if (!raw || typeof raw != "object" || Array.isArray(raw)) throw new TreeError('Send the operation as JSON: {"op": "new_page" | "new_folder" | "move" | "delete" | "make_project" | "make_document", ...}.');
   const op = raw as Record<string, unknown>;
   if (o.only != null) throw new TreeError(`This document is the single file ${o.only}, opened from disk on its own: it can't hold other files or folders.`, 403);
   const kind = o.kind ?? "project";
@@ -728,12 +728,22 @@ export async function runTreeOp(room: Room, raw: unknown, o: { index: string; on
     }
     case "make_project": {
       if (kind == "project") return { op: "make_project" };
-      if (!o.makeProject) throw new TreeError("This document can't become a project here.", 403);
-      await o.makeProject();
+      if (!o.setKind) throw new TreeError("This document can't become a project here.", 403);
+      await o.setKind("project");
       return { op: "make_project" };
     }
+    case "make_document": {
+      if (kind == "document") return { op: "make_document" };
+      if (!o.setKind) throw new TreeError("This project can't become a document here.", 403);
+      // A document has one page, its own: every other page goes first, by the person's hand (nothing is deleted for them).
+      const pages = room.paths().filter(isPage);
+      const others = pages.filter((p) => p != o.index);
+      if (others.length) throw new TreeError(`It has ${pages.length} pages, and a document has one. Delete the others first: ${others.slice(0, 5).join(", ")}${others.length > 5 ? ` and ${others.length - 5} more` : ""}.`, 409);
+      await o.setKind("document");
+      return { op: "make_document" };
+    }
     default:
-      throw new TreeError(`There's no operation "${String(op.op)}": it's one of new_page, new_folder, move, delete and make_project.`);
+      throw new TreeError(`There's no operation "${String(op.op)}": it's one of new_page, new_folder, move, delete, make_project and make_document.`);
   }
 }
 
