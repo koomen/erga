@@ -2,6 +2,7 @@
   "name": "erga",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "bun client/build.ts",
