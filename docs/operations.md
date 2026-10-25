@@ -3,8 +3,7 @@
 This page tells how an Erga deployment builds, deploys and rolls back.
 The examples use Erga's own deployment: erga.dev (production),
 staging.erga.dev (staging) and ops.erga.dev (the control Worker). Another
-deployment has its own names in `deploy/targets.json` and
-`control/wrangler.jsonc`.
+deployment has its own names in `deploy/targets.json`.
 
 ## The parts
 
@@ -72,10 +71,4 @@ Two changes still need wrangler from a machine
 
 ## A new deployment
 
-`deploy/setup.ts` is the runbook for the first setup, as a script. It
-tells each step first, and does it only after you say yes
-(`bun deploy/setup.ts --dry-run` changes nothing). After the setup:
-
-1. An admin opens the control Worker's Ops page and connects Cloudflare.
-2. The first push to `staging` deploys staging.
-3. The first move of `main` deploys production and then the control Worker.
+docs/self-host.md tells how to set up a new deployment.

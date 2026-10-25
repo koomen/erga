@@ -91,22 +91,23 @@ flowchart LR
 
 ## Self-host on Cloudflare
 
-Erga needs a Cloudflare account with Workers, Durable Objects, D1 and R2.
-The control Worker also needs Containers (for builds) and Artifacts (for
-the repository). You need two domains: one for the app, and one for the
-pages origins, so that a page can never reach the app's cookies.
+Erga needs a Cloudflare account on the Workers Paid plan: Workers, Durable
+Objects, D1 and R2, and for the control Worker, Containers (for builds) and
+Artifacts (for the repository). You need a zone for the app, and a
+separate zone for the pages origins, so that a page can never run on the
+app's origin.
 
-1. Put your names in `deploy/targets.json` (the Workers, the databases,
-   the hosts, the pages domains and the admins) and in
-   `control/wrangler.jsonc` (your account, and the ids of your GitHub App
-   and your Cloudflare OAuth client).
-2. Run `bun deploy/setup.ts --dry-run` to see each step, then
-   `bun deploy/setup.ts`. It makes the control Worker and its secrets.
-3. Open the control Worker's Ops page, and connect Cloudflare.
-4. Push to `staging`. The control Worker builds the commit and deploys
-   staging. Merge to `main` to deploy production.
+1. Put your values in `deploy/targets.json`: the account, the admins, the
+   hosts and zones, and the ids of your GitHub and Cloudflare OAuth apps.
+   You do not change code.
+2. Deploy production the first time (`bun deploy/run.ts production`), then
+   set up the control Worker and staging (`bun deploy/setup.ts`).
+3. Open the control Worker's page, and connect Cloudflare.
+4. After that, a push to `staging` deploys staging, and a move of `main`
+   deploys production.
 
-docs/operations.md tells how deploys, health checks and rollbacks work.
+docs/self-host.md gives each step. docs/operations.md tells how deploys,
+health checks and rollbacks work.
 
 ## The layout
 
@@ -166,7 +167,7 @@ docs/operations.md tells how deploys, health checks and rollbacks work.
                   (branch-deploys.ts) and /deploy's (deploy-routes.ts, deploy-session.ts)
     control/      the control Worker: Erga's repository and Git endpoint, the deploy pipeline, the Ops page and its
                   sign-in, and the build container (builder/), apart from the app, so a broken app never takes the
-                  way to fix it down (index.ts the entry, routes.ts, platform.ts, wrangler.jsonc). The app reaches it
+                  way to fix it down (index.ts the entry, routes.ts, platform.ts, wrangler.jsonc: its bindings). The app reaches it
                   over a service binding; locally the app hosts its routes.
     deploy/       the deploy pipeline (pipeline.ts, and control.ts for the control Worker's own deploy), its Cloudflare
                   credential (credential.ts: an OAuth grant), branch deploys (branches.ts), the release build
@@ -177,7 +178,7 @@ docs/operations.md tells how deploys, health checks and rollbacks work.
                   GitHub and Google for tests, and a document's files on disk as its Storage (disk-storage.ts, over
                   the mirror the plugin serves)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
-    docs/         operations.md (how a deployment deploys), and the screenshot above
+    docs/         self-host.md (deploy your own Erga), operations.md (how a deployment deploys), the screenshot above
     tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full) and benchmarks (e2e/bench)
 
 Each area of `server/` (directory, identity, documents, pages, home,
