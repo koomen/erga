@@ -47,7 +47,7 @@ test("an editor's page names the editor's half at the app's origin, with the int
   const map = JSON.parse(/<script type="importmap" data-erga>(.*?)<\/script>/.exec(page)![1]) as { integrity: Record<string, string> };
   expect(map.integrity).toEqual({ "https://erga.test/_erga/frame-bbbb2222.js": "sha384-frame", "https://erga.test/_erga/chunk-gggg7777.js": "sha384-chunk", "https://erga.test/_erga/chunk-hhhh8888.js": "sha384-later" });
   expect(page.indexOf('type="importmap"')).toBeLessThan(page.indexOf('src="app.js"'));
-  const config = JSON.parse(/var C = (\{.*?\});\n/.exec(page)![1]);
+  const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(page)![1]);
   expect(config.editor).toMatchObject({ src: "https://erga.test/_erga/frame-bbbb2222.js", integrity: "sha384-frame", preload: ["https://erga.test/_erga/chunk-gggg7777.js"] });
   // A reader's page has none of the editor's.
   const reader = readerPage("<p>x</p>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: false });
