@@ -36,6 +36,7 @@ export interface AgentAction {
 const SECRET = "a secret: pasted or made only on the page, never in a conversation";
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
+const SIGN_IN = "signing in: the person in their own browser, before any agent acts for them";
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys
@@ -201,6 +202,11 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /d/<id>/api/ext/tools/:name", domain: "none", action: "An outside agent runs a document's tool", exempt: "the outside agents' API: its tools are theirs" },
   { route: "POST /api/auth/request", domain: "none", action: "An outside agent asks for a token", exempt: "an outside agent's sign-in" },
   { route: "POST /api/auth/poll", domain: "none", action: "An outside agent collects its token", exempt: "an outside agent's sign-in" },
+
+  // ------------------------------------------------------------ signing in (server/identity/accounts.ts)
+  { route: "GET /auth/username", domain: "none", action: "A new account's first sign-in: choose a username", exempt: SIGN_IN },
+  { route: "POST /auth/username", domain: "none", action: "A new account's first sign-in: make the account under the username", exempt: SIGN_IN },
+  { route: "GET /auth/dev", domain: "none", action: "Local development's pretend provider signs someone in", exempt: "the dev server's" },
 
   // ------------------------------------------------------------ local development
   { route: "POST /__erga/migrate", domain: "none", action: "The dev server brings the local database up to date", exempt: "the dev server's" },

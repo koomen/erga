@@ -45,6 +45,7 @@ import { ConfigError, ServerConfig } from "./settings.ts";
 
 import { NotAllowed, Users } from "./users.ts";
 import { Credentials } from "./api-keys.ts";
+import { Identities } from "./identities.ts";
 import { isDocKind, type DocKind } from "../../document/pages.ts";
 
 
@@ -193,6 +194,8 @@ export class Directory {
   readonly config: ServerConfig;
   /** The API keys admins enter, encrypted. */
   readonly credentials: Credentials;
+  /** How each account signs in (its GitHub and Google identities), and usernames. */
+  readonly identities: Identities;
 
   /**
    * `admins`: the deploy's bootstrap admins. `locked`: settings
@@ -206,6 +209,7 @@ export class Directory {
   constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean; permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void> } = {}) {
     this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
     this.users = new Users(sql, opts.admins);
+    this.identities = new Identities(sql, this.users);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,

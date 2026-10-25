@@ -30,6 +30,8 @@ import { cookieName, cookies } from "./cookies.ts";
 import { signInApp, testedSignIn } from "./settings.ts";
 import { b64, SESSION_COOKIE, sign, SIGNED_OUT, unb64, unsign } from "./session.ts";
 import { openRelay, randomNonce, relayNonce, relayState } from "../source/index.ts";
+import type { Vouched } from "../directory/index.ts";
+import { vouchedSignIn } from "./accounts.ts";
 
 /** GitHub's two origins from the deploy's one (the stand-in serves its API under /api). */
 const originsOf = (platform: Platform) => ({ www: platform.signIn.github, api: platform.signIn.github == "https://github.com" ? "https://api.github.com" : `${platform.signIn.github}/api` });
@@ -40,7 +42,11 @@ const DAY = 24 * 60 * 60;
 const cookie = (request: Request, name: string, value: string, maxAge: number) =>
   `${cookieName(request, name)}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
 
-async function signIn(platform: Platform, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
+/** The cookie that clears the sign-in's state. */
+export const clearCookie = (request: Request) => cookie(request, STATE, "", 0);
+
+/** Signs `session` in: its cookie, and on to `next`. */
+export async function signIn(platform: Pick<Platform, "secret">, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
   const value = b64(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
   const headers = new Headers({ Location: next });
   headers.append("Set-Cookie", cookie(request, SESSION_COOKIE, await sign(platform.secret, value), ttl));
@@ -120,18 +126,18 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
     }
     return page("Sign-in failed", `GitHub didn't let you in${why}. <a href="/">Try again</a>.`, 400);
   }
-  // GitHub's access token reads the login, once, and is never stored.
+  // GitHub's access token reads who they are, once, and is never stored.
   const user = await fetch(`${api}/user`, {
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
   }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
-  if (!user.login) return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
-  // Their row says they're in (a bootstrap admin's is made now), with the name GitHub gives today.
-  if (!(await users.signedIn(user.login, user.name?.trim() || user.login))) return page("Invite only", `Erga is invite-only for now, and <b>${escape(user.login)}</b> isn't on the list yet.`, 403);
-  // Their GitHub id, for commits authored as them (their noreply address).
-  if (typeof user.id == "number") await users.setGithubId(user.login, user.id).catch(() => {});
-  // A test sign-in with the pending values worked: an admin's puts them in use.
-  if (testing && app) await testedSignIn(platform, app.clientId, { ok: true, login: user.login, admin: await users.isAdmin({ login: user.login }) });
-  return signIn(platform, request, { login: user.login, name: user.name?.trim().split(/\s+/)[0] || user.login }, safeNext(next ?? null));
+  if (!user.login || typeof user.id != "number") return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
+  const v: Vouched = { provider: "github", subject: String(user.id), handle: user.login.toLowerCase(), name: user.name?.trim() || null, emails: [] };
+  return vouchedSignIn(platform, request, v, next ?? "/", async (login) => {
+    // Their GitHub id on their row too (users.github_id), as before identities.
+    if (login == v.handle) await users.setGithubId(login, user.id!).catch(() => {});
+    // A test sign-in with the pending values worked: an admin's puts them in use.
+    if (testing && app) await testedSignIn(platform, app.clientId, { ok: true, login, admin: await users.isAdmin({ login }) });
+  });
 }
 
 // ------------------------------------------------------------ test tokens

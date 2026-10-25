@@ -13,6 +13,8 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out; /auth/github?app=pending, a test sign-in with the
 //                              GitHub app values that wait on /admin/auth
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
+//   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
+//   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   /api/sign-in/...           another of Erga's servers reads this one's sign-in status, or sets its GitHub app
 //                              (server/identity/settings.ts, with DEPLOY_HOOK_SECRET)
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token
@@ -43,7 +45,7 @@ import { serverApi, tokensDoor } from "./api.ts";
 import { mayDeploy } from "./deploys/access.ts";
 import { frontDoor, isPagesSite } from "./documents/index.ts";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
-import { adminsOnlyGate, finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn } from "./identity/index.ts";
+import { adminsOnlyGate, devSignIn, finishSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn, usernameStep } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
@@ -89,6 +91,8 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (path == "/auth/github/callback") return finishSignIn(p, request);
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/auth/test") return testSignIn(p, request);
+  if (path == "/auth/username") return usernameStep(p, request);
+  if (path == "/auth/dev") return devSignIn(p, request);
   // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
   if (assets) return isAssetPath(path) ? serveAsset(request, p) : p.assets(request);
   // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`

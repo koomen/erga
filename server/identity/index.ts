@@ -4,6 +4,7 @@
 
 export { sessionOf } from "./session.ts";
 export { finishSignIn, mintTestToken, signOut, startSignIn, testSignIn } from "./sign-in.ts";
+export { devSignIn, usernameStep } from "./accounts.ts";
 export { authOps, isSignInPath, signInDoor } from "./settings.ts";
 export { isPeer } from "./peer.ts";
 export { adminsOnlyGate } from "./admins-only.ts";

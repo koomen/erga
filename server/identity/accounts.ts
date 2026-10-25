@@ -1,0 +1,191 @@
+// Which account a sign-in is: the step after a provider (GitHub, Google)
+// says who someone is (a `Vouched`), the same for each provider.
+//
+//   1. An identity already linked (by the provider's subject id) signs in to
+//      its account, whatever its email or login is now.
+//   2. A GitHub identity whose login names an account with no identity at all
+//      (one from before identities, or one an admin added by GitHub login)
+//      claims it: the accounts from before keep their GitHub login as their
+//      username.
+//   3. Anyone else who may join makes a new account: they choose a username
+//      first (/auth/username). Until they do, who they are waits in a signed
+//      cookie for half an hour, and nothing is written.
+//
+//   GET  /auth/username            the username step: a username to choose, for a new account
+//   GET  /auth/username ?check=    whether a username is free: {ok} or {problem}
+//   POST /auth/username            username: makes the account, signs in, goes on to `next`
+//   GET  /auth/dev                 ?provider=&subject=&handle=&name=&email=&verified=:
+//                                  local development only: a pretend provider's sign-in, through the same steps
+
+import type { Platform, Session } from "../platform.ts";
+import { esc, page, safeNext } from "../pages/index.ts";
+import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
+import { cookieName, cookies } from "./cookies.ts";
+import { b64, sign, unb64, unsign } from "./session.ts";
+import { clearCookie, signIn } from "./sign-in.ts";
+
+const JOIN = "erga_join";
+const JOIN_SECONDS = 30 * 60;
+
+/** Where a sign-in goes next. */
+export type Outcome =
+  | { kind: "in"; login: string }
+  | { kind: "new"; suggestion: string }
+  | { kind: "refused"; login?: string };
+
+/** Whether someone a provider vouched for may make a new account here. */
+export async function mayJoin(platform: Pick<Platform, "dev">, url: URL, _v: Vouched): Promise<boolean> {
+  // Local development: everyone may (as everyone may sign in there).
+  return platform.dev(url);
+}
+
+/** The account a vouched-for identity signs in to, or the username step, or no (the steps at the top of this file). */
+export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; create?: boolean }): Promise<Outcome> {
+  const { users, identities } = dir;
+  const known = await identities.find(v.provider, v.subject);
+  if (known) {
+    const user = await users.signedIn(known.login, v.name, { create: o.create });
+    if (!user) return { kind: "refused", login: known.login };
+    await identities.used(v);
+    return { kind: "in", login: user.login };
+  }
+  if (v.provider == "github") {
+    const row = await users.get(v.handle);
+    if (row && (await identities.unclaimed(row.login))) {
+      await identities.link(row.login, v);
+      const user = await users.signedIn(row.login, v.name, { create: o.create });
+      return user ? { kind: "in", login: user.login } : { kind: "refused", login: row.login };
+    }
+  }
+  if (!o.join) return { kind: "refused" };
+  return { kind: "new", suggestion: await identities.suggest(v) };
+}
+
+// ------------------------------------------------------------ after a provider's answer
+
+/**
+ * A provider vouched for someone: sign them in to their account, or on to the username step, or say why not.
+ * `after`: what runs once they're in (a test sign-in's result), with their account's login.
+ */
+export async function vouchedSignIn(platform: Platform, request: Request, v: Vouched, next: string, after?: (login: string) => Promise<void>): Promise<Response> {
+  const url = new URL(request.url);
+  const dev = platform.dev(url);
+  const outcome = await resolve(platform.directory, v, { join: await mayJoin(platform, url, v), create: dev });
+  if (outcome.kind == "refused") return refusedPage(v, outcome.login);
+  if (outcome.kind == "new") return toUsernameStep(platform, request, v, next);
+  await after?.(outcome.login);
+  return signIn(platform, request, sessionFor(outcome.login, v), safeNext(next));
+}
+
+const sessionFor = (login: string, v: Vouched): Session => ({ login, name: v.name?.trim().split(/\s+/)[0] || login });
+
+function refusedPage(v: Vouched, login?: string): Response {
+  const who = login ?? v.handle;
+  return page("Invite only", `Erga is invite-only for now, and <b>${esc(who)}</b> (${esc(label(v.provider))}) isn't on the list yet.`, 403);
+}
+
+// ------------------------------------------------------------ the username step
+
+interface Pending { v: Vouched; next: string; exp: number }
+
+const cookieFor = (request: Request, value: string, maxAge: number) =>
+  `${cookieName(request, JOIN)}=${value}; Path=/auth; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
+
+async function toUsernameStep(platform: Platform, request: Request, v: Vouched, next: string): Promise<Response> {
+  const pending: Pending = { v, next: safeNext(next), exp: Math.floor(Date.now() / 1000) + JOIN_SECONDS };
+  const value = await sign(platform.secret, `join:${b64(new TextEncoder().encode(JSON.stringify(pending)))}`);
+  const headers = new Headers({ Location: "/auth/username", "Cache-Control": "no-store" });
+  headers.append("Set-Cookie", cookieFor(request, value, JOIN_SECONDS));
+  headers.append("Set-Cookie", clearCookie(request));
+  return new Response(null, { status: 302, headers });
+}
+
+async function pendingOf(platform: Platform, request: Request): Promise<Pending | null> {
+  const raw = cookies(request).get(JOIN);
+  const value = raw && (await unsign(platform.secret, raw));
+  if (!value?.startsWith("join:")) return null;
+  try {
+    const p = JSON.parse(new TextDecoder().decode(unb64(value.slice("join:".length)))) as Pending;
+    return p.exp > Date.now() / 1000 && p.v?.subject ? p : null;
+  } catch { return null; }
+}
+
+/** /auth/username: choose a username, for a new account. */
+export async function usernameStep(platform: Platform, request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const pending = await pendingOf(platform, request);
+  if (request.method == "GET" && url.searchParams.has("check")) {
+    if (!pending) return Response.json({ problem: "This sign-in expired: sign in again." }, { status: 400 });
+    const problem = await platform.directory.identities.usernameProblem(url.searchParams.get("check") ?? "");
+    return Response.json(problem ? { problem } : { ok: true }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (!pending) return page("Sign-in expired", "This sign-in waited too long, or it finished already. <a href=\"/auth/github\">Sign in again</a>.", 400);
+  const { v } = pending;
+  if (request.method == "GET") return usernamePage(v, await platform.directory.identities.suggest(v), null);
+  if (request.method != "POST") return new Response("Not allowed", { status: 405 });
+  if (request.headers.get("origin") != url.origin) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData().catch(() => null);
+  const wanted = String(form?.get("username") ?? "").trim().toLowerCase();
+  // Who may join is asked again: a rule could have changed while they chose.
+  if (!(await mayJoin(platform, url, v))) return refusedPage(v);
+  try {
+    const login = await platform.directory.identities.createAccount(wanted, v);
+    const answer = await signIn(platform, request, sessionFor(login, v), pending.next);
+    answer.headers.append("Set-Cookie", cookieFor(request, "", 0));
+    return answer;
+  } catch (e) {
+    if (e instanceof NotAllowed) return usernamePage(v, wanted, e.message);
+    throw e;
+  }
+}
+
+function usernamePage(v: Vouched, value: string, error: string | null): Response {
+  const body = `Welcome. You signed in with ${esc(label(v.provider))} as <b>${esc(v.handle)}</b>. Choose a username for your Erga account: it is in the address of each of your documents (/<i>username</i>/…).</p>
+<form method="post" action="/auth/username" class="username" novalidate>
+  <label for="username">Username</label>
+  <p class="row"><input class="input" id="username" name="username" value="${esc(value)}" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="39" required autofocus>
+  <button class="new" type="submit">Make my account</button></p>
+  <p class="hint${error ? " error" : ""}" role="status" id="username-hint">${error ? esc(error) : "Lowercase letters, digits and dashes."}</p>
+</form>
+<style>
+  form.username label { display: block; font-weight: 600; margin-bottom: 6px; }
+  form.username .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0; }
+  form.username .input { flex: 1; min-width: 180px; font: inherit; padding: 8px 10px; border: 1px solid var(--line, #8886); border-radius: 8px; background: transparent; color: inherit; }
+  form.username .hint { font-size: 13px; color: var(--chrome); margin-top: 8px; }
+  form.username .hint.error { color: #c0392b; }
+</style>
+<script>
+  const input = document.getElementById("username"), hint = document.getElementById("username-hint");
+  let timer = 0, asked = "";
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const name = input.value.trim().toLowerCase();
+      if (!name || name == asked) return;
+      asked = name;
+      try {
+        const r = await (await fetch("/auth/username?check=" + encodeURIComponent(name))).json();
+        if (asked != name) return;
+        hint.textContent = r.ok ? '"' + name + '" is free.' : r.problem;
+        hint.classList.toggle("error", !r.ok);
+      } catch {}
+    }, 250);
+  });
+</script><p>`;
+  return page("Choose a username", body, error ? 400 : 200);
+}
+
+// ------------------------------------------------------------ local development's pretend provider
+
+/** /auth/dev: a pretend provider's answer, for trying the sign-in steps and for the end-to-end tests (local development only). */
+export async function devSignIn(platform: Platform, request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (!platform.dev(url)) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  const q = url.searchParams;
+  const provider = (q.get("provider") == "google" ? "google" : "github") as SignInProvider;
+  const subject = q.get("subject")?.trim();
+  const handle = q.get("handle")?.trim();
+  if (!subject || !handle) return page("Not enough", "Give the pretend identity's subject= and handle=.", 400);
+  const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
+  return vouchedSignIn(platform, request, { provider, subject, handle, name: q.get("name") || null, emails }, q.get("next") ?? "/");
+}
