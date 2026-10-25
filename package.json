@@ -7,6 +7,8 @@
     "build": "bun client/build.ts",
     "start": "bun dev/start.ts",
     "test": "bun e2e/run.ts",
+    "format": "bun dev/format.ts --write",
+    "lint": "biome lint .",
     "typecheck": "node --no-experimental-webstorage -e \"import('vite').then((v) => v.resolveConfig({}, 'serve'))\" && tsc -p . && tsc -p cloudflare",
     "deploy": "bun deploy/run.ts production",
     "deploy:staging": "bun deploy/run.ts staging",
@@ -42,6 +44,7 @@
     "yjs": "13.6.33"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.3",
     "@cloudflare/vite-plugin": "2.0.0-beta.sha-ad79608dd",
     "@e2e-dev/web": "0.13.0",
     "@types/bun": "1.4.2",
