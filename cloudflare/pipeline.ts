@@ -40,6 +40,13 @@ export type RelayEvent = { type: string } & Record<string, unknown>;
 /** An install made from this control Worker's /deploy: where its control Worker and app are, whose account, who did it, which release, its fork's id. */
 export interface InstallRecord { control: string; app: string; staging?: string; accountId: string; by: string; at: number; version: string; fork?: string }
 
+/**
+ * The mock Cloudflare (ERGA_DEPLOY_MOCK=1): one for the Worker's isolate, not one for each instance of the object. The
+ * runtime evicts an idle object and makes a new one, which reads the deploys' state from storage; a mock of its own
+ * would have forgotten every Worker those deploys uploaded ("Worker erga-staging not found").
+ */
+let fleetMock: ReturnType<typeof mockCloudflare> | null = null;
+
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
   private store: ReleaseStore | null;
@@ -71,7 +78,7 @@ export class Pipeline extends DurableObject<Env> {
       const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "").catch(() => null);
       return !!view?.branches.some((b: { commits: { sha: string; subject: string }[] }) => b.commits.some((c) => c.sha == commit && c.subject.includes("[mock-fail]")));
     };
-    const fleet = mock ? mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25 }) : null;
+    const fleet = mock ? (fleetMock ??= mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25 })) : null;
     const net = fleet ? fleet.fetch : globalThis.fetch.bind(globalThis);
     this.deps = { net };
     // The Cloudflare credential: the OAuth grant an admin connected at /install (kept in this object's storage, sealed).
