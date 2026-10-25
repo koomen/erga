@@ -5,8 +5,10 @@
 Work on a branch of `staging`, or on `staging` itself for a small change.
 Before you push, run the tests:
 
-    bun run test               # the typecheck, the unit tests and the smoke run: under a minute
+    bun run test               # the format check, lint, typecheck, unit tests and smoke run: under a minute
 
+If the format check fails, `bun run format` formats the lines your change
+touches. Never format whole files: other branches change them too.
 
 Push to `staging` (`git push origin HEAD:staging`): the control Worker
 (ops.erga.dev, `control/`) builds it and deploys staging.erga.dev at once.

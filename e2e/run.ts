@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Runs the tests, one step after another, stopping at the first that fails:
 //
-//   bun run test               the typecheck, the unit tests and the smoke run: about a minute
+//   bun run test               the format check, lint, typecheck, unit tests and smoke run: about a minute
 //   bun run test:full          the same, then every end-to-end test: only when you want the whole suite
 //   bun run test:e2e [ARGS]    the end-to-end tests only; ARGS go to `e2e run`: files or folders,
 //                              --grep, --workers 2, --headed ...; with no files, the smoke run
@@ -62,6 +62,8 @@ process.on("SIGTERM", () => { if (current) stop(current); });
 const t0 = Date.now();
 const steps: (() => Promise<boolean>)[] = [];
 if (!e2eOnly) {
+  // The formatter on the lines this change touches (dev/format.ts), and the linter (biome.json) on everything.
+  steps.push(() => step("format and lint", "sh", ["-c", "bun dev/format.ts && node_modules/.bin/biome lint --colors=off ."]));
   steps.push(() => step("typecheck", "bun", ["run", "typecheck"]));
   steps.push(() => step("unit tests", "bun", ["test", "./tests/"]));
 }
