@@ -1,0 +1,78 @@
+// The toast: a short confirmation, an explanation, or a problem with the page, with a way to have the agent fix it.
+
+import { ms } from "../timescale";
+import { $, type Shell } from "./shell";
+
+export function mountToast(shell: Shell) {
+  const toast = $("toast");
+  let toastTimer = 0;
+  let explaining = 0; // when an explanation went up, or 0
+  /** A short confirmation ("Saved"): fades on its own. */
+  function flash(text: string, duration = 1400) {
+    explaining = 0;
+    toast.classList.remove("actionable");
+    toast.textContent = text;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => toast.classList.remove("show"), ms(duration));
+  }
+  // An explanation (why something can't be done, or what's wrong with the
+  // page) is there to be read: it stays at least EXPLAIN_MS, then until the
+  // next click or keypress anywhere. When the document is at fault it never
+  // sends you off to fix it by hand: it offers a button that asks the agent
+  // to, with a prompt that names the problem.
+  const EXPLAIN_MS = ms(5000);
+  const problemQueue: { text: string; fix?: string; key?: string }[] = [];
+  function explain(text: string, fix?: string, key?: string) {
+    clearTimeout(toastTimer);
+    toast.textContent = "";
+    toast.append(Object.assign(document.createElement("span"), { className: "toast-text", textContent: text }));
+    toast.classList.toggle("actionable", !!fix);
+    if (fix) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "toast-fix";
+      b.textContent = "Fix with agent";
+      // aria-disabled, not disabled: it can still say why it can't.
+      if (shell.agent.off) { b.setAttribute("aria-disabled", "true"); b.title = shell.agent.off; }
+      b.addEventListener("click", () => {
+        if (shell.agent.off) { explain(shell.agent.off); return; }
+        hideExplanation();
+        shell.agent.fixReported(fix, key);
+      });
+      toast.append(b);
+    }
+    toast.classList.add("show");
+    explaining = performance.now();
+  }
+  function hideExplanation() {
+    explaining = 0;
+    clearTimeout(toastTimer);
+    // Only "show" goes: the note keeps its content and layout while it fades
+    // (the next note replaces both), so nothing jumps on the way out.
+    toast.classList.remove("show");
+    // The next thing wrong with the page, if more than one thing is.
+    const next = problemQueue.shift();
+    if (next) toastTimer = window.setTimeout(() => explain(next.text, next.fix, next.key), 250);
+  }
+  function dismissExplanation(e: Event | null) {
+    if (!explaining || (e && toast.contains(e.target as Node))) return;
+    const left = EXPLAIN_MS - (performance.now() - explaining);
+    clearTimeout(toastTimer);
+    if (left > 0) { const shownAt = explaining; toastTimer = window.setTimeout(() => { if (explaining == shownAt) hideExplanation(); }, left); }
+    else hideExplanation();
+  }
+  /** Something wrong with the page that nobody asked about: shown in turn, never on top of another. */
+  function reportProblem(text: string, fix: string, key: string) {
+    if (explaining || toast.classList.contains("show")) problemQueue.push({ text, fix, key });
+    else explain(text, fix, key);
+  }
+  // Capture phase, before whatever the click or key does (which may explain something new).
+  for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, dismissExplanation, true);
+  return {
+    flash, explain, hideExplanation, dismissExplanation, reportProblem,
+    clearProblems() { problemQueue.length = 0; if (explaining) hideExplanation(); },
+  };
+}
+
+export type Toast = ReturnType<typeof mountToast>;
