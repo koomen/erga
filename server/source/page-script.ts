@@ -59,7 +59,7 @@ export const SOURCE_SCRIPT = `
   function deployCell(name, sha, groups) {
     const list = groups.get(sha);
     if (list) return badge(name, shown(list));
-    // A server without the history: whether the commit is live, as before.
+    // A server that sends no history: whether the commit is live.
     const t = targetOf(name);
     if (t && !t.history && (t.deployed ?? (t.state == "deployed" ? t.commit : null)) == sha) return '<span class="dep live" title="Live on ' + esc(t.host) + '"><span class="w">live</span><span class="at"></span></span>';
     return "";
