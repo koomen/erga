@@ -24,7 +24,7 @@ test("the document's page is in one frame on its pages origin, for everyone: nev
   // Opened in the editor, its address waits for the editor's half to start with the page (FRAME_SRC).
   expect(editing.tag).toContain('data-src="https://abcd1234-ada.erga-pages.dev/t/x/index.html"');
   expect(editing.tag).toContain(`allow="${EDITOR_ALLOW}"`);
-  expect(editing.page).toContain('f.src = f.dataset.src + "?erga-edit"');
+  expect(editing.page).toMatch(/\.src\s*=\s*[\w$]+\.dataset\.src\s*\+\s*"\?erga-edit"/);
   expect(EDITOR_ALLOW, "no full screen").toContain("fullscreen 'none'");
   expect(PAGE_SANDBOX).not.toMatch(/allow-top-navigation|allow-popups-to-escape-sandbox/);
 });
