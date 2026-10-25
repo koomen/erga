@@ -26,6 +26,10 @@
 //   logo.png           Erga's logo (assets/logo/logo.png), public at /logo.png: a square 512 px PNG for
 //                      places that want one (an OAuth client's logo)
 //
+// And, into the repository: server/pages/inline-scripts.ts, the scripts the server puts in its pages inline (each
+// file of client/inline/, type-checked as the client is), as text. It's committed, so the server needs no build to
+// run; tests/inline-scripts.test.ts checks it's up to date. Usage: bun client/build.ts --inline makes only it.
+//
 // The build writes into a folder of its own, then moves each file into .build/
 // and writes the manifest last, so a server never names a file that isn't there,
 // even with two builds at once. The files of the last build stay beside the new
@@ -75,11 +79,66 @@ const sha = (bytes: Uint8Array, alg = "sha256") => new Bun.CryptoHasher(alg as "
 const hashOf = (bytes: Uint8Array) => sha(bytes).digest("hex").slice(0, 10);
 const integrityOf = (bytes: Uint8Array) => `sha384-${new Bun.CryptoHasher("sha384").update(bytes).digest("base64")}`;
 
+/** Where the inline scripts go, as text (see above). */
+export const INLINE_OUT = join(ROOT, "server/pages/inline-scripts.ts");
+
+/**
+ * The inline scripts' file: each script of client/inline/ (a default-exported function) built alone and minified, as
+ * the text of an expression whose value is the function. The server calls it in the page (server/pages/inline.ts).
+ */
+export async function inlineScripts(): Promise<string> {
+  const dir = join(ROOT, "client/inline");
+  const names = readdirSync(dir)
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
+    .sort();
+  const out: string[] = [];
+  for (const f of names) {
+    const result = await Bun.build({ entrypoints: [join(dir, f)], target: "browser", format: "esm", minify: true, splitting: false });
+    if (!result.success) {
+      for (const l of result.logs) console.error(l);
+      throw new Error(`client/inline/${f} didn't build`);
+    }
+    const js = (await result.outputs[0].text()).trim();
+    const m = /export\s*\{\s*([\w$]+)\s+as\s+default\s*\};?$/.exec(js);
+    if (!m) throw new Error(`client/inline/${f} has no default export (a function)`);
+    const code = js.slice(0, m.index).trim();
+    // One function and nothing else is the function itself; anything more goes in a closure that answers it.
+    let alone = false;
+    try {
+      alone = code.startsWith(`function ${m[1]}(`) && typeof new Function(`return (${code})`)() == "function";
+    } catch {}
+    const text = alone ? `(${code})` : `(()=>{${code};return ${m[1]}})()`;
+    out.push(`  ${JSON.stringify(f.replace(/\.ts$/, ""))}: ${JSON.stringify(text)},`);
+  }
+  return `// Made by client/build.ts from client/inline/: don't edit it, edit those and run bun client/build.ts --inline.
+// tests/inline-scripts.test.ts checks it's up to date. Each script is the text of a function, for server/pages/inline.ts.
+/* biome-ignore-all format: made by client/build.ts */
+
+export const INLINE = {
+${out.join("\n")}
+} as const;
+`;
+}
+
+/** Writes the inline scripts' file, if it changed. */
+async function writeInline(): Promise<void> {
+  const text = await inlineScripts();
+  const was = (() => {
+    try {
+      return readFileSync(INLINE_OUT, "utf8");
+    } catch {
+      return "";
+    }
+  })();
+  if (text != was) writeFileSync(INLINE_OUT, text);
+}
+
 async function build(): Promise<void> {
   // The server settings the deploy locks (deploy/locked-settings.ts): a bad one stops the build here.
   const check = Bun.spawnSync(["bun", "deploy/locked-settings.ts"], { cwd: ROOT, stdout: "ignore", stderr: "inherit" });
   if (check.exitCode != 0) process.exit(check.exitCode || 1);
 
+  await writeInline();
   const tmp = join(OUT, `.next-${process.pid}`);
   rmSync(tmp, { recursive: true, force: true });
   const at = join(tmp, DIR);
@@ -233,4 +292,4 @@ function sizes(m: AssetManifest, made: Map<string, Uint8Array>) {
   row("later: every other chunk", [...made.keys()].filter((u) => u.endsWith(".js") && !shell.includes(u) && !frame.includes(u)));
 }
 
-if (import.meta.main) await build();
+if (import.meta.main) await (process.argv.includes("--inline") ? writeInline() : build());

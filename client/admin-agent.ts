@@ -26,7 +26,7 @@ import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
-declare global { interface Window { ergaAgent?: { set(open: boolean): void } } }
+// (window.ergaAgent: client/inline/admin-agent.ts.)
 interface Prefs { open?: boolean; side?: "left" | "right"; width?: number }
 
 const $ = (id: string) => document.getElementById(id)!;
