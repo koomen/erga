@@ -9,6 +9,18 @@
 
 import { analyzeHtml, stamp } from "./manuscript";
 
+/** What the script needs: the viewer's origin, where the document's files are (with the token), and its text's digest. */
+export interface ReaderConfig {
+  /** The viewer's origin (the token names it): the only one it talks to. */
+  shell: string;
+  /** The path the document's files are under on this origin: /t/<token>/. */
+  prefix: string;
+  /** The digest of the text the page was made from (shared/page.ts, sourceDigest): the editor checks it has the same. */
+  src: string;
+  /** For whoever may edit: the editor's half (frame.js), its chunks and their integrity. */
+  editor?: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
+}
+
 /** The page's HTML, its text blocks marked (data-erga-id), as the editor's own analysis of the same text numbers them. */
 export const markPage = (src: string): string => stamp(src, analyzeHtml(src).units);
 

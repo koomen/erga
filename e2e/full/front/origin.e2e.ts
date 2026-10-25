@@ -57,7 +57,11 @@ test("a file has an ETag, is checked each time, and is a 304 with no body when u
   expect((await framed(`${url}index.html`, { "If-None-Match": etag! })).status).toBe(200);
   // The editor's half loads from the app's origin (one address for every document), each script with its integrity.
   const html = await page.text();
-  const config = JSON.parse(/var C = (\{.*?\});\n/.exec(html)?.[1] ?? "null") as { shell: string; prefix: string; editor: { src: string; integrity: string; map: Record<string, string> } };
+  const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(html)?.[1] ?? "null") as {
+    shell: string;
+    prefix: string;
+    editor: { src: string; integrity: string; map: Record<string, string> };
+  };
   expect(config.shell).toBe(p.origin);
   expect(config.prefix).toBe(at.pathname);
   expect(config.editor.src).toMatch(new RegExp(`^${p.origin}/_erga/frame-[a-z0-9]+\\.js$`));
