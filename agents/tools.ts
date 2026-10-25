@@ -20,7 +20,7 @@
 //                                       those that wait for a test sign-in. Admins only, with ToolWho.auth; an app's
 //                                       values are set only on /admin/auth, never in a conversation
 //   list_users, add_user,               the users, and who's an admin, admins only (add_user: a rule for that one
-//   set_user_role, set_user_deploy,     account, with write)
+//   set_user_role, set_user_deploy,     account: 'Can create and edit content')
 //   remove_user
 //   list_access_rules, add_access_rule, the access rules on /admin/users, one list, admins only
 //   change_access_rule, remove_access_rule
@@ -38,7 +38,7 @@
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type TObject } from "typebox";
-import { type AccessRule, type Action, ANYONE, KIND_LABEL, NO_WRITE, type ConfigEntry, ConfigError, CredentialError, type Directory, type DocRow, type Grant, ID, LOCKED, nameOf, newDocId, NotAllowed, OWNER, type Route, type User, type Who } from "../server/directory/index.ts";
+import { ACCESS_LABEL, type AccessRule, type Action, ANYONE, KIND_LABEL, NO_WRITE, type ConfigEntry, ConfigError, CredentialError, type Directory, type DocRow, type Grant, ID, LOCKED, nameOf, newDocId, NotAllowed, OWNER, type Route, type User, type Who } from "../server/directory/index.ts";
 import { AuthError, type AuthOps, type AuthStatus, type OtherStatus } from "../server/identity/index.ts";
 import { makeDoc, startingFiles } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform.ts";
@@ -326,7 +326,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Add a user",
     activity: "adding a user",
     admin: true,
-    description: "Admins only. Lets someone sign in to this server, by username or a GitHub login that hasn't signed in yet, as a user (the default) or an admin: it adds them, and an access rule for that one account with write. Someone already there keeps their row; their role becomes the one given.",
+    description: "Admins only. Lets someone sign in to this server, by username or a GitHub login that hasn't signed in yet, as a user (the default) or an admin: it adds them, and an access rule for that one account with write ('Can create and edit content'). Someone already there keeps their row; their role becomes the one given.",
     parameters: Type.Object({
       login: LOGIN,
       role: Type.Optional(Type.Union([Type.Literal("user"), Type.Literal("admin")], { description: "user (the default) or admin" })),
@@ -342,7 +342,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Read the access rules",
     activity: "reading the access rules",
     admin: true,
-    description: "Admins only. The access rules on /admin/users, one list: each rule's id, who (everybody; a Google Workspace organization, by its domain, matched on the hd claim Google gives Workspace accounts; a GitHub organization, its members checked at each GitHub sign-in; one account, by username; one Google account, by email) and access (read: may sign in and view documents; write: may also make and edit them). A person gets the highest access of the rules that match them; none: they can't sign in. Admins always have write. Also the Workspace domains and GitHub organizations of people who signed in here (suggestions).",
+    description: "Admins only. The access rules on /admin/users, one list: each rule's id, who (everybody; a Google Workspace organization, by its domain, matched on the hd claim Google gives Workspace accounts; a GitHub organization, its members checked at each GitHub sign-in; one account, by username; one Google account, by email) and access: read ('Can view content': sign in and view documents) or write ('Can create and edit content': also make and edit them). A person gets the highest access of the rules that match them; none of them ('No access'): they can't sign in. Admins always have 'Can create and edit content'. Each rule's accessLabel is the words the Users page shows: use them when you tell the person. Also the Workspace domains and GitHub organizations of people who signed in here (suggestions).",
     parameters: Type.Object({}),
     run: async (_args, { dir, who }) => ({ rules: (await dir.rules.list(who)).map(ruleOf), suggestions: await dir.rules.suggestions(who) }),
   },
@@ -351,11 +351,11 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Add an access rule",
     activity: "adding an access rule",
     admin: true,
-    description: "Admins only. Adds an access rule, as Add on /admin/users does (a rule for the same who changes its access). kind: workspace (value: the Google Workspace organization's domain), github_org (value: the organization's login), account (value: an Erga username, or a GitHub login that hasn't signed in yet: it claims that username at its first GitHub sign-in), email (value: a Google account's email). access: read or write. Only when the person asks in this conversation; say what you added.",
+    description: "Admins only. Adds an access rule, as Add on /admin/users does (a rule for the same who changes its access). kind: workspace (value: the Google Workspace organization's domain), github_org (value: the organization's login), account (value: an Erga username, or a GitHub login that hasn't signed in yet: it claims that username at its first GitHub sign-in), email (value: a Google account's email). access: read ('Can view content') or write ('Can create and edit content'). Only when the person asks in this conversation; say what you added, in those words.",
     parameters: Type.Object({
       kind: Type.Union([Type.Literal("workspace"), Type.Literal("github_org"), Type.Literal("account"), Type.Literal("email")], { description: "workspace, github_org, account or email" }),
       value: Type.String({ description: "The domain, organization, username or email" }),
-      access: Type.Union([Type.Literal("read"), Type.Literal("write")], { description: "read or write" }),
+      access: Type.Union([Type.Literal("read"), Type.Literal("write")], { description: "read ('Can view content') or write ('Can create and edit content')" }),
     }),
     run: async (args, { dir, who }) => ruleOf(await dir.rules.add(who, { kind: args.kind, value: args.value, access: args.access })),
   },
@@ -364,15 +364,15 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Change an access rule",
     activity: "changing an access rule",
     admin: true,
-    description: "Admins only. Changes a rule's access (list_access_rules gives each id), as its select on /admin/users does: read or write; everybody's may also be none (then only the other rules let anyone in). Only when the person asks; say what changed, from what to what.",
+    description: "Admins only. Changes a rule's access (list_access_rules gives each id), as its select on /admin/users does: read ('Can view content') or write ('Can create and edit content'); everybody's may also be none ('No access': then only the other rules let anyone in). Only when the person asks; say what changed, from what to what, in those words.",
     parameters: Type.Object({
       id: Type.Integer({ description: "The rule's id" }),
-      access: Type.Union([Type.Literal("none"), Type.Literal("read"), Type.Literal("write")], { description: "none (everybody only), read or write" }),
+      access: Type.Union([Type.Literal("none"), Type.Literal("read"), Type.Literal("write")], { description: "none ('No access', everybody only), read ('Can view content') or write ('Can create and edit content')" }),
     }),
     run: async (args, { dir, who }) => {
       const before = (await dir.rules.list(who)).find((r) => r.id == Number(args.id));
       const after = await dir.rules.change(who, Number(args.id), args.access);
-      return { rule: ruleOf(after), from: before?.access ?? null };
+      return { rule: ruleOf(after), from: before ? `${before.access} (${ACCESS_LABEL[before.access]})` : null };
     },
   },
   {
@@ -534,7 +534,7 @@ function entryOf(e: ConfigEntry) {
 }
 
 function ruleOf(r: AccessRule) {
-  return { id: r.id, who: r.kind == "everybody" ? "everybody" : `${KIND_LABEL[r.kind]}: ${r.value}`, kind: r.kind, value: r.value, access: r.access, added: r.created ? iso(r.created) : null, addedBy: r.addedBy, ...(r.addedVia ? { addedVia: r.addedVia } : {}) };
+  return { id: r.id, who: r.kind == "everybody" ? "everybody" : `${KIND_LABEL[r.kind]}: ${r.value}`, kind: r.kind, value: r.value, access: r.access, accessLabel: ACCESS_LABEL[r.access], added: r.created ? iso(r.created) : null, addedBy: r.addedBy, ...(r.addedVia ? { addedVia: r.addedVia } : {}) };
 }
 
 function userOf(u: User) {

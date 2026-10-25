@@ -112,7 +112,7 @@ export interface Who {
   via?: string;
 }
 /** What making a document answers someone the write rule (/admin/users) leaves out. */
-export const NO_WRITE = "You may open documents on this server, but not make or edit them: the server's write rule (on its Users page) doesn't include your account. An admin can list you there.";
+export const NO_WRITE = "Your access on this server is Can view content: you may open documents, but not make or edit them. An admin can give you Can create and edit content on the Users page.";
 
 /** The login a permission for anyone signed in (who has the link) is under. */
 export const ANYONE = "*";
