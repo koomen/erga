@@ -12,6 +12,9 @@ import { startSignIn } from "../server/identity/sign-in";
 import { testedSignIn } from "../server/identity/settings";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
+import { quietConsole } from "./quiet.ts";
+
+quietConsole();
 
 const GOOD = { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) };
 const OTHER = { clientId: "Ov23liOtherApp0000002", secret: "b".repeat(40) };

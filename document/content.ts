@@ -19,7 +19,7 @@
 //            history came from.
 
 import * as Y from "yjs";
-import { byLine, VIA } from "../shared/attribution";
+import { byLine, VIA } from "../shared/attribution.ts";
 import { ChangeSet, type ChangeSpec } from "@codemirror/state";
 
 export type AuthorKind = "person" | "agent" | "disk";

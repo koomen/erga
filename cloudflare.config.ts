@@ -11,7 +11,7 @@ import * as devEntrypoint from "./cloudflare/dev-entry.ts" with { type: "cf-work
 // The server settings the deploy fixes (locks): deploy/locked-settings.ts, with ERGA_SERVER_CONFIG
 // (JSON, from the environment) over them. client/build.ts and dev/start.ts check them first (`bun deploy/locked-settings.ts`).
 import { deployed } from "./deploy/locked-settings.ts";
-import { localAgentKey } from "./dev/agent-key.ts";
+import { hasDevSecret, localAgentKey } from "./dev/agent-key.ts";
 import { readFileSync } from "node:fs";
 
 // Production's names (its Worker, database, domain, pages route, public settings): the same list the deploy
@@ -22,6 +22,11 @@ const PROD = { ...TARGETS.targets.production, vars: { ADMINS: TARGETS.admins, ..
 
 /** The local database's id (the dev server's D1): any UUID. Production's is found by name (the deploy pipeline). */
 const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
+
+/** Where the dev server's .dev.vars is (tests give each server its own). */
+const ENV_DIR = process.env.ERGA_ENV_DIR || process.cwd();
+/** A secret local development does without: declared there only when set, so Vite doesn't warn that it's missing. */
+const optionalSecret = (mode: string | undefined, name: string) => (mode != "development" || hasDevSecret(ENV_DIR, name) ? { [name]: bindings.secret() } : {});
 
 export default defineConfig(({ mode }) => ({
   worker: {
@@ -110,7 +115,7 @@ export default defineConfig(({ mode }) => ({
       // The deploy page's Cloudflare OAuth client (public, PKCE: no secret), made under Manage Account > OAuth clients
       // with the callback https://erga.dev/deploy/auth/cloudflare/callback. Empty: /deploy offers the API token link only.
       CLOUDFLARE_OAUTH_CLIENT_ID: bindings.text(process.env.CLOUDFLARE_OAUTH_CLIENT_ID ?? ""),
-      GITHUB_CLIENT_SECRET: bindings.secret(),
+      ...optionalSecret(mode, "GITHUB_CLIENT_SECRET"),
       SESSION_SECRET: bindings.secret(),
       ANTHROPIC_API_KEY: bindings.secret(),
       // Local development only (vite dev reads them from .dev.vars); erga.dev never has them.
@@ -118,7 +123,7 @@ export default defineConfig(({ mode }) => ({
         // Sign in without GitHub, on localhost.
         DEV_LOGIN: bindings.secret(),
         // "script" swaps the agent's model for the free scripted one, for the test suite.
-        ERGA_AGENT_MODEL: bindings.secret(),
+        ...optionalSecret(mode, "ERGA_AGENT_MODEL"),
         // From the process that runs the dev server, not .dev.vars: the
         // secret that lets it link files on disk to documents, and a shorter write delay for tests.
         ERGA_LINK_SECRET: bindings.text(process.env.ERGA_LINK_SECRET ?? ""),
@@ -156,7 +161,7 @@ export default defineConfig(({ mode }) => ({
         ERGA_DEV_ORIGIN: bindings.text(process.env.ERGA_DEV_ORIGIN ?? ""),
         // The agent's key: a real one in .dev.vars, else the environment's, so a
         // placeholder in .dev.vars doesn't hide the key you exported. Never written to .dev.vars.
-        ANTHROPIC_API_KEY: bindings.text(localAgentKey(process.env.ERGA_ENV_DIR || process.cwd())),
+        ANTHROPIC_API_KEY: bindings.text(localAgentKey(ENV_DIR)),
       } : {}),
     },
   },

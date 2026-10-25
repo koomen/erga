@@ -11,6 +11,9 @@ import { afterAll, expect, test } from "bun:test";
 import { adminDoor } from "../server/admin/index.ts";
 import { checkKey, CredentialError, Credentials, Directory, NotAllowed, type Param, type Sql, withCredentials } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
+import { quietConsole } from "./quiet.ts";
+
+quietConsole();
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const ANTHROPIC = "sk-ant-api03-" + "x".repeat(80) + "Ab12";

@@ -13,6 +13,9 @@ import { memoryBlobs, ReleaseStore } from "../deploy/releases";
 import { mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
+import { quietConsole } from "./quiet.ts";
+
+quietConsole();
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const ACC = "0123456789abcdef0123456789abcdef";
