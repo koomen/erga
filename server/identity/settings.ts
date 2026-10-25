@@ -119,7 +119,7 @@ export async function providersOn(platform: Pick<Platform, "own">): Promise<Prov
 
 /**
  * Turns sign-in with a provider on or off. The rules, so nobody is locked out: a provider goes on only while its app
- * works; one goes off only while the other is on and works, and the admin who turns it off can sign in with the other.
+ * works; one goes off only while the other is on and works, and only by an admin whose account signs in with the other.
  */
 async function setProvider(platform: SignInPlatform, by: Act, provider: Provider, on: boolean): Promise<ProvidersOn> {
   if (!(provider in PROVIDERS)) throw new AuthError(`"${provider}" isn't a sign-in provider: github or google.`);
@@ -134,9 +134,9 @@ async function setProvider(platform: SignInPlatform, by: Act, provider: Provider
     const other: Provider = provider == "github" ? "google" : "github", otherLabel = PROVIDERS[other].label;
     if (!now[other]) throw new AuthError(`Sign-in with ${label} is the only one on: turn on ${otherLabel} first, so people can still sign in. Nothing changed.`);
     if (!(await works(other))) throw new AuthError(`${otherLabel}'s app doesn't work now, so turning ${label} off would stop sign-in. Nothing changed.`);
-    // An account with no identity yet signs in with GitHub by its login (accounts.ts), once.
-    const mine = await platform.directory.identities.of(by.login);
-    if (!mine.some((i) => i.provider == other) && !(other == "github" && mine.length == 0)) throw new AuthError(`You sign in only with ${label}: link your ${otherLabel} account on /settings first, or you couldn't sign in again. Nothing changed.`);
+    // Each account signs in with one provider (an account with no identity yet: GitHub, by its login).
+    const mine = (await platform.directory.identities.of(by.login))[0]?.provider ?? "github";
+    if (mine == provider) throw new AuthError(`Your account signs in with ${label}: turning it off would lock you out. An admin whose account signs in with ${otherLabel} can turn it off. Nothing changed.`);
   }
   const next = { ...now, [provider]: on };
   await platform.own.put(ON_KEY, next);

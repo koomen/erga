@@ -1,8 +1,10 @@
 // How each account signs in: the identities table (server/migrations/0210),
 // one row for each identity a provider vouches for, by the provider's stable
 // subject id (GitHub's numeric account id, Google's `sub`), never by an email
-// or a GitHub login. An account (users.login, its username) has at most one
-// identity of each provider.
+// or a GitHub login. Each GitHub account and each Google account is its own
+// Erga account (one identity each); nothing links two. The emails table
+// (0220) keeps the address Google verified at the last sign-in, for the
+// access rules' domains only.
 //
 // A username is the account's name in its addresses (/<username>/<id>): free
 // to choose on the first sign-in, valid for an address, and not a name in use
@@ -26,6 +28,8 @@ export interface Identity {
   handle: string | null;
   created: number;
   lastUsed: number | null;
+  /** A GitHub identity's organizations at its last sign-in (lowercase logins); null when not checked. */
+  orgs: string[] | null;
 }
 
 /** Who a provider says someone is, at a sign-in. */
@@ -37,12 +41,18 @@ export interface Vouched {
   handle: string;
   /** Their display name, if the provider gives one. */
   name: string | null;
-  /** Their email addresses, as the provider gives them: only verified ones ever link or pass a rule. */
+  /** Their email addresses, as the provider gives them: only Google's verified ones pass a domain rule. */
   emails: { email: string; verified: boolean }[];
+  /** A GitHub account's organizations, as GitHub answered at this sign-in; null or absent: not asked, or no answer. */
+  orgs?: string[] | null;
 }
 
-/** The addresses that may link an account or pass a domain rule: verified, and never GitHub's noreply ones. */
-export function linkable(v: Pick<Vouched, "emails">): string[] {
+/**
+ * The addresses a domain rule may read (server/directory/access.ts): Google's, when it says the address is verified.
+ * Never GitHub's (it vouches for none at sign-in), never a noreply one. No address ever finds or links an account.
+ */
+export function vouchedEmails(v: Pick<Vouched, "provider" | "emails">): string[] {
+  if (v.provider != "google") return [];
   return [...new Set(v.emails.filter((e) => e.verified).map((e) => e.email.trim().toLowerCase())
     .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && !e.endsWith("@users.noreply.github.com")))];
 }
@@ -51,8 +61,9 @@ export const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 /** Names no account may take, besides the app's addresses (RESERVED): people would read them as Erga's. */
 const NOT_A_USERNAME = new Set(["anyone", "admins", "erga", "root", "system", "support", "security", "staff", "www", "mail", "ops", "git", "deploy", "install", "me", "you", "everyone", "null", "undefined"]);
 
-interface Row { provider: SignInProvider; subject: string; login: string; handle: string | null; created: number; last_used: number | null }
-const fromRow = (r: Row): Identity => ({ provider: r.provider, subject: String(r.subject), login: r.login, handle: r.handle, created: Number(r.created), lastUsed: r.last_used == null ? null : Number(r.last_used) });
+interface Row { provider: SignInProvider; subject: string; login: string; handle: string | null; created: number; last_used: number | null; orgs?: string | null }
+const orgsOf = (raw: string | null | undefined): string[] | null => { try { const v = raw ? JSON.parse(raw) : null; return Array.isArray(v) ? v.map(String) : null; } catch { return null; } };
+const fromRow = (r: Row): Identity => ({ provider: r.provider, subject: String(r.subject), login: r.login, handle: r.handle, created: Number(r.created), lastUsed: r.last_used == null ? null : Number(r.last_used), orgs: orgsOf(r.orgs) });
 
 export class Identities {
   constructor(private sql: Sql, private users: Users) {}
@@ -68,24 +79,17 @@ export class Identities {
     return (await this.sql.all<Row>("SELECT * FROM identities WHERE login = ?1 ORDER BY provider", login.toLowerCase())).map(fromRow);
   }
 
-  /** The statements that make an identity's kept addresses those it vouched for now (linkable ones only). */
+  /** The statements that make an identity's kept addresses those it vouches for now (vouchedEmails). */
   private emailStatements(login: string, v: Vouched, at: number): Statement[] {
     return [
       ["DELETE FROM emails WHERE provider = ?1 AND subject = ?2", v.provider, v.subject],
-      ...linkable(v).map((email): Statement => ["INSERT OR REPLACE INTO emails (provider, subject, email, login, seen) VALUES (?1, ?2, ?3, ?4, ?5)", v.provider, v.subject, email, login.toLowerCase(), at]),
+      ...vouchedEmails(v).map((email): Statement => ["INSERT OR REPLACE INTO emails (provider, subject, email, login, seen) VALUES (?1, ?2, ?3, ?4, ?5)", v.provider, v.subject, email, login.toLowerCase(), at]),
     ];
   }
 
   /** An identity's addresses, refreshed at its sign-in: its account stays the one its subject id names. */
   async refreshEmails(login: string, v: Vouched): Promise<void> {
     await this.sql.batch(this.emailStatements(login, v, Date.now()));
-  }
-
-  /** The accounts that have any of these addresses (verified, kept from their identities). */
-  async accountsWithEmails(emails: string[]): Promise<string[]> {
-    if (!emails.length) return [];
-    const rows = await this.sql.all<{ login: string }>(`SELECT DISTINCT login FROM emails WHERE email IN (${emails.map((_, i) => `?${i + 1}`).join(", ")}) ORDER BY login`, ...emails);
-    return rows.map((r) => r.login);
   }
 
   /** An account's verified addresses, from all its identities. */
@@ -95,7 +99,8 @@ export class Identities {
 
   /** The statement that links an identity to an account (with `link`, or in a batch that makes the account). */
   private linkStatement(login: string, v: Vouched, at: number): Statement {
-    return ["INSERT INTO identities (provider, subject, login, handle, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?5)", v.provider, v.subject, login.toLowerCase(), v.handle || null, at];
+    const orgs = v.orgs ? JSON.stringify(v.orgs) : null;
+    return ["INSERT INTO identities (provider, subject, login, handle, created, last_used, orgs, orgs_checked) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)", v.provider, v.subject, login.toLowerCase(), v.handle || null, at, orgs, orgs ? at : null];
   }
 
   /**
@@ -115,22 +120,11 @@ export class Identities {
   }
 
   /** An identity signed in again: when, and what the provider calls them now. */
-  async used(v: Pick<Vouched, "provider" | "subject" | "handle">): Promise<void> {
-    await this.sql.run("UPDATE identities SET last_used = ?3, handle = COALESCE(?4, handle) WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, Date.now(), v.handle || null);
-  }
-
-  /**
-   * Unlinks one of `login`'s identities: the person themselves (in a browser, or their agent). An account keeps at
-   * least one, so it can still sign in.
-   */
-  async unlink(by: Actor, login: string, provider: SignInProvider): Promise<Identity[]> {
-    login = login.toLowerCase();
-    if (by.test || by.login.toLowerCase() != login) throw new NotAllowed("Only the account's own person can unlink its sign-in.");
-    const have = await this.of(login);
-    if (!have.some((i) => i.provider == provider)) throw new NotAllowed(`${login} doesn't sign in with ${label(provider)}.`);
-    if (have.length < 2) throw new NotAllowed(`${label(provider)} is the only way ${login} signs in: link another first, so the account can still sign in.`);
-    await this.sql.batch([["DELETE FROM identities WHERE login = ?1 AND provider = ?2", login, provider], ["DELETE FROM emails WHERE login = ?1 AND provider = ?2", login, provider]]);
-    return this.of(login);
+  async used(v: Pick<Vouched, "provider" | "subject" | "handle" | "orgs">): Promise<void> {
+    const at = Date.now();
+    await this.sql.run("UPDATE identities SET last_used = ?3, handle = COALESCE(?4, handle) WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, at, v.handle || null);
+    // Its organizations, when GitHub answered this time: recorded, the old answer replaced.
+    if (v.orgs) await this.sql.run("UPDATE identities SET orgs = ?3, orgs_checked = ?4 WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, JSON.stringify(v.orgs), at);
   }
 
   /** Whether an account has no identity at all: one from before identities, or one an admin added by its GitHub login. */
@@ -174,9 +168,10 @@ export class Identities {
 
   /**
    * A new account, under the username its person chose, with the identity that signed them in: both or neither.
+   * Unlisted unless `listed` (an admin's invitation, with its `role`): the access rules say what an unlisted one may do.
    * The username must have no problem (usernameProblem); two people who choose one at once can't both have it.
    */
-  async createAccount(username: string, v: Vouched, extra: Statement[] = []): Promise<string> {
+  async createAccount(username: string, v: Vouched, o: { listed?: boolean; role?: "user" | "admin"; extra?: Statement[] } = {}): Promise<string> {
     const login = username.trim().toLowerCase();
     const problem = await this.usernameProblem(login);
     if (problem) throw new NotAllowed(problem);
@@ -184,10 +179,10 @@ export class Identities {
     const at = Date.now(), name = v.name?.trim().slice(0, 100) || login;
     try {
       await this.sql.batch([
-        ["INSERT INTO users (login, name, role, created, added_by, last_seen) VALUES (?1, ?2, 'user', ?3, NULL, ?3)", login, name, at],
+        ["INSERT INTO users (login, name, role, created, added_by, last_seen, listed) VALUES (?1, ?2, ?4, ?3, NULL, ?3, ?5)", login, name, at, o.role ?? "user", o.listed ? 1 : 0],
         this.linkStatement(login, v, at),
         ...this.emailStatements(login, v, at),
-        ...extra,
+        ...(o.extra ?? []),
       ]);
     } catch {
       throw new NotAllowed(`"${login}" is taken: choose another.`);

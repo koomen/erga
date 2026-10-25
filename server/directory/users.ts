@@ -46,7 +46,12 @@ export interface User {
   lastSeen: number | null;
   /** Their GitHub account id (users.github_id), from their last sign-in; null until then. */
   githubId: number | null;
+  /** An admin listed them (added them here, or they came in before access rules); false: they made their account themselves. */
+  listed: boolean;
 }
+
+/** Someone an admin listed by an email address, before they have an account (the invites table). */
+export interface Invite { email: string; role: ServerRole; created: number; addedBy: string | null; addedVia?: string | null }
 
 /**
  * Someone acting, to a guarded call: a login (lowercase), whether they're a
@@ -73,11 +78,16 @@ const REMEMBER_MS = 10_000;
 /** How often someone's last_seen is written, at most. */
 const SEEN_EVERY_MS = 5 * 60_000;
 
-interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; added_via?: string | null; last_seen: number | null; github_id?: number | null }
+interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; added_via?: string | null; last_seen: number | null; github_id?: number | null; listed?: number | null }
 
 export class Users {
   private readonly admins: Set<string>;
   private known = new Map<string, { user: User | null; at: number }>();
+  /**
+   * Whether an account passes the server's read rule now (the access rules: server/directory/access.ts, which the
+   * directory sets here). Everyone with a row, until it's set.
+   */
+  gate: (user: User) => Promise<boolean> = async () => true;
   private seenAt = new Map<string, number>();
 
   /** `admins`: the bootstrap admins (the ADMINS binding), always admins and always allowed in. */
@@ -102,9 +112,10 @@ export class Users {
     return user;
   }
 
-  /** Whether `login` may sign in. */
+  /** Whether `login` may sign in: an account, and the read rule lets them in (admins always). */
   async allowed(login: string): Promise<boolean> {
-    return (await this.get(login)) != null;
+    const user = await this.get(login);
+    return user != null && (await this.gate(user));
   }
 
   /** Whether `login` is an admin (a test person never is). */
@@ -145,6 +156,7 @@ export class Users {
     const user = await this.get(login);
     const now = Date.now();
     if (!user && !opts.create) return null;
+    if (user && !(await this.gate(user))) return null;
     // A bootstrap admin with no row yet has created 0.
     if (user && user.created != 0 && (given == null || user.name == given) && now - (this.seenAt.get(login) ?? 0) < SEEN_EVERY_MS) return user;
     this.seenAt.set(login, now);
@@ -190,8 +202,8 @@ export class Users {
     if (role != "admin" && this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
     const had = await this.get(login), at = Date.now();
     await this.sql.batch([
-      [`INSERT INTO users (login, name, role, created, added_by, added_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-       ON CONFLICT (login) DO UPDATE SET role = ?3`,
+      [`INSERT INTO users (login, name, role, created, added_by, added_via, listed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)
+       ON CONFLICT (login) DO UPDATE SET role = ?3, listed = 1`,
       login, opts.name?.trim() || login, this.isBootstrapAdmin(login) ? "admin" : role, at, by.login.toLowerCase(), by.via ?? null],
       this.logged(by, at, had && had.created != 0 ? { login, event: "role", role } : { login, event: "added", role }),
     ]);
@@ -225,6 +237,53 @@ export class Users {
     return (await this.get(login))!;
   }
 
+  /** Lists an account (the rule "only listed accounts" lets it in), or takes it off the list. Admins only. */
+  async setListed(by: Actor, login: string, listed: boolean): Promise<User> {
+    await this.mustAdmin(by);
+    login = login.toLowerCase();
+    const user = await this.get(login);
+    if (!user || user.created == 0) throw new NotAllowed(`${login} isn't a user here.`);
+    if (!listed && user.role == "admin") throw new NotAllowed(`${login} is an admin: admins always may sign in, listed or not. Make them a user first.`);
+    await this.sql.batch([["UPDATE users SET listed = ?2 WHERE login = ?1", login, listed ? 1 : 0], this.logged(by, Date.now(), { login, event: listed ? "listed" : "unlisted" })]);
+    this.known.delete(login);
+    return (await this.get(login))!;
+  }
+
+  /** People listed by an email address, before they have an account. Admins only. */
+  async invites(by: Actor): Promise<Invite[]> {
+    await this.mustAdmin(by);
+    return (await this.sql.all<{ email: string; role: ServerRole; created: number; added_by: string | null; added_via: string | null }>("SELECT * FROM invites ORDER BY email"))
+      .map((r) => ({ email: r.email, role: r.role, created: Number(r.created), addedBy: r.added_by, ...(r.added_via ? { addedVia: r.added_via } : {}) }));
+  }
+
+  /** Lists someone by an email address: who signs in with it verified may make an account, listed, with `role`. Admins only. */
+  async invite(by: Actor, email: string, role: ServerRole = "user"): Promise<Invite> {
+    await this.mustAdmin(by);
+    email = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new NotAllowed(`"${email}" isn't an email address.`);
+    if (email.endsWith("@users.noreply.github.com")) throw new NotAllowed("A GitHub noreply address never signs anyone in: add their GitHub login instead.");
+    const at = Date.now();
+    await this.sql.batch([
+      ["INSERT INTO invites (email, role, created, added_by, added_via) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (email) DO UPDATE SET role = ?2", email, role, at, by.login.toLowerCase(), by.via ?? null],
+      this.logged(by, at, { login: email, event: "invited", role }),
+    ]);
+    return { email, role, created: at, addedBy: by.login.toLowerCase(), ...(by.via ? { addedVia: by.via } : {}) };
+  }
+
+  /** Takes back an invitation. Admins only. */
+  async uninvite(by: Actor, email: string): Promise<void> {
+    await this.mustAdmin(by);
+    email = email.trim().toLowerCase();
+    await this.sql.batch([["DELETE FROM invites WHERE email = ?1", email], this.logged(by, Date.now(), { login: email, event: "removed" })]);
+  }
+
+  /** The invitation one of these (verified) addresses has, if any: who signs in with it may make an account. */
+  async invitationFor(emails: string[]): Promise<Invite | null> {
+    if (!emails.length) return null;
+    const [r] = await this.sql.all<{ email: string; role: ServerRole; created: number; added_by: string | null }>(`SELECT * FROM invites WHERE email IN (${emails.map((_, i) => `?${i + 1}`).join(", ")}) ORDER BY created LIMIT 1`, ...emails);
+    return r ? { email: r.email, role: r.role, created: Number(r.created), addedBy: r.added_by } : null;
+  }
+
   /** Stops someone signing in (their sessions stop working within seconds; their documents stay). Admins only. */
   async remove(by: Actor, login: string): Promise<void> {
     await this.mustAdmin(by);
@@ -245,7 +304,7 @@ export class Users {
   }
 
   /** The change log's entry for a change to a user, under the admin who made it and how. */
-  private logged(by: Actor, at: number, user: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean }): Statement {
+  private logged(by: Actor, at: number, user: { login: string; event: "added" | "role" | "deploy" | "removed" | "listed" | "unlisted" | "invited"; role?: string; deploy?: boolean }): Statement {
     return changeLogEntry(at, by.login, by.via, [{ key: "user", from: null, to: null, user }]);
   }
 
@@ -262,11 +321,12 @@ export class Users {
       login: r.login, name: r.name, role, deploy: !!r.deploy, mayDeploy: role == "admin" || !!r.deploy, bootstrap,
       created: Number(r.created), addedBy: r.added_by, addedVia: r.added_via ?? null, lastSeen: r.last_seen == null ? null : Number(r.last_seen),
       githubId: r.github_id == null ? null : Number(r.github_id),
+      listed: r.listed == null ? true : !!r.listed,
     };
   }
 
   /** A bootstrap admin with no row yet (created 0: never signed in). */
   private bootstrapUser(login: string): User {
-    return { login, name: login, role: "admin", deploy: false, mayDeploy: true, bootstrap: true, created: 0, addedBy: null, lastSeen: null, githubId: null };
+    return { login, name: login, role: "admin", deploy: false, mayDeploy: true, bootstrap: true, created: 0, addedBy: null, lastSeen: null, githubId: null, listed: true };
   }
 }

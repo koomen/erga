@@ -19,9 +19,11 @@
 //   clear_sign_in_app                   turning a provider on or off; clearing the values set on /admin/auth, or discarding
 //                                       those that wait for a test sign-in. Admins only, with ToolWho.auth; an app's
 //                                       values are set only on /admin/auth, never in a conversation
-//   list_users, add_user,               who may sign in, and who's an admin,
-//   set_user_role, set_user_deploy,     admins only
-//   remove_user
+//   list_users, add_user,               who may sign in, and who's an admin, admins only; whether each is listed, and
+//   set_user_role, set_user_deploy,     invitations by email (Google)
+//   remove_user, set_user_listed,
+//   invite_by_email
+//   get_access_rules, set_access_rule   the access rules (read, write) on /admin/users, admins only
 //
 // An admin tool is offered only to an admin with admin power (`toolsFor`;
 // Users.actsAsAdmin): an external agent with an admin-scope token,
@@ -36,7 +38,7 @@
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type TObject } from "typebox";
-import { type Action, ANYONE, type ConfigEntry, ConfigError, CredentialError, type Directory, type DocRow, type Grant, ID, LOCKED, nameOf, newDocId, NotAllowed, OWNER, type Route, type User, type Who } from "../server/directory/index.ts";
+import { type Action, ANYONE, NO_WRITE, type ConfigEntry, ConfigError, CredentialError, type Directory, type DocRow, type Grant, ID, LOCKED, nameOf, newDocId, NotAllowed, OWNER, type Route, type User, type Who } from "../server/directory/index.ts";
 import { AuthError, type AuthOps, type AuthStatus, type OtherStatus } from "../server/identity/index.ts";
 import { makeDoc, startingFiles } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform.ts";
@@ -142,6 +144,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     run: async (args, ctx) => {
       const { who } = ctx, platform = docsOf(ctx);
       if (who.test) throw new ToolError("You can't make documents on this server.", 403);
+      if (!(await ctx.dir.mayWrite(who.login))) throw new ToolError(NO_WRITE, 403);
       const named = typeof args.template == "string" && args.template.trim() ? args.template.trim() : null;
       if (named && args.from) throw new ToolError("Give a template or a document to copy (from), not both.");
       const template = named && named != "landing" ? templateById(named) : undefined;
@@ -277,7 +280,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Turn a sign-in provider on or off",
     activity: "turning a sign-in provider on or off",
     admin: true,
-    description: "Admins only. Turns sign-in with GitHub or Google on or off on this server, as the switches on /admin/auth do. Anyone allowed on the server may then sign in with each provider that's on. The rules, so nobody is locked out: a provider goes on only while its app works (get_sign_in_status says); one goes off only while the other is on and works, and only if the person you act for can sign in with the other (their account is linked to it). Answers which providers are on now.",
+    description: "Admins only. Turns sign-in with GitHub or Google on or off on this server, as the switches on /admin/auth do. Anyone allowed on the server may then sign in with each provider that's on. The rules, so nobody is locked out: a provider goes on only while its app works (get_sign_in_status says); one goes off only while the other is on and works, and only by an admin whose own account signs in with the other provider (each account signs in with one). Answers which providers are on now.",
     parameters: Type.Object({
       provider: Type.Union([Type.Literal("github"), Type.Literal("google")], { description: "github or google" }),
       on: Type.Boolean({ description: "true: people may sign in with it; false: they may not" }),
@@ -332,6 +335,66 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     run: async (args, { dir, who }) => userOf(await dir.users.add(who, String(args.login ?? ""), {
       role: args.role == "admin" ? "admin" : "user", ...(typeof args.name == "string" ? { name: args.name } : {}),
     })),
+  },
+  {
+    name: "set_user_listed",
+    label: "List a user, or not",
+    activity: "changing whether a user is listed",
+    admin: true,
+    description: "Admins only. Lists an account, or takes it off the list, as the Listed switch on /admin/users does. A rule of \"only some\" (get_access_rules) always lets listed accounts in. Accounts people made themselves (an access rule let them in) start unlisted. An admin always may, listed or not.",
+    parameters: Type.Object({ login: LOGIN, listed: Type.Boolean({ description: "true: listed; false: not" }) }),
+    run: async (args, { dir, who }) => userOf(await dir.users.setListed(who, String(args.login ?? ""), args.listed === true)),
+  },
+  {
+    name: "invite_by_email",
+    label: "Invite someone by email",
+    activity: "inviting someone by email",
+    admin: true,
+    description: "Admins only. Invites someone by an email address, as Add with an email does on /admin/users: who signs in with Google, that address verified, may make an account, listed, with the role given. GitHub sign-in never matches an email (use add_user with their GitHub login). remove: true takes an invitation back. get_access_rules lists the invitations.",
+    parameters: Type.Object({
+      email: Type.String({ description: "The email address" }),
+      role: Type.Optional(Type.Union([Type.Literal("user"), Type.Literal("admin")], { description: "user (the default) or admin" })),
+      remove: Type.Optional(Type.Boolean({ description: "true: take the invitation back" })),
+    }),
+    run: async (args, { dir, who }) => {
+      if (args.remove === true) { await dir.users.uninvite(who, String(args.email ?? "")); return { uninvited: String(args.email ?? "").trim().toLowerCase() }; }
+      const i = await dir.users.invite(who, String(args.email ?? ""), args.role == "admin" ? "admin" : "user");
+      return { invited: i.email, role: i.role };
+    },
+  },
+  {
+    name: "get_access_rules",
+    label: "Read the access rules",
+    activity: "reading the access rules",
+    admin: true,
+    description: "Admins only. The access rules on /admin/users. read: who may sign in (and so open the documents shared with them and the public ones). write: who of those may make and edit documents (others open documents as viewers). Each is mode anyone, or some: listed accounts, Google accounts with a verified email on `domains`, and GitHub accounts in `orgs` (checked at each GitHub sign-in). Admins always pass. Also the invitations by email (invite_by_email).",
+    parameters: Type.Object({}),
+    run: async (_args, { dir, who }) => {
+      await dir.users.mustAdmin(who);
+      return {
+        read: await dir.config.get("access_read"), write: await dir.config.get("access_write"), note: "Email domains count for Google accounts only; organizations for GitHub accounts.",
+        invitedByEmail: (await dir.users.invites(who)).map((i) => ({ email: i.email, role: i.role, invited: iso(i.created), by: i.addedBy })),
+      };
+    },
+  },
+  {
+    name: "set_access_rule",
+    label: "Change an access rule",
+    activity: "changing an access rule",
+    admin: true,
+    description: "Admins only. Sets one access rule, as Save on /admin/users does: rule read or write; mode anyone, or some (listed accounts, plus Google accounts with a verified email on domains, plus GitHub accounts in orgs). Someone a read rule leaves out is signed out within seconds. Only when the person asks in this conversation; say what changed, from what to what.",
+    parameters: Type.Object({
+      rule: Type.Union([Type.Literal("read"), Type.Literal("write")], { description: "read or write" }),
+      mode: Type.Union([Type.Literal("anyone"), Type.Literal("some")], { description: "anyone, or some" }),
+      domains: Type.Optional(Type.Array(Type.String(), { description: "With some: email domains for Google accounts, like example.com" })),
+      orgs: Type.Optional(Type.Array(Type.String(), { description: "With some: GitHub organizations' logins" })),
+    }),
+    run: async (args, { dir, who }) => {
+      const key = args.rule == "write" ? "access_write" : "access_read";
+      const before = await dir.config.get(key);
+      const after = (await dir.config.set(who, key, { mode: args.mode, domains: args.domains ?? [], orgs: args.orgs ?? [] })).value;
+      return { rule: args.rule, before, after };
+    },
   },
   {
     name: "set_user_role",
@@ -479,7 +542,7 @@ function entryOf(e: ConfigEntry) {
 }
 
 function userOf(u: User) {
-  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, mayDeploy: u.mayDeploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, ...(u.addedVia ? { addedVia: u.addedVia } : {}), lastSeen: iso(u.lastSeen) };
+  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, mayDeploy: u.mayDeploy, bootstrap: u.bootstrap, listed: u.listed, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, ...(u.addedVia ? { addedVia: u.addedVia } : {}), lastSeen: iso(u.lastSeen) };
 }
 
 /** Sign-in's settings, where this agent has them. */

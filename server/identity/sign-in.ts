@@ -1,5 +1,6 @@
 // Signing in with GitHub or Google, and signing out; test people for the test suite.
-// Each provider's answer goes on to the same steps (accounts.ts): which account it is, or a username first.
+// Each provider's answer goes on to the same steps (accounts.ts): which account it is (by the provider's id), or a
+// username first.
 // An admin chooses which providers are on (/admin/auth, settings.ts); one that's off signs in only admins (a test).
 //
 // The GitHub app is the deploy's (Platform.signIn.app: an OAuth app on
@@ -30,7 +31,7 @@
 //   /auth/logout                         signs out (another site's link to it asks first)
 //   /auth/test?token=&as=                a test person, signed in with a test token
 
-import { confirmAction, fromElsewhere, page, safeNext, signInFirst } from "../pages/index.ts";
+import { confirmAction, fromElsewhere, page, safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
 import { cookieName, cookies } from "./cookies.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
@@ -71,15 +72,12 @@ export async function startSignIn(platform: Platform, request: Request): Promise
     const login = url.searchParams.get("as") || platform.signIn.devLogin!;
     return signIn(platform, request, { login, name: login }, next);
   }
-  const link = await linkTarget(platform, request, "github");
-  if (link instanceof Response) return link;
-  const linkTo = link;
   // A test sign-in with the values that wait on /admin/auth: the state says so, for the callback.
   const relay = platform.signIn.relay;
-  const testing = !linkTo && !relay && url.searchParams.get("app") == "pending";
+  const testing = !relay && url.searchParams.get("app") == "pending";
   // Sign-in with GitHub turned off on /admin/auth: only an admin's test sign-in (?app=test) goes on.
-  const offTest = !linkTo && !testing && url.searchParams.get("app") == "test";
-  if (!linkTo && !testing && !offTest && !(await providersOn(platform)).github) return providerOff(platform, "github", next);
+  const offTest = !testing && url.searchParams.get("app") == "test";
+  if (!testing && !offTest && !(await providersOn(platform)).github) return providerOff(platform, "github", next);
   const app = await signInApp(platform, testing ? "pending" : "active");
   if (testing && !app) return nothingToTest();
   // No GitHub OAuth app yet (staging's, until an admin makes one): GitHub would answer a 404, so say so here instead.
@@ -89,14 +87,14 @@ export async function startSignIn(platform: Platform, request: Request): Promise
   const github = new URL(`${originsOf(platform).www}/login/oauth/authorize`);
   github.searchParams.set("client_id", app.clientId);
   github.searchParams.set("redirect_uri", `${relay ?? url.origin}/auth/github/callback`);
-  // user:email reads their addresses (/user/emails): an OAuth app's scope. Erga's GitHub App (installs, the control
-  // Worker) ignores scopes: its "Email addresses" permission (read) gives the same.
-  github.searchParams.set("scope", "read:user user:email");
+  // read:org, only while a rule names a GitHub organization: their memberships, private ones too (an OAuth app's scope;
+  // Erga's GitHub App ignores scopes: it needs the Members permission, and to be installed on the organization).
+  github.searchParams.set("scope", (await orgRules(platform)).length ? "read:user read:org" : "read:user");
   github.searchParams.set("state", state);
   github.searchParams.set("allow_signup", "false");
   return new Response(null, {
     status: 302,
-    headers: { Location: github.toString(), "Set-Cookie": cookie(request, STATE, await sign(platform.secret, stateValue(state, next, linkTo)), 600) },
+    headers: { Location: github.toString(), "Set-Cookie": cookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600) },
   });
 }
 
@@ -105,26 +103,12 @@ const TESTING = "p.";
 /** A state that starts so is an admin's test sign-in with a provider that's off. */
 const OFF_TEST = "t.";
 
-/** The sign-in's cookie: its state, the account it links to (?link=1, from /settings), and where it goes after. */
-const stateValue = (state: string, next: string, linkTo: string | null) => `${state}|${linkTo ?? ""}|${next}`;
-function readState(value: string | null | undefined): { state?: string; next?: string; linkTo: string | null } {
-  if (!value) return { linkTo: null };
-  const [state, linkTo, ...rest] = value.split("|");
-  return { state, linkTo: linkTo || null, next: rest.join("|") || "/" };
-}
-
-/**
- * ?link=1: the signed-in person links this provider to their own account (/settings): who they are, or a sign-in
- * first. Null for an ordinary sign-in; a Response when they can't link from here.
- */
-async function linkTarget(platform: Platform, request: Request, provider: Provider): Promise<string | Response | null> {
-  const url = new URL(request.url);
-  if (url.searchParams.get("link") != "1") return null;
-  const session = await platform.sessionOf(request);
-  if (!session) return signInFirst(`/auth/${provider}${url.search}`);
-  if (session.agent || session.test) return page("Not for agents", "Only the person, signed in, links a sign-in to their account.", 403);
-  if (!(await providersOn(platform))[provider]) return providerOff(platform, provider, "/settings");
-  return session.login.toLowerCase();
+/** The sign-in's cookie: its state, and where it goes after. */
+const stateValue = (state: string, next: string) => `${state}|${next}`;
+function readState(value: string | null | undefined): { state?: string; next?: string } {
+  if (!value) return {};
+  const [state, ...rest] = value.split("|");
+  return { state, next: rest.join("|") || "/" };
 }
 
 /**
@@ -153,6 +137,29 @@ const nothingToTest = () => page("Nothing to test", `No new sign-in values wait 
 /** The sign-in routes on a server with no GitHub OAuth app (GITHUB_CLIENT_ID empty): a page saying what an admin does. */
 const noOAuthApp = (origin: string) => page("Sign-in isn't set up", `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin makes an OAuth app on GitHub (homepage ${escape(origin)}, callback ${escape(origin)}/auth/github/callback), and pastes its Client ID and client secret on the Authentication page (/admin/auth; staging's are set on production's). Or they put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`, 503);
 
+/** The GitHub organizations the access rules name (read's and write's). */
+async function orgRules(platform: Pick<Platform, "directory">): Promise<string[]> {
+  try {
+    const [read, write] = await Promise.all([platform.directory.config.get("access_read"), platform.directory.config.get("access_write")]);
+    return [...new Set([...(read?.orgs ?? []), ...(write?.orgs ?? [])])];
+  } catch { return []; }
+}
+
+/**
+ * The organizations someone is an active member of, private memberships too, as GitHub answers their token
+ * (/user/memberships/orgs). An OAuth app's token needs read:org, and an organization that restricts OAuth apps must
+ * have approved it; a GitHub App's token sees the organizations it's installed on, with Members (read). No answer:
+ * none, so a rule that needs one refuses them, and says why.
+ */
+export async function memberships(api: string, token: string): Promise<string[]> {
+  const r = await fetch(`${api}/user/memberships/orgs?state=active&per_page=100`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
+  }).catch(() => null);
+  if (!r?.ok) { console.log(`GitHub's /user/memberships/orgs answered ${r?.status ?? "nothing"}: no organizations for this sign-in`); return []; }
+  const list = (await r.json().catch(() => [])) as { state?: string; organization?: { login?: string } }[];
+  return Array.isArray(list) ? [...new Set(list.filter((m) => m.state == "active" && m.organization?.login).map((m) => m.organization!.login!.toLowerCase()))] : [];
+}
+
 /** /auth/github/callback: GitHub sends the person back with a code to trade for who they are. */
 export async function finishSignIn(platform: Platform, request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -160,7 +167,7 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
   const dev = platform.dev(url);
   const saved = cookies(request).get(STATE);
   const value = saved && await unsign(platform.secret, saved);
-  const { state, next, linkTo } = readState(value);
+  const { state, next } = readState(value);
   const testing = !!state?.startsWith(TESTING);
   const app = dev ? null : await signInApp(platform, testing ? "pending" : "active");
   // GitHub turned off on /admin/auth: only an admin's sign-in (a test) goes through.
@@ -193,16 +200,11 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
   }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
   if (!user.login || typeof user.id != "number") return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
-  // Their addresses, with whether GitHub verified each (any verified one may link; noreply ones never: accounts.ts).
-  // Without the permission GitHub answers 403 or 404: then none, and nothing links by address.
-  const emails = await fetch(`${api}/user/emails`, {
-    headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
-  }).then(async (r) => (r.ok ? ((await r.json()) as { email?: string; verified?: boolean }[]) : (console.log(`GitHub's /user/emails answered ${r.status}: no addresses for this sign-in`), [])), () => []);
-  const v: Vouched = {
-    provider: "github", subject: String(user.id), handle: user.login.toLowerCase(), name: user.name?.trim() || null,
-    emails: (Array.isArray(emails) ? emails : []).filter((e) => typeof e?.email == "string").map((e) => ({ email: e.email!.toLowerCase(), verified: e.verified === true })),
-  };
-  return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins, linkTo }, async (login) => {
+  // No email: GitHub's profile email isn't one it vouches for, so a GitHub account never matches a domain rule. Its
+  // organizations, when a rule names any: asked now, with their token, and recorded on the identity.
+  const orgs = (await orgRules(platform)).length ? await memberships(api, token.access_token) : null;
+  const v: Vouched = { provider: "github", subject: String(user.id), handle: user.login.toLowerCase(), name: user.name?.trim() || null, emails: [], orgs };
+  return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
     // Their GitHub id on their row too (users.github_id), as before identities.
     if (login == v.handle) await users.setGithubId(login, user.id!).catch(() => {});
     // A test sign-in with the pending values worked: an admin's puts them in use.
@@ -221,13 +223,10 @@ export async function startGoogleSignIn(platform: Platform, request: Request): P
   const next = safeNext(url.searchParams.get("next"));
   // Local development signs in without a provider, as /auth/github does.
   if (platform.dev(url)) return startSignIn(platform, request);
-  const link = await linkTarget(platform, request, "google");
-  if (link instanceof Response) return link;
-  const linkTo = link;
   const relay = platform.signIn.relay;
-  const testing = !linkTo && !relay && url.searchParams.get("app") == "pending";
-  const offTest = !linkTo && !testing && url.searchParams.get("app") == "test";
-  if (!linkTo && !testing && !offTest && !(await providersOn(platform)).google) return providerOff(platform, "google", next);
+  const testing = !relay && url.searchParams.get("app") == "pending";
+  const offTest = !testing && url.searchParams.get("app") == "test";
+  if (!testing && !offTest && !(await providersOn(platform)).google) return providerOff(platform, "google", next);
   const app = await signInApp(platform, testing ? "pending" : "active", "google");
   if (testing && !app) return nothingToTest();
   if (!app?.clientId) return noGoogleClient(url.origin);
@@ -242,7 +241,7 @@ export async function startGoogleSignIn(platform: Platform, request: Request): P
   google.searchParams.set("prompt", "select_account");
   return new Response(null, {
     status: 302,
-    headers: { Location: google.toString(), "Set-Cookie": cookie(request, STATE, await sign(platform.secret, stateValue(state, next, linkTo)), 600) },
+    headers: { Location: google.toString(), "Set-Cookie": cookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600) },
   });
 }
 
@@ -260,7 +259,7 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
   const url = new URL(request.url);
   const saved = cookies(request).get(STATE);
   const value = saved && await unsign(platform.secret, saved);
-  const { state, next, linkTo } = readState(value);
+  const { state, next } = readState(value);
   const testing = !!state?.startsWith(TESTING);
   const app = await signInApp(platform, testing ? "pending" : "active", "google");
   if (!app?.clientId) return testing ? nothingToTest() : noGoogleClient(url.origin);
@@ -287,10 +286,10 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
     .then((r) => r.json() as Promise<{ sub?: string; email?: string; email_verified?: boolean | string; name?: string }>, () => ({} as { sub?: string; email?: string; email_verified?: boolean | string; name?: string }));
   if (!user.sub) return page("Sign-in failed", "Google didn't say who you are. <a href=\"/auth/sign-in\">Try again</a>.", 400);
   const email = user.email?.trim().toLowerCase() ?? "";
-  // Only an email Google says is verified ever links an account or passes a rule.
+  // Only an email Google says is verified ever passes a domain rule; none ever finds an account.
   const v: Vouched = { provider: "google", subject: String(user.sub), handle: email || String(user.sub), name: user.name?.trim() || null, emails: email ? [{ email, verified: user.email_verified === true || user.email_verified === "true" }] : [] };
   const onlyAdmins = !(await providersOn(platform)).google;
-  return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins, linkTo }, async (login) => {
+  return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
     if (testing) await testedSignIn(platform, app.clientId, { ok: true, login, admin: await platform.directory.users.isAdmin({ login }) }, "google");
   });
 }

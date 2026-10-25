@@ -218,7 +218,7 @@ const PAGES_STYLE = `
   .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
   .add-user .input { flex: 1; }
   #users-hint { margin: -6px 0 12px; }
-  .labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 7.5rem 4.5rem 4.5rem 34px; align-items: center; column-gap: 12px; }
+  .labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 7.5rem 4.5rem 4.5rem 4.5rem 34px; align-items: center; column-gap: 12px; }
   .labels { padding: 0 4px 6px; font-size: 12px; color: var(--soft); }
   .labels .c, ol.users .switch { justify-self: center; }
   .labels .t, ol.users time { justify-self: start; margin: 0; }
@@ -227,7 +227,17 @@ const PAGES_STYLE = `
   ol.users .who .badge { align-self: center; }
   ol.users .who .added { flex-basis: 100%; font-size: 12px; color: var(--chrome); }
   ol.users .never { font-style: italic; }
-  @media (max-width: 640px) { .labels .seen, ol.users time.seen { display: none; } .labels, ol.users > li { grid-template-columns: minmax(0, 1fr) 6.5rem 3.5rem 3.5rem 34px; } }
+  @media (max-width: 640px) { .labels .seen, ol.users time.seen { display: none; } .labels, ol.users > li { grid-template-columns: minmax(0, 1fr) 6.5rem 3.5rem 3.5rem 3.5rem 34px; } }
+  .access { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 0 0 26px; }
+  .access form { padding: 14px 16px 16px; border: 1px solid var(--rule); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .access h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+  .access .sub { margin: 0 0 4px; font-size: 13px; color: var(--soft); }
+  .access label.choice { display: flex; align-items: baseline; gap: 8px; font-size: 13.5px; }
+  .access label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--soft); }
+  .access .row { display: flex; gap: 8px; align-items: center; }
+  .access .hint { margin: 0; }
+  ol.invites { margin: 0 0 18px; }
+  ol.invites > li { display: flex; align-items: center; gap: 10px; padding: 6px 4px; font-size: 13.5px; }
 
   /* The change log: one row each, across the page: who (their avatar, and how), what changed (each change on its own line, in full), when. */
   .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; border-bottom: 1px solid var(--rule); }
