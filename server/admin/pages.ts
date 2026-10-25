@@ -4,15 +4,17 @@
 //
 //   /admin                     the Settings page (GET /admin/settings redirects here)
 //   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
-//   /admin/users               the Users page: the access rules (who, and No access, Can view content or Can create and edit content), and the users: their roles (admin,
-//                              deploy) as switches, when they joined and last came, remove
+//   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined and last came, remove
+//   /admin/access              the Access page: the access rules (who, and No access, Can view content or Can create and edit
+//                              content), and whether people can share content publicly
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
 //   GET /admin/auth/status     the same as JSON {here, other} (server/auth.ts, AuthStatus: never a secret), with live checks
 //   POST /admin/auth           server (here or other), provider (github or google), and do=save (clientId, secret), do=discard (the values that wait for a test sign-in), do=clear (force=1: even if sign-in would stop) or do=providers (provider, on: 1 or 0)
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role: the user, and a rule for that one account with write), do=role (login, role), do=deploy (login, deploy: 1 or 0), do=remove (login)
-//   POST /admin/users          do=add_rule (kind, value, access), do=change_rule (id, access), do=remove_rule (id): the access rules
+//   POST /admin/access         do=add_rule (kind, value, access), do=change_rule (id, access), do=remove_rule (id): the access rules
+//   POST /admin/access         do=public_sharing (on: 1 or 0): whether people can share content publicly
 //   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
 //   POST /admin/share          rotate=1 (optional): Share with agent's admin token, for an outside
 //                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
@@ -38,7 +40,7 @@
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all.
 
-import { type Access, ACCESS_LABEL, type AccessRule, type ConfigEntry, ConfigError, KIND_LABEL, type RuleKind, type CredentialEntry, CredentialError, type DeploySecretEntry, NotAllowed, type ServerRole, type SettingChange, type Settings, type SettingsVersion, type User } from "../directory/index.ts";
+import { type Access, ACCESS_LABEL, ACCESS_SETTINGS, type AccessRule, type ConfigEntry, ConfigError, KIND_LABEL, type RuleKind, type CredentialEntry, CredentialError, type DeploySecretEntry, NotAllowed, type ServerRole, type SettingChange, type Settings, type SettingsVersion, type User } from "../directory/index.ts";
 import { avatarUrl, esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
 import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
@@ -71,6 +73,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
       const status = await authOps(platform, url.origin).status(who!);
       return url.pathname == "/admin/auth" ? authPage(session!, status) : Response.json(status, { headers: { "Cache-Control": "no-store" } });
     }
+    if (url.pathname == "/admin/access") return accessPage(platform, session!);
     return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
   }
   if (request.method != "POST") return notFound();
@@ -104,6 +107,16 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
         default: return Response.json({ error: "do= save, discard, clear or providers" }, { status: 400 });
       }
     }
+    if (url.pathname == "/admin/access") {
+      const rules = platform.directory.rules;
+      switch (field("do")) {
+        case "add_rule": return Response.json({ rule: await rules.add(who!, { kind: field("kind"), value: field("value"), access: field("access") }) });
+        case "change_rule": return Response.json({ rule: await rules.change(who!, Number(field("id")), field("access")) });
+        case "remove_rule": await rules.remove(who!, Number(field("id"))); return Response.json({ ok: true });
+        case "public_sharing": return Response.json({ entry: await platform.directory.config.set(who!, "public_sharing", field("on") == "1") });
+        default: return Response.json({ error: "do= add_rule, change_rule, remove_rule or public_sharing" }, { status: 400 });
+      }
+    }
     if (url.pathname == "/admin/settings") {
       const key = field("key");
       if (form.get("reset")) return Response.json({ entry: await platform.directory.config.reset(who!, key) });
@@ -114,9 +127,6 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     const users = platform.directory.users, login = field("login"), role = field("role") as ServerRole;
     if (role && role != "user" && role != "admin") throw new NotAllowed(`"${role}" isn't a role: user or admin.`);
     switch (field("do")) {
-      case "add_rule": return Response.json({ rule: await platform.directory.rules.add(who!, { kind: field("kind"), value: field("value"), access: field("access") }) });
-      case "change_rule": return Response.json({ rule: await platform.directory.rules.change(who!, Number(field("id")), field("access")) });
-      case "remove_rule": await platform.directory.rules.remove(who!, Number(field("id"))); return Response.json({ ok: true });
       case "add": {
         if ((await users.get(login.trim()))?.created) throw new NotAllowed(`${login.trim().toLowerCase()} is already a user.`);
         // With its rule: this one account, with write.
@@ -129,7 +139,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
         return Response.json({ user: await users.setDeploy(who!, login, deploy == "1") });
       }
       case "remove": await users.remove(who!, login); return Response.json({ ok: true });
-      default: return Response.json({ error: "do= add, role, deploy, remove, add_rule, change_rule or remove_rule" }, { status: 400 });
+      default: return Response.json({ error: "do= add, role, deploy or remove" }, { status: 400 });
     }
   } catch (e) {
     if (e instanceof NotAllowed || e instanceof ScopeError) return Response.json({ error: e.message }, { status: 403 });
@@ -364,7 +374,8 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
   const who = whoOf(session);
   const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
   // A setting naming a document shows it by its address now, linked.
-  const settings: Shown[] = await Promise.all(entries.map(async (e) => {
+  // The Access page's settings are set there.
+  const settings: Shown[] = await Promise.all(entries.filter((e) => !ACCESS_SETTINGS.includes(e.key)).map(async (e) => {
     if (e.kind != "document" || e.value == null) return e;
     const doc = await platform.directory.find(String(e.value));
     return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
@@ -685,7 +696,7 @@ function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; 
     <ol class="rows rules">
 ${rules.map(row).join("\n")}
     </ol>
-    <form class="add-rule" method="post" action="${esc(link("/admin/users", session))}">
+    <form class="add-rule" method="post" action="${esc(link("/admin/access", session))}">
       <select name="kind" aria-label="Who">
         <option value="workspace">Google Workspace organization</option>
         <option value="github_org">GitHub organization</option>
@@ -703,13 +714,10 @@ ${rules.map(row).join("\n")}
 }
 
 async function usersPage(platform: Platform, session: Session): Promise<Response> {
-  const [users, rules, suggestions] = await Promise.all([
-    platform.directory.users.list(whoOf(session)), platform.directory.rules.list(whoOf(session)), platform.directory.rules.suggestions(whoOf(session)),
-  ]);
+  const users = await platform.directory.users.list(whoOf(session));
   const admins = users.filter((u) => u.role == "admin");
   return adminResponse({ session, title: "Users", here: "users", body: `
   <section aria-label="Users">
-    ${rulesSection(rules, suggestions, session)}
     <h2>Users</h2>
     <p class="hint" id="users-hint" role="status"></p>
     <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span class="c">Admin</span><span class="c">Deploy</span><span></span></div>
@@ -728,6 +736,43 @@ ${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1))
     say(hint, saying);
     try { await post(action, fields); reload(); } catch (err) { undo?.(); say(hint, err.message, true); }
   }
+  for (const li of document.querySelectorAll("ol.users > li")) {
+    const login = li.dataset.login, admin = li.querySelector("input.admin"), deploy = li.querySelector("input.deploy"), remove = li.querySelector(".remove");
+    admin.addEventListener("change", () => {
+      const undo = () => { admin.checked = !admin.checked; };
+      if (login == me && !admin.checked && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
+      change({ do: "role", login, role: admin.checked ? "admin" : "user" }, "Saving…", undo);
+    });
+    deploy.addEventListener("change", () => change({ do: "deploy", login, deploy: deploy.checked ? "1" : "0" }, "Saving…", () => { deploy.checked = !deploy.checked; }));
+    remove.addEventListener("click", () => {
+      if (!confirm(login == me ? "Remove yourself? You'll be signed out, and can't sign in again until an admin adds you." : "Remove " + login + "? They won't be able to sign in. Their documents stay.")) return;
+      change({ do: "remove", login }, "Removing…");
+    });
+  }
+</script>` });
+}
+
+/** /admin/access: the access rules, one list, and whether people can share content publicly. */
+async function accessPage(platform: Platform, session: Session): Promise<Response> {
+  const who = whoOf(session);
+  const [rules, suggestions, publicSharing] = await Promise.all([platform.directory.rules.list(who), platform.directory.rules.suggestions(who), platform.directory.config.get("public_sharing")]);
+  return adminResponse({ session, title: "Access", here: "access", body: `
+  ${rulesSection(rules, suggestions, session)}
+  <section class="public-sharing" aria-labelledby="public-head">
+    <h2 id="public-head">Sharing</h2>
+    <label class="switch public"><input type="checkbox" role="switch" id="public-sharing"${publicSharing ? " checked" : ""}><span class="track" aria-hidden="true"></span><span>People can share content publicly</span></label>
+    <p class="hint" id="public-hint" role="status"></p>
+  </section>
+<script>
+  ${POST_SCRIPT}
+  const action = ${JSON.stringify(link("/admin/access", session))};
+  const publicBox = document.getElementById("public-sharing"), publicHint = document.getElementById("public-hint");
+  publicBox.addEventListener("change", async () => {
+    if (publicBox.checked && !confirm("Let people share content publicly? Documents already shared with anyone with the link will open for people who aren't signed in too.")) { publicBox.checked = false; return; }
+    say(publicHint, "Saving…");
+    try { await post(action, { do: "public_sharing", on: publicBox.checked ? "1" : "0" }); say(publicHint, "Saved."); }
+    catch (err) { publicBox.checked = !publicBox.checked; say(publicHint, err.message, true); }
+  });
   const rulesHint = document.getElementById("rules-hint"), ruleForm = document.querySelector("form.add-rule");
   const PLACEHOLDER = { workspace: "example.com", github_org: "my-org", account: "a username", email: "someone@example.com" };
   ruleForm.elements.kind.addEventListener("change", () => {
@@ -752,19 +797,6 @@ ${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1))
     li.querySelector(".remove-rule")?.addEventListener("click", async () => {
       if (!confirm("Remove this rule? The people only it lets in can't sign in any more.")) return;
       try { await post(action, { do: "remove_rule", id: li.dataset.id }); reload(); } catch (err) { say(rulesHint, err.message, true); }
-    });
-  }
-  for (const li of document.querySelectorAll("ol.users > li")) {
-    const login = li.dataset.login, admin = li.querySelector("input.admin"), deploy = li.querySelector("input.deploy"), remove = li.querySelector(".remove");
-    admin.addEventListener("change", () => {
-      const undo = () => { admin.checked = !admin.checked; };
-      if (login == me && !admin.checked && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
-      change({ do: "role", login, role: admin.checked ? "admin" : "user" }, "Saving…", undo);
-    });
-    deploy.addEventListener("change", () => change({ do: "deploy", login, deploy: deploy.checked ? "1" : "0" }, "Saving…", () => { deploy.checked = !deploy.checked; }));
-    remove.addEventListener("click", () => {
-      if (!confirm(login == me ? "Remove yourself? You'll be signed out, and can't sign in again until an admin adds you." : "Remove " + login + "? They won't be able to sign in. Their documents stay.")) return;
-      change({ do: "remove", login }, "Removing…");
     });
   }
 </script>` });

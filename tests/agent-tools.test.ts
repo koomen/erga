@@ -107,7 +107,8 @@ test("users: the deploy role, granted and revoked by an admin only", async () =>
 });
 
 test("sharing: the owner sees and changes who has access; nobody else may; the editor's agent defaults to its document", async () => {
-  const dir = fresh();
+  // People can share content publicly here (anyone with the link): the Access page's switch.
+  const dir = fresh({ defaults: { public_sharing: true } });
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
   const ada = { dir, who: { login: "ada" } };
   let r = await run(ada, "share_document", { document: "/ada/plan", login: "Bo", role: "editor" });

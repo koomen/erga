@@ -11,7 +11,8 @@
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
 //   /admin                     the server's settings and users, for admins; POST /admin/settings, /admin/users
-//   /<owner>/<slug>            the viewer on that document (for those it's shared with): its canonical address;
+//   /<owner>/<slug>            the viewer on that document (for those it's shared with; for people not signed in, a
+//                              document shared with anyone with the link while the server lets people share publicly): its canonical address;
 //                              Clone, and Edit for those who may edit it
 //   /<owner>/<slug>?edit       the editor on it, under Documents (its breadcrumbs): the same page, which
 //                              goes into the editor (the pencil goes there and back without a reload)
@@ -46,7 +47,7 @@ import { ID, OWNER, type Route } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { deleteDoc, listDocs, newDoc, shareDoc, shareToken } from "./make.ts";
 import { pagesDoor, pagesHost } from "./pages-origin.ts";
-import { viewAddress, viewLanding } from "./view.ts";
+import { viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
 
 /** The front door's answer to a request, for any path (a page saying so when there's nothing there). */
@@ -61,7 +62,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
   if (path == "/docs/share") return shareDoc(platform, request);
-  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users" || path == "/admin/api-keys" || path == "/admin/credentials" || path == "/admin/share" || path == "/admin/auth" || path == "/admin/auth/status") return adminDoor(platform, request);
+  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users" || path == "/admin/api-keys" || path == "/admin/credentials" || path == "/admin/share" || path == "/admin/auth" || path == "/admin/auth/status" || path == "/admin/access") return adminDoor(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
@@ -72,7 +73,8 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   // is the same page with ?edit. Sign in first, then the page, at its canonical address.
   // /api/... and /doc/... under it are the document's host (so no page or folder at its top may be called api or doc).
   if (!/^\/(api|doc)(\/|$)/.test(rest ?? "")) {
-    if (!session) return signInFirst(path + url.search);
+    // Not signed in: a document shared publicly opens for them, to view (Directory.isPublic); any other, sign in first.
+    if (!session) return (await viewPublic(platform, request, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""))) ?? signInFirst(path + url.search);
     if (first == "d" && !ID.test(second)) return nothing();
     return viewAddress(platform, request, session, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""));
   }

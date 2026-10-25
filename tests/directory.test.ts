@@ -85,7 +85,8 @@ test("the list, removal and who may", async () => {
 });
 
 test("sharing: editors, viewers and anyone with the link", async () => {
-  const dir = fresh();
+  // People can share content publicly here (anyone with the link): the Access page's switch.
+  const dir = fresh({ defaults: { public_sharing: true } });
   const one = (await dir.add(doc("aaaaaaaa", "One"))).doc;
   // An editor may open, edit and rename; a viewer only open; neither delete nor share.
   await dir.share({ login: "ada" }, one.id, "Bo", "editor");
@@ -376,7 +377,7 @@ test("landing_document: an admin who may edit the document chooses it, by addres
 
 test("the front page: only admins may edit it while it is one", async () => {
   const changed: string[] = [];
-  const dir = fresh({ admins: ["ada"], changed: async (key) => { changed.push(key); } });
+  const dir = fresh({ admins: ["ada"], defaults: { public_sharing: true }, changed: async (key) => { changed.push(key); } });
   const ada = { login: "ada", admin: true };
   await dir.users.add(ada, "bo", { role: "user" });
   await dir.users.add(ada, "cy", { role: "admin" });
