@@ -1,6 +1,7 @@
 // What every page of the site's own shares: escaping, the plain page, the app page's
 // shell and style, the breadcrumbs, the icons, and the small helpers around redirects.
 
+import { inlineCall } from "./inline.ts";
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { fontTags, styleTag } from "./assets.ts";
@@ -126,19 +127,8 @@ export function viewCrumbs(session: Session | null, title: string | null): strin
   return `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link("/", session))}"><span>${WORDMARK}</span></a>${here}</nav>`;
 }
 
-/** Every <time datetime> in the reader's own language and zone: "5 minutes ago", "yesterday", the date. */
-export const TIMES_SCRIPT = `
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  for (const t of document.querySelectorAll("time[datetime]")) {
-    const d = new Date(t.dateTime), s = (d - Date.now()) / 1000;
-    t.title = d.toLocaleString();
-    if (s > -60) t.textContent = "just now";
-    else if (s > -3600) t.textContent = rtf.format(Math.round(s / 60), "minute");
-    else if (s > -86400) t.textContent = rtf.format(Math.round(s / 3600), "hour");
-    else if (s > -30 * 86400) t.textContent = rtf.format(Math.round(s / 86400), "day");
-    else t.textContent = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  }
-`;
+/** Every <time datetime> in the reader's own language and zone (client/inline/times.ts): a statement, inside a page's script. */
+export const TIMES_SCRIPT = inlineCall("times");
 
 export const ICON = {
   delete: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>`,
