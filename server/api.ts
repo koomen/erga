@@ -17,7 +17,9 @@
 //   GET  /api/docs/<id>/tree       a document's file tree; POST does a tree operation. For people
 //                                  signed in (the tree's UI) as well as tokens
 //   /tokens, /tokens/...           a person's tokens: make one (a scope, an expiry), revoke one, approve or deny an agent's request
-//   /settings                      their settings: their tokens and the test token
+//   /settings                      their settings: how they sign in (GitHub, Google: link the other at
+//                                  /auth/<provider>?link=1), their tokens and the test token
+//   POST /settings/unlink          provider: unlinks that sign-in from their account (they keep at least one)
 //
 // The Worker sends those paths here, with the platform
 // that knows agent tokens. The share button's token
@@ -43,7 +45,7 @@ import { accessOf, type Platform, type Session, whoOf } from "./platform";
 import { byLine, VIA } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";
 import { cleanRel } from "../document/host";
-import { authOps, LABEL_MAX, mintTestToken, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
+import { authOps, LABEL_MAX, mintTestToken, NotAllowed, providersOn, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { TEMPLATES, templateById } from "./pages/index.ts";
 
 // ---------------------------------------------------------------- the registry
@@ -657,6 +659,15 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
       throw e;
     }
   }
+  if (path == "/settings/unlink" && post) {
+    try {
+      await platform.directory.identities.unlink(whoOf(session), session.login, field("provider") == "google" ? "google" : "github");
+      return new Response(null, { status: 303, headers: { Location: `/settings?unlinked=${field("provider") == "google" ? "google" : "github"}` } });
+    } catch (e) {
+      if (e instanceof NotAllowed) return tokensPage(platform, session, url, { notice: error(e.message) });
+      throw e;
+    }
+  }
   if (path == "/tokens/new" && post) {
     const scope = (field("scope") || "documents") as Scope;
     const expires = expiryOf(field("expires"));
@@ -674,7 +685,10 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
     return new Response(null, { status: 303, headers: { Location: "/tokens" } });
   }
   if (path != "/tokens" && path != "/settings") return page("Not found", "There's nothing here. <a href=\"/tokens\">Your tokens</a>.", 404);
-  return tokensPage(platform, session, url, {});
+  const linked = url.searchParams.get("linked"), unlinked = url.searchParams.get("unlinked");
+  const named = (p: string | null) => (p == "google" ? "Google" : p == "github" ? "GitHub" : null);
+  return tokensPage(platform, session, url, named(linked) ? { notice: `<p class="notice">Linked: you can sign in with ${named(linked)} too.</p>` }
+    : named(unlinked) ? { notice: `<p class="notice">Unlinked: you no longer sign in with ${named(unlinked)}.</p>` } : {});
 }
 
 const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin" };
@@ -730,6 +744,21 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
 <p>To push to Erga's source with it, once:</p>
 <pre>git remote set-url origin ${esc(origin)}/git/erga.git
 printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\nusername=token\\npassword=${esc(m.token)}\\n\\n' | git credential approve</pre>` : ""}</section>` : "";
+  // How they sign in: each identity, its addresses, and the providers on here that they haven't linked.
+  const [identities, emails, on] = await Promise.all([platform.directory.identities.of(session.login), platform.directory.identities.emailsOf(session.login), providersOn(platform)]);
+  const providerName = (p: string) => (p == "google" ? "Google" : "GitHub");
+  const signInRows = identities.map((i) => `  <li data-provider="${esc(i.provider)}">
+    <div class="name"><span class="title">${providerName(i.provider)}</span><span class="note">${esc(i.handle ?? "")}</span></div>
+    <div class="what">${i.lastUsed ? `Last sign-in ${day(i.lastUsed)}` : ""}</div>
+    <div class="acts">${identities.length > 1 ? `<form method="post" action="/settings/unlink" data-confirm="${esc(`Unlink ${providerName(i.provider)}? You won't sign in with it any more.`)}"><input type="hidden" name="provider" value="${esc(i.provider)}"><button class="pill unlink" aria-label="Unlink ${providerName(i.provider)}">Unlink</button></form>` : `<span class="never" title="The only way you sign in: link another first">Only one</span>`}</div>
+  </li>`).join("\n");
+  const missing = (["github", "google"] as const).filter((p) => on[p] && !identities.some((i) => i.provider == p));
+  const signInBlock = `<section class="part sign-in">
+  <h2>Sign-in</h2>
+  <p class="sub">How you sign in to this account. A GitHub and a Google account with the same verified email sign in here as one.${emails.length ? ` Your verified emails: ${emails.map((e) => `<b>${esc(e)}</b>`).join(", ")}.` : ""}</p>
+  ${identities.length ? `<ol class="rows identities">\n${signInRows}\n  </ol>` : `<p class="empty">This account has no linked sign-in yet: it signs in with GitHub by its login.</p>`}
+  ${missing.length ? `<div class="buttons">${missing.map((p) => `<a class="pill link-provider" href="/auth/${p}?link=1&amp;next=%2Fsettings">${ICON.plus}Link ${providerName(p)}</a>`).join(" ")}</div>` : ""}
+  </section>`;
   const test = await mintTestToken(platform, session.login);
   const testBlock = test ? `<section class="part">
   <h2>Test token</h2>
@@ -793,6 +822,7 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   <header><div><h1>${title}</h1></div></header>
   ${o.notice ?? ""}
   ${made}
+  ${url.pathname.startsWith("/settings") ? signInBlock : ""}
   <section class="part">
   <h2>Your tokens</h2>
   <p class="sub">A token lets an agent or a script (Claude Code, Codex, git) act as you, within its scope. <a href="/llms.txt">Point agents here</a>.</p>

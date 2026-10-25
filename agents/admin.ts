@@ -77,6 +77,10 @@ export interface DashboardOps {
   deployHome(): Promise<object>;
   agentTokens(): Promise<object[]>;
   revokeAgentToken(id: string): Promise<boolean>;
+  /** How the admin signs in (/settings): their identities and verified emails. */
+  signIns(): Promise<object>;
+  /** Unlinks one of the admin's own sign-ins (they keep at least one). */
+  unlinkSignIn(provider: "github" | "google"): Promise<object>;
 }
 
 const text = toolResult;
@@ -161,6 +165,11 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
         if (!(await ops.revokeAgentToken(String(a.id ?? "")))) throw new Error(`You have no token "${a.id}". list_agent_tokens lists them.`);
         return { revoked: a.id };
       }),
+    tool("list_sign_ins", "Read how you sign in", "How you sign in to your own account (/settings, Sign-in): each linked provider (GitHub, Google) with what it calls you, when it was linked and last used, and your verified emails. Linking another provider is a consent on that provider's own page: tell the person to click Link on /settings.",
+      Type.Object({}), () => ops.signIns()),
+    tool("unlink_sign_in", "Unlink a sign-in", "Unlinks one of your own sign-ins (github or google), as Unlink on /settings does: you won't sign in with it any more. The account keeps at least one. Only when the person asks in this conversation.",
+      Type.Object({ provider: Type.Union([Type.Literal("github"), Type.Literal("google")], { description: "github or google" }) }),
+      async (a) => ops.unlinkSignIn(a.provider == "google" ? "google" : "github")),
   ];
 }
 
@@ -259,6 +268,8 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   deploy_homepage: ["Redeploying the homepage", "Redeployed the homepage"],
   list_agent_tokens: ["Reading your agent tokens", "Read your agent tokens"],
   revoke_agent_token: ["Revoking the agent token", "Revoked the agent token"],
+  list_sign_ins: ["Reading how you sign in", "Read how you sign in"],
+  unlink_sign_in: ["Unlinking", "Unlinked"],
   list_source: ["Listing", "Listed"],
   read_source: ["Reading", "Read"],
   search_source: ["Searching the source for", "Searched the source for"],
@@ -336,6 +347,9 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
   (read_source with that ref), resolve it keeping both sides' intent, write it with
   resolve_upstream_file, then finish_upstream_merge; abandon_upstream_merge drops it.
   Production follows only through deploy_production.
+- list_sign_ins reads how ${owner} signs in (/settings: GitHub, Google, their verified
+  emails); unlink_sign_in unlinks one (they keep at least one). Linking is a consent on the
+  provider's page: tell ${owner} to click Link on /settings.
 - list_agent_tokens and revoke_agent_token: ${owner}'s own agent tokens, the one Share with
   agent made for an outside agent too (kind share, scope admin). A token is made, or an
   agent's request approved, only on the page (/settings, or Share with agent).

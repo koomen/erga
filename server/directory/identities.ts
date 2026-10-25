@@ -41,6 +41,12 @@ export interface Vouched {
   emails: { email: string; verified: boolean }[];
 }
 
+/** The addresses that may link an account or pass a domain rule: verified, and never GitHub's noreply ones. */
+export function linkable(v: Pick<Vouched, "emails">): string[] {
+  return [...new Set(v.emails.filter((e) => e.verified).map((e) => e.email.trim().toLowerCase())
+    .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && !e.endsWith("@users.noreply.github.com")))];
+}
+
 export const USERNAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 /** Names no account may take, besides the app's addresses (RESERVED): people would read them as Erga's. */
 const NOT_A_USERNAME = new Set(["anyone", "admins", "erga", "root", "system", "support", "security", "staff", "www", "mail", "ops", "git", "deploy", "install", "me", "you", "everyone", "null", "undefined"]);
@@ -62,6 +68,31 @@ export class Identities {
     return (await this.sql.all<Row>("SELECT * FROM identities WHERE login = ?1 ORDER BY provider", login.toLowerCase())).map(fromRow);
   }
 
+  /** The statements that make an identity's kept addresses those it vouched for now (linkable ones only). */
+  private emailStatements(login: string, v: Vouched, at: number): Statement[] {
+    return [
+      ["DELETE FROM emails WHERE provider = ?1 AND subject = ?2", v.provider, v.subject],
+      ...linkable(v).map((email): Statement => ["INSERT OR REPLACE INTO emails (provider, subject, email, login, seen) VALUES (?1, ?2, ?3, ?4, ?5)", v.provider, v.subject, email, login.toLowerCase(), at]),
+    ];
+  }
+
+  /** An identity's addresses, refreshed at its sign-in: its account stays the one its subject id names. */
+  async refreshEmails(login: string, v: Vouched): Promise<void> {
+    await this.sql.batch(this.emailStatements(login, v, Date.now()));
+  }
+
+  /** The accounts that have any of these addresses (verified, kept from their identities). */
+  async accountsWithEmails(emails: string[]): Promise<string[]> {
+    if (!emails.length) return [];
+    const rows = await this.sql.all<{ login: string }>(`SELECT DISTINCT login FROM emails WHERE email IN (${emails.map((_, i) => `?${i + 1}`).join(", ")}) ORDER BY login`, ...emails);
+    return rows.map((r) => r.login);
+  }
+
+  /** An account's verified addresses, from all its identities. */
+  async emailsOf(login: string): Promise<string[]> {
+    return (await this.sql.all<{ email: string }>("SELECT DISTINCT email FROM emails WHERE login = ?1 ORDER BY email", login.toLowerCase())).map((r) => r.email);
+  }
+
   /** The statement that links an identity to an account (with `link`, or in a batch that makes the account). */
   private linkStatement(login: string, v: Vouched, at: number): Statement {
     return ["INSERT INTO identities (provider, subject, login, handle, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?5)", v.provider, v.subject, login.toLowerCase(), v.handle || null, at];
@@ -79,7 +110,7 @@ export class Identities {
       throw new NotAllowed(`This ${label(v.provider)} account already signs in to another Erga account (${had.login}).`);
     }
     if ((await this.of(login)).some((i) => i.provider == v.provider)) throw new NotAllowed(`${login} already signs in with another ${label(v.provider)} account.`);
-    try { await this.sql.run(...this.linkStatement(login, v, Date.now())); }
+    try { await this.sql.batch([this.linkStatement(login, v, Date.now()), ...this.emailStatements(login, v, Date.now())]); }
     catch { throw new NotAllowed(`${login} already signs in with ${label(v.provider)}, or this ${label(v.provider)} account signs in to another Erga account.`); }
   }
 
@@ -98,7 +129,7 @@ export class Identities {
     const have = await this.of(login);
     if (!have.some((i) => i.provider == provider)) throw new NotAllowed(`${login} doesn't sign in with ${label(provider)}.`);
     if (have.length < 2) throw new NotAllowed(`${label(provider)} is the only way ${login} signs in: link another first, so the account can still sign in.`);
-    await this.sql.run("DELETE FROM identities WHERE login = ?1 AND provider = ?2", login, provider);
+    await this.sql.batch([["DELETE FROM identities WHERE login = ?1 AND provider = ?2", login, provider], ["DELETE FROM emails WHERE login = ?1 AND provider = ?2", login, provider]]);
     return this.of(login);
   }
 
@@ -155,6 +186,7 @@ export class Identities {
       await this.sql.batch([
         ["INSERT INTO users (login, name, role, created, added_by, last_seen) VALUES (?1, ?2, 'user', ?3, NULL, ?3)", login, name, at],
         this.linkStatement(login, v, at),
+        ...this.emailStatements(login, v, at),
         ...extra,
       ]);
     } catch {
