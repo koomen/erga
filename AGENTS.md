@@ -1,5 +1,9 @@
 # Agents working in this repo
 
+These are the rules for agents that work on Erga's code. People read
+CONTRIBUTING.md, which has the same rules. README.md tells what each
+folder holds.
+
 ## How to work
 
 Work on a branch of `staging`, or on `staging` itself for a small change.
@@ -10,32 +14,25 @@ Before you push, run the tests:
 If the format check fails, `bun run format` formats the lines your change
 touches. Never format whole files: other branches change them too.
 
-Push to `staging` (`git push origin HEAD:staging`): the control Worker
-(ops.erga.dev, `control/`) builds it and deploys staging.erga.dev at once.
-Erga's repository is at https://ops.erga.dev/git/erga.git; a checkout whose
-origin is https://erga.dev/git/erga.git still works (erga.dev redirects Git
-there, and Git says so once).
-Production (erga.dev) deploys when `main` moves to a staging commit: Merge
-on https://ops.erga.dev/, the admin agent's `deploy_production`, the API, or
-a push to `main`. The control Worker deploys with an OAuth grant an admin
-gave once (no API token anywhere). When Cloudflare refuses it, the Ops
-page's Cloudflare card says so in Cloudflare's words, with Connect
-Cloudflare (a consent in a popup); the deploys that waited go after it.
-Errors are fixed where they show: never send a person to another page.
-After production, the control Worker deploys itself from
-the same commit (`deploy/control.ts`): a change under `control/` reaches
-ops.erga.dev when it reaches `main`. Each deploy checks the target's health
-and rolls back by itself when it fails; Roll back on a deploy's log does it
-by hand. Two things still need wrangler from a machine (`bun deploy/setup.ts
---control`): a change to the build container's image (`control/builder/`),
-and a new Durable Object class in `control/wrangler.jsonc`.
-
 The smoke run (`e2e/smoke/`) checks the editor's core in a real browser.
 Keep it small: it has a time limit (90 s), and a new test there should
 replace one. Every other end-to-end test is in `e2e/full/`. Run the whole
 suite (`bun run test:full`) only when the user asks for it; run one file or
 folder of it when you change that part (`bun run test:e2e
 e2e/full/page/html-typing.e2e.ts`).
+
+## Deploys
+
+docs/operations.md tells how a deployment builds, deploys and rolls back:
+staging, production, the deploy credential and the control Worker. Read
+it before you push to a deployment's repository. On Erga's own deployment:
+
+1. Push to `staging` only: `git push origin HEAD:staging`. Staging then
+   deploys at once.
+2. Never push to `main`. A maintainer moves `main`, and production deploys
+   from it.
+3. A push is not a deploy: `/api/deploys/version` on staging shows your
+   commit when it is live.
 
 ## Summaries
 
@@ -88,13 +85,13 @@ For example:
 
 ## Standing rules
 
-1. **Staging is for admins only.** staging.erga.dev runs on a copy of
-   production's data. The copy is frozen: a deploy keeps it, and only a
-   Redeploy with a fresh copy replaces it. Every request there needs an
-   admin: an admin's session or an admin-scope token (`server/identity/admins-only.ts`, from
-   `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or origin
-   goes behind that guard, and any exemption (server to server, sign-in) is
-   listed there with its reason.
+1. **Staging is for admins only.** A deployment's staging target
+   (staging.erga.dev on Erga's own) runs on a copy of production's data.
+   Every request there needs an admin: an admin's session or an
+   admin-scope token (`server/identity/admins-only.ts`, from `adminsOnly`
+   in `deploy/targets.json`). Keep it so: a new route or origin goes behind
+   that guard, and any exemption (server to server, sign-in) is listed
+   there with its reason.
 2. **Erga's embedded agents can do what their person can.** An agent inside
    Erga can do everything its person can do in its domain. The admin agent
    (`agents/admin.ts`) covers everything on `/admin` (the Ops page and
@@ -110,8 +107,9 @@ For example:
    does.
 3. **The database changes only by a new migration.** Change the server's
    tables (D1: users, settings, documents and their permissions) with a new
-   file in `server/migrations/`, never by editing one that's there: erga.dev has
-   applied those, and other branches may be adding their own at the same time.
+   file in `server/migrations/`, never by editing one that's there: deployed
+   servers have applied those, and other branches may be adding their own at
+   the same time.
    A migration only adds (tables, columns, indexes, with `IF NOT EXISTS`):
    never drops, renames or changes a column's meaning, so the Worker before it
    still runs on the new schema and a rollback is safe. A migration that must
@@ -119,3 +117,12 @@ For example:
    `tests/migrations.test.ts` fails without it.
    Reach the data through `Directory` (`server/directory/`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.
+4. **Keep the module boundaries.** Each area of `server/` (directory,
+   identity, documents, pages, home, admin, source) is imported
+   through its `index.ts`. Only `cloudflare/` and `control/` read the
+   Worker's bindings; `server/` and `document/` never import them. The
+   browser's bundles may import `shared/`, and of `document/` only
+   `content.ts`, `pages.ts`, `merge.ts` and the types of `api.ts`
+   (`tests/browser-imports.test.ts` checks it).
+5. **Fix errors where they show.** Erga's pages never send a person to
+   another page to fix an error: the fix shows in place.
