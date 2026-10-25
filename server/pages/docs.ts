@@ -107,6 +107,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   .people .fixed { font-size: 13px; color: var(--soft); padding-right: 4px; }
   .people .act { opacity: 1; width: 26px; height: 26px; }
   .anyone { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+  .anyone[hidden] { display: none; }
   .anyone .face svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
   .anyone .who { flex: 1; color: var(--fg-strong); }
   .anyone .who small { display: block; font-size: 12px; color: var(--soft); }
@@ -131,7 +132,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   <ul class="people" aria-label="People with access"></ul>
   <div class="anyone">
     <span class="face" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.4-3.6-8.5s1.1-5.9 3.6-8.5Z"/></svg></span>
-    <label class="who" for="share-anyone">Anyone signed in with the link<small>Anyone who can sign in to this server</small></label>
+    <label class="who" for="share-anyone">Anyone with the link<small id="share-anyone-note">Signed in or not, as viewers</small></label>
     <select id="share-anyone"><option value="none">No access</option><option value="viewer">Can view</option><option value="editor">Can edit</option></select>
   </div>
   <p class="hint" id="share-hint" role="status"></p>
@@ -159,7 +160,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
     for (const [v, t] of ROLES) s.append(el("option", { value: v, textContent: t, selected: v == role }));
     return s;
   };
-  function render({ permissions, notUsers, avatars }) {
+  function render({ permissions, notUsers, avatars, publicSharing }) {
     people.replaceChildren();
     const pending = new Set(notUsers || []);
     let all = "none";
@@ -183,6 +184,10 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
       people.append(li);
     }
     anyone.value = all;
+    // Anyone with the link, only while the server lets people share content publicly; a share made before stays, to stop.
+    anyone.closest(".anyone").hidden = !publicSharing && all == "none";
+    for (const o of anyone.options) o.disabled = !publicSharing && o.value != "none" && o.value != all;
+    document.getElementById("share-anyone-note").textContent = publicSharing ? "Signed in or not; people who aren't signed in view it" : "Public sharing is off here: only people who sign in can open it";
   }
   async function call(init) {
     const r = await fetch(init ? action : action + (action.includes("?") ? "&" : "?") + "id=" + doc.id, init ? { method: "POST", body: new URLSearchParams(init), headers: { Accept: "application/json" } } : {}).catch(() => null);

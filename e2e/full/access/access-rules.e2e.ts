@@ -1,4 +1,4 @@
-// The access rules on the Users page (/admin/users), end to end on a server of this file's own (they change who may
+// The access rules on the Access page (/admin/access), end to end on a server of this file's own (they change who may
 // use the whole server): one list of rules, each who and read or write. An admin adds a Google Workspace organization
 // and a GitHub organization; such people make their accounts at their first sign-in, with that access; anyone else is
 // refused, told why, in place. Everybody's rule changes with its select; a removed rule lets nobody in any more.
@@ -11,7 +11,7 @@ await server();
 
 test("rules: a Workspace with write, a GitHub organization with read, everybody's select, a rule removed", async ({ tab }) => {
   const page = tab.page, root = (await server()).root;
-  const admin = () => page.goto(`${root}/admin/users?user=tester`);
+  const admin = () => page.goto(`${root}/admin/access?user=tester`);
   const hint = () => page.textContent("#rules-hint");
   const addRule = async (kind: string, value: string, access: "read" | "write") => {
     await admin();

@@ -237,6 +237,8 @@ const PAGES_STYLE = `
   .add-rule { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
   .add-rule .input { flex: 1; min-width: 180px; }
   section.rules { margin-bottom: 30px; }
+  section.public-sharing .switch { font-size: 14px; color: var(--fg-strong); }
+  section.public-sharing .hint { margin: 8px 0 0; }
 
   /* The change log: one row each, across the page: who (their avatar, and how), what changed (each change on its own line, in full), when. */
   .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; border-bottom: 1px solid var(--rule); }

@@ -133,3 +133,44 @@ test("a GitHub sign-in's organizations: active memberships only, as the pretend 
     expect(await memberships("https://gh.test/api", "ghu_unknown")).toEqual([]);
   } finally { globalThis.fetch = real; }
 });
+
+test("public sharing: off by default; then anyone with the link is refused, saying why, kept shares open to no one signed out; on restores them", async () => {
+  const dir = fresh();
+  await dir.users.add(ADMIN, "ada");
+  await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1, expires: null });
+  expect(await dir.config.get("public_sharing")).toBe(false);
+  await expect(dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer")).rejects.toThrow("doesn't let people share content publicly");
+  // Sharing with people by name is unaffected.
+  await dir.share({ login: "ada" }, "aaaaaaaa", "bo", "viewer");
+  await dir.config.set(ADMIN, "public_sharing", true);
+  await dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer");
+  expect(await dir.isPublic("aaaaaaaa")).toBe(true);
+  // A signed-in person without a share of their own opens it through anyone with the link.
+  await dir.users.add(ADMIN, "cy");
+  expect(await dir.access({ login: "cy" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
+  // Off: kept, and still for people who sign in, but not public; stopping it is allowed.
+  await dir.config.set(ADMIN, "public_sharing", false);
+  expect((await dir.permissions("aaaaaaaa")).some((p) => p.login == "*")).toBe(true);
+  expect(await dir.isPublic("aaaaaaaa")).toBe(false);
+  expect(await dir.access({ login: "cy" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
+  await dir.config.set(ADMIN, "public_sharing", true);
+  expect(await dir.isPublic("aaaaaaaa")).toBe(true);
+  await dir.config.set(ADMIN, "public_sharing", false);
+  await dir.share({ login: "ada" }, "aaaaaaaa", "*", null);
+  expect((await dir.permissions("aaaaaaaa")).some((p) => p.login == "*")).toBe(false);
+  // Only admins turn it on or off.
+  await expect(dir.config.set({ login: "ada" }, "public_sharing", true)).rejects.toThrow();
+});
+
+test("public sharing: anyone with the link as an editor gives a signed-in person with 'Can view content' only viewing", async () => {
+  const dir = fresh();
+  await dir.config.set(ADMIN, "public_sharing", true);
+  await dir.users.add(ADMIN, "ada");
+  await dir.add({ id: "bbbbbbbb", owner: "ada", title: "Notes", created: 1, expires: null });
+  await dir.share({ login: "ada" }, "bbbbbbbb", "*", "editor");
+  await dir.identities.createAccount("dee", google("g-dee", "dee@example.com"));
+  await everybody(dir, "read");
+  expect(await dir.access({ login: "dee" }, (await dir.get("bbbbbbbb"))!)).toBe("viewer");
+  await everybody(dir, "write");
+  expect(await dir.access({ login: "dee" }, (await dir.get("bbbbbbbb"))!)).toBe("editor");
+});

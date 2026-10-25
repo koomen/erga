@@ -22,8 +22,9 @@
 //   list_users, add_user,               the users, and who's an admin, admins only (add_user: a rule for that one
 //   set_user_role, set_user_deploy,     account: 'Can create and edit content')
 //   remove_user
-//   list_access_rules, add_access_rule, the access rules on /admin/users, one list, admins only
-//   change_access_rule, remove_access_rule
+//   list_access_rules, add_access_rule, the access rules on /admin/access, one list, and whether people can share
+//   change_access_rule,                 content publicly; admins only
+//   remove_access_rule, set_public_sharing
 //
 // An admin tool is offered only to an admin with admin power (`toolsFor`;
 // Users.actsAsAdmin): an external agent with an admin-scope token,
@@ -101,10 +102,10 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     name: "share_document",
     label: "Share the document",
     activity: "sharing the document",
-    description: "Shares a document (only its owner may): gives someone the role of editor (may edit and rename it) or viewer (may only look), or takes theirs away with role \"none\". login \"*\" means anyone signed in who has the link. Answers who has access now.",
+    description: "Shares a document (only its owner may): gives someone the role of editor (may edit and rename it) or viewer (may only look), or takes theirs away with role \"none\". login \"*\" means anyone with the link: anyone signed in, and people who aren't signed in too (as viewers); the server refuses it, saying why, unless it lets people share content publicly (the Access page). Answers who has access now.",
     parameters: Type.Object({
       document: DOCUMENT,
-      login: Type.String({ description: "Whose role to set: a GitHub login, or \"*\" for anyone signed in who has the link" }),
+      login: Type.String({ description: "Whose role to set: a GitHub login, or \"*\" for anyone with the link (only while the server lets people share content publicly)" }),
       role: Type.Union([Type.Literal("editor"), Type.Literal("viewer"), Type.Literal("none")], { description: "editor, viewer, or none to stop sharing it with them" }),
     }),
     run: async (args, ctx) => {
@@ -342,16 +343,29 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Read the access rules",
     activity: "reading the access rules",
     admin: true,
-    description: "Admins only. The access rules on /admin/users, one list: each rule's id, who (everybody; a Google Workspace organization, by its domain, matched on the hd claim Google gives Workspace accounts; a GitHub organization, its members checked at each GitHub sign-in; one account, by username; one Google account, by email) and access: read ('Can view content': sign in and view documents) or write ('Can create and edit content': also make and edit them). A person gets the highest access of the rules that match them; none of them ('No access'): they can't sign in. Admins always have 'Can create and edit content'. Each rule's accessLabel is the words the Users page shows: use them when you tell the person. Also the Workspace domains and GitHub organizations of people who signed in here (suggestions).",
+    description: "Admins only. The access rules on /admin/access, one list: each rule's id, who (everybody; a Google Workspace organization, by its domain, matched on the hd claim Google gives Workspace accounts; a GitHub organization, its members checked at each GitHub sign-in; one account, by username; one Google account, by email) and access: read ('Can view content': sign in and view documents) or write ('Can create and edit content': also make and edit them). A person gets the highest access of the rules that match them; none of them ('No access'): they can't sign in. Admins always have 'Can create and edit content'. Each rule's accessLabel is the words the Users page shows: use them when you tell the person. Also the Workspace domains and GitHub organizations of people who signed in here (suggestions), and whether people can share content publicly (publicSharing).",
     parameters: Type.Object({}),
-    run: async (_args, { dir, who }) => ({ rules: (await dir.rules.list(who)).map(ruleOf), suggestions: await dir.rules.suggestions(who) }),
+    run: async (_args, { dir, who }) => ({ rules: (await dir.rules.list(who)).map(ruleOf), suggestions: await dir.rules.suggestions(who), publicSharing: await dir.config.get("public_sharing") }),
+  },
+  {
+    name: "set_public_sharing",
+    label: "Turn public sharing on or off",
+    activity: "changing whether people can share content publicly",
+    admin: true,
+    description: "Admins only. 'People can share content publicly', the switch on /admin/access. On: a document shared with anyone with the link opens for people who aren't signed in too, as viewers, and owners may share that way. Off: nobody may share with anyone with the link (it's refused, saying why), and such shares made before stay but open only for people who sign in; turning it on again restores them. The homepage is public either way. Only when the person asks in this conversation; say what changed.",
+    parameters: Type.Object({ on: Type.Boolean({ description: "true: people can share content publicly; false: they can't" }) }),
+    run: async (args, { dir, who }) => {
+      if (typeof args.on != "boolean") throw new ToolError("on: true or false.");
+      const before = await dir.config.get("public_sharing");
+      return { publicSharing: (await dir.config.set(who, "public_sharing", args.on)).value, before };
+    },
   },
   {
     name: "add_access_rule",
     label: "Add an access rule",
     activity: "adding an access rule",
     admin: true,
-    description: "Admins only. Adds an access rule, as Add on /admin/users does (a rule for the same who changes its access). kind: workspace (value: the Google Workspace organization's domain), github_org (value: the organization's login), account (value: an Erga username, or a GitHub login that hasn't signed in yet: it claims that username at its first GitHub sign-in), email (value: a Google account's email). access: read ('Can view content') or write ('Can create and edit content'). Only when the person asks in this conversation; say what you added, in those words.",
+    description: "Admins only. Adds an access rule, as Add on /admin/access does (a rule for the same who changes its access). kind: workspace (value: the Google Workspace organization's domain), github_org (value: the organization's login), account (value: an Erga username, or a GitHub login that hasn't signed in yet: it claims that username at its first GitHub sign-in), email (value: a Google account's email). access: read ('Can view content') or write ('Can create and edit content'). Only when the person asks in this conversation; say what you added, in those words.",
     parameters: Type.Object({
       kind: Type.Union([Type.Literal("workspace"), Type.Literal("github_org"), Type.Literal("account"), Type.Literal("email")], { description: "workspace, github_org, account or email" }),
       value: Type.String({ description: "The domain, organization, username or email" }),
@@ -364,7 +378,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Change an access rule",
     activity: "changing an access rule",
     admin: true,
-    description: "Admins only. Changes a rule's access (list_access_rules gives each id), as its select on /admin/users does: read ('Can view content') or write ('Can create and edit content'); everybody's may also be none ('No access': then only the other rules let anyone in). Only when the person asks; say what changed, from what to what, in those words.",
+    description: "Admins only. Changes a rule's access (list_access_rules gives each id), as its select on /admin/access does: read ('Can view content') or write ('Can create and edit content'); everybody's may also be none ('No access': then only the other rules let anyone in). Only when the person asks; say what changed, from what to what, in those words.",
     parameters: Type.Object({
       id: Type.Integer({ description: "The rule's id" }),
       access: Type.Union([Type.Literal("none"), Type.Literal("read"), Type.Literal("write")], { description: "none ('No access', everybody only), read ('Can view content') or write ('Can create and edit content')" }),
@@ -380,7 +394,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Remove an access rule",
     activity: "removing an access rule",
     admin: true,
-    description: "Admins only. Removes a rule (list_access_rules gives each id), as its remove button on /admin/users does. Everybody's rule stays: set it to none with change_access_rule. Someone no rule matches any more is signed out within seconds. Only when the person asks.",
+    description: "Admins only. Removes a rule (list_access_rules gives each id), as its remove button on /admin/access does. Everybody's rule stays: set it to none with change_access_rule. Someone no rule matches any more is signed out within seconds. Only when the person asks.",
     parameters: Type.Object({ id: Type.Integer({ description: "The rule's id" }) }),
     run: async (args, { dir, who }) => {
       const before = (await dir.rules.list(who)).find((r) => r.id == Number(args.id));
@@ -515,7 +529,7 @@ function described(doc: DocRow, { origin }: ToolWho) {
 
 async function permissionsOf(dir: Directory, id: string) {
   return (await dir.permissions(id)).map((p) => ({
-    login: p.login, role: p.role, ...(p.login == ANYONE ? { means: "anyone signed in who has the link" } : {}),
+    login: p.login, role: p.role, ...(p.login == ANYONE ? { means: "anyone with the link: anyone signed in, and, while the server lets people share content publicly, people who aren't signed in too (as viewers)" } : {}),
     granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}), ...(p.grantedVia ? { grantedVia: p.grantedVia } : {}),
   }));
 }

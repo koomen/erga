@@ -135,6 +135,24 @@ export async function viewAddress(platform: Platform, request: Request, session:
 }
 
 /**
+ * The viewer for someone who isn't signed in, at /<owner>/<slug>[/<page>]: a document shared with anyone with the link,
+ * while the server lets people share content publicly (Directory.isPublic). They view it only. Null for any other: they
+ * sign in first, as before.
+ */
+export async function viewPublic(platform: Platform, request: Request, first: string, second: string, wanted: string): Promise<Response | null> {
+  const url = new URL(request.url);
+  if (first == "d" || !OWNER.test(first)) return null;
+  const row = (await platform.directory.locate(first, second))?.doc ?? null;
+  if (!row || !(await platform.directory.isPublic(row.id))) return null;
+  const answer = await platform.docs.view(row.id, null, { page: wanted, anyone: true });
+  if (!answer || answer.file == null || answer.ver == null) return null;
+  const d: Decision = { id: row.id, owner: row.owner, slug: row.slug, title: row.title, role: "viewer", ver: answer.ver, file: answer.file, canonical: answer.canonical ?? "" };
+  const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
+  if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`)) return new Response(null, { status: 302, headers: { Location: canonical + url.search, "Cache-Control": "no-store" } });
+  return render(platform, request, null, d, false);
+}
+
+/**
  * The files view (?files: server/pages/files.ts): every file of the document, for whoever may view it; whoever may
  * edit adds, moves, renames and deletes them there. Its files come from the pages origin, under a token as the viewer's.
  */

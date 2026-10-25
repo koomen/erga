@@ -881,11 +881,11 @@ Once you've read the guide, await further instructions.`;
   // card's people half shows for them alone; each change is saved as it's made (/docs/share, as on My Documents' share dialog).
   const sharing = $("sharing");
   const sharingList = $("sharing-list"), sharingAdd = $("sharing-add") as HTMLFormElement;
-  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement, sharingStatus = $("sharing-status");
+  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement, sharingStatus = $("sharing-status"), anyoneLabel = document.querySelector<HTMLLabelElement>("label[for=sharing-anyone]")!;
   const shareAt = document.querySelector<HTMLMetaElement>('meta[name="erga-share"]')?.content ?? "";
   const docId = BASE.replace(/^\/d\//, "");
   $("sharing-people").hidden = !shareAt;
-  type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string> };
+  type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string>; publicSharing?: boolean };
   const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
   async function shareCall(change?: { login: string; role: string }): Promise<Shared> {
     const r = await fetch(change ? shareAt : `${shareAt}${shareAt.includes("?") ? "&" : "?"}id=${docId}`,
@@ -894,7 +894,7 @@ Once you've read the guide, await further instructions.`;
     if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
     return body as Shared;
   }
-  function renderSharing({ permissions, notUsers, avatars }: Shared) {
+  function renderSharing({ permissions, notUsers, avatars, publicSharing }: Shared) {
     sharingList.textContent = "";
     const pending = new Set(notUsers ?? []);
     let anyone = "none";
@@ -930,6 +930,14 @@ Once you've read the guide, await further instructions.`;
       sharingList.append(li);
     }
     sharingAnyone.value = anyone;
+    // Anyone with the link, only while the server lets people share content publicly; a share made before stays, to stop.
+    const offered = !!publicSharing || anyone != "none";
+    sharingAnyone.hidden = !offered;
+    for (const o of sharingAnyone.options) o.disabled = !publicSharing && o.value != "none" && o.value != anyone;
+    linkHint = publicSharing ? (anyone == "none" ? "only the people it's shared with" : "anyone may view it, signed in or not")
+      : anyone == "none" ? "only the people it's shared with" : "public sharing is off here: they sign in first";
+    if (copied.textContent != "Copied") copied.textContent = linkHint;
+    anyoneLabel.textContent = offered ? "Anyone with the link" : "Its link";
   }
   async function changeSharing(login: string, role: string): Promise<boolean> {
     tellSharing("Saving…");
@@ -976,7 +984,8 @@ Once you've read the guide, await further instructions.`;
   viewersOn.addEventListener("change", () => {
     viewersCall(viewersOn.checked).then(renderViewers, (e: Error) => { viewersOn.checked = !viewersOn.checked; tellSharing(e.message, true); });
   });
-  const copied = $("sharing-copied"), linkHint = copied.textContent;
+  const copied = $("sharing-copied");
+  let linkHint = copied.textContent;
   let copiedTimer = 0;
   $("sharing-copy").addEventListener("click", async () => {
     const url = location.origin + (docName?.address ?? location.pathname);

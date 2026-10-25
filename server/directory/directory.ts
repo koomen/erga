@@ -114,7 +114,10 @@ export interface Who {
 /** What making a document answers someone the write rule (/admin/users) leaves out. */
 export const NO_WRITE = "Your access on this server is Can view content: you may open documents, but not make or edit them. An admin can give you Can create and edit content on the Users page.";
 
-/** The login a permission for anyone signed in (who has the link) is under. */
+/** What sharing with anyone with the link answers while the server doesn't let people share content publicly. */
+export const NO_PUBLIC = "This server doesn't let people share content publicly, so this document can't be shared with anyone with the link. An admin can turn on \"People can share content publicly\" on the Access page (/admin/access). Share it with people by their username instead.";
+
+/** The login a permission for anyone with the link is under: anyone signed in, and, while the server lets people share content publicly, people who aren't signed in too (as viewers). */
 export const ANYONE = "*";
 
 /** One person's (or anyone's, "*") permission on a document. */
@@ -213,7 +216,7 @@ export class Directory {
   /** Tells a document's host its permissions now (the platform's: its Durable Object keeps a copy); none: the document is gone. */
   private readonly permissionsChanged: (id: string, permissions: Permission[]) => Promise<void>;
 
-  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean; permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void> } = {}) {
+  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; defaults?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean; permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void> } = {}) {
     this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
     this.users = new Users(sql, opts.admins);
     this.identities = new Identities(sql, this.users);
@@ -224,6 +227,7 @@ export class Directory {
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
+      defaults: opts.defaults,
       changed: opts.changed,
       // The front page shows a document to everyone, and runs its scripts on this site itself: an admin
       // who may edit it puts it there, and only if everyone who may edit it is an admin. Kept by id, which a rename never changes.
@@ -602,6 +606,16 @@ export class Directory {
     return (await this.rules.accessFor(this.factsOfVouched(v))) != "none";
   }
 
+  /**
+   * Whether a document opens for people who aren't signed in: the homepage always does (the front door's own path), and
+   * one shared with anyone with the link does while the server lets people share content publicly. They view it only.
+   */
+  async isPublic(id: string): Promise<boolean> {
+    if (!(await this.config.get("public_sharing"))) return false;
+    const [row] = await this.sql.all<{ n: number }>("SELECT COUNT(*) AS n FROM permissions p JOIN documents d ON d.id = p.doc_id WHERE p.doc_id = ?1 AND p.login = ?2 AND d.test = 0", id, ANYONE);
+    return Number(row?.n ?? 0) > 0;
+  }
+
   /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
   async may(who: Who | null, action: Action, doc: { id: string; owner: string; test: boolean }): Promise<boolean> {
     return roleMay(await this.access(who, doc), action);
@@ -628,6 +642,9 @@ export class Directory {
     if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login)) throw new NotAllowed(`"${login}" isn't a login (or "*" for anyone with the link).`);
     if (login == doc.owner) throw new NotAllowed("The owner's own permission can't be changed.");
     if (role != null && role != "editor" && role != "viewer") throw new NotAllowed(`"${role}" isn't a role: editor or viewer.`);
+    // Anyone with the link: only while the server lets people share content publicly (the Access page). Stopping one
+    // made before is always allowed.
+    if (login == ANYONE && role != null && !(await this.config.get("public_sharing"))) throw new NotAllowed(NO_PUBLIC);
     // The front page's editors are admins only (homeBlocked).
     if (role == "editor" && (await this.homeId()) == id && (login == ANYONE || !(await this.users.isAdmin(login)))) {
       throw new NotAllowed(`This document is the front page, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`);

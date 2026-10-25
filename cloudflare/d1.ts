@@ -35,7 +35,9 @@ export function directoryOf(env: Env): Directory {
     const changed = async (key: string) => { if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged(); };
     // A document's permissions changed: its object keeps a copy, and decides with it (document/document.ts, authorize).
     const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await documentOf(env, id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };
-    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG), changed, permissionsChanged, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
+    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG),
+      // Local development offers anyone with the link, as before the Access page's switch (a server starts with it off).
+      ...(env.DEV_LOGIN?.trim() ? { defaults: { public_sharing: true } } : {}), changed, permissionsChanged, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
   }
   return directory.dir;
 }

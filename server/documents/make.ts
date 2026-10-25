@@ -170,9 +170,10 @@ export async function deleteDoc(platform: Platform, request: Request): Promise<R
 
 /**
  * POST /docs/share (id, login, role): gives someone a role on one of your
- * documents ("editor" or "viewer"; login "*" is anyone signed in who has the
- * link), or takes it away (role "none" or empty). Only its owner may. Answers
- * JSON: everyone's permissions now, and which of them can't sign in yet
+ * documents ("editor" or "viewer"; login "*" is anyone with the link: refused
+ * unless the server lets people share content publicly), or takes it away (role
+ * "none" or empty). Only its owner may. Answers JSON: everyone's permissions now,
+ * whether the server lets people share publicly (`publicSharing`), which of them can't sign in yet
  * (`notUsers`: not users of this server), each one's picture (`avatars`, by
  * login: their GitHub picture), or the error. GET /docs/share?id=
  * answers the same without changing anything (the list's share dialog).
@@ -183,7 +184,9 @@ export async function shareDoc(platform: Platform, request: Request): Promise<Re
   const url = new URL(request.url);
   const answer = async (permissions: Permission[]) => {
     const notUsers = (await Promise.all(permissions.map(async (p) => (p.login == "*" || (await platform.directory.users.allowed(p.login)) ? null : p.login)))).filter((l) => l != null);
-    return Response.json({ permissions, notUsers, avatars: avatarsOf(permissions.map((p) => p.login)) });
+    // Whether the server lets people share content publicly: the menus offer anyone with the link only then.
+    const publicSharing = await platform.directory.config.get("public_sharing");
+    return Response.json({ permissions, notUsers, avatars: avatarsOf(permissions.map((p) => p.login)), publicSharing });
   };
   if (request.method == "GET") {
     const id = url.searchParams.get("id") ?? "";

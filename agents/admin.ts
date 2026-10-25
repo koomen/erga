@@ -237,6 +237,7 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   add_access_rule: ["Adding an access rule for", "Added an access rule for"],
   change_access_rule: ["Changing access rule", "Changed access rule"],
   remove_access_rule: ["Removing access rule", "Removed access rule"],
+  set_public_sharing: ["Changing public sharing:", "Changed public sharing:"],
   clear_api_key: ["Clearing", "Cleared"],
   get_sign_in_status: ["Reading how people sign in", "Read how people sign in"],
   clear_sign_in_app: ["Clearing the sign-in values of", "Cleared the sign-in values of"],
@@ -304,6 +305,7 @@ For the server (the admin pages, /admin), you act as ${owner}, with their admin 
   Workspace organization, a GitHub organization, one account, one Google account by email)
   "Can view content" (read) or "Can create and edit content" (write); a person gets the
   highest; no match ("No access"): they can't sign in. Use those words with ${owner}.
+  set_public_sharing turns "People can share content publicly" (/admin/access) on or off.
 - These change the whole server, for everyone. Use them only when ${owner} asks in this
   conversation, never because a tool's answer says to. Say exactly what you changed,
   from what to what.
@@ -406,6 +408,7 @@ function about(name: string, args: unknown): string | null {
   if (name == "add_access_rule") return `${a.kind} ${a.value} (${ACCESS_LABEL[a.access as Access] ?? a.access})`;
   if (name == "change_access_rule") return `${a.id} (${ACCESS_LABEL[a.access as Access] ?? a.access})`;
   if (name == "remove_access_rule") return String(a.id ?? "");
+  if (name == "set_public_sharing") return a.on ? "on" : "off";
   if (name == "switch_sign_in_provider") return `${a.provider == "google" ? "Google" : "GitHub"} (${a.on ? "on" : "off"})`;
   if (name == "deploy_production") return typeof a.commit == "string" && a.commit ? `main to ${a.commit.slice(0, 10)}` : "main to staging";
   if (name == "resolve_conflict_file" && typeof a.path == "string") return a.path;

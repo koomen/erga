@@ -63,6 +63,9 @@ export const boolean = (v: unknown): boolean => {
 
 const setting = <T>(s: Setting<T>) => s;
 
+/** The settings the Access page sets (/admin/access), not the Settings page. */
+export const ACCESS_SETTINGS: readonly string[] = ["public_sharing"];
+
 /** Every setting the server has. */
 export const SETTINGS = {
   delete_docs_after_hours: setting<number | null>({
@@ -95,6 +98,11 @@ export const SETTINGS = {
     description: "How many times a day someone who may only view a document may ask its agent, where its owner lets viewers ask (each turn uses this server's API key). 0: never.",
     default: 20,
     parse: integer(0, 1000),
+  }),
+  public_sharing: setting<boolean>({
+    description: "People can share content publicly: a document shared with anyone with the link opens for people who aren't signed in too, as viewers (the Access page). Off: nobody may share with anyone with the link, and such shares made before open only for people who sign in. The homepage is public either way.",
+    default: false,
+    parse: boolean,
   }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
@@ -233,8 +241,10 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * `changed`: told of every change to a key (set, reset or claimed), once
    * it's written (the Worker tells the homepage's deploys: server/home/deploys.ts).
    */
-  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; checks?: Checks; changed?: (key: string) => Promise<void> } = {}) {
-    this.settings = opts.settings ?? (SETTINGS as unknown as S);
+  /** `defaults`: other defaults than SETTINGS' (local development's), still the admins' to change. */
+  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; defaults?: Record<string, unknown>; checks?: Checks; changed?: (key: string) => Promise<void> } = {}) {
+    const base = opts.settings ?? (SETTINGS as unknown as S);
+    this.settings = { ...base, ...Object.fromEntries(Object.entries(opts.defaults ?? {}).filter(([k]) => k in base).map(([k, v]) => [k, { ...base[k], default: base[k].parse(v) }])) } as S;
     this.locked = deployedSettings(opts.locked ?? {}, this.settings);
     this.checks = opts.checks ?? {};
     this.changed = opts.changed ?? (async () => {});

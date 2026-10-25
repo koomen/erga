@@ -73,7 +73,8 @@ const DOCUMENT_RULES = documentPrompt.trim();
 export function beyondPrompt(owner: string, names: string[]): string {
   const lines: string[] = [];
   if (names.includes("share_document")) lines.push(`- document_access and share_document show who the document is shared with and share it
-  (editor, viewer, or none to stop; "*" is anyone signed in with the link). Only its owner
+  (editor, viewer, or none to stop; "*" is anyone with the link, people not signed in too,
+  only where the server lets people share content publicly). Only its owner
   may; leave out "document" for this one. Share only when ${owner} asks you to.`);
   if (names.includes("list_documents")) lines.push(`- list_documents, create_document and delete_document do what ${owner} does on the
   documents list (/docs): list their documents (and the ones shared with them), make a
@@ -91,7 +92,8 @@ export function beyondPrompt(owner: string, names: string[]): string {
   there, never in this conversation), and list_users, add_user, set_user_role,
   set_user_deploy and remove_user for the users, who's an admin and who has the deploy role,
   and list_access_rules, add_access_rule, change_access_rule and remove_access_rule for who
-  "Can view content" and who "Can create and edit content" (or "No access"). These change the whole server, for
+  "Can view content" and who "Can create and edit content" (or "No access"), and
+  set_public_sharing for whether people can share content publicly. These change the whole server, for
   everyone: use them only when ${owner} asks, and say exactly what you changed.`);
   return lines.length ? `\n${lines.join("\n")}` : "";
 }
