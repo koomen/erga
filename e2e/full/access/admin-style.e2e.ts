@@ -41,4 +41,29 @@ test("a link from one admin page to another shows the new page styled, in place"
   });
   expect(colours.on).toBe(colours.blue);
   expect(colours.off).toBe(colours.grey);
+
+  // In dark mode: the switch's circle is the page's colour, as the editor's, and a link in the help text is the editor's
+  // link colour (--link), readable on the dark page.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto(`${server.root}/admin/auth`);
+  await page.waitForSelector(".switch .track");
+  const dark = await page.evaluate(() => {
+    const token = (name: string) => {
+      const el = document.body.appendChild(document.createElement("i"));
+      el.style.color = `var(${name})`;
+      const c = getComputedStyle(el).color;
+      el.remove();
+      return c;
+    };
+    const link = document.querySelector<HTMLElement>("main.admin-main .steps a")!;
+    return {
+      circle: getComputedStyle(document.querySelector(".switch .track")!, "::after").backgroundColor,
+      bg: token("--bg"),
+      link: getComputedStyle(link).color,
+      linkToken: token("--link"),
+    };
+  });
+  expect(dark.circle).toBe(dark.bg);
+  expect(dark.link).toBe(dark.linkToken);
+  expect(dark.bg).toBe("rgb(24, 24, 27)");
 });
