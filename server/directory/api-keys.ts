@@ -12,7 +12,7 @@
 //     one, its last four characters, and who set it when. `value` is for the
 //     server's own calls to the providers.
 //   - The change log gets "ANTHROPIC_API_KEY set by …", never the value.
-//   - Admins only (Users.mustAdmin); server/admin/pages.ts takes changes only from an
+//   - Admins only (Users.mustAdmin); server/admin/routes.ts takes changes only from an
 //     admin, in a browser, with a same-origin request.
 //   - A server with no key stored uses the Worker secret of the same name
 //     (`withCredentials`), so a server deployed without this page still works.

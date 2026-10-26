@@ -144,7 +144,8 @@ health checks and rollbacks work.
                       own script (reader.ts), the files view (files.ts), the documents list (docs.ts), the start page,
                       the account menu, the templates, and what every page shares (chrome.ts)
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
-      admin/          the admin pages (pages.ts), the layout and style they share
+      admin/          the admin pages, one file for each (settings.ts, api-keys.ts, auth.ts, access.ts, changes.ts,
+                      users.ts), their routes (routes.ts) and the layout they share
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     agents/       both embedded agents, and what they share
       tools.ts        the tools both agents and the outside API share; actions.ts, the audit of every action and its tool

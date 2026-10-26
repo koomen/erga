@@ -1,5 +1,5 @@
 // How people sign in to a server: its OAuth apps (GitHub's, Google's), as the
-// Authentication page shows it (/admin/auth, server/admin/pages.ts) and the admin agent
+// Authentication page shows it (/admin/auth, server/admin/auth.ts) and the admin agent
 // reads it.
 //
 // The deploy gives each server its app: the public client ID in
