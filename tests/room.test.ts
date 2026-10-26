@@ -8,7 +8,7 @@ import { Awareness } from "y-protocols/awareness";
 import * as Layer from "effect/Layer";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import * as Effect from "effect/Effect";
-import { YjsWorkspace, type Pacer, type WorkspaceError } from "../editor-agent/workspace";
+import { PACE, YjsWorkspace, type Pacer, type WorkspaceError } from "../editor-agent/workspace";
 import { authorOf, files, introduce, type Author } from "../document/content";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */
@@ -274,5 +274,84 @@ test("a paced edit shows the old text, types the new in steps, and ends as the e
     await tick();
     expect(err.reason).toBe("changed");
     expect(agent.text().toString()).toBe(start.replace("brown", "broown") + "<p>Ada's line.</p>\n");
+  });
+});
+
+test("a paced edit streams long text with tags in many steps, and others never see a half tag", async () => {
+  const para =
+    '<p>The <b>spring release</b> brings three things: faster pages, a new <a href="/docs">guide</a> for teams &amp; their agents, and <i>live</i> carets. ' +
+    "Each of them took a season of work, and each of them shows on every page from today, for every reader and every writer of a document.</p>\n";
+  const start = "<h1>Notes</h1>\n";
+  const agentMe: Author = { user: "ada", name: "Ada’s agent", color: "#12a594", kind: "agent" };
+  await withRoom(memoryStore({ "index.html": start }), async (room) => {
+    const bo = await peer(room, person("Bo"));
+    const agent = await peer(room, agentMe);
+    let waited = 0;
+    const pacer: Pacer = {
+      cursor: () => {},
+      wait: async (ms) => {
+        waited += ms;
+        await tick();
+      },
+      revert: () => {},
+    };
+    const ws = new YjsWorkspace(
+      agent.doc,
+      agentMe,
+      () => true,
+      {},
+      null,
+      () => null,
+      pacer
+    );
+    const seen: string[] = [];
+    bo.doc.on("update", () => seen.push(bo.text().toString()));
+    // A tag whole: what's left with every tag and entity out has no < > or &.
+    const whole = (s: string) => !/[<>&]/.test(s.replace(/<[^<>]*>|&[#\w]+;/g, ""));
+    const balanced = (s: string) =>
+      ["p", "b", "a", "i"].every((n) => s.split(`<${n}>`).length + s.split(`<${n} `).length - 1 == s.split(`</${n}>`).length);
+
+    await Effect.runPromise(ws.edit("index.html", [{ oldText: start, newText: start + para }]));
+    await tick();
+    expect(bo.text().toString()).toBe(start + para);
+    // About 1 s at 300 characters a second, in many steps; each a whole page.
+    expect(para.length).toBeGreaterThan(280);
+    expect(waited).toBeGreaterThan(700);
+    expect(waited).toBeLessThan(1400);
+    expect(seen.length).toBeGreaterThan(20);
+    expect(seen.filter((s) => !whole(s) || !balanced(s))).toEqual([]);
+
+    // Text that doesn't fit the time streams faster, and never jumps to the end.
+    seen.length = waited = 0;
+    const long = para.repeat(10);
+    await Effect.runPromise(ws.edit("index.html", [{ oldText: para, newText: long }]));
+    await tick();
+    expect(bo.text().toString()).toBe(start + long);
+    expect(waited).toBeLessThanOrEqual(PACE.budgetMs);
+    expect(waited).toBeGreaterThan(PACE.budgetMs / 2);
+    expect(seen.length).toBeGreaterThan(50);
+    expect(seen.filter((s) => !whole(s) || !balanced(s))).toEqual([]);
+
+    // A write streams the same way: its changes from the merge.
+    seen.length = waited = 0;
+    await Effect.runPromise(ws.read("index.html"));
+    await Effect.runPromise(ws.write("index.html", start + para));
+    await tick();
+    expect(bo.text().toString()).toBe(start + para);
+    expect(seen.filter((s) => !whole(s) || !balanced(s))).toEqual([]);
+    seen.length = waited = 0;
+    await Effect.runPromise(ws.write("index.html", start + para + para.replace("spring", "autumn")));
+    await tick();
+    expect(seen.length).toBeGreaterThan(20);
+    expect(waited).toBeGreaterThan(700);
+    expect(seen.filter((s) => !whole(s) || !balanced(s))).toEqual([]);
+
+    // A very large call applies at once.
+    seen.length = waited = 0;
+    const huge = "<p>" + "word ".repeat(PACE.wholeChars / 5) + "</p>\n";
+    await Effect.runPromise(ws.write("big.html", huge));
+    await tick();
+    expect(bo.text("big.html").toString()).toBe(huge);
+    expect(waited).toBe(0);
   });
 });
