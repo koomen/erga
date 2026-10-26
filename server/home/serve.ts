@@ -8,11 +8,10 @@
 
 import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
-import { mayDeploy } from "../../control/deploys/access.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import type { LivePage } from "./deploys.ts";
 import { HOME_FILES, homeHeader } from "./render.ts";
-import { actingAdmin } from "../identity/index.ts";
+import { actingAdmin, mayDeploy } from "../identity/index.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
 let memo: { page: LivePage; checked: number } | null = null;

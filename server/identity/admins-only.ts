@@ -41,7 +41,6 @@
 // (made before this guard, or by another server) is refused.
 
 
-import { TARGETS } from "../../deploy/targets.ts";
 import { isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
 import { isAssetPath, page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
@@ -104,10 +103,19 @@ export async function adminsOnlyGate(request: Request, base: Platform, url: URL)
     return new Response(`${why}\n`, { status: session ? 403 : 401, headers: { "Content-Type": "text/plain; charset=utf-8", ...(session ? {} : { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"' }) } });
   }
   if (!wantsPage(request, url)) return json({ error: why, adminsOnly: true }, 403);
-  const production = `https://${TARGETS.production.host}`;
+  const productionHost = base.deploy.targets.production.host,
+    production = `https://${productionHost}`;
   const refusal = signedIn
-    ? page("Staging is for Erga's admins only", `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one. Erga itself is at <a href="${production}">${TARGETS.production.host}</a>. <a href="/auth/logout">Sign out</a>`, 403)
-    : page("Staging is for admins: sign in", `This is staging, a test copy of Erga for its admins. Admins sign in with staging's own GitHub app, or Google's where it is on. Erga itself is at <a href="${production}">${TARGETS.production.host}</a>.</p><p><a class="new sign-in" href="/auth/sign-in?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in</a>`, 403);
+    ? page(
+        "Staging is for Erga's admins only",
+        `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one. Erga itself is at <a href="${production}">${productionHost}</a>. <a href="/auth/logout">Sign out</a>`,
+        403
+      )
+    : page(
+        "Staging is for admins: sign in",
+        `This is staging, a test copy of Erga for its admins. Admins sign in with staging's own GitHub app, or Google's where it is on. Erga itself is at <a href="${production}">${productionHost}</a>.</p><p><a class="new sign-in" href="/auth/sign-in?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in</a>`,
+        403
+      );
   refusal.headers.set("Cache-Control", "no-store");
   return refusal;
 }

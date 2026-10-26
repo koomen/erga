@@ -10,6 +10,7 @@ import { chooseSignIn, finishGoogleSignIn, startGoogleSignIn, startSignIn } from
 import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { memory } from "./helpers/memory-sql.ts";
+import { TARGETS } from "../deploy/targets";
 
 const GOOGLE = "https://google.test", GITHUB = "https://github.test";
 const APP = { clientId: "123456789012-abcdefghijklmnop.apps.googleusercontent.com", secret: "GOCSPX-abcdefghijklmnopqrstuv" };
@@ -37,7 +38,7 @@ function server() {
   const platform = {
     secret: "session-secret", dev: () => false, own, directory,
     signIn: { app: { clientId: "Ov23liGoodApp00000001", secret: "a".repeat(40) }, github: GITHUB, googleApp: APP, google: GOOGLE, relay: null, devLogin: null, encryptionKey: "factory-key" },
-    deploy: { target: null, version: null, hookSecret: "", originOf: () => "" },
+    deploy: { target: null, version: null, targets: TARGETS },
   } as unknown as Platform;
   return { platform, own, directory };
 }

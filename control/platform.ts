@@ -17,7 +17,7 @@ import type { Env } from "../cloudflare/env";
 import type { Pipeline } from "./deploys/pipeline-object";
 import type { SourceHost } from "./source/source-host";
 import { sourceService } from "./source/service";
-import { TARGETS, type TargetName } from "../deploy/targets";
+import { TARGETS } from "../deploy/targets";
 import { sessionOf, Tokens } from "../server/identity/index.ts";
 import type { Platform } from "../server/platform";
 import type { Builder } from "./builder/worker";
@@ -108,7 +108,7 @@ export function controlPlatform(env: ControlEnv, ctx: ExecutionContext): Platfor
     own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
     source: sourceService(e),
     deploys: env.PIPELINE.getByName("deploys"),
-    deploy: { target: null, version: env.CF_VERSION_METADATA?.id ?? null, hookSecret: "", originOf: (t: TargetName) => `https://${TARGETS[t].host}` },
+    deploy: { target: null, version: env.CF_VERSION_METADATA?.id ?? null, targets: TARGETS },
     edge: { cache: null, background: (work: Promise<unknown>) => ctx.waitUntil(work), homeRecheckMs: 0 },
     assets: async () => new Response("Not found", { status: 404 }),
     templates: {},

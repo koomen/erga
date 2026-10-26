@@ -11,7 +11,7 @@
 import { INSTALL_CONTROL_WORKER, type InstallSpec } from "../install/install";
 import type { Target } from "./pipeline";
 import type { Channel } from "./releases";
-import { CONTROL, CONTROL_ENTRYPOINT, type DeployName } from "../../deploy/targets";
+import { CONTROL_ENTRYPOINT, type DeployName } from "../../deploy/targets";
 
 /** The control Worker's settings a fleet needs. */
 export interface FleetEnv { CLOUDFLARE_ACCOUNT_ID?: string; SNAPSHOT_TOKEN?: string }
@@ -93,4 +93,3 @@ export function installFleet(env: InstallEnv): Fleet | null {
   };
 }
 
-export { CONTROL };

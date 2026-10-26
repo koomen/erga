@@ -5,7 +5,6 @@
 // Cloudflare binding.
 
 import type { AgentToken, AppValues, AuthStorage, Tokens } from "./identity/index.ts";
-import type { TargetName } from "../deploy/targets.ts";
 import type { HomeObject } from "./home/index.ts";
 import type { SourceService } from "../control/source/index.ts";
 import type { AdminAgentObject, DashboardDeploys } from "../agents/admin/sessions.ts";
@@ -107,16 +106,14 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens. */
   tokens: Tokens;
-  /** Which of Erga's own deploy targets this server is, and how it reaches the other one. */
+  /** Which of Erga's own deploy targets this server is, and where they are. */
   deploy: {
     /** "production", "staging", or null on any other server (one /deploy made, local development). */
-    target: TargetName | null;
+    target: "production" | "staging" | null;
     /** The release this server runs (the commit), or null where no deploy named one. */
     version: string | null;
-    /** The secret Erga's servers prove themselves to each other with (DEPLOY_HOOK_SECRET); "" when there's none. */
-    hookSecret: string;
-    /** The other target's server: https://<its host>, or local development's stand-in for it. */
-    originOf(target: TargetName): string;
+    /** Erga's own targets, as deploy/targets.json names them: each one's host (erga.dev) and Worker. */
+    targets: Record<"production" | "staging", { host: string; worker: string }>;
   };
   /** Sign-in's fixed values, from the deploy. */
   signIn: {

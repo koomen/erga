@@ -151,7 +151,6 @@ export default defineConfig(({ mode }) => ({
         GITHUB_WEBHOOK_SECRET: bindings.text("mock-webhook-secret"),
         // A downstream dev server (ERGA_UPSTREAM): its fork's secret at upstream (tests set it; the webhook relay signs with its hash).
         FORK_SECRET: bindings.text(process.env.ERGA_FORK_SECRET ?? ""),
-        ERGA_PEER_ORIGIN: bindings.text(process.env.ERGA_PEER_ORIGIN ?? ""),
         // "1": /deploy and the branch deploys talk to a pretend Cloudflare, for their tests and for trying them safely.
         ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),
         // The dev server as a downstream of another (the tests start two): where upstream is, and the channel followed.

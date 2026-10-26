@@ -29,12 +29,11 @@ import type { DeployPlan } from "../deploys/plan";
 import { DEPLOY_OAUTH_COOKIE, INSTALL_CONTROL_WORKER } from "./install";
 import { mockCloudflare } from "../../dev/mock-cloudflare";
 import { deployPage, mockConsentPage } from "./page";
-import { mayDeploy } from "../deploys/access";
 import { page } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { base64url, randomToken, sha256 } from "../../shared/bytes.ts";
 import { whoOf, type Platform } from "../../server/platform";
-import { cookies, setCookie } from "../../server/identity/index.ts";
+import { cookies, mayDeploy, setCookie } from "../../server/identity/index.ts";
 import type { Env } from "../../cloudflare/env";
 import { releaseStoreOf } from "../cloudflare";
 

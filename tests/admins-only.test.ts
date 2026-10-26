@@ -10,7 +10,7 @@ import type { Directory } from "../server/directory/index.ts";
 const serverWith = (clientId: string): Platform => ({
   secret: "x", dev: () => false, directory: {} as Directory,
   signIn: { app: { clientId, secret: "" }, github: "https://github.com", devLogin: null, encryptionKey: null },
-  deploy: { target: null, version: null, hookSecret: "", originOf: () => "" },
+  deploy: { target: null, version: null, targets: TARGETS },
   own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
 } as unknown as Platform);
 

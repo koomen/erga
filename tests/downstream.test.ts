@@ -5,11 +5,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { controlRoutes, relayOrigin, type Control } from "../control/routes";
+import { controlRoutes, type Control } from "../control/routes";
+import { relayOrigin } from "../shared/relay";
 import { Cloudflare } from "../control/deploys/cloudflare-api";
 import { loadRelease, type Release } from "../control/deploys/release-format";
 import type { DeployPlan } from "../control/deploys/plan";
-import { controlHostOf, INSTALL_STEPS, installControlMetadata, runInstall, stagingHostOf } from "../control/install/install";
+import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf } from "../control/install/install";
+import { installControlMetadata } from "../control/deploys/control-worker";
 import { builderEndpoint, forkBuilder, forkHosts, forkRemote, hashSecret } from "../control/install/forks";
 import { BranchDeploys } from "../control/deploys/branches";
 import { fixedCredential } from "../control/deploys/credential";

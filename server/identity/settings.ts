@@ -24,7 +24,6 @@ import {
   statusOf,
 } from "./apps.ts";
 import type { Act } from "../../shared/attribution.ts";
-import { TARGETS, type TargetName } from "../../deploy/targets.ts";
 import type { Platform } from "../platform.ts";
 
 /** The provider a call means when it names none. */
@@ -32,7 +31,7 @@ const PROVIDER: Provider = "github";
 
 type SignInPlatform = Pick<Platform, "deploy" | "signIn" | "own" | "directory" | "dev">;
 
-const targetOf = (platform: SignInPlatform): TargetName | null => platform.deploy.target;
+const targetOf = (platform: SignInPlatform) => platform.deploy.target;
 
 /** The page's values, in this server's own storage (not D1: apps.ts says why). */
 const appsOf = (platform: SignInPlatform) => new AuthApps(platform.own, platform.signIn.encryptionKey, targetOf(platform) ?? "");
@@ -161,10 +160,10 @@ async function localStatus(platform: SignInPlatform, origin: string, provider: P
   const target = targetOf(platform);
   const pagePlace = `on this server's Authentication page (${origin}/admin/auth)`;
   return statusOf(contextOf(platform, provider), {
-    origin: target && !platform.signIn.devLogin ? `https://${TARGETS[target].host}` : origin,
+    origin: target && !platform.signIn.devLogin ? `https://${platform.deploy.targets[target].host}` : origin,
     target,
     dev: platform.dev(new URL(origin)),
-    worker: target ? TARGETS[target].worker : undefined,
+    worker: target ? platform.deploy.targets[target].worker : undefined,
     pagePlace,
   });
 }

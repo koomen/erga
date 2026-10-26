@@ -13,6 +13,7 @@ import { testedSignIn } from "../server/identity/settings";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
 import { quietConsole } from "./helpers/quiet.ts";
+import { TARGETS } from "../deploy/targets";
 
 quietConsole();
 
@@ -190,7 +191,7 @@ function serverOn(own: Platform["own"]): Platform {
   return {
     secret: "s", dev: () => false,
     signIn: { app: GOOD, github: "https://github.com", devLogin: null, encryptionKey: "factory-key" },
-    deploy: { target: "production", version: null, hookSecret: "", originOf: (t) => `https://${t}.example` },
+    deploy: { target: "production", version: null, targets: TARGETS },
     own,
     directory: { config: { record: async () => {} } } as unknown as Directory,
   } as Platform;

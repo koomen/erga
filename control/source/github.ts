@@ -21,7 +21,7 @@
 // a `net` to reach GitHub (the tests' and local development's pretend GitHub,
 // dev/github-mock.ts, answers the same routes).
 
-import { base64url, fromBase64url, hex, randomBytes, sha256 } from "../../shared/bytes";
+import { base64url, fromBase64url, hex, sha256 } from "../../shared/bytes";
 
 export interface GithubApp {
   /** The App's id (the JWT's issuer), slug (its install page: github.com/apps/<slug>) and client id (sign-in). */
@@ -198,41 +198,7 @@ export function linkOf(installationId: number, account: { login: string; type: s
   return { installationId, account, repo: { id: repo.id, fullName: repo.full_name, cloneUrl: repo.clone_url, htmlUrl: repo.html_url, private: !!repo.private, defaultBranch: repo.default_branch || "main" }, by, at };
 }
 
-// ---------------------------------------------------------------- the relay: an install's consent through erga.dev
-
-/**
- * A state for a consent an install's Worker starts: its origin (base64url), a dot, a random nonce. erga.dev's callback
- * reads the origin and relays the answer there; the nonce (in the install's cookie, never sent on) opens what it relays.
- */
-export const relayState = (origin: string, nonce: string) => `${base64url(enc.encode(origin))}.${nonce}`;
-export function relayOrigin(state: string | null): string | null {
-  const [head, rest] = (state ?? "").split(".");
-  if (!head || !rest) return null;
-  try {
-    const origin = new TextDecoder().decode(fromBase64url(head));
-    return /^https:\/\/[a-z0-9.-]+$/i.test(origin) ? origin : null;
-  } catch { return null; }
-}
-export const relayNonce = (state: string) => state.split(".")[1] ?? "";
-
-const relayKey = async (nonce: string) =>
-  crypto.subtle.importKey("raw", await sha256(`erga-github-relay:${nonce}`), "AES-GCM", false, ["encrypt", "decrypt"]);
-
-/** What erga.dev relays to an install (the person's token, GitHub's answer), sealed under the consent's nonce: only the browser that started it (its cookie) and the install's Worker open it. */
-export async function sealRelay(nonce: string, payload: object): Promise<string> {
-  const iv = randomBytes(12);
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await relayKey(nonce), enc.encode(JSON.stringify(payload))));
-  const out = new Uint8Array(iv.length + ct.length);
-  out.set(iv); out.set(ct, iv.length);
-  return base64url(out);
-}
-export async function openRelay<T extends object>(nonce: string, sealed: string): Promise<T | null> {
-  try {
-    const bytes = fromBase64url(sealed);
-    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.subarray(0, 12) }, await relayKey(nonce), bytes.subarray(12));
-    return JSON.parse(new TextDecoder().decode(plain)) as T;
-  } catch { return null; }
-}
+// ---------------------------------------------------------------- the relay: an install's consent through erga.dev (shared/relay.ts)
 
 /** A webhook relayed to an install's control Worker: signed with the fork secret's hash (both sides have it; nobody else). */
 export const relaySignature = (forkSecretHash: string, body: Uint8Array | string) => signWebhook(`erga-relay:${forkSecretHash}`, body);

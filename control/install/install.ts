@@ -40,7 +40,6 @@ import type { Release } from "../deploys/release-format";
 import { installControlMetadata } from "../deploys/control-worker";
 import { CONTROL_ENTRYPOINT } from "../../deploy/targets";
 import { sleep } from "../../shared/time";
-export { installControlMetadata };
 
 /** The install's steps, as the page lists them: the pipeline's, with the control Worker's two among them. */
 export const INSTALL_STEPS = [

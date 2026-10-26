@@ -6,6 +6,7 @@ import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql } from "../server/directory";
 import { health } from "../server/health";
 import type { Platform } from "../server/platform";
+import { TARGETS } from "../deploy/targets";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 
@@ -21,8 +22,10 @@ function directory(): Directory {
   return new Directory(sql, { admins: ["ada"] });
 }
 
-const platform = (dir: Directory, exists: (id: string) => Promise<boolean>): Platform => ({
-  directory: dir, deploy: { target: "staging", version: "abcdef123456", hookSecret: "", originOf: () => "" },
+const platform = (dir: Directory, exists: (id: string) => Promise<boolean>): Platform =>
+  ({
+    directory: dir,
+    deploy: { target: "staging", version: "abcdef123456", targets: TARGETS },
   docs: { exists: async (doc: { id: string }) => exists(doc.id) },
 } as unknown as Platform);
 

@@ -11,6 +11,7 @@ import { controlRoutes, isControlPath, type Control } from "../control/routes";
 import { localToken } from "../dev/git-server.ts";
 import { adminsOnlyGate } from "../server/identity/admins-only.ts";
 import type { Platform } from "../server/platform";
+import { TARGETS } from "../deploy/targets";
 import type { SourceService } from "../control/source/index.ts";
 import { git, must, startFixture, type Fixture } from "./helpers/source-fixture.ts";
 
@@ -148,7 +149,13 @@ describe("what stays shut", () => {
   });
 
   test("on staging (admins only), the page and Git need an admin too", async () => {
-    const staging = { adminsOnly: true, sessionOf: async () => null, pagesDomain: () => "", directory: { users: {} } } as unknown as Platform;
+    const staging = {
+      adminsOnly: true,
+      sessionOf: async () => null,
+      pagesDomain: () => "",
+      directory: { users: {} },
+      deploy: { targets: TARGETS },
+    } as unknown as Platform;
     for (const p of ["/git", "/git/erga.git", "/git/tree/main/README.md", "/git/erga.git/info/refs?service=git-upload-pack"]) {
       const url = new URL(`https://staging.erga.test${p}`);
       const refused = await adminsOnlyGate(new Request(url, { headers: { accept: "text/html" } }), staging, url);
