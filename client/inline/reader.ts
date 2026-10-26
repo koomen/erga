@@ -5,7 +5,7 @@
 // document to the viewer, which opens them. `C`: the viewer's origin, where the document's files are, and the editor's
 // half for whoever may edit.
 
-import type { ReaderConfig } from "../../shared/page";
+import type { ReaderConfig } from "../../shared/page-html";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
 type Canvas = {
@@ -151,7 +151,7 @@ export default function reader(C: ReaderConfig): void {
     },
     { capture: true, passive: true }
   );
-  // Links, reading (the editor follows its own: client/frame.ts). To another of the document's pages: in this frame, as
+  // Links, reading (the editor follows its own: client/page-editor/frame.ts). To another of the document's pages: in this frame, as
   // the link says. Out of the document: a new tab, unless the link names its own target; "_self" takes the whole tab.
   // The viewer opens both, on the reader's click.
   document.addEventListener("click", (e) => {

@@ -1,4 +1,4 @@
-// The files view (/<owner>/<slug>?files: server/pages/files.ts, client/files.ts): every file of a document, any kind,
+// The files view (/<owner>/<slug>?files: server/pages/files.ts, client/pages/files.ts): every file of a document, any kind,
 // stored as text or as a blob (document/blobs.ts); a drop adds files and says what it replaced; rows rename, move and
 // delete (a folder asks once); the list follows changes made elsewhere, live.
 import type { Page } from "playwright-core";

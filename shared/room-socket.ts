@@ -1,6 +1,6 @@
 // How a tab starts on its document, and what it says on its socket besides
 // the room's Yjs messages and the person's events: shared by the host
-// (document/host.ts, document/tabs.ts) and the browser (client/collab.ts).
+// (document/host.ts, document/tabs.ts) and the browser (client/shell/collab.ts).
 //
 // A tab starts with one request on the connection it has already (GET
 // /d/<id>/api/start: its hello and the room's whole state, START below), and

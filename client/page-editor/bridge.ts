@@ -19,8 +19,8 @@
 
 import { ChangeSet, EditorSelection, type EditorState } from "@codemirror/state";
 import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, Peer } from "./editor";
-import type { ViewRequest, ViewResult } from "../shared/agent-log";
-import type { LiveRequest, LiveResult } from "../shared/live-page";
+import type { ViewRequest, ViewResult } from "../../shared/agent-log";
+import type { LiveRequest, LiveResult } from "../../shared/live-page";
 import { zoomKey, type ZoomBy } from "./zoom";
 
 /** The parts of a keydown the shell's shortcuts look at. */

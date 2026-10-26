@@ -62,7 +62,7 @@ export class DocumentObject extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // A tab's "are you there?" is answered without waking the object (client/collab.ts sends it while idle).
+    // A tab's "are you there?" is answered without waking the object (client/shell/collab.ts sends it while idle).
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
   }
 
@@ -181,7 +181,7 @@ export class DocumentObject extends DurableObject<Env> {
     const tab: Tab = {
       id: crypto.randomUUID(), readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null,
       person: personOf(request.headers), events: url.searchParams.get("events") == "1" || url.searchParams.get("watch") == "files",
-      // A files view (client/files.ts): it hears the tree change, and never joins the room.
+      // A files view (client/pages/files.ts): it hears the tree change, and never joins the room.
       ...(url.searchParams.get("watch") == "files" ? { watch: true } : {}),
     };
     const [client, server] = Object.values(new WebSocketPair());

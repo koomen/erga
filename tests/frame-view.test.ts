@@ -1,4 +1,4 @@
-// The frame's build has an inert stand-in for @codemirror/view (client/frame-view.ts,
+// The frame's build has an inert stand-in for @codemirror/view (client/page-editor/frame-view.ts,
 // client/build.ts FRAME_VIEW): the frame keeps an EditorState and never a view. This
 // checks that the frame's bundle has none of the real view's code, and that what the
 // frame does with CodeMirror (a state with its history: edits, undo and redo; the state
@@ -15,12 +15,20 @@ const ROOT = resolve(import.meta.dir, "..");
 test("the frame's bundle has nothing of @codemirror/view but the stand-in", async () => {
   const outdir = mkdtempSync(join(tmpdir(), "erga-frame-"));
   try {
-    const built = await Bun.build({ entrypoints: [join(ROOT, "client/frame.ts")], outdir, splitting: true, target: "browser", format: "esm", metafile: true, plugins: [FRAME_VIEW] } as Bun.BuildConfig);
+    const built = await Bun.build({
+      entrypoints: [join(ROOT, "client/page-editor/frame.ts")],
+      outdir,
+      splitting: true,
+      target: "browser",
+      format: "esm",
+      metafile: true,
+      plugins: [FRAME_VIEW],
+    } as Bun.BuildConfig);
     expect(built.success).toBe(true);
     const meta = (built as unknown as { metafile: { inputs: Record<string, unknown>; outputs: Record<string, { inputs: Record<string, unknown>; entryPoint?: string }> } }).metafile;
     const all = Object.keys(meta.inputs);
     expect(all.filter((p) => p.includes("@codemirror/view"))).toEqual([]);
-    expect(all.some((p) => p.endsWith("client/frame-view.ts"))).toBe(true);
+    expect(all.some((p) => p.endsWith("client/page-editor/frame-view.ts"))).toBe(true);
     // And the agent's screenshots load only when asked for: a chunk of their own, not the frame's script.
     const entry = Object.values(meta.outputs).find((o) => o.entryPoint)!;
     expect(Object.keys(entry.inputs).filter((p) => p.includes("modern-screenshot"))).toEqual([]);
@@ -31,7 +39,7 @@ test("the frame's bundle has nothing of @codemirror/view but the stand-in", asyn
 });
 
 test("the frame's CodeMirror work, over the stand-in: edits, undo and redo, its state as JSON", async () => {
-  mock.module("@codemirror/view", () => import("../client/frame-view.ts"));
+  mock.module("@codemirror/view", () => import("../client/page-editor/frame-view.ts"));
   const { EditorState, Transaction } = await import("@codemirror/state");
   const { history, historyField, undo, redo, isolateHistory } = await import("@codemirror/commands");
 

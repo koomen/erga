@@ -5,11 +5,11 @@ import type { AgentState, ModelState } from "../../document/api";
 import type { Log, LogEvent } from "../../shared/agent-log";
 import { fileRefs, type Attachment } from "../../shared/attach";
 import { FIX_REPORTED, pageReport } from "../../shared/page-report";
-import { chat } from "../agent-chat";
-import { attachments } from "../attach-ui";
-import { mountLayout } from "../layout";
-import { backoff, transient } from "../live-client";
-import { ms } from "../timescale";
+import { chat } from "../agent/agent-chat";
+import { attachments } from "../agent/attach-ui";
+import { mountLayout } from "../agent/layout";
+import { backoff, transient } from "../live/client";
+import { ms } from "../page-editor/timescale";
 import { $, store, type Shell } from "./shell";
 
 export function mountAgent(shell: Shell) {

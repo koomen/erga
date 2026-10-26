@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import {
   AGENT_DEFAULT, AGENT_MAX, AGENT_MIN, DEFAULT, DOC_MIN, INSET, KEY, PICKER_W,
   agentWidth, geometry, insertAt, load, magnets, normalize, pickSlot, resized, save, sideOf, type Layout,
-} from "../client/layout";
+} from "../client/agent/layout";
 
 const view = { width: 1400, safeL: 0, safeR: 0 };
 const both = { agent: true, picker: true };
@@ -187,7 +187,7 @@ test("kept in storage, and read back", () => {
 
 test("the admin pages' early script puts the agent where mountPaneLayout will (no shift once admin-agent.js runs)", async () => {
   const { PANE_EARLY_SCRIPT } = await import("../server/admin/layout.ts");
-  const { PANE_KEY, loadPane, paneWidth } = await import("../client/layout");
+  const { PANE_KEY, loadPane, paneWidth } = await import("../client/agent/layout");
   const body = /<script>([\s\S]*)<\/script>/.exec(PANE_EARLY_SCRIPT)![1];
   const cases: [unknown, number][] = [[null, 1200], [{ side: "right", width: 520 }, 1400], [{ side: "left", width: 900 }, 1000], [{ width: 100 }, 1600], ["broken", 1200]];
   for (const [kept, room] of cases) {
@@ -204,7 +204,7 @@ test("the admin pages' early script puts the agent where mountPaneLayout will (n
 
 test("the editor's early layout puts on what mountLayout will (the document doesn't move once main.ts runs)", async () => {
   const { LAYOUT_EARLY } = await import("../server/pages/viewer.ts");
-  const { KEY, layoutVars, load } = await import("../client/layout");
+  const { KEY, layoutVars, load } = await import("../client/agent/layout");
   const layouts: unknown[] = [null, "broken", { order: ["doc", "picker", "agent"], agentWidth: 520 }, { order: ["picker", "agent", "doc"], agentWidth: 900 },
     { order: ["agent", "picker", "doc"], agentWidth: 100 }, { order: ["doc", "agent", "picker"], agentWidth: 450 }, { order: ["x"], agentWidth: "wide" }];
   for (const kept of layouts) for (const agent of [true, false, undefined]) for (const width of [1300, 1000, 800, 700, 390]) for (const safe of [0, 47]) {

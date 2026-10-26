@@ -1,5 +1,5 @@
 // A problem the page editor reported about a page (a file that didn't load, a
-// script error), for the toast's "Fix with agent" (client/main.ts). The page
+// script error), for the toast's "Fix with agent" (client/shell/main.ts). The page
 // editor runs on the page's origin, so the page's own script can write the
 // report: the agent gets it as data in a block of its own, never as what the
 // person asked (the editor agent's system prompt says so).

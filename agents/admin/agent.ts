@@ -1,6 +1,6 @@
 // The admin's agent, on every admin page: an agent panel like the editor's
 // (the same transcript, shared/agent-log.ts, and the same panel,
-// client/agent-chat.ts, run by client/admin-agent.ts). Its tools: the
+// client/agent/agent-chat.ts, run by client/admin/admin-agent.ts). Its tools: the
 // admin tools of agents/tools.ts (`adminTools`): the settings on /admin,
 // their change log, the API keys (read, clear), sign-in (read, clear:
 // /admin/auth), and the users. Read-only tools for Erga's own source

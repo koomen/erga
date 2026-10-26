@@ -1,7 +1,7 @@
 // A page that moves its text without a scroll of the window (a board panned by a drag or the wheel, with a
-// transform; a column that scrolls by itself): the caret drawn by the editor (client/caret.ts) and the format bar
+// transform; a column that scrolls by itself): the caret drawn by the editor (client/page-editor/caret.ts) and the format bar
 // move with the text, at 100% and with the page zoomed. And a drag that starts on the text selects it: the page's
-// own handlers, which pan the board from any press, don't see it (client/text-guard.ts). And a press on the empty
+// own handlers, which pan the board from any press, don't see it (client/page-editor/text-guard.ts). And a press on the empty
 // board, with the caret in text, pans it and leaves the caret where it is: the browser starts no selection there.
 import { expect, servers, test } from "../../fixtures";
 import { F, openEditor, type Editor } from "../../editor";

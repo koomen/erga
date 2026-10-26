@@ -30,8 +30,8 @@
 // deploy rolls out) waits longer each time.
 
 import { RESTORE_KEY, restored, type Saved } from "./restore";
-import type { Live } from "./live-client";
-import { ASSET_PREFIX, stemOf } from "../shared/assets";
+import type { Live } from "./client";
+import { ASSET_PREFIX, stemOf } from "../../shared/assets";
 
 declare global {
   /** The editor's files a page uses that its elements don't name, by name ("frame.js": the address it loaded): the viewer's, once editing. */

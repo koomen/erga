@@ -4,7 +4,7 @@
 // right, read-only, as the browser shows it: a PDF in its PDF viewer, an
 // image or a video as it is, text as text. Whoever may edit adds files (a
 // drop anywhere on the window, into the selected folder), and moves,
-// renames and deletes them. The page's script is its own (client/files.ts,
+// renames and deletes them. The page's script is its own (client/pages/files.ts,
 // files.js), loaded only here.
 
 import type { Session } from "../platform.ts";

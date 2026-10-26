@@ -1,15 +1,15 @@
-// The page editor's shell, as its parts share it (client/main.ts makes it and mounts each part on it): who this tab
+// The page editor's shell, as its parts share it (client/shell/main.ts makes it and mounts each part on it): who this tab
 // is, the document and the page it edits, the page editor, and each part's own calls. A part reads what another
 // part keeps through here at the moment it needs it, so the parts can mount in any order the page allows.
 
 import type { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { MarkAuthor } from "../editor";
-import type { RemotePage } from "../remote";
-import type { Collab } from "../collab";
+import type { MarkAuthor } from "../page-editor/editor";
+import type { RemotePage } from "./remote";
+import type { Collab } from "./collab";
 import type { Author } from "../../document/content";
 import type { DocInfo, DocName } from "../../document/api";
-import type { Settings } from "../settings";
+import type { Settings } from "../pages/settings";
 import type { Naming } from "./naming";
 import type { Room } from "./room";
 import type { People } from "./people";
@@ -67,7 +67,7 @@ export interface Shell {
   mode: Mode;
   sourceView: EditorView | null;
   /** The source view's code, once loaded. */
-  source: typeof import("../source-view") | null;
+  source: typeof import("./source-view") | null;
   /** The document's settings, once the gear has loaded them (Chrome.loadSettings). */
   docSettings: Settings | null;
 

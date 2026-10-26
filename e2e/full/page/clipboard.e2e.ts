@@ -1,4 +1,4 @@
-// Paste in and copy out keep the basic formatting and drop the rest (client/clipboard.ts): paragraphs, line breaks,
+// Paste in and copy out keep the basic formatting and drop the rest (client/page-editor/clipboard-html.ts): paragraphs, line breaks,
 // bold, italic, links, lists (nested), headings, quotes and code; never fonts, sizes, colours, classes or styles.
 import { expect, servers, test } from "../../fixtures";
 import { F, openEditor, type Editor } from "../../editor";

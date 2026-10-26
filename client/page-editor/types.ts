@@ -45,7 +45,7 @@ export interface Peer {
 export interface PageEditorConfig {
   /** The page's window: the editor runs in it, on the page as the pages origin served it. */
   win: Window;
-  /** The digest of the text the page was made from (shared/page.ts): the editor takes the page only if its text is the same. */
+  /** The digest of the text the page was made from (shared/page-html.ts): the editor takes the page only if its text is the same. */
   source: string;
   state: EditorState;
   /** Where the document's relative URLs resolve, e.g. "/doc/". */

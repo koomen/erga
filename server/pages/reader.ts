@@ -1,7 +1,7 @@
 // A document's page, as everyone sees it: one frame on the viewer (pages/viewer.ts), which holds the page on the
 // document's own pages origin (documents/pages-origin.ts), served with the source marks the editor needs
-// (shared/page.ts). It loads once: reading it, and editing it. Going into the editor loads the editor's half into the
-// page itself (client/frame.ts, from the app's origin, pinned by its integrity), which finds the text there by its
+// (shared/page-html.ts). It loads once: reading it, and editing it. Going into the editor loads the editor's half into the
+// page itself (client/page-editor/frame.ts, from the app's origin, pinned by its integrity), which finds the text there by its
 // marks; going back out stops it, and the page stays as it is, its scripts and media carrying on.
 //
 // This script goes into the page first (before the page's own), and tells the viewer by postMessage what it needs:
@@ -14,7 +14,7 @@
 // this one document: that's the boundary (PAGE_SANDBOX).
 
 import { EVENT_TYPES, liveWatch } from "../../shared/live-page.ts";
-import { insertHead, type ReaderConfig } from "../../shared/page.ts";
+import { insertHead, type ReaderConfig } from "../../shared/page-html.ts";
 import { asset, frameScripts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
 
@@ -31,7 +31,7 @@ const EDITING_API = inlineCall("page-editing-api");
  * allow-same-origin stays, with allow-scripts: the page keeps its pages origin, which holds nothing but this one
  * document, and the editor's half reaches into it there (typing and carets). So the page's script can remove its own
  * sandbox: Chrome warns about that, rightly, and it changes nothing. The boundary is the origin: the page can't reach
- * erga.dev, its cookies or another document's origin, and the viewer (viewer.ts, client/remote.ts) treats every
+ * erga.dev, its cookies or another document's origin, and the viewer (viewer.ts, client/shell/remote.ts) treats every
  * message from it as the page's own. Its own storage is its own, as on any site.
  */
 export const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
@@ -60,7 +60,7 @@ const LIVE_WATCH = () => `(function(){var __name=function(f){return f};(${liveWa
 const inline = (js: string) => js.replace(/<\/script/gi, "<\\/script");
 
 /**
- * A page of the document as its pages origin serves it: its marked HTML (shared/page.ts, markPage) with, first in its
+ * A page of the document as its pages origin serves it: its marked HTML (shared/page-html.ts, markPage) with, first in its
  * <head>, this script; for whoever may edit, before it, the editor's half's integrity (an import map: the browser checks
  * each of its modules against it, and it must come before any module loads), and after it, the scripts the editor needs
  * from the page's first moment (its problems and its live log, the text guard, ergaEditor).

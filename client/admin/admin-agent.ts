@@ -17,13 +17,13 @@
 // Share with agent is in every admin page's header. Built
 // by client/build.ts to admin-agent.js.
 
-import { chat } from "./agent-chat";
-import { fileRefs, type Attachment } from "../shared/attach";
-import { attachments } from "./attach-ui";
-import type { Log, LogEvent } from "../shared/agent-log";
-import { mountPaneLayout, type PaneLayout } from "./layout";
-import { backoff, live, transient } from "./live-client";
-import { restoredFor } from "./restore";
+import { chat } from "../agent/agent-chat";
+import { fileRefs, type Attachment } from "../../shared/attach";
+import { attachments } from "../agent/attach-ui";
+import type { Log, LogEvent } from "../../shared/agent-log";
+import { mountPaneLayout, type PaneLayout } from "../agent/layout";
+import { backoff, live, transient } from "../live/client";
+import { restoredFor } from "../live/restore";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
 // (window.ergaAgent: client/inline/admin-agent.ts.)

@@ -3,7 +3,7 @@
 
 import type { ViewRequest } from "../../shared/agent-log";
 import { ConsoleLog, liveWatch, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../../shared/live-page";
-import { ms } from "../timescale";
+import { ms } from "../page-editor/timescale";
 import { $, type Shell } from "./shell";
 
 // The editor's own console (this window's), from its first line: page_console gives it with the page's ("editor").

@@ -7,11 +7,11 @@ interface ErgaFrames {
   readonly frame: HTMLIFrameElement;
   from(e: MessageEvent): boolean;
   send(m: unknown): void;
-  /** How much larger than its own size the frame shows (the editor's zoom: client/zoom.ts). */
+  /** How much larger than its own size the frame shows (the editor's zoom: client/page-editor/zoom.ts). */
   scale(): number;
 }
 
-/** What the editor kept for its reload, as the page opens with it (viewer-editing-head.ts; client/main.ts keeps it). */
+/** What the editor kept for its reload, as the page opens with it (viewer-editing-head.ts; client/shell/main.ts keeps it). */
 interface ErgaRestored {
   body: string[];
   parts?: Record<string, string>;

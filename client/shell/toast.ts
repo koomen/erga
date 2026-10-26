@@ -1,6 +1,6 @@
 // The toast: a short confirmation, an explanation, or a problem with the page, with a way to have the agent fix it.
 
-import { ms } from "../timescale";
+import { ms } from "../page-editor/timescale";
 import { $, type Shell } from "./shell";
 
 export function mountToast(shell: Shell) {

@@ -4,7 +4,7 @@
 // The document's page is in the viewer's frame (#frame), on the document's own pages
 // origin (pages/reader.ts tells this page what it needs from inside it), for readers and
 // editors alike. Going into the editor loads the editor's half into that same page
-// (editBoot, client/main.ts, client/remote.ts): the page loads once. Every script here
+// (editBoot, client/shell/main.ts, client/shell/remote.ts): the page loads once. Every script here
 // hears the frame through `ergaFrames` (framesScript).
 
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";
@@ -25,7 +25,7 @@ export const filesButton = (href: string) => `<a href="${esc(href)}" class="erga
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
-/** What a page kept for its reload (client/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
+/** What a page kept for its reload (client/live/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";
 
 /** The editor's script and the chunks it imports first (page.js, a module): the only files it fetches (its shell is in the page). */

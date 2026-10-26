@@ -2,15 +2,15 @@
 // the events on the document's socket.
 
 import { Transaction, type ChangeSet } from "@codemirror/state";
-import type { MarkAuthor } from "../editor";
-import type { SocketEvent } from "../collab";
+import type { MarkAuthor } from "../page-editor/editor";
+import type { SocketEvent } from "./collab";
 import type { Author } from "../../document/content";
 import type { AgentState, DocName, Hello, ModelState } from "../../document/api";
 import type { LogEvent, ViewRequest } from "../../shared/agent-log";
 import { changesBetween } from "../../document/merge";
-import { escapeHtml } from "../agent-chat";
-import { live } from "../live-client";
-import { ms } from "../timescale";
+import { escapeHtml } from "../agent/agent-chat";
+import { live } from "../live/client";
+import { ms } from "../page-editor/timescale";
 import { $, type Shell } from "./shell";
 
 export function mountRoom(shell: Shell) {

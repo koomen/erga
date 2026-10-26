@@ -2,7 +2,7 @@
 
 import * as M from "../../shared/manuscript";
 import type { ChangeSet } from "@codemirror/state";
-import * as C from "../clipboard";
+import * as C from "./clipboard-html";
 import { contentIn, HEADING, SPLITS } from "./source";
 import { EditorMarkdown } from "./markdown";
 

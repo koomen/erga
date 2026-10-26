@@ -8,7 +8,7 @@
 // another. /tokens lists and revokes it with the rest. Built by client/build.ts to
 // admin-share.js.
 
-import { shareWithAgent } from "./share-agent";
+import { shareWithAgent } from "../agent/share-agent";
 
 const button = document.getElementById("btn-share");
 

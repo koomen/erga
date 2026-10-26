@@ -29,7 +29,7 @@ test("a page names this build's files: its scripts as modules, with the chunks t
   expect(scriptTag("live.js")).toBe(`<script type="module" src="/_erga/live.js"></script>`);
   expect(fontTags()).toBe(`<style id="erga-fonts">${MANIFEST.fonts.css}</style>`);
   expect(fontTags(true)).toStartWith(`<link rel="preload" as="font" type="font/woff2" crossorigin href="/_erga/fonts/inter-latin-normal-iiii9999.woff2">`);
-  // A build's file and the next one's have the same stem: how an open page tells it has another build's (client/live.ts).
+  // A build's file and the next one's have the same stem: how an open page tells it has another build's (client/live/live.ts).
   expect(stemOf("/_erga/main-aaaa1111.js")).toBe(stemOf("/_erga/main-zzzz0000.js"));
   expect(stemOf("/_erga/fonts/inter-latin-normal-iiii9999.woff2")).toBe("/_erga/fonts/inter-latin-normal");
 });

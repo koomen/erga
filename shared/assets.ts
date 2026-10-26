@@ -3,7 +3,7 @@
 // browser keeps it for a year and never asks again, and a list of them
 // (the manifest, .build/manifest.json) that the server reads to name them
 // in the pages it makes (server/pages/assets.ts). Shared by the build, the
-// server and the browser (client/live.ts compares a page's files with the
+// server and the browser (client/live/live.ts compares a page's files with the
 // server's by their names).
 
 /** Where the hashed files are, on the app's origin: the only path the Worker doesn't run first for (cloudflare.config.ts). */

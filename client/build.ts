@@ -47,15 +47,15 @@ const DIR = ASSET_PREFIX.slice(1, -1);
 
 /** The scripts, by name, and their sources. */
 export const ENTRIES: Record<string, string> = {
-  "page.js": "client/main.ts",
-  "frame.js": "client/frame.ts",
-  "settings.js": "client/settings.ts",
-  "pages-tree.js": "client/pages-tree.ts",
-  "files.js": "client/files.ts",
-  "admin-agent.js": "client/admin-agent.ts",
-  "admin-share.js": "client/admin-share.ts",
-  "admin-nav.js": "client/admin-nav.ts",
-  "live.js": "client/live.ts",
+  "page.js": "client/shell/main.ts",
+  "frame.js": "client/page-editor/frame.ts",
+  "settings.js": "client/pages/settings.ts",
+  "pages-tree.js": "client/pages/pages-tree.ts",
+  "files.js": "client/pages/files.ts",
+  "admin-agent.js": "client/admin/admin-agent.ts",
+  "admin-share.js": "client/admin/admin-share.ts",
+  "admin-nav.js": "client/admin/admin-nav.ts",
+  "live.js": "client/live/live.ts",
 };
 
 /** The headers of the hashed files: kept for a year, and loadable from a document's own origin (the frame's scripts and fonts). */
@@ -67,12 +67,14 @@ export const HEADERS = `${ASSET_PREFIX}*
 `;
 
 /**
- * The frame's build: @codemirror/view as an inert stand-in (client/frame-view.ts). The frame has no CodeMirror view
+ * The frame's build: @codemirror/view as an inert stand-in (client/page-editor/frame-view.ts). The frame has no CodeMirror view
  * (bridge.ts), but CodeMirror's language, history and Markdown modules import the view's for their view parts.
  */
 export const FRAME_VIEW: import("bun").BunPlugin = {
   name: "erga:frame-view",
-  setup(b) { b.onResolve({ filter: /^@codemirror\/view$/ }, () => ({ path: join(ROOT, "client/frame-view.ts") })); },
+  setup(b) {
+    b.onResolve({ filter: /^@codemirror\/view$/ }, () => ({ path: join(ROOT, "client/page-editor/frame-view.ts") }));
+  },
 };
 
 const sha = (bytes: Uint8Array, alg = "sha256") => new Bun.CryptoHasher(alg as "sha256").update(bytes);

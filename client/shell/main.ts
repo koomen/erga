@@ -12,29 +12,29 @@
 
 import type { SocketEvent } from "./collab";
 import { Collab } from "./collab";
-import type { MarkAuthor } from "./editor";
+import type { MarkAuthor } from "../page-editor/editor";
 import { RemotePage } from "./remote";
-import type { Backdrop, Keys } from "./bridge";
-import { colorFor, files, type Author } from "../document/content";
-import type { Attachment } from "../shared/attach";
+import type { Backdrop, Keys } from "../page-editor/bridge";
+import { colorFor, files, type Author } from "../../document/content";
+import type { Attachment } from "../../shared/attach";
 import { BASE } from "./base";
-import { isPage, pageUrl } from "../document/pages";
-import { live } from "./live-client";
-import { restoredFor } from "./restore";
-import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "./zoom";
-import { fastClick } from "../shared/fast-click";
-import { $, editing, isMac, store, type Shell } from "./shell/shell";
-import { mountNaming } from "./shell/naming";
-import { mountRoom } from "./shell/room";
-import { mountPeople } from "./shell/people";
-import { mountChrome } from "./shell/chrome";
-import { mountSharing } from "./shell/sharing";
-import { mountToast } from "./shell/toast";
-import { mountStyleBar } from "./shell/style-bar";
-import { mountViews } from "./shell/views";
-import { mountPageRequests } from "./shell/page-requests";
-import { mountAgent } from "./shell/agent";
-import { mountPause } from "./shell/pause";
+import { isPage, pageUrl } from "../../document/pages";
+import { live } from "../live/client";
+import { restoredFor } from "../live/restore";
+import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../page-editor/zoom";
+import { fastClick } from "../../shared/fast-click";
+import { $, editing, isMac, store, type Shell } from "./shell";
+import { mountNaming } from "./naming";
+import { mountRoom } from "./room";
+import { mountPeople } from "./people";
+import { mountChrome } from "./chrome";
+import { mountSharing } from "./sharing";
+import { mountToast } from "./toast";
+import { mountStyleBar } from "./style-bar";
+import { mountViews } from "./views";
+import { mountPageRequests } from "./page-requests";
+import { mountAgent } from "./agent";
+import { mountPause } from "./pause";
 
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean } }

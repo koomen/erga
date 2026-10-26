@@ -1,6 +1,6 @@
 // The style bar over a selection (bold, italic, code, link, clear formatting), and the link bar.
 
-import type { InlineStyle } from "../editor";
+import type { InlineStyle } from "../page-editor/editor";
 import { $, type Shell } from "./shell";
 
 export function mountStyleBar(shell: Shell) {

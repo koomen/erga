@@ -1,11 +1,11 @@
 // A document's page as its pages origin serves it (server/documents/pages-origin.ts), to readers and editors alike:
 // its own HTML with the source marks the editor needs (data-erga-id on each text block: manuscript.ts's stamp), and
 // first in its <head> the viewer's script (server/pages/reader.ts), with, for whoever may edit, the scripts below. The
-// page loads once: going into the editor loads the editor's half into it (client/frame.ts), which finds the text
+// page loads once: going into the editor loads the editor's half into it (client/page-editor/frame.ts), which finds the text
 // blocks by their marks and checks the page was made from the text it has (sourceDigest). Pure: the server makes the
 // page with it, and the editor reads it back.
 //
-// Each script here goes in as a <script data-erga>: the editor's additions, which its morph (client/morph.ts) leaves be.
+// Each script here goes in as a <script data-erga>: the editor's additions, which its morph (client/page-editor/morph.ts) leaves be.
 
 import { analyzeHtml, stamp } from "./manuscript";
 
@@ -15,7 +15,7 @@ export interface ReaderConfig {
   shell: string;
   /** The path the document's files are under on this origin: /t/<token>/. */
   prefix: string;
-  /** The digest of the text the page was made from (shared/page.ts, sourceDigest): the editor checks it has the same. */
+  /** The digest of the text the page was made from (shared/page-html.ts, sourceDigest): the editor checks it has the same. */
   src: string;
   /** For whoever may edit: the editor's half (frame.js), its chunks and their integrity. */
   editor?: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
