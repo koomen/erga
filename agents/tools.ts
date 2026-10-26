@@ -548,17 +548,20 @@ export async function runServerTool(tool: ServerToolDef, args: Record<string, un
 }
 
 /** The tools as the editor's agent takes them (pi's AgentTool), for someone in a document. */
-export async function agentToolsFor(ctx: ToolWho): Promise<AgentTool[]> {
-  return (await toolsFor(ctx.dir, ctx.who)).filter((t) => !t.docs || ctx.platform).map((t): AgentTool => ({
-    name: t.name,
-    label: t.label,
-    description: t.description,
-    parameters: t.parameters,
-    execute: async (_id, params) => {
-      const out = await runServerTool(t, params as Record<string, unknown>, ctx).catch((e: unknown) => { throw new Error(e instanceof Error ? e.message : String(e)); });
-      return toolResult(out);
-    },
-  }));
+export async function agentToolsFor(ctx: ToolWho): Promise<(AgentTool & { activity: string })[]> {
+  return (await toolsFor(ctx.dir, ctx.who))
+    .filter((t) => !t.docs || ctx.platform)
+    .map((t) => ({
+      name: t.name,
+      label: t.label,
+      activity: t.activity,
+      description: t.description,
+      parameters: t.parameters,
+      execute: async (_id, params) => {
+        const out = await runServerTool(t, params as Record<string, unknown>, ctx).catch((e: unknown) => { throw new Error(e instanceof Error ? e.message : String(e)); });
+        return toolResult(out);
+      },
+    }));
 }
 
 /** A tool's answer as pi takes it: the text for the model; an `offer` in it (a button for the person) goes to the panel too. */
@@ -566,9 +569,6 @@ export function toolResult(out: unknown) {
   const offer = out && typeof out == "object" && "offer" in out ? (out as { offer: unknown }).offer : undefined;
   return { content: [{ type: "text" as const, text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }], details: offer ? { offer } : {} };
 }
-
-/** What the editor's agent is doing while one runs. */
-export const SERVER_TOOL_ACTIVITY: Record<string, string> = Object.fromEntries(SERVER_TOOLS.map((t) => [t.name, t.activity]));
 
 // ---------------------------------------------------------------- helpers
 

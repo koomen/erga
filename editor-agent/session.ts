@@ -45,7 +45,6 @@ import { byLine, VIA } from "../shared/attribution";
 import { pageRefusal, type DocKind, type TreeOp } from "../document/pages";
 import { joinLocal, type Room } from "../document/room";
 import type { Naming } from "../server/directory/index.ts";
-import { SERVER_TOOL_ACTIVITY } from "../agents/tools";
 import { YjsWorkspace } from "./workspace";
 
 import {
@@ -159,8 +158,9 @@ export interface SessionOptions {
    * The tools beyond the document the owner may use now (agents/tools.ts:
    * sharing; the server's settings and users for an admin). Asked for again
    * before each new prompt, so becoming (or stopping being) an admin shows.
+   * Each says what the agent is doing while it runs (`activity`).
    */
-  serverTools?: () => Promise<AgentTool[]>;
+  serverTools?: () => Promise<ServerAgentTool[]>;
   /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
   turnEnded?: () => Promise<string | null> | void;
   /** The document's versions; without it those tools are left out. */
@@ -175,7 +175,40 @@ export interface SessionOptions {
   viewersAgent?: ViewersAgentAccess;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", make_project: "making it a project", make_document: "making it a document", viewers_agent: "looking at viewers and the agent", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", page_console: "reading the page's console", page_network: "reading the page's requests", page_events: "reading the page's events", page_inspect: "inspecting the live page", page_click: "clicking on the page", page_key: "pressing a key on the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version" };
+/** A tool beyond the document (agents/tools.ts), with what the agent is doing while it runs. */
+export type ServerAgentTool = AgentTool & { activity?: string };
+
+const TOOL_ACTIVITY: Record<string, string> = {
+  new_page: "making a page",
+  make_project: "making it a project",
+  make_document: "making it a document",
+  viewers_agent: "looking at viewers and the agent",
+  list_pages: "looking at the pages",
+  open_page: "opening a page",
+  mkdir: "making a folder",
+  mv: "moving",
+  rm: "deleting",
+  read: "reading",
+  edit: "editing",
+  write: "writing",
+  ls: "looking around",
+  find: "looking for files",
+  grep: "searching",
+  view_page: "looking at the page",
+  evaluate_page: "inspecting the page",
+  page_console: "reading the page's console",
+  page_network: "reading the page's requests",
+  page_events: "reading the page's events",
+  page_inspect: "inspecting the live page",
+  page_click: "clicking on the page",
+  page_key: "pressing a key on the page",
+  get_title: "reading the title",
+  set_title: "renaming the document",
+  list_versions: "looking at versions",
+  read_version: "reading an old version",
+  diff_versions: "comparing versions",
+  restore_version: "restoring a version",
+};
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { owner } = opts;
@@ -326,7 +359,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       }
       case "tool_execution_start": {
         const path = toolPath(e.args);
-        presence({ activity: `${TOOL_ACTIVITY[e.toolName] ?? e.toolName}${path ? ` ${path}` : ""}` });
+        const server = agent?.state.tools.find((t) => t.name == e.toolName) as ServerAgentTool | undefined;
+        presence({ activity: `${TOOL_ACTIVITY[e.toolName] ?? server?.activity ?? e.toolName}${path ? ` ${path}` : ""}` });
         emit({ t: "tool", id: e.toolCallId, name: e.toolName, path, status: "running" });
         break;
       }

@@ -10,7 +10,8 @@
 // each changed file; only the parts of its result that meet a changed line are kept, so the rest of
 // a file stays as it is and a branch's diff stays its own. A line that Biome would only indent again
 // (the code around it got wrapped) isn't a part: the parts kept take the indentation of the file's
-// own lines around them. `bun run test` runs the check.
+// own lines around them. The file written must be the same code: Biome must format it exactly as it formats the file
+// as it was, else the formatter writes nothing and says so. `bun run test` runs the check.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -83,6 +84,23 @@ const indent = (l: string) => /^ */.exec(l)![0].length;
 const shift = (lines: string[], by: number) =>
   by > 0 ? lines.map((l) => (l ? " ".repeat(by) + l : l)) : by < 0 ? lines.map((l) => l.replace(new RegExp(`^ {0,${-by}}`), "")) : lines;
 
+/** The two texts, line by line, in the parts they share and the parts they don't: a line only indented again is shared. */
+function align(before: string[], after: string[]) {
+  return diffArrays(before, after, { comparator: (a, b) => a.trim() == b.trim() });
+}
+
+/**
+ * How far the file's lines move between the two texts, at the last line both have (of `same`) that is no deeper than
+ * `depth`; undefined before there's one.
+ */
+function moveAt(before: string[], after: string[], same: [number, number][], depth: number) {
+  for (let k = same.length - 1; k >= 0; k--) {
+    const [i, j] = same[k];
+    if (before[i].trim() && indent(before[i]) <= depth) return indent(before[i]) - indent(after[j]);
+  }
+  return undefined;
+}
+
 /**
  * Where Biome's text differs from the file's, line by line, its indentation aside: a line Biome would only indent
  * again is the same line. Each region's new lines move by as much as the file's own lines do between the two texts,
@@ -97,28 +115,18 @@ export function regions(before: string[], after: string[]): Region[] {
   let at = 0;
   let atAfter = 0;
   let open: Region | null = null;
-  /**
-   * How far the file's lines move between the two texts, at the last line both have that is no deeper than `depth`;
-   * undefined before there's one.
-   */
-  const moveAt = (depth: number) => {
-    for (let k = same.length - 1; k >= 0; k--) {
-      const [i, j] = same[k];
-      if (before[i].trim() && indent(before[i]) <= depth) return indent(before[i]) - indent(after[j]);
-    }
-    return undefined;
-  };
   const close = () => {
     if (!open) return;
-    out.push({ ...open, lines: shift(open.lines, moveAt(open.from < before.length ? indent(before[open.from]) : 0) ?? 0) });
+    const by = moveAt(before, after, same, open.from < before.length ? indent(before[open.from]) : 0);
+    out.push({ ...open, lines: shift(open.lines, by ?? 0) });
     open = null;
   };
-  for (const part of diffArrays(before, after, { comparator: (a, b) => a.trim() == b.trim() })) {
+  for (const part of align(before, after)) {
     if (!part.added && !part.removed) {
       close();
       for (let k = 0; k < part.value.length; k++) {
         const [i, j] = [at + k, atAfter + k];
-        const by = moveAt(indent(before[i]));
+        const by = moveAt(before, after, same, indent(before[i]));
         const placed = by == undefined ? before[i] : shift([after[j]], by)[0];
         if (before[i].trim() && placed != before[i]) out.push({ from: i, to: i + 1, lines: [placed] });
         same.push([i, j]);
@@ -138,6 +146,75 @@ export function regions(before: string[], after: string[]): Region[] {
   return out;
 }
 
+/**
+ * The regions kept, each grown to the whole run of regions it meets (one ends where the next starts), and that run
+ * made one region of Biome's text for its lines. Regions are a line diff: when the diff pairs a line with the wrong
+ * one of its kind (a "})," that closes another call), a single rewrite of Biome's comes apart into regions side by
+ * side, and keeping only some of them would drop code.
+ */
+export function runs(before: string[], after: string[], all: Region[], kept: Region[]): Region[] {
+  const same: [number, number][] = [];
+  const to = new Map<number, number>();
+  let at = 0;
+  let atAfter = 0;
+  for (const part of align(before, after)) {
+    if (part.added) atAfter += part.value.length;
+    else if (part.removed) at += part.value.length;
+    else
+      for (let k = 0; k < part.value.length; k++, at++, atAfter++) {
+        same.push([at, atAfter]);
+        to.set(at, atAfter);
+      }
+  }
+  const out: Region[] = [];
+  let run: { from: number; to: number; kept: boolean } | null = null;
+  const end = () => {
+    if (!run?.kept) return;
+    const { from, to: until } = run;
+    const first = from == 0 ? 0 : to.get(from - 1)! + 1;
+    const last = until >= before.length ? after.length : to.get(until)!;
+    const by = moveAt(
+      before,
+      after,
+      same.filter(([i]) => i < from),
+      from < before.length ? indent(before[from]) : 0
+    );
+    out.push({ from, to: until, lines: shift(after.slice(first, last), by ?? 0) });
+  };
+  for (const r of all) {
+    if (run && r.from <= run.to) {
+      run.to = Math.max(run.to, r.to);
+      run.kept ||= kept.includes(r);
+      continue;
+    }
+    end();
+    run = { from: r.from, to: r.to, kept: kept.includes(r) };
+  }
+  end();
+  return out;
+}
+
+/** The file's lines with the regions in place of theirs. */
+export function apply(before: string[], parts: Region[]): string[] {
+  const lines = [...before];
+  for (const r of [...parts].reverse()) lines.splice(r.from, r.to - r.from, ...r.lines);
+  return lines;
+}
+
+/**
+ * The parts of Biome's text to write for the changed lines: the regions they meet, else the runs those make. Either
+ * is kept only when Biome formats the file it gives exactly as it formats the file as it is: the same code, only laid
+ * out differently. When neither is, undefined: the formatter writes nothing rather than change the code.
+ */
+export function parts(before: string[], after: string[], changed: Set<number>, format: (text: string) => string | undefined) {
+  const all = regions(before, after);
+  const kept = all.filter((r) => touches(r, changed));
+  if (!kept.length) return [];
+  const pretty = after.join("\n");
+  for (const todo of [kept, runs(before, after, all, kept)]) if (format(apply(before, todo).join("\n")) == pretty) return todo;
+  return undefined;
+}
+
 /** Whether a region meets a changed line: one of its lines, or, for lines it only adds, a line beside them. */
 export const touches = (r: Region, changed: Set<number>) =>
   r.from == r.to
@@ -153,18 +230,25 @@ function main() {
     process.exit(0);
   }
   let found = 0;
+  let refused = 0;
   for (const [file, changed] of changes(from)) {
     const path = join(ROOT, file);
     const text = readFileSync(path, "utf8");
     const pretty = formatted(file, text);
     if (pretty == undefined || pretty == text) continue;
     const before = text.split("\n");
-    const todo = regions(before, pretty.split("\n")).filter((r) => touches(r, changed));
+    const todo = parts(before, pretty.split("\n"), changed, (t) => formatted(file, t));
+    if (todo == undefined) {
+      refused++;
+      console.log(
+        `format: ${file}: Biome's changes to the changed lines don't stand apart from the lines around them, so nothing is written. Format them by hand.`
+      );
+      continue;
+    }
     if (!todo.length) continue;
     found += todo.length;
     if (write) {
-      for (const r of todo.reverse()) before.splice(r.from, r.to - r.from, ...r.lines);
-      writeFileSync(path, before.join("\n"));
+      writeFileSync(path, apply(before, todo).join("\n"));
       console.log(`format: formatted ${todo.length} part${todo.length == 1 ? "" : "s"} of ${file}`);
       continue;
     }
@@ -174,6 +258,7 @@ function main() {
       for (const l of r.lines.slice(0, 12)) console.log(`  + ${l}`);
     }
   }
+  if (refused) process.exit(1);
   if (!write && found) {
     console.log(`\nformat: ${found} changed part${found == 1 ? "" : "s"} not formatted. Run: bun run format`);
     process.exit(1);
