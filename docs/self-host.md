@@ -137,7 +137,7 @@ Commit the changed `deploy/targets.json` before the next steps:
    control Worker with wrangler, sets its secrets, and deploys staging the
    first time with a copy of production's data. It asks before each step.
 5. Push your history into the repository:
-   `ERGA_TOKEN=<admin-scope token> bun control/source/import.ts https://<control host> --from .`
+   `ERGA_TOKEN=<admin-scope token> bun deploy/import-source.ts https://<control host> --from .`
    Make the token at `https://<production host>/tokens`.
 6. Open `https://<control host>/` and click **Connect Cloudflare**. This
    gives the control Worker its deploy credential (an OAuth grant). There is

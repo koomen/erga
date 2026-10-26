@@ -4,7 +4,7 @@
 // both main and staging. Through Erga, not straight into Artifacts, so Erga
 // indexes the whole history as it lands.
 //
-//   ERGA_TOKEN=erga_... bun control/source/import.ts <server> --from <repo or path> [--branch main]
+//   ERGA_TOKEN=erga_... bun deploy/import-source.ts <server> --from <repo or path> [--branch main]
 //
 //   <server>        the Erga server, e.g. https://ops.example.com (or http://127.0.0.1:4400 locally)
 //   --from          where the history comes from (required): a repository's clone URL,
@@ -31,7 +31,7 @@ const branch = flag("--branch", "main");
 const server = args.find((a) => !a.startsWith("--"))?.replace(/\/+$/, "");
 const token = process.env.ERGA_TOKEN;
 if (!server || !token || !from) {
-  console.error("usage: ERGA_TOKEN=erga_... bun control/source/import.ts <server> --from <repo or path> [--branch main]");
+  console.error("usage: ERGA_TOKEN=erga_... bun deploy/import-source.ts <server> --from <repo or path> [--branch main]");
   process.exit(2);
 }
 
