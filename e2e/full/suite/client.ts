@@ -8,7 +8,8 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { authorOf, colorFor, files, introduce, roomInfo, stamp, type Author } from "../../../document/content";
 import type { Doc } from "./target";
-import { Failure, until } from "./harness";
+import { Failure } from "./harness";
+import { until } from "../../helpers/fixtures";
 
 export interface Seen { author: string | null; kind: string | null; at: number; inserted: string }
 

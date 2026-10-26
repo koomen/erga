@@ -1,7 +1,8 @@
 // The multiplayer suite in real tabs: the agent pane follows the agent's output
 // until you scroll back, like a terminal.
 import { settle } from "../../helpers/fixtures";
-import { expect, until } from "./harness";
+import { expect } from "./harness";
+import { until } from "../../helpers/fixtures";
 import { browserTest, noErrors, openAs } from "./suite";
 
 // Three scripted runs of the agent, the first with a screenshot: 6 s on an idle Mac, inside a browser test's 30 s.

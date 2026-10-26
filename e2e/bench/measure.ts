@@ -37,6 +37,7 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { LINE, lineLength, type Docs } from "./docs";
 import type { Hit, Proxy } from "./proxy";
+import { sleep } from "../../shared/time";
 
 export interface Load {
   /** The first byte of the top page's HTML. */
@@ -136,7 +137,6 @@ export class Tab {
 }
 
 const now = () => performance.timeOrigin + performance.now();
-const sleep = (ms: number) => Bun.sleep(ms);
 
 /** In a frame: the typing line, if the frame shows it. */
 const LINE_IN = (LINE: string) => {

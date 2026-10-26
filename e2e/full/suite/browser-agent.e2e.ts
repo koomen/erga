@@ -1,6 +1,7 @@
 // The multiplayer suite in real tabs: the agent panel is per person, view_page goes
 // through its owner's tab, others see its edits as they happen, a message that can't be sent says so.
-import { expect, until } from "./harness";
+import { expect } from "./harness";
+import { until } from "../../helpers/fixtures";
 import { browserTest, noErrors, openAs, peerNames } from "./suite";
 
 const FILE = "e2e/full/suite/browser-agent.e2e.ts";

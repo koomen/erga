@@ -62,7 +62,6 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
 }
 
 export const bytesOf = (n: number, seed = 7) => Uint8Array.from({ length: n }, (_, i) => (i * seed + (i >> 8)) & 0xff);
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 
 /** A small PDF: one page for each line given. */

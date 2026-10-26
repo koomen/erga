@@ -80,4 +80,3 @@ export async function record(page: Page, run: () => Promise<void>): Promise<stri
 }
 
 /** Waits out `ms` of wall time: only for the bench, which records what happens meanwhile. */
-export const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));

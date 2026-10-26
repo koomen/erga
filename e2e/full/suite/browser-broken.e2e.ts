@@ -2,7 +2,8 @@
 // itself, and its button asks the agent to fix it: in the shell's own words, with the problem as a page-report the
 // agent reads as data (shared/page-report.ts). (How soon the prompt shows is a bench: browser-broken.bench.e2e.ts.)
 import { FIX_REPORTED } from "../../../shared/page-report";
-import { expect, until } from "./harness";
+import { expect } from "./harness";
+import { until } from "../../helpers/fixtures";
 import { browserTest, noErrors, openAs } from "./suite";
 
 browserTest("e2e/full/suite/browser-broken.e2e.ts", "a paragraph broken by bad markup explains itself and the button asks the agent to fix it", { needs: ["scriptedAgent"] }, async (ctx, tab) => {

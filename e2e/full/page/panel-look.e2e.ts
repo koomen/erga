@@ -5,7 +5,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, settle, test, until } from "../../helpers/fixtures";
 import { F, W, openEditor, type Editor } from "../../helpers/editor";
-import { diff, pause, sample, screenshot, type RGB } from "../viewer/viewer";
+import { diff, sample, screenshot, type RGB } from "../viewer/viewer";
+import { sleep } from "../../../shared/time";
 
 await servers.main();
 
@@ -14,7 +15,7 @@ async function restyle(ed: Editor, css: string, want: string) {
   const f = join(ed.dir, "index.html");
   writeFileSync(f, readFileSync(f, "utf8").replace(/<\/style>/, ` ${css}</style>`));
   await until(async () => (await ed.frame<string>(`(() => { const cs = getComputedStyle(${F}.body); return cs.backgroundImage + " " + cs.backgroundColor; })()`)).includes(want), 15_000, `the page shows ${want}`);
-  await pause(400);
+  await sleep(400);
   await settle(ed.page);
 }
 
@@ -52,7 +53,7 @@ test("the agent card is the editor's light card on a white page and its dark car
   await tab.page.setViewportSize({ width: 1300, height: 860 });
   const ed = await openEditor(tab, await servers.main(), "long");
   await ed.openAgent();
-  await pause(700);
+  await sleep(700);
   const white = await card(ed);
   await seamless(ed, "a white page", 6);
 
@@ -74,7 +75,7 @@ test("the agent card is the editor's light card on a white page and its dark car
   expect(await card(ed), "the agent card on a gradient is one of the two cards").toBe(tone ? dark : white);
   await seamless(ed, "a gradient, at the top", 8);
   await ed.frame(`${W}.scrollTo(0, (${F}.documentElement.scrollHeight - ${W}.innerHeight) / 2)`);
-  await pause(300);
+  await sleep(300);
   await settle(ed.page);
   await seamless(ed, "a gradient, scrolled half way", 8);
 });
