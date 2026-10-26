@@ -1,5 +1,5 @@
 // The tree at phone width ("A phone").
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { multi, openTreeEditor, js } from "./tree";
 
 await servers.main();

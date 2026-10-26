@@ -1,6 +1,6 @@
 // Documents, fast: a button acts as the press starts, once (shared/fast-click.ts), and a document is fetched ahead as the
 // pointer rests on its row, each document once.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { js, multi } from "./tree";
 
 await servers.main();

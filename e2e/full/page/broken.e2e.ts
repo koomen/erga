@@ -1,6 +1,6 @@
 // A page with problems nobody asked about: each explained in turn, with a button to have the agent fix it ("Broken page").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

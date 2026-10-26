@@ -1,6 +1,6 @@
 // Joins that empty a quote or a list, joins that do nothing, and Delete ("Backspace joins a block to the one before").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

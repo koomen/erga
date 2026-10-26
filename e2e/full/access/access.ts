@@ -5,7 +5,7 @@
 // ("tester", local development's admin) unless they say otherwise (?user=,
 // a cookie, a token); each test makes its own people, documents and tokens.
 
-import { expect, settle, until, type Page } from "../../fixtures";
+import { expect, settle, until, type Page } from "../../helpers/fixtures";
 
 /** A request to the server, its redirects not followed. */
 export const getter = (root: string) => (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });

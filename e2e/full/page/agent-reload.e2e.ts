@@ -1,6 +1,6 @@
 // The agent panel across a reload ("Agent, empty message").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.agent();
 

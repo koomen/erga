@@ -1,7 +1,7 @@
 // Zoom in the editor zooms the page, not Erga (client/page-editor/zoom.ts): the keys and ctrl with the wheel scale the page;
 // the controls at the top and the agent's panel keep their size; a click on the zoomed page puts the caret there.
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor } from "../../helpers/editor";
 
 await servers.main();
 

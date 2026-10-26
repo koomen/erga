@@ -12,7 +12,7 @@ import { startSignIn } from "../server/identity/sign-in";
 import { testedSignIn } from "../server/identity/settings";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
-import { quietConsole } from "./quiet.ts";
+import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
 

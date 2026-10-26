@@ -15,12 +15,12 @@
 
 import { spawnSync } from "node:child_process";
 import type { E2EConfig } from "e2e";
-import { testJobs } from "./e2e/cores";
-import { cleanEnv, hermetic, ROOT } from "./e2e/env";
-import { engine } from "./e2e/engine";
+import { testJobs } from "./e2e/helpers/cores";
+import { cleanEnv, hermetic, ROOT } from "./e2e/helpers/env";
+import { engine } from "./e2e/helpers/engine";
 
 process.env.E2E_TELEMETRY_DISABLED = "1";
-/** Each test's time limit (e2e/fixtures.ts gives it to every test that doesn't name its own). */
+/** Each test's time limit (e2e/helpers/fixtures.ts gives it to every test that doesn't name its own). */
 process.env.ERGA_TEST_MS ||= "15000";
 if (hermetic() && !process.env.ERGA_BUILT) {
   const r = spawnSync("bun", ["client/build.ts"], { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });

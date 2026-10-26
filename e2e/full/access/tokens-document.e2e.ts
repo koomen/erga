@@ -1,5 +1,5 @@
 // A one-document token over HTTP (A document token): its document, and nothing else.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { getter, mint, publish, tool } from "./access";
 
 await servers.main();

@@ -1,5 +1,5 @@
 // What cuts a version besides a pause: an agent's turn, the last editor leaving; and paging the list.
-import { expect, servers, SHORT, test } from "../../fixtures";
+import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { cut, intoHeading, person, scripted, someone } from "./versions";
 
 await servers.short();

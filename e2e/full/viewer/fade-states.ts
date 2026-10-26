@@ -1,6 +1,6 @@
 // The fade's states on one kind of page, shared by fade-doc.e2e.ts and fade-home.e2e.ts (viewer()).
 
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { FADED, FADE_NEAR, ROOT_EXPR, controls, homeReady, opacityIs, openFade, wheel, type Mode } from "./fade";
 import { sample, screenshot } from "./viewer";
 

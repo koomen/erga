@@ -1,5 +1,5 @@
 // Clicking a page opens it in the editor, at its address; folders stay open for the tab ("the editor").
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { clickOn, clickToGo, multi, openCard, openTreeEditor, paths, row } from "./tree";
 
 await servers.main();

@@ -1,5 +1,5 @@
 // Rename in place (F2, or the menu); the server's refusal in its own words ("the editor": rename).
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { act, menuItem, multi, openCard, openTreeEditor, press, row, type, js } from "./tree";
 
 await servers.main();

@@ -7,8 +7,8 @@
 // editor's own address, where it must not run at all.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { editor } from "../../editor";
-import { expect, servers, test, until, type Page } from "../../fixtures";
+import { editor } from "../../helpers/editor";
+import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { unique } from "../access/access";
 import { FIX_REPORTED } from "../../../shared/page-report";
 

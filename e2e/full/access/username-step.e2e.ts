@@ -1,7 +1,7 @@
 // A new account's first sign-in: its person chooses a username (server/identity/accounts.ts), here through local
 // development's pretend provider (/auth/dev), which takes the same steps as GitHub's and Google's answers. The page
 // says at once whether a name is free; the account is made only when they choose; the next sign-in skips the step.
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { unique } from "./access";
 
 await servers.main();

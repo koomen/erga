@@ -4,8 +4,8 @@
 // settings popover's parts.
 
 import type { Page } from "playwright-core";
-import { editor } from "../../editor";
-import { settle, until, type Server, type Tab } from "../../fixtures";
+import { editor } from "../../helpers/editor";
+import { settle, until, type Server, type Tab } from "../../helpers/fixtures";
 import { Participant, person, roomOf } from "./versions";
 
 /** A page whose paragraph says which draft it is: each version of the documents here has its own. */

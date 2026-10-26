@@ -1,5 +1,5 @@
 // Agents and the open editor of a page: what they see, and taking it to another page.
-import { expect, servers, test, type Tab } from "../../fixtures";
+import { expect, servers, test, type Tab } from "../../helpers/fixtures";
 import { editing, inFrames, ready, site, where } from "./tree";
 
 await servers.short();

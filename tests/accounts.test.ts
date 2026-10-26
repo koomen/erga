@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
-import { memory } from "./memory-sql.ts";
+import { memory } from "./helpers/memory-sql.ts";
 
 const ADMIN = { login: "koomen", admin: true };
 export const github = (id: number, login: string, orgs: string[] | null = null): Vouched => ({ provider: "github", subject: String(id), handle: login, name: login, emails: [], orgs });

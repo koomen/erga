@@ -1,7 +1,7 @@
 // The Homepage Project setting on /admin (landing_document): a box that finds any of the server's documents and projects
 // as you type (GET /admin/documents), each with its owner, address and kind; choosing one saves it, and Reset puts the
 // repo's demo page back.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { adminToken, fresh, landingSetting, publish, resetLanding } from "./home";
 
 await servers.short();

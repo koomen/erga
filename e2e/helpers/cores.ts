@@ -9,7 +9,7 @@
 //   TEST_CORES_PER_JOB=c   one at once for every c usable cores (default 2)
 //   TEST_MEM_PER_JOB_MB=m  one at once for every m MB of memory (default 2048)
 //
-//   bun e2e/cores.ts     prints "<jobs> <cores> <why>"
+//   bun e2e/helpers/cores.ts     prints "<jobs> <cores> <why>"
 
 import { readFileSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";

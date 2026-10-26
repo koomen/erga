@@ -2,7 +2,7 @@
 // the page slides over to make room for it only once the agent can be seen (what made the flash before), on every
 // animation frame, and the agent ends up open with the editor shown. On a light page and a dark one. The frames
 // themselves (no white or blank block, no jump) are a bench: switch.bench.e2e.ts.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { rects, switchToEditing, viewerReady } from "./switch";
 
 await servers.main();

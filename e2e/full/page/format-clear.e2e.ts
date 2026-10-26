@@ -1,6 +1,6 @@
 // Clear formatting, ⌘\ and the bar's button ("Styling and views").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor } from "../../helpers/editor";
 
 await servers.main();
 

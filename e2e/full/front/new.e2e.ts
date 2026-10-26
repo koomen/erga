@@ -1,6 +1,6 @@
 // /new and the documents list: a blank document, its automatic address, the landing
 // page the server makes, and another site's link or form asking first.
-import { expect, test } from "../../fixtures";
+import { expect, test } from "../../helpers/fixtures";
 import { person, servers, template } from "./front";
 
 await servers.script();

@@ -1,8 +1,8 @@
 // The editor's side panels on a presentation: docking by the head, with a ghost
 // where the panel lands, and a reload, which keeps the arrangement.
 import { AGENT_DEFAULT, INSET, PICKER_W } from "../../../client/agent/layout";
-import { center, drag } from "../../drag";
-import { expect, servers, test } from "../../fixtures";
+import { center, drag } from "../../helpers/drag";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { dock, open, openSteps, settled, W, where } from "./layout";
 
 await servers.agent();

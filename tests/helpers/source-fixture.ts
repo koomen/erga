@@ -8,12 +8,12 @@ import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitServers, localToken } from "../dev/git-server.ts";
-import { mockGithub, type MockGithub } from "../dev/github-mock.ts";
-import { gitHttp } from "../control/source/http.ts";
-import { installationToken, linkOf, uninstall, type GithubLink } from "../control/source/github.ts";
-import { SourceRepo, type Move } from "../control/source/repo.ts";
-import type { Remote } from "../control/source/remote.ts";
+import { gitServers, localToken } from "../../dev/git-server.ts";
+import { mockGithub, type MockGithub } from "../../dev/github-mock.ts";
+import { gitHttp } from "../../control/source/http.ts";
+import { installationToken, linkOf, uninstall, type GithubLink } from "../../control/source/github.ts";
+import { SourceRepo, type Move } from "../../control/source/repo.ts";
+import type { Remote } from "../../control/source/remote.ts";
 
 export interface Fixture {
   url: string;

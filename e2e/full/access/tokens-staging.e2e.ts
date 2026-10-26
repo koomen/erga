@@ -1,6 +1,6 @@
 // Staging: an admin's token without the admin scope reaches the API, MCP and its documents,
 // within its own scope, while its person is an admin; nothing of the admins' (pages, APIs, settings, deploys, Git).
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { mockGithubId } from "../../../dev/github-mock";
 import { getter, mint, publish, tool } from "./access";
 

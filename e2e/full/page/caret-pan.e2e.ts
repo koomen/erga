@@ -3,8 +3,8 @@
 // move with the text, at 100% and with the page zoomed. And a drag that starts on the text selects it: the page's
 // own handlers, which pan the board from any press, don't see it (client/page-editor/text-guard.ts). And a press on the empty
 // board, with the caret in text, pans it and leaves the caret where it is: the browser starts no selection there.
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

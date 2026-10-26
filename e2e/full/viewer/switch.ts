@@ -1,7 +1,7 @@
 // The first switch into editing after a hard reload, on a slow network, for its tests:
 // the agent was left open last time, so it opens as the editor comes up.
 
-import { expect, type Page, type Server } from "../../fixtures";
+import { expect, type Page, type Server } from "../../helpers/fixtures";
 import { docShows, openViewer, throttle } from "./viewer";
 
 export const W = 1200, H = 760;

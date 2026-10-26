@@ -1,6 +1,6 @@
 // Backspace in an empty block takes the block away and puts the caret at the end of the block before; Delete there joins the next block to it ("Backspace joins a block to the one before").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor } from "../../helpers/editor";
 
 await servers.main();
 

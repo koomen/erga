@@ -1,6 +1,6 @@
 // With prefers-reduced-motion, the controls fade with no transition, to the same opacity (reduced()),
 // on a document's page and on the homepage.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { FADED, ROOT_EXPR, controls, homeReady, opacityIs, openFade, type Mode } from "./fade";
 
 // The homepage served directly, before any test (servers.main() gives nothing where the runner only lists the tests).

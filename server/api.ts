@@ -43,10 +43,8 @@ import { accessOf, type Platform, type Session, whoOf } from "./platform";
 import { byLine } from "../shared/attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "../agents/tools";
 import { cleanRel } from "../document/host";
-import { authOps, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
+import { authOps, expiryOf, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { TEMPLATES, templateById } from "./pages/index.ts";
-import { expiryOf } from "./tokens-page.ts";
-export { tokensDoor } from "./tokens-page.ts";
 
 // ---------------------------------------------------------------- the registry
 

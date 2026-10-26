@@ -4,7 +4,7 @@
 // after the first loses the document (it's one page, loaded once: the editor loads into it).
 // Before, the document showed across the whole window, then slid beside the panel once the editor's script ran; and the
 // viewer's copy of the page went before the editor's had painted, so the document went blank and came back.
-import { expect, servers, test, type Page } from "../../fixtures";
+import { expect, servers, test, type Page } from "../../helpers/fixtures";
 import { topDoc } from "./band";
 import { openViewer, pause } from "./viewer";
 

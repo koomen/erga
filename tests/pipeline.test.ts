@@ -68,7 +68,7 @@ import { runInstall } from "../control/install/install";
 import { memoryStore, snapshotDoor } from "../document/snapshot";
 import { ACCOUNT, ADMINS, CONTROL, SOURCE, TARGETS } from "../deploy/targets";
 import { controlConfig, controlWranglerConfig } from "../deploy/release";
-import { quietConsole } from "./quiet.ts";
+import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
 

@@ -1,5 +1,5 @@
 // The settings on a phone, and over a dark page.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 
 await servers.short();

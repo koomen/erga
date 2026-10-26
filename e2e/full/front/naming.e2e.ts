@@ -1,7 +1,7 @@
 // Titles and addresses: what counts as an edit, the
 // title that follows the page's heading and the slug that follows the title until they're set, old addresses that
 // redirect, the agent's get_title and set_title, and open tabs following a rename.
-import { expect, test, until } from "../../fixtures";
+import { expect, test, until } from "../../helpers/fixtures";
 import { person, retitle, servers, tools, type Person } from "./front";
 
 await servers.script();

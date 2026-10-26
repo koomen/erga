@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { controlRoutes, type Control } from "../control/routes";
 import type { Platform } from "../server/platform";
 import type { PushEvent } from "../control/source/github";
-import { git, must, startFixture, TEST_APP, type Fixture } from "./source-fixture";
+import { git, must, startFixture, TEST_APP, type Fixture } from "./helpers/source-fixture";
 
 setDefaultTimeout(30_000);
 const scratch = () => mkdtempSync(join(tmpdir(), "erga-gh-"));

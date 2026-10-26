@@ -1,6 +1,6 @@
 // The device flow with a scope (The device flow): the approval page shows the scope, the
 // document and the expiry; Deny tells the agent, and Approve in the browser hands it a token of that scope.
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { getter, mint, publish, signIn, tool } from "./access";
 
 await servers.main();

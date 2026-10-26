@@ -1,5 +1,5 @@
 // Live reload: without --reload, no page gets the script.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 
 await servers.main();
 

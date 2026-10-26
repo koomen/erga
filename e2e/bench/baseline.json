@@ -8,7 +8,7 @@
     "serverLatencyMs": 30,
     "keys": 30,
     "keyGapMs": 100,
-    "server": "dev server (e2e/server.ts) behind a proxy (e2e/bench/proxy.ts)"
+    "server": "dev server (e2e/helpers/server.ts) behind a proxy (e2e/bench/proxy.ts)"
   },
   "loads": {
     "small viewer cold": {

@@ -1,5 +1,5 @@
 // Folders last across a restart.
-import { expect, test } from "../../fixtures";
+import { expect, test } from "../../helpers/fixtures";
 import { paths, site } from "./tree";
 
 // A server of its own, as the test stops it, and a second on the first's state: two starts (a few seconds each; more on a loaded machine).

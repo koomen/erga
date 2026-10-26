@@ -20,9 +20,9 @@
 import { mkdtempSync, readFileSync, realpathSync, rmSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { servers, settle, SUITE_ENV, test, until, type Page, type Tab } from "../../fixtures";
-import { editor } from "../../editor";
-import { startServer, type Server } from "../../server";
+import { servers, settle, SUITE_ENV, test, until, type Page, type Tab } from "../../helpers/fixtures";
+import { editor } from "../../helpers/editor";
+import { startServer, type Server } from "../../helpers/server";
 import { FIXTURES, makeDoc, readFixture, RemoteTarget, type Capability, type Doc, type Target } from "./target";
 import { rng, type Ctx, type Test } from "./harness";
 

@@ -1,7 +1,7 @@
 // What viewers see: the document as it is now, always. There's no publishing.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { cut, intoHeading, person, someone, type Get } from "./versions";
-import { framed, pagesFetch } from "../../pages-fetch";
+import { framed, pagesFetch } from "../../helpers/pages-fetch";
 
 await servers.short();
 

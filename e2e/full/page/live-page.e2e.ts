@@ -4,7 +4,7 @@
 // the tab, the agent clicks play through the editor's handlers, and reads the
 // media's state, the console (a repeated warning collapses into one line),
 // the requests and the events.
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { person, tools } from "../versions/versions";
 
 await servers.script();

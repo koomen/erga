@@ -1,6 +1,6 @@
 // On a phone (phone()): the controls fade once scrolled and are whole again at the top; on a document's
 // page, a tap near them (a touch screen) brings them back until the page scrolls again, and a tap far away doesn't.
-import { servers, test, type Page } from "../../fixtures";
+import { servers, test, type Page } from "../../helpers/fixtures";
 import { FADED, controls, homeReady, opacityIs, openFade, wheel, type Mode } from "./fade";
 
 // The homepage served directly, before any test (servers.main() gives nothing where the runner only lists the tests).

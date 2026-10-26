@@ -2,7 +2,7 @@
 // tests: the fixtures under e2e/fixtures/top, each linked as a
 // document, and what the band and the controls look like once settled.
 
-import type { Page, Server } from "../../fixtures";
+import type { Page, Server } from "../../helpers/fixtures";
 import { diff, inPage, sample, screenshot, type RGB } from "./viewer";
 
 /** A document from e2e/fixtures/top/<name>: its address. */

@@ -20,7 +20,7 @@
 // makes (the pages origins too) point at the proxy.
 
 import { constants as zlib, createGzip } from "node:zlib";
-import { freePort } from "../server";
+import { freePort } from "../helpers/server";
 
 export interface Hit {
   url: string;

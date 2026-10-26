@@ -1,8 +1,8 @@
 // The editor's header and the room around the page take the page's background, and
 // follow it whichever way it changes: the agent's edit to a style rule (shown in place, not rendered: morph.ts), its
 // undo, a script change (the page rendered afresh in a new frame), and a change typed in the source view.
-import { expect, servers, test, until } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test, until } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.script();
 

@@ -1,5 +1,5 @@
 // Folders open and close by click and by key; ↑ ↓ ← → Home End move ("the editor": open and close a folder).
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { clickOn, focused, multi, openCard, openTreeEditor, paths, press, row } from "./tree";
 
 await servers.main();

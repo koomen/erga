@@ -8,7 +8,7 @@
 // server, never assumes it (a fresh one is /tester/landing-2 while an earlier
 // one still holds /tester/landing).
 
-import { until, type Server } from "../../fixtures";
+import { until, type Server } from "../../helpers/fixtures";
 import type { HomeState } from "../versions/versions";
 
 export type { HomeState };

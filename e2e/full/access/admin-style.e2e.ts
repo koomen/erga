@@ -1,7 +1,7 @@
 // The admin pages have one stylesheet (admin.css, server/admin/style.ts), so a page shown in place by a link
 // (client/admin/admin-nav.ts) is styled as it is after a load. Before, the in-place page kept the first page's style: from
 // Ops, API keys showed each key's label and env name run together, and its rows without their look.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 
 test("a link from one admin page to another shows the new page styled, in place", async ({ tab }) => {
   const server = await servers.main(), { page } = tab;

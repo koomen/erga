@@ -1,5 +1,5 @@
 // The first / on a fresh server, and a landing_document the deploy locks: a server of their own each.
-import { expect, test } from "../../fixtures";
+import { expect, test } from "../../helpers/fixtures";
 import { adminToken, front, home, publish, setLanding } from "./home";
 
 // A server of its own (a few seconds to start; more on a loaded machine).

@@ -3,7 +3,7 @@
 // signed in, as viewers. Off: the share menu doesn't offer anyone with the link, a new such share is refused saying
 // why, and those made before stay but open for nobody signed out, until it's on again. The homepage is public either
 // way. Local development starts with it on (a server starts with it off). The admin is DEV_LOGIN ("tester").
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { newDoc } from "./access";
 
 const server = () => servers.of("public-sharing");

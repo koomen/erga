@@ -13,7 +13,7 @@ import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
 import { mockBuilder, mockCloudflare } from "../dev/mock-cloudflare";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
-import { quietConsole } from "./quiet.ts";
+import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
 

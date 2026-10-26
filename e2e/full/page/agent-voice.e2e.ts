@@ -1,8 +1,8 @@
 // Voice mode, against a stand-in for the browser's speech recognition: dictation fills the box
 // and each pause sends it ("Agent, voice mode").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor, type Editor } from "../../editor";
-import type { Tab } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor, type Editor } from "../../helpers/editor";
+import type { Tab } from "../../helpers/fixtures";
 
 await servers.agent();
 

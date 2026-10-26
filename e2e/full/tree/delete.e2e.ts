@@ -1,5 +1,5 @@
 // Delete: a page at once, a folder after a question in its row; the root document stays ("the editor": delete).
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { act, clickOn, menuItem, multi, openCard, openTreeEditor, press, row, js } from "./tree";
 
 await servers.main();

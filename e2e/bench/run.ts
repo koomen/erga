@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // How fast a document loads, in the viewer and in the editor, and how fast a
 // typed key shows: a benchmark in a real browser (headless Chromium, the e2e
-// suite's), against a dev server of its own (e2e/server.ts, as the e2e suite
+// suite's), against a dev server of its own (e2e/helpers/server.ts, as the e2e suite
 // starts one). It prints numbers; it doesn't pass or fail. `bun run test`
 // doesn't run it.
 //
@@ -41,8 +41,8 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { chromium } from "playwright-core";
-import { ROOT } from "../env";
-import { startServer, type Server } from "../server";
+import { ROOT } from "../helpers/env";
+import { startServer, type Server } from "../helpers/server";
 import { Docs, LARGE, SMALL, type DocKind } from "./docs";
 import { keystrokes, load, Tab, type Keys, type Load } from "./measure";
 import { startProxy, type Hit } from "./proxy";
@@ -151,7 +151,7 @@ if (failed) process.exit(1);
 
 const results = summarize({
   date: new Date().toISOString(), commit, runs: RUNS, rttMs: RTT, handshakeRtts: HANDSHAKE, serverLatencyMs: LATENCY, keys: KEYS, keyGapMs: KEY_GAP,
-  server: "dev server (e2e/server.ts) behind a proxy (e2e/bench/proxy.ts)",
+    server: "dev server (e2e/helpers/server.ts) behind a proxy (e2e/bench/proxy.ts)",
 }, loads, keys);
 console.log("\n" + table(results));
 if (args.includes("--waterfall")) {

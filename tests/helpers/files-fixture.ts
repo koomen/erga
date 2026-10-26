@@ -3,12 +3,12 @@
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
-import { Document, type DocumentDeps } from "../document/document";
-import { INLINE_HEADER, MemoryBlobs, serveBlob } from "../document/blobs";
-import { MemoryStorage } from "../document/storage";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Document, type DocumentDeps } from "../../document/document";
+import { INLINE_HEADER, MemoryBlobs, serveBlob } from "../../document/blobs";
+import { MemoryStorage } from "../../document/storage";
+import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
 
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
   const db = new Database(":memory:");
   for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + f, "utf8"));

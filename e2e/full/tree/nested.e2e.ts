@@ -1,6 +1,6 @@
 // A document two folders down renders whole, with the stylesheet, image and font from folders above it ("a nested document renders whole").
 import type { Page } from "playwright-core";
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { agentClosed, multi, js } from "./tree";
 
 await servers.main();

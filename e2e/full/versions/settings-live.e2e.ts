@@ -1,8 +1,8 @@
 // The popover following the document live, Edit on an old version, and errors.
-import { expect, servers, test, type Tab } from "../../fixtures";
+import { expect, servers, test, type Tab } from "../../helpers/fixtures";
 import { roomOf, Participant } from "./versions";
 import { another, closeDrafts, draftDoc, openDocEditor, viewerShows } from "./settings";
-import { F } from "../../editor";
+import { F } from "../../helpers/editor";
 
 await servers.short();
 test.afterEach(closeDrafts);

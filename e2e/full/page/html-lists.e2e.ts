@@ -1,6 +1,6 @@
 // Enter, Backspace and undo in an HTML list ("HTML page").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 

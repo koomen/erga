@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { BLOB_HEADER, OBJECT_MAX, sha256 } from "../document/blobs";
 import { KEYS } from "../document/storage";
-import { bytesOf, setup, sleep } from "./files-fixture";
+import { bytesOf, setup, sleep } from "./helpers/files-fixture";
 import { files } from "../document/content";
 import type { Room } from "../document/room";
 

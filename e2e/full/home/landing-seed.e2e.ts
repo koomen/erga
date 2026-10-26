@@ -1,8 +1,8 @@
 // The front page the server makes for itself on a fresh database (server/documents/landing.ts seedLanding).
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test } from "../../fixtures";
-import { ROOT } from "../../env";
+import { expect, test } from "../../helpers/fixtures";
+import { ROOT } from "../../helpers/env";
 import { frameOf, get, landingSetting } from "./home";
 
 // A fresh database, so a server of its own (a few seconds to start; more on a loaded machine).

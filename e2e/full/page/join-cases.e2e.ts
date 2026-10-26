@@ -2,8 +2,8 @@
 // joins the next one to it: whatever the blocks are, however they nest, whatever lies between them in the source.
 // Where no join can be (a table cell, a picture or a widget between), the caret goes to the other block instead.
 // ("Backspace joins a block to the one before")
-import { expect, servers, test } from "../../fixtures";
-import { editor, F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { editor, F, openEditor, type Editor } from "../../helpers/editor";
 import { editorReady, newDoc, openTab } from "../templates/templates";
 
 await servers.main();

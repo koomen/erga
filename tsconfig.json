@@ -11,6 +11,6 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["shared/text-imports.d.ts", "shared", "document", "agents/models.ts", "client", "dev", "vite.config.ts", "server/documents", "server/pages", "agents/document/session.ts", "document/room.ts", "agents/document/workspace.ts", "deploy", "control/routes.ts", "control/builder", "control/source", "control/deploys", "e2e", "e2e.config.ts", "tests/deploy.test.ts", "tests/pipeline.test.ts", "tests/source.test.ts", "tests/source-fixture.ts"],
+  "include": ["shared/text-imports.d.ts", "shared", "document", "agents/models.ts", "client", "dev", "vite.config.ts", "server/documents", "server/pages", "agents/document/session.ts", "document/room.ts", "agents/document/workspace.ts", "deploy", "control/routes.ts", "control/builder", "control/source", "control/deploys", "e2e", "e2e.config.ts", "tests/deploy.test.ts", "tests/pipeline.test.ts", "tests/source.test.ts", "tests/helpers/source-fixture.ts"],
   "exclude": ["control/builder/worker.ts", "control/index.ts", "control/platform.ts", "control/deploys/hook.ts", "control/deploys/pipeline-object.ts", "control/deploys/app-routes.ts", "control/source/source-host.ts", "control/source/service.ts"]
 }

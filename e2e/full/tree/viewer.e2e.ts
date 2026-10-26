@@ -1,5 +1,5 @@
 // Someone who may only view a document sees its tree read-only ("a viewer").
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { clickOn, multi, row, signIn, js } from "./tree";
 
 await servers.main();

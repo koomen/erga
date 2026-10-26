@@ -10,7 +10,7 @@
 // It has several pages, so it's a project: its tree shows them all.
 
 import type { Page } from "playwright-core";
-import { expect, settle, until, type Server, type Tab } from "../../fixtures";
+import { expect, settle, until, type Server, type Tab } from "../../helpers/fixtures";
 
 /** Evaluates an expression in the tab, its value as any (for expect.poll, whose matchers need a type). */
 export const js = (page: Page, expr: string) => page.evaluate(expr) as Promise<any>;

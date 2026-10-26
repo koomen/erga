@@ -5,8 +5,8 @@
 // With CARET_SHOTS=<folder>, the test also saves a picture of the caret at each zoom there.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, settle, test } from "../../fixtures";
-import { editor, F, W } from "../../editor";
+import { expect, servers, settle, test } from "../../helpers/fixtures";
+import { editor, F, W } from "../../helpers/editor";
 import { editorReady, newDoc, openTab } from "../templates/templates";
 
 await servers.main();

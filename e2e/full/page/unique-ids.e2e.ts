@@ -1,7 +1,7 @@
 // An id is unique in the page: an element an edit in the editor adds (Enter, a custom edit) loses an id (or a link's
 // name) that the page has already. The element that was there keeps it ("An id is unique in the page").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

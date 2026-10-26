@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const ROOT = new URL("..", import.meta.url).pathname;
+export const ROOT = new URL("../..", import.meta.url).pathname;
 
 /** Names of variables never handed on: anything that looks like a credential. */
 const SECRET = /TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|AUTH|COOKIE|SESSION/i;

@@ -3,8 +3,8 @@
 // controls; only the page in the frame changes (it goes to the other page's address, in place of this one's). The address follows, and Back and Forward go between the pages the same way.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor } from "../../helpers/editor";
 import { row } from "../tree/tree";
 
 await servers.main();

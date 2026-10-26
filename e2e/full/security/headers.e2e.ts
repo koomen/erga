@@ -1,9 +1,9 @@
 // The site's own pages say no other site may frame them (server/security.ts): each kind of page sends frame-ancestors
 // 'self' and X-Frame-Options, and its Content-Security-Policy; a document's page on its pages origin names only its
 // viewer. A page of another site that frames /docs gets nothing, and the editor works with the headers on.
-import { expect, servers, test, until } from "../../fixtures";
-import { openEditor } from "../../editor";
-import { framed } from "../../pages-fetch";
+import { expect, servers, test, until } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
+import { framed } from "../../helpers/pages-fetch";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 

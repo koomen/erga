@@ -1,6 +1,6 @@
 // Selecting across lines in the HTML view ("Selecting across paragraphs").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 

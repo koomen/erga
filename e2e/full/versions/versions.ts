@@ -8,7 +8,7 @@ import { request } from "node:http";
 import type * as Y from "yjs";
 import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
-import { until, type Server } from "../../fixtures";
+import { until, type Server } from "../../helpers/fixtures";
 
 export { Participant };
 

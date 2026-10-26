@@ -1,6 +1,6 @@
 // A presentation's steps in the editor (editing): the controls and the keys outside the text go to
 // a step, the arrows in text being edited move the caret, and an edit draws the list's pictures afresh.
-import { expect, servers, settle, test } from "../../fixtures";
+import { expect, servers, settle, test } from "../../helpers/fixtures";
 import { atStep, bar, clickOn, clickTextEnd, editorReady, frameAt, inPage, openTab, rawKey } from "./templates";
 
 await servers.main();

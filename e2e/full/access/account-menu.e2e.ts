@@ -1,6 +1,6 @@
 // The account corner in the browser, on the site's own pages: your avatar's menu on /docs, light,
 // dark and a phone, and its place on the front page.
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { clickOn, corner, inPage } from "./access";
 
 await servers.main();

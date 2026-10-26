@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
+import { git, must, startFixture, type Fixture } from "./helpers/source-fixture.ts";
 
 setDefaultTimeout(30_000);
 const scratch = () => mkdtempSync(join(tmpdir(), "erga-down-"));

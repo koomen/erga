@@ -2,10 +2,11 @@
 // and approve or deny an agent's request for one. And a token's expiry as given, which the API reads too.
 
 
-import { nameOf } from "./directory/index.ts";
-import { appPage, crumbs, esc, ICON, page, safeNext, TIMES_SCRIPT } from "./pages/index.ts";
-import { type Platform, type Session, whoOf } from "./platform";
-import { LABEL_MAX, mintTestToken, normalCode, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
+import { nameOf } from "../directory/index.ts";
+import { appPage, crumbs, esc, ICON, page, safeNext, TIMES_SCRIPT } from "../pages/index.ts";
+import { type Platform, type Session, whoOf } from "../platform";
+import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
+import { mintTestToken } from "./sign-in.ts";
 
 /** A token's expiry as given: an ISO 8601 time, a date (the end of that day, UTC), milliseconds since the epoch, or nothing (never). */
 export function expiryOf(v: unknown): number | null | "bad" {

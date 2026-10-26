@@ -1,7 +1,7 @@
 // The Authentication page (/admin/auth) shows a change in place: Save, then Clear, and GitHub's card shows the new
 // state, Client ID and message at once, with no page load. It has one card for each provider: this server's (no other
 // server's). The values are the pretend GitHub's app (dev/vite-plugin.ts), which its live check accepts.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 
 const CARD = 'section.server[data-provider="github"]';
 

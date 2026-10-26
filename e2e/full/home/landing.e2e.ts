@@ -2,9 +2,9 @@
 // Each test starts from a fresh front page, and leaves one for the next.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, SHORT, test } from "../../fixtures";
-import { ROOT } from "../../env";
-import { editor, F } from "../../editor";
+import { expect, servers, SHORT, test } from "../../helpers/fixtures";
+import { ROOT } from "../../helpers/env";
+import { editor, F } from "../../helpers/editor";
 import { deployed, docOf, editOf, fresh, front, get, resetLanding } from "./home";
 
 await servers.short();

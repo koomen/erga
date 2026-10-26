@@ -1,7 +1,7 @@
 // The agent's tools on every file, in the Worker as it runs (PDF.js and pdf-lib under workerd): over an agent token, the
 // way an external agent calls them (/api/ext/tools) and over MCP: ls with kinds and sizes, grep through PDFs, read of a
 // PDF as a document (an embedded resource over MCP), and write of bytes, which the files view then lists.
-import { expect, servers, test, until, type Server } from "../../fixtures";
+import { expect, servers, test, until, type Server } from "../../helpers/fixtures";
 import { person } from "../versions/versions";
 
 await servers.main();
