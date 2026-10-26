@@ -1,0 +1,13 @@
+/* The band at the top of a document's page (server/pages/viewer.ts, BAND_STYLE), where the controls are, and the
+   frame and canvas below it. */
+
+:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+html { background: var(--page-bg, var(--band, #fff)); }
+#frame { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); border: 0; display: block; background: transparent; }
+html.erga-band-wait #frame { opacity: 0; }
+.erga-canvas { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); pointer-events: none; }
+.erga-canvas > div { position: absolute; left: 0; top: 0; }
+.erga-canvas :is(i, b) { position: absolute; display: block; }
+.erga-canvas b { overflow: hidden; }
+.erga-canvas i { box-sizing: content-box; background-origin: content-box; }

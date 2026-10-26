@@ -1,0 +1,26 @@
+/* The small page (server/pages/chrome.ts, page) for when there's nothing to show, or something about signing in goes
+   wrong: a title and a few lines, in a column. */
+
+main.plain { max-width: 560px; padding: max(18vh, 96px) 24px 96px; }
+main.plain h1 { font-size: 24px; margin-bottom: 14px; }
+main.plain p { margin: 0 0 14px; color: var(--fg); }
+/* Not the buttons (.new, .provider): their own colours. */
+main.plain a:not(.new, .provider) { color: var(--fg-strong); }
+main.plain b { color: var(--fg-strong); }
+main.plain .new { margin-top: 6px; }
+/* The sign-in page's buttons (server/identity/sign-in.ts), each as its provider's brand rules say. */
+main.plain .providers { display: flex; flex-direction: column; gap: 10px; max-width: 320px; margin-top: 6px; }
+.provider { box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 10px; height: 40px; padding: 0 16px; border: 1px solid; border-radius: 8px;
+  font: 500 14px/1 "Roboto", var(--font-text); text-decoration: none; white-space: nowrap; transition: background-color 150ms ease; }
+.provider svg { flex: none; width: 18px; height: 18px; }
+.provider:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
+.provider.google { color: #1f1f1f; background: #fff; border-color: #747775; }
+.provider.google:hover { background: #f2f2f2; }
+.provider.github { color: #fff; background: #24292f; border-color: #24292f; }
+.provider.github:hover { background: #32383f; }
+@media (prefers-color-scheme: dark) {
+  .provider.google { color: #e3e3e3; background: #131314; border-color: #8e918f; }
+  .provider.google:hover { background: #222224; }
+  .provider.github { border-color: #6e7681; }
+}
+@media (max-width: 520px) { main.plain { padding: 72px 16px 64px; } main.plain h1 { font-size: 22px; } }

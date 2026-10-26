@@ -9,7 +9,7 @@
 .panes { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
 .pane { container-type: inline-size; min-width: 0; }
 .pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
-/* Its headings look as every admin page's (server/admin/style.ts). */
+/* Its headings look as every admin page's (client/styles/admin.css). */
 .pane-head h2 { margin: 0; }
 .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
 #source-pane { --on-main: #1f7a4d; --only-staging: #c26a00; --upstream: #2563eb; --bad: #c2410c; --row: 32px; }

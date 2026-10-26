@@ -13,6 +13,7 @@
 
 import { link, safeNext } from "./chrome.ts";
 import { esc } from "../../shared/html.ts";
+import { inlineStyle } from "./inline.ts";
 import type { Session } from "../platform.ts";
 import { colorFor } from "../../document/content.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
@@ -98,41 +99,8 @@ export async function withAccount(response: Response, account: () => Promise<Acc
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
-// Its own colours, since pages differ (client/style.css's, the small pages', the
-// landing page's frame): quiet like the editor's controls, a card for the menu.
-export const ACCOUNT_STYLE = `<style>
-  .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14);
-    position: absolute; top: max(14px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 1001;
-    font: 400 14px/1.4 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  @media (prefers-color-scheme: dark) {
-    .erga-account { --acc-bg: #1f1f23; --acc-fg: #ececf1; --acc-soft: #8f8f99; --acc-chrome: #8a8a94; --acc-ring: #2f2f35; --acc-hover: rgba(161, 161, 169, .16); }
-  }
-  .erga-account-btn { position: relative; display: grid; place-items: center; width: 30px; height: 30px; margin: 0; padding: 0; border: 0; border-radius: 50%;
-    cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1; color: #fff; background: var(--c, #8e8e96); box-shadow: 0 0 0 2px var(--acc-bg); }
-  .erga-account-btn img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; -webkit-user-drag: none; }
-  .erga-account-btn.erga-account-out { color: var(--acc-soft); background: var(--acc-bg); box-shadow: inset 0 0 0 1.5px var(--acc-chrome); }
-  .erga-account-btn.erga-account-out:hover { color: var(--acc-fg); box-shadow: inset 0 0 0 1.5px var(--acc-soft); }
-  .erga-account-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  .erga-account-btn:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 2px; }
-  @media (pointer: coarse) { .erga-account-btn::after { content: ""; position: absolute; inset: -7px; } }
-  /* Its tooltip, as every control's on the site: plain text, the moment the pointer is on it, just below the pointer and following it (the script below). */
-  .erga-account-btn::before { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px; font-weight: 400; line-height: 1.3;
-    letter-spacing: .01em; color: var(--acc-soft); opacity: 0; pointer-events: none; }
-  @media (hover: hover) { .erga-account-btn:hover::before { opacity: 1; } }
-  .erga-account-btn[aria-expanded="true"]::before { display: none; }
-  .erga-account-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 190px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px;
-    color: var(--acc-fg); background: var(--acc-bg); border: 1px solid var(--acc-ring); border-radius: 12px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .05); }
-  .erga-account-menu[hidden] { display: none; }
-  .erga-account-who { margin: 0; padding: 6px 10px 8px; color: var(--acc-soft); font-size: 13px; }
-  .erga-account-who b { display: block; color: var(--acc-fg); font-weight: 600; font-size: 14px; }
-  .erga-account-menu a { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; color: var(--acc-fg); text-decoration: none; font-size: 14px; white-space: nowrap; }
-  .erga-account-menu a:hover, .erga-account-menu a:focus-visible { background: var(--acc-hover); outline: none; }
-  /* Sign in: the editor's primary button (client/style.css, .share-primary). */
-  .erga-account-menu .erga-account-sign-in { justify-content: center; margin: 2px; padding: 8px 14px; font-weight: 600; color: #fff; background: #3b7cf0; border-radius: 7px; }
-  .erga-account-menu .erga-account-sign-in:hover, .erga-account-menu .erga-account-sign-in:focus-visible { background: #2f6ad8; }
-  @media (pointer: coarse) { .erga-account-menu a { padding: 11px 12px; } }
-</style>`;
+/** The corner's look (client/inline/account.css): its own colours, since pages differ. */
+export const ACCOUNT_STYLE = `<style>${inlineStyle("account")}</style>`;
 
 /**
  * For an inline script: a picture marked data-erga-fallback in `root` (a document or a shadow root) that doesn't load

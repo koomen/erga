@@ -155,7 +155,7 @@ export async function chooseSignIn(platform: Platform, request: Request): Promis
   const on = await providersOn(platform);
   const providers = (Object.keys(PROVIDERS) as Provider[]).filter((p) => on[p]);
   if (providers.length == 1) return new Response(null, { status: 302, headers: { Location: `/auth/${providers[0]}?next=${encodeURIComponent(next)}`, "Cache-Control": "no-store" } });
-  // Each provider's own button, as its brand rules say (Google's white with its G; GitHub's dark with its mark): PLAIN_STYLE, server/pages/chrome.ts.
+  // Each provider's own button, as its brand rules say (Google's white with its G; GitHub's dark with its mark): client/inline/plain.css.
   const buttons = providers
     .map(
       (p) =>

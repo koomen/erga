@@ -1,0 +1,62 @@
+/* A document's page (server/pages/viewer.ts): the controls on the band, upper right, and, for someone signed in, the
+   breadcrumbs upper left. Also inside the homepage's controls (server/home/render.ts). Faded controls are at 0.2:
+   faint, but still there to find (client/inline/fade.ts). */
+
+/* The editor's look (client/style.css, .icon-btn): small icons. Right of them is who you are. Upper left, for
+   someone signed in, the breadcrumbs (viewCrumbs), where the editor's are (client/editor.html, .chrome-nav) and as they look. */
+:is(.erga-view-buttons, .erga-crumbs) { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73;
+  position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
+  font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+.erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
+.erga-crumbs { left: max(14px, env(safe-area-inset-left)); height: 34px; min-width: 0; max-width: calc(100vw - 200px); margin: 0; font-size: 13.5px; }
+/* Each step's box and arrow as the editor's, so going into the editor and out moves nothing. */
+.erga-crumbs, .erga-crumbs > * { align-items: baseline; line-height: 34px; }
+.erga-crumbs > * { display: flex; height: 34px; text-decoration: none; }
+.erga-crumbs > :not(:last-child)::after { content: "›"; color: var(--chrome); opacity: 0.55; font-size: 13.5px; font-weight: 400; letter-spacing: normal; }
+.erga-brand { flex: none; padding: 0 6px; font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
+.erga-brand::after { margin: 0 -6px 0 10px; }
+.erga-crumbs a.erga-crumb { flex: none; padding: 0 10px; color: var(--soft); }
+.erga-crumb::after { margin: 0 -6px 0 12px; }
+.erga-crumbs .erga-here { padding: 0 8px; }
+.erga-crumbs a:hover { opacity: 0.7; }
+.erga-crumbs a:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 1px; border-radius: 8px; }
+.erga-crumbs .erga-here { min-width: 0; color: var(--fg); }
+.erga-crumbs .erga-here span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 520px) { .erga-crumbs a.erga-crumb { display: none; } .erga-crumbs .erga-here { padding: 0 6px; } }
+/* On the band (BAND_STYLE), in the document's own colour: light or dark text to suit it, whatever the system's mode. */
+html.page-dark :is(.erga-view-buttons, .erga-crumbs) { --chrome: #8a8a94; --chrome-hover: #e4e4e9; --fg: #ececf1; --fg-strong: #ececf1; --soft: #a1a1aa; }
+html.page-light .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14); }
+html.page-dark .erga-account { --acc-bg: #1f1f23; --acc-fg: #ececf1; --acc-soft: #8f8f99; --acc-chrome: #8a8a94; --acc-ring: #2f2f35; --acc-hover: rgba(161, 161, 169, .16); }
+html:is(.page-dark, .page-light) .erga-account-btn:not(.erga-account-out) { box-shadow: 0 0 0 2px var(--band, var(--acc-bg)); }
+.erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
+  transition: color 150ms ease, background-color 150ms ease; }
+.erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+/* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
+.erga-view-button[aria-pressed="true"] { color: #3b7cf0; }
+/* On the way into the editor the first time, while its code arrives, the pencil breathes (only if that takes a moment). */
+body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: erga-edit-wait 700ms ease-in-out 250ms infinite alternate; }
+@keyframes erga-edit-wait { to { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: none; opacity: 0.6; } }
+.erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
+  font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
+@media (hover: hover) { .erga-view-button:hover::after { opacity: 1; } }
+/* Into the editor and out (editBoot): the controls you're going to are there at once, whole, and the ones you're leaving fade
+   out; so those in both (the pencil, your avatar, the breadcrumbs) never go see-through. */
+#erga-editor { opacity: 0; transition: opacity 200ms ease; }
+body.erga-editing.erga-editor-ready #erga-editor { opacity: 1; transition: none; }
+body:not(.erga-editing) #nav-docs { visibility: hidden; }
+.erga-view-buttons, .erga-account, .erga-crumbs { transition: none; }
+/* Editing, the editor's own breadcrumbs, just under the viewer's while those fade, take the clicks. */
+body.erga-editing .erga-crumbs { pointer-events: none; }
+body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-account, .erga-crumbs) { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s 200ms; }
+/* Faded once the page is scrolled (FADE): the controls themselves, not the band behind them nor your open menu. Quick and
+   smooth, and with no motion at all for those who ask for less: just the change. */
+.erga-view-buttons > *, .erga-account-btn, .erga-crumbs > * { transition: opacity 180ms ease, color 150ms ease, background-color 150ms ease; }
+html.erga-faded :is(.erga-view-buttons > *, .erga-account-btn, .erga-crumbs > *) { opacity: 0.2; }
+:host(.erga-faded) :is(.erga-view-buttons > *, .erga-account-btn, .erga-crumbs > *) { opacity: 0.2; }
+@media (prefers-reduced-motion: reduce) { .erga-view-buttons > *, .erga-account-btn, .erga-crumbs > * { transition: color 150ms ease, background-color 150ms ease; } }
+/* On a phone they'd sit over the text the whole way down: they stay at the top instead. */
+@media (max-width: 640px), (max-height: 480px) {
+  .erga-view-buttons, .erga-crumbs { position: absolute; }
+}

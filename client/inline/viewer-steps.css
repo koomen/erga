@@ -1,0 +1,35 @@
+/* A presentation's steps on a document's page (server/pages/viewer.ts; client/inline/viewer-steps.ts): the bar and
+   the panel of steps. */
+
+.erga-steps, .erga-steps-panel { --st-bg: rgba(255, 255, 255, .95); --st-fg: #3f3f46; --st-soft: #8a8a94; --st-hover: rgba(161, 161, 169, .18);
+  position: fixed; z-index: 25; box-sizing: border-box; background: var(--st-bg); color: var(--st-fg);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 4px 18px rgba(0, 0, 0, .14); font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+html.page-dark :is(.erga-steps, .erga-steps-panel) { --st-bg: rgba(31, 31, 35, .95); --st-fg: #e4e4e9; --st-soft: #8f8f99; --st-hover: rgba(161, 161, 169, .2);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 4px 18px rgba(0, 0, 0, .4); }
+.erga-steps[hidden], .erga-steps-panel[hidden] { display: none; }
+.erga-steps { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; transform: translateX(-50%); }
+.erga-steps button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; }
+.erga-steps button:hover:not(:disabled) { background: var(--st-hover); }
+.erga-steps button:disabled { opacity: .3; cursor: default; }
+:is(.erga-steps button, .erga-step):focus-visible { outline: 2px solid #3b7cf0; outline-offset: -2px; }
+.erga-steps button[aria-expanded="true"] { color: #3b7cf0; }
+.erga-steps svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.erga-steps-at { min-width: 54px; padding: 0 2px; text-align: center; font-variant-numeric: tabular-nums; }
+.erga-steps-panel { display: flex; flex-direction: column; width: min(208px, 55vw); overflow: hidden; border-radius: 12px; }
+.erga-steps-head { flex: none; padding: 10px 12px 2px; color: var(--st-soft); font-size: 12px; font-weight: 600; }
+.erga-steps-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 6px; list-style: none; overflow-y: auto; overscroll-behavior: contain; }
+.erga-step { display: block; width: 100%; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.erga-step:hover { background: var(--st-hover); }
+.erga-step-pic { display: grid; place-items: center; width: 100%; aspect-ratio: var(--ar, 16 / 9); overflow: hidden; border-radius: 5px;
+  background: var(--st-hover); color: var(--st-soft); font-size: 22px; font-weight: 600; }
+.erga-step-pic img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.erga-step[aria-current="step"] .erga-step-pic { outline: 2px solid #3b7cf0; outline-offset: 1px; }
+.erga-step-name { display: flex; gap: 6px; margin-top: 6px; font-size: 12px; font-weight: 400; line-height: 1.3; }
+.erga-step-name b { color: var(--st-soft); font-weight: 500; font-variant-numeric: tabular-nums; }
+.erga-step-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.erga-steps-plain .erga-step-pic { display: none; }
+.erga-steps-plain .erga-step-name { margin: 0; }
+.erga-steps-plain .erga-step[aria-current="step"] { color: #3b7cf0; }
+.erga-steps-plain .erga-step[aria-current="step"] b { color: inherit; }
+/* On a phone the agent covers the page: the steps go with it. */
+@media (max-width: 640px) { body.agent-open :is(.erga-steps, .erga-steps-panel) { display: none; } }
