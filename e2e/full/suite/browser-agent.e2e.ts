@@ -77,16 +77,16 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
   const selected = seen.some((s) => s.sel > 0 && s.h1.includes("Launch notes") && /Ada, via their agent/.test(s.name));
   expect(selected, "Bo saw the agent's selection on the old heading, with its name", said);
   const typing = new Set(seen.filter((s) => s.sel == 0 && !s.h1.includes("Launch")).map((s) => s.h1));
-  expect(typing.size >= 3, "and its caret as the new text came in, in a few steps", said);
+  expect(typing.size >= 2, "and its caret as the new text came in, in steps", said);
   const inP = seen.some((s) => s.inP);
   expect(inP, "an edit in a tag puts the caret at the text of its paragraph", said);
-  // The new paragraph streams in over about a second, in many steps, and never shows a half tag or entity.
+  // The new paragraph streams in over about half a second, in many steps, and never shows a half tag or entity.
   const news = seen.filter((s) => s.news != null);
   const steps = new Set(news.map((s) => s.news)).size;
   const took = news.length ? [...news].reverse().find((s) => s.news!.length < news[news.length - 1].news!.length)!.t - news[0].t : 0;
   const saidNews = JSON.stringify(news.map((s) => [Math.round(s.t - news[0].t), s.news!.length, s.links]));
-  expect(steps >= 15, `Bo saw the paragraph arrive in many steps (${steps})`, saidNews);
-  expect(took > 600 && took < 2500, `over about a second (${Math.round(took)} ms)`, saidNews);
+  expect(steps >= 8, `Bo saw the paragraph arrive in many steps (${steps})`, saidNews);
+  expect(took > 300 && took < 1500, `over about half a second (${Math.round(took)} ms)`, saidNews);
   const half = news.filter((s) => /[<>]|&\w/.test(s.news!));
   expect(!half.length, "and never a half tag or entity", JSON.stringify(half.slice(0, 3)));
   const idle = async () => !(await peerNames(b)).includes("Ada, via their agent");

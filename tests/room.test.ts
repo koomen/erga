@@ -314,11 +314,11 @@ test("a paced edit streams long text with tags in many steps, and others never s
     await Effect.runPromise(ws.edit("index.html", [{ oldText: start, newText: start + para }]));
     await tick();
     expect(bo.text().toString()).toBe(start + para);
-    // About 1 s at 300 characters a second, in many steps; each a whole page.
+    // About 0.5 s at 600 characters a second, in many steps; each a whole page.
     expect(para.length).toBeGreaterThan(280);
-    expect(waited).toBeGreaterThan(700);
-    expect(waited).toBeLessThan(1400);
-    expect(seen.length).toBeGreaterThan(20);
+    expect(waited).toBeGreaterThan(350);
+    expect(waited).toBeLessThan(700);
+    expect(seen.length).toBeGreaterThan(10);
     expect(seen.filter((s) => !whole(s) || !balanced(s))).toEqual([]);
 
     // Text that doesn't fit the time streams faster, and never jumps to the end.
@@ -342,8 +342,8 @@ test("a paced edit streams long text with tags in many steps, and others never s
     seen.length = waited = 0;
     await Effect.runPromise(ws.write("index.html", start + para + para.replace("spring", "autumn")));
     await tick();
-    expect(seen.length).toBeGreaterThan(20);
-    expect(waited).toBeGreaterThan(700);
+    expect(seen.length).toBeGreaterThan(10);
+    expect(waited).toBeGreaterThan(350);
     expect(seen.filter((s) => !whole(s) || !balanced(s))).toEqual([]);
 
     // A very large call applies at once.
