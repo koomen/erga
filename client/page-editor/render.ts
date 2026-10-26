@@ -595,9 +595,12 @@ export abstract class EditorRender extends EditorMarks {
       return;
     }
     // First the text on the top line, by its source position (a long paragraph that starts above the window, edited
-    // up there, keeps the line you're reading still); else the first block that's still there.
+    // up there, keeps the line you're reading still); else the first block that's still there. While the window hasn't
+    // moved since the last change, the same character as then: text that streams in above it, in its paragraph, moves
+    // it along its line before it moves it down, and the top line's first character, read afresh at each step, would
+    // hold the line still while the text slides down through it.
     const start = this.firstShown();
-    const text = this.topText(start);
+    const text = this.stillHeld() ?? this.topText(start);
     const held: { el: Element; top: number }[] = [];
     for (let i = start; i < this.els.length; i++) {
       const el = this.els[i];
@@ -626,9 +629,19 @@ export abstract class EditorRender extends EditorMarks {
       const keep = !live || top != null ? null : held.find((h) => h.el.isConnected);
       const d = top != null ? top - text!.top : keep ? keep.el.getBoundingClientRect().top - keep.top : 0;
       if (Math.abs(d) >= 0.5) win.scrollBy(0, d);
+      this.heldText = pos != null && top != null ? { pos, top: text!.top, scrollY: win.scrollY } : null;
       root.style.overflowAnchor = before;
       if (!styled && !root.getAttribute("style")) root.removeAttribute("style");
     }
+  }
+
+  /** The character keepView held last, if the window hasn't moved since and it is still where it was held. */
+  protected stillHeld(): { pos: number; top: number } | null {
+    const h = this.heldText;
+    this.heldText = null;
+    if (!h || Math.abs(this.win.scrollY - h.scrollY) >= 0.5 || h.pos > this.state.doc.length) return null;
+    const top = this.textTop(h.pos);
+    return top != null && Math.abs(top - h.top) < 0.5 ? { pos: h.pos, top } : null;
   }
 
   /** The unit's run texts as the DOM should hold them: each line, up to a <br>, on its own (see balanceWhitespace). */
