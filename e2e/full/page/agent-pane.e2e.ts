@@ -1,6 +1,6 @@
 // The agent pane going in and out of the editor ("Agent, empty message").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor, type Editor } from "../../helpers/editor";
 
 await servers.agent();
 

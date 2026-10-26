@@ -23,8 +23,8 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { servers, test, until } from "../fixtures";
-import { editor, F } from "../editor";
+import { servers, test, until } from "../helpers/fixtures";
+import { editor, F } from "../helpers/editor";
 
 await servers.main();
 

@@ -18,7 +18,7 @@ import { ASSET_PREFIX, type AssetManifest } from "../shared/assets.ts";
 import { open, seal } from "../control/deploys/seal";
 import { pagesHost, pagesOrigin, pagesToken } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
-import { quietConsole } from "./quiet.ts";
+import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
 

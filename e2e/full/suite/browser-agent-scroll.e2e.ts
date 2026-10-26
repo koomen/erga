@@ -1,6 +1,6 @@
 // The multiplayer suite in real tabs: the agent pane follows the agent's output
 // until you scroll back, like a terminal.
-import { settle } from "../../fixtures";
+import { settle } from "../../helpers/fixtures";
 import { expect, until } from "./harness";
 import { browserTest, noErrors, openAs } from "./suite";
 

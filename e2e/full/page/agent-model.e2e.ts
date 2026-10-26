@@ -1,6 +1,6 @@
 // The model menu: Opus 5.5 fast by default, Sonnet 5.5 to pick; the person's other tabs and a reload follow ("Agent model").
-import { expect, servers, test, type Page } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test, type Page } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.agent();
 

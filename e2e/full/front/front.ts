@@ -10,8 +10,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
-import { ROOT } from "../../env";
-import { expect, servers, type Server } from "../../fixtures";
+import { ROOT } from "../../helpers/env";
+import { expect, servers, type Server } from "../../helpers/fixtures";
 
 export { servers };
 

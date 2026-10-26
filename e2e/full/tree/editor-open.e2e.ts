@@ -1,5 +1,5 @@
 // The editor's title opens the tree: the project as its root row, its pages, folders and other files under it ("the editor").
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { focused, multi, openCard, openTreeEditor, rows, js } from "./tree";
 
 await servers.main();

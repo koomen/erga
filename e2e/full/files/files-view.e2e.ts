@@ -3,7 +3,7 @@
 // delete (a folder asks once); the list follows changes made elsewhere, live.
 import type { Page } from "playwright-core";
 import { request } from "node:http";
-import { expect, servers, test, until, type Server } from "../../fixtures";
+import { expect, servers, test, until, type Server } from "../../helpers/fixtures";
 
 /** A GET of a pages origin's address (<id>-<owner>.localhost, which this process can't look up): to this machine, with its Host. */
 function viaHost(url: string): Promise<{ type: string; body: string }> {

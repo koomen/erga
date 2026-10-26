@@ -1,7 +1,7 @@
 // Custom edits (agents/document/PROMPT.md, "Custom edits"): in the editor a page's script draws buttons, and a click sends
 // custom edits (ergaEditor.apply) that the editor makes to the source as one undo step.
-import { expect, servers, test } from "../../fixtures";
-import { F, W, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, W, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

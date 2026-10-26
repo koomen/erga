@@ -1,5 +1,5 @@
 // New folder and New page, at the top level and in a folder, named in place ("the editor": New folder, New page).
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { act, clickOn, focused, menuItem, multi, openCard, openTreeEditor, press, rows, type, js } from "./tree";
 
 await servers.main();

@@ -1,6 +1,6 @@
 // The admin agent's panel, off for want of an Anthropic API key, takes the key in place: the admin pastes it under
 // the reason, Save, and the agent turns on, on the same page (no trip to the API keys page).
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 
 const own = () => servers.of("agent-key-in-panel");
 await own();

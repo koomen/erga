@@ -1,6 +1,6 @@
 // The Share button: its card's lower half, "Share with an agent", a prompt with this page's API and a working token.
-import { expect, servers, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 

@@ -1,5 +1,5 @@
 // Settings for someone who may only view.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { closeDrafts, draftDoc, openDocEditor, rect, viewerShows } from "./settings";
 
 await servers.short();

@@ -1,8 +1,8 @@
 // Spaces at the ends of a block: every space someone can type shows, and the caret stops at each one, the same
 // with ArrowRight as with ArrowLeft. Whitespace with a line break in it is the source's formatting: it collapses as
 // on the page and holds no caret ("Arrow keys and spaces").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

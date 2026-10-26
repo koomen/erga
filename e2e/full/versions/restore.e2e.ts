@@ -1,5 +1,5 @@
 // Restoring a version: a new current version, live in open editors.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { cut, intoHeading, person, someone, tools } from "./versions";
 
 await servers.short();

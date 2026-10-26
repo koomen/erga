@@ -1,6 +1,6 @@
 // Nested pages in the viewer and the editor, in a browser.
-import { expect, servers, test } from "../../fixtures";
-import { editor, F } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { editor, F } from "../../helpers/editor";
 import { site, styled, where, ready, editing } from "./tree";
 
 await servers.short();

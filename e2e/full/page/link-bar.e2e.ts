@@ -1,8 +1,8 @@
 // The link bar ("Styling and views"): the style bar's link button turns it into the bar that edits a link's text,
 // address and where it opens; a click in a link shows it too, and typing at a link's ends joins it or ends it.
 // And for readers: a link that leaves the document opens a new tab, unless its author set it to open in this one.
-import { expect, servers, test } from "../../fixtures";
-import { openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor, type Editor } from "../../helpers/editor";
 import { inPage, openViewer } from "../viewer/viewer";
 
 await servers.main();

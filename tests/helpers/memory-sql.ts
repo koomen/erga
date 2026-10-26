@@ -2,9 +2,9 @@
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
-import type { Param, Sql } from "../server/directory/index.ts";
+import type { Param, Sql } from "../../server/directory/index.ts";
 
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
 
 /** A fresh in-memory database, its tables made by server/migrations/ (`before`: runs before the given migration). */
 export function memory(before?: { at: string; run: (db: Database) => void }): Sql {

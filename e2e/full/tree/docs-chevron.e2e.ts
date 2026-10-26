@@ -1,6 +1,6 @@
 // Documents: each document's chevron opens its pages beneath its row and closes them, always saying which; what's open is kept for the tab.
 import type { Page } from "playwright-core";
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { clickOn, multi } from "./tree";
 
 await servers.main();

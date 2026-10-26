@@ -1,6 +1,6 @@
 // Selections across units by mouse, then delete, copy and cut ("Selecting across paragraphs").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

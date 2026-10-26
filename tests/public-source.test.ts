@@ -1,7 +1,7 @@
 // Erga's source for anyone (control/routes.ts, control/source/public.ts): a clone and a fetch with no
 // credentials, the read-only page with no sign-in, and what stays shut: a push without an admin's token,
 // the Ops page and its APIs, /install, and all of it on staging (admins only). Real git, in front of
-// pretend Artifacts (tests/source-fixture.ts), through the control Worker's routes.
+// pretend Artifacts (tests/helpers/source-fixture.ts), through the control Worker's routes.
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
@@ -12,7 +12,7 @@ import { localToken } from "../dev/git-server.ts";
 import { adminsOnlyGate } from "../server/identity/admins-only.ts";
 import type { Platform } from "../server/platform";
 import type { SourceService } from "../control/source/index.ts";
-import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
+import { git, must, startFixture, type Fixture } from "./helpers/source-fixture.ts";
 
 setDefaultTimeout(30_000);
 

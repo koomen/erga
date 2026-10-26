@@ -1,5 +1,5 @@
 // A new document's first version, and a burst of edits as one version.
-import { expect, servers, SHORT, test } from "../../fixtures";
+import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { events, person, someone } from "./versions";
 
 await servers.short();

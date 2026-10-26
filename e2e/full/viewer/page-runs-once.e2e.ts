@@ -7,7 +7,7 @@
 // The fixture (e2e/fixtures/music) has the shape of a page of music widgets: an inline script, a module that imports
 // another (and preloads it), a recording it fetches and plays from a Blob, and an <audio> that loads its own.
 import type { Frame } from "playwright-core";
-import { expect, servers, test, type Page } from "../../fixtures";
+import { expect, servers, test, type Page } from "../../helpers/fixtures";
 import { openViewer, pause } from "./viewer";
 
 await servers.main();

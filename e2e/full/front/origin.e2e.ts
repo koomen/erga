@@ -1,8 +1,8 @@
 // A document's page runs on the document's own origin, for readers and editors alike, whose files open only with the
 // token the viewer's page hands out, and loads fast: files checked by ETag, the page too (with what goes in it).
 import { createHash } from "node:crypto";
-import { expect, test } from "../../fixtures";
-import { framed, pagesFetch } from "../../pages-fetch";
+import { expect, test } from "../../helpers/fixtures";
+import { framed, pagesFetch } from "../../helpers/pages-fetch";
 import { person, servers, type Person } from "./front";
 
 await servers.script();

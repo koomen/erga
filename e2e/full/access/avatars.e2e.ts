@@ -1,7 +1,7 @@
 // Each account's picture (shared/avatars.ts), through local development's pretend provider (/auth/dev), which takes the
 // same steps as Google's and GitHub's answers: a Google account shows the picture Google gave, in the corner and in the
 // editor; one with none shows its initial, never a GitHub picture; a GitHub account shows GitHub's, by its id.
-import { expect, type Page, servers, test, until } from "../../fixtures";
+import { expect, type Page, servers, test, until } from "../../helpers/fixtures";
 import { corner, unique } from "./access";
 
 await servers.main();

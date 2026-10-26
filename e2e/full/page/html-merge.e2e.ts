@@ -1,6 +1,6 @@
 // Typing and an edit on disk at the same moment ("HTML page").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 

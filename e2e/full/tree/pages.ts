@@ -1,6 +1,6 @@
 // The editor's pages dropdown opened for the first time, for pages-open.e2e.ts (correctness) and pages-open.bench.e2e.ts (time).
 import type { Page } from "playwright-core";
-import { until } from "../../fixtures";
+import { until } from "../../helpers/fixtures";
 import { agentClosed } from "./tree";
 
 /** The editor at `url` (an address), up with its title showing; the tree's script may not be there yet. */

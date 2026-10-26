@@ -1,7 +1,7 @@
 // view_page's capture, as the user sees the page: it waits for the fonts and
 // draws them (not a fallback), and says which fonts rendered, at what size and in which mode, as the agent's context
 // does. Other sizes and modes: view-page-modes.e2e.ts.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { capture, CAPTURES, differ, expectColour, fontSite, openFonts as open, SCRIPT_LIGHT, SLOW_MS, WHITE } from "./view-page";
 
 await servers.script();

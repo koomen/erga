@@ -3,7 +3,7 @@
 // cold (a new object on the same storage), how many reads and bytes that
 // takes, and what 6 seconds of steady typing writes.
 //
-//   bun tests/room-storage.bench.ts
+//   bun e2e/bench/room-storage.bench.ts
 //
 // Storage is MemoryStorage, counted: the times are the CPU's (Yjs, merging),
 // the reads and bytes are what a Durable Object's storage would do.
@@ -13,13 +13,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import * as Effect from "effect/Effect";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
-import { Document, type DocumentDeps } from "../document/document";
-import { MemoryStorage } from "../document/storage";
-import { joinLocal } from "../document/room";
-import { files, introduce } from "../document/content";
-import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { Document, type DocumentDeps } from "../../document/document";
+import { MemoryStorage } from "../../document/storage";
+import { joinLocal } from "../../document/room";
+import { files, introduce } from "../../document/content";
+import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
 
-const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
   const db = new Database(":memory:");
   for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + f, "utf8"));

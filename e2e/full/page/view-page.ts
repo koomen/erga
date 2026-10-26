@@ -6,9 +6,9 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ViewResult } from "../../../shared/agent-log";
-import { ROOT } from "../../env";
-import { expect, servers, type Tab } from "../../fixtures";
-import { editor, type Editor } from "../../editor";
+import { ROOT } from "../../helpers/env";
+import { expect, servers, type Tab } from "../../helpers/fixtures";
+import { editor, type Editor } from "../../helpers/editor";
 
 export const FONT = join(ROOT, "client/fonts/inter-latin-normal.woff2");
 /** How long the other site's font takes to arrive. */

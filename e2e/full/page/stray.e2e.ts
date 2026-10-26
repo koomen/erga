@@ -1,7 +1,7 @@
 // A paragraph whose HTML has a stray end tag: locked, saying why, and typing never lands somewhere else ("Stray end tag").
 // The toast's minimum time on screen is checked in stray.bench.e2e.ts (timing).
-import { expect, servers, test, type Tab } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test, type Tab } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

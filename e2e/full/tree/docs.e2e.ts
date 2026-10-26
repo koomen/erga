@@ -1,6 +1,6 @@
 // The tree on Documents: each document's chevron opens its pages beneath its row ("Documents").
 import type { Page } from "playwright-core";
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { act, clickOn, clickToGo, menuItem, multi, press, row, rows, type, type Doc, js } from "./tree";
 
 await servers.main();

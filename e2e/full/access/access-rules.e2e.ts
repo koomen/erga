@@ -3,7 +3,7 @@
 // and a GitHub organization; such people make their accounts at their first sign-in, with that access; anyone else is
 // refused, told why, in place. Everybody's rule changes with its select; a removed rule lets nobody in any more.
 // Sign-ins go through local development's pretend provider (/auth/dev); the admin is DEV_LOGIN ("tester").
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { unique } from "./access";
 
 const server = () => servers.of("access-rules");

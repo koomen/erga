@@ -9,7 +9,7 @@ import { authOps, providersOn, signInApp } from "../server/identity/settings";
 import { chooseSignIn, finishGoogleSignIn, startGoogleSignIn, startSignIn } from "../server/identity/sign-in";
 import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
-import { memory } from "./memory-sql.ts";
+import { memory } from "./helpers/memory-sql.ts";
 
 const GOOGLE = "https://google.test", GITHUB = "https://github.test";
 const APP = { clientId: "123456789012-abcdefghijklmnop.apps.googleusercontent.com", secret: "GOCSPX-abcdefghijklmnopqrstuv" };

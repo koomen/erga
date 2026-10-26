@@ -1,5 +1,5 @@
 // The agents' file tools: over the token API and MCP, and the editor's own agent.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { paths, site } from "./tree";
 
 await servers.short();

@@ -1,6 +1,6 @@
 // The account corner in the pages the server sends (the markup): every page of the site's own has
 // it, the editor has its own, a document has none.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { getter, githubPicture, newDoc } from "./access";
 
 await servers.main();

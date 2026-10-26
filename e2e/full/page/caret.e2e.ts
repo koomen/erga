@@ -1,6 +1,6 @@
 // The caret on the page is drawn by the editor: wider than the browser's 1 px, and wider in large type.
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor } from "../../helpers/editor";
 
 await servers.main();
 

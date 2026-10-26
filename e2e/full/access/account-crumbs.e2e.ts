@@ -2,7 +2,7 @@
 // p) not clipped, light and dark; the arrow midway between the two words' ink (not their boxes); a long title still
 // ends in an ellipsis. (A zero-size inline-block's bottom sits on its line's baseline; a canvas measures each text's
 // ink from where its box starts.)
-import { expect, servers, test, until, type Page } from "../../fixtures";
+import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { getter, newDoc, unique } from "./access";
 
 await servers.main();

@@ -9,7 +9,7 @@ import { sha256 } from "../document/blobs";
 import { withDocuments } from "../agents/models";
 import { withBlobs, GONE, type ChatSave, type ChatStore, type StoredChat } from "../agents/checkpoint";
 import { MemoryBlobs } from "../document/blobs";
-import { bytesOf, pdf, setup } from "./files-fixture";
+import { bytesOf, pdf, setup } from "./helpers/files-fixture";
 
 type Content = { type: string; text?: string; data?: string; mimeType?: string };
 

@@ -1,6 +1,6 @@
 // The editor's own controls (the editor): your avatar's menu, sharing with people, the order of the
 // controls, and the pencil between viewing and editing without a reload.
-import { expect, servers, test, until, type Page } from "../../fixtures";
+import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, githubPicture, inFrames, inPage, newDoc } from "./access";
 
 await servers.main();

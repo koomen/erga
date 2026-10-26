@@ -1,7 +1,7 @@
 // Into the editor and back on the dark page, on a slow network (2. "Frame by frame"): the document's
 // top never moves, on every animation frame, since the band is the same height viewing and editing. The screencast
 // checks (no frame shows a white band over the dark page) are a bench: band-frames.bench.e2e.ts.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { topDoc } from "./band";
 import { docShows, frameTop, openViewer, throttle } from "./viewer";
 

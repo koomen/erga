@@ -1,6 +1,6 @@
 // Documents' addresses: /d/<id>, /<owner>/<id> and the canonical /<owner>/<slug>, the
 // viewer there and the editor with ?edit, and no /edit route.
-import { expect, test } from "../../fixtures";
+import { expect, test } from "../../helpers/fixtures";
 import { person, servers } from "./front";
 
 await servers.script();

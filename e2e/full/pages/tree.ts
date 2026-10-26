@@ -3,7 +3,7 @@
 // with a home page, a blog folder with its own stylesheet, and an about page,
 // made through the server's API with an agent token, and the tree's API.
 
-import { until, type Server } from "../../fixtures";
+import { until, type Server } from "../../helpers/fixtures";
 import { person, tools } from "../versions/versions";
 
 export const PAGE = (title: string, body: string, up = "") => `<!doctype html>

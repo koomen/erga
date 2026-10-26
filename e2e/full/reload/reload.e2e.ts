@@ -7,8 +7,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
-import { beforeTests, expect, test, until, withoutOutage, type Page } from "../../fixtures";
-import { copyCheckout, startIn, upAt, type Started } from "../../checkout";
+import { beforeTests, expect, test, until, withoutOutage, type Page } from "../../helpers/fixtures";
+import { copyCheckout, startIn, upAt, type Started } from "../../helpers/checkout";
 
 let scratch = "", copy = "", root = "", server: Started | null = null;
 

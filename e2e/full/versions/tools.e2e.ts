@@ -1,5 +1,5 @@
 // The agent's version tools, over the server's API with an agent token.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { cut, intoHeading, person, scripted, someone, tools } from "./versions";
 
 await servers.short();

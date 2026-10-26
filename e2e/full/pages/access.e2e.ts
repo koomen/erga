@@ -1,5 +1,5 @@
 // Who may use the tree.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { person, someone } from "../versions/versions";
 import { paths, site } from "./tree";
 

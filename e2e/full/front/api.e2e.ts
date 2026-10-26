@@ -1,7 +1,7 @@
 // The server's API for agents: /llms.txt, agent tokens (asked for by an
 // agent and approved, made at /tokens, the share button's), publishing a folder as a document, every tool over HTTP
 // and MCP with the person's own permissions, and revoking.
-import { expect, test } from "../../fixtures";
+import { expect, test } from "../../helpers/fixtures";
 import { freshLogin, person, servers, tools, type Person } from "./front";
 
 await servers.script();

@@ -3,7 +3,7 @@
 // look-alike test.
 
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
-import { until } from "../../fixtures";
+import { until } from "../../helpers/fixtures";
 
 export const VIEWS = [
   { name: "desktop-light", width: 1300, height: 860, scale: 1, mobile: false, dark: false },

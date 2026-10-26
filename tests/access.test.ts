@@ -7,8 +7,8 @@
 import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
 import { resolve } from "../server/identity/accounts.ts";
-import { memory } from "./memory-sql.ts";
-import { quietConsole } from "./quiet.ts";
+import { memory } from "./helpers/memory-sql.ts";
+import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
 

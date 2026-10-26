@@ -40,7 +40,7 @@ const PAGE_SCRIPTS = [
   ...(readdirSync(ROOT + "client", { recursive: true }) as string[]).filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
   "control/source/page.ts",
   "control/source/page-script.ts",
-  "server/tokens-page.ts",
+  "server/identity/tokens-page.ts",
   "control/install/page.ts",
   "server/admin/pages.ts",
   "server/documents/view.ts",

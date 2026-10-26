@@ -1,5 +1,5 @@
 // Move to…, and drag and drop, with the warning about relative links; the tree says page, not document ("the editor": move).
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { act, menuItem, menuItems, multi, openCard, openTreeEditor, rows, js } from "./tree";
 
 await servers.main();

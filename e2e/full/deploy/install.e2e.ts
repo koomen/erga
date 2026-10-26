@@ -1,7 +1,7 @@
 // /deploy, the install page, end to end against the pretend Cloudflare (ERGA_DEPLOY_MOCK): Authorize with Cloudflare
 // (the consent through /install/callback), where it goes, sign-in and the agent (nothing to make or paste: Erga's GitHub
 // App, through this server), the install itself (the app and its control Worker), and what the page says at the end.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 
 const own = () => servers.of("deploy-install", { env: { ERGA_DEPLOY_MOCK: "1" } });
 await own();

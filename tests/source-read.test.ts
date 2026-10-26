@@ -2,7 +2,7 @@
 // SourceRepo.read, agents/admin/agent.ts `sourceTools`): list a folder, read a file
 // or some of its lines, search, and the git log, at staging (the default), main,
 // a task's branch or a commit, in front of pretend Artifacts (real git,
-// tests/source-fixture.ts). Read-only: with a read token only, and no branch moves.
+// tests/helpers/source-fixture.ts). Read-only: with a read token only, and no branch moves.
 
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
@@ -15,7 +15,7 @@ import { lsRefs } from "../control/source/remote.ts";
 import { SourceRepo } from "../control/source/repo.ts";
 import type { SourceRead } from "../control/source/browse.ts";
 import { sourceTools, startAdminAgent } from "../agents/admin/agent.ts";
-import { must, startFixture, type Fixture } from "./source-fixture.ts";
+import { must, startFixture, type Fixture } from "./helpers/source-fixture.ts";
 
 setDefaultTimeout(30_000);
 

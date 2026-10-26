@@ -1,6 +1,6 @@
 // view_page's capture, done in the tab: the page as it is, or one element ("Styling and views").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 

@@ -1,6 +1,6 @@
 // Markdown as you type, on an HTML page ("Styling and views").
-import { expect, servers, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 

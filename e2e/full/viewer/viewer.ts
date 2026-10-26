@@ -4,7 +4,7 @@
 // in it). `inPage` evaluates in the page.
 
 import type { Page } from "playwright-core";
-import { settle, until } from "../../fixtures";
+import { settle, until } from "../../helpers/fixtures";
 
 export type RGB = [number, number, number];
 export const lum = ([r, g, b]: RGB) => 0.2126 * r + 0.7152 * g + 0.0722 * b;

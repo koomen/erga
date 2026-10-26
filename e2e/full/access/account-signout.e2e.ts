@@ -1,7 +1,7 @@
 // Signing out in the browser: locally too it leaves nobody signed in, the corner offers Sign in,
 // which comes back to the same page, signed in. Signing out is this browser context's cookie, so the worker's server
 // is shared safely.
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { clickOn, corner } from "./access";
 
 await servers.main();

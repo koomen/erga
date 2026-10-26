@@ -1,6 +1,6 @@
 // How long a document lasts: one nobody edits goes on time, one
 // edited or open stays, and one deleted from the list is gone, addresses and all.
-import { expect, test, until } from "../../fixtures";
+import { expect, test, until } from "../../helpers/fixtures";
 import { person, servers, tools } from "./front";
 
 await servers.script();

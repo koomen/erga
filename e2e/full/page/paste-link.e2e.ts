@@ -1,6 +1,6 @@
 // A URL pasted over selected text links that text ("Styling and views").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

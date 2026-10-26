@@ -3,8 +3,8 @@
 //.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, settle, test, until } from "../../fixtures";
-import { F, W, openEditor, type Editor } from "../../editor";
+import { expect, servers, settle, test, until } from "../../helpers/fixtures";
+import { F, W, openEditor, type Editor } from "../../helpers/editor";
 import { diff, pause, sample, screenshot, type RGB } from "../viewer/viewer";
 
 await servers.main();

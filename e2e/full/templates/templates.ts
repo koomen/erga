@@ -8,7 +8,7 @@
 // evaluates an expression in that page.
 
 import type { Page } from "playwright-core";
-import { settle, until, type Server, type Tab } from "../../fixtures";
+import { settle, until, type Server, type Tab } from "../../helpers/fixtures";
 
 /** Makes a document from a template (/new?template=<id>): the answer, and the document's address (no ?edit). */
 export async function newDoc(server: Server, template: string) {
@@ -79,7 +79,7 @@ export const atStep = (page: Page, n: number, of: number, what = `step ${n + 1} 
 const RAW = { End: 35, ArrowLeft: 37, ArrowRight: 39 } as const;
 /**
  * A key as DevTools sends it, with no editing command attached: Playwright on a Mac turns End and the arrows into
- * the Mac's own commands (End scrolls instead of moving the caret), as e2e/editor.ts says.
+ * the Mac's own commands (End scrolls instead of moving the caret), as e2e/helpers/editor.ts says.
  */
 export async function rawKey(page: Page, key: keyof typeof RAW) {
   const cdp = await page.context().newCDPSession(page);

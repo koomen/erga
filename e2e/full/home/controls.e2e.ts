@@ -1,5 +1,5 @@
 // The controls over the homepage: who sees what.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { deployed, fresh, resetLanding } from "./home";
 
 await servers.short();

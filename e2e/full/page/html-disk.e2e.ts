@@ -1,8 +1,8 @@
 // Edits made to the file on disk reach the open page ("HTML page").
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, TIMESCALE } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, TIMESCALE } from "../../helpers/editor";
 
 await servers.main();
 

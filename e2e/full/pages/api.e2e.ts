@@ -1,5 +1,5 @@
 // The file tree's API: making, refusing, moving and deleting, and the events open editors hear.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { events } from "../versions/versions";
 import { paths, site } from "./tree";
 

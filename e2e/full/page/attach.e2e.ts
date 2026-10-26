@@ -2,8 +2,8 @@
 // pasted, dropped and picked wait as chips; some are refused, with why; Send takes them, the model gets images as
 // images and text files as text, and the conversation shows them, after a reload too. The factory's panel is the
 // same code.
-import { expect, servers, test, until, type Tab } from "../../fixtures";
-import { openEditor, type Editor } from "../../editor";
+import { expect, servers, test, until, type Tab } from "../../helpers/fixtures";
+import { openEditor, type Editor } from "../../helpers/editor";
 
 await servers.script();
 

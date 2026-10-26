@@ -3,7 +3,7 @@
 // own origin) and on the homepage (served directly, its controls in a shadow
 // root: server/home/render.ts).
 
-import { expect, until, type Page, type Server } from "../../fixtures";
+import { expect, until, type Page, type Server } from "../../helpers/fixtures";
 import { docShows, inPage, openViewer } from "./viewer";
 
 /** server/pages/viewer.ts: the controls' opacity once faded, and how near the pointer brings them back. */

@@ -1,7 +1,7 @@
 // Keys sent right after a change to the page's structure (an Enter, an indent, a join), with no wait between:
 // typing at human speed (or faster) never loses a key while the page shows the new structure.
-import { expect, servers, test } from "../../fixtures";
-import { openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { openEditor, type Editor } from "../../helpers/editor";
 
 test.beforeAll(async () => { await servers.main(); });
 

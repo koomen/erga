@@ -1,8 +1,8 @@
 // The Canvas presentation template: frames on one large canvas, each a step; going to the
 // next step zooms out to the whole canvas, then in on the next frame, which ends in the middle; viewing and editing.
 import type { Page } from "playwright-core";
-import { expect, servers, test } from "../../fixtures";
-import { editor, F } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { editor, F } from "../../helpers/editor";
 import { templateById } from "../../../server/pages/index.ts";
 import { bar, clickOn, editorReady, inPage, newDoc, openTab } from "./templates";
 

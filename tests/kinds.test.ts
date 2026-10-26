@@ -10,7 +10,7 @@ import { KEYS, MemoryStorage } from "../document/storage";
 import { kindOf, pageRefusal } from "../document/pages";
 import { docsPage } from "../server/pages/docs";
 import type { Listed, Session } from "../server/platform";
-import { setup } from "./files-fixture";
+import { setup } from "./helpers/files-fixture";
 
 /** The document of the files tests, with its tree's API and its agent's tools as its owner. */
 async function withTree() {

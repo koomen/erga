@@ -28,10 +28,10 @@ import {
   type GithubStatus,
   type PushEvent,
 } from "../control/source/github";
-import { TEST_APP, testPrivateKey } from "./source-fixture";
+import { TEST_APP, testPrivateKey } from "./helpers/source-fixture";
 import { Directory } from "../server/directory/index.ts";
-import { memory } from "./memory-sql.ts";
-import { quietConsole } from "./quiet.ts";
+import { memory } from "./helpers/memory-sql.ts";
+import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
 

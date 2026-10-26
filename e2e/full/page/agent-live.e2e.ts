@@ -6,12 +6,12 @@
 //
 //   ERGA_LIVE_AGENT=1 ANTHROPIC_API_KEY=sk-ant-... bun run test:e2e e2e/full/page/agent-live.e2e.ts
 //
-// (The test environment drops every secret, e2e/env.ts; with ERGA_LIVE_AGENT=1 it keeps this key, for this file's
+// (The test environment drops every secret, e2e/helpers/env.ts; with ERGA_LIVE_AGENT=1 it keeps this key, for this file's
 // own server only.)
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { F, openEditor, W, type Editor } from "../../editor";
-import { expect, servers, test } from "../../fixtures";
+import { F, openEditor, W, type Editor } from "../../helpers/editor";
+import { expect, servers, test } from "../../helpers/fixtures";
 
 const KEY = process.env.ERGA_LIVE_AGENT_KEY;
 const own = () => servers.of("agent-live", { processEnv: { ANTHROPIC_API_KEY: KEY ?? "" } });

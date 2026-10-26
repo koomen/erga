@@ -1,7 +1,7 @@
 // The tree follows changes without a reload: a file on disk, another tab, an agent ("Live").
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { act, clickOn, menuItem, multi, openCard, openTreeEditor, paths, press, rows, type } from "./tree";
 
 await servers.main();

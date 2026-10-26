@@ -1,5 +1,5 @@
 // Addresses resolving to pages, and the pages origin's relative redirects.
-import { expect, servers, test } from "../../fixtures";
+import { expect, servers, test } from "../../helpers/fixtures";
 import { pagesFetch } from "../versions/versions";
 import { PAGE, site, type Site } from "./tree";
 

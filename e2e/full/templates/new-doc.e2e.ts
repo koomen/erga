@@ -4,8 +4,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
-import { expect, servers, settle, test, until } from "../../fixtures";
-import { ROOT } from "../../env";
+import { expect, servers, settle, test, until } from "../../helpers/fixtures";
+import { ROOT } from "../../helpers/env";
 import { TEMPLATES } from "../../../server/pages/index.ts";
 import { editorReady, idOf, newDoc, openTab } from "./templates";
 

@@ -1,6 +1,6 @@
 // A focus the shell asked of the page before a card opened doesn't take the card's focus when it reaches the frame late.
 import type { Frame } from "playwright-core";
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { focused, multi, openTreeEditor } from "./tree";
 
 test.beforeAll(async () => { await servers.main(); });

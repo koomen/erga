@@ -1,7 +1,7 @@
 // The sign-in page (/auth/sign-in, server/identity/sign-in.ts): with one provider on it goes straight to that one's
 // sign-in, keeping where to come back to; with both on, a button for each, its text and logo visible, light and dark.
 // It switches Google on, so it has a server of its own.
-import { expect, type Page, servers, test } from "../../fixtures";
+import { expect, type Page, servers, test } from "../../helpers/fixtures";
 import { getter } from "./access";
 
 const server = () => servers.of("sign-in-chooser");

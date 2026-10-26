@@ -5,8 +5,8 @@
 // as the viewer, and nothing else; and what it says to the shell is its own word, which the shell treats as such.)
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { editor, F } from "../../editor";
-import { expect, servers, test, until } from "../../fixtures";
+import { editor, F } from "../../helpers/editor";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { unique } from "./access";
 
 await servers.main();

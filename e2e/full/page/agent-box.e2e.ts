@@ -1,8 +1,8 @@
 // The agent's message box ("Agent, empty message").
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor } from "../../helpers/editor";
 
 await servers.agent();
 

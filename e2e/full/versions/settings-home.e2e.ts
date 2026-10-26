@@ -1,6 +1,6 @@
 // The homepage in the settings: a note only on the homepage (chosen on /admin), a new version scheduling a deploy, Redeploy now.
 // These change which document is the server's homepage (landing_document): each puts it back after.
-import { expect, servers, SHORT, test } from "../../fixtures";
+import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { setLanding } from "../home/home";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 

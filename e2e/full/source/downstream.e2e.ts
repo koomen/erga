@@ -9,8 +9,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { startServer, type Server } from "../../server";
-import { beforeTests, expect, servers, test } from "../../fixtures";
+import { startServer, type Server } from "../../helpers/server";
+import { beforeTests, expect, servers, test } from "../../helpers/fixtures";
 
 const up = () => servers.of("downstream-up", { env: { ERGA_DEPLOY_MOCK: "1" } });
 let down: Server | undefined;

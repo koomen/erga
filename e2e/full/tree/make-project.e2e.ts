@@ -3,7 +3,7 @@
 // pages. A request from elsewhere (an agent's) switches it too. A project with more than one page can't be a document:
 // the settings say why, in place. With one page again, it can. On Documents a document's row has no chevron; a
 // project's has, and says Project. The New menu's Project makes a project from the start, with two pages.
-import { expect, servers, test, until, type Page } from "../../fixtures";
+import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, js, openTreeEditor, paths } from "./tree";
 
 /** Opens the settings once the gear can be clicked (the editor's controls fade in and out), and waits for them. */

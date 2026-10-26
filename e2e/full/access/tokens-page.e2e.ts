@@ -1,6 +1,6 @@
 // /tokens in the browser (/tokens in headless Chrome): make a one-document token with an
 // expiry, shown once, then listed with its scope, document and expiry; the Admin scope offered to an admin only.
-import { expect, servers, test, until } from "../../fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { mint, publish, unique } from "./access";
 
 await servers.main();

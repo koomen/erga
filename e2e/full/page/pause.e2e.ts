@@ -1,6 +1,6 @@
 // Pausing the page: one that defines window.ergaPause stops answering clicks, so its text can be edited; one that doesn't says so ("Pausing the page").
-import { expect, servers, test } from "../../fixtures";
-import { F, openEditor, type Editor } from "../../editor";
+import { expect, servers, test } from "../../helpers/fixtures";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 

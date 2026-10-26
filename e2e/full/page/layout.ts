@@ -1,9 +1,9 @@
 // The editor's side panels on a presentation, its list of steps open, for
 // e2e/page/layout*.e2e.ts: where each panel is, and the presentation opened at W × H with both panels open.
 import { KEY } from "../../../client/agent/layout";
-import { center, drag, still, type Span } from "../../drag";
-import { openEditor } from "../../editor";
-import { expect, servers, until, type Page, type Tab } from "../../fixtures";
+import { center, drag, still, type Span } from "../../helpers/drag";
+import { openEditor } from "../../helpers/editor";
+import { expect, servers, until, type Page, type Tab } from "../../helpers/fixtures";
 
 export const W = 1440, H = 860;
 export type Where = { agent: Span; frame: Span; picker: Span; ghost: Span | null; order: string; width: number | null; docked: boolean };

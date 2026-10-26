@@ -1,8 +1,8 @@
 // No dark mode, and a coloured page's background from the first frame ("System in dark mode", "Reload with a coloured page").
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, servers, settle, test } from "../../fixtures";
-import { openEditor } from "../../editor";
+import { expect, servers, settle, test } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 
