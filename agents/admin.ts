@@ -410,7 +410,7 @@ function about(name: string, args: unknown): string | null {
   if (typeof a.key == "string") return a.key;
   if (typeof a.target == "string") return a.target;
   if (name == "clear_api_key" && typeof a.name == "string") return a.name;
-  if (name == "clear_sign_in_app") return `${a.provider == "google" ? "Google on " : ""}${a.server == "other" ? "the other server" : "this server"}${a.what == "pending" ? " (pending)" : ""}`;
+  if (name == "clear_sign_in_app") return `${a.provider == "google" ? "Google" : "GitHub"}${a.what == "pending" ? " (pending)" : ""}`;
   if (name == "add_user") return `${a.handle} (${ROLE_LABEL[a.role as UserRole] ?? a.role})`;
   if (name == "set_user_role") return `${a.login ?? `person ${a.person}`} (${ROLE_LABEL[a.role as UserRole | "none"] ?? a.role})`;
   if (name == "add_access_rule") return `${a.kind} ${a.value} (${ACCESS_LABEL[a.access as Access] ?? a.access})`;

@@ -14,8 +14,8 @@
 //   list_setting_changes                the settings' change log (server/directory/settings.ts history), admins only
 //   list_api_keys, clear_api_key        which API keys are set, never a key, and clearing one,
 //                                       admins only; a key is set only on /admin/api-keys, never in a conversation
-//   get_sign_in_status,                 how people sign in: which providers are on, this server's GitHub app and
-//   switch_sign_in_provider,               Google client and the other deploy target's GitHub app, never a secret;
+//   get_sign_in_status,                 how people sign in on this server: which providers are on, its GitHub app and
+//   switch_sign_in_provider,               Google client, never a secret;
 //   clear_sign_in_app                   turning a provider on or off; clearing the values set on /admin/auth, or discarding
 //                                       those that wait for a test sign-in. Admins only, with ToolWho.auth; an app's
 //                                       values are set only on /admin/auth, never in a conversation
@@ -66,7 +66,7 @@ import {
   type User,
   type Who,
 } from "../server/directory/index.ts";
-import { AuthError, type AuthOps, type AuthStatus, type OtherStatus } from "../server/identity/index.ts";
+import { AuthError, type AuthOps, type AuthStatus } from "../server/identity/index.ts";
 import { makeDoc, startingFiles } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform.ts";
 import { TEMPLATES, templateById } from "../server/pages/index.ts";
@@ -312,11 +312,12 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Read how people sign in",
     activity: "reading how people sign in",
     admin: true,
-    description: "Admins only. How people sign in, as /admin/auth shows it: which providers are on (GitHub, Google); this server's Google OAuth client; and for this server and the other deploy target (production and staging), the GitHub OAuth app's client ID (public) and where it comes from (the deploy, or set on /admin/auth), whether its client secret is set (never the secret), the homepage and callback URLs the app must have, a live check with GitHub (working, misconfigured and why, not set up, unknown), values that wait for a test sign-in, and, where the app doesn't work, the steps to make one. An app's values are pasted only on /admin/auth, never in a conversation.",
+    description:
+      "Admins only. How people sign in, as /admin/auth shows it: which providers are on (GitHub, Google); and for each of this server's GitHub OAuth app and Google OAuth client: its client ID (public) and where it comes from (the deploy, or set on /admin/auth), whether its client secret is set (never the secret), the homepage and callback URLs the app must have, a live check with GitHub or Google (working, misconfigured and why, not set up, unknown), values that wait for a test sign-in, and, where the app doesn't work, the steps to make one. An app's values are pasted only on /admin/auth, never in a conversation.",
     parameters: Type.Object({}),
     run: async (_args, ctx) => {
-      const { here, other, google, providers } = await authOf(ctx).status(ctx.who);
-      return { providersOn: providers, thisServer: signInOf(here), otherServer: other ? signInOf(other) : null, googleThisServer: signInOf(google) };
+      const { here, google, providers } = await authOf(ctx).status(ctx.who);
+      return { providersOn: providers, github: signInOf(here), google: signInOf(google) };
     },
   },
   {
@@ -341,17 +342,17 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Clear sign-in values",
     activity: "clearing sign-in values",
     admin: true,
-    description: "Admins only. Clears a provider's app values set on /admin/auth (provider: github, the default, or google), as Clear there does: sign-in goes back to the deploy's values. With what: \"pending\", it only discards new values that wait for a test sign-in (Discard), and sign-in keeps the values in use. server: \"here\" (this server, the default) or \"other\" (the other deploy target: production may change staging's, not the other way round). It refuses when the values set on the page work and the deploy's don't, since everyone would stop being able to sign in; force: true clears anyway, and only when the person says so after you told them that. Setting an app's values is done only on /admin/auth.",
+    description:
+      "Admins only. Clears a provider's app values set on /admin/auth (provider: github, the default, or google), as Clear there does: sign-in goes back to the deploy's values. With what: \"pending\", it only discards new values that wait for a test sign-in (Discard), and sign-in keeps the values in use. It refuses when the values set on the page work and the deploy's don't, since everyone would stop being able to sign in; force: true clears anyway, and only when the person says so after you told them that. Setting an app's values is done only on /admin/auth.",
     parameters: Type.Object({
-      server: Type.Optional(Type.Union([Type.Literal("here"), Type.Literal("other")], { description: "here (default) or other (GitHub only: each server sets its own Google client)" })),
       provider: Type.Optional(Type.Union([Type.Literal("github"), Type.Literal("google")], { description: "github (default) or google" })),
       what: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("pending")], { description: "all (default): the values set on the page; pending: only those that wait for a test sign-in" })),
       force: Type.Optional(Type.Boolean({ description: "Clear even if sign-in would stop working: only when the person says so" })),
     }),
     run: async (args, ctx) => {
-      const server = args.server == "other" ? "other" : "here", provider = args.provider == "google" ? "google" : "github";
-      if (args.what == "pending") return { server, provider, ...(await authOf(ctx).discard(ctx.who, server, provider)) };
-      return { server, provider, ...(await authOf(ctx).clear(ctx.who, server, args.force === true, provider)) };
+      const provider = args.provider == "google" ? "google" : "github";
+      if (args.what == "pending") return { provider, ...(await authOf(ctx).discard(ctx.who, provider)) };
+      return { provider, ...(await authOf(ctx).clear(ctx.who, args.force === true, provider)) };
     },
   },
 
@@ -698,8 +699,7 @@ function authOf(ctx: ToolWho): AuthOps {
 }
 
 /** A server's sign-in, as an agent reads it: never a secret. */
-function signInOf(s: AuthStatus | OtherStatus) {
-  if ("error" in s) return { target: s.target, origin: s.origin, reachable: false, error: s.error };
+function signInOf(s: AuthStatus) {
   return {
     target: s.target, origin: s.origin, provider: s.provider, state: s.check.state, summary: s.check.summary, reasons: s.check.reasons,
     clientId: s.inUse.clientId, clientIdFrom: s.inUse.source == "page" ? "/admin/auth" : "the deploy", secretSet: s.inUse.secretSet,
@@ -707,7 +707,7 @@ function signInOf(s: AuthStatus | OtherStatus) {
     deploy: { clientId: s.deploy.clientId, secretSet: s.deploy.secretSet },
     setOnPage: s.page ? { clientId: s.page.clientId, updated: iso(s.page.updated), updatedBy: s.page.updatedBy, ...(s.page.updatedVia ? { updatedVia: s.page.updatedVia } : {}) } : null,
     waitingForTestSignIn: s.pending ? { clientId: s.pending.clientId, updated: iso(s.pending.updated), updatedBy: s.pending.updatedBy, check: s.pendingCheck?.summary, lastTest: s.pending.test ?? null } : null,
-    takesValuesFrom: s.takesFrom, canKeepValues: s.canStore,
+    canKeepValues: s.canStore,
     setupSteps: s.setup,
   };
 }

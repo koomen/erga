@@ -41,15 +41,12 @@
 // Sessions people already have are signed with SESSION_SECRET, not the app,
 // so a change here never signs anyone out.
 //
-// Another server's values: production's page sets staging's too, through
-// staging's server (cloudflare/auth-settings.ts, with DEPLOY_HOOK_SECRET): staging is
-// for admins only, and until staging has an app no admin can sign in there.
-// A server takes values only from the target it copies its data from
-// (`snapshotFrom`: staging from production), never the other way round.
+// Each server's page sets its own sign-in only, GitHub's and Google's alike:
+// no server sets another's. The way back in, when the page's values stop
+// working, is the deploy's (settings.ts, signInApp): sign-in falls back to
+// them while they work, so an admin can sign in and fix the page's.
 //
-// GitHub and Google, each with its own app and the same rules. Google's
-// values are set only for this server (no other server's page sets them):
-// its admins sign in with GitHub to set them.
+// GitHub and Google, each with its own app and the same rules.
 
 import type { Act } from "../../shared/attribution.ts";
 
@@ -399,8 +396,6 @@ export interface AuthStatus {
   pending: KeptView | null;
   /** This server can keep values from the page (it has FACTORY_KEY). */
   canStore: boolean;
-  /** Which other target's page may set this server's values (staging: production). */
-  takesFrom: string | null;
   check: AppCheck;
   pendingCheck: AppCheck | null;
   /** How to make the app, when there is none that works. */
@@ -432,7 +427,10 @@ export function setupSteps(o: { origin: string; target: string | null; worker?: 
 }
 
 /** One server's status: what it uses, what the page set, and a live check of each. */
-export async function statusOf(c: AppContext, o: { origin: string; target: string | null; dev: boolean; takesFrom: string | null; worker?: string; pagePlace: string }): Promise<AuthStatus> {
+export async function statusOf(
+  c: AppContext,
+  o: { origin: string; target: string | null; dev: boolean; worker?: string; pagePlace: string }
+): Promise<AuthStatus> {
   const [now, kept, pendingValues] = await Promise.all([inUse(c), c.apps.read(c.provider), c.apps.values(c.provider, "pending")]);
   const [check, pendingCheck] = await Promise.all([c.check(now), pendingValues ? c.check(pendingValues) : null]);
   return {
@@ -447,7 +445,6 @@ export async function statusOf(c: AppContext, o: { origin: string; target: strin
     page: kept.active,
     pending: kept.pending,
     canStore: c.apps.canStore,
-    takesFrom: o.takesFrom,
     check,
     pendingCheck,
     setup: check.state == "working" ? null : setupSteps({ origin: o.origin, target: o.target, worker: o.worker, pagePlace: o.pagePlace, provider: c.provider }),
@@ -457,25 +454,16 @@ export async function statusOf(c: AppContext, o: { origin: string; target: strin
 /** Someone acting on sign-in: their login, how, and whether they come with admin power. */
 export type By = Act & { admin?: boolean };
 
-/** The other target's status, or why it couldn't be read. */
-export type OtherStatus = AuthStatus | { target: string; origin: string; error: string };
-
-/**
- * What the Authentication page and the admin agent do, on this server ("here") or the other deploy target's ("other":
- * only where it takes this server's values). Admins only. No call answers a secret.
- */
+/** What the Authentication page and the admin agent do, on this server only. Admins only. No call answers a secret. */
 export interface AuthOps {
-  /**
-   * `by`: who asks, with their admin power (Users.actsAsAdmin): each call checks it. GitHub's app here and on the
-   * other server; Google's here (each server sets its own); which providers are on.
-   */
-  status(by: By): Promise<{ here: AuthStatus; other: OtherStatus | null; google: AuthStatus; providers: ProvidersOn }>;
-  /** Turns sign-in with a provider on or off here, with the rules that keep someone able to sign in. */
+  /** `by`: who asks, with their admin power (Users.actsAsAdmin): each call checks it. GitHub's app, Google's, and which providers are on. */
+  status(by: By): Promise<{ here: AuthStatus; google: AuthStatus; providers: ProvidersOn }>;
+  /** Turns sign-in with a provider on or off, with the rules that keep someone able to sign in. */
   setProvider(by: By, provider: Provider, on: boolean): Promise<ProvidersOn>;
-  /** `provider`: GitHub (the default), or Google (this server only). */
-  save(by: By, server: "here" | "other", input: { clientId?: unknown; secret?: unknown }, provider?: Provider): Promise<SaveResult>;
-  discard(by: By, server: "here" | "other", provider?: Provider): Promise<{ discarded: boolean }>;
-  clear(by: By, server: "here" | "other", force?: boolean, provider?: Provider): Promise<{ cleared: boolean; message: string }>;
+  /** `provider`: GitHub (the default) or Google. */
+  save(by: By, input: { clientId?: unknown; secret?: unknown }, provider?: Provider): Promise<SaveResult>;
+  discard(by: By, provider?: Provider): Promise<{ discarded: boolean }>;
+  clear(by: By, force?: boolean, provider?: Provider): Promise<{ cleared: boolean; message: string }>;
 }
 
 /** Which providers people may sign in with on a server. */
