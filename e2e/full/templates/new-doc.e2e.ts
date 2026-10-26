@@ -120,7 +120,11 @@ test("the documents page's New opens the same picker under it, without icons; Pr
   expect(m).toEqual({ open: true, rows: ROWS, note: "", expanded: "New document" });
   expect(await page.evaluate(() => [...document.querySelectorAll(".erga-new-menu a")].some((a) => a.querySelector("svg")))).toBe(false);
   await sameTypeface(page);
-  const place = await page.evaluate(() => ({ menu: document.querySelector(".erga-new-menu")!.getBoundingClientRect().toJSON(), btn: document.querySelector("header .erga-new-btn")!.getBoundingClientRect().toJSON(), w: innerWidth }));
+  const place = await page.evaluate(() => ({
+    menu: document.querySelector(".erga-new-menu")!.getBoundingClientRect().toJSON(),
+    btn: document.querySelector("header .erga-new-btn")!.getBoundingClientRect().toJSON(),
+    w: innerWidth,
+  }));
   expect(place.menu.top).toBeGreaterThan(place.btn.bottom);
   expect(place.menu.right).toBeLessThanOrEqual(place.w);
   await page.keyboard.press("Escape");
@@ -128,7 +132,12 @@ test("the documents page's New opens the same picker under it, without icons; Pr
   await clickOn(page, "header .erga-new-btn");
   // (Not clickOn: the page leaves at once, before its settle.)
   await page.click('.erga-new-menu a[data-template="project"]');
-  await expect.poll(() => { const u = new URL(page.url()); return u.pathname != "/docs" && u.search == "?edit"; }).toBe(true);
+  await expect
+    .poll(() => {
+      const u = new URL(page.url());
+      return u.pathname != "/docs" && u.search == "?edit";
+    })
+    .toBe(true);
   expect(await fileOf(s.root, s.root + new URL(page.url()).pathname)).toBe(template("assets/templates/project"));
 });
 
