@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, type Context, type Model } from "@mariozechner/pi-ai";
 import { sleep } from "../shared/time";
+import { CREDENTIALS, type Credentials } from "../server/directory/index.ts";
 
 /** The models a person can switch between, by key; prices per million tokens. */
 export const MODELS = {
@@ -54,6 +55,28 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (an admin pastes the Anthropic API key in the admin agent's panel; locally, export it before bun start, or put it in .dev.vars)` };
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
+
+/** What the agent pane says when the stored key doesn't open on this server. */
+export const UNREADABLE_KEY = "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again in the admin agent's panel";
+
+/**
+ * Both agents' settings, as they are now: the Anthropic key an admin stored on
+ * /admin/api-keys, else the Worker secret in `env`. Read at each turn (one row
+ * of the database), so a key an admin stores, replaces or clears reaches every
+ * agent at its next turn, with no reload. No stored keys: the Worker secret only.
+ */
+export async function agentSettingsFrom(env: object, credentials: Pick<Credentials, "opened"> | null): Promise<AgentConfig | { missing: string }> {
+  const name = CREDENTIALS.anthropic.env;
+  const stored = credentials
+    ? await credentials.opened("anthropic").catch((e: unknown) => {
+      console.log(`couldn't read the stored ${CREDENTIALS.anthropic.label}, so the Worker secret stands: ${e instanceof Error ? e.message : e}`);
+      return { key: null, unreadable: false };
+    })
+    : { key: null, unreadable: false };
+  const cfg = await Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(stored.key ? { ...env, [name]: stored.key } : env)));
+  // No key to use, but one is stored: say why it can't be used, not only that there's none.
+  return "missing" in cfg && stored.unreadable && cfg.missing.startsWith(name) ? { missing: UNREADABLE_KEY } : cfg;
+}
 
 /**
  * pi's built-in catalogue predates the 5.5 models, so they're described here.
