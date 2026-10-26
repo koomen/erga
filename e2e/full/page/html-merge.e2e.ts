@@ -10,9 +10,10 @@ test("typing and a disk edit at once: both survive, marked; ⌘Z takes back the 
   await expect.poll(() => ed.textOf("figcaption")).toBe("Where the leads went.");
   await ed.clickEnd("h1");
   await ed.type(" now");
+  // Marks are brief (the timescale makes them briefer): each one is kept as it shows.
+  await ed.watchMarks();
   ed.write(ed.disk().replace("Where the leads went.", "Where the leads go now."));
-  // Marks are brief (the timescale makes them briefer): looked for as the edit lands.
-  await expect.poll(async () => (await ed.marks()).added.some((x) => /go now/.test(x))).toBe(true);
+  await expect.poll(async () => (await ed.seenMarks()).some((x) => /go now/.test(x))).toBe(true);
   await expect.poll(() => ed.disk()).toMatch(/ now<\/h1>[\s\S]*leads go now\./);
   expect(await ed.textOf("h1")).toMatch(/ now$/);
   expect(await ed.textOf("figcaption")).toBe("Where the leads go now.");
