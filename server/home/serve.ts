@@ -12,6 +12,7 @@ import { mayDeploy } from "../../control/deploys/access.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import type { LivePage } from "./deploys.ts";
 import { HOME_FILES, homeHeader } from "./render.ts";
+import { actingAdmin } from "../identity/index.ts";
 
 /** The snapshot as this isolate last had it, and when it last asked whether it's still current. */
 let memo: { page: LivePage; checked: number } | null = null;
@@ -88,7 +89,7 @@ export async function serveHome(request: Request, platform: Platform): Promise<R
     const dir = platform.directory;
     // Only admins may edit the homepage: their role is asked of the database only if they are one
     // (whether someone is, the isolate remembers for a few seconds), so for anyone else, signed out above all, nothing is.
-    const admin = !!who && !session.test && !session.agent && (await dir.users.isAdmin(who));
+    const admin = !!session && !session.agent && (await actingAdmin(dir.users, session));
     const doc = { id: page.docId, owner: page.address.split("/")[1], test: false };
     const role = admin ? await dir.access(who, doc) : null;
     return homeHeader({

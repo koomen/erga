@@ -42,9 +42,10 @@ import {
   scriptTag,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import type { Platform, Session } from "../platform.ts";
 import { MARK } from "../../assets/logo/logo.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
+import { actingAdmin } from "../identity/index.ts";
 
 export type AdminSection = "settings" | "keys" | "auth" | "access" | "changes" | "users" | "ops";
 
@@ -167,7 +168,7 @@ export async function adminGate(platform: Platform, request: Request): Promise<R
     if (read) return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(url.pathname + url.search)}`, "Cache-Control": "no-store" } });
     return Response.json({ error: "Sign in as an admin first." }, { status: 401 });
   }
-  const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
+  const admin = !session.agent && (await actingAdmin(platform.directory.users, session));
   if (admin) return null;
   if (read) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return Response.json({ error: "Only an admin can do that." }, { status: 403 });

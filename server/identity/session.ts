@@ -14,7 +14,8 @@
 //     carried along in its links), else whoever this browser signed in as,
 //     else the dev login, unless the browser signed out.
 
-import type { Platform, Session } from "../platform.ts";
+import { type Platform, type Session, whoOf } from "../platform.ts";
+import type { Users } from "../directory/index.ts";
 import { cookies } from "./cookies.ts";
 import { base64url, fromBase64url } from "../../shared/bytes.ts";
 
@@ -108,3 +109,9 @@ async function tokenSession(platform: Platform, bearer: string, url: URL): Promi
 /** A name as a login: letters and digits, the rest as dashes ("Ada Lovelace" → "ada-lovelace"). */
 const loginOf = (name: string) =>
   name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 39) || "me";
+
+/**
+ * Whether the session has admin power now: an admin in person, or with an admin-scope token (Users.actsAsAdmin). A
+ * test person never has; nor has an admin's token without the admin scope.
+ */
+export const actingAdmin = async (users: Users, session: Session | null) => !!session && (await users.actsAsAdmin(whoOf(session)));

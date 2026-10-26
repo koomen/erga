@@ -73,7 +73,7 @@ import { releasesDoor, type ReleaseStore } from "./deploys/releases.ts";
 import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "./deploys/api.ts";
-import { cookies, finishSignIn, setCookie, signOut, startSignIn } from "../server/identity/index.ts";
+import { actingAdmin, cookies, finishSignIn, setCookie, signOut, startSignIn } from "../server/identity/index.ts";
 import { googleEndpoints } from "../server/identity/apps.ts";
 import { googleToken } from "../server/identity/sign-in.ts";
 import { open, seal, type Sealed } from "./deploys/seal.ts";
@@ -245,9 +245,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
     if (wantsPage) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname + url.search)}`, "Cache-Control": "no-store" } });
     return json({ error: "Sign in as an admin, or send an admin-scope token (Authorization: Bearer erga_…)." }, 401);
   }
-  const users = p.directory.users;
-  const admin = !session.test && (await users.isAdmin(whoOf(session))) && (await users.actsAsAdmin(whoOf(session)));
-  if (!admin) {
+  if (!(await actingAdmin(p.directory.users, session))) {
     if (wantsPage) return page("Admins only", `This is Erga's control page, for its admins, and <b>${esc(session.login)}</b> isn't one. Erga itself is at <a href="${esc(c.app)}">${esc(c.app.replace(/^https?:\/\//, ""))}</a>. <a href="/auth/logout">Sign out</a>`, 403);
     return json({ error: "Only an admin can do that." }, 403);
   }
@@ -416,9 +414,7 @@ ${o.ok && !o.warning ? "setTimeout(() => window.close(), 300);" : ""}
 /** An admin's session on this Worker, for the connect pages (the cookie proves the popup started here; the session says who). */
 async function adminSession(request: Request, c: Control): Promise<AdminLayout["session"] | null> {
   const session = await c.platform.sessionOf(request);
-  if (!session || session.test) return null;
-  const users = c.platform.directory.users;
-  return (await users.isAdmin(whoOf(session))) && (await users.actsAsAdmin(whoOf(session))) ? session : null;
+  return (await actingAdmin(c.platform.directory.users, session)) ? session : null;
 }
 
 /** Connect GitHub coming back from the App's install page: the person's token (relayed, or the code traded here), then the repository. */

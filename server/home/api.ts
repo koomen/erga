@@ -28,7 +28,11 @@ export async function homeApi(request: Request, platform: Platform, id: string, 
   const dir = platform.directory;
   const doc = await dir.get(id);
   const who = whoOf(session);
-  const [role, admin, unlocked] = await Promise.all([doc ? dir.access(who, doc) : null, session.test ? false : dir.users.isAdmin(who), session.test ? false : dir.users.actsAsAdmin(who)]);
+  const [role, admin, unlocked] = await Promise.all([
+    doc ? dir.access(who, doc) : null,
+    dir.users.isAdmin(who),
+    dir.users.actsAsAdmin(who),
+  ]);
   if (!doc || doc.test || (!role && !admin)) return json({ error: "There's no such document." }, 404);
   const state = async () => {
     const isHome = (await dir.homeId()) == doc.id;
