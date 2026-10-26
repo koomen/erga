@@ -17,6 +17,8 @@
 //
 // Uses the DOM (DOMParser): runs in the browser only.
 
+import { escapeHtmlText } from "../../shared/manuscript";
+
 /** An inline piece of text: what it is, and the formatting it has. */
 interface Marks { strong: boolean; em: boolean; code: boolean; href: string | null }
 type Run = { text: string; marks: Marks } | { br: true };
@@ -39,7 +41,6 @@ const BLOCK = /^(p|div|h[1-6]|li|ul|ol|dl|dt|dd|blockquote|pre|table|thead|tbody
 const DROP = /^(script|style|template|head|title|meta|link|svg|math|canvas|img|picture|video|audio|iframe|object|embed|button|input|select|textarea|noscript|xml|o:p|v:.*|w:.*)$/;
 /** The links a paste keeps: web and mail addresses, and places in the page (#id). */
 const LINK = /^(https?:|mailto:|#[^\s#]+$)/i;
-const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // ------------------------------------------------------------------ inline
 
@@ -142,7 +143,7 @@ function render(runs: Run[], pre: boolean, noBold: boolean): { html: string; tex
       for (const w of want.slice(k)) { html += open(w); stack.push(w); }
       prev = r.marks;
     }
-    html += esc(r.text);
+    html += escapeHtmlText(r.text);
     text += r.text;
   }
   while (stack.length) html += close(stack.pop()!);
@@ -303,7 +304,7 @@ export function textLines(text: string): Line[] {
     let stack: { indent: number; type: "ul" | "ol" }[] = [];
     const flushPlain = () => {
       if (!plain.length) return;
-      lines.push({ tag: "p", list: [], quote: false, html: plain.map(esc).join("<br>"), text: plain.join("\n") });
+      lines.push({ tag: "p", list: [], quote: false, html: plain.map(escapeHtmlText).join("<br>"), text: plain.join("\n") });
       plain = [];
     };
     for (const raw of para.split("\n")) {
@@ -317,7 +318,7 @@ export function textLines(text: string): Line[] {
       if (!stack.length || stack.at(-1)!.indent < indent) stack.push({ indent, type });
       else stack[stack.length - 1].type = type;
       const t = m[3].trim().replace(/\s+/g, " ");
-      lines.push({ tag: "li", list: stack.map((s) => s.type), quote: false, html: esc(t), text: t });
+      lines.push({ tag: "li", list: stack.map((s) => s.type), quote: false, html: escapeHtmlText(t), text: t });
     }
     flushPlain();
   }

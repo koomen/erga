@@ -3,7 +3,8 @@
 import type { Listed, Session } from "../platform.ts";
 import { asset } from "./assets.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
-import { appPage, crumbs, esc, ICON, link, TIMES_SCRIPT, withEdit } from "./chrome.ts";
+import { appPage, crumbs, ICON, link, TIMES_SCRIPT, withEdit } from "./chrome.ts";
+import { esc } from "../../shared/html.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 import { editorScripts } from "./viewer.ts";
 

@@ -3,7 +3,8 @@
 
 
 import { nameOf } from "../directory/index.ts";
-import { appPage, crumbs, esc, ICON, page, safeNext, TIMES_SCRIPT } from "../pages/index.ts";
+import { appPage, crumbs, ICON, page, safeNext, TIMES_SCRIPT } from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
 import { mintTestToken } from "./sign-in.ts";

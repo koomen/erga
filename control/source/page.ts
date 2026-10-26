@@ -63,7 +63,8 @@
 // the scroll, an open log or dialog, and the focus stay.
 
 import { SOURCE_SCRIPT } from "./page-script.ts";
-import { esc, page as plainPage } from "../../server/pages/index.ts";
+import { page as plainPage } from "../../server/pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import type { Session } from "../../server/platform";
 import { adminResponse, type AdminLayout } from "../../server/admin/index.ts";
 import { CONTROL, SOURCE, TARGETS } from "../../deploy/targets.ts";

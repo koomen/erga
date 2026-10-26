@@ -22,6 +22,7 @@
 // Someone who can't edit sees it all read-only.
 
 import { ago, clock, RECENT, type Version, type Versions } from "./versions";
+import { esc } from "../../shared/html";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
 /** GET /api/docs/<id>/home. */
@@ -135,7 +136,6 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 @media (prefers-reduced-motion: reduce) { .ds-dot.deploying, .ds-skel { animation-duration: 3s; } .help.ds { animation: none; } }
 `;
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n == 1 ? one : many}`;
 
 function mount(host: SettingsHost): Settings {

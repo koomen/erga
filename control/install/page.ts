@@ -4,7 +4,8 @@
 // beside it, which keeps it up to date. One page; its script asks
 // /deploy/api/* and redraws.
 
-import { appPage, crumbs, esc } from "../../server/pages/index.ts";
+import { appPage, crumbs } from "../../server/pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import { TARGETS } from "../../deploy/targets.ts";
 
 export interface DeployPageConfig {

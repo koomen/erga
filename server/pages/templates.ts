@@ -7,6 +7,7 @@
 
 import { asset } from "./assets.ts";
 import type { DocKind } from "../../document/pages.ts";
+import { esc } from "../../shared/html.ts";
 
 /** A template: what the picker shows, and the files a new document starts with. */
 export interface Template {
@@ -46,7 +47,6 @@ export const TEMPLATES: Template[] = [
 
 export const templateById = (id: string | null | undefined): Template | undefined => TEMPLATES.find((t) => t.id == id);
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 const PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.1538) translate(-12 -12)" stroke-width="1.3867"><path d="M12 5.5v13M5.5 12h13"/></g></svg>`;
 

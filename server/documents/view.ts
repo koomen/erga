@@ -28,7 +28,22 @@ import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { frontDocument, landingPage } from "./landing.ts";
 import { pagesOrigin, pagesToken } from "./pages-origin.ts";
-import { accountHtml, accountOf, cloneButton, editButton, esc, filesButton, filesPage, link, OWN_ACCOUNT, page, scriptTag, startPage, viewerPage, withEdit } from "../pages/index.ts";
+import {
+  accountHtml,
+  accountOf,
+  cloneButton,
+  editButton,
+  filesButton,
+  filesPage,
+  link,
+  OWN_ACCOUNT,
+  page,
+  scriptTag,
+  startPage,
+  viewerPage,
+  withEdit,
+} from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;

@@ -40,6 +40,7 @@ import { b64, SESSION_COOKIE, sign, SIGNED_OUT, unb64, unsign } from "./session.
 import { openRelay, randomNonce, relayNonce, relayState } from "../../control/source/index.ts";
 import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
+import { esc } from "../../shared/html.ts";
 
 /** GitHub's API from its origin (the stand-in serves its API under /api). */
 const apiOf = (github: string) => (github == "https://github.com" ? "https://api.github.com" : `${github}/api`);
@@ -171,7 +172,12 @@ const PROVIDER_LOGOS: Record<Provider, string> = {
 const nothingToTest = () => page("Nothing to test", `No new sign-in values wait for a test. <a href="/admin/auth">Authentication</a>`, 404);
 
 /** The sign-in routes on a server with no GitHub OAuth app (GITHUB_CLIENT_ID empty): a page saying what an admin does. */
-const noOAuthApp = (origin: string) => page("Sign-in isn't set up", `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin makes an OAuth app on GitHub (homepage ${escape(origin)}, callback ${escape(origin)}/auth/github/callback), and pastes its Client ID and client secret on the Authentication page (/admin/auth; staging's are set on production's). Or they put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`, 503);
+const noOAuthApp = (origin: string) =>
+  page(
+    "Sign-in isn't set up",
+    `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin makes an OAuth app on GitHub (homepage ${esc(origin)}, callback ${esc(origin)}/auth/github/callback), and pastes its Client ID and client secret on the Authentication page (/admin/auth; staging's are set on production's). Or they put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`,
+    503
+  );
 
 /** The GitHub organizations the access rules name. */
 async function orgRules(platform: Pick<Platform, "directory">): Promise<string[]> {
@@ -222,7 +228,7 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
   if (!token.access_token) {
     // GitHub's own reason (e.g. incorrect_client_credentials: a wrong GITHUB_CLIENT_SECRET) goes to the logs and the page.
     console.log(`GitHub sign-in failed: ${token.error}: ${token.error_description}`);
-    const why = token.error ? ` (${escape(token.error_description ?? token.error)})` : "";
+    const why = token.error ? ` (${esc(token.error_description ?? token.error)})` : "";
     if (testing && app) {
       await testedSignIn(platform, app.clientId, { ok: false, error: `GitHub refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` });
       return page("Test sign-in failed", `GitHub didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`, 400);
@@ -252,7 +258,7 @@ export async function finishSignIn(platform: Platform, request: Request): Promis
 const noGoogleClient = (origin: string) =>
   page(
     "Google sign-in isn't set up",
-    `This server has no Google OAuth client yet. An admin makes one in Google Cloud Console (a Web application, with the redirect URI ${escape(origin)}/auth/google/callback) and pastes its Client ID and secret on the Authentication page (/admin/auth). </p><p><a class="new" href="/auth/sign-in">Sign in</a>`,
+    `This server has no Google OAuth client yet. An admin makes one in Google Cloud Console (a Web application, with the redirect URI ${esc(origin)}/auth/google/callback) and pastes its Client ID and secret on the Authentication page (/admin/auth). </p><p><a class="new" href="/auth/sign-in">Sign in</a>`,
     503
   );
 
@@ -323,7 +329,7 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
     : await googleToken(endpoints, app, url.searchParams.get("code") ?? "", `${url.origin}/auth/google/callback`);
   if (!token.access_token) {
     console.log(`Google sign-in failed: ${token.error}: ${token.error_description}`);
-    const why = token.error ? ` (${escape(token.error_description ?? token.error)})` : "";
+    const why = token.error ? ` (${esc(token.error_description ?? token.error)})` : "";
     if (testing) {
       await testedSignIn(platform, app.clientId, { ok: false, error: `Google refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` }, "google");
       return page("Test sign-in failed", `Google didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`, 400);
@@ -392,4 +398,3 @@ export function signOut(platform: Platform, request: Request): Response {
   return new Response(null, { status: 302, headers });
 }
 
-const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);

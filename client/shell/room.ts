@@ -8,10 +8,10 @@ import type { Author } from "../../document/content";
 import type { AgentState, DocName, Hello, ModelState } from "../../document/api";
 import type { LogEvent, ViewRequest } from "../../shared/agent-log";
 import { changesBetween } from "../../document/merge";
-import { escapeHtml } from "../agent/agent-chat";
 import { live } from "../live/client";
 import { ms } from "../page-editor/timescale";
 import { $, type Shell } from "./shell";
+import { esc } from "../../shared/html";
 
 export function mountRoom(shell: Shell) {
 
@@ -105,7 +105,8 @@ export function mountRoom(shell: Shell) {
     if (!refreshPending) return;
     const who = shell.people.busyAgents();
     const names = who.length ? who.join(" and ") : "the agent";
-    refreshPill.querySelector("span")!.innerHTML = `Page changes will show when ${escapeHtml(names)} ${who.length > 1 ? "finish" : "finishes"} · <b>Refresh now</b>`;
+    refreshPill.querySelector("span")!.innerHTML =
+      `Page changes will show when ${esc(names)} ${who.length > 1 ? "finish" : "finishes"} · <b>Refresh now</b>`;
     refreshPill.title = `${names} changed more than text; the page re-renders when ${who.length > 1 ? "they finish" : "it finishes"}.`;
   }
   function setAgentBusy(busy: boolean) {

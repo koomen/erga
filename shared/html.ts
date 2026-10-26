@@ -9,4 +9,5 @@ export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ENTITIES[c]!);
 export const jsonInScript = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
 
 /** A time as a <time> element that shows its UTC date ("2026-10-26"); TIMES_SCRIPT redoes it in the reader's zone. */
-export const dateTag = (t: number, cls = "") => `<time${cls ? ` class="${cls}"` : ""} datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>`;
+export const dateTag = (t: number, cls = "") =>
+  `<time${cls ? ` class="${cls}"` : ""} datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>`;

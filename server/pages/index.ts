@@ -3,7 +3,21 @@
 // templates, and what every page shares (pages/chrome.ts). The rest of the app imports
 // pages through this file.
 
-export { appPage, confirmAction, crumbs, crumbsFont, esc, fromElsewhere, ICON, link, page, safeNext, signInFirst, TIMES_SCRIPT, viewCrumbs, withEdit } from "./chrome.ts";
+export {
+  appPage,
+  confirmAction,
+  crumbs,
+  crumbsFont,
+  fromElsewhere,
+  ICON,
+  link,
+  page,
+  safeNext,
+  signInFirst,
+  TIMES_SCRIPT,
+  viewCrumbs,
+  withEdit,
+} from "./chrome.ts";
 export { docsPage } from "./docs.ts";
 export { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX, readerPage, readerScript, readerVersion } from "./reader.ts";
 export { startPage } from "./start.ts";

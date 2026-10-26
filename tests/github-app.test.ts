@@ -262,7 +262,7 @@ describe("Connect GitHub (control/routes.ts)", () => {
     const other = await startSignIn(platform, new Request(`${INSTALL}/auth/github`));
     const stale = await finishSignIn(platform, new Request(`${INSTALL}/auth/github/callback?state=${encodeURIComponent(new URL(other.headers.get("location")!).searchParams.get("state")!)}&relay=${on.searchParams.get("relay")}`, { headers: { cookie: cookieOf(other) } }));
     expect(stale.status).toBe(400);
-    expect(await stale.text()).toContain("didn't open");
+    expect(await stale.text()).toContain("didn&#39;t open");
   });
 });
 

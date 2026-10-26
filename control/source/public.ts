@@ -9,7 +9,8 @@
 // Ops page: no merge, deploys, logs, mirror or settings. Git itself (clone,
 // fetch) is routes.ts's sourceGit, which also needs no sign-in.
 
-import { appPage, crumbs, esc, TIMES_SCRIPT } from "../../server/pages/index.ts";
+import { appPage, crumbs, TIMES_SCRIPT } from "../../server/pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import type { Platform } from "../../server/platform.ts";
 import type { SourceView } from "./browse.ts";
 

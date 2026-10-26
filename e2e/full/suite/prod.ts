@@ -59,9 +59,21 @@ let code = 0;
 try {
   // Four tests at a time: each makes its documents and people on the deployment. Everything runs, with a retry each.
   const files = args.some((a) => a.startsWith("e2e/")) ? [] : ["e2e/full/suite"];
-  code = spawnSync("bun", ["e2e/run.ts", "--e2e", "--workers", "4", ...files, ...args], { cwd: root, env, stdio: "inherit", timeout: 30 * 60_000 }).status ?? 1;
+  code =
+    spawnSync("bun", ["e2e/run.ts", "--e2e", "--workers", "4", ...files, ...args], {
+      cwd: root,
+      env,
+      stdio: "inherit",
+      timeout: 30 * 60_000,
+    }).status ?? 1;
   if (!args.some((a) => a.startsWith("e2e/"))) {
-    const bench = spawnSync("bun", ["e2e/run.ts", "--e2e", "e2e/bench/latency.e2e.ts", ...args], { cwd: root, env, stdio: "inherit", timeout: 10 * 60_000 }).status ?? 1;
+    const bench =
+      spawnSync("bun", ["e2e/run.ts", "--e2e", "e2e/bench/latency.e2e.ts", ...args], {
+        cwd: root,
+        env,
+        stdio: "inherit",
+        timeout: 10 * 60_000,
+      }).status ?? 1;
     code ||= bench;
   }
 } finally {

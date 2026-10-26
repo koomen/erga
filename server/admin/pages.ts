@@ -72,7 +72,8 @@ import {
   USER_ROLES,
   type UserRole,
 } from "../directory/index.ts";
-import { esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
+import { ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";

@@ -5,6 +5,7 @@ import { inlineCall } from "./inline.ts";
 import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { fontTags, styleTag } from "./assets.ts";
+import { esc } from "../../shared/html.ts";
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
 export const link = (path: string, session: Session | null) =>
@@ -13,7 +14,6 @@ export const link = (path: string, session: Session | null) =>
 /** An address with ?edit (its query kept): the editor on it. */
 export const withEdit = (href: string) => href + (href.includes("?") ? "&" : "?") + "edit";
 
-export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 /**
  * The look the app's own pages share (/docs, /admin): the editor's type and

@@ -9,9 +9,12 @@
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type Offer } from "../../shared/agent-log";
 import type { FileRef } from "../../shared/attach";
 import { fileChip } from "./attach-ui";
+import { esc } from "../../shared/html";
 
-export const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-const inline = (s: string) => escapeHtml(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+const inline = (s: string) =>
+  esc(s)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
 
 export interface ChatOptions {
   /** The log's element (#agent-log) and its "Jump to latest" button. */
@@ -105,16 +108,19 @@ export function chat(opts: ChatOptions): Chat {
     else if (item.kind == "assistant") el.innerHTML = inline(item.text);
     else {
       const [doing, done] = verbs[item.name] ?? [item.name, item.name];
-      const what = item.path ? ` <code>${escapeHtml(item.path)}</code>` : "";
+      const what = item.path ? ` <code>${esc(item.path)}</code>` : "";
       // A call from an agent you shared the page with (the share button) says so.
-      const via = item.via == "external" ? `<span class="via" title="${escapeHtml(opts.externalTip ?? "An outside agent, working as your agent")}">External agent:</span> ` : "";
+      const via =
+        item.via == "external"
+          ? `<span class="via" title="${esc(opts.externalTip ?? "An outside agent, working as your agent")}">External agent:</span> `
+          : "";
       if (retried(i)) {
         el.classList.add("retried");
         el.title = item.detail ?? "";
         el.innerHTML = `<span>${via}${doing}${what} didn't apply; retried</span>`;
       } else {
         el.classList.add(item.status);
-        el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${escapeHtml(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${escapeHtml(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;
+        el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${esc(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${esc(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;
         if (item.status == "done" && item.offer) { const b = offerButton(item.offer); if (b) el.append(b); }
       }
     }

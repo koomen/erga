@@ -21,7 +21,8 @@ export const base64url = (bytes: Uint8Array | ArrayBuffer) => base64(bytes).repl
 export const fromBase64url = (s: string) => fromBase64(s.replace(/-/g, "+").replace(/_/g, "/"));
 
 /** Bytes as lowercase hex, two digits each. */
-export const hex = (bytes: Uint8Array | ArrayBuffer) => Array.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
+export const hex = (bytes: Uint8Array | ArrayBuffer) =>
+  Array.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** The SHA-256 of bytes, or of a string as UTF-8. */
 export async function sha256(data: string | Uint8Array | ArrayBuffer): Promise<Uint8Array<ArrayBuffer>> {

@@ -43,7 +43,8 @@
 
 import { TARGETS } from "../../deploy/targets.ts";
 import { isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
-import { esc, isAssetPath, page, safeNext } from "../pages/index.ts";
+import { isAssetPath, page, safeNext } from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { tokenPath } from "./token-paths.ts";
 
