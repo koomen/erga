@@ -6,10 +6,11 @@
 import { DeployError, type Release } from "../deploys/pipeline";
 import { unpackRelease } from "../deploys/bundle";
 import type { Builder } from "../deploys/branches";
+import { sleep } from "../../shared/time";
 
 /** A builder behind `fetcher`: the control Worker's own builderFetch (worker.ts), or a service binding to one. */
 export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: (ms: number) => Promise<void> } = {}): Builder {
-  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const wait = o.sleep ?? sleep;
   return {
     async build({ commit, branch, source }, log, signal): Promise<Release> {
       let r: Response | null = null;
@@ -27,13 +28,13 @@ export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: 
         r = await fetcher.fetch(`http://builder/build?id=${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, commit, branch }), signal });
         if (r.status == 409 && busy < 120) {
           if (busy++ == 0) log("the builder is busy with another build: waiting");
-          await sleep(5000);
+          await wait(5000);
         } else if (r.status == 503 && waited < 5 * 60_000) {
           const why = (await r.text().catch(() => "")).slice(0, 200);
           const ms = Math.min(30_000, 5000 * 2 ** Math.min(3, i));
           log(`waiting for the builder (it answered 503${why ? `: ${why}` : ""}); trying again in ${ms / 1000} s`);
           waited += ms;
-          await sleep(ms);
+          await wait(ms);
           r = null;
         } else break;
       }

@@ -21,6 +21,7 @@ import { LivePage } from "./live-page-tab";
 import { changesBetween } from "../../document/merge";
 import { sourceDigest } from "../../shared/page-html";
 import { evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import { sleep } from "../../shared/time";
 
 declare global {
   interface Window {
@@ -484,7 +485,7 @@ async function captureView(req: ViewRequest, text?: string): Promise<ViewResult>
     if (forced) forceScheme(d, scheme);
     const unread = await embeddableFonts(d);
     const pending = await settle(d, Date.now() + LOAD_WAIT);
-    await new Promise((r) => setTimeout(r, 600)); // let the page's own scripts draw
+    await sleep(600); // let the page's own scripts draw
     if (req.evaluate != null) {
       const r = await evaluateIn(win!, String(req.evaluate), evalTimeout(req));
       return { width, height: viewport, ...r, errors: [...(win?.__ergaErrors ?? [])] };
@@ -580,7 +581,6 @@ async function settle(d: Document, deadline: number): Promise<string[]> {
   }
   return [...new Set(loading().map((l) => l.what))];
 }
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 
 const GENERIC = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "emoji", "fangsong", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded"]);
 

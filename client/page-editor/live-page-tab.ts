@@ -20,6 +20,7 @@ import {
 } from "../../shared/live-page";
 import { evaluateIn, toJSON } from "./evaluate";
 import { EVAL_MAX_JSON, evalTimeout } from "../../shared/agent-log";
+import { sleep } from "../../shared/time";
 
 type LiveWindow = Window & typeof globalThis & { __ergaLiveInstalled?: boolean; __ergaLiveTake?: (sink: Sink) => void };
 type Sink = (kind: string, data: unknown) => void;
@@ -265,7 +266,7 @@ export class LivePage {
       fire(new w.KeyboardEvent("keyup", init));
     }
     // The page's handlers have run; what they started (a play(), a fetch) gets a moment to say how it went.
-    await new Promise((r) => setTimeout(r, 400));
+    await sleep(400);
     const consumed = sent.flatMap((e) => (this.pending.get(e)?.consumed ?? []).map((c) => ({ ...c, on: `${c.on} (${e.type})` })));
     const act: ActResult = {
       target: describeEl(target),

@@ -73,7 +73,7 @@ import {
   type UserRole,
 } from "../directory/index.ts";
 import { ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
-import { esc } from "../../shared/html.ts";
+import { dateTag, esc } from "../../shared/html.ts";
 import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
@@ -90,6 +90,7 @@ import {
   type ProvidersOn,
 } from "../identity/index.ts";
 import { json } from "../../shared/http.ts";
+import { plural } from "../../shared/time.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -405,7 +406,9 @@ function eventItem(c: SettingChange): string {
   // Past the production gate (its tests hadn't passed): the admin's reason, and what the gate said.
   const override = r.override ? ` <span class="badge" title="${esc(r.override.gate)}">${c.key == "staging" ? "staging rule overridden" : "tests overridden"}</span> <span class="title">${esc(r.override.reason)}</span>` : "";
   // Folded, so the entry stays on its line: the commits open under it.
-  const list = r.commits.length ? ` <details><summary>${r.total} commit${r.total == 1 ? "" : "s"}</summary><ul class="commits">${commits}${more}</ul></details>` : "";
+  const list = r.commits.length
+    ? ` <details><summary>${plural(r.total, "commit")}</summary><ul class="commits">${commits}${more}</ul></details>`
+    : "";
   return `<li><span class="key">${c.key == "staging" ? "staging" : "main"}</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${override}${list}</li>`;
 }
 
@@ -806,7 +809,6 @@ function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]
 }
 
 /** A date as the page shows it before its script makes it relative (TIMES_SCRIPT). */
-const when = (t: number, cls = "") => `<time${cls ? ` class="${cls}"` : ""} datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>`;
 
 /** The deploy role's switch: a checkbox (role="switch"); off, with why in its title, for an admin (who may always deploy). */
 function deploySwitch(u: User): string {
@@ -830,8 +832,8 @@ const accountOf = (u: User, ids: Identity[]) =>
 
 function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean): string {
   const me = u.login == session.login.toLowerCase();
-  const joined = u.created ? when(u.created, "joined") : `<time class="joined never">not yet</time>`;
-  const seen = u.lastSeen != null ? when(u.lastSeen, "seen") : `<time class="seen never">never</time>`;
+  const joined = u.created ? dateTag(u.created, "joined") : `<time class="joined never">not yet</time>`;
+  const seen = u.lastSeen != null ? dateTag(u.lastSeen, "seen") : `<time class="seen never">never</time>`;
   const added = u.bootstrap ? "Admin by the deploy (ADMINS)" : u.addedBy ? `Added by ${byLine(u.addedBy, u.addedVia)}` : "Made their account at their first sign-in";
   // The same reason keeps them from being removed.
   const fixed = u.bootstrap
@@ -1012,7 +1014,7 @@ async function changesPage(platform: Platform, session: Session, before?: number
   const last = history.versions.at(-1);
   const older = last && last.n > 1 && history.versions.length == CHANGES;
   return adminResponse({ session, title: "Change log", here: "changes", wide: true, body: `
-  <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
+  <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${plural(history.total, "change")}.` : ""}</p>
   ${history.versions.length ? `<ol class="changes">
 ${history.versions.map((v) => changeRow(v, kinds, docs, avatars)).join("\n")}
   </ol>` : `<p class="changes-empty">${before ? "No older changes." : "Nothing has changed yet."}</p>`}

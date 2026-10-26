@@ -4,7 +4,7 @@
 
 import { nameOf } from "../directory/index.ts";
 import { appPage, crumbs, ICON, page, safeNext, TIMES_SCRIPT } from "../pages/index.ts";
-import { esc } from "../../shared/html.ts";
+import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
 import { mintTestToken } from "./sign-in.ts";
@@ -87,7 +87,7 @@ async function docLabel(platform: Platform, ref: string | null): Promise<string>
   return doc ? `${esc(nameOf(doc).title)} <span class="addr">${esc(nameOf(doc).address)}</span>` : `<span class="never">a document that's gone</span>`;
 }
 
-const day = (t: number) => `<time class="day" datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>`;
+const day = (t: number) => dateTag(t, "day");
 
 /** The card on /tokens/approve: what the agent asks for, and Approve (if the person may give it) or Deny. */
 async function approvalCard(platform: Platform, session: Session, code: string, waiting: { label: string; grant: { scope: Scope; docId: string | null; expires: number | null } }): Promise<string> {
@@ -110,7 +110,7 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   const [list, docs, admin] = await Promise.all([
     platform.tokens.list(session.login), platform.docs.list(session.login), platform.directory.users.isAdmin(whoOf(session)),
   ]);
-  const when = (t: number | null) => (t ? `<time datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>` : `<span class="never">Never</span>`);
+  const when = (t: number | null) => (t ? dateTag(t) : `<span class="never">Never</span>`);
   const scopeCell = async (t: AgentToken) => t.scope == "document" ? `<span class="scope">One document</span> ${await docLabel(platform, t.docId)}` : `<span class="scope">${SCOPE_NAMES[t.scope]}</span>`;
   // Rows as the documents list's: its name (and whether it's the share button's), its scope, when it expires, when it was last used, revoke on hover.
   const rows = (await Promise.all(list.map(async (t) => `  <li${t.expires != null && t.expires <= Date.now() ? ` class="expired"` : ""}>

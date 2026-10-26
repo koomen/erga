@@ -71,6 +71,7 @@ import {
   type ToolSpec,
   type VersionsAccess,
 } from "./tools";
+import { sleep } from "../../shared/time";
 export { beyondPrompt } from "./prompt";
 export {
   CHANGES,
@@ -234,7 +235,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const awareness = new Awareness(doc);
   awareness.setLocalState({ user: me, busy: false, activity: null, cursor: null });
   const leave = joinLocal(opts.room, doc, awareness);
-  await new Promise((r) => setTimeout(r, 0)); // the in-process sync is microtasks: done by now
+  await sleep(0); // the in-process sync is microtasks: done by now
   introduce(doc, me);
 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
@@ -244,7 +245,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const pacer: Pacer = {
     cursor: (path, anchor, head) =>
       presence({ cursor: { path, anchor: Y.relativePositionToJSON(anchor), head: head && Y.relativePositionToJSON(head) } }),
-    wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+    wait: sleep,
     revert: () => {
       doc.transact(() => {
         undo.undo();
@@ -303,7 +304,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   /** Done in the room: the replica has it once it has seen everything the room has (a few microtasks). */
   const caughtUp = async () => {
     const want = stateVector(opts.room.doc);
-    for (let i = 0; i < 200 && !hasSeen(doc, want); i++) await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 200 && !hasSeen(doc, want); i++) await sleep(0);
   };
   const tools = makeTools(ws, {
     view: (req) => opts.view({ ...req, after: stateVector(doc) }),

@@ -35,6 +35,7 @@ import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { mountAgent } from "./agent";
 import { mountPause } from "./pause";
+import { sleep } from "../../shared/time";
 
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean } }
@@ -422,7 +423,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   function openAgentOnEntry() {
     if (!settings.agent) return;
     const mine = ++entering;
-    void Promise.race([backdropReady, new Promise((r) => setTimeout(r, 2000))]).then(() =>
+    void Promise.race([backdropReady, sleep(2000)]).then(() =>
       requestAnimationFrame(() => requestAnimationFrame(() => { if (mine == entering && editing()) shell.agent.showAgent(true); })));
   }
   function setEditing(on: boolean) {

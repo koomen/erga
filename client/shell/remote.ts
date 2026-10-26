@@ -22,6 +22,7 @@ import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../.
 import type { LiveRequest, LiveResult } from "../../shared/live-page";
 import { changesBetween } from "../../document/merge";
 import { clampZoom, type ZoomBy } from "../page-editor/zoom";
+import { sleep } from "../../shared/time";
 
 export interface RemotePageConfig {
   frame: HTMLIFrameElement;
@@ -241,7 +242,7 @@ export class RemotePage {
         // (Only keys that were going to the page anyway: the page itself can say this, and mustn't take the focus from the shell.)
         if (m.focus === true && document.activeElement == this.frame) this.holdKeys();
         // It loads again once the room has its edits (else it would come made from the text before them, and load again).
-        void Promise.race([c.flushed?.(), new Promise((r) => setTimeout(r, 3000))]).then(() => this.frame.contentWindow?.postMessage({ type: "reload" }, c.origin));
+        void Promise.race([c.flushed?.(), sleep(3000)]).then(() => this.frame.contentWindow?.postMessage({ type: "reload" }, c.origin));
         const v = m.view;
         this.carryView = v && Number.isInteger(v.pos) && v.pos >= 0 && Number.isFinite(v.top) ? { pos: v.pos, top: v.top } : null;
         this.ready = false;

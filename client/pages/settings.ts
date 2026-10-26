@@ -23,6 +23,7 @@
 
 import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 import { esc } from "../../shared/html";
+import { plural } from "../../shared/time";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
 /** GET /api/docs/<id>/home. */
@@ -136,7 +137,6 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 @media (prefers-reduced-motion: reduce) { .ds-dot.deploying, .ds-skel { animation-duration: 3s; } .help.ds { animation: none; } }
 `;
 
-const plural = (n: number, one: string, many = one + "s") => `${n} ${n == 1 ? one : many}`;
 
 function mount(host: SettingsHost): Settings {
   if (!document.getElementById("ds-style")) document.head.append(Object.assign(document.createElement("style"), { id: "ds-style", textContent: CSS }));

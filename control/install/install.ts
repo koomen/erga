@@ -51,6 +51,7 @@ import {
 } from "../deploys/pipeline";
 import { installControlMetadata } from "../deploys/control-worker";
 import { CONTROL_ENTRYPOINT } from "../../deploy/targets";
+import { sleep } from "../../shared/time";
 export { installControlMetadata };
 
 /** The install's steps, as the page lists them: the pipeline's, with the control Worker's two among them. */
@@ -139,7 +140,7 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number;
 }): Promise<Installed> {
   const site = o.site ?? globalThis.fetch;
-  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const wait = o.sleep ?? sleep;
   const controlHost = controlHostOf(plan);
   const app = installAppTarget(plan, o.sessionSecret, controlHost, o.upstream, o.snapshotToken);
   const appHost = targetHost(app);
@@ -186,7 +187,7 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
     const h = await checkHealth(site, controlHost, release.version).catch(() => null);
     if (h?.ok) { o.report("control-live", "done", `https://${controlHost}, release ${release.version} (${h.summary})`); break; }
     if (Date.now() > until) throw new DeployError(`The control Worker is uploaded, but https://${controlHost} hasn't answered yet${h?.why ? ` (${h.why})` : ""}. Open it in a little while; if it still doesn't answer, try again.`);
-    await sleep(Math.min(5000, 1000 + tries * 500));
+    await wait(Math.min(5000, 1000 + tries * 500));
   }
   return { ...made, control: `https://${controlHost}`, staging: `https://${stagingHostOf(plan)}` };
 }
