@@ -4,6 +4,7 @@ import type { Peer } from "../editor";
 import type { Presence } from "../collab";
 import type { Author } from "../../document/content";
 import { $, type Shell } from "./shell";
+import { safeAvatar } from "../../shared/avatars";
 
 export function mountPeople(shell: Shell) {
 
@@ -86,6 +87,7 @@ export function mountPeople(shell: Shell) {
         img.src = picture;
         img.alt = "";
         img.draggable = false; // a click, not the browser's drag of the picture
+        img.referrerPolicy = "no-referrer";
         img.addEventListener("error", () => img.remove()); // the initial shows through
         b.append(img);
       }
@@ -143,11 +145,11 @@ export function mountPeople(shell: Shell) {
     set("account-out", accountLinks!.signOut);
   }
   /**
-   * A participant's picture: only GitHub avatars, since anyone in the room
+   * A participant's picture: only GitHub's (by id) and Google's (shared/avatars.ts), since anyone in the room
    * can put anything in their presence and we'd rather not fetch it.
    */
   function pictureOf(user: Author): string | null {
-    try { return user.avatar && new URL(user.avatar).origin == "https://avatars.githubusercontent.com" ? user.avatar : null; } catch { return null; }
+    return safeAvatar(user.avatar);
   }
   /** Clicking a participant scrolls to their caret; with none yet, the button says so. */
   function revealOnClick(b: HTMLElement, p: Presence, none: string) {

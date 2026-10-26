@@ -1,13 +1,14 @@
 // The editor's own controls (the editor): your avatar's menu, sharing with people, the order of the
 // controls, and the pencil between viewing and editing without a reload.
 import { expect, servers, test, until, type Page } from "../../fixtures";
-import { clickOn, inFrames, inPage, newDoc } from "./access";
+import { clickOn, githubPicture, inFrames, inPage, newDoc } from "./access";
 
 await servers.main();
 
 /** A new document, open in the editor at 1100×720, its controls shown: its editor address. */
 async function editing(page: Page): Promise<string> {
   const root = (await servers.main()).root;
+  await githubPicture(root);
   const { at } = await newDoc(root);
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.goto(root + at);
@@ -15,11 +16,25 @@ async function editing(page: Page): Promise<string> {
   return at;
 }
 
-test("your avatar, far right of the editor's controls with your GitHub picture, opens the menu, which stays open; Escape closes it; the pencil beside it is on and goes to the viewer", async ({ tab }) => {
+test("your avatar, far right of the editor's controls with your GitHub picture (by id), opens the menu, which stays open; Escape closes it; the pencil beside it is on and goes to the viewer", async ({
+  tab,
+}) => {
   const page = tab.page;
   const at = await editing(page);
   // Its controls fade in: wait for where they end.
-  await expect.poll(() => page.evaluate(() => { const b = document.querySelector("#me .avatar")!, r = b.getBoundingClientRect(); return r.right > 1100 - 30 && r.top < 30 && !!b.querySelector("img")?.getAttribute("src")?.startsWith("https://avatars.githubusercontent.com/tester"); })).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const b = document.querySelector("#me .avatar")!,
+          r = b.getBoundingClientRect();
+        return (
+          r.right > 1100 - 30 &&
+          r.top < 30 &&
+          b.querySelector("img")?.getAttribute("src") == "https://avatars.githubusercontent.com/u/4242?s=64"
+        );
+      })
+    )
+    .toBe(true);
   // A press on the picture or the logo is a click: the browser doesn't drag either away.
   expect(await page.evaluate(() => { const img = document.querySelector<HTMLImageElement>("#me .avatar img")!, brand = document.getElementById("nav-brand")!; return { img: img.draggable, imgDrag: getComputedStyle(img).getPropertyValue("-webkit-user-drag"), brand: brand.draggable }; })).toEqual({ img: false, imgDrag: "none", brand: false });
   await clickOn(page, "#me .avatar");
@@ -42,10 +57,27 @@ test("its owner adds someone, sees them listed with their role and picture, and 
   await until(() => page.evaluate(() => !document.getElementById("sharing")!.hidden && !!document.querySelector("#sharing-list li")), 5000, "the Share button opens who has the document");
   await page.evaluate(() => { const f = document.getElementById("sharing-add") as HTMLFormElement; (f.elements.namedItem("login") as HTMLInputElement).value = "ada"; (f.elements.namedItem("role") as HTMLSelectElement).value = "viewer"; f.requestSubmit(); });
   await until(() => page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada") && li.querySelector("select")?.value == "viewer")), 5000, "adding someone lists them, with their role");
-  // Each person shows their own GitHub picture (the owner, and whom it's shared with), as the header's avatar does.
-  expect(await page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].map((li) => li.querySelector(".face img")?.getAttribute("src")))).toEqual(["https://avatars.githubusercontent.com/tester?s=64", "https://avatars.githubusercontent.com/ada?s=64"]);
-  await page.evaluate(() => ([...document.querySelectorAll("#sharing-list li")].find((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))!.querySelector(".remove") as HTMLElement).click());
-  await until(() => page.evaluate(() => ![...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))), 5000, "taking them off unlists them");
+  // Each person shows their own picture, as the header's avatar does: the owner GitHub's, by id; ada, with no account, none.
+  expect(
+    await page.evaluate(() =>
+      [...document.querySelectorAll("#sharing-list li")].map((li) => li.querySelector(".face img")?.getAttribute("src") ?? null)
+    )
+  ).toEqual(["https://avatars.githubusercontent.com/u/4242?s=64", null]);
+  await page.evaluate(() =>
+    (
+      [...document.querySelectorAll("#sharing-list li")]
+        .find((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))!
+        .querySelector(".remove") as HTMLElement
+    ).click()
+  );
+  await until(
+    () =>
+      page.evaluate(
+        () => ![...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))
+      ),
+    5000,
+    "taking them off unlists them"
+  );
   const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden])")].map((e) => e.id).join(" "));
   // New document (+), clone, then the editor's own (pause, track changes, share, document settings), then edit.
   expect(order).toBe("btn-new btn-clone btn-pause btn-track btn-share btn-settings btn-edit");

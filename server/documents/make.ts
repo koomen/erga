@@ -6,7 +6,19 @@ import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
 import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
 import { type Listed, type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
-import { esc, avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
+import {
+  esc,
+  confirmAction,
+  docsPage,
+  fromElsewhere,
+  link,
+  page,
+  signInFirst,
+  type Template,
+  templateById,
+  TEMPLATES,
+  withEdit,
+} from "../pages/index.ts";
 
 /** A template's starting files (server/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
 export function templateFiles(
@@ -178,7 +190,7 @@ export async function deleteDoc(platform: Platform, request: Request): Promise<R
  * "none" or empty). Only its owner may. Answers JSON: everyone's permissions now,
  * whether the server lets people share publicly (`publicSharing`), which of them can't sign in yet
  * (`notUsers`: not users of this server), each one's picture (`avatars`, by
- * login: their GitHub picture), or the error. GET /docs/share?id=
+ * login: their picture, shared/avatars.ts), or the error. GET /docs/share?id=
  * answers the same without changing anything (the list's share dialog).
  */
 export async function shareDoc(platform: Platform, request: Request): Promise<Response> {
@@ -189,7 +201,12 @@ export async function shareDoc(platform: Platform, request: Request): Promise<Re
     const notUsers = (await Promise.all(permissions.map(async (p) => (p.login == "*" || (await platform.directory.users.allowed(p.login)) ? null : p.login)))).filter((l) => l != null);
     // Whether the server lets users share content publicly: the menus offer anyone with the link only then.
     const publicSharing = await platform.directory.config.get("public_sharing");
-    return Response.json({ permissions, notUsers, avatars: avatarsOf(permissions.map((p) => p.login)), publicSharing });
+    return Response.json({
+      permissions,
+      notUsers,
+      avatars: await platform.directory.users.avatars(permissions.map((p) => p.login)),
+      publicSharing,
+    });
   };
   if (request.method == "GET") {
     const id = url.searchParams.get("id") ?? "";

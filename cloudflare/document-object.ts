@@ -33,10 +33,10 @@ import { DiskLink } from "../dev/disk-storage";
 import { homeChanged } from "./current-files";
 import type { Env } from "./env";
 import { blobsOf } from "./blobs";
+import { safeAvatar } from "../shared/avatars";
 
 /** The new-document template's page, which a new page starts from. */
 const TEMPLATE = Object.values(import.meta.glob("../assets/templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>)[0] ?? "";
-const AVATARS = "https://avatars.githubusercontent.com";
 
 export class DocumentObject extends DurableObject<Env> {
   /** The dev server's sockets (ordinary ones): a document on disk. */
@@ -99,8 +99,8 @@ export class DocumentObject extends DurableObject<Env> {
       viewChanged: (docId) => forgetDecisions(docId),
       log: (line) => console.log(line),
       pageTemplate: TEMPLATE || undefined,
-      // People's ids are their GitHub logins, so GitHub serves their pictures.
-      avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
+      // Each person's picture, as the front door sent it (their users row: shared/avatars.ts); none: their initial shows.
+      avatarOf: (person) => safeAvatar(person.avatar) ?? undefined,
       // Each person's conversation here, kept in their own object (cloudflare/objects/person-agent.ts).
       chats: (person, docId) => {
         const agents = env.AGENTS.getByName(person.id), scope = `doc:${docId}`;

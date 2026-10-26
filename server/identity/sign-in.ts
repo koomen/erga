@@ -27,7 +27,7 @@
 //   /auth/github/callback                GitHub's answer: a code, traded for who they are
 //   /auth/google[?next=][&app=pending]   off to Google, the same way
 //   /auth/google/callback                Google's answer: a code, traded for who they are (their sub, their email
-//                                        and whether Google verified it, their Workspace: hd)
+//                                        and whether Google verified it, their Workspace: hd, their picture)
 //   /auth/logout                         signs out (another site's link to it asks first)
 //   /auth/test?token=&as=                a test person, signed in with a test token
 
@@ -294,7 +294,14 @@ export async function googleToken(endpoints: { token: string }, app: AppValues, 
 }
 
 /** Who Google's userinfo says someone is (OpenID Connect's claims; hd only for a Google Workspace account). */
-interface GoogleUser { sub?: string; email?: string; email_verified?: boolean | string; name?: string; hd?: string }
+interface GoogleUser {
+  sub?: string;
+  email?: string;
+  email_verified?: boolean | string;
+  name?: string;
+  hd?: string;
+  picture?: string;
+}
 
 /** /auth/google/callback: Google sends the person back with a code to trade for who they are. */
 export async function finishGoogleSignIn(platform: Platform, request: Request): Promise<Response> {
@@ -333,6 +340,7 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
   const v: Vouched = {
     provider: "google", subject: String(user.sub), handle: email || String(user.sub), name: user.name?.trim() || null,
     emails: email ? [{ email, verified: user.email_verified === true || user.email_verified === "true" }] : [], hd: user.hd?.trim().toLowerCase() || null,
+    picture: user.picture ?? null,
   };
   const onlyAdmins = !(await providersOn(platform)).google;
   return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {

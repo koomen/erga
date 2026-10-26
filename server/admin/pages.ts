@@ -70,7 +70,7 @@ import {
   USER_ROLES,
   type UserRole,
 } from "../directory/index.ts";
-import { avatarUrl, esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
+import { esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
 import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
@@ -327,18 +327,18 @@ const CHANGES = 50;
  * Who made a version, and how: the person's login, and, when they
  * acted through an agent or the factory, "via …" beside it. Never the agent alone.
  */
-function byHtml(by: string, via?: string | null): string {
+function byHtml(by: string, via: string | null | undefined, avatars: Record<string, string>): string {
   const chip = via ? viaChip(via) : null;
-  return `<span class="who">${avatarHtml(by)}<span class="by">${esc(byLine(by))}</span>${chip ? ` <span class="via" data-via="${esc(via!)}" title="${esc(chip.title)}">${esc(chip.text)}</span>` : ""}</span>`;
+  return `<span class="who">${avatarHtml(by, avatars[by.toLowerCase()])}<span class="by">${esc(byLine(by))}</span>${chip ? ` <span class="via" data-via="${esc(via!)}" title="${esc(chip.title)}">${esc(chip.text)}</span>` : ""}</span>`;
 }
 
-/** A person's GitHub picture, on their initial in their colour (shown if the picture doesn't load); the system has a dot. */
-function avatarHtml(by: string): string {
+/** A person's picture (shared/avatars.ts), on their initial in their colour (shown if they have none, or it doesn't load); the system has a dot. */
+function avatarHtml(by: string, avatar?: string | null): string {
   if (!by || by == SYSTEM) return `<span class="avatar system" aria-hidden="true">•</span>`;
   const login = by.toLowerCase();
-  const pic = login.startsWith("test-")
-    ? ""
-    : `<img src="${esc(avatarUrl(login))}" alt="" loading="lazy" draggable="false" data-erga-fallback>`;
+  const pic = avatar
+    ? `<img src="${esc(avatar)}" alt="" loading="lazy" draggable="false" referrerpolicy="no-referrer" data-erga-fallback>`
+    : "";
   return `<span class="avatar" style="--c: ${colorFor(login)}" aria-hidden="true">${esc(login[0]?.toUpperCase() ?? "?")}${pic}</span>`;
 }
 
@@ -396,7 +396,12 @@ function eventItem(c: SettingChange): string {
  * setting's value from and to. `docs`: a document's address and title by id,
  * for a setting that names one.
  */
-function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>, docs: Map<string, { address: string; title: string }>): string {
+function changeRow(
+  v: SettingsVersion,
+  kinds: Record<string, string | undefined>,
+  docs: Map<string, { address: string; title: string }>,
+  avatars: Record<string, string>
+): string {
   const at = new Date(v.at).toISOString();
   const value = (key: string, x: unknown) => {
     const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
@@ -404,7 +409,7 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
   };
   const what = v.changes.map((c) => c.task || c.release || c.stagingOverride || c.user || c.token || c.signIn ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
-    ${byHtml(v.by, v.via)}<ul class="what">${what}</ul><time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>
+    ${byHtml(v.by, v.via, avatars)}<ul class="what">${what}</ul><time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>
   </li>`;
 }
 
@@ -783,7 +788,7 @@ function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean)
       : "";
   const role: UserRole | "none" = u.role == "admin" ? "admin" : (u.access ?? "none");
   return `  <li data-login="${esc(u.login)}">
-    <div class="who"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}<span class="added">${esc(`${accountOf(u, ids)} · ${added}`)}</span></div>
+    <div class="who">${avatarHtml(u.login, u.avatar)}<span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}<span class="added">${esc(`${accountOf(u, ids)} · ${added}`)}</span></div>
     ${joined}
     ${seen}
     ${roleSelect(role, u.login, { none: true, fixed })}
@@ -950,12 +955,13 @@ async function changesPage(platform: Platform, session: Session, before?: number
     const doc = await platform.directory.find(id);
     return doc ? [[id, { address: `/${doc.owner}/${doc.slug}`, title: doc.title }] as const] : [];
   }))).flat());
+  const avatars = await platform.directory.users.avatars(history.versions.map((v) => v.by).filter((by) => by && by != SYSTEM));
   const last = history.versions.at(-1);
   const older = last && last.n > 1 && history.versions.length == CHANGES;
   return adminResponse({ session, title: "Change log", here: "changes", wide: true, body: `
   <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
   ${history.versions.length ? `<ol class="changes">
-${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
+${history.versions.map((v) => changeRow(v, kinds, docs, avatars)).join("\n")}
   </ol>` : `<p class="changes-empty">${before ? "No older changes." : "Nothing has changed yet."}</p>`}
   ${before || older ? `<p class="changes-more">${before ? `<a href="${esc(link("/admin/changes", session))}">Newest</a>` : ""}${before && older ? " · " : ""}${older ? `<a href="${esc(link(`/admin/changes?before=${last!.n}`, session))}">Older changes</a>` : ""}</p>` : ""}
 <script>

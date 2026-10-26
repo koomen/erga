@@ -61,8 +61,8 @@ export interface HostOptions {
   readonly agentOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string; via?: string } | null;
   /** The document's public address for a request, for the external agent's guide. */
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
-  /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
-  readonly avatarOf?: (person: { id: string; name: string }) => string | undefined;
+  /** A person's picture, if the platform knows one (hosted: the one the front door sent, shared/avatars.ts). */
+  readonly avatarOf?: (person: { id: string; name: string; avatar?: string }) => string | undefined;
   /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/document-object.ts). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
   /** Whether a request may publish a file (PUT /api/stored): everyone, if not given. */

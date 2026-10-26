@@ -13,6 +13,12 @@ export const getter = (root: string) => (path: string, init: RequestInit = {}) =
 /** A name no other test (nor a repeat of this one) uses: for logins, slugs and labels. */
 export const unique = (name: string) => `${name}${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
 
+/** The dev login (DEV_LOGIN) signs in with a pretend GitHub account, so it has GitHub's picture, by its id: that picture. */
+export async function githubPicture(root: string): Promise<string> {
+  await getter(root)("/auth/dev?provider=github&subject=4242&handle=tester");
+  return "https://avatars.githubusercontent.com/u/4242?s=64";
+}
+
 /** A new document from /new: its editor address (with ?edit) and id. */
 export async function newDoc(root: string): Promise<{ at: string; id: string }> {
   const get = getter(root);

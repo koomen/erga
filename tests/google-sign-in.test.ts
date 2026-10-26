@@ -174,3 +174,25 @@ test("an install signs in with Erga's Google client through erga.dev's callback,
   const stranger = await controlRoutes(new Request(atGoogle.headers.get("location")!), { ...(control as object), deploys: { isInstall: async () => false } } as never);
   expect(stranger.status).toBe(400);
 });
+
+test("a Google account's picture is Google's, kept at each sign-in; with none, no picture (never GitHub's)", async () => {
+  const { platform, directory } = server();
+  await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
+  await directory.identities.createAccount(
+    "ada",
+    { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] },
+    writes("ada")
+  );
+  // No picture: none, so her initial shows.
+  expect((await signInWithGoogle(platform)).status).toBe(302);
+  expect((await directory.users.get("ada"))?.avatar).toBeNull();
+  expect(await directory.users.avatars(["ada"])).toEqual({});
+  google.state.user = { ...ADA, picture: "https://lh3.googleusercontent.com/a/ACg8ocK=s96-c" };
+  expect((await signInWithGoogle(platform)).status).toBe(302);
+  expect((await directory.users.get("ada"))?.avatar).toBe("https://lh3.googleusercontent.com/a/ACg8ocK=s64-c");
+  expect(await directory.users.avatars(["ada", "*", "nobody"])).toEqual({ ada: "https://lh3.googleusercontent.com/a/ACg8ocK=s64-c" });
+  // A picture that isn't Google's is never kept.
+  google.state.user = { ...ADA, picture: "https://evil.example/a.png" };
+  expect((await signInWithGoogle(platform)).status).toBe(302);
+  expect((await directory.users.get("ada"))?.avatar).toBeNull();
+});

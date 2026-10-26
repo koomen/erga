@@ -78,7 +78,11 @@ export interface DocumentInfo {
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
 export interface OnDisk { path: string; slug: string; only?: boolean }
 
-export interface Person { id: string; name: string }
+export interface Person {
+  id: string;
+  name: string /** Their picture, as the front door said (shared/avatars.ts); absent: none. */;
+  avatar?: string;
+}
 
 export type AgentSettings = AgentConfig | { readonly missing: string };
 
@@ -115,7 +119,7 @@ export interface DocumentDeps {
   log: (line: string) => void;
   /** What a new page starts from (the new-document template's page); a plain one if not given. */
   pageTemplate?: string;
-  /** A person's picture, if known (hosted: their GitHub avatar). */
+  /** A person's picture, if known (hosted: the one the front door sent, shared/avatars.ts). */
   avatarOf?: (person: Person) => string | undefined;
   /** The files viewers see changed after a quiet while: whatever the server kept of them goes (where it can reach). */
   viewChanged?: (docId: string) => void;
@@ -1491,11 +1495,14 @@ function viaOf(header: string | undefined): string {
   return VIA.token("");
 }
 
-/** Who a request is from, as the front door said (x-erga-person: JSON {id, name}). */
+/** Who a request is from, as the front door said (x-erga-person: JSON {id, name, avatar?}). */
 export function personOf(headers: Headers): Person {
   try {
     const p = JSON.parse(headers.get("x-erga-person") ?? "") as Person;
-    if (typeof p.id == "string" && typeof p.name == "string") return p;
-  } catch { /* none */ }
+    if (typeof p.id == "string" && typeof p.name == "string")
+      return { id: p.id, name: p.name, ...(typeof p.avatar == "string" ? { avatar: p.avatar } : {}) };
+  } catch {
+    /* none */
+  }
   return { id: "anon", name: "Someone" };
 }

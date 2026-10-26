@@ -68,7 +68,12 @@ Once you've read the guide, await further instructions.`;
       // Their picture, as the header's avatars show it; the initial stays under it, and shows if it doesn't load.
       const picture = avatars?.[p.login] && shell.people.pictureOf({ avatar: avatars[p.login] } as Author);
       if (picture) {
-        const img = Object.assign(document.createElement("img"), { src: picture, alt: "", draggable: false });
+        const img = Object.assign(document.createElement("img"), {
+          src: picture,
+          alt: "",
+          draggable: false,
+          referrerPolicy: "no-referrer",
+        });
         img.addEventListener("error", () => img.remove());
         face.append(img);
       }

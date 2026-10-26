@@ -34,6 +34,8 @@ export interface Session {
   admin?: boolean;
   /** Signed in with a document token: this one document (its id), and no other. */
   onlyDoc?: string;
+  /** Their picture (users.avatar, shared/avatars.ts), read with their row at each request; absent: none. */
+  avatar?: string;
 }
 
 /** A document as its owner's list shows it. */

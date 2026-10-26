@@ -62,9 +62,12 @@ async function findSession(platform: Platform, request: Request): Promise<Sessio
   const session = as ? { login: loginOf(as), name: as, as }
     : (await cookieSession(platform, request, dev)) ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: platform.signIn.devLogin!, name: platform.signIn.devLogin! } : null);
   // Locally everyone may sign in, and gets a user's row the first time (last seen, the next). The read rule may say no.
-  if (session && !session.test && !(await users.signedIn(session.login, dev ? session.name : null, { create: dev }))) return null;
+  const user = session && !session.test ? await users.signedIn(session.login, dev ? session.name : null, { create: dev }) : null;
+  if (session && !session.test && !user) return null;
   // A signed-in browser session comes with admin power: Users.isAdmin decides whether that's any.
   if (session && !session.test) session.admin = true;
+  // Their picture, from their row (the cookie never carries it): an old cookie shows the new picture too.
+  if (session && user?.avatar) session.avatar = user.avatar;
   return session;
 }
 

@@ -171,7 +171,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
       if (pending.has(p.login)) who.append(el("small", { className: "pending", textContent: "can't sign in yet", title: "Not a user of this server: an admin can add them" }));
       const face = el("span", { className: "face", ariaHidden: "true", textContent: p.login[0] });
       const pic = avatars?.[p.login];
-      if (pic) { const img = el("img", { src: pic, alt: "", draggable: false }); img.addEventListener("error", () => img.remove()); face.append(img); }
+      if (pic) { const img = el("img", { src: pic, alt: "", draggable: false, referrerPolicy: "no-referrer" }); img.addEventListener("error", () => img.remove()); face.append(img); }
       const li = el("li", {}, face, who);
       if (p.role == "owner") li.append(el("span", { className: "fixed", textContent: "Owner" }));
       else {

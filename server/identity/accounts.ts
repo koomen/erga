@@ -21,7 +21,7 @@
 //   GET  /auth/username            the username step: a username to choose, for a new account
 //   GET  /auth/username ?check=    whether a username is free: {ok} or {problem}
 //   POST /auth/username            username: makes the account, signs in, goes on to `next`
-//   GET  /auth/dev                 ?provider=&subject=&handle=&name=&email=&verified=&org=&hd=:
+//   GET  /auth/dev                 ?provider=&subject=&handle=&name=&email=&verified=&org=&hd=&picture=:
 //                                  local development only: a pretend provider's sign-in, through the same steps
 
 import type { Platform, Session } from "../platform.ts";
@@ -63,6 +63,7 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
     await identities.used(v);
     await identities.refreshEmails(known.login, v);
     dir.forgetAccess(known.login);
+    users.forget(known.login);
     const user = await users.signedIn(known.login, v.name, { create: o.create });
     if (!user) return { kind: "refused", login: known.login };
     return { kind: "in", login: user.login };
@@ -73,6 +74,7 @@ export async function resolve(dir: Directory, v: Vouched, o: { join: boolean; cr
     if (row && (await identities.unclaimed(row.login))) {
       if (o.onlyAdmins && !(await users.isAdmin(row.login))) return { kind: "refused" };
       await identities.link(row.login, v);
+      users.forget(row.login);
       const user = await users.signedIn(row.login, v.name, { create: o.create });
       return user ? { kind: "in", login: user.login, claimed: true } : { kind: "refused", login: row.login };
     }
@@ -244,5 +246,12 @@ export async function devSignIn(platform: Platform, request: Request): Promise<R
   const emails = q.getAll("email").filter(Boolean).map((email) => ({ email: email.toLowerCase(), verified: q.get("verified") != "0" }));
   const orgs = provider == "github" ? q.getAll("org").filter(Boolean).map((o) => o.toLowerCase()) : null;
   const hd = provider == "google" ? q.get("hd")?.toLowerCase() || null : null;
-  return vouchedSignIn(platform, request, { provider, subject, handle, name: q.get("name") || null, emails, orgs, hd }, q.get("next") ?? "/", {});
+  const picture = provider == "google" ? q.get("picture") || null : null;
+  return vouchedSignIn(
+    platform,
+    request,
+    { provider, subject, handle, name: q.get("name") || null, emails, orgs, hd, picture },
+    q.get("next") ?? "/",
+    {}
+  );
 }
