@@ -1,4 +1,4 @@
-// The multiplayer suite, sync: publishes landing just as the room writes (e2e/suite/suites/sync.ts, the slow one).
+// The multiplayer suite, sync: publishes landing just as the room writes (e2e/full/suite/suites/sync.ts, the slow one).
 import { sync } from "./suites/sync";
 import { register } from "./suite";
 

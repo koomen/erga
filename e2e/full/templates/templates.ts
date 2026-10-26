@@ -4,7 +4,7 @@
 //
 // The document's page runs in a frame: in the viewer the viewer's frame itself
 // (inline, an opaque origin), in the editor the host page's visible frame on the
-// document's own origin (iframe.on, server/pages/frame-host.ts). `inPage`
+// document's own origin (iframe.on, server/pages/viewer.ts). `inPage`
 // evaluates an expression in that page.
 
 import type { Page } from "playwright-core";

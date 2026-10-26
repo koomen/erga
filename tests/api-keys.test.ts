@@ -3,7 +3,6 @@
 // encrypted, never answered back (only set, the last four characters, and who
 // set it when), in the change log without the value, admins only, and read by
 // the code that calls the providers before the Worker secret of the same name.
-// In the browser (Save, Replace, Clear, the Claude token): e2e/config/api-keys.e2e.ts.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";

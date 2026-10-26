@@ -23,7 +23,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { OBJECT_MAX, sha256, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import { isTextPath } from "./content.ts";
 
-/** A version as the API shows it (the contract shared with the settings UI, client/versions.ts, and the homepage deploy, server/home.ts). */
+/** A version as the API shows it (the contract shared with the settings UI, client/versions.ts, and the homepage deploy, server/home/deploys.ts). */
 export interface Version {
   id: string;
   /** 1, 2, 3... per document. */

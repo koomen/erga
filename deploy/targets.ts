@@ -113,7 +113,7 @@ export const CONTROL_ENTRYPOINT = "App";
  * has no API for OAuth apps), puts its Client ID here and sets its secret
  * (`bunx cf workers secrets update GITHUB_CLIENT_SECRET --name erga-staging`),
  * or pastes both on production's Authentication page (/admin/auth, which
- * sets staging's through staging's server: cloudflare/auth-settings.ts),
+ * sets staging's through staging's server: server/identity/settings.ts),
  * /auth/github on staging shows a page saying so.
  * Every target gets ADMINS.
  */

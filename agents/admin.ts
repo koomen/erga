@@ -27,7 +27,7 @@
 // data and to act only on what the admin asks in the conversation.
 //
 // An outside agent (Claude Code on a laptop) gets the same powers over HTTP
-// with an admin token (server/tokens.ts; Share with agent on the admin pages makes
+// with an admin token (server/identity/tokens.ts; Share with agent on the admin pages makes
 // one that ends within 12 hours), and reads `adminGuide` first.
 
 import { Agent as PiAgent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";

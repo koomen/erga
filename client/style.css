@@ -167,7 +167,7 @@ body.previewing .i-pen { display: block; }
 body.previewing #btn-preview { color: var(--chrome-hover); }
 
 /* Tooltips, the same on every control: plain text, the moment the pointer is on it,
-   just below the pointer with its right edge there, following it (server/account-menu.ts sets
+   just below the pointer with its right edge there, following it (server/pages/account-menu.ts sets
    --tip-x and --tip-y as it moves; without them, right-aligned under the control).
    (Avatars use ::before: their ::after widens them for a finger.) */
 .icon-btn[data-tip]::after, :is(.avatar, .agent-badge)[data-tip]::before {

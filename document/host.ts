@@ -354,7 +354,7 @@ export function makeHost(opts: HostOptions) {
   const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
 
   // An external agent (Claude Code, Codex...) holds one of the person's
-  // agent tokens (server/tokens.ts; the share button makes one), which the front
+  // agent tokens (server/identity/tokens.ts; the share button makes one), which the front
   // door checks; over /api/ext it calls that person's agent tools, as their agent.
 
   const modelState = (s: AgentSession): ModelState => ({

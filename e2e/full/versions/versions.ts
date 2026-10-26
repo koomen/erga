@@ -2,7 +2,7 @@
 // client/settings.ts), on servers.short(): people signed in by cookie, a
 // document's versions over the HTTP API, an agent token and its
 // tools, and someone in the document's room (a headless Yjs participant, as an
-// editor's tab is: e2e/suite/client.ts).
+// editor's tab is: e2e/full/suite/client.ts).
 
 import { request } from "node:http";
 import type * as Y from "yjs";
@@ -21,7 +21,7 @@ export const someone = (prefix: string) => `${prefix}${crypto.randomUUID().repla
 
 export type Get = (path: string, init?: RequestInit) => Promise<Response>;
 
-/** Someone signed in on `server` (cloudflare/auth.ts, /auth/github?as=): requests carrying their session cookie. */
+/** Someone signed in on `server` (server/identity/sign-in.ts, /auth/github?as=): requests carrying their session cookie. */
 export async function person(server: Server, as: string) {
   const r = await fetch(`${server.root}/auth/github?as=${as}&next=/docs`, { redirect: "manual" });
   const cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));

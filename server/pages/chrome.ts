@@ -27,7 +27,7 @@ export const APP_STYLE = `
   .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
   main { flex: 1; width: 100%; min-height: 0; box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
   /* The breadcrumbs (crumbs): the wordmark, then where you are, upper left, on the line of the account corner upper right
-     (server/account-menu.ts). The viewer's (VIEW_STYLE) and the editor's (client/editor.html) look the same, in the same place. */
+     (server/pages/account-menu.ts). The viewer's (VIEW_STYLE) and the editor's (client/editor.html) look the same, in the same place. */
   .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; margin: 0; min-width: 0; max-width: calc(100vw - 140px); }
   .brand { flex: none; display: flex; align-items: center; font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
   .brand:hover { opacity: 0.7; }

@@ -1,14 +1,14 @@
 // The builder's container: a small HTTP server that builds one commit at a
 // time and streams how it's going. The builder Worker
 // starts the container and forwards the
-// pipeline's request to it (deploy/builder/client.ts sends it).
+// pipeline's request to it (control/builder/client.ts sends it).
 //
 //   POST /build {source: {cloneUrl, token}, commit, branch}
 //     → NDJSON: {"log": "..."} per line of output, then {"bundle": "<release bundle JSON>"} or {"error": "..."}
 //   POST /cancel {commit?} → stops the running build (of that commit, if named): its commands are killed
 //   GET /health → ok
 //
-//   bun deploy/builder/server.ts        (PORT, default 8080; WORK, default /tmp/erga-build)
+//   bun control/builder/server.ts        (PORT, default 8080; WORK, default /tmp/erga-build)
 
 import { buildCommit, type Source } from "./build";
 

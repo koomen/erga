@@ -1,4 +1,4 @@
-// The multiplayer suite, durability (e2e/suite/suites/durability.ts, part 2 of 2 of the tests that restart or kill their own server).
+// The multiplayer suite, durability (e2e/full/suite/suites/durability.ts, part 2 of 2 of the tests that restart or kill their own server).
 import { durability } from "./suites/durability";
 import { part, register } from "./suite";
 
