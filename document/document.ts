@@ -6,7 +6,7 @@
 // row in the directory up to date. cloudflare/objects/document.ts runs one in
 // a Durable Object; the tests run one on MemoryStorage.
 //
-// The front door says who's asking, and the document decides what they may
+// The app says who's asking, and the document decides what they may
 // do: it forwards each request with the path inside the document (/api/doc,
 // not /koomen/abc123/api/doc), the document's public address in x-erga-base,
 // the signed-in person in x-erga-person and who they are in x-erga-who.
@@ -15,7 +15,7 @@
 // (access.ts), so a request here asks the database nothing. What they may do
 // goes on as x-erga-access ("edit", or "view":
 // their room connection is then read-only, and so are their agent and
-// the files they send whole). A read of a file with a key the front door checked (the
+// the files they send whole). A read of a file with a key the app checked (the
 // viewer's files, the editor's pages origin) says so in x-erga-checked. A request that came with an agent token also has x-erga-agent:
 // only those may call the external agent's tools (/api/ext), as the person
 // the token stands for, who may do what they last could.
@@ -80,7 +80,7 @@ export interface OnDisk { path: string; slug: string; only?: boolean }
 
 export interface Person {
   id: string;
-  name: string /** Their picture, as the front door said (shared/avatars.ts); absent: none. */;
+  name: string /** Their picture, as the app said (shared/avatars.ts); absent: none. */;
   avatar?: string;
 }
 
@@ -153,7 +153,7 @@ export interface DocumentDeps {
   log: (line: string) => void;
   /** What a new page starts from (the new-document template's page); a plain one if not given. */
   pageTemplate?: string;
-  /** A person's picture, if known (hosted: the one the front door sent, shared/avatars.ts). */
+  /** A person's picture, if known (hosted: the one the app sent, shared/avatars.ts). */
   avatarOf?: (person: Person) => string | undefined;
   /** The files viewers see changed after a quiet while: whatever the server kept of them goes (where it can reach). */
   viewChanged?: (docId: string) => void;
@@ -208,7 +208,7 @@ export class Document {
   /** Who the files arriving whole now are by (publish), for the version. */
   private publisher: string | null = null;
   /**
-   * Who may edit, by person id, as the front door last said (x-erga-access):
+   * Who may edit, by person id, as the app last said (x-erga-access):
    * their agent, and an external agent acting for them, may do what they could
    * at their latest request.
    */
@@ -338,7 +338,7 @@ export class Document {
   }
 
   /**
-   * Creates the document, whose row the front door has just added to the
+   * Creates the document, whose row the app has just added to the
    * directory, from a template's files; false if it already exists. Unless
    * someone edits it, it's deleted at `expires` (the delete_docs_after_hours setting
    * after it's made, or sooner when local development asks, to test it).
@@ -481,7 +481,7 @@ export class Document {
     return { index: info.index, files };
   }
 
-  /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
+  /** Deletes the document (the app has asked the directory who may): everyone on it is disconnected. */
   async delete(): Promise<boolean> {
     const info = await this.readInfo();
     if (!info) return false;
@@ -664,7 +664,7 @@ export class Document {
   }
 
   /**
-   * Becomes `snap` (staging only: the front door allows it only with
+   * Becomes `snap` (staging only: the app allows it only with
    * SNAPSHOT_IMPORT, never on production): whoever has it open is
    * disconnected and the room closed first (it writes what it holds as it
    * closes), then its storage is emptied and the snapshot written in. A
@@ -727,7 +727,7 @@ export class Document {
   }
 
   /**
-   * Opens the document for a request and notes what the front door said the
+   * Opens the document for a request and notes what the app said the
    * person may do; null if there's no such document. The adapter calls it
    * before it accepts a WebSocket.
    */
@@ -826,7 +826,7 @@ export class Document {
 
   // ---------------------------------------------------------------- who may, and what viewers see
 
-  /** A request from the front door, decided here (access.ts): it goes on with x-erga-access; a Response refuses it. */
+  /** A request from the app, decided here (access.ts): it goes on with x-erga-access; a Response refuses it. */
   authorize(request: Request): Promise<Request | Response> {
     return this.access.authorize(request);
   }
@@ -842,8 +842,8 @@ export class Document {
   }
 
   /**
-   * A document's page for a viewer (the front door's viewer, server/documents/view.ts), in one call: what `who` may do
-   * (`anyone`: the front page, which everyone may view), which file the address `page` is (its path under the
+   * A document's page for a viewer (the app's viewer, server/documents/view.ts), in one call: what `who` may do
+   * (`anyone`: the homepage, which everyone may view), which file the address `page` is (its path under the
    * document's; "" its own page) in what viewers see (view.ts), that version, and the document's name (the page itself comes
    * from the document's pages origin: server/documents/pages-origin.ts). Null if there's no such document.
    */
@@ -1243,7 +1243,7 @@ export class Document {
       doc: { name: info.index, path: info.index, dir: info.disk?.path ?? info.owner },
       only: info.disk?.only ? info.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
-      // The front door sets x-erga-agent only on a request whose agent token it checked.
+      // The app sets x-erga-agent only on a request whose agent token it checked.
       // With x-erga-via, how the person acts through it: "a shared agent (label)".
       agentOf: (req) => (req.headers["x-erga-agent"] ? { ...personOf(new Headers(req.headers as Record<string, string>)), via: viaOf(req.headers["x-erga-via"]) } : null),
       // Their agent edits only if they may (and only while they may).
@@ -1394,13 +1394,13 @@ function touchesFiles(doc: Y.Doc, tr: Y.Transaction): boolean {
   return false;
 }
 
-/** How an outside agent's person acts through it, as the front door said (x-erga-via, JSON; shared/attribution.ts). */
+/** How an outside agent's person acts through it, as the app said (x-erga-via, JSON; shared/attribution.ts). */
 function viaOf(header: string | undefined): string {
   try { const v = JSON.parse(header ?? ""); if (typeof v == "string" && v) return v; } catch { /* none */ }
   return VIA.token("");
 }
 
-/** Who a request is from, as the front door said (x-erga-person: JSON {id, name, avatar?}). */
+/** Who a request is from, as the app said (x-erga-person: JSON {id, name, avatar?}). */
 export function personOf(headers: Headers): Person {
   try {
     const p = JSON.parse(headers.get("x-erga-person") ?? "") as Person;

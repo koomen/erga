@@ -69,7 +69,7 @@ import {
 } from "./deploys/credential.ts";
 import { mockConsentPage } from "./install/page.ts";
 import { Cloudflare, type Fetch } from "./deploys/cloudflare-api.ts";
-import { releasesDoor, type ReleaseStore } from "./deploys/releases.ts";
+import { releasesRoutes, type ReleaseStore } from "./deploys/releases.ts";
 import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "./deploys/api.ts";
@@ -222,7 +222,10 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   // Erga's source, read-only, for anyone (a browser's GET of /git/erga.git too: Git asks only for paths under it).
   if (read && isPublicSourcePath(path)) return publicSourcePage(p, url, c.app);
   // The release store, for anyone: the channels and each release's files.
-  if (read) { const r = await releasesDoor(c.releases ?? null, path); if (r) return r; }
+  if (read) {
+    const r = await releasesRoutes(c.releases ?? null, path);
+    if (r) return r;
+  }
   // Cloudflare's consent coming back for the deploy page (its cookie), or for an install's control Worker (the relay).
   if (path == "/install/callback" && read) {
     if (c.deploy && cookies(request).has(DEPLOY_OAUTH_COOKIE)) return c.deploy(request);

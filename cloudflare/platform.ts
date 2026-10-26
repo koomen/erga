@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-// The front door's platform on Cloudflare: the directory in D1, a document a Durable
+// The app's platform on Cloudflare: the directory in D1, a document a Durable
 // Object named by its id, the templates and the landing project. The Worker's routes
 // use it, and so does a document's host, for its agent's tools on the person's documents (agents/tools.ts: list,
 // make and delete them).
@@ -29,7 +29,7 @@ for (const [path, text] of Object.entries(import.meta.glob("../assets/templates/
 }
 
 /**
- * The repo's landing project, the front page the server makes for
+ * The repo's landing project, the homepage the server makes for
  * itself: its text files as they are, and its fonts
  * and images as bytes (Vite inlines them as data: URLs, decoded here).
  */
@@ -44,7 +44,7 @@ for (const [path, url] of Object.entries(import.meta.glob("../assets/landing/**/
   landingFile(path, fromBase64(url.slice(url.indexOf(",") + 1)));
 }
 
-/** Whose the front page is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
+/** Whose the homepage is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
 const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
   const admins = (env.ADMINS ?? "").split(",").map((l) => l.trim().toLowerCase()).filter((l) => OWNER.test(l));
   const dev = env.DEV_LOGIN?.trim().toLowerCase();
@@ -88,7 +88,7 @@ const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || TARGETS.producti
 
 
 /**
- * The front door on Cloudflare: people sign in with GitHub, the
+ * The app on Cloudflare: people sign in with GitHub, the
  * directory is in D1, and a document is a Durable Object
  * named by its id.
  */

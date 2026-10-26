@@ -5,7 +5,7 @@
 // document's files (/doc/).
 //
 // What's the Durable Object's stays with it: where files live, who a request
-// is from (the person the front door vouched for), and the WebSockets, which
+// is from (the person the app vouched for), and the WebSockets, which
 // it accepts its own way and hands to `room.connect`, `addTab` and `hello`.
 //
 //   GET  /api/files          anyone who may view: every file (its kind, size and time) and the folders: the files view
@@ -89,12 +89,12 @@ export interface HostOptions {
   readonly personOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string };
   /**
    * Whom an external agent's request acts for: the person its token stands
-   * for, as the front door vouched (null if it came without one).
+   * for, as the app vouched (null if it came without one).
    */
   readonly agentOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string; via?: string } | null;
   /** The document's public address for a request, for the external agent's guide. */
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
-  /** A person's picture, if the platform knows one (hosted: the one the front door sent, shared/avatars.ts). */
+  /** A person's picture, if the platform knows one (hosted: the one the app sent, shared/avatars.ts). */
   readonly avatarOf?: (person: { id: string; name: string; avatar?: string }) => string | undefined;
   /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/objects/document.ts). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
@@ -357,8 +357,8 @@ export function makeHost(opts: HostOptions) {
   const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
 
   // An external agent (Claude Code, Codex...) holds one of the person's
-  // agent tokens (server/identity/tokens.ts; the share button makes one), which the front
-  // door checks; over /api/ext it calls that person's agent tools, as their agent.
+  // agent tokens (server/identity/tokens.ts; the share button makes one), which the app
+  // checks; over /api/ext it calls that person's agent tools, as their agent.
 
   const modelState = (s: AgentSession): ModelState => ({
     model: s.model,

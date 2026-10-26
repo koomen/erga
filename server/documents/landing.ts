@@ -1,4 +1,4 @@
-// The front page's document (the landing_document setting), and making it from the repo's
+// The homepage's document (the landing_document setting), and making it from the repo's
 // assets/landing/ when there's none (seedLanding). The viewer on it at / is view.ts's.
 
 import { type DocRow, newDocId } from "../directory/index.ts";
@@ -6,7 +6,7 @@ import { type Platform } from "../platform.ts";
 import { makeDoc } from "./make.ts";
 
 /**
- * The document the front page shows now: the setting's (and, while a seed in this isolate has claimed it but not yet
+ * The document the homepage shows now: the setting's (and, while a seed in this isolate has claimed it but not yet
  * moved it to /<owner>/landing, that seed's answer, at its address). Null when there's none yet (landingPage makes one).
  */
 export async function frontDocument(platform: Platform): Promise<DocRow | null> {
@@ -17,7 +17,7 @@ export async function frontDocument(platform: Platform): Promise<DocRow | null> 
 }
 
 /**
- * The front page's document: the one landing_document names, else (unset,
+ * The homepage's document: the one landing_document names, else (unset,
  * or naming a document that's gone) a new one made from the repo's assets/landing/
  * (seedLanding). Null only when the deploy locks the setting to a document
  * that isn't there, or there's nobody to own one.
@@ -26,7 +26,7 @@ export async function landingDocument(platform: Platform): Promise<DocRow | null
   return (await landingPage(platform))?.doc ?? null;
 }
 
-/** The front page's document (landingDocument) and its page: the one round trip to its host tells both that it's there and which file to show. */
+/** The homepage's document (landingDocument) and its page: the one round trip to its host tells both that it's there and which file to show. */
 export async function landingPage(platform: Platform): Promise<{ doc: DocRow; index: string } | null> {
   const doc = await platform.directory.landing();
   const index = doc && (await platform.docs.index(doc));
@@ -40,7 +40,7 @@ export async function landingPage(platform: Platform): Promise<{ doc: DocRow; in
 const seeding = new WeakMap<object, Promise<DocRow | null>>();
 
 /**
- * Makes the front page from the repo's assets/landing/ (built into the Worker) the
+ * Makes the homepage from the repo's assets/landing/ (built into the Worker) the
  * first time anyone asks for it, and again when the one it named was deleted
  * or an admin reset the setting: a document of the landing owner's at
  * /<owner>/landing, which the other bootstrap admins may edit too, and sets
@@ -81,13 +81,13 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     for (let tries = 0; !made && tries < 5; tries++) { const id = newDocId(); made = await makeDoc(platform, owner, id, { ...project.files }, { index, slug: id, published: true }); }
     if (!made) return null;
     if (!(await config.claim("landing_document", stored, made.id, owner))) {
-      // Another seed won: theirs is the front page, and this one goes.
+      // Another seed won: theirs is the homepage, and this one goes.
       if (!(await platform.docs.delete(made))) await platform.directory.remove(made.id);
       return settle(await live(await config.stored("landing_document")));
     }
     made = (await settle(made)) ?? made;
     // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin power
-    // (editing the front page needs that: server/directory/, homeLimit).
+    // (editing the homepage needs that: server/directory/, homeLimit).
     const server = { login: owner, test: false, admin: true };
     for (const login of project.editors) {
       if (login.toLowerCase() == owner) continue;

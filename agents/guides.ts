@@ -39,7 +39,7 @@ export function serverGuide(origin: string, session: (Session & { agent: AgentTo
 > do in the app, as that person: list, make, rename, share and delete their
 > documents, publish a folder of files (a static site, a page) as a document,
 > read and edit any document they may edit, and, for a server admin, configure
-> the server (its settings and who may sign in). The editor's own agent has
+> the server (its settings and who may sign in). The document agent has
 > the same tools, for the same person.
 
 ${you}

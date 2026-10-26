@@ -1,4 +1,4 @@
-// erga.dev on Cloudflare: the front door Worker, also
+// erga.dev on Cloudflare: the app Worker, also
 // serving documents' pages on erga-pages.dev, one Durable Object per
 // document, the directory of documents in D1
 // (server/directory/, its tables in server/migrations/), and the editor's own files as

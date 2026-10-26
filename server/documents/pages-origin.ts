@@ -8,7 +8,7 @@
 
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
-import { forwarded } from "./front-door.ts";
+import { forwarded } from "./routes.ts";
 import { markPage, sourceDigest } from "../../shared/page-html.ts";
 import { readerPage, readerVersion } from "../pages/index.ts";
 import { base64url, fromBase64url } from "../../shared/bytes.ts";
@@ -30,7 +30,7 @@ export function pagesOrigin(owner: string, id: string, url: URL, platform: Platf
 
 /** The document a pages origin is for, if the request came to one. */
 export function pagesHost(url: URL, platform: Platform): { owner: string; id: string } | null {
-  // On a shared host the document is the one its token names (pagesDoor checks the token itself).
+  // On a shared host the document is the one its token names (pagesRoutes checks the token itself).
   const shared = platform.pagesShared?.(url);
   if (shared && url.hostname == shared) {
     const claims = /^\/t\/([^/.]+)\./.exec(url.pathname)?.[1];
@@ -71,7 +71,7 @@ const hmac = async (secret: string, value: string) => {
  * A token that opens one document's files on its pages origin, for a week, for the viewer at `shell` (whose origin it names);
  * `edit`: for someone who may edit it, whose pages come with what the editor needs in them (readerPage).
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
- * same all day: the browser's cache can answer for them (they're checked by ETag, pagesDoor and document/host.ts's docFile).
+ * same all day: the browser's cache can answer for them (they're checked by ETag, pagesRoutes and document/host.ts's docFile).
  */
 export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { by?: string; edit?: boolean } = {}): Promise<string> {
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
@@ -135,7 +135,7 @@ function markedPage(etag: string | null, text: string): { html: string; src: str
  * page), which only the viewer on the token's site may frame. A page the frame goes to (an HTML file, as a frame's
  * document) comes marked, with the viewer's script first in it (readerPage); anything else as the file is.
  */
-export async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
+export async function pagesRoutes(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   const [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();

@@ -1,4 +1,4 @@
-// Attachments in the editor's agent panel, on the scripted model: files
+// Attachments in the document agent panel, on the scripted model: files
 // pasted, dropped and picked wait as chips; some are refused, with why; Send takes them, the model gets images as
 // images and text files as text, and the conversation shows them, after a reload too. The factory's panel is the
 // same code.

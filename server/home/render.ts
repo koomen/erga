@@ -1,9 +1,9 @@
-// The homepage, served directly: the front page's document (the
+// The homepage, served directly: the homepage's document (the
 // landing_document setting) rendered on this site itself, with no frame and
 // no pages origin, as close to a static file as it gets, and Erga's controls
 // (Clone, Edit, who you are) on top, in a shadow root of their own. Every
 // other document still renders in a frame on its own origin (server/documents/view.ts,
-// pagesDoor); the homepage may skip that only because only admins may edit
+// pagesRoutes); the homepage may skip that only because only admins may edit
 // it: its script runs on this
 // site's own origin, where it could act as whoever views it.
 //

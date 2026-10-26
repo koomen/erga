@@ -50,9 +50,9 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
       return { status: r.status, body: (await r.json()) as { entries?: Entry[]; error?: string } };
     },
     async write(path: string, content: string) { const w = await tool("write", { path, content }); if (!w.ok) throw new Error(`write ${path}: ${w.text}`); },
-    /** The editor's own agent's log (GET /d/<id>/api/agent). */
+    /** The document agent's log (GET /d/<id>/api/agent). */
     agentLog: async () => ((await (await owner.get(`/d/${doc.id}/api/agent`)).json()) as { log: { busy: boolean; items: { kind: string; name?: string; status?: string; detail?: string; text?: string }[] } }).log,
-    /** A scripted turn of the editor's own agent; the tool calls it made, once it's done. */
+    /** A scripted turn of the document agent; the tool calls it made, once it's done. */
     async agentTurn(text: string, steps: unknown[], context?: string) {
       const before = (await s.agentLog()).items.length;
       const tools = steps.filter((x) => (x as { tool?: string }).tool).length;

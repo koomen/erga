@@ -13,4 +13,4 @@ export {
   VIEW_SCRIPT,
   type AdminLayout,
 } from "./layout.ts";
-export { adminDoor } from "./routes.ts";
+export { adminRoutes } from "./routes.ts";

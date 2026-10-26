@@ -336,7 +336,7 @@ function mount(host: SettingsHost): Settings {
     homeSec.hidden = !home?.isHome;
     if (!home || !home.isHome) return;
     const d = home.deploy;
-    homeExplain.textContent = "The site's front page shows this document. Each new version goes live a few minutes later.";
+    homeExplain.textContent = "The site's homepage shows this document. Each new version goes live a few minutes later.";
     const live = d.version != null ? ` · version ${d.version}` : "";
     const last = d.at ? `Last deployed ${esc(clock(d.at))}${live}.` : "Not deployed yet.";
     const line = d.state == "deploying" ? `<b>Deploying…</b>`

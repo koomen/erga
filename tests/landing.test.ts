@@ -1,4 +1,4 @@
-// The front page the server makes for itself: on a
+// The homepage the server makes for itself: on a
 // fresh database the first request makes the landing document from the
 // repo's assets/landing/ once, however many ask at once, even from separate
 // isolates (two Directory objects over one database); a deleted one is made
@@ -61,7 +61,7 @@ test("a fresh database: the first requests make one landing document, even from 
   // Its owner may edit it, and so may the other bootstrap admins; anyone else only sees it on /.
   expect(await p.directory.may({ login: "root", admin: true }, "edit", doc)).toBe(true);
   expect(await p.directory.may({ login: "second", admin: true }, "edit", doc)).toBe(true);
-  // Only with admin power (not through a documents token): the front page's scripts run on the site itself.
+  // Only with admin power (not through a documents token): the homepage's scripts run on the site itself.
   expect(await p.directory.may({ login: "second" }, "edit", doc)).toBe(false);
   expect(await p.directory.may({ login: "second" }, "open", doc)).toBe(true);
   expect(await p.directory.may({ login: "ada" }, "edit", doc)).toBe(false);
@@ -103,7 +103,7 @@ test("a deleted landing document is made again; an admin's choice stays", async 
   expect(second.slug).toBe("landing");
   expect(await platformOn(sql, hosts).directory.config.get("landing_document")).toBe(second.id);
 
-  // root chooses another of theirs: it's the front page, and nothing is made.
+  // root chooses another of theirs: it's the homepage, and nothing is made.
   await p.directory.add({ id: "chosen01", owner: "root", title: "Mine", created: 1 });
   hosts.set("chosen01", { "index.html": "<h1>Mine</h1>" });
   await p.directory.config.set({ login: "root", admin: true }, "landing_document", "/root/mine");

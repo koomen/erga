@@ -1,4 +1,4 @@
-// The agents' file tools: over the token API and MCP, and the editor's own agent.
+// The agents' file tools: over the token API and MCP, and the document agent.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { paths, site } from "./tree";
 
@@ -58,7 +58,7 @@ test("the token API and MCP list the file tools; the external agent's guide says
   for (const part of ["A document is a folder of files", "Users\nsee pages; you see files", "blog/index.html is /<owner>/<slug>/blog", "open_page"]) expect(guide).toContain(part);
 });
 
-test("the editor's own agent makes, moves, lists and deletes on the same tree", async () => {
+test("the document agent makes, moves, lists and deletes on the same tree", async () => {
   const s = await site(await servers.short());
   const calls = await s.agentTurn("Tidy up", [{ tool: "mkdir", args: { path: "drafts" } }, { tool: "new_page", args: { path: "drafts/idea.html" } }, { tool: "mv", args: { from: "drafts/idea.html", to: "drafts/plan.html" } }, { tool: "ls", args: { path: "drafts" } }, { tool: "rm", args: { path: "drafts" } }, { text: "Done." }]);
   expect(calls.map((c) => c.status)).toEqual(["done", "done", "done", "done", "done"]);

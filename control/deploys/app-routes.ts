@@ -9,7 +9,7 @@
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
 //   GET  /api/snapshot/blob/<sha-256>   SNAPSHOT_TOKEN: one of the documents' blobs (any server), read-only
 
-import { snapshotDoor } from "../../document/snapshot";
+import { snapshotRoutes } from "../../document/snapshot";
 import { PRODUCTION } from "../../deploy/targets";
 import { health } from "../../server/health";
 import type { Platform } from "../../server/platform";
@@ -21,7 +21,7 @@ import { json } from "../../shared/http";
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) => path == "/api/deploys/version" || path == "/api/health" || path.startsWith("/api/snapshot/");
 
-export async function deploysDoor(request: Request, env: Env, platform: Platform): Promise<Response> {
+export async function deploysRoutes(request: Request, env: Env, platform: Platform): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method;
@@ -36,7 +36,7 @@ export async function deploysDoor(request: Request, env: Env, platform: Platform
   if (path.startsWith("/api/snapshot/")) {
     // Never into production, whatever its settings say.
     const production = env.DEPLOY_TARGET == "production" || url.hostname == PRODUCTION.host;
-    return (await snapshotDoor(request, {
+    const answer = await snapshotRoutes(request, {
       token: env.SNAPSHOT_TOKEN,
       importAllowed: env.SNAPSHOT_IMPORT == "1" && !production,
       store: {
@@ -44,7 +44,8 @@ export async function deploysDoor(request: Request, env: Env, platform: Platform
         import: (snap) => documentOf(env, snap.id).importStorage(snap),
         wipe: (id) => documentOf(env, id).wipeStorage(),
       },
-    })) ?? Response.json({ error: "Not found" }, { status: 404 });
+    });
+    return answer ?? Response.json({ error: "Not found" }, { status: 404 });
   }
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
 }

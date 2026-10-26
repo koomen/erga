@@ -7,7 +7,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, expect, test } from "bun:test";
-import { adminDoor } from "../server/admin/index.ts";
+import { adminRoutes } from "../server/admin/index.ts";
 import { checkKey, CredentialError, Credentials, Directory, NotAllowed, type Param, type Sql, withCredentials } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
 import { quietConsole } from "./helpers/quiet.ts";
@@ -120,7 +120,7 @@ const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
-    return path == "/admin" || path.startsWith("/admin/") ? adminDoor(platform, r) : new Response("", { status: 404 });
+    return path == "/admin" || path.startsWith("/admin/") ? adminRoutes(platform, r) : new Response("", { status: 404 });
   },
 });
 const origin = `http://localhost:${server.port}`;

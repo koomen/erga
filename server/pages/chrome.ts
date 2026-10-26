@@ -22,7 +22,7 @@ export const siteFooter = () => `<footer class="site-foot">© ${new Date().getUT
 export interface Crumb { label: string; href?: string }
 
 /**
- * The breadcrumbs in the upper left of every page for someone signed in: the wordmark (back to the front page), then
+ * The breadcrumbs in the upper left of every page for someone signed in: the wordmark (back to the homepage), then
  * the pages above this one, then this one. `here` is the tag of this page's own crumb (the admin pages' is their <h1>).
  */
 export function crumbs(session: Session | null, trail: Crumb[], here = "span", home = "/"): string {
@@ -34,7 +34,7 @@ export function crumbs(session: Session | null, trail: Crumb[], here = "span", h
 
 /**
  * The viewer's breadcrumbs (VIEW_STYLE), for someone signed in: Erga › Documents › the document, as the editor's
- *. The front page's are the wordmark alone; a test person's skip Documents, as they have none. An agent sees none.
+ *. The homepage's are the wordmark alone; a test person's skip Documents, as they have none. An agent sees none.
  */
 /** The breadcrumbs' type (Inter, as the editor's), for a page that shows them (viewCrumbs) but has none of the app's style: its rules only, which wait for nothing. */
 export const crumbsFont = (session: Session | null) => session && !session.agent ? fontTags() : "";

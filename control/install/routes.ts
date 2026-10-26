@@ -51,7 +51,7 @@ export interface DeployHost {
 const isDeployOAuthReturn = (request: Request) => cookies(request).has(OAUTH_COOKIE);
 
 /** The deploy page's own routes, and the OAuth callback when it's the page's (isDeployOAuthReturn). */
-export async function deployDoor(request: Request, host: DeployHost): Promise<Response> {
+export async function deployRoutes(request: Request, host: DeployHost): Promise<Response> {
   const { env, platform } = host;
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";

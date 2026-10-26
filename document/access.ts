@@ -9,7 +9,7 @@ import type { Storage } from "./storage.ts";
 /** A person's role in a document: whoever made it owns it; others are given editor or viewer. */
 export type Role = "owner" | "editor" | "viewer";
 
-/** Someone asking, as the front door said (x-erga-who): the directory's Who, which the document only passes on to the directory's rule. */
+/** Someone asking, as the app said (x-erga-who): the directory's Who, which the document only passes on to the directory's rule. */
 export interface Asker {
   login: string;
   test?: boolean;
@@ -58,11 +58,11 @@ export class DocumentAccess {
   }
 
   /**
-   * A request from the front door, decided here: who it's from (x-erga-who,
-   * the person the front door signed in) and what their permission lets them
+   * A request from the app, decided here: who it's from (x-erga-who,
+   * the person the app signed in) and what their permission lets them
    * do, from this document's copy of its permissions (Directory.decide, the
    * directory's own rule). It goes on with x-erga-access; a Response refuses
-   * it. A GET of a file with a key the front door checked (x-erga-checked:
+   * it. A GET of a file with a key the app checked (x-erga-checked:
    * the viewer's files, the editor's pages origin) needs no one.
    */
   async authorize(request: Request): Promise<Request | Response> {

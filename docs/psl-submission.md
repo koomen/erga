@@ -21,7 +21,7 @@ What Erga does until then:
 
 - Erga's own code sets no cookie on the pages origin and reads none there.
   The pages origin removes the `Cookie` header before a request goes to the
-  document (`pagesDoor`; test: `tests/security-headers.test.ts`).
+  document (`pagesRoutes`; test: `tests/security-headers.test.ts`).
 - The session cookie is on `erga.dev` (host-only). A page on
   `erga-pages.dev` cannot set or read it, because it is another site.
 

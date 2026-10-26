@@ -304,7 +304,7 @@ export class Pipeline extends DurableObject<Env> {
   }
 
   /**
-   * /api/events (the door has checked it's an admin): a WebSocket (the Ops page: it holds none of the browser's six
+   * /api/events (the routes have checked it is an admin): a WebSocket (the Ops page: it holds none of the browser's six
    * connections to the host), else server-sent events (an API client), one message of JSON each.
    */
   async fetch(request?: Request): Promise<Response> {

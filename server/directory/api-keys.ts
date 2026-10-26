@@ -1,5 +1,5 @@
 // The API keys an admin enters on /admin/api-keys: Anthropic's,
-// for the editor's agent, the admin's agent and version descriptions;
+// for the document agent, the admin's agent and version descriptions;
 // OpenAI's, for OpenAI's models; the GitHub mirror's token; and the
 // Cloudflare token a server deploys itself with. They are kept so:
 //
@@ -33,9 +33,28 @@ import { base64, fromBase64, randomBytes, sha256 } from "../../shared/bytes.ts";
  * service it is for, and how a real one starts (any start, if none).
  */
 export const CREDENTIALS = {
-  anthropic: { env: "ANTHROPIC_API_KEY", label: "Anthropic API key", service: "Anthropic", prefixes: ["sk-ant-"], description: "The editor's agent, the admin's agent and the descriptions of versions call Anthropic's API with it." },
-  openai: { env: "OPENAI_API_KEY", label: "OpenAI API key", service: "OpenAI", prefixes: ["sk-"], description: "For OpenAI's models. Erga doesn't call OpenAI yet: a key set here is ready for when it does." },
-  cloudflare_deploy: { env: "CLOUDFLARE_DEPLOY_TOKEN", label: "Cloudflare deploy token", service: "Cloudflare", prefixes: [], description: "The server deploys itself with it when its branch moves. A Cloudflare API token: bun deploy/setup.ts makes one as narrow as Cloudflare allows." },
+  anthropic: {
+    env: "ANTHROPIC_API_KEY",
+    label: "Anthropic API key",
+    service: "Anthropic",
+    prefixes: ["sk-ant-"],
+    description: "The document agent, the admin's agent and the descriptions of versions call Anthropic's API with it.",
+  },
+  openai: {
+    env: "OPENAI_API_KEY",
+    label: "OpenAI API key",
+    service: "OpenAI",
+    prefixes: ["sk-"],
+    description: "For OpenAI's models. Erga doesn't call OpenAI yet: a key set here is ready for when it does.",
+  },
+  cloudflare_deploy: {
+    env: "CLOUDFLARE_DEPLOY_TOKEN",
+    label: "Cloudflare deploy token",
+    service: "Cloudflare",
+    prefixes: [],
+    description:
+      "The server deploys itself with it when its branch moves. A Cloudflare API token: bun deploy/setup.ts makes one as narrow as Cloudflare allows.",
+  },
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 
 /**

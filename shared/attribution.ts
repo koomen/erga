@@ -3,7 +3,7 @@
 // and how they did it is recorded beside it, as `via`, a short phrase:
 //
 //   (none)                      in person: their browser session
-//   their agent                 the editor's agent, in one of their documents
+//   their agent                 the document agent, in one of their documents
 //   their admin agent           the agent on the admin pages
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
 //                               API, MCP, /api/ext, Git pushes, the admin APIs
@@ -16,7 +16,7 @@
 
 /** How a person did something, when not in person. */
 export const VIA = {
-  /** The editor's agent. */
+  /** The document agent. */
   agent: "their agent",
   /** The admin agent. */
   admin: "their admin agent",

@@ -1,4 +1,4 @@
-// The front page the server makes for itself on a fresh database (server/documents/landing.ts seedLanding).
+// The homepage the server makes for itself on a fresh database (server/documents/landing.ts seedLanding).
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "../../helpers/fixtures";

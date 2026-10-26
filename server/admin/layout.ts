@@ -27,7 +27,7 @@
 // admin.css (client/styles/admin.css), and no style of its own.
 //
 // Only the page: who may see it is checked on the server, before any admin
-// page is made (adminGate, below, in server/app.ts; and each page's own door).
+// page is made (adminGate, below, in server/app.ts; and each page's own routes).
 
 import {
   appPage,
@@ -146,13 +146,13 @@ export const adminResponse = (o: AdminLayout, status = 200) => new Response(admi
 export const isAdminPath = (path: string) => path == "/admin" || path.startsWith("/admin/");
 
 /**
- * Every /admin route, before its own door: the server's admin role, checked
+ * Every /admin route, before its own routes: the server's admin role, checked
  * here on the server. Signed out, a page sends you to sign in; anyone who
  * isn't an admin gets "not found" for a page (they can't tell there is one)
  * and 401 or 403 for a POST. The role is the only thing that counts: no
  * other permission (deploy_page, who may use /deploy; a document's sharing;
  * an agent or test token) makes anyone an admin. Null lets an admin through;
- * each door still checks on its own, and asks for the unlock.
+ * each page's routes still check on their own, and asks for the unlock.
  */
 export async function adminGate(platform: Platform, request: Request): Promise<Response | null> {
   const url = new URL(request.url);

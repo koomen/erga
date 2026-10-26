@@ -111,7 +111,7 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   const third = await publish(server, token, { "index.html": "<!doctype html><title>Third</title><h1>Third</h1>" }, { title: "Third" });
   await share(third.id, bo, "editor");
   const refused = await setLanding(server, third.id);
-  expect(refused.error).toMatch(/Only admins may edit the front page/);
+  expect(refused.error).toMatch(/Only admins may edit the homepage/);
   expect(refused.error).toMatch(new RegExp(`${bo} may edit this document`));
   // An admin may be its editor; made a user again, they only view it.
   const role = (r: string) => get(server, "/admin/users", { method: "POST", headers: { Origin: server.root, Accept: "application/json" }, body: new URLSearchParams({ do: "role", login: bo, role: r }) });

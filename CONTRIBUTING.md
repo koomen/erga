@@ -35,6 +35,11 @@ tells the rest.
 - The smoke run (`e2e/smoke/`) has a time limit of 90 s. A new test there
   replaces one. Put other end-to-end tests in `e2e/full/`.
 - A bug fix comes with a test that fails before the fix.
+- `tests/` holds the unit tests: `bun test`, with no browser. `e2e/` holds
+  the browser tests and the benchmarks. A helper goes in `tests/helpers/`
+  or `e2e/helpers/`, not among the tests.
+- An end-to-end test waits for a state (`until`, `expect.poll`), never for
+  a fixed time: under the load of `bun run test:full`, everything is slower.
 
 ## The rules of the code
 
@@ -46,10 +51,12 @@ AGENTS.md has the full rules. The most important:
 2. **The embedded agents can do what their person can.** A new button or
    HTTP route needs a tool for the agent, and a line in `agents/actions.ts`.
    `tests/agent-actions.test.ts` checks it.
-3. **Keep the module boundaries.** Import each area of `server/` through
-   its `index.ts`. Only `cloudflare/` and `control/` read the Worker's
+3. **Keep the layers.** A folder imports only the layers below it
+   (README.md, "The layout"). Import each area of `server/` through its
+   `index.ts`. Only `cloudflare/` and `control/` read the Workers'
    bindings. The browser's code imports only `shared/` and a few files of
-   `document/`; `tests/browser-imports.test.ts` checks it.
+   `document/`. `tests/imports.test.ts` and
+   `tests/browser-imports.test.ts` check it.
 4. **New routes on staging stay behind the admins-only guard**
    (`server/identity/admins-only.ts`).
 5. **Write code like the code around it**: the same names, the same

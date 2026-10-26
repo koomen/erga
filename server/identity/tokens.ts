@@ -14,7 +14,7 @@
 // flow: it gets a link for the person to approve, and polls). Share with
 // agent on the admin pages makes an admin token that ends within 12 hours
 // (shareAdmin). Only a person signed in in a browser makes a token: an agent
-// never can, whatever its scope. The front door
+// never can, whatever its scope. The app
 // treats "Authorization: Bearer erga_..." as signing
 // the person in, within the token's scope, for the server's API
 // (server/api.ts, /api/ext and /mcp) and every document's own (/api/ext).

@@ -1,4 +1,4 @@
-// The homepage: the front page's document served directly at /, from a
+// The homepage: the homepage's document served directly at /, from a
 // snapshot its deploys make. The rest of the app imports the homepage through
 // this file.
 

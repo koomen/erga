@@ -8,7 +8,7 @@ import { docShows, openViewer } from "../full/viewer/viewer";
 
 await servers.main();
 
-test("the front page and the documents list answer", async () => {
+test("the homepage and the documents list answer", async () => {
   const s = await servers.main();
   for (const path of ["/", "/docs"]) expect((await fetch(`${s.root}${path}`)).status, path).toBe(200);
 });

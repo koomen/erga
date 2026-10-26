@@ -37,7 +37,7 @@ test("an agent in blog/post.html's editor sees one file system: every page, the 
   expect((await s.tool("find", { pattern: "**/*.css" })).text.split("\n").sort()).toEqual(["blog/blog.css", "style.css"]);
 });
 
-test("open_page, from the editor's own agent and from an external one, switches the open editor to another page", async ({ tab }) => {
+test("open_page, from the document agent and from an external one, switches the open editor to another page", async ({ tab }) => {
   const { s, p } = await onPost(tab);
   const calls = await s.agentTurn("Take me to About", [{ tool: "open_page", args: { path: "about.html" } }, { text: "There." }]);
   expect(calls.map((c) => `${c.name} ${c.status}`)).toEqual(["open_page done"]);

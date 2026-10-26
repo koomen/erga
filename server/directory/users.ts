@@ -80,7 +80,7 @@ export interface User {
  * test person (never an admin), and whether they come with admin power
  * (`admin`): a signed-in browser session does, a token only with the admin
  * scope. Every admin-only call needs it, and the person must be
- * an admin too (actsAsAdmin). The front door sets `admin`.
+ * an admin too (actsAsAdmin). The app sets `admin`.
  */
 export interface Actor {
   login: string; test?: boolean; admin?: boolean;

@@ -1,4 +1,4 @@
-// Helpers for the front door's tests:
+// Helpers for the app's tests:
 // a fresh person signed in on the worker's scripted-model server, so their list starts empty and nothing they make
 // meets another test's; their documents made, named, shared and joined; agent tokens and the tools over HTTP.
 //

@@ -90,7 +90,7 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
     e.kind == "document" && e.value != null
       ? e.doc
         ? `<a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a>`
-        : `<span class="gone" title="No such document now: the front page is the plain one">missing</span>`
+        : `<span class="gone" title="No such document now: the homepage is the plain one">missing</span>`
       : "";
   // Under each setting: when it was last set, and by whom (its default on hover).
   const set =
