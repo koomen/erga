@@ -244,6 +244,8 @@ const PAGES_STYLE = `
   ol.users > li { padding: 10px 4px; }
   ol.users .who { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
   ol.users .who .badge { align-self: center; }
+  /* Their picture (or initial), before their username. */
+  ol.users .who .avatar { align-self: center; width: 22px; height: 22px; margin-right: -2px; font-size: 11px; }
   ol.users .who .added { flex-basis: 100%; font-size: 12px; color: var(--chrome); }
   ol.users .never { font-style: italic; }
   @media (max-width: 640px) { .labels, ol.users time { display: none; } ol.users > li { grid-template-columns: minmax(0, 1fr) 3.5rem 34px; row-gap: 6px; } ol.users select.role { grid-row: 2; grid-column: 1 / -1; } }
@@ -267,9 +269,9 @@ const PAGES_STYLE = `
   .changes .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .changes .who .by { color: var(--fg-strong); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .changes .who .via { flex: none; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
-  .changes .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
+  :is(.changes, ol.users) .avatar { position: relative; flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
     background: var(--c, var(--chrome)); color: #fff; font: 600 12.5px var(--font-text); }
-  .changes .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  :is(.changes, ol.users) .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .changes .avatar.system { background: color-mix(in srgb, var(--chrome) 25%, transparent); color: var(--soft); }
   .changes .what { list-style: none; margin: 0; padding: 4px 0 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .changes .what > li { overflow-wrap: anywhere; }

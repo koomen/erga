@@ -14,6 +14,7 @@
 
 import type { Sql, Statement } from "./directory.ts";
 import { RESERVED } from "./directory.ts";
+import { avatarFor } from "../../shared/avatars.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
 export type SignInProvider = "github" | "google";
@@ -49,6 +50,8 @@ export interface Vouched {
   orgs?: string[] | null;
   /** A Google Workspace account's organization: the ID token's hd claim (its domain). Absent for a personal account. */
   hd?: string | null;
+  /** A Google account's picture: the picture claim (shared/avatars.ts). A GitHub account's is found by its id. */
+  picture?: string | null;
 }
 
 /**
@@ -129,14 +132,30 @@ export class Identities {
       if (had.login == login) return;
       throw new NotAllowed(`This ${label(v.provider)} account already signs in to another Erga account (${had.login}).`);
     }
-    if ((await this.of(login)).some((i) => i.provider == v.provider)) throw new NotAllowed(`${login} already signs in with another ${label(v.provider)} account.`);
-    try { await this.sql.batch([this.linkStatement(login, v, Date.now()), ...this.emailStatements(login, v, Date.now())]); }
-    catch { throw new NotAllowed(`${login} already signs in with ${label(v.provider)}, or this ${label(v.provider)} account signs in to another Erga account.`); }
+    if ((await this.of(login)).some((i) => i.provider == v.provider))
+      throw new NotAllowed(`${login} already signs in with another ${label(v.provider)} account.`);
+    try {
+      await this.sql.batch([
+        this.linkStatement(login, v, Date.now()),
+        ...this.emailStatements(login, v, Date.now()),
+        avatarStatement(login, v),
+      ]);
+    } catch {
+      throw new NotAllowed(
+        `${login} already signs in with ${label(v.provider)}, or this ${label(v.provider)} account signs in to another Erga account.`
+      );
+    }
   }
 
-  /** An identity signed in again: when, and what the provider calls them now. */
-  async used(v: Pick<Vouched, "provider" | "subject" | "handle" | "orgs" | "hd">): Promise<void> {
+  /** An identity signed in again: when, what the provider calls them now, and their picture now. */
+  async used(v: Pick<Vouched, "provider" | "subject" | "handle" | "orgs" | "hd" | "picture">): Promise<void> {
     const at = Date.now();
+    await this.sql.run(
+      "UPDATE users SET avatar = ?3 WHERE login = (SELECT login FROM identities WHERE provider = ?1 AND subject = ?2)",
+      v.provider,
+      v.subject,
+      avatarFor(v)
+    );
     // Its Workspace as Google says now (none: a personal account); a GitHub identity has none.
     await this.sql.run("UPDATE identities SET last_used = ?3, handle = COALESCE(?4, handle), hd = ?5 WHERE provider = ?1 AND subject = ?2", v.provider, v.subject, at, v.handle || null, workspaceOf(v));
     // Its organizations, when GitHub answered this time: recorded, the old answer replaced.
@@ -206,6 +225,7 @@ export class Identities {
         ],
         this.linkStatement(login, v, at),
         ...this.emailStatements(login, v, at),
+        avatarStatement(login, v),
         ...(o.extra ?? []),
       ]);
     } catch {
@@ -218,3 +238,6 @@ export class Identities {
 }
 
 export const label = (p: SignInProvider) => (p == "github" ? "GitHub" : "Google");
+
+/** The account's picture, from the identity it signed in with now (shared/avatars.ts). */
+const avatarStatement = (login: string, v: Vouched): Statement => ["UPDATE users SET avatar = ?2 WHERE login = ?1", login, avatarFor(v)];

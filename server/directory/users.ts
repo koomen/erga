@@ -24,6 +24,7 @@
 
 import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
+import { safeAvatar } from "../../shared/avatars.ts";
 
 export type ServerRole = "user" | "admin";
 /** A user's one role, as the Users page and the admin agent name it. */
@@ -70,6 +71,8 @@ export interface User {
   lastSeen: number | null;
   /** Their GitHub account id (users.github_id), from their last sign-in; null until then. */
   githubId: number | null;
+  /** Their picture (users.avatar, shared/avatars.ts), from their last sign-in; null: none, so their initial shows. */
+  avatar: string | null;
 }
 
 /**
@@ -108,6 +111,7 @@ interface Row {
   added_via?: string | null;
   last_seen: number | null;
   github_id?: number | null;
+  avatar?: string | null;
 }
 
 export class Users {
@@ -219,6 +223,23 @@ export class Users {
   }
 
   /** Forgets what was remembered of `login` (a row written elsewhere: a new account, server/directory/identities.ts). */
+  /** Each login's picture, for a list of people (a share list): those with one; anyone ("*") and test people have none. */
+  async avatars(logins: string[]): Promise<Record<string, string>> {
+    const wanted = [...new Set(logins.map((l) => l.toLowerCase()).filter((l) => l != "*" && !l.startsWith("test-")))];
+    // D1 binds at most 100 values to a statement.
+    const rows: { login: string; avatar: string | null }[] = [];
+    for (let i = 0; i < wanted.length; i += 90) {
+      const some = wanted.slice(i, i + 90);
+      rows.push(
+        ...(await this.sql.all<{ login: string; avatar: string | null }>(
+          `SELECT login, avatar FROM users WHERE login IN (${some.map((_, j) => `?${j + 1}`).join(", ")}) AND avatar IS NOT NULL`,
+          ...some
+        ))
+      );
+    }
+    return Object.fromEntries(rows.flatMap((r) => (safeAvatar(r.avatar) ? [[r.login, safeAvatar(r.avatar)!]] : [])));
+  }
+
   forget(login: string): void {
     this.known.delete(login.toLowerCase());
   }
@@ -362,6 +383,7 @@ export class Users {
       addedVia: r.added_via ?? null,
       lastSeen: r.last_seen == null ? null : Number(r.last_seen),
       githubId: r.github_id == null ? null : Number(r.github_id),
+      avatar: safeAvatar(r.avatar),
     };
   }
 
@@ -379,6 +401,7 @@ export class Users {
       addedBy: null,
       lastSeen: null,
       githubId: null,
+      avatar: null,
     };
   }
 }

@@ -32,7 +32,7 @@ export interface Author {
   /** A colour from PALETTE. */
   color: string;
   kind: AuthorKind;
-  /** Their picture, if signed in with one (a GitHub avatar's URL). */
+  /** Their picture, if they have one (shared/avatars.ts: GitHub's by id, or Google's). */
   avatar?: string;
   /** An agent's: how its person acts through it, "their agent" or "a shared agent (label)". Its edits are `user`'s, via this. */
   via?: string;

@@ -1,6 +1,6 @@
 // Who you are, in the upper right of every page erga.dev serves: your
-// avatar (your GitHub picture, or your initial on your colour if it doesn't
-// load), which opens a small menu (your name, Documents, Settings, Deploy
+// avatar (your picture, shared/avatars.ts, or your initial on your colour if
+// you have none or it doesn't load), which opens a small menu (your name, Documents, Settings, Deploy
 // your own for those the deploy_page setting lets in, Admin settings for
 // admins, Sign out); or, signed out, a person in a circle whose
 // menu has only Sign in (to the sign-in page, coming back to the same page).
@@ -26,7 +26,7 @@ export interface Account {
   admin: boolean;
   /** May use /deploy (the deploy_page setting): not an admin right. */
   deploy?: boolean;
-  /** Their GitHub picture (test people have none). */
+  /** Their picture (shared/avatars.ts); absent: none, so their initial shows. */
   avatar?: string;
   /** The ?user= a local tab carries, kept on the menu's links. */
   session: Session;
@@ -35,15 +35,8 @@ export interface Account {
 export const accountOf = (session: Session | null, admin: boolean, deploy = false): Account | null =>
   !session || session.agent ? null : {
     login: session.login, name: session.name, admin, deploy, session,
-    ...(session.test ? {} : { avatar: avatarUrl(session.login) }),
+        ...(!session.test && session.avatar ? { avatar: session.avatar } : {}),
   };
-
-/** A GitHub login's picture. */
-export const avatarUrl = (login: string) => `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?s=64`;
-
-/** Each login's picture, for a list of people (a share dialog): test people ("test-…") and anyone ("*") have none. */
-export const avatarsOf = (logins: string[]): Record<string, string> =>
-  Object.fromEntries(logins.filter((l) => l != "*" && !l.startsWith("test-")).map((l) => [l, avatarUrl(l)]));
 
 const PERSON = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9.25" r="3.25"/><path d="M5.75 19c.9-3.1 3.3-4.75 6.25-4.75s5.35 1.65 6.25 4.75"/></svg>`;
 
@@ -70,7 +63,7 @@ export function accountMarkup(account: Account | null, here: string): string {
   const s = account.session;
   return `<div class="erga-account" data-erga-account="in">
 <button type="button" class="erga-account-btn" style="--c: ${colorFor(account.login.toLowerCase())}" aria-label="${esc(`You (${account.name})`)}" data-tip="${esc(account.name)}" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">
-<span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" draggable="false" data-erga-fallback>` : ""}
+<span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" draggable="false" referrerpolicy="no-referrer" data-erga-fallback>` : ""}
 </button>
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>

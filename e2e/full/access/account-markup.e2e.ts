@@ -1,17 +1,20 @@
 // The account corner in the pages the server sends (the markup): every page of the site's own has
 // it, the editor has its own, a document has none.
 import { expect, servers, test } from "../../fixtures";
-import { getter, newDoc } from "./access";
+import { getter, githubPicture, newDoc } from "./access";
 
 await servers.main();
 
 test("every page of the site's own has your avatar in its corner", async () => {
-  const get = getter((await servers.main()).root);
+  const root = (await servers.main()).root,
+    get = getter(root);
+  const picture = await githubPicture(root);
   for (const path of ["/", "/docs", "/admin", "/settings", "/nobody-here"]) {
     const html = await (await get(path)).text();
     expect(html, path).toContain('data-erga-account="in"');
-    expect(html, path).toContain("https://avatars.githubusercontent.com/tester?s=64");
-    expect(html, path).toMatch(/<img src="https:\/\/avatars\.githubusercontent\.com\/tester\?s=64" alt="" draggable="false"/);
+    expect(html, path).toContain(`<img src="${picture}" alt="" draggable="false"`);
+    // Never GitHub's picture for the username: it may be another GitHub person's.
+    expect(html, path).not.toContain("avatars.githubusercontent.com/tester");
   }
 });
 
