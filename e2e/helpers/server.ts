@@ -121,7 +121,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
     async fixture(name) {
       const dir = join(scratch, "docs", `${name}-${++fixtures}`);
-      cpSync(join(ROOT, "e2e/helpers/fixtures", name), dir, { recursive: true });
+      cpSync(join(ROOT, "e2e/fixtures", name), dir, { recursive: true });
       return { dir, address: await server.open(dir) };
     },
     stop() {

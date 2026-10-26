@@ -87,7 +87,7 @@ export interface Target {
 }
 
 const EDITOR = new URL("../../../", import.meta.url).pathname;
-export const FIXTURES = join(EDITOR, "e2e/helpers/fixtures");
+export const FIXTURES = join(EDITOR, "e2e/fixtures");
 
 /** A fixture folder's text files, keyed by path. */
 export function readFixture(name: string): Record<string, string> {
