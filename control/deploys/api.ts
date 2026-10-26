@@ -27,7 +27,7 @@
 
 import type { CredentialStatus, TokenAnswer } from "./credential.ts";
 import type { ReleasesView } from "./releases.ts";
-import type { DomainsView } from "./branches.ts";
+import type { DomainsView } from "./domains.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../../server/platform.ts";
 import { whoOf } from "../../server/platform.ts";

@@ -19,16 +19,14 @@ import { join } from "path";
 import {
   ATTEMPTS,
   BranchDeploys,
-  HISTORY_KEEP,
   RESUME_MS,
   targetOf,
   UPSTREAM_CHECK_MS,
   type DeployEnv,
-  type DeployRecord,
   type Deps,
-  type LogLine,
   type TargetStatus,
 } from "../control/deploys/branches";
+import { HISTORY_KEEP, type DeployRecord, type LogLine } from "../control/deploys/history";
 import { CONTROL_OAUTH_SCOPES, exchangeCode, fixedCredential, OAuthCredential, pkce } from "../control/deploys/credential";
 import { unpackRelease } from "../control/deploys/bundle";
 import { fromBase64 } from "../shared/bytes";

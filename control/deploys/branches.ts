@@ -39,11 +39,11 @@
 // toolchain, and answers production's build of it from there
 // (control/builder/cache.ts, which says why that's safe).
 //
-// Status: one entry per target, as GET /api/deploys answers it (the Source
+// Status: one entry per target, as GET /api/deploys answers it (the Ops
 // page shows it next to each branch), and an event on each change
 // ({type: "deploys"} on /api/events). History: a record of each deploy (its
 // id, commit, times, state, what started it) and its whole log, the last
-// HISTORY_KEEP of each target, in the same storage.
+// HISTORY_KEEP of each target, in the same storage (control/deploys/history.ts).
 
 import { ALL_STEPS, API, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, Unhealthy, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { sourceFor, type Source } from "./build-source";
@@ -54,40 +54,13 @@ import type { ChannelFile, ReleaseStore } from "./releases";
 import type { Fleet } from "./fleet";
 import { compareVersions, type UpdateResult } from "../source/index.ts";
 import { plural } from "../../shared/time";
+import { DeployHistory, HISTORY_KEEP, type DeployRecord, type LogLine } from "./history";
+import { Domains } from "./domains";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
 export interface StepStatus { id: StepId | "build" | "rollback"; title: string; status: "pending" | "running" | "done" | "skipped" | "failed" | "cancelled"; detail?: string }
 
-/** One deploy, as the history keeps it (GET /api/deploys/<name>/history, newest first). */
-export interface DeployRecord {
-  id: string;
-  target: DeployName;
-  commit: string;
-  state: Exclude<DeployState, "idle">;
-  /** When it started, and when it ended (ms since the epoch; null while it runs). */
-  started: number;
-  ended: number | null;
-  /** What started it: "push by ada", "merge by ada", "redeploy by ada". */
-  trigger: string;
-  /** Why it failed, or why it was cancelled. */
-  error: string | null;
-  /** A cancelled deploy: the commit that took its place, and that deploy's id once it started. */
-  supersededBy?: string;
-  replacedBy?: string;
-  /**
-   * What the target ran before this deploy (recorded before its migrations): the Worker version a rollback goes back to,
-   * the release and commit it ran, the database's bookmark. A rollback's own restore point is what it rolled back from.
-   */
-  restore?: RestorePoint & { commit: string | null };
-  /** A rollback: the deploy it undid. A deploy undone: the rollback that undid it. */
-  rollbackOf?: string;
-  rolledBackBy?: string;
-  /** In answers only: the deploy the target runs now. */
-  live?: boolean;
-}
-/** At most this many deploys are kept in each target's history (and their logs: the older ones' are deleted). */
-export const HISTORY_KEEP = 100;
 
 /** One target, as GET /api/deploys answers it. */
 export interface TargetStatus {
@@ -160,18 +133,23 @@ export interface Deps {
 }
 
 /** `attempt`: 1 for a deploy as asked for; 2 and on when it runs again by itself after a restart stopped it before the upload. */
-interface Run { deployId: string; commit: string; started: number; cursor: StepId | null; carry: Carry; attempt?: number; fresh?: Fresh }
+export interface Run {
+  deployId: string;
+  commit: string;
+  started: number;
+  cursor: StepId | null;
+  carry: Carry;
+  attempt?: number;
+  fresh?: Fresh;
+}
 /** Staging copies production's data afresh only when asked for (`force`). */
 interface Fresh { force?: boolean }
 
-/** One line of a deploy's log: when (ms since the epoch), what, and which step it belongs to. */
-export interface LogLine { at: number; text: string; step?: StepId | "build" | "rollback" }
-/** A deploy's whole log, as GET /api/deploys/<name>/log answers it (the latest deploy's, or ?deploy=<id>'s), with its record. */
-export interface DeployLog { deployId: string | null; commit: string | null; state: DeployState; lines: LogLine[]; trigger?: string; started?: number; ended?: number | null; error?: string | null; live?: boolean; restore?: DeployRecord["restore"]; rollbackOf?: string; rolledBackBy?: string }
-interface StoredLog { deployId: string; commit: string; lines: LogLine[] }
-/** At most this many lines are kept of one deploy's log (the first and the latest, with a line saying how many went between). */
-const LOG_KEEP = 5000;
-interface Stored { status: TargetStatus; run: Run | null; oldDocs: string[] }
+export interface Stored {
+  status: TargetStatus;
+  run: Run | null;
+  oldDocs: string[];
+}
 /** The branch's head and what's waiting (and what asked for it), kept apart from the run's record (a hook can come while a deploy runs and saves its own). */
 interface Queue { head: string | null; pending: string | null; trigger?: string | null; attempt?: number | null; fresh?: boolean | null }
 
@@ -199,33 +177,36 @@ export const RESUME_MS = 5_000;
 export const ATTEMPTS = 3;
 const key = (name: DeployName) => `target:${name}`;
 const queueKey = (name: DeployName) => `queue:${name}`;
-const logKey = (name: DeployName, id: string) => `log:${name}:${id}`;
-/** Before the history, each target kept its latest deploy's log here (read when a deploy started then is resumed). */
-const oldLogKey = (name: DeployName) => `log:${name}`;
-const historyKey = (name: DeployName) => `history:${name}`;
-const TERMINAL = new Set<DeployState>(["deployed", "failed", "cancelled", "rolled-back"]);
 
 /** How often an install's control Worker looks at upstream's channel for a newer release. */
 export const UPSTREAM_CHECK_MS = 10 * 60 * 1000;
 
+
 export class BranchDeploys {
-  private fleet: Fleet;
+  fleet: Fleet;
   private running: DeployName | null = null;
   /** The deploy running here, which a newer one for its target cancels. */
   private current: { name: DeployName; deployId: string; commit: string; abort: AbortController; s: Stored } | null = null;
-  /** The running deploy's log, kept here as it grows (and written whole on each save), and the lines no event has carried yet. */
-  private log: { name: DeployName; stored: StoredLog; unsent: LogLine[] } | null = null;
-  private now: () => number;
+  now: () => number;
+  readonly history = new DeployHistory(this);
+  readonly customDomains = new Domains(this);
 
-  constructor(private deps: Deps) { this.now = deps.now ?? Date.now; this.fleet = deps.fleet ?? ERGA; }
-  private specOf(name: DeployName) { return this.fleet.specOf(name); }
-  private targetFor(name: DeployName, fresh?: Fresh): Target { return this.fleet.targetFor(name, this.deps.env, fresh); }
+  constructor(readonly deps: Deps) {
+    this.now = deps.now ?? Date.now;
+    this.fleet = deps.fleet ?? ERGA;
+  }
+  specOf(name: DeployName) {
+    return this.fleet.specOf(name);
+  }
+  private targetFor(name: DeployName, fresh?: Fresh): Target {
+    return this.fleet.targetFor(name, this.deps.env, fresh);
+  }
 
   /**
    * Cloudflare's API with the credential's token, fresh (refreshed when it's about to expire; a DeployError says why not).
    * A 401 from the API tells the credential, so the next deploy's refresh says whether the grant is revoked.
    */
-  private async cf(): Promise<Cloudflare> {
+  async cf(): Promise<Cloudflare> {
     const credential = this.deps.credential, net = this.deps.net;
     const watched: Fetch = async (input, init) => {
       const r = await net(input, init);
@@ -249,7 +230,7 @@ export class BranchDeploys {
     return null;
   }
 
-  private async load(name: DeployName): Promise<Stored> {
+  async load(name: DeployName): Promise<Stored> {
     const spec = this.specOf(name);
     const s = await this.deps.storage.get<Stored>(key(name));
     const out = s ?? {
@@ -272,101 +253,9 @@ export class BranchDeploys {
     s.status.pending = (await this.queue(s.status.name)).pending;
     if (s.status.log.length > LOG_LINES) s.status.log = s.status.log.slice(-LOG_LINES);
     await this.deps.storage.put(key(s.status.name), s);
-    await this.syncRecord(s);
-    await this.flushLog();
+    await this.history.syncRecord(s);
+    await this.history.flushLog();
     this.deps.changed();
-  }
-
-  /** A target's deploys, newest first (at most HISTORY_KEEP). */
-  private async records(name: DeployName): Promise<DeployRecord[]> {
-    return (await this.deps.storage.get<DeployRecord[]>(historyKey(name))) ?? [];
-  }
-
-  private async putRecords(name: DeployName, list: DeployRecord[]): Promise<void> {
-    const gone = list.splice(HISTORY_KEEP);
-    await this.deps.storage.put(historyKey(name), list);
-    for (const r of gone) await this.deps.storage.delete?.(logKey(name, r.id));
-  }
-
-  /** The running or last deploy's record, brought up to date with the status (written only when it changed). */
-  private async syncRecord(s: Stored): Promise<void> {
-    const id = s.status.deployId, state = s.status.state;
-    if (!id || state == "idle") return;
-    const list = await this.records(s.status.name);
-    const i = list.findIndex((r) => r.id == id);
-    if (i < 0) return;
-    const was = list[i];
-    const next: DeployRecord = { ...was, state, error: s.status.error, ended: TERMINAL.has(state) ? (was.ended ?? s.status.at ?? this.now()) : null };
-    if (JSON.stringify(next) == JSON.stringify(was)) return;
-    list[i] = next;
-    await this.putRecords(s.status.name, list);
-  }
-
-  /** A deploy's restore point, onto its record (the migrations step read it). */
-  private async setRestore(name: DeployName, id: string, restore: DeployRecord["restore"]): Promise<void> {
-    const list = await this.records(name);
-    const rec = list.find((r) => r.id == id);
-    if (!rec || !restore) return;
-    rec.restore = restore;
-    await this.putRecords(name, list);
-  }
-
-  /** A line added to a past deploy's kept log (and sent, for whoever has it open). */
-  private async appendTo(name: DeployName, id: string, text: string): Promise<void> {
-    const kept = await this.deps.storage.get<StoredLog>(logKey(name, id));
-    if (!kept) return;
-    const line: LogLine = { at: this.now(), text };
-    kept.lines.push(line);
-    await this.deps.storage.put(logKey(name, id), kept);
-    this.deps.logged?.({ type: "deploy-log", target: name, deployId: id, lines: [line] });
-  }
-
-  /** A target's history (GET /api/deploys/<name>/history). */
-  async historyOf(name: string, limit = 20): Promise<DeployRecord[] | null> {
-    if (!this.fleet.has(name)) return null;
-    return this.localHistory(name, Math.max(1, Math.min(HISTORY_KEEP, Math.floor(limit) || 20)));
-  }
-
-  private async localHistory(name: DeployName, limit: number): Promise<DeployRecord[]> {
-    const live = (await this.load(name)).status.liveDeploy;
-    return (await this.records(name)).slice(0, limit).map((r) => ({ ...r, live: r.id == live }));
-  }
-
-  /** The deploy's log so far into storage, and its new lines out as an event. */
-  private async flushLog(): Promise<void> {
-    const log = this.log;
-    if (!log || !log.unsent.length) return;
-    const lines = log.unsent.splice(0);
-    const all = log.stored.lines;
-    if (all.length > LOG_KEEP) all.splice(LOG_KEEP / 2, all.length - LOG_KEEP + 1, { at: lines[0].at, text: `(${all.length - LOG_KEEP + 1} lines left out)` });
-    await this.deps.storage.put(logKey(log.name, log.stored.deployId), log.stored);
-    this.deps.logged?.({ type: "deploy-log", target: log.name, deployId: log.stored.deployId, lines });
-  }
-
-  /** The run's log: a new one for a new deploy, or (after a restart) the one storage kept. */
-  private async openLog(name: DeployName, run: Run, fresh: boolean): Promise<void> {
-    const kept = fresh ? null : (await this.deps.storage.get<StoredLog>(logKey(name, run.deployId))) ?? (await this.deps.storage.get<StoredLog>(oldLogKey(name)));
-    this.log = { name, stored: kept?.deployId == run.deployId ? kept : { deployId: run.deployId, commit: run.commit, lines: [] }, unsent: [] };
-    if (fresh) await this.deps.storage.put(logKey(name, run.deployId), this.log.stored);
-  }
-
-  /**
-   * A deploy's whole log, with its record (GET /api/deploys/<name>/log): the
-   * latest deploy's, or `deployId`'s (null if the history has no such deploy).
-   */
-  async logOf(name: string, deployId?: string): Promise<DeployLog | null> {
-    if (!this.fleet.has(name)) return null;
-    const { status } = await this.load(name);
-    const list = await this.records(name);
-    const id = deployId ?? status.deployId ?? list[0]?.id ?? null;
-    const rec = id ? list.find((r) => r.id == id) : undefined;
-    if (deployId && !rec) return null;
-    const kept = !id ? null : this.log?.name == name && this.log.stored.deployId == id ? this.log.stored
-      : (await this.deps.storage.get<StoredLog>(logKey(name, id))) ?? await this.deps.storage.get<StoredLog>(oldLogKey(name)).then((l) => (l?.deployId == id ? l : null));
-    return {
-      deployId: id, commit: rec?.commit ?? kept?.commit ?? null, state: rec?.state ?? status.state, lines: kept?.lines ?? [],
-      ...(rec ? { trigger: rec.trigger, started: rec.started, ended: rec.ended, error: rec.error, live: rec.id == status.liveDeploy, ...(rec.restore ? { restore: rec.restore } : {}), ...(rec.rollbackOf ? { rollbackOf: rec.rollbackOf } : {}), ...(rec.rolledBackBy ? { rolledBackBy: rec.rolledBackBy } : {}) } : {}),
-    };
   }
 
   private line(s: Stored, text: string, step?: LogLine["step"]) {
@@ -375,10 +264,10 @@ export class BranchDeploys {
     for (const l of text.split("\n")) {
       s.status.log.push(`${t} ${step == "build" ? "build: " : ""}${l}`);
       // A deploy's own lines go in its full log too (GET /api/deploys/<name>/log).
-      if (s.run && this.log?.name == s.status.name && this.log.stored.deployId == s.run.deployId) {
+      if (s.run && this.history.log?.name == s.status.name && this.history.log.stored.deployId == s.run.deployId) {
         const line: LogLine = { at, text: l, ...(step ? { step } : {}) };
-        this.log.stored.lines.push(line);
-        this.log.unsent.push(line);
+        this.history.log.stored.lines.push(line);
+        this.history.log.unsent.push(line);
       }
     }
   }
@@ -392,7 +281,7 @@ export class BranchDeploys {
     const limit = o.history ? Math.max(1, Math.min(HISTORY_KEEP, Math.floor(o.history))) : 0;
     for (const name of this.fleet.names) {
       const local: TargetStatus & { history?: DeployRecord[] } = (await this.load(name)).status;
-      if (limit) local.history = await this.localHistory(name, limit);
+      if (limit) local.history = await this.history.localHistory(name, limit);
       targets.push(local);
     }
     const upstream = this.fleet.upstream ? (await this.deps.storage.get<UpstreamStatus>("upstream")) ?? { origin: this.fleet.upstream.origin, channel: this.fleet.upstream.channel, latest: null, checkedAt: null, error: null } : undefined;
@@ -484,86 +373,6 @@ export class BranchDeploys {
     }
   }
 
-  // ---- each environment's domains: its Worker's custom domains, through the credential (control/routes.ts, /api/domains).
-
-  /** Every environment's domains: its own address first (the fleet's: a deploy puts the Worker on it), then the others added here. */
-  async domains(): Promise<DomainsView | { error: string; status?: number }> {
-    const wrong = await this.deps.credential.status();
-    if (wrong.problem) return { error: `Nothing can be read: ${wrong.problem}`, status: 409 };
-    try {
-      const cf = await this.cf();
-      const acc = this.deps.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
-      const all = (await cf.call<{ id: string; hostname: string; service: string; zone_name?: string; zone_id: string }[]>("GET", `/accounts/${acc}/workers/domains`, "read the account's custom domains")) ?? [];
-      const targets: DomainsView["targets"] = {};
-      for (const name of this.fleet.names) {
-        const spec = this.specOf(name);
-        const own: DomainEntry = { hostname: spec.host, primary: true, zone: all.find((d) => d.hostname == spec.host)?.zone_name ?? null };
-        const more = all.filter((d) => d.service == spec.worker && d.hostname != spec.host).map((d): DomainEntry => ({ hostname: d.hostname, primary: false, zone: d.zone_name ?? null }));
-        targets[name] = [own, ...more.sort((a, b) => (a.hostname < b.hostname ? -1 : 1))];
-      }
-      return { targets };
-    } catch (e) {
-      return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
-    }
-  }
-
-  /** A domain added to an environment: a hostname on one of the account's zones (the zone found by the hostname's end), put on its Worker. */
-  async addDomain(name: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }> {
-    if (!this.fleet.has(name)) return { error: `There's no environment called ${name}.`, status: 404 };
-    const host = hostname.trim().toLowerCase();
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) return { error: "A hostname looks like docs.example.com.", status: 400 };
-    const spec = this.specOf(name);
-    for (const other of this.fleet.names) if (this.specOf(other).host == host) return { error: `${host} is ${other}'s own address.`, status: 409 };
-    const wrong = await this.deps.credential.status();
-    if (wrong.problem) return { error: `Nothing can be changed: ${wrong.problem}`, status: 409 };
-    try {
-      const cf = await this.cf();
-      const acc = this.deps.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
-      const zones = (await cf.call<{ id: string; name: string }[]>("GET", `/zones?account.id=${acc}&per_page=50`, "list the account's zones")) ?? [];
-      const zone = zones.filter((z) => host == z.name || host.endsWith(`.${z.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
-      if (!zone) return { error: `${host} isn't on one of this account's zones (${zones.map((z) => z.name).join(", ") || "none"}): add the domain to Cloudflare first.`, status: 400 };
-      await cf.call("PUT", `/accounts/${acc}/workers/domains`, `put ${spec.worker} on ${host}`, { hostname: host, service: spec.worker, zone_id: zone.id, environment: "production" });
-      console.log(`domain ${host} added to ${name} (${spec.worker}) by ${by}`);
-      this.deps.logged?.({ type: "domains" });
-      const view = await this.domains();
-      await this.tellHosts(view);
-      return view;
-    } catch (e) {
-      return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
-    }
-  }
-
-  /** An install: every host its environments answer at, told to upstream (the GitHub consent relay sends people back only to one of them). */
-  private async tellHosts(view: DomainsView | { error: string }): Promise<void> {
-    if ("error" in view || !this.deps.upstream?.hosts) return;
-    const hosts = Object.values(view.targets).flat().map((d) => d.hostname);
-    await this.deps.upstream.hosts(hosts).catch((e: Error) => console.log(`upstream wasn't told the hosts: ${e.message}`));
-  }
-
-  /** A domain taken off an environment's Worker (never its own address: a deploy would put it back, and the health check goes there). */
-  async removeDomain(name: string, hostname: string, by: string): Promise<DomainsView | { error: string; status?: number }> {
-    if (!this.fleet.has(name)) return { error: `There's no environment called ${name}.`, status: 404 };
-    const host = hostname.trim().toLowerCase(), spec = this.specOf(name);
-    if (host == spec.host) return { error: `${host} is ${name}'s own address: it stays.`, status: 409 };
-    const wrong = await this.deps.credential.status();
-    if (wrong.problem) return { error: `Nothing can be changed: ${wrong.problem}`, status: 409 };
-    try {
-      const cf = await this.cf();
-      const acc = this.deps.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
-      const there = (await cf.call<{ id: string; hostname: string; service: string }[]>("GET", `/accounts/${acc}/workers/domains?hostname=${encodeURIComponent(host)}`, `read ${host}'s custom domain`)) ?? [];
-      const mine = there.find((d) => d.hostname == host && d.service == spec.worker);
-      if (!mine) return { error: `${host} isn't one of ${name}'s domains.`, status: 404 };
-      await cf.call("DELETE", `/accounts/${acc}/workers/domains/${mine.id}`, `take ${spec.worker} off ${host}`);
-      console.log(`domain ${host} removed from ${name} (${spec.worker}) by ${by}`);
-      this.deps.logged?.({ type: "domains" });
-      const view = await this.domains();
-      await this.tellHosts(view);
-      return view;
-    } catch (e) {
-      return { error: e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`, status: 502 };
-    }
-  }
-
   /**
    * A branch moved to `commit` (after a push or merge): every target on that
    * branch deploys it. `trigger` says what moved it ("merge by ada"), for the history.
@@ -605,7 +414,7 @@ export class BranchDeploys {
     if (wrong) return { ok: false, error: wrong, status: 409 };
     const s = await this.load(name);
     if (s.run || this.running == name) return { ok: false, error: `A deploy of ${name} is running: wait for it to end (or push again to replace it), then roll back.`, status: 409 };
-    const list = await this.records(name);
+    const list = await this.history.records(name);
     const live = list.find((r) => r.id == s.status.liveDeploy) ?? null;
     const restore = live?.restore;
     if (!live || !restore?.versionId) return { ok: false, error: live ? `The live deploy (${live.commit.slice(0, 12)}) has no restore point: it was made before restore points were recorded, or its Worker was new. Deploy an earlier commit instead.` : `${name} has no live deploy to roll back from.`, status: 409 };
@@ -623,11 +432,11 @@ export class BranchDeploys {
     live.rolledBackBy = deployId;
     live.ended ??= this.now();
     list.unshift(rec);
-    await this.putRecords(name, list);
+    await this.history.putRecords(name, list);
     const steps: StepStatus[] = [{ id: "rollback", title: `Roll back to ${restore.version ? `release ${restore.version}` : `version ${restore.versionId.slice(0, 8)}`}`, status: "running" }];
     s.status = { ...s.status, state: "deploying", commit: rec.commit, deployId, at: this.now(), error: null, steps };
     s.run = { deployId, commit: rec.commit, started: this.now(), cursor: null, carry: {} };
-    await this.openLog(name, s.run, true);
+    await this.history.openLog(name, s.run, true);
     this.line(s, `rolling ${this.specOf(name).host} back to ${restore.version ? `release ${restore.version}` : `version ${restore.versionId.slice(0, 8)}`} (${rec.trigger})`, "rollback");
     this.line(s, `the version before deploy ${live.id} (${live.commit.slice(0, 12)}) serves again; the database keeps its schema${restore.bookmark ? ` (its bookmark from before that deploy: ${restore.bookmark})` : ""}`, "rollback");
     // Complete before the call.
@@ -642,7 +451,7 @@ export class BranchDeploys {
       const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
       live.state = "deployed"; delete live.rolledBackBy;
       rec.state = "failed"; rec.error = message; rec.ended = this.now();
-      await this.putRecords(name, list);
+      await this.history.putRecords(name, list);
       steps[0].status = "failed";
       s.status = { ...s.status, state: "failed", at: this.now(), error: `Stopped at “${steps[0].title}”. ${message}`, deployed: live.commit, liveDeploy: live.id };
       s.run = { deployId, commit: rec.commit, started: rec.started, cursor: null, carry: {} };
@@ -741,14 +550,14 @@ export class BranchDeploys {
     s.run = { deployId, commit, started: this.now(), cursor: null, carry: { oldDocs: s.oldDocs }, ...(attempt > 1 ? { attempt } : {}), ...(fresh ? { fresh } : {}) };
     const abort = new AbortController();
     this.current = { name, deployId, commit, abort, s };
-    await this.openLog(name, s.run, true);
+    await this.history.openLog(name, s.run, true);
     // Its record, first in the history; and the cancelled deploy it takes the place of, told which one did.
-    const list = await this.records(name);
+    const list = await this.history.records(name);
     const replaced = list[0]?.state == "cancelled" && !list[0].replacedBy ? list[0] : null;
     if (replaced) replaced.replacedBy = deployId;
     list.unshift({ id: deployId, target: name, commit, state: "building", started: this.now(), ended: null, trigger, error: null });
-    await this.putRecords(name, list);
-    if (replaced) await this.appendTo(name, replaced.id, `replaced by deploy ${deployId} (${commit.slice(0, 12)}, ${trigger})`);
+    await this.history.putRecords(name, list);
+    if (replaced) await this.history.appendTo(name, replaced.id, `replaced by deploy ${deployId} (${commit.slice(0, 12)}, ${trigger})`);
     this.line(s, `deploying ${commit.slice(0, 12)} (${spec.branch}) to ${spec.host}: ${trigger}${replaced ? `, in place of the cancelled deploy ${replaced.id}` : ""}${attempt > 1 ? ` (attempt ${attempt} of ${ATTEMPTS})` : ""}`);
     await this.save(s);
     try {
@@ -813,7 +622,7 @@ export class BranchDeploys {
   private async resume(s: Stored): Promise<void> {
     const run = s.run!;
     const name = s.status.name;
-    await this.openLog(name, run, false);
+    await this.history.openLog(name, run, false);
     const q = await this.queue(name);
     if (q.pending) {
       this.line(s, `interrupted by the server's restart, and ${q.pending.slice(0, 12)} came since: not carried on`);
@@ -835,7 +644,7 @@ export class BranchDeploys {
       this.line(s, `interrupted before the new version was uploaded (the server restarted): nothing changed. ${again ? `Trying again (attempt ${attempt + 1} of ${ATTEMPTS}).` : `That was attempt ${attempt} of ${ATTEMPTS}: Redeploy to try again.`}`);
       await this.failed(s, new DeployError(`The deploy was interrupted before the new version went up (the server restarted). ${again ? "It runs again by itself." : `It was tried ${ATTEMPTS} times: Redeploy to try again.`}`));
       if (again) {
-        const trigger = (await this.records(name)).find((r) => r.id == run.deployId)?.trigger ?? "deploy";
+        const trigger = (await this.history.records(name)).find((r) => r.id == run.deployId)?.trigger ?? "deploy";
         await this.setQueue(name, { pending: run.commit, trigger: trigger.endsWith(", again after a restart") ? trigger : `${trigger}, again after a restart`, attempt: attempt + 1, fresh: run.fresh?.force || null });
         await this.save(s);
       }
@@ -875,7 +684,8 @@ export class BranchDeploys {
         run.carry = carry;
         s.oldDocs = carry.oldDocs ?? [];
         run.cursor = steps[steps.indexOf(done) + 1] ?? null;
-        if ((done == "migrations" || done == "account") && carry.restore) await this.setRestore(s.status.name, run.deployId, { ...carry.restore, commit: s.status.deployed });
+        if ((done == "migrations" || done == "account") && carry.restore)
+          await this.history.setRestore(s.status.name, run.deployId, { ...carry.restore, commit: s.status.deployed });
         await this.save(s);
       },
     });
@@ -898,9 +708,11 @@ export class BranchDeploys {
           this.deps.logged?.({ type: "releases" });
           // A release tag waiting for this build: stable follows.
           await this.refreshStable().catch((e) => console.log(`stable wasn't refreshed: ${(e as Error).message}`));
-        } catch (e) { note = `not published to the release store: ${(e as Error).message}`; }
+        } catch (e) {
+          note = `not published to the release store: ${(e as Error).message}`;
+        }
       }
-      await this.appendTo(s.status.name, run.deployId, note);
+      await this.history.appendTo(s.status.name, run.deployId, note);
       s.status.log = [...s.status.log, `${new Date(this.now()).toISOString().slice(11, 19)} ${note}`].slice(-LOG_LINES);
       await this.save(s);
     }
@@ -957,9 +769,12 @@ export class BranchDeploys {
     // Written whole before the call: the record (its error says it was undone), the log, no run left to resume.
     s.run = null;
     await this.save(s);
-    const list = await this.records(name);
+    const list = await this.history.records(name);
     const rec = list.find((r) => r.id == run.deployId);
-    if (rec) { rec.error = s.status.error; await this.putRecords(name, list); }
+    if (rec) {
+      rec.error = s.status.error;
+      await this.history.putRecords(name, list);
+    }
     try {
       // Cloudflare's side can fail for a moment (a 500 from its token endpoint refreshing the credential, 2026-10-14): three tries.
       for (let attempt = 1; ; attempt++) {
@@ -974,10 +789,13 @@ export class BranchDeploys {
       const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
       console.log(`the rollback of ${name} failed: ${message}`);
       const undone = `${note} That failed too: ${message} Roll back by hand (Cloudflare's dashboard, or deployments create).`;
-      if (rec) { rec.error = rec.error!.replace(note, undone); await this.putRecords(name, list); }
+      if (rec) {
+        rec.error = rec.error!.replace(note, undone);
+        await this.history.putRecords(name, list);
+      }
       s.status = { ...s.status, error: s.status.error!.replace(note, undone) };
       for (const x of s.status.steps) if (x.id == "rollback") x.status = "failed";
-      await this.appendTo(name, run.deployId, `the rollback failed: ${message}`);
+      await this.history.appendTo(name, run.deployId, `the rollback failed: ${message}`);
       await this.save(s);
     }
   }
@@ -999,14 +817,36 @@ export class BranchDeploys {
       ? "This version was already up; the next deploy replaces it."
       : `Nothing went up: ${host} stays on ${s.status.deployed ? s.status.deployed.slice(0, 12) : "what it had"}.`}`);
     if (run) {
-      const list = await this.records(s.status.name);
+      const list = await this.history.records(s.status.name);
       const rec = list.find((r) => r.id == run.deployId);
-      if (rec && by) { rec.supersededBy = by.commit; await this.putRecords(s.status.name, list); }
+      if (rec && by) {
+        rec.supersededBy = by.commit;
+        await this.history.putRecords(s.status.name, list);
+      }
     }
     s.run = null;
     await this.save(s);
   }
+
+  // ---- the parts: history.ts, domains.ts
+
+  historyOf(name: string, limit?: number) {
+    return this.history.historyOf(name, limit);
+  }
+  logOf(name: string, deployId?: string) {
+    return this.history.logOf(name, deployId);
+  }
+  domains() {
+    return this.customDomains.domains();
+  }
+  addDomain(name: string, hostname: string, by: string) {
+    return this.customDomains.addDomain(name, hostname, by);
+  }
+  removeDomain(name: string, hostname: string, by: string) {
+    return this.customDomains.removeDomain(name, hostname, by);
+  }
 }
+
 
 function step(s: Stored, id: StepStatus["id"], status: StepStatus["status"], detail?: string) {
   const x = s.status.steps.find((t) => t.id == id);
@@ -1035,11 +875,6 @@ const ERGA: Fleet = {
   specOf: (name) => (name == "control" ? { name, branch: CONTROL.branch, worker: CONTROL.worker, host: CONTROL.host, control: true } : { ...TARGETS[name as keyof typeof TARGETS], control: false }),
   targetFor: (name, env, fresh) => targetFor(name, env, fresh),
 };
-
-/** One of an environment's domains: its own address (`primary`, the fleet's), or one added on the Ops page; the zone it's on, when known. */
-export interface DomainEntry { hostname: string; primary: boolean; zone: string | null }
-/** GET /api/domains: each environment's domains. */
-export interface DomainsView { targets: Partial<Record<DeployName, DomainEntry[]>> }
 
 /** A release tag, as the repository reports it (control/source/source-host.ts, released): the tag, its commit (40 hex), who cut it. */
 export interface ReleaseTag { tag: string; commit: string; by: string; at: number }
