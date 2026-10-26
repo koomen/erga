@@ -117,7 +117,7 @@ export class DocumentObject extends DurableObject<Env> {
       viewChanged: (docId) => forgetDecisions(docId),
       log: (line) => console.log(line),
       pageTemplate: TEMPLATE || undefined,
-      // Each person's picture, as the front door sent it (their users row: shared/avatars.ts); none: their initial shows.
+      // Each person's picture, as the app sent it (their users row: shared/avatars.ts); none: their initial shows.
       avatarOf: (person) => safeAvatar(person.avatar) ?? undefined,
     };
   }
@@ -192,7 +192,7 @@ export class DocumentObject extends DurableObject<Env> {
     if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return this.document.handle(request);
     // A tab's one socket: the room, and with ?events=1 its person's events (document/tabs.ts).
     if (!url.pathname.startsWith("/api/room")) return new Response("Not found", { status: 404 });
-    // Who may: decided here, on the document's copy of its permissions (the front door asked no database).
+    // Who may: decided here, on the document's copy of its permissions (the app asked no database).
     const allowed = await this.document.authorize(request);
     if (allowed instanceof Response) return allowed;
     request = allowed;
@@ -231,7 +231,7 @@ export class DocumentObject extends DurableObject<Env> {
     this.tabs.closed(ws);
   }
 
-  /** The dev server's socket to the files of a document on disk (the front door checked its secret; so does this). */
+  /** The dev server's socket to the files of a document on disk (the app checked its secret; so does this). */
   private async mirror(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (!(await this.document.onDisk()) || !this.env.ERGA_LINK_SECRET || url.searchParams.get("link") != this.env.ERGA_LINK_SECRET || request.headers.get("upgrade")?.toLowerCase() != "websocket") {

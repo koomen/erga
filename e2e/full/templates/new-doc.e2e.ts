@@ -1,5 +1,5 @@
 // New documents from a template: /new?template=<id> makes each template's document and refuses
-// one that isn't there; the + button in the viewer, the editor, the documents page and (signed out) the front page opens the picker,
+// one that isn't there; the + button in the viewer, the editor, the documents page and (signed out) the homepage opens the picker,
 // in the app's typeface, and picking a template makes the document and opens it in the editor.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { editorReady, idOf, newDoc, openTab } from "./templates";
 
 await servers.main();
 
-// The picker's root: the page's own document, or the front page's controls' shadow root when it's served directly.
+// The picker's root: the page's own document, or the homepage's controls' shadow root when it's served directly.
 const ROOT_OF = `(document.querySelector("erga-controls")?.shadowRoot ?? document)`;
 const ROWS = ["Document", "Slides", "Canvas", "Project"];
 
@@ -141,7 +141,7 @@ test("the documents page's New opens the same picker under it, without icons; Pr
   expect(await fileOf(s.root, s.root + new URL(page.url()).pathname)).toBe(template("assets/templates/project"));
 });
 
-test("signed out, the front page's + says you sign in first, and a template goes to sign-in and comes back to make it", async ({ tab }) => {
+test("signed out, the homepage's + says you sign in first, and a template goes to sign-in and comes back to make it", async ({ tab }) => {
   const s = await servers.main();
   const out = (await fetch(`${s.root}/auth/logout`, { method: "POST", headers: { Origin: s.root }, redirect: "manual" })).headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
   const page = tab.page;

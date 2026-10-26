@@ -8,8 +8,7 @@
 // plus a _tag naming which failure it was. A body or parameter that doesn't
 // decode is a 400 saying what's wrong (BadRequest).
 //
-// The share button's /api/share isn't here either: tokens are the front
-// door's, which answers it before it reaches a document.
+// The share button's /api/share isn't here either: tokens are the app.s, which answers it before it reaches a document.
 //
 // Not here: the WebSocket (/api/room: the room, and with ?events=1 the person's events), the editor's start (/api/start:
 // binary, shared/room-socket.ts), the files (the editor's
@@ -50,12 +49,12 @@ export class NameRefused extends Schema.TaggedError<NameRefused>()("NameRefused"
 /** Who's asking; an outside agent's request also says how they act through it (`via`, shared/attribution.ts: "a shared agent (label)"). */
 export class Person extends Context.Service<Person, { readonly id: string; readonly name: string; readonly via?: string }>()("erga/Person") {}
 
-/** Who a request is from: the person the front door vouched for (its session, or ?user= in local development). */
+/** Who a request is from: the person the app vouched for (its session, or ?user= in local development). */
 export class PersonFromRequest extends HttpApiMiddleware.Service<PersonFromRequest, { provides: Person }>()("erga/PersonFromRequest") {}
 
 /**
  * An external agent: a request that came with an agent token,
- * which the front door checked and turned into the person it stands for.
+ * which the app checked and turned into the person it stands for.
  */
 export class ExternalAgent extends HttpApiMiddleware.Service<ExternalAgent, { provides: Person }>()("erga/ExternalAgent", {
   error: Unauthorized,

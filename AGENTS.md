@@ -117,12 +117,16 @@ For example:
    `tests/migrations.test.ts` fails without it.
    Reach the data through `Directory` (`server/directory/`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.
-4. **Keep the module boundaries.** Each area of `server/` (directory,
-   identity, documents, pages, home, admin) is imported
-   through its `index.ts`. Only `cloudflare/` and `control/` read the
-   Worker's bindings; `server/` and `document/` never import them. The
-   browser's bundles may import `shared/`, and of `document/` only
-   `content.ts`, `pages.ts`, `merge.ts` and the types of `api.ts`
-   (`tests/browser-imports.test.ts` checks it).
+4. **Keep the layers.** A file imports only its own layer and the layers
+   below it, lowest first: `shared/`, `document/`, the areas of `server/`,
+   `control/`, `agents/`, `server/app.ts` and `server/api.ts`,
+   `cloudflare/` (README.md, "The layout"). A layer adds its part of the
+   Platform with a `declare module` of `server/platform.ts`, never by an
+   import the other way. Each area of `server/` (directory, identity,
+   documents, pages, home, admin) is imported through its `index.ts`. Only
+   `cloudflare/` and `control/` read the Workers' bindings. The browser's
+   bundles may import `shared/`, and of `document/` only `content.ts`,
+   `pages.ts`, `merge.ts` and the types of `api.ts`.
+   `tests/imports.test.ts` and `tests/browser-imports.test.ts` check it.
 5. **Fix errors where they show.** Erga's pages never send a person to
    another page to fix an error: the fix shows in place.

@@ -19,7 +19,7 @@ import type { Actor, GithubLink, PushEvent, SourceRead } from "./source/index.ts
 import { CONTROL } from "../deploy/targets";
 import { githubAppOf, releaseStoreOf } from "./cloudflare";
 import { installFleet } from "./deploys/fleet";
-import { deployDoor } from "./install/routes";
+import { deployRoutes } from "./install/routes";
 import type { Env } from "../cloudflare/env";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
@@ -92,8 +92,11 @@ export default {
       releases: releaseStoreOf(env as never),
       // /deploy: installs, from the store; and the installs' forks (their repositories and builds). Not on a downstream's
       // control Worker, which names its upstream and its own hosts instead.
-      ...(upstream ? { upstream, ...(hosts ? { hosts } : {}), ...(env.FORK_SECRET ? { forkSecretHash: await hashSecret(env.FORK_SECRET) } : {}) } : {
-        deploy: (request: Request) => deployDoor(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }),
+      ...(upstream
+        ? { upstream, ...(hosts ? { hosts } : {}), ...(env.FORK_SECRET ? { forkSecretHash: await hashSecret(env.FORK_SECRET) } : {}) }
+        : {
+            deploy: (request: Request) =>
+              deployRoutes(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }),
         forks: {
           access: (id: string, secret: string, scope: "read" | "write") => env.PIPELINE.getByName("deploys").forkAccess(id, secret, scope),
           builder: async (id: string, secret: string, request: Request) => {

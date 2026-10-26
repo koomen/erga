@@ -158,7 +158,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     return;
   }
 
-  // Which of the document's pages this is: the one the address named (the front door says, erga-page),
+  // Which of the document's pages this is: the one the address named (the app says, erga-page),
   // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
   // (Another page opened in place, while editing, changes it: swapPage.)
   shell.pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || shell.info.path;
@@ -166,7 +166,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   /** A page's address (the editor's, while editing), given its path in the document; the root page's for null. */
   const addressOf = (path: string | null) => {
     const doc = shell.docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
-    // A path that isn't a page file ("blog/", a folder) is an address as it is: the front door finds its page.
+    // A path that isn't a page file ("blog/", a folder) is an address as it is: the app finds its page.
     const at = path == null ? doc : isPage(path) ? pageUrl(doc, path) : `${doc}/${path.replace(/^\/+|\/+$/g, "").split("/").map(encodeURIComponent).join("/")}`;
     return at.replace(/\/$/, "") + (as ? as + (editing() ? "&edit" : "") : editing() ? "?edit" : "");
   };
@@ -259,7 +259,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
 
   // ---------------------------------------------------------------- the page editor
 
-  // The page editor runs in the page, in the frame, on the document's own origin: under the address the front door gave
+  // The page editor runs in the page, in the frame, on the document's own origin: under the address the app gave
   // this page (with the token that opens the document's files there).
   const pagesUrl = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')?.content ?? "";
   const page = shell.page = new RemotePage({

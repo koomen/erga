@@ -27,8 +27,8 @@ import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { CONTROL } from "../deploy/targets";
 import type { DeploysObject } from "../control/deploys/api";
-import { deploysDoor, isDeploysPath } from "../control/deploys/app-routes";
-import { deployDoor } from "../control/install/routes";
+import { deploysRoutes, isDeploysPath } from "../control/deploys/app-routes";
+import { deployRoutes } from "../control/install/routes";
 import { devRoutes } from "./dev";
 import type { Env } from "./env";
 import { platform } from "./platform";
@@ -49,7 +49,7 @@ export default {
     const p = platform(env, ctx);
     const { value: answer, timing } = await tallied(() => handle(request, p, async (request, url) => {
       const path = url.pathname;
-      if (isDeploysPath(path)) return deploysDoor(request, env, p);
+      if (isDeploysPath(path)) return deploysRoutes(request, env, p);
       // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; here only in local
       // development, where this Worker serves the control routes too. A sign-in's callback stays the app's.
       const githubApp = path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"));
@@ -94,7 +94,9 @@ export default {
           // Erga's GitHub App (the pretend GitHub's, in local development), the consent's sealing key, and the webhook's background work.
           github: githubAppOf(env), sealKey: sealKeyFrom(env.SESSION_SECRET), background: (work: Promise<unknown>) => ctx.waitUntil(work), net: globalThis.fetch.bind(globalThis),
           // The deploy page (installs), in local development only: on erga.dev it's the control Worker's.
-          ...(env.PIPELINE ? { deploy: (request: Request) => deployDoor(request, { env, platform: p, oauthCallback: "/install/callback" }) } : {}),
+          ...(env.PIPELINE
+            ? { deploy: (request: Request) => deployRoutes(request, { env, platform: p, oauthCallback: "/install/callback" }) }
+            : {}),
           // Under the mock, the mock fleet's account, as the deploys' object has it (control/deploys/pipeline-object.ts).
           oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: mock ? FLEET_ACCOUNT : env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
         });

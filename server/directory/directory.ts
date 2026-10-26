@@ -29,9 +29,9 @@
 // documents, and those as editors of the documents of whoever minted their
 // token. Server admins get nothing on documents by being admins.
 //
-// The front page (landing_document) is the exception: its scripts run on
-// this site itself, so while it's the front page only admins
-// may edit it. It can't be made the front page while anyone else may
+// The homepage (landing_document) is the exception: its scripts run on
+// this site itself, so while it's the homepage only admins
+// may edit it. It can't be made the homepage while anyone else may
 // (homeBlocked), nobody else can be made its editor (share), and anyone else
 // whose permission says otherwise only views it (homeLimit).
 //
@@ -106,7 +106,7 @@ export type Action = "open" | "edit" | "rename" | "delete" | "share";
  */
 export interface Who {
   login: string; test?: boolean; by?: string;
-  /** Comes with admin power: a browser session, or an admin token. Set by the front door. */
+  /** Comes with admin power: a browser session, or an admin token. Set by the app. */
   admin?: boolean;
   /** A document token's document: they may touch this one document, and no other. */
   onlyDoc?: string;
@@ -140,7 +140,7 @@ export const TITLE_MAX = 200;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
- * Words that can't be slugs: the app's own first path segments (server/documents/front-door.ts,
+ * Words that can't be slugs: the app's own first path segments (server/documents/routes.ts,
  * server/app.ts) and the document host's, so an
  * address never reads as one of those, and a few kept for later.
  */
@@ -237,7 +237,7 @@ export class Directory {
       locked: opts.locked,
       defaults: opts.defaults,
       changed: opts.changed,
-      // The front page shows a document or project to everyone, and runs its scripts on this site itself: an admin
+      // The homepage shows a document or project to everyone, and runs its scripts on this site itself: an admin
       // puts any of the server's there (config.set checks they're one), but only if everyone who may edit it is an admin.
       // Kept by id, which a rename never changes.
       checks: {
@@ -269,7 +269,7 @@ export class Directory {
     return (await this.locate(first, second))?.doc ?? null;
   }
 
-  /** The document the front page shows (the landing_document setting), if it's set and there is one. */
+  /** The document the homepage shows (the landing_document setting), if it's set and there is one. */
   async landing(): Promise<DocRow | null> {
     const ref = await this.config.get("landing_document");
     const doc = ref ? await this.find(ref) : null;
@@ -277,7 +277,7 @@ export class Directory {
   }
 
   /**
-   * The id of the document the front page shows (landing_document), without
+   * The id of the document the homepage shows (landing_document), without
    * asking the database when the setting holds an id (it does, unless the
    * deploy locks it to an address). Null when it's unset.
    */
@@ -288,7 +288,7 @@ export class Directory {
   }
 
   /**
-   * Why a document can't be the front page, or null if it can: the front
+   * Why a document can't be the homepage, or null if it can: the front
    * page runs its scripts on this site itself, where they
    * act as whoever views it, so everyone who may edit it must be an admin.
    */
@@ -297,15 +297,15 @@ export class Directory {
     const others: string[] = [];
     for (const p of editors) if (p.login == ANYONE || !(await this.users.isAdmin(p.login))) others.push(p.login == ANYONE ? "anyone with the link" : p.login);
     if (!others.length) return null;
-    return `Only admins may edit the front page, since its scripts run on this site itself. ${others.join(", ")} may edit this document: make ${others.length == 1 ? "them a viewer" : "them viewers"} (or admins) first.`;
+    return `Only admins may edit the homepage, since its scripts run on this site itself. ${others.join(", ")} may edit this document: make ${others.length == 1 ? "them a viewer" : "them viewers"} (or admins) first.`;
   }
 
   /**
-   * The front page's editing is for admins only (homeBlocked), and only
+   * The homepage's editing is for admins only (homeBlocked), and only
    * with admin power (Users.actsAsAdmin: not through a token without the admin
    * scope): its scripts run on this site itself, so editing it is changing the app.
    * Anyone else, whatever their permission says (an admin since made a user,
-   * or an admin's documents token), only views it while it's the front page.
+   * or an admin's documents token), only views it while it's the homepage.
    */
   async homeLimit(who: Who, id: string, role: Role | null): Promise<Role | null> {
     if (role != "owner" && role != "editor") return role;
@@ -445,7 +445,7 @@ export class Directory {
 
   /**
    * Moves a document to the slug `base`, or base-2, base-3... if another of
-   * its owner's has that: the server's own naming (the front page it makes,
+   * its owner's has that: the server's own naming (the homepage it makes,
    * server/documents/landing.ts seedLanding), not a person's, so it never refuses. The slug
    * stays set.
    */
@@ -587,7 +587,7 @@ export class Directory {
 
   /**
    * `access`'s rule, on permissions already at hand (`access` reads them here; a document's host keeps a copy:
-   * document/document.ts). Only the front page's limit may ask the database (homeLimit: its settings and users,
+   * document/document.ts). Only the homepage's limit may ask the database (homeLimit: its settings and users,
    * remembered a few seconds).
    */
   async decide(who: Who | null, doc: { id: string; owner: string; test: boolean }, permissions: readonly { login: string; role: Role }[]): Promise<Role | null> {
@@ -722,7 +722,7 @@ export class Directory {
   }
 
   /**
-   * Whether a document opens for people who aren't signed in: the homepage always does (the front door's own path), and
+   * Whether a document opens for people who aren't signed in: the homepage always does (the app's own path), and
    * one shared with anyone with the link does while the server lets users share content publicly. They view it only.
    */
   async isPublic(id: string): Promise<boolean> {
@@ -765,9 +765,11 @@ export class Directory {
       const why = await this.whyNoShare(login);
       if (why) throw new NotAllowed(why);
     }
-    // The front page's editors are admins only (homeBlocked).
+    // The homepage's editors are admins only (homeBlocked).
     if (role == "editor" && (await this.homeId()) == id && (login == ANYONE || !(await this.users.isAdmin(login)))) {
-      throw new NotAllowed(`This document is the front page, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`);
+      throw new NotAllowed(
+        `This document is the homepage, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`
+      );
     }
     if (role == null) await this.sql.run("DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, login);
     else await this.sql.run(

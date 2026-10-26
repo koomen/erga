@@ -27,11 +27,11 @@ test("the editor's page has the corner, and the links for its own menu, Admin am
   expect(JSON.parse(/name="erga-account" content="([^"]+)"/.exec(html)![1].replaceAll("&quot;", '"')).admin).toBe("/admin");
 });
 
-test("a document's own files, and the front page's document on its pages origin, have no corner", async () => {
+test("a document's own files, and the homepage's document on its pages origin, have no corner", async () => {
   const root = (await servers.main()).root, get = getter(root);
   const { id } = await newDoc(root);
   expect(await (await get(`/d/${id}/doc/index.html`)).text()).not.toContain("data-erga-account");
-  // The front page: the viewer's frame until its first deploy is done, then the page itself, whose one corner is in its controls.
+  // The homepage: the viewer's frame until its first deploy is done, then the page itself, whose one corner is in its controls.
   const front = await (await get("/")).text();
   const frameSrc = /<iframe id="frame" class="erga-view" (?:data-)?src="([^"]+)"/.exec(front)?.[1].replaceAll("&amp;", "&");
   if (frameSrc) {
@@ -52,7 +52,7 @@ test("someone who isn't an admin has no Admin, and a local tab's ?user= stays on
   expect(html).not.toContain('href="/admin');
 });
 
-test("signed out, /docs asks you to sign in first, and the front page's corner offers it", async () => {
+test("signed out, /docs asks you to sign in first, and the homepage's corner offers it", async () => {
   const root = (await servers.main()).root, get = getter(root);
   const out = await get("/auth/logout", { method: "POST", headers: { Origin: root } });
   const cookie = out.headers.getSetCookie().map((s) => s.split(";")[0]).join("; ");

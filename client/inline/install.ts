@@ -431,7 +431,7 @@ export default function install(C: InstallConfig): void {
         " ↗</a></p>" +
         "<p>Sign in there with GitHub as <b>" +
         esc(C.login) +
-        "</b>: you're its admin, and add everyone else on its Admin page. Its front page is made the first time it's opened, yours to edit.</p>" +
+        "</b>: you're its admin, and add everyone else on its Admin page. Its homepage is made the first time it's opened, yours to edit.</p>" +
         "<p><b>One more step, so it keeps itself up to date:</b> open <a href='" +
         esc(run.result.control + "/install") +
         "' target='_blank' rel='noopener'>" +

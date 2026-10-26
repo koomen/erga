@@ -1,5 +1,5 @@
 // The account corner in the browser, on the site's own pages: your avatar's menu on /docs, light,
-// dark and a phone, and its place on the front page.
+// dark and a phone, and its place on the homepage.
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { clickOn, corner, inPage } from "./access";
 
@@ -46,7 +46,7 @@ test("dark, it opens; at phone width it fits clear of the page's header, and its
   expect(await page.evaluate(() => { const r = document.querySelector(".erga-account-menu")!.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })).toBe(true);
 });
 
-test("on the front page, the avatar sits right of the Edit and Clone buttons, level with them", async ({ tab }) => {
+test("on the homepage, the avatar sits right of the Edit and Clone buttons, level with them", async ({ tab }) => {
   const page = tab.page;
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.goto(`${(await servers.main()).root}/`);

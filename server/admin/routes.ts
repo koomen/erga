@@ -61,7 +61,7 @@ import { accessPage } from "./access.ts";
 import { changesPage } from "./changes.ts";
 
 /** /admin and its POSTs. */
-export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
+export async function adminRoutes(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
   const read = request.method == "GET" || request.method == "HEAD";

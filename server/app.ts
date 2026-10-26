@@ -3,9 +3,9 @@
 // cloudflare/index.ts calls `handle` for every request, and the unit tests
 // may call it on a Platform in memory.
 //
-//   /                          the front page: the homepage served from its last deploy, else the viewer on the
+//   /                          the homepage: the homepage served from its last deploy, else the viewer on the
 //                              landing document (a setting), with an Edit button for those who may
-//   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
+//   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
 //   /docs                      your documents (the directory), latest edit first; POST /docs/delete, /docs/share
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
@@ -28,7 +28,7 @@
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
 //   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; agents/admin/sessions.ts)
 //                              Every /admin page has the same layout, and every /admin route is
-//                              for the server's admins only, checked here first (adminGate) and by its own door.
+//                              for the server's admins only, checked here first (adminGate) and by its own routes.
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
 //                              on Cloudflare served without the Worker, kept for a year); /logo.png, Erga's logo
 //   GET /api/release           which of them this release has: open pages follow a redeploy with it,
@@ -43,7 +43,7 @@
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
 import { serverApi } from "./api.ts";
-import { frontDoor, isPagesSite } from "./documents/index.ts";
+import { documentRoutes, isPagesSite } from "./documents/index.ts";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
 import {
   adminsOnlyGate,
@@ -56,7 +56,7 @@ import {
   signOut,
   startSignIn,
   testSignIn,
-  tokensDoor,
+  tokensRoutes,
   usernameStep,
 } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
@@ -101,7 +101,7 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   // answer for the document's files after its authors had changed them.
   if (isPagesSite(url, p) && request.headers.get("service-worker") == "script") return new Response("A document's page can't register a service worker.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)
-  if (isPagesSite(url, p)) return frontDoor(request, p);
+  if (isPagesSite(url, p)) return documentRoutes(request, p);
   if (path == "/auth/sign-in") return chooseSignIn(p, request);
   if (path == "/auth/github") return startSignIn(p, request);
   if (path == "/auth/google") return startGoogleSignIn(p, request);
@@ -117,7 +117,7 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (assets) return isAssetPath(path) ? serveAsset(request, p) : p.assets(request);
   // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
   // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
-  if (path == "/git" || path.startsWith("/git/")) return (await outside(request, url)) ?? frontDoor(request, p);
+  if (path == "/git" || path.startsWith("/git/")) return (await outside(request, url)) ?? documentRoutes(request, p);
   // Every /admin route: the server's admins only, checked on the server before any of them answers.
   if (isAdminPath(path)) {
     const refused = await adminGate(p, request);
@@ -150,8 +150,9 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
   if (path == "/api/admin/guide") return adminGuideApi(request, p, url);
   // The server's API for agents, and people's agent tokens.
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, p);
-  if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, p);
-  return frontDoor(request, p);
+  if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/"))
+    return tokensRoutes(request, p);
+  return documentRoutes(request, p);
 }
 
 /** The editor's own files (hashed, under /_erga/), and Erga's logo (static assets, client/build.ts). */

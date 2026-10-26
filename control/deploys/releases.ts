@@ -180,7 +180,7 @@ export class ReleaseStore {
 /**
  * Blobs read from another control Worker's store over HTTPS (an install
  * reading erga.dev's: control/deploys/fleet.ts): the channel files and each release's
- * files at /releases/..., as releasesDoor serves them. Read-only.
+ * files at /releases/..., as releasesRoutes serves them. Read-only.
  */
 export function httpBlobs(origin: string, net: (input: string, init?: RequestInit) => Promise<Response> = globalThis.fetch.bind(globalThis)): ReleaseBlobs {
   const base = origin.replace(/\/+$/, "");
@@ -250,7 +250,7 @@ export function r2Blobs(bucket: Bucket): ReleaseBlobs {
 }
 
 /** The HTTP side: GET /releases/... for anyone (control/routes.ts), or null for a path that isn't one. */
-export async function releasesDoor(store: ReleaseStore | null, path: string): Promise<Response | null> {
+export async function releasesRoutes(store: ReleaseStore | null, path: string): Promise<Response | null> {
   if (path != "/releases" && !path.startsWith("/releases/")) return null;
   const noStore = { "Cache-Control": "no-cache" };
   if (!store) return Response.json({ error: "This server has no release store." }, { status: 404, headers: noStore });

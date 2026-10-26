@@ -154,7 +154,7 @@ test("a viewer's page in one call: the role, the file an address is, a version t
   expect(first).toMatchObject({ role: "owner", file: "index.html", canonical: "" });
   expect(first.ver).toMatch(/^l[0-9a-f]+$/);
   expect(await doc.view({ login: "bo" }, { page: "" })).toMatchObject({ role: null });
-  // The front page: anyone sees it.
+  // The homepage: anyone sees it.
   expect(await doc.view(null, { page: "", anyone: true })).toMatchObject({ role: null, file: "index.html" });
   // Another page by its address; one that isn't there.
   expect(await doc.view({ login: "ada" }, { page: "blog" })).toMatchObject({ file: "blog.html", canonical: "blog" });

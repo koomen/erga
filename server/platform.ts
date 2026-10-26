@@ -60,7 +60,7 @@ export interface Listed {
 }
 
 /**
- * What the front door needs from the platform it runs on. The layers above server/ add the parts that are theirs, each
+ * What the app needs from the platform it runs on. The layers above server/ add the parts that are theirs, each
  * where it is defined (a `declare module` of this file): control/ adds `source` (control/source/routes.ts) and
  * `deploys` (control/deploys/api.ts); agents/ adds `agentSettings` (agents/models.ts) and `adminAgent`
  * (agents/admin/sessions.ts). cloudflare/platform.ts builds the whole of it.
@@ -72,7 +72,7 @@ export interface Platform {
   templates: Record<string, Record<string, string>>;
   /**
    * The repo's landing project (assets/landing/, built into the Worker), which the
-   * server makes the front page by itself when landing_document is unset or
+   * server makes the homepage by itself when landing_document is unset or
    * names a document that's gone (seedLanding): its text files by path, whose
    * document it becomes (locally DEV_LOGIN, else the deploy's first bootstrap
    * admin), and who else may edit it (the other bootstrap admins). No owner
@@ -189,7 +189,7 @@ export interface Platform {
     fetch(doc: Route, request: Request): Promise<Response>;
     /**
      * A viewer's page, in one call to the document's host (document/document.ts, view): what `who` may do (`anyone`:
-     * the front page), which file the address `page` is, the version viewers see, and the file's text unless the caller
+     * the homepage), which file the address `page` is, the version viewers see, and the file's text unless the caller
      * has that version (`have`). Null if there's no such document. Asks the database nothing.
      */
     view(id: string, who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null>;

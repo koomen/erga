@@ -12,7 +12,7 @@ test("signed out: a person in a circle whose menu has only Sign in, which comes 
   await page.goto(`${root}/docs`);
   await clickOn(page, "[data-erga-account] button");
   await clickOn(page, `.erga-account-menu a[href="/auth/logout"]`);
-  await until(async () => (await page.evaluate(() => location.pathname)) == "/", 10_000, "signing out goes to the front page");
+  await until(async () => (await page.evaluate(() => location.pathname)) == "/", 10_000, "signing out goes to the homepage");
   await page.goto(`${root}/nobody-here`);
   let c = await corner(page);
   expect(c.state).toBe("out");

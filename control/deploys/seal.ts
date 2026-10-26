@@ -1,5 +1,5 @@
 // Sealing the deploy page's Cloudflare token: AES-GCM,
-// with a key the front door makes from the browser's half (a cookie) and the
+// with a key the app makes from the browser's half (a cookie) and the
 // server's SESSION_SECRET, so neither alone opens it.
 
 import { base64url, fromBase64url, randomBytes } from "../../shared/bytes";

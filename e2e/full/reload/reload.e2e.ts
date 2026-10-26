@@ -1,5 +1,5 @@
 // Live reload (`bun start --reload`, dev/reload.ts): an open tab reloads by itself, showing the
-// change, when the Worker's front door changes (Vite restarts the server), when another Worker module changes (Vite
+// change, when the app Worker changes (Vite restarts the server), when another Worker module changes (Vite
 // reloads the Worker), when the editor's own files change (dev/start.ts rebuilds them), and the page editor too. The edits
 // are made in a copy of this checkout, with a server of its own for this file: each test makes
 // its own change, with a mark of its own, and waits for that.
@@ -43,7 +43,7 @@ function edit(file: string, from: string | RegExp, to: string) {
   if (!(typeof from == "string" ? text.includes(from) : from.test(text))) throw new Error(`${file} has no ${from}`);
   writeFileSync(path, text.replace(from, to));
 }
-/** The front door's title for a document, whatever an earlier test made it. */
+/** The app's title for a document, whatever an earlier test made it. */
 const TITLE = /<title>\$\{esc\(title\)\} · Erga[^<]*<\/title>/;
 
 /** An expression: the page's stylesheets have a rule for the class. */
@@ -63,7 +63,9 @@ async function reloads(page: Page, change: () => void, ready: string, ms = 30_00
 }
 
 // Vite restarts the server (seconds; more on a busy machine) before the tab can reload.
-test("the Worker's front door changes (server/pages/chrome.ts: Vite restarts the server): the page reloads, showing it", { timeout: 45_000 }, async ({ tab }) => {
+test("the app Worker changes (server/pages/chrome.ts: Vite restarts the server): the page reloads, showing it", {
+  timeout: 45_000,
+}, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
   await reloads(tab.page, () => edit("server/pages/chrome.ts", TITLE, "<title>${esc(title)} · Erga, front</title>"), `document.title == "Documents · Erga, front"`);
@@ -89,7 +91,7 @@ test("the editor's own files change (client/style.css: they're rebuilt): the pag
 });
 
 // Both at once, as an agent's edit often is: the restart and the rebuild end in one good page, never an error page.
-test("the front door and the editor's files change together: the page comes back with both, and stays", { timeout: 45_000 }, async ({ tab }) => {
+test("the app and the editor's files change together: the page comes back with both, and stays", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
   const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;

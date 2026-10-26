@@ -377,7 +377,7 @@ test("landing_document: an admin chooses any document or project on the server, 
   // A user's: still only if everyone who may edit it is an admin (homeBlocked), its owner too.
   await dir.users.add(ada, "bo", { role: "user" });
   const bos = (await dir.add(doc("bbbbbbbb", "Bo's page", { owner: "bo" }))).doc;
-  await expect(dir.config.set(root, "landing_document", bos.id)).rejects.toThrow(/Only admins may edit the front page/);
+  await expect(dir.config.set(root, "landing_document", bos.id)).rejects.toThrow(/Only admins may edit the homepage/);
   // Not an admin: refused.
   await expect(dir.config.set({ login: "bo" }, "landing_document", "aaaaaaaa")).rejects.toThrow(NotAllowed);
   for (const ref of [`/ada/${one.slug}`, `https://erga.dev/ada/${one.slug}`, "/d/aaaaaaaa", "aaaaaaaa"]) {
@@ -387,7 +387,7 @@ test("landing_document: an admin chooses any document or project on the server, 
   // Empty is none.
   expect((await dir.config.set(ada, "landing_document", "")).value).toBeNull();
   expect(await dir.landing()).toBeNull();
-  // A deploy may lock it to an address; the document it names is the front page.
+  // A deploy may lock it to an address; the document it names is the homepage.
   const locked = fresh({ locked: { landing_document: "/ada/front-page" } }, memory());
   await locked.add(doc("aaaaaaaa", "Front page"));
   expect((await locked.landing())?.id).toBe("aaaaaaaa");
@@ -422,17 +422,17 @@ test("search: an admin finds any of the server's documents and projects by title
   await expect(dir.search({ login: "ada" }, "")).rejects.toThrow(NotAllowed);
 });
 
-test("the front page: only admins may edit it while it is one", async () => {
+test("the homepage: only admins may edit it while it is one", async () => {
   const changed: string[] = [];
   const dir = fresh({ admins: ["ada"], defaults: { public_sharing: true }, changed: async (key) => { changed.push(key); } });
   const ada = { login: "ada", admin: true };
   await dir.users.add(ada, "bo", { role: "user" });
   await dir.users.add(ada, "cy", { role: "admin" });
   const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
-  // Someone who isn't an admin may edit it: it can't be the front page, and says why.
+  // Someone who isn't an admin may edit it: it can't be the homepage, and says why.
   await dir.share(ada, one.id, "bo", "editor");
   expect(await dir.homeBlocked(one.id)).toMatch(/bo may edit this document/);
-  await expect(dir.config.set(ada, "landing_document", one.id)).rejects.toThrow(/Only admins may edit the front page/);
+  await expect(dir.config.set(ada, "landing_document", one.id)).rejects.toThrow(/Only admins may edit the homepage/);
   await dir.share(ada, one.id, "*", "editor");
   await dir.share(ada, one.id, "bo", "viewer");
   expect(await dir.homeBlocked(one.id)).toMatch(/anyone with the link may edit/);
@@ -443,7 +443,7 @@ test("the front page: only admins may edit it while it is one", async () => {
   await dir.config.set(ada, "landing_document", one.id);
   expect(changed).toEqual(["landing_document"]);
   expect(await dir.homeId()).toBe(one.id);
-  // While it's the front page nobody else becomes its editor; a viewer still may.
+  // While it's the homepage nobody else becomes its editor; a viewer still may.
   await expect(dir.share(ada, one.id, "bo", "editor")).rejects.toThrow(/only admins may edit it/);
   await expect(dir.share(ada, one.id, "*", "editor")).rejects.toThrow(/only admins may edit it/);
   await dir.share(ada, one.id, "*", "viewer");
@@ -456,7 +456,7 @@ test("the front page: only admins may edit it while it is one", async () => {
   expect(await again.access({ login: "cy", admin: true }, one)).toBe("viewer");
   expect((await again.openAs({ login: "cy" }, "ada", one.slug))?.role).toBe("viewer");
   expect(await again.may({ login: "cy" }, "edit", one)).toBe(false);
-  // Not the front page any more: their permission counts again.
+  // Not the homepage any more: their permission counts again.
   await again.config.reset(ada, "landing_document");
   expect(await again.access({ login: "cy" }, one)).toBe("editor");
 });

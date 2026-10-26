@@ -124,7 +124,7 @@ export function mountPeople(shell: Shell) {
   }
   // Your avatar opens a small menu: who you are, Documents, Settings,
   // Deploy your own if the deploy_page setting lets you, Admin settings if you're an admin, Sign out (the same as every other page's upper
-  // right, server/pages/account-menu.ts). The front door says which links (meta erga-account).
+  // right, server/pages/account-menu.ts). The app says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
     try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; settings?: string; deploy?: string; admin?: string; signOut?: string }; } catch { return null; }

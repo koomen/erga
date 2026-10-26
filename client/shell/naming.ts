@@ -38,7 +38,7 @@ export function mountNaming(shell: Shell) {
     if (!n.address) return;
     const at = viewHref(n.address);
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
-    // At the front page's address (/), it stays there.
+    // At the homepage's address (/), it stays there.
     const here = location.pathname == "/" ? "/" : at;
     if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }

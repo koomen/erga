@@ -1,4 +1,4 @@
-// The viewer on a document: the page at /<owner>/<slug> (and the front page, /), which is
+// The viewer on a document: the page at /<owner>/<slug> (and the homepage, /), which is
 // the editor too for whoever may edit (?edit). It holds the document's page in one frame,
 // on the document's own pages origin (pages-origin.ts: the page with what the viewer and
 // the editor need in it, pages/reader.ts), for readers and editors alike: the page loads
@@ -184,7 +184,7 @@ async function renderFiles(platform: Platform, request: Request, session: Sessio
 }
 
 /**
- * The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not.
+ * The homepage: the viewer on the landing document (the landing_document setting), for anyone, signed in or not.
  * Made from the repo's assets/landing/ if there's none (landing.ts).
  */
 export async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
@@ -250,7 +250,7 @@ async function render(platform: Platform, request: Request, session: Session | n
     : "");
   // The page's own address there: its file, under the token.
   const src = files + d.file.split("/").map(encodeURIComponent).join("/");
-  // The files view, for whoever signed in may view the document; on the front page (everyone's), for whoever may edit it.
+  // The files view, for whoever signed in may view the document; on the homepage (everyone's), for whoever may edit it.
   const filesLink = session && !session.agent && (!landing || canEdit) ? filesButton(link(`${address}?files`, session)) : "";
   const shell = viewerPage({ title: d.title, docId: d.id, pages: origin, src, meta, session, editable: canEdit, editing, landing, clone, edit, files: filesLink });
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);

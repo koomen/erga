@@ -6,7 +6,7 @@
 // admin's signed-in session, or an admin-scope token (tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
 // admins only, with a link to production) or a JSON 403, and Git a 401 that
-// asks for a token. This is the one guard, at the front door, before every route; production and servers made
+// asks for a token. This is the one guard, at the app, before every route; production and servers made
 // by /deploy never run it.
 //
 // What gets in without an admin, and why (each one checks its own credential):
@@ -34,7 +34,7 @@
 //                                   own scope decides, as on production: no admin
 //                                   power, so no /admin, settings, users, deploys, credentials, Ops page or Git
 //
-// Everything else needs an admin: documents and their sockets, /docs, the front page and the homepage, /new, /deploy,
+// Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new, /deploy,
 // /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
 // (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name

@@ -39,7 +39,7 @@ Once you've read the guide, await further instructions.`;
   });
 
   // Share (#btn-share, the Share card): with people, then with an agent (above). With people: who may view or edit the
-  // document, and anyone signed in with the link. Only its owner may (the front door says where, meta erga-share), so the
+  // document, and anyone signed in with the link. Only its owner may (the app says where, meta erga-share), so the
   // card's people half shows for them alone; each change is saved as it's made (/docs/share, as on My Documents' share dialog).
   const sharing = $("sharing");
   const sharingList = $("sharing-list"), sharingAdd = $("sharing-add") as HTMLFormElement;

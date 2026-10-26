@@ -1,4 +1,4 @@
-// The agent editor as a participant, driven by the scripted model (agents/document/session.ts:
+// The document agent as a participant, driven by the scripted model (agents/document/session.ts:
 // a message with `@script [...]` plays tool calls in order), so every run is
 // the same and free. Checks the agent's edits are attributed and visible to
 // others, that stale aim fails cleanly, that `write` keeps edits made since
@@ -277,7 +277,7 @@ export const agent: Test[] = [
       // Made an editor, their agent edits.
       await d.share!("Dee", "editor");
       await runScript(d, "Dee", [edit(d.path, "<h1>Bo typed. Launch notes", "<h1>Dee's notes"), { text: "Done." }]);
-      await until(() => b.str().includes("<h1>Dee's notes"), 3000, "the editor's agent's edit reaches Bo");
+      await until(() => b.str().includes("<h1>Dee's notes"), 3000, "the document agent's edit reaches Bo");
     },
   },
 ];

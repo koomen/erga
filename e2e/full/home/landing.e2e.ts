@@ -1,5 +1,5 @@
-// The front page as its owner, others and admins use it.
-// Each test starts from a fresh front page, and leaves one for the next.
+// The homepage as its owner, others and admins use it.
+// Each test starts from a fresh homepage, and leaves one for the next.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
@@ -74,7 +74,7 @@ test("deleted, the landing document is made again from assets/landing/ on the ne
   expect(await (await get(server, `/d/${id2}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "assets/landing/index.html"), "utf8"));
 });
 
-test("a landing document an admin chose is the front page, and nothing more is made", async () => {
+test("a landing document an admin chose is the homepage, and nothing more is made", async () => {
   const server = await servers.short();
   await fresh(server);
   const landings = async () => ((await (await get(server, "/docs")).text()).match(/href="\/tester\/landing(-\d+)?\?edit"/g) ?? []).length;

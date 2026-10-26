@@ -18,7 +18,7 @@ import { bucketName, workerMetadata } from "../control/deploys/account";
 import { Cloudflare } from "../control/deploys/cloudflare-api";
 import type { Release } from "../control/deploys/release-format";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare, PROD_DB, PROD_DOCS } from "../dev/mock-cloudflare";
-import { memoryStore, snapshotDoor } from "../document/snapshot";
+import { memoryStore, snapshotRoutes } from "../document/snapshot";
 import { ACCOUNT, ADMINS, CONTROL, SOURCE, TARGETS } from "../deploy/targets";
 import { controlConfig, controlWranglerConfig } from "../deploy/release";
 import {
@@ -229,19 +229,29 @@ describe("production", () => {
 describe("the snapshot endpoints", () => {
   test("export needs the token and only reads; import only where it's allowed", async () => {
     const store = memoryStore();
-    store.docs.set("abcd2345", { entries: new Map<string, unknown>([["meta", { id: "abcd2345" }], ["state", new Uint8Array([9, 8])]]), alarm: 5 });
-    const req = (path: string, body: unknown, token = MOCK_SNAPSHOT_TOKEN) => new Request(`https://x${path}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
-    const door = (r: Request, importAllowed = false, token: string | undefined = MOCK_SNAPSHOT_TOKEN) => snapshotDoor(r, { token, importAllowed, store });
-    expect((await door(req("/api/snapshot/docs", { ids: ["abcd2345"] }), false, ""))!.status).toBe(404);
-    expect((await door(req("/api/snapshot/docs", { ids: ["abcd2345"] }, "wrong-token-wrong-token-wrong-token-xx")))!.status).toBe(403);
-    const r = await door(req("/api/snapshot/docs", { ids: ["abcd2345", "nope0000"] }));
+    store.docs.set("abcd2345", {
+      entries: new Map<string, unknown>([
+        ["meta", { id: "abcd2345" }],
+        ["state", new Uint8Array([9, 8])],
+      ]),
+      alarm: 5,
+    });
+    const req = (path: string, body: unknown, token = MOCK_SNAPSHOT_TOKEN) =>
+      new Request(`https://x${path}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    const routes = (r: Request, importAllowed = false, token: string | undefined = MOCK_SNAPSHOT_TOKEN) =>
+      snapshotRoutes(r, { token, importAllowed, store });
+    expect((await routes(req("/api/snapshot/docs", { ids: ["abcd2345"] }), false, ""))!.status).toBe(404);
+    expect((await routes(req("/api/snapshot/docs", { ids: ["abcd2345"] }, "wrong-token-wrong-token-wrong-token-xx")))!.status).toBe(403);
+    const r = await routes(req("/api/snapshot/docs", { ids: ["abcd2345", "nope0000"] }));
     const { docs } = await r!.json() as any;
     expect(docs).toEqual([{ id: "abcd2345", entries: [["meta", { j: { id: "abcd2345" } }], ["state", { b: btoa("\x09\x08") }]], alarm: 5 }]);
-    expect((await door(req("/api/snapshot/docs/import", { docs })))!.status).toBe(404);
-    expect((await door(req("/api/snapshot/docs/import", { docs: [{ ...docs[0], id: "efgh6789" }], wipe: ["abcd2345"] }), true))!.status).toBe(200);
+    expect((await routes(req("/api/snapshot/docs/import", { docs })))!.status).toBe(404);
+    expect(
+      (await routes(req("/api/snapshot/docs/import", { docs: [{ ...docs[0], id: "efgh6789" }], wipe: ["abcd2345"] }), true))!.status
+    ).toBe(200);
     expect([...store.docs.keys()]).toEqual(["efgh6789"]);
     expect(store.docs.get("efgh6789")!.entries.get("state")).toEqual(new Uint8Array([9, 8]));
-    expect(await door(new Request("https://x/api/other"))).toBeNull();
+    expect(await routes(new Request("https://x/api/other"))).toBeNull();
   });
 
   test("an answer carries at most its budget: a document in parts, continued after its last key", async () => {
@@ -249,7 +259,15 @@ describe("the snapshot endpoints", () => {
     const bytes = (n: number) => new Uint8Array(n).fill(7);
     store.docs.set("abcd2345", { entries: new Map<string, unknown>([["meta", { id: "abcd2345" }], ["b:1", bytes(300)], ["b:2", bytes(300)], ["b:3", bytes(300)]]), alarm: 5 });
     store.docs.set("efgh6789", { entries: new Map<string, unknown>([["meta", { id: "efgh6789" }]]), alarm: null });
-    const ask = async (body: unknown) => (await (await snapshotDoor(new Request("https://x/api/snapshot/docs", { method: "POST", headers: { Authorization: `Bearer ${MOCK_SNAPSHOT_TOKEN}` }, body: JSON.stringify(body) }), { token: MOCK_SNAPSHOT_TOKEN, importAllowed: false, store, budget: 500 }))!.json()) as any;
+    const ask = async (body: unknown) =>
+      (await (await snapshotRoutes(
+        new Request("https://x/api/snapshot/docs", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${MOCK_SNAPSHOT_TOKEN}` },
+          body: JSON.stringify(body),
+        }),
+        { token: MOCK_SNAPSHOT_TOKEN, importAllowed: false, store, budget: 500 }
+      ))!.json()) as any;
     const keys = (a: any) => a.docs.map((d: any) => [d.id, d.entries.map(([k]: [string]) => k), d.more]);
     // Each part stops at the entry that reaches the budget (400 characters of base64 each), in the order of the keys.
     let a = await ask({ ids: ["abcd2345", "efgh6789"] });

@@ -130,7 +130,12 @@ export interface Tool {
   run(args: Record<string, unknown>, ctx: ToolWho): Promise<string | object | ToolContent[]>;
 }
 
-const DOCUMENT = Type.Optional(Type.String({ description: "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours. The editor's agent may leave it out for the document it's in." }));
+const DOCUMENT = Type.Optional(
+  Type.String({
+    description:
+      "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours. The document agent may leave it out for the document it's in.",
+  })
+);
 const LOGIN = Type.String({ description: "A GitHub login" });
 
 /** Files as an outside agent gives them: by path, each text or base64. */
@@ -176,7 +181,7 @@ const API_TOOLS: Tool[] = [
     only: "api",
     wide: true,
     loose: true,
-    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html, plus its styles, scripts and images), and it stays. Without files it's a blank page, a template (template: ${TEMPLATES.map((t) => t.id).join(", ")}, or "landing" for a copy of the server's front page) or a copy of another document you may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
+    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html, plus its styles, scripts and images), and it stays. Without files it's a blank page, a template (template: ${TEMPLATES.map((t) => t.id).join(", ")}, or "landing" for a copy of the server's homepage) or a copy of another document you may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
     parameters: Type.Object({
       files: Type.Optional(FILES),
       index: Type.Optional(str("The page, if it isn't index.html: an .html file among the files.")),
@@ -188,7 +193,7 @@ const API_TOOLS: Tool[] = [
         Type.String({
           enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"],
           description:
-            "Without files: a blank page (blank or page, the default), another template, or a copy of the server's front page (landing).",
+            "Without files: a blank page (blank or page, the default), another template, or a copy of the server's homepage (landing).",
         })
       ),
       from: Type.Optional(str("Without files: a document to copy instead (its address, URL or id). It copies the document as it is now.")),
@@ -215,7 +220,11 @@ const API_TOOLS: Tool[] = [
         if (named && named != "landing" && !template) throw new ToolError(`There's no template "${named}".`);
         const from = args.from ? (await findDocument(ctx, args.from, "open")).id : named == "landing" ? "landing" : null;
         const start = await startingFiles(platform, from, ctx.who, template);
-        if (!start) throw new ToolError(from == "landing" ? "This server has no front page (landing document) to copy." : "There's nothing there you can copy.", 404);
+        if (!start)
+          throw new ToolError(
+            from == "landing" ? "This server has no homepage (landing document) to copy." : "There's nothing there you can copy.",
+            404
+          );
         ({ files, index } = start);
         startKind = start.kind;
       }
@@ -375,7 +384,7 @@ export const SERVER_TOOLS: Tool[] = [
     label: "Make a document",
     activity: "making a document",
     only: "agent",
-    description: `Makes a new document for the person, as New on the documents list does: from a template (${TEMPLATES.map((t) => `"${t.id}": ${t.description}`).join(" ")} "landing": a copy of the server's front page), or a copy of a document they may open (from; someone who may not edit it copies its published version). A blank page by default. It goes if nobody edits it in time (the delete_docs_after_hours setting; the answer says when). The title follows the page's first heading unless you give one; the address follows the title unless you give a slug. Answers its address: open it, or say where it is.`,
+    description: `Makes a new document for the person, as New on the documents list does: from a template (${TEMPLATES.map((t) => `"${t.id}": ${t.description}`).join(" ")} "landing": a copy of the server's homepage), or a copy of a document they may open (from; someone who may not edit it copies its published version). A blank page by default. It goes if nobody edits it in time (the delete_docs_after_hours setting; the answer says when). The title follows the page's first heading unless you give one; the address follows the title unless you give a slug. Answers its address: open it, or say where it is.`,
     parameters: Type.Object({
       template: Type.Optional(Type.String({ description: `A template: ${TEMPLATES.map((t) => t.id).join(", ")} (the default), or landing` })),
       from: Type.Optional(Type.String({ description: "A document to copy instead: its address, URL or id" })),
@@ -393,8 +402,13 @@ export const SERVER_TOOLS: Tool[] = [
       if (named && named != "landing" && !template) throw new ToolError(`There's no template "${named}": ${TEMPLATES.map((t) => t.id).join(", ")}, or landing.`);
       const from = args.from ? (await findDocument(ctx, args.from, "open")).id : named == "landing" ? "landing" : null;
       const start = await startingFiles(platform, from, who, template);
-      if (!start) throw new ToolError(from == "landing" ? "This server has no front page (landing document) to copy." : "There's nothing there you can copy.", 404);
-      const title = typeof args.title == "string" ? args.title : undefined, slug = typeof args.slug == "string" ? args.slug : undefined;
+      if (!start)
+        throw new ToolError(
+          from == "landing" ? "This server has no homepage (landing document) to copy." : "There's nothing there you can copy.",
+          404
+        );
+      const title = typeof args.title == "string" ? args.title : undefined,
+        slug = typeof args.slug == "string" ? args.slug : undefined;
       for (let tries = 0; tries < 5; tries++) {
         const kind = isDocKind(args.kind) ? args.kind : start.kind;
         const doc = await makeDoc(platform, who.login.toLowerCase(), newDocId(), start.files, { index: start.index, title, slug, kind });

@@ -4,7 +4,7 @@
 // logins parser checks what it saves.
 
 import { afterAll, expect, test } from "bun:test";
-import { adminDoor } from "../server/admin/index.ts";
+import { adminRoutes } from "../server/admin/index.ts";
 import { ConfigError, logins, type ConfigEntry } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform.ts";
 
@@ -45,7 +45,7 @@ const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
-    return path == "/admin" || path.startsWith("/admin/") ? adminDoor(platform, r) : new Response("", { status: 404 });
+    return path == "/admin" || path.startsWith("/admin/") ? adminRoutes(platform, r) : new Response("", { status: 404 });
   },
 });
 afterAll(() => server.stop(true));

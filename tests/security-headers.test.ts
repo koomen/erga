@@ -52,7 +52,7 @@ test("a WebSocket's answer goes as it is", () => {
 });
 
 test("a cookie that one document's page set for every page (erga-pages.dev isn't on the Public Suffix List yet) never reaches the document", async () => {
-  const { pagesDoor, pagesToken } = await import("../server/documents/pages-origin.ts");
+  const { pagesRoutes, pagesToken } = await import("../server/documents/pages-origin.ts");
   const token = await pagesToken("s", "ada", "abcd1234", "https://erga.dev");
   let seen: Request | null = null;
   const platform = {
@@ -61,7 +61,7 @@ test("a cookie that one document's page set for every page (erga-pages.dev isn't
     docs: { fetch: async (_: unknown, r: Request) => { seen = r; return new Response("x", { headers: { "Content-Type": "text/plain" } }); } },
   } as never;
   const url = new URL(`https://abcd1234-ada.erga-pages.dev/t/${token}/data.txt`);
-  const r = await pagesDoor(new Request(url, { headers: { Cookie: "tossed=1" } }), url, { owner: "ada", id: "abcd1234" }, platform);
+  const r = await pagesRoutes(new Request(url, { headers: { Cookie: "tossed=1" } }), url, { owner: "ada", id: "abcd1234" }, platform);
   expect(await r.text()).toBe("x");
   expect(seen!.headers.get("cookie")).toBeNull();
 });

@@ -27,7 +27,7 @@ export function expiryOf(v: unknown): number | null | "bad" {
  * (/tokens/approve?code=), and, where the platform makes them, a test token
  * for running the test suite. /settings is the same page.
  */
-export async function tokensDoor(request: Request, platform: Platform): Promise<Response> {
+export async function tokensRoutes(request: Request, platform: Platform): Promise<Response> {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, "");
   const session = await platform.sessionOf(request);
   if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(safeNext(path + url.search))}` } });

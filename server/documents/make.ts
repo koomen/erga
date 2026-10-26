@@ -35,7 +35,7 @@ export function templateFiles(
 }
 
 /**
- * What a new document starts from: a copy of the front page's document
+ * What a new document starts from: a copy of the homepage's document
  * (`landing`), of another document by id (one `who` may open), or a
  * template's files (server/pages/templates.ts; the first, a blank page, by default).
  * Null if there's nothing there to copy.
@@ -49,7 +49,7 @@ export async function startingFiles(platform: Platform, from: string | null, who
   return snap && (doc.kind ? { ...snap, kind: doc.kind } : snap);
 }
 
-/** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/pages/templates.ts), or a copy of the front page's (?from=landing). */
+/** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/pages/templates.ts), or a copy of the homepage's (?from=landing). */
 export async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
@@ -67,8 +67,16 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   const wanted = params.get("id");
   const from = params.get("from");
   const start = await startingFiles(platform, from, whoOf(session), template);
-  if (!start) return page("Nothing to copy", from == "landing" ? "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>." : "There's no document here you can copy. <a href=\"/new\">Make a blank document</a>.", 404);
-  const files = start.files, index = start.index;
+  if (!start)
+    return page(
+      "Nothing to copy",
+      from == "landing"
+        ? 'This server has no homepage to copy. <a href="/new">Make a blank document</a>.'
+        : 'There\'s no document here you can copy. <a href="/new">Make a blank document</a>.',
+      404
+    );
+  const files = start.files,
+    index = start.index;
   // ?kind=project: a project from the start (create_document's kind), else the kind it copies, else from its files.
   const kind = params.get("kind") == "project" ? "project" as const : start.kind;
   // A test person makes (or reuses) a test document under the address of whoever minted their token.

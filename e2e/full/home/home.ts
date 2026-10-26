@@ -1,7 +1,7 @@
-// Helpers for the front page tests (server/documents/landing.ts seedLanding, server/home/): / as served, the landing document, the homepage's state
+// Helpers for the homepage tests (server/documents/landing.ts seedLanding, server/home/): / as served, the landing document, the homepage's state
 // and deploys, and documents published through the server's API.
 //
-// On servers.short(), tests share the server's one front page one after
+// On servers.short(), tests share the server's one homepage one after
 // another: each starts from a fresh one (fresh(): landing_document reset, so
 // the next / makes it again from assets/landing/) and puts it back after (the
 // same, in test.afterEach), and finds the landing document's address from the
@@ -37,10 +37,10 @@ export const landingSetting = async (server: Server) => (await (await get(server
 export const setLanding = async (server: Server, id: string) =>
   (await (await get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(id) }) })).json()) as { entry?: { value: unknown }; error?: string };
 
-/** Unsets landing_document: the next / makes a fresh front page from assets/landing/. */
+/** Unsets landing_document: the next / makes a fresh homepage from assets/landing/. */
 export const resetLanding = (server: Server) => get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", reset: "1" }) });
 
-/** A fresh front page from assets/landing/ (made by the first / after the reset): its id and address. */
+/** A fresh homepage from assets/landing/ (made by the first / after the reset): its id and address. */
 export async function fresh(server: Server) {
   await resetLanding(server);
   const html = (await front(server)).html;

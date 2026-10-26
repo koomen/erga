@@ -30,7 +30,7 @@ export default function viewerNav(): void {
     }
     if (m.content == path || (!path && !suffix(m.content))) return;
     m.content = path;
-    // Viewing at the front page's address (/), its first page stays there.
+    // Viewing at the homepage's address (/), its first page stays there.
     if (location.pathname == "/" && !suffix(path)) return;
     const here = ergaPageAddress();
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);

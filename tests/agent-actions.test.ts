@@ -33,7 +33,7 @@ const ROUTE_TABLES = [
   "server/identity/accounts.ts",
   "server/admin/routes.ts",
   "server/api.ts",
-  "server/documents/front-door.ts",
+  "server/documents/routes.ts",
   "server/home/render.ts",
   "document/host.ts",
 ];

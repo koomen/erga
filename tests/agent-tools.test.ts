@@ -40,7 +40,7 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   const e = await failure(run({ dir, who: { login: "bo" } }, "list_settings"));
   expect(e).toBeInstanceOf(ToolError);
   expect(e.status).toBe(403);
-  // The editor's agent gets the same, as pi tools.
+  // The document agent gets the same, as pi tools.
   expect((await agentToolsFor({ dir, who: { login: "bo" } })).map((t) => t.name)).toEqual(["document_access", "share_document"]);
   const forRoot = await agentToolsFor({ dir, who: { login: "root", admin: true } });
   const out = await forRoot.find((t) => t.name == "list_settings")!.execute("x", {});
@@ -132,7 +132,7 @@ test("users: the deploy role, granted and revoked by an admin only", async () =>
   expect((await failure(run(root, "set_user_deploy", { login: "nobody", deploy: true }))).status).toBe(404);
 });
 
-test("sharing: the owner sees and changes who has access; nobody else may; the editor's agent defaults to its document", async () => {
+test("sharing: the owner sees and changes who has access; nobody else may; the document agent defaults to its document", async () => {
   // Users can share content publicly here (anyone with the link): the Access page's switch.
   const dir = fresh({ defaults: { public_sharing: true }, admins: ["root"] });
   // Bo and Cy may sign in here (a share goes only to someone who may).
@@ -196,7 +196,7 @@ function platformOf(dir: Directory) {
   return { platform, made };
 }
 
-test("the documents list: the editor's agent lists, makes (blank, a template, a copy) and deletes the person's documents, as /docs does", async () => {
+test("the documents list: the document agent lists, makes (blank, a template, a copy) and deletes the person's documents, as /docs does", async () => {
   const dir = fresh();
   const { platform, made } = platformOf(dir);
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });

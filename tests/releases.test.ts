@@ -4,7 +4,7 @@
 // Worker's routes: the store for anyone, the channels for admins.
 import { describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
-import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor } from "../control/deploys/releases";
+import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesRoutes } from "../control/deploys/releases";
 import { sha256Hex } from "../shared/bytes";
 import { DeployError } from "../control/deploys/cloudflare-api";
 import type { Release } from "../control/deploys/release-format";
@@ -117,8 +117,8 @@ describe("the routes", () => {
     const { store: s } = store();
     await s.publish(release(V1), C1);
     await s.addTo("edge", V1);
-    const get = async (path: string) => (await releasesDoor(s, path))!;
-    expect(await releasesDoor(s, "/install")).toBeNull();
+    const get = async (path: string) => (await releasesRoutes(s, path))!;
+    expect(await releasesRoutes(s, "/install")).toBeNull();
     const all = await get("/releases");
     expect(all.status).toBe(200);
     expect(((await all.json()) as { edge: { latest: string } }).edge.latest).toBe(V1);
@@ -135,7 +135,7 @@ describe("the routes", () => {
     expect((await get(`/releases/${V1}/bundle/nope.js`)).status).toBe(404);
     expect((await get(`/releases/${V2}/manifest.json`)).status).toBe(404);
     expect((await get(`/releases/${V1}/../x`)).status).toBe(404);
-    expect((await releasesDoor(null, "/releases"))!.status).toBe(404);
+    expect((await releasesRoutes(null, "/releases"))!.status).toBe(404);
   });
 
   test("the channels on the control Worker: admins read /api/releases; the store is for anyone; a tag rides on stable", async () => {

@@ -157,7 +157,7 @@ export function save(storage: Pick<Storage, "setItem"> | null, layout: Layout) {
 
 /**
  * The admin pages' agent panel: the
- * same grip and drag as the editor's agent, in a grid of two, the agent and
+ * same grip and drag as the document agent, in a grid of two, the agent and
  * the board's column, either way round. Kept in this browser (PANE_KEY).
  */
 export const PANE_KEY = "erga:admin-pane:v1";

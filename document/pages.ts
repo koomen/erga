@@ -21,8 +21,8 @@
 // would be one, is refused in a document with a message that says how (pageRefusal). A project with
 // one page becomes a document again the same way (make_document).
 //
-// Shared by the host (document/host.ts: the tree's API and its operations), the front
-// door (server/documents/front-door.ts: which page an address is) and the browser (the editor and
+// Shared by the host (document/host.ts: the tree's API and its operations), the app
+// (server/documents/routes.ts: which page an address is) and the browser (the editor and
 // the tree's UI), so it holds only plain functions and the operations' shape.
 
 /** One entry in the tree: a page (.html), any other file, or a folder. */

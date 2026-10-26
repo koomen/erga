@@ -1,6 +1,6 @@
 // What a document's viewers see: its files as they are now, under a version
 // that's a digest of them (so the same files are always the same version),
-// and which file a page's address is. The front door's viewer
+// and which file a page's address is. The app's viewer
 // (server/documents/view.ts) asks for it in one call (Document.view); the
 // answer is kept in the document's storage while no file changes, so a
 // viewer's request needn't open the room.
@@ -118,7 +118,7 @@ export class DocumentView {
     return state;
   }
 
-  /** The answer for someone who may view (`role`, or anyone: the front page): which file the address `page` is, in what viewers see now, and that version. */
+  /** The answer for someone who may view (`role`, or anyone: the homepage): which file the address `page` is, in what viewers see now, and that version. */
   async answer(
     info: { index: string; test?: boolean; disk?: unknown },
     role: Role | null,
@@ -132,7 +132,7 @@ export class DocumentView {
       : paths.has(state.index)
         ? { file: state.index, canonical: "" }
         : null;
-    // Quiet: no file changed in a while, so the front door may keep this answer a moment. A document being edited is
+    // Quiet: no file changed in a while, so the app may keep this answer a moment. A document being edited is
     // asked each time.
     const quiet = Date.now() - this.lastChange > QUIET_MS;
     return { role, name, test: !!info.test, ver: state.ver, file: found?.file ?? null, canonical: found?.canonical ?? null, quiet };

@@ -8,7 +8,7 @@
 // logged, and never goes to D1. A token from Cloudflare's OAuth is also
 // revoked at the end.
 //
-// Every call names who's asking (the front door's signed-in login), and only
+// Every call names who's asking (the app's signed-in login), and only
 // the person who connected may use the session. The install itself runs here
 // (control/install/install.ts: the app and its control Worker, from a release of the
 // store) and records each step as it goes; the page polls `info` to show them.

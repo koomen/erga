@@ -128,6 +128,7 @@ health checks and rollbacks work.
       blobs.ts        the files that are not text, by their sha-256
       merge.ts        an outside edit, as a small change to the open document
       pdf.ts          PDFs for the agents: their pages and their text
+      disk.ts         local development: a document's files in a folder on disk, through the dev server
       api.ts          the document API's contract (document/host.ts has its routes)
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
       app.ts          the one route table, and what every page of the site's own gets
@@ -141,9 +142,9 @@ health checks and rollbacks work.
       identity/       who is asking: sessions (session.ts), agent tokens (tokens.ts) and their page (tokens-page.ts:
                       /tokens, /settings), sign-in with GitHub or Google (sign-in.ts, accounts.ts) and its settings
                       (settings.ts, apps.ts), cookies, the staging guard (admins-only.ts)
-      documents/      the front door for documents: a document's address and access (front-door.ts), the pages origin
+      documents/      the app for documents: a document's address and access (routes.ts), the pages origin
                       and its tokens (pages-origin.ts), the viewer (view.ts), new/list/delete/share (make.ts), the
-                      front page's document (landing.ts)
+                      homepage's document (landing.ts)
       pages/          the HTML the server renders, no routing: the viewer's scripts and styles (viewer.ts), the page's
                       own script (reader.ts), the files view (files.ts), the documents list (docs.ts), the start page,
                       the account menu, the templates, and what every page shares (chrome.ts)
@@ -195,24 +196,33 @@ health checks and rollbacks work.
       install/        /deploy: installs in other accounts (install.ts, forks.ts, the page, its routes and session)
       cloudflare.ts   what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
     deploy/       what a person runs on a machine: a deploy (run.ts), the release build (release.ts), the setup
-                  runbook (setup.ts), the targets (targets.json, targets.ts), the settings a deploy locks
-                  (locked-settings.ts)
+                  runbook (setup.ts), the first push of Erga's history (import-source.ts), the targets (targets.json,
+                  targets.ts), the settings a deploy locks (locked-settings.ts)
     dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, the formatter on changed
                   lines (format.ts, `bun run format`), a Git server, a mock GitHub, Google and Cloudflare
-                  (mock-cloudflare.ts) for tests, and a document's files on disk as its Storage (disk-storage.ts,
-                  over the mirror the plugin serves)
+                  (mock-cloudflare.ts) for tests, and the folders on disk that documents link to (the plugin)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     docs/         self-host.md (deploy your own Erga), operations.md (how a deployment deploys), the screenshot above
     tests/        the unit tests (bun test, no browser), their helpers in tests/helpers/; e2e/ the browser tests
                   (e2e/smoke, e2e/full), benchmarks (e2e/bench) and their helpers (e2e/helpers/)
     .github/      the tests on each pull request and push (workflows/test.yml)
 
-Each area of `server/` (directory, identity, documents, pages, home,
-admin) is imported through its `index.ts`, its interface. Only
-`cloudflare/` and `control/` read the Worker's bindings; `server/` and
-`document/` never import them. The configs at the root are the ones their
-tools look for there: `cloudflare.config.ts` (the Worker and its bindings),
-`vite.config.ts`, `e2e.config.ts`, `tsconfig.json`, `biome.json`.
+The folders are layers. A file imports only its own layer and the layers
+below it, lowest first: `shared/`, `document/`, the areas of `server/`,
+`control/`, `agents/`, `server/app.ts` and `server/api.ts`, `cloudflare/`.
+`client/` imports `shared/` and a few files of `document/`; `deploy/`,
+`dev/`, `tests/` and `e2e/` import anything. Each area of `server/`
+(directory, identity, documents, pages, home, admin) is imported through
+its `index.ts`, its interface. Only `cloudflare/` and `control/` read the
+Workers' bindings. `tests/imports.test.ts` has the whole rules and checks
+them.
+
+The configs at the root are the ones their tools look for there:
+`cloudflare.config.ts` (the Worker and its bindings), `vite.config.ts`,
+`e2e.config.ts`, `biome.json`, and the typecheck's three projects:
+`tsconfig.json` (what runs under Bun: deploy/, dev/, tests/, e2e/),
+`tsconfig.workers.json` (the Workers) and `tsconfig.browser.json` (the
+browser).
 
 Building: `bun run build` (client/build.ts) writes the client's files to
 `.build/`; `bun run release` (deploy/release.ts) adds the Worker's release to

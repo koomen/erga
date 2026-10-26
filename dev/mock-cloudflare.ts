@@ -49,7 +49,7 @@ import { createHash } from "node:crypto";
 import type { Fetch } from "../control/deploys/cloudflare-api";
 import type { Release } from "../control/deploys/release-format";
 import type { Builder } from "../control/deploys/branches";
-import { memoryStore, snapshotDoor, type DocStore } from "../document/snapshot";
+import { memoryStore, snapshotRoutes, type DocStore } from "../document/snapshot";
 import { base64, fromBase64, hex, randomBytes } from "../shared/bytes";
 import { sleep } from "../shared/time";
 
@@ -685,7 +685,7 @@ export function mockCloudflare(opts: {
       const bad = !!version && (state.unhealthy ?? []).includes(version);
       return Response.json({ ok: !bad, version, target: text("DEPLOY_TARGET") || null, checks: { db: { ok: true, ms: 1 }, documents: bad ? { ok: false, error: "a document didn't open (the mock says this release is unhealthy)" } : { ok: true, ms: 2 } } }, { status: bad ? 503 : 200 });
     }
-    const snap = await snapshotDoor(req, {
+    const snap = await snapshotRoutes(req, {
       token: state.secrets[name]?.SNAPSHOT_TOKEN,
       importAllowed: text("SNAPSHOT_IMPORT") == "1" && text("DEPLOY_TARGET") != "production",
       store: (state.docs[name] ??= memoryStore()) as DocStore,

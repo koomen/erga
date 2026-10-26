@@ -1,13 +1,13 @@
-// The front door for documents (server/app.ts hands it every document address,
+// The app for documents (server/app.ts hands it every document address,
 // on erga.dev and in local development alike). It's written against web
 // Requests and Responses, and the Worker supplies the rest (`Platform`):
 // who's signed in, the templates, the directory of documents (server/directory/,
 // in D1) and the documents themselves (Durable Objects).
 //
-//   /                          the front page: the viewer on the landing document (a setting), for anyone
+//   /                          the homepage: the viewer on the landing document (a setting), for anyone
 //   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
 //                              a template; /new?from=landing a copy
-//                              of the front page's, /new?from=<id> of another you may open (the viewer's Clone)
+//                              of the homepage's, /new?from=<id> of another you may open (the viewer's Clone)
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
 //   /admin                     the server's settings and users, for admins; POST /admin/settings, /admin/users
@@ -27,7 +27,7 @@
 // Who may open, edit, rename, delete or share a document is the directory's
 // rule (`Directory.decide`, from the document's permissions). For a request to
 // a document, its host applies it, on the copy of its permissions it keeps
-// (document/document.ts, authorize): the front door says only who's asking
+// (document/document.ts, authorize): the app says only who's asking
 // (x-erga-who), and asks the database nothing. The viewer's page asks the host
 // once for everything (view.ts).
 //
@@ -42,20 +42,20 @@
 // Worker.
 
 import { VIA } from "../../shared/attribution.ts";
-import { adminDoor } from "../admin/index.ts";
+import { adminRoutes } from "../admin/index.ts";
 import { ID, OWNER, type Route } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { deleteDoc, listDocs, newDoc, shareDoc, shareToken } from "./make.ts";
-import { pagesDoor, pagesHost } from "./pages-origin.ts";
+import { pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
 
-/** The front door's answer to a request, for any path (a page saying so when there's nothing there). */
-export async function frontDoor(request: Request, base: Platform): Promise<Response> {
+/** The app's answer to a request, for any path (a page saying so when there's nothing there). */
+export async function documentRoutes(request: Request, base: Platform): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const pages = pagesHost(url, base);
-  if (pages) return pagesDoor(request, url, pages, base);
+  if (pages) return pagesRoutes(request, url, pages, base);
   const platform = base;
   if (path == "/") return viewLanding(platform, request, await platform.sessionOf(request));
   if (path == "/new") return newDoc(platform, request);
@@ -75,7 +75,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
     path == "/admin/access" ||
     path == "/admin/documents"
   )
-    return adminDoor(platform, request);
+    return adminRoutes(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
@@ -100,7 +100,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
       ? Response.json({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". If it stopped working it was revoked: ask for a new one." }, { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="erga"' } })
       : new Response("Sign in first", { status: 401 });
   }
-  // The share button's token is the front door's, not the document's: for whoever may open the document.
+  // The share button's token is the app's, not the document's: for whoever may open the document.
   if (rest == "/api/share" && request.method == "POST") {
     const doc = await platform.directory.route(route.id);
     if (!doc || !(await platform.directory.access(whoOf(session), doc))) return new Response("Not allowed", { status: 403 });
@@ -115,7 +115,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (answer.status == 101) return answer;
   // A document's files (an HTML page, an SVG) are its authors' code. Here, on this site's own origin, they run in a
   // sandbox of their own (an opaque origin, no scripts): opened at this address, a page's script would otherwise act as
-  // whoever opened it, with their session. Pages run on their pages origin (pagesDoor), never here.
+  // whoever opened it, with their session. Pages run on their pages origin (pagesRoutes), never here.
   const headers = new Headers(answer.headers);
   headers.set("Content-Security-Policy", "sandbox");
   headers.set("X-Content-Type-Options", "nosniff");
@@ -159,7 +159,7 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
  * public address, who's asking (x-erga-who: the document decides what they
  * may do), and whether it's an agent with a token; never what the browser
  * claimed: those headers are replaced. `checked`: a file read with a key the
- * front door checked itself (the document's pages origin),
+ * app checked itself (the document's pages origin),
  * for nobody in particular.
  */
 export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null, checked?: "files"): Request {

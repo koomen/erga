@@ -99,7 +99,10 @@ function same(a: string, b: string): boolean {
  * SNAPSHOT_TOKEN (none: the endpoints aren't there). `importAllowed`: this
  * server takes snapshots in (staging); production never does.
  */
-export async function snapshotDoor(request: Request, o: { token?: string; importAllowed: boolean; store: DocStore; budget?: number }): Promise<Response | null> {
+export async function snapshotRoutes(
+  request: Request,
+  o: { token?: string; importAllowed: boolean; store: DocStore; budget?: number }
+): Promise<Response | null> {
   const path = new URL(request.url).pathname.replace(/\/+$/, "");
   if (path != "/api/snapshot/docs" && path != "/api/snapshot/docs/import") return null;
   const notFound = () => Response.json({ error: "Not found" }, { status: 404 });
