@@ -31,15 +31,14 @@
 // `scriptModel`), for the test suites (e2e/full/suite/, servers.script in e2e/helpers/fixtures.ts): deterministic, free,
 // and it needs no key. Never set it on a deployment real people use.
 
-import * as Redacted from "effect/Redacted";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { validateToolArguments } from "@mariozechner/pi-ai";
-import { fileRefs, messageContent, type Attachment } from "../../shared/attach";
-import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { emptyLog, offerOf, reduce, type Log, type LogEvent } from "../../shared/agent-log";
-import { CUT, Checkpoints, restoredLog, sendLate, type ChatStore } from "../checkpoint";
-import { type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import type { Attachment } from "../../shared/attach";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { Log, LogEvent, ViewRequest, ViewResult } from "../../shared/agent-log";
+import type { ChatStore } from "../checkpoint";
+import { startLoop } from "../run";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
 import { pageRefusal, type DocKind, type TreeOp } from "../../document/pages";
@@ -47,18 +46,7 @@ import { joinLocal, type Room } from "../../document/room";
 import type { Naming } from "../../server/directory/index.ts";
 import { YjsWorkspace, type Pacer } from "./workspace";
 
-import {
-  DEFAULT_MODEL,
-  describeModel,
-  isModelChoice,
-  isScript,
-  patchPayload,
-  resultImage,
-  resultText,
-  scriptModel,
-  type AgentConfig,
-  type ModelChoice,
-} from "../models";
+import { resultImage, type AgentConfig, type ModelChoice } from "../models";
 import { kindLine, systemPrompt } from "./prompt";
 import {
   CHANGES,
@@ -192,8 +180,6 @@ const TOOL_ACTIVITY: Record<string, string> = {
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { owner } = opts;
-  /** The settings now: configure changes them (a key an admin stores reaches the next model call). */
-  let cfg = opts.cfg;
   // Its work is its person's, via it: "Ada, via their agent".
   const me: Author = { user: owner.id, name: byLine(owner.name, VIA.agent), color: colorFor(owner.id, true), kind: "agent", via: VIA.agent };
   /** Who the session's edits are by now: the embedded agent, or, while an outside agent's calls run, that agent (runTool). */
@@ -235,23 +221,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     (path) => (opts.kind ? pageRefusal(opts.kind(), path, opts.docName) : null),
     pacer
   );
-  let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
-
   // The conversation as it was at its last checkpoint, if there is one (a reload, a restart).
   const stored = opts.store ? await opts.store.load().catch((e: unknown) => { console.log(`couldn't read ${owner.id}'s conversation: ${e}`); return null; }) : null;
-  const log = stored ? restoredLog(stored) : emptyLog();
-  if (stored && choice != null && isModelChoice(stored.state.model ?? "")) choice = stored.state.model as ModelChoice;
-  const listeners = new Set<(ev: LogEvent) => void>();
-  // tool_execution_end carries no args; keep each call's path from its start event.
-  const paths = new Map<string, string | null>();
-  const emit = (ev: LogEvent) => {
-    if (ev.t == "tool") {
-      if (ev.status == "running") paths.set(ev.id, ev.path);
-      else ev = { ...ev, path: paths.get(ev.id) ?? null };
-    }
-    checkpoints.logged(reduce(log, ev));
-    for (const l of listeners) l(ev);
-  };
   const presence = (patch: Record<string, unknown>) => awareness.setLocalState({ ...awareness.getLocalState(), ...patch });
   // Busy while the embedded agent runs, or while an external agent is
   // calling tools: during a call, and for a while after the last one, since
@@ -270,6 +241,20 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     wasBusy = on;
     presence({ busy: on, activity: on ? activity ?? (awareness.getLocalState()?.activity as string | null) ?? "working" : null });
   };
+  // Each step of a run, kept in the person's store; a restart goes on from the last (agents/checkpoint.ts).
+  const loop = startLoop({
+    cfg: opts.cfg, stored, store: opts.store ?? null, meta: { person: owner.id, name: owner.name, ...opts.meta }, tag: "editor",
+    hooks: {
+      about: (_name, args) => toolPath(args),
+      toolStarted: (name, path) => {
+        const server = loop.agent?.state.tools.find((t) => t.name == name) as ServerAgentTool | undefined;
+        presence({ activity: `${TOOL_ACTIVITY[name] ?? server?.activity ?? name}${path ? ` ${path}` : ""}` });
+      },
+      toolEnded: () => presence({ activity: "thinking" }),
+      busy: (on) => { busy.agent = on; syncBusy(on ? "thinking" : undefined); },
+    },
+  });
+  const emit = loop.emit;
   const undoable = () => emit({ t: "undoable", count: undo.undoStack.length });
 
   /** Done in the room: the replica has it once it has seen everything the room has (a few microtasks). */
@@ -307,138 +292,47 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const mine = () => (opts.canEdit() ? tools : tools.filter((t) => !CHANGES.has(t.name)));
   // The tools beyond the document, as the owner may use them now (none if they can't be had).
   const beyond = async () => (await opts.serverTools?.().catch((e: unknown) => { console.log(`server tools for ${owner.id}: ${e}`); return null; })) ?? [];
-  let starting = false;
   // Someone who may only view: the prompt says so, and why the tools that change the document aren't there.
   const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, owner.name, opts.only != null, more.map((t) => t.name)) + kindLine(opts.only != null ? null : opts.kind?.() ?? null, owner.name) + (opts.canEdit() ? "" : `\n\n${owner.name} can only view this document, so you can't change it: you have only the tools that change nothing (read, ls, find, grep and the like). If they ask for a change, say so.`);
   /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
-  let agent: PiAgent | null = null;
-  /** The model's messages while it has no model side yet (the agent off): the stored ones, until a reset. */
-  let offMessages = stored?.messages ?? [];
-  // Each step of a run, kept in the person's store; a restart goes on from the last (agents/checkpoint.ts).
-  const checkpoints = new Checkpoints(opts.store ?? null, {
-    log, stored, meta: { person: owner.id, name: owner.name, ...opts.meta },
-    messages: () => agent?.state.messages ?? offMessages,
-    busy: () => !!agent?.state.isStreaming,
-    model: () => choice,
-  });
   const makeAgent = async (first: AgentConfig) => {
     const serverTools = await beyond();
-    const kept = stored && isModelChoice(stored.state.model ?? "") ? stored.state.model as ModelChoice : null;
-    choice = first.model == "script" ? null : kept ?? first.model;
-    const a = new PiAgent({
-      initialState: { systemPrompt: prompted(serverTools), model: choice == null ? scriptModel() : describeModel(choice), thinkingLevel: "medium", tools: [...mine(), ...serverTools], messages: offMessages },
-      getApiKey: () => (cfg ? Redacted.value(cfg.apiKey) : "") || "none",
-      onPayload: isScript(first) ? undefined : patchPayload(() => cfg ?? first, () => choice ?? DEFAULT_MODEL),
-      beforeToolCall: checkpoints.beforeToolCall,
-    });
-    // The session's handler first, so the transcript has each event when its checkpoint is saved.
-    a.subscribe(onEvent);
-    a.subscribe(checkpoints.listener);
-    return a;
+    return loop.agent ?? loop.start(first, prompted(serverTools), [...mine(), ...serverTools]);
   };
-  /** A run that ended in a failure outside the model's answer (pi threw). */
-  const failed = (err: unknown) => {
-    starting = false;
-    emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
-    busy.agent = false;
-    syncBusy();
-    emit({ t: "busy", busy: false });
-  };
-  let resumed = false;
-
-  const onEvent = (e: AgentEvent) => {
-    switch (e.type) {
-      case "message_update": {
-        const m = e.assistantMessageEvent;
-        if (m.type == "text_delta") emit({ t: "text", delta: m.delta });
-        else if (m.type == "thinking_delta") emit({ t: "thinking", delta: m.delta });
-        break;
-      }
-      case "message_end": {
-        const msg = e.message as { role?: string; stopReason?: string; errorMessage?: string };
-        if (msg.role == "assistant" && msg.stopReason == "error") emit({ t: "error", text: msg.errorMessage || "The request failed." });
-        break;
-      }
-      case "tool_execution_start": {
-        const path = toolPath(e.args);
-        const server = agent?.state.tools.find((t) => t.name == e.toolName) as ServerAgentTool | undefined;
-        presence({ activity: `${TOOL_ACTIVITY[e.toolName] ?? server?.activity ?? e.toolName}${path ? ` ${path}` : ""}` });
-        emit({ t: "tool", id: e.toolCallId, name: e.toolName, path, status: "running" });
-        break;
-      }
-      case "tool_execution_end":
-        presence({ activity: "thinking" });
-        emit({
-          t: "tool", id: e.toolCallId, name: e.toolName, path: null,
-          status: e.isError ? "error" : "done",
-          detail: e.isError ? resultText(e.result).slice(0, 400) : undefined,
-          image: e.isError ? undefined : resultImage(e.result),
-          offer: e.isError ? undefined : offerOf(e.result),
-        });
-        break;
-      case "agent_start": busy.agent = true; syncBusy("thinking"); emit({ t: "busy", busy: true }); break;
-      case "agent_end": busy.agent = false; syncBusy(); emit({ t: "busy", busy: false }); if (agent) sendLate(agent, failed); break;
-    }
-  };
-  if (cfg) agent = await makeAgent(cfg);
-  const piAgent = () => agent;
+  if (opts.cfg) await makeAgent(opts.cfg);
   /** The model's side, being made (a key arrived after the session started). */
-  let making: Promise<void> | null = null;
+  let making: Promise<unknown> | null = null;
 
   return {
     close() {
-      agent?.abort();
+      loop.abort();
       if (busy.extTimer) clearTimeout(busy.extTimer);
       leave();
       awareness.destroy();
     },
-    get model() { return agent?.state.model.name ?? null; },
-    get modelChoice() { return choice; },
-    setModel(next) {
-      if (!agent || choice == null) return false;
-      choice = next;
-      agent.state.model = describeModel(next);
-      return true;
-    },
+    get model() { return loop.model; },
+    get modelChoice() { return loop.modelChoice; },
+    setModel: loop.setModel,
     async configure(next) {
-      cfg = next;
-      if (next && !agent) await (making ??= makeAgent(next).then((a) => { agent ??= a; }).finally(() => { making = null; }));
+      loop.configure(next);
+      if (next && !loop.agent) await (making ??= makeAgent(next).finally(() => { making = null; }));
     },
-    log: () => log,
+    log: () => loop.log,
     prompt(text, context, files = []) {
-      emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
-      const agent = piAgent();
-      if (!agent || !cfg) { emit({ t: "error", text: "The agent is off." }); return; }
-      const content = messageContent(context ? `<editor>\n${context}\n</editor>\n\n${text}` : text, files);
-      if (isScript(cfg)) scriptModel();
-      const message = { role: "user" as const, content, timestamp: Date.now() };
-      // Kept until the model has it: a restart before then doesn't lose it.
-      checkpoints.queue(message);
-      // A message sent while the turn is starting (its tools being looked up) steers it too.
-      if (agent.state.isStreaming || starting) { agent.steer(message); return; }
-      starting = true;
       // The tools beyond the document as the owner may use them now (an admin's, say).
-      const refresh = beyond().then((more) => {
+      loop.prompt(text, context, files, (agent) => beyond().then((more) => {
         agent.state.tools = [...mine(), ...more];
         agent.state.systemPrompt = prompted(more);
-      });
-      refresh.then(() => { starting = false; return agent.prompt(message); }).catch(failed);
+      }));
     },
-    abort: () => agent?.abort(),
+    abort: loop.abort,
     async reset() {
-      if (agent) {
-        agent.abort();
-        await agent.waitForIdle();
-        agent.reset();
-      }
-      paths.clear();
       undo.clear();
-      offMessages = [];
-      await checkpoints.clear();
-      busy.agent = false;
-      syncBusy();
-      presence({ cursor: null });
-      emit({ t: "reset" });
+      await loop.reset(() => {
+        busy.agent = false;
+        syncBusy();
+        presence({ cursor: null });
+      });
       undoable();
     },
     undo() {
@@ -450,22 +344,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       undoable();
       return true;
     },
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    async resume() {
-      if (resumed) return false;
-      resumed = true;
-      const was = checkpoints.current.running || checkpoints.current.queued.length > 0;
-      const going = await checkpoints.resume(agent, onEvent, failed);
-      // A run with nothing left to do, or that can't go on (the agent is off now), ends here.
-      if (was && !going) {
-        if (!agent) emit({ t: "error", text: CUT });
-        emit({ t: "busy", busy: false });
-      }
-      return going;
-    },
+    subscribe: loop.subscribe,
+    resume: loop.resume,
     tools: () => mine().map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) })),
     async runTool(name, args, via) {
       if (CHANGES.has(name) && !opts.canEdit()) throw new Error(`${owner.name} can only view this document, so ${name} isn't one of the tools: they are ${mine().map((t) => t.name).join(", ")}.`);

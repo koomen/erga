@@ -30,26 +30,15 @@
 // with an admin token (server/identity/tokens.ts; Share with agent on the admin pages makes
 // one that ends within 12 hours), and reads `adminGuide` first.
 
-import { Agent as PiAgent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
-import * as Redacted from "effect/Redacted";
+import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
-import {
-  DEFAULT_MODEL,
-  describeModel,
-  isScript,
-  MODELS,
-  patchPayload,
-  resultImage,
-  resultText,
-  scriptModel,
-  type AgentConfig,
-  type ModelChoice,
-} from "../models";
-import { fileRefs, messageContent, type Attachment } from "../../shared/attach";
-import { emptyLog, offerOf, reduce, type Log, type LogEvent, type Offer } from "../../shared/agent-log";
+import type { AgentConfig, ModelChoice } from "../models";
+import type { Attachment } from "../../shared/attach";
+import type { Log, LogEvent } from "../../shared/agent-log";
 import { agentName } from "../../document/content";
 import { runServerTool, SERVER_TOOLS, toolResult, type ToolWho } from "../tools";
-import { Checkpoints, restoredLog, sendLate, type ChatStore, type StoredChat } from "../checkpoint";
+import type { ChatStore, StoredChat } from "../checkpoint";
+import { startLoop } from "../run";
 import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
 import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
 
@@ -433,104 +422,21 @@ function about(name: string, args: unknown): string | null {
  * had it, to go on with.
  */
 export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; store?: ChatStore; stored?: StoredChat | null; meta?: Record<string, string> }): AdminAgent {
-  const { owner, tools, stored } = opts;
-  let cfg = opts.cfg;
-  const kept = stored && Object.hasOwn(MODELS, stored.state.model ?? "") ? stored.state.model as ModelChoice : null;
-  let choice: ModelChoice | null = cfg.model == "script" ? null : kept ?? cfg.model;
-  const model = choice == null ? scriptModel() : describeModel(choice);
-  const log = stored ? restoredLog(stored) : emptyLog();
-  const listeners = new Set<(ev: LogEvent) => void>();
-  const whats = new Map<string, string | null>();
-  const emit = (ev: LogEvent) => {
-    if (ev.t == "tool") {
-      if (ev.status == "running") whats.set(ev.id, ev.path);
-      else ev = { ...ev, path: whats.get(ev.id) ?? null };
-    }
-    checkpoints.logged(reduce(log, ev));
-    for (const l of listeners) l(ev);
-  };
-  // Each step of a run, kept in the store; a restart goes on from the last.
-  const checkpoints: Checkpoints = new Checkpoints(opts.store ?? null, {
-    log, stored, meta: { login: owner, ...opts.meta },
-    messages: () => agent.state.messages,
-    busy: () => agent.state.isStreaming,
-    model: () => choice,
-  });
-  const agent = new PiAgent({
-    initialState: { systemPrompt: systemPrompt(owner), model, thinkingLevel: "medium", tools, messages: stored?.messages ?? [] },
-    getApiKey: () => Redacted.value(cfg.apiKey) || "none",
-    onPayload: isScript(cfg) ? undefined : patchPayload(() => cfg, () => choice ?? DEFAULT_MODEL),
-    beforeToolCall: checkpoints.beforeToolCall,
-  });
-  const onEvent = (e: AgentEvent) => {
-    switch (e.type) {
-      case "message_update": {
-        const m = e.assistantMessageEvent;
-        if (m.type == "text_delta") emit({ t: "text", delta: m.delta });
-        else if (m.type == "thinking_delta") emit({ t: "thinking", delta: m.delta });
-        break;
-      }
-      case "message_end": {
-        const msg = e.message as { role?: string; stopReason?: string; errorMessage?: string };
-        if (msg.role == "assistant" && msg.stopReason == "error") emit({ t: "error", text: msg.errorMessage || "The request failed." });
-        break;
-      }
-      case "tool_execution_start": emit({ t: "tool", id: e.toolCallId, name: e.toolName, path: about(e.toolName, e.args), status: "running" }); break;
-      case "tool_execution_end":
-        emit({ t: "tool", id: e.toolCallId, name: e.toolName, path: null, status: e.isError ? "error" : "done", detail: e.isError ? resultText(e.result).slice(0, 400) : undefined, image: e.isError ? undefined : resultImage(e.result), offer: e.isError ? undefined : offerOf(e.result) });
-        break;
-      case "agent_start": emit({ t: "busy", busy: true }); break;
-      case "agent_end": emit({ t: "busy", busy: false }); sendLate(agent, failed); break;
-    }
-  };
-  // The session's handler first, so the transcript has each event when its checkpoint is saved.
-  agent.subscribe(onEvent);
-  agent.subscribe(checkpoints.listener);
-  const failed = (err: unknown) => {
-    emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
-    emit({ t: "busy", busy: false });
-  };
-  let resumed = false;
+  const { owner } = opts;
+  const loop = startLoop({ cfg: opts.cfg, stored: opts.stored ?? null, store: opts.store ?? null, meta: { login: owner, ...opts.meta }, tag: "page", hooks: { about } });
+  const agent = loop.start(opts.cfg, systemPrompt(owner), opts.tools);
   return {
-    get model() { return agent.state.model.name ?? null; },
-    get modelChoice() { return choice; },
-    setModel(next) {
-      if (choice == null || !Object.hasOwn(MODELS, next)) return false;
-      choice = next;
-      agent.state.model = describeModel(next);
-      return true;
-    },
-    configure(next) { cfg = next; },
-    log: () => log,
+    get model() { return loop.model; },
+    get modelChoice() { return loop.modelChoice; },
+    setModel: loop.setModel,
+    configure: loop.configure,
+    log: () => loop.log,
     messages: () => agent.state.messages,
-    prompt(text, context, files = []) {
-      emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
-      const content = messageContent(context ? `<page>\n${context}\n</page>\n\n${text}` : text, files);
-      if (isScript(cfg)) scriptModel();
-      const message = { role: "user" as const, content, timestamp: Date.now() };
-      // Kept until the model has it: a restart before then doesn't lose it.
-      checkpoints.queue(message);
-      if (agent.state.isStreaming) { agent.steer(message); return; }
-      agent.prompt(message).catch(failed);
-    },
-    abort: () => agent.abort(),
-    async reset() {
-      agent.abort();
-      await agent.waitForIdle();
-      agent.reset();
-      whats.clear();
-      await checkpoints.clear();
-      emit({ t: "reset" });
-    },
-    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    async resume() {
-      if (resumed) return false;
-      resumed = true;
-      const was = checkpoints.current.running || checkpoints.current.queued.length > 0;
-      const going = await checkpoints.resume(agent, onEvent, failed);
-      if (was && !going) emit({ t: "busy", busy: false });
-      return going;
-    },
+    prompt: (text, context, files = []) => loop.prompt(text, context, files),
+    abort: loop.abort,
+    reset: () => loop.reset(),
+    subscribe: loop.subscribe,
+    resume: loop.resume,
   };
 }
 
