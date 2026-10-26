@@ -71,7 +71,8 @@ export function readerPage(marked: string, o: { shell: string; prefix: string; s
 }
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
-export const readerVersion = () => versionOf(readerScript({ shell: "", prefix: "", src: "" }) + PROBLEM_WATCH + TEXT_GUARD + EDITING_API + LIVE_WATCH + asset("frame.js"));
+export const readerVersion = () =>
+  versionOf(readerScript({ shell: "", prefix: "", src: "" }) + PROBLEM_WATCH + TEXT_GUARD + EDITING_API + LIVE_WATCH + asset("frame.js"));
 
 /** A digest of text (FNV-1a), which changes whenever it does. */
 const versionOf = (text: string) => {
