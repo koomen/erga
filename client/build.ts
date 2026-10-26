@@ -26,9 +26,9 @@
 //   logo.png           Erga's logo (assets/logo/logo.png), public at /logo.png: a square 512 px PNG for
 //                      places that want one (an OAuth client's logo)
 //
-// And, into the repository: server/pages/inline-scripts.ts, the scripts the server puts in its pages inline (each
-// file of client/inline/, type-checked as the client is), as text. It's committed, so the server needs no build to
-// run; tests/inline-scripts.test.ts checks it's up to date. Usage: bun client/build.ts --inline makes only it.
+// And, into the repository: server/pages/inline-code.ts, the scripts and styles the server puts in its pages inline
+// (each file of client/inline/; the scripts type-checked as the client is), as text. It's committed, so the server
+// needs no build to run; tests/inline-code.test.ts checks it's up to date. Usage: bun client/build.ts --inline makes only it.
 //
 // The build writes into a folder of its own, then moves each file into .build/
 // and writes the manifest last, so a server never names a file that isn't there,
@@ -80,20 +80,19 @@ const sha = (bytes: Uint8Array, alg = "sha256") => new Bun.CryptoHasher(alg as "
 const hashOf = (bytes: Uint8Array) => sha(bytes).digest("hex").slice(0, 10);
 const integrityOf = (bytes: Uint8Array) => `sha384-${new Bun.CryptoHasher("sha384").update(bytes).digest("base64")}`;
 
-/** Where the inline scripts go, as text (see above). */
-export const INLINE_OUT = join(ROOT, "server/pages/inline-scripts.ts");
+/** Where the inline scripts and styles go, as text (see above). */
+export const INLINE_OUT = join(ROOT, "server/pages/inline-code.ts");
 
 /**
- * The inline scripts' file: each script of client/inline/ (a default-exported function) built alone and minified, as
- * the text of an expression whose value is the function. The server calls it in the page (server/pages/inline.ts).
+ * The inline code's file: each script of client/inline/ (a default-exported function) built alone and minified, as
+ * the text of an expression whose value is the function, which the server calls in the page (server/pages/inline.ts);
+ * and each stylesheet of client/inline/, without its comments, as the text for a <style>.
  */
-export async function inlineScripts(): Promise<string> {
+export async function inlineCode(): Promise<string> {
   const dir = join(ROOT, "client/inline");
-  const names = readdirSync(dir)
-    .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
-    .sort();
-  const out: string[] = [];
-  for (const f of names) {
+  const files = readdirSync(dir).sort();
+  const scripts: string[] = [];
+  for (const f of files.filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))) {
     const result = await Bun.build({ entrypoints: [join(dir, f)], target: "browser", format: "esm", minify: true, splitting: false });
     if (!result.success) {
       for (const l of result.logs) console.error(l);
@@ -109,21 +108,32 @@ export async function inlineScripts(): Promise<string> {
       alone = code.startsWith(`function ${m[1]}(`) && typeof new Function(`return (${code})`)() == "function";
     } catch {}
     const text = alone ? `(${code})` : `(()=>{${code};return ${m[1]}})()`;
-    out.push(`  ${JSON.stringify(f.replace(/\.ts$/, ""))}: ${JSON.stringify(text)},`);
+    scripts.push(`  ${JSON.stringify(f.replace(/\.ts$/, ""))}: ${JSON.stringify(text)},`);
+  }
+  const styles: string[] = [];
+  for (const f of files.filter((f) => f.endsWith(".css"))) {
+    const css = readFileSync(join(dir, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\n\s*/g, "\n").trim();
+    if (/<\/style/i.test(css)) throw new Error(`client/inline/${f} holds </style>`);
+    styles.push(`  ${JSON.stringify(f.replace(/\.css$/, ""))}: ${JSON.stringify(css)},`);
   }
   return `// Made by client/build.ts from client/inline/: don't edit it, edit those and run bun client/build.ts --inline.
-// tests/inline-scripts.test.ts checks it's up to date. Each script is the text of a function, for server/pages/inline.ts.
+// tests/inline-code.test.ts checks it's up to date. For server/pages/inline.ts: each script is the text of a function,
+// each style the text of a stylesheet.
 /* biome-ignore-all format: made by client/build.ts */
 
-export const INLINE = {
-${out.join("\n")}
+export const SCRIPTS = {
+${scripts.join("\n")}
+} as const;
+
+export const STYLES = {
+${styles.join("\n")}
 } as const;
 `;
 }
 
-/** Writes the inline scripts' file, if it changed. */
+/** Writes the inline code's file, if it changed. */
 async function writeInline(): Promise<void> {
-  const text = await inlineScripts();
+  const text = await inlineCode();
   const was = (() => {
     try {
       return readFileSync(INLINE_OUT, "utf8");

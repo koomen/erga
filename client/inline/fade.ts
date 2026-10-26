@@ -1,6 +1,6 @@
 // The viewer's controls (Clone, Edit, who you are) fade once the page is scrolled, on a document's page
 // (viewer-fade.ts) and on the homepage alike (server/home/render.ts): whole at the top of the page, faded
-// (server/pages/viewer.ts: VIEW_STYLE, FADED) anywhere below it, and whole again while the pointer is within NEAR px
+// (client/inline/viewer.css: opacity 0.2) anywhere below it, and whole again while the pointer is within NEAR px
 // of them, one of them has keyboard focus or your menu is open. On a touch screen, with no pointer to come near, a tap
 // near them brings them back until the page scrolls again. It's a function of those alone: the same scroll and pointer
 // give the same look, and no timer changes it.

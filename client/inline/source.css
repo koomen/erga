@@ -1,0 +1,44 @@
+/* Erga's source for anyone (/git, control/source/public.ts): how to clone, the branches, the recent commits and the files. */
+
+main.src { box-sizing: border-box; width: 100%; max-width: 1180px; margin: 0 auto; padding: 72px 24px 64px; }
+  .src-head h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
+  .src-head p { margin: 0 0 14px; color: var(--soft); font-size: 14.5px; }
+  .src-clone { display: flex; align-items: center; gap: 8px; max-width: 620px; margin: 0 0 26px; padding: 6px 6px 6px 14px; border: 1px solid var(--rule); border-radius: 10px; }
+  .src-clone code { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 13px; color: var(--fg-strong); overflow-x: auto; white-space: nowrap; }
+  .src-branch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 14px; }
+  .src-tabs { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--rule); border-radius: 9px; }
+  .src-tabs a { padding: 4px 12px; border-radius: 6px; font-size: 13.5px; font-weight: 500; color: var(--soft); text-decoration: none; }
+  .src-tabs a:hover { color: var(--fg-strong); }
+  .src-tabs a[aria-current="page"] { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 16%, transparent); }
+  .src-at { flex: 1; min-width: 0; margin: 0; font-size: 13.5px; color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .src-at code, .src-commits code { font-family: var(--font-mono); font-size: 12px; color: var(--fg); }
+  .src-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; align-items: start; }
+  .src-grid:not(:has(.src-commits)) { grid-template-columns: minmax(0, 1fr); }
+  .src-path { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0 0 10px; font-size: 14px; }
+  .src-path a { color: var(--soft); text-decoration: none; } .src-path a:hover { color: var(--fg-strong); text-decoration: underline; }
+  .src-path [aria-current] { color: var(--fg-strong); font-weight: 600; }
+  .src-path .sep { margin: 0 4px; color: var(--chrome); }
+  .src-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  .src-list li + li { border-top: 1px solid var(--rule); }
+  .src-list a { display: flex; align-items: center; gap: 10px; padding: 7px 14px; color: var(--fg); text-decoration: none; font-size: 14px; }
+  .src-list a:hover { background: color-mix(in srgb, var(--chrome) 9%, transparent); }
+  .src-list a:focus-visible { outline: 2px solid var(--caret); outline-offset: -2px; }
+  .src-list .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .src-list .size { flex: none; font-size: 12.5px; color: var(--soft); font-variant-numeric: tabular-nums; }
+  .src-list .icon { flex: none; width: 14px; text-align: center; color: var(--chrome); font-size: 13px; }
+  .src-list .icon.folder::before { content: ""; display: inline-block; width: 13px; height: 10px; border-radius: 2px; background: var(--chrome); opacity: .7; }
+  .src-list .icon.file::before { content: ""; display: inline-block; width: 9px; height: 12px; border: 1.5px solid var(--chrome); border-radius: 2px; box-sizing: border-box; }
+  .src-file { border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  .src-file-head { padding: 7px 14px; border-bottom: 1px solid var(--rule); font-size: 12.5px; color: var(--soft); }
+  .src-file pre { margin: 0; padding: 10px 0; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; color: var(--fg); counter-reset: line; tab-size: 2; }
+  .src-file code > span { display: block; padding: 0 16px 0 0; white-space: pre; }
+  .src-file code > span::before { counter-increment: line; content: counter(line); display: inline-block; width: 3.5em; margin-right: 16px; text-align: right; color: var(--chrome); opacity: .8; }
+  .src-commits h3 { margin: 2px 0 10px; font-size: 13px; font-weight: 600; color: var(--soft); }
+  .src-commits ol { list-style: none; margin: 0; padding: 0; }
+  .src-commits li { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .src-commits .subject { font-size: 13.5px; line-height: 1.4; color: var(--fg-strong); overflow-wrap: anywhere; }
+  .src-commits .meta { font-size: 12px; color: var(--soft); }
+  .src-note { color: var(--soft); font-size: 14px; }
+  .src-note a { color: var(--fg-strong); }
+  @media (max-width: 860px) { .src-grid { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 520px) { main.src { padding: 64px 16px 48px; } .src-at { white-space: normal; flex-basis: 100%; } .src-file code > span::before { width: 2.5em; margin-right: 10px; } }

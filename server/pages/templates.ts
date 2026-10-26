@@ -8,6 +8,7 @@
 import { asset } from "./assets.ts";
 import type { DocKind } from "../../document/pages.ts";
 import { esc } from "../../shared/html.ts";
+import { inlineStyle } from "./inline.ts";
 
 /** A template: what the picker shows, and the files a new document starts with. */
 export interface Template {
@@ -69,30 +70,8 @@ export function newDocMenu(href: (path: string) => string, signedIn: boolean): s
   return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" data-fonts="${esc(asset("inter.css"))}" hidden><p class="erga-new-title">New document</p>${TEMPLATES.map(item).join("")}${signedIn ? "" : `<p class="erga-new-note">You sign in first, then Erga makes the document.</p>`}</div>`;
 }
 
-export const NEW_DOC_STYLE = `<style>
-  .erga-new-menu { --nm-bg: #fff; --nm-fg: #1c1c1f; --nm-soft: #6b6b73; --nm-ring: #e6e6ea; --nm-hover: rgba(161, 161, 169, .14);
-    position: fixed; z-index: 2147483000; width: min(300px, calc(100vw - 24px)); max-height: calc(100vh - 80px); overflow: auto; box-sizing: border-box; padding: 6px;
-    color: var(--nm-fg); background: var(--nm-bg); border: 1px solid var(--nm-ring); border-radius: 12px; text-align: left;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .05); font: 400 14px/1.35 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  html.page-dark .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); }
-  .erga-new-menu[hidden] { display: none; }
-  /* One typeface throughout, the app's (Inter, which the script loads where the page hasn't it): every option in the
-     same size and weight; the lines under them, smaller and quieter. */
-  .erga-new-menu * { font: inherit; letter-spacing: normal; text-transform: none; }
-  .erga-new-menu p { margin: 0; }
-  .erga-new-title { padding: 6px 10px 6px; color: var(--nm-soft); font-size: 12.5px; }
-  .erga-new-menu a { display: grid; gap: 1px; padding: 7px 10px; border-radius: 7px; color: var(--nm-fg); text-decoration: none; }
-  .erga-new-menu a b { font-weight: 600; font-size: 14px; color: var(--nm-fg); }
-  .erga-new-menu a span, .erga-new-note { color: var(--nm-soft); font-size: 12.5px; }
-  .erga-new-menu a:hover, .erga-new-menu a:focus-visible { background: var(--nm-hover); outline: none; }
-  .erga-new-note { margin-top: 4px !important; padding: 8px 10px 4px; border-top: 1px solid var(--nm-ring); }
-  .erga-view-button.erga-new-btn { margin: 0; padding: 0; border: 0; background-color: transparent; font: inherit; cursor: pointer; }
-  .erga-view-button.erga-new-btn:hover { background-color: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  .erga-new-btn:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 1px; }
-  .erga-new-btn svg { stroke-width: 1.7; }
-  .erga-new-btn[aria-expanded="true"]::after, .erga-new-btn[aria-expanded="true"]::before { display: none; }
-  @media (pointer: coarse) { .erga-new-menu a { padding: 10px 12px; } }
-</style>`;
+/** The menu's look (client/inline/new-doc.css). */
+export const NEW_DOC_STYLE = `<style>${inlineStyle("new-doc")}</style>`;
 
 /**
  * Opens and closes the picker: `ergaNewDoc(root)`, once for each page or
