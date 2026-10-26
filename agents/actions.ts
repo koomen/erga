@@ -43,6 +43,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /admin", domain: "admin", action: "Read the settings (Settings)", tool: "list_settings" },
   { route: "POST /admin/settings", domain: "admin", action: "Change a setting (Settings)", tool: "set_setting" },
   { route: "POST /admin/settings", domain: "admin", action: "Reset a setting to its default (Settings)", tool: "reset_setting" },
+  {
+    route: "GET /admin/documents",
+    domain: "admin",
+    action: "Find any document or project on the server (Settings: the Homepage Project picker)",
+    tool: "search_documents",
+  },
   { route: "GET /admin/settings", domain: "none", action: "An old address of Settings", exempt: "a redirect" },
   { route: "GET /admin/credentials", domain: "none", action: "An old address of API keys", exempt: "a redirect" },
   { route: "GET /admin/changes", domain: "admin", action: "Read the change log (Change log)", tool: "list_setting_changes" },

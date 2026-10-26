@@ -354,16 +354,22 @@ test("server config: the deploy's values, from deploy/locked-settings.ts and SER
   expect(() => parseDeployed('{"delete_docs_after_hours": "soon"}')).toThrow(/delete_docs_after_hours to "soon", but it must be a whole number/);
 });
 
-test("landing_document: an admin who may edit the document chooses it, by address, URL or id; kept by id", async () => {
+test("landing_document: an admin chooses any document or project on the server, by address, URL or id; kept by id", async () => {
   const dir = fresh({ admins: ["ada", "root"] });
   const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
   await dir.add(doc("tttttttt", "Test", { test: true }));
   expect(await dir.landing()).toBeNull();
   const ada = { login: "ada", admin: true }, root = { login: "root", admin: true };
-  // A document an admin may not edit, even an admin's choosing: refused; a missing one or a test one: no such document.
-  await expect(dir.config.set(root, "landing_document", `/ada/${one.slug}`)).rejects.toThrow(/Only someone who may edit \/ada\//);
+  // Another admin's document: any admin may choose it. A missing one or a test one: no such document.
+  expect((await dir.config.set(root, "landing_document", `/ada/${one.slug}`)).value).toBe("aaaaaaaa");
   await expect(dir.config.set(ada, "landing_document", "/ada/nothing-here")).rejects.toThrow(ConfigError);
   await expect(dir.config.set(ada, "landing_document", "tttttttt")).rejects.toThrow(/no document/);
+  // A user's: still only if everyone who may edit it is an admin (homeBlocked), its owner too.
+  await dir.users.add(ada, "bo", { role: "user" });
+  const bos = (await dir.add(doc("bbbbbbbb", "Bo's page", { owner: "bo" }))).doc;
+  await expect(dir.config.set(root, "landing_document", bos.id)).rejects.toThrow(/Only admins may edit the front page/);
+  // Not an admin: refused.
+  await expect(dir.config.set({ login: "bo" }, "landing_document", "aaaaaaaa")).rejects.toThrow(NotAllowed);
   for (const ref of [`/ada/${one.slug}`, `https://erga.dev/ada/${one.slug}`, "/d/aaaaaaaa", "aaaaaaaa"]) {
     expect((await dir.config.set(ada, "landing_document", ref)).value).toBe("aaaaaaaa");
   }
@@ -375,6 +381,35 @@ test("landing_document: an admin who may edit the document chooses it, by addres
   const locked = fresh({ locked: { landing_document: "/ada/front-page" } }, memory());
   await locked.add(doc("aaaaaaaa", "Front page"));
   expect((await locked.landing())?.id).toBe("aaaaaaaa");
+});
+
+test("search: an admin finds any of the server's documents and projects by title, owner, address or id; nobody else may", async () => {
+  const dir = fresh({ admins: ["ada"] });
+  const ada = { login: "ada", admin: true };
+  await dir.users.add(ada, "bo", { role: "user" });
+  await dir.add(doc("aaaaaaaa", "Front page", { modified: 10 }));
+  await dir.add(doc("bbbbbbbb", "Garden notes", { owner: "bo", modified: 30, kind: "project" }));
+  await dir.add(doc("cccccccc", "100% done_now", { owner: "bo", modified: 20 }));
+  await dir.add(doc("tttttttt", "Garden test", { test: true }));
+  const ids = async (q: string) => (await dir.search(ada, q)).map((d) => d.id);
+  // Nothing typed: the most recently edited first; never a test document.
+  expect(await ids("")).toEqual(["bbbbbbbb", "cccccccc", "aaaaaaaa"]);
+  // By title (any case), owner, address (or a URL with it) and id.
+  expect(await ids("GARDEN")).toEqual(["bbbbbbbb"]);
+  expect(await ids("bo")).toEqual(["bbbbbbbb", "cccccccc"]);
+  expect(await ids("/ada/front")).toEqual(["aaaaaaaa"]);
+  expect(await ids("https://erga.dev/bo/garden-notes")).toEqual(["bbbbbbbb"]);
+  expect(await ids("aaaaaaaa")).toEqual(["aaaaaaaa"]);
+  // % and _ are only themselves.
+  expect(await ids("0% d")).toEqual(["cccccccc"]);
+  expect(await ids("e_n")).toEqual(["cccccccc"]);
+  expect(await dir.search(ada, "garden")).toEqual([
+    { id: "bbbbbbbb", title: "Garden notes", owner: "bo", address: "/bo/garden-notes", kind: "project" },
+  ]);
+  expect((await dir.search(ada, "", 1)).length).toBe(1);
+  // Admins only: a user, or an admin without admin power (a documents token), may not.
+  await expect(dir.search({ login: "bo" }, "")).rejects.toThrow(NotAllowed);
+  await expect(dir.search({ login: "ada" }, "")).rejects.toThrow(NotAllowed);
 });
 
 test("the front page: only admins may edit it while it is one", async () => {

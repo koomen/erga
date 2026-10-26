@@ -22,6 +22,8 @@ import { NotAllowed, type Actor, type Users } from "./index.ts";
 export class ConfigError extends Error {}
 
 export interface Setting<T = unknown> {
+  /** Its name on the admin page, where it isn't the key. */
+  label?: string;
   /** What it does, for the admin (or agent) changing it. */
   description: string;
   /** Its value until it's set. */
@@ -79,7 +81,8 @@ export const SETTINGS = {
     },
   }),
   landing_document: setting<string | null>({
-    description: "Document shown at /, one of yours; empty: a fresh copy of the repo's demo page.",
+    label: "Homepage Project",
+    description: "Document or project shown at /; empty: a fresh copy of the repo's demo page.",
     default: null,
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
@@ -132,6 +135,8 @@ export interface ConfigEntry {
   locked: boolean;
   /** What the value names, if it isn't plain (Setting.kind). */
   kind?: "document" | "users";
+  /** Its name on the admin page, where it isn't the key (Setting.label). */
+  label?: string;
   /** The values the admin page offers (Setting.choices). */
   choices?: string[];
   /** The value the deploy fixes it to (only when it's locked; then it's `value` too). */
@@ -269,7 +274,14 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async entry(key: string): Promise<ConfigEntry> {
     const s = this.setting(key);
     const row = (await this.table()).get(key);
-    const base = { key, description: s.description, default: s.default, ...(s.kind ? { kind: s.kind } : {}), ...(s.choices ? { choices: s.choices } : {}) };
+    const base = {
+      key,
+      description: s.description,
+      default: s.default,
+      ...(s.kind ? { kind: s.kind } : {}),
+      ...(s.label ? { label: s.label } : {}),
+      ...(s.choices ? { choices: s.choices } : {}),
+    };
     // The deploy's value wins; a row set before it was locked stays in the table, and counts again once it isn't.
     if (this.isLocked(key)) return { ...base, value: this.locked[key], source: "locked", locked: true, deployed: this.locked[key], updated: null, updatedBy: null };
     if (row) {

@@ -145,6 +145,17 @@ const PAGES_STYLE = `
   .setting .value .input.pick { width: 9em; }
   .setting .value .input.secret { width: 15em; font-family: var(--font-mono); font-size: 12.5px; }
   .setting .value [hidden] { display: none; }
+  /* A document setting's picker (the homepage): a box to find one, and what it finds below it, each with its owner, address and kind. */
+  .setting .key.named { font-family: inherit; font-size: 14px; font-weight: 600; }
+  .doc-pick { position: relative; }
+  .setting .value .input.find { width: 17em; }
+  .doc-pick .found { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; width: 26em; max-width: calc(100vw - 32px); max-height: 320px; overflow-y: auto; box-sizing: border-box; margin: 0; padding: 4px; list-style: none;
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+  .doc-pick .found li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; column-gap: 10px; padding: 7px 10px; border-radius: 7px; cursor: pointer; }
+  .doc-pick .found li[aria-selected=true], .doc-pick .found li[role=option]:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .doc-pick .found .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--fg-strong); }
+  .doc-pick .found .where { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--soft); }
+  .doc-pick .found .none { display: block; cursor: default; font-size: 13px; color: var(--soft); }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
   .picker { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 26em; }
   .chips { display: contents; list-style: none; margin: 0; padding: 0; }

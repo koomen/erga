@@ -222,6 +222,19 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     parameters: Type.Object({ key: Type.String({ description: "The setting's key" }) }),
     run: async (args, { dir, who }) => entryOf(await dir.config.reset(who, String(args.key ?? ""))),
   },
+  {
+    name: "search_documents",
+    label: "Find a document or project on the server",
+    activity: "finding a document or project",
+    admin: true,
+    description:
+      "Admins only. Finds any of the server's documents and projects, everyone's, by a part of its title, its owner, its address (/<owner>/<slug>) or its id, as the Homepage Project setting's picker on /admin does; most recently edited first. Each: its id, title, owner, address and kind (document or project). To make one the homepage, give its address or id to set_setting with the key landing_document.",
+    parameters: Type.Object({
+      query: Type.String({ description: "A part of the title, owner or address; empty: the most recently edited" }),
+      limit: Type.Optional(Type.Integer({ description: "At most this many (default 20, at most 100)" })),
+    }),
+    run: async (args, { dir, who }) => ({ found: await dir.search(who, String(args.query ?? ""), Number(args.limit) || 20) }),
+  },
 
   {
     name: "list_setting_changes",
@@ -544,7 +557,19 @@ const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
 function entryOf(e: ConfigEntry) {
   const locked = e.locked;
-  return { key: e.key, description: e.description, value: e.value, default: e.default, source: e.source, locked, ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (deploy/locked-settings.ts): it can't be changed here." } : {}), updated: iso(e.updated), updatedBy: e.updatedBy, ...(e.updatedVia ? { updatedVia: e.updatedVia } : {}) };
+  return {
+    key: e.key,
+    ...(e.label ? { label: e.label } : {}),
+    description: e.description,
+    value: e.value,
+    default: e.default,
+    source: e.source,
+    locked,
+    ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (deploy/locked-settings.ts): it can't be changed here." } : {}),
+    updated: iso(e.updated),
+    updatedBy: e.updatedBy,
+    ...(e.updatedVia ? { updatedVia: e.updatedVia } : {}),
+  };
 }
 
 function ruleOf(r: AccessRule) {
