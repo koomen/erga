@@ -5,7 +5,7 @@
 // /deploy/api/* and redraws.
 
 import { appPage, crumbs } from "../../server/pages/index.ts";
-import { esc } from "../../shared/html.ts";
+import { esc, jsonInScript } from "../../shared/html.ts";
 import { TARGETS } from "../../deploy/targets.ts";
 
 export interface DeployPageConfig {
@@ -185,7 +185,7 @@ export function deployPage(c: DeployPageConfig): string {
   <p class="error" id="confirm-error"></p>
   <div class="buttons"><button id="buy-cancel">Cancel</button><button class="primary" id="buy-go" disabled>Buy</button></div>
 </dialog>
-<script>${SCRIPT.replace("__CONFIG__", JSON.stringify({ login: c.login, mock: c.mock, tokenUrl: c.tokenUrl, tokenUrlRegistrar: c.tokenUrlRegistrar, controlWorker: c.controlWorker, release: c.release }).replace(/</g, "\\u003c"))}</script>`;
+<script>${SCRIPT.replace("__CONFIG__", jsonInScript({ login: c.login, mock: c.mock, tokenUrl: c.tokenUrl, tokenUrlRegistrar: c.tokenUrlRegistrar, controlWorker: c.controlWorker, release: c.release }))}</script>`;
   return appPage("Install your own", STYLE, body);
 }
 

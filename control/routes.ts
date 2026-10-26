@@ -105,7 +105,7 @@ import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, page } from "../server/pages/index.ts";
-import { esc } from "../shared/html.ts";
+import { esc, jsonInScript } from "../shared/html.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
 import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
 
@@ -393,7 +393,11 @@ async function googleRelay(request: Request, url: URL, c: Control): Promise<Resp
 function githubDone(o: { ok: true; repo: string; warning?: string | null } | { ok: false; error: string }, c: Control, url: URL, ...setCookies: string[]): Response {
   const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
   const origins = [...new Set([url.origin, c.app, ...Object.values(hosts).map((h) => `https://${h}`)])];
-  const message = JSON.stringify({ type: GITHUB_MESSAGE, ok: o.ok, ...(o.ok ? { repo: o.repo, ...(o.warning ? { warning: o.warning } : {}) } : { error: o.error }) }).replace(/</g, "\\u003c");
+  const message = jsonInScript({
+    type: GITHUB_MESSAGE,
+    ok: o.ok,
+    ...(o.ok ? { repo: o.repo, ...(o.warning ? { warning: o.warning } : {}) } : { error: o.error }),
+  });
   const text = o.ok ? `GitHub is connected: ${o.repo}.${o.warning ? ` ${o.warning}` : ""}` : `GitHub isn't connected: ${o.error}`;
   const r = page(o.ok ? "GitHub connected" : "GitHub not connected", `${esc(text)} ${o.ok ? "You can close this window." : `<a href="/github/connect?popup=1">Try again</a>, or close this window.`}<script>
 const m = ${message};
@@ -648,7 +652,7 @@ function consentPopupPage(o: Outcome, c: Control, url: URL): Response {
   const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
   const origins = [...new Set([url.origin, c.app, ...Object.values(hosts).map((h) => `https://${h}`)])];
   const warnings = consentWarnings(o);
-  const message = JSON.stringify({ type: CONSENT_MESSAGE, ok: o.ok, ...(o.ok ? {} : { error: o.error }), warnings }).replace(/</g, "\\u003c");
+  const message = jsonInScript({ type: CONSENT_MESSAGE, ok: o.ok, ...(o.ok ? {} : { error: o.error }), warnings });
   const text = o.ok ? `Cloudflare is connected.${warnings.length ? ` ${warnings.join(" ")}` : ""}` : `Cloudflare isn't connected: ${o.error}`;
   return page(o.ok ? "Cloudflare connected" : "Cloudflare not connected", `${esc(text)} You can close this window.<script>
 const m = ${message};

@@ -17,6 +17,7 @@ import { EVENT_TYPES, liveWatch } from "../../shared/live-page.ts";
 import { insertHead, type ReaderConfig } from "../../shared/page-html.ts";
 import { asset, frameScripts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
+import { jsonInScript } from "../../shared/html.ts";
 
 /** The page's problems, from before its first script (client/inline/page-problems.ts). */
 const PROBLEM_WATCH = inlineCall("page-problems");
@@ -67,10 +68,12 @@ const inline = (js: string) => js.replace(/<\/script/gi, "<\\/script");
  */
 export function readerPage(marked: string, o: { shell: string; prefix: string; src: string; editor: boolean }): string {
   const editor = o.editor ? frameScripts(o.shell) : undefined;
-  const json = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
-  const head = (editor ? `<script type="importmap" data-erga>${json({ imports: {}, integrity: editor.map })}</script>` : "")
-    + `<script data-erga>${inline(readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) }))}</script>`
-    + (editor ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${inline(LIVE_WATCH())}</script><script data-erga>${inline(TEXT_GUARD)}</script><script data-erga>${EDITING_API}</script>` : "");
+  const head =
+    (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
+    `<script data-erga>${inline(readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) }))}</script>` +
+    (editor
+      ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${inline(LIVE_WATCH())}</script><script data-erga>${inline(TEXT_GUARD)}</script><script data-erga>${EDITING_API}</script>`
+      : "");
   return insertHead(marked, head);
 }
 
