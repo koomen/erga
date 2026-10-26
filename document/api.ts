@@ -14,7 +14,7 @@
 // Not here: the WebSocket (/api/room: the room, and with ?events=1 the person's events), the editor's start (/api/start:
 // binary, shared/room-socket.ts), the files (the editor's
 // own, and the document's under /doc/), and /api/stored, which moves raw
-// bytes with ETags. Those stay plain routes in document/host.ts and cloudflare/document-object.ts.
+// bytes with ETags. Those stay plain routes in document/host.ts and cloudflare/objects/document.ts.
 
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";

@@ -36,7 +36,7 @@ import { platform } from "./platform";
 import { simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "../control/install/session";
-export { DocumentObject } from "./document-object";
+export { DocumentObject } from "./objects/document";
 export { AdminAgentHost } from "./objects/admin-agent";
 export { PersonAgent } from "./objects/person-agent";
 export { Home } from "./objects/home";

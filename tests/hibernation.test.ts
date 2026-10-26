@@ -1,5 +1,5 @@
 // A document whose object sleeps while its tabs stay connected
-// (document/tabs.ts, as cloudflare/document-object.ts uses it with the
+// (document/tabs.ts, as cloudflare/objects/document.ts uses it with the
 // WebSocket hibernation API): the document closes when nothing happens,
 // presence still passes between tabs, and the next edit opens it again from
 // its journal, even in a new object that remembers nothing, with every tab

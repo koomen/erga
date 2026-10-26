@@ -7,7 +7,7 @@ import { forgetDecisions } from "../server/documents/index.ts";
 
 import type { Env } from "./env";
 import { counted } from "./timing";
-import { documentOf } from "./document-host";
+import { documentOf } from "./objects/document-stub";
 
 export const sqlOn = (db: D1Database): Sql => {
   const statement = (q: string, params: Param[]) => db.prepare(q).bind(...params);

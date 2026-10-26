@@ -14,7 +14,7 @@ import { PRODUCTION } from "../../deploy/targets";
 import { health } from "../../server/health";
 import type { Platform } from "../../server/platform";
 import type { Env } from "../../cloudflare/env";
-import { documentOf } from "../../cloudflare/document-host";
+import { documentOf } from "../../cloudflare/objects/document-stub";
 import { snapshotBlob } from "../../cloudflare/blobs";
 
 /** Whether this path is one of these routes. */

@@ -1,7 +1,7 @@
 import type { ArtifactsBinding } from "../control/cloudflare/artifacts";
 import type { AdminAgentHost } from "./objects/admin-agent";
 import type { Deployer } from "../control/install/session";
-import type { DocumentObject } from "./document-object";
+import type { DocumentObject } from "./objects/document";
 import type { SourceHost } from "../control/source/source-host";
 import type { Pipeline } from "../control/deploys/pipeline-object";
 import type { Home } from "./objects/home";
@@ -84,7 +84,7 @@ export interface Env {
   DEPLOY_TARGET?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
-  /** When the pipeline uploaded this server (ms): a document's object older than its caller restarts (cloudflare/document-host.ts). */
+  /** When the pipeline uploaded this server (ms): a document's object older than its caller restarts (cloudflare/objects/document-stub.ts). */
   ERGA_DEPLOYED?: string;
   /** The Cloudflare account the server is in (the pipeline sets it): where it deploys itself. */
   CLOUDFLARE_ACCOUNT_ID?: string;

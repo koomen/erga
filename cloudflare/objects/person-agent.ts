@@ -13,7 +13,7 @@ import { DurableObject } from "cloudflare:workers";
 import { ChatTables, STALE_MS, wakeRuns } from "../../agents/chat-store";
 import type { ChatSave, StoredChat } from "../../agents/checkpoint";
 import type { Env } from "../env";
-import { documentOf } from "../document-host";
+import { documentOf } from "./document-stub";
 
 export class PersonAgent extends DurableObject<Env> {
   private chats = new ChatTables({

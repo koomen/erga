@@ -2,7 +2,7 @@
 // needs: values by key (its files, its folders, its record, the room's Yjs
 // state, its versions), listed by prefix and in order, and one alarm (when
 // an unedited document expires). A Durable Object's storage is one as it is
-// (cloudflare/document-object.ts); MemoryStorage is one for the tests, and
+// (cloudflare/objects/document.ts); MemoryStorage is one for the tests, and
 // a folder on disk is one in local development (dev/).
 //
 // The room's history is a journal under `room/` (see `Journal`): a snapshot

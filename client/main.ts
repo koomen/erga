@@ -1,5 +1,5 @@
 // The page editor's shell: joins the document's room (its Durable Object,
-// cloudflare/document-object.ts) as one participant among others, renders the document in the
+// cloudflare/objects/document.ts) as one participant among others, renders the document in the
 // page editor, sends every edit to the room as you type and applies everyone
 // else's (people and their agents) as they land, shows who's here and where
 // their carets are, and offers quiet chrome:

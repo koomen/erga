@@ -3,7 +3,7 @@
 // and its room's state, opens the room when the first request arrives,
 // serves the document's API (host.ts), cuts versions as it is edited,
 // restores them, deletes itself when nobody edits it, and keeps its
-// row in the directory up to date. cloudflare/document-object.ts runs one in
+// row in the directory up to date. cloudflare/objects/document.ts runs one in
 // a Durable Object; the tests run one on MemoryStorage.
 //
 // The front door says who's asking, and the document decides what they may
