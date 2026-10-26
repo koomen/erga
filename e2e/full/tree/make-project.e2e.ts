@@ -6,11 +6,16 @@
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, js, openTreeEditor, paths } from "./tree";
 
-/** Waits until a control can be clicked (the editor's controls fade in and out), then clicks it. */
+/**
+ * Clicks a control of the editor's chrome once it can take the click. The chrome hides while the page changes (the
+ * editor's own first changes too, later on a busy machine) and comes back as the pointer moves: so the pointer moves,
+ * as a person's would, until it shows.
+ */
 async function clickWhenShown(page: Page, selector: string, what: string) {
+  let x = 200;
   await until(
-    () =>
-      page.evaluate((sel) => {
+    async () => {
+      const ok = await page.evaluate((sel) => {
         const g = document.querySelector(sel),
           r = g?.getBoundingClientRect();
         return (
@@ -18,7 +23,10 @@ async function clickWhenShown(page: Page, selector: string, what: string) {
           document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest(sel) == g &&
           getComputedStyle(g!.closest(".chrome") ?? g!).opacity == "1"
         );
-      }, selector),
+      }, selector);
+      if (!ok) await page.mouse.move((x = x == 200 ? 400 : 200), 300, { steps: 4 });
+    return ok;
+    },
     10_000,
     `${what} can be clicked`
   );
