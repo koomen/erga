@@ -46,7 +46,7 @@ import {
   type Author,
 } from "../../document/content";
 import { changesBetween } from "../../document/merge";
-import { BASE } from "./base";
+import { BASE } from "./shell";
 import { decodeStart, PING, PONG } from "../../shared/room-socket";
 import { base64, fromBase64 } from "../../shared/bytes";
 import { sleep } from "../../shared/time";

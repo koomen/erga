@@ -7,10 +7,18 @@ import { mimeOf } from "../../document/host";
 import { HomeDeploys, type HomeObject } from "../../server/home/index.ts";
 import { directoryOf } from "../d1";
 import type { Env } from "../env";
-import { currentFiles } from "../current-files";
 import { documentOf } from "./document-stub";
 
 const FIVE_MINUTES = 5 * 60 * 1000;
+
+/** A document's files as they are now: its page, its files and its current version's number; null if there's no such document. */
+async function currentFiles(
+  env: Env,
+  docId: string
+): Promise<{ index: string; files: Record<string, string | Uint8Array>; version: number | null } | null> {
+  const r = await documentOf(env, docId).currentFiles();
+  return r && { index: r.index, files: Object.fromEntries(r.files), version: r.version.n };
+}
 
 export class Home extends DurableObject<Env> implements HomeObject {
   private deploys = new HomeDeploys({

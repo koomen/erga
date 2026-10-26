@@ -3,10 +3,9 @@
 import type { DocName } from "../../document/api";
 import { files } from "../../document/content";
 import { pageUrl, slugify } from "../../document/pages";
-import { BASE } from "./base";
 import { live } from "../live/client";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";
-import { $, editing, type Shell } from "./shell";
+import { BASE, $, editing, type Shell } from "./shell";
 
 /** pages-tree.ts, once imported (a chunk of its own: pages-tree.js). */
 type TreeModule = { mountTree: typeof mountTree };
