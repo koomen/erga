@@ -133,7 +133,7 @@ export interface Control {
     /** Whose an installation is: the install's control Worker, and its fork secret's hash (the relayed webhook's signature). */
     ofInstallation(installation: number): Promise<{ control: string; secretHash: string } | null>;
   };
-  /** Erga's GitHub App (control/cloudflare/github-app.ts): whole on erga.dev's control Worker (its secrets), the public parts on an install's; null where none is set. */
+  /** Erga's GitHub App (control/cloudflare.ts): whole on erga.dev's control Worker (its secrets), the public parts on an install's; null where none is set. */
   github: GithubApp | null;
   /** Erga's Google OAuth client, on erga.dev's control Worker (GOOGLE_APP_CLIENT_ID, GOOGLE_APP_CLIENT_SECRET): installs sign in with Google through it. */
   google?: { clientId: string; secret: string; origin?: string | null } | null;

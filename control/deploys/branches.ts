@@ -1,6 +1,6 @@
 // Branches that deploy: Erga's own targets (deploy/targets.ts: production
 // from main, staging from staging), each deployed when its branch moves. The
-// repository (control/source) calls deployHook after a push or merge, and this
+// repository (control/source) hands the deploys a branch move after a push or merge, and this
 // builds the new head (the build container: control/builder/) and runs the
 // deploy pipeline on the target's Worker. It runs in the control Worker
 // (control/), apart from the app, in one Durable Object ("deploys",
@@ -1041,7 +1041,7 @@ export interface DomainEntry { hostname: string; primary: boolean; zone: string 
 /** GET /api/domains: each environment's domains. */
 export interface DomainsView { targets: Partial<Record<DeployName, DomainEntry[]>> }
 
-/** A release tag, as the repository reports it (control/deploys/hook.ts releaseHook): the tag, its commit (40 hex), who cut it. */
+/** A release tag, as the repository reports it (control/source/source-host.ts, released): the tag, its commit (40 hex), who cut it. */
 export interface ReleaseTag { tag: string; commit: string; by: string; at: number }
 
 /** An install's view of upstream (GET /api/deploys, `upstream`): the channel it follows, its latest, when it last looked, what the last Update did. */

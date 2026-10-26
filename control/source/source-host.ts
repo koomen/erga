@@ -4,13 +4,18 @@
 // The routes (control/source/routes.ts) check who's asking and hand it the
 // request.
 //
+// A push or merge that moves a branch, and a release tag cut, go to the
+// deploys' object (control/deploys/pipeline-object.ts), which deploys the
+// branch where it goes, and answers at once: the deploy runs on in the
+// background, its progress on GET /api/deploys and {type: "deploys"} on
+// /api/events. Only the control Worker has the deploys (its PIPELINE binding).
+//
 // Calls name the address the request came to (`origin`), which local
 // development's stand-ins for Artifacts and GitHub live at. GitHub's
 // installation tokens come from the App's key here (erga.dev's control
 // Worker), or from erga.dev over the fork's secret (an install's).
 
 import { DurableObject } from "cloudflare:workers";
-import { deployHook, publishEvent, releaseHook } from "../deploys/hook";
 import { byLine } from "../../shared/attribution";
 import {
   SourceError,
@@ -27,8 +32,7 @@ import {
   type UpdateResult,
   type UpstreamSource,
 } from "./index.ts";
-import { artifactsRemote, forkOf } from "../cloudflare/artifacts";
-import { githubAppOf, githubTokenFor, githubUninstallFor } from "../cloudflare/github-app";
+import { artifactsRemote, forkOf, githubAppOf, githubTokenFor, githubUninstallFor } from "../cloudflare";
 import { directoryOf } from "../../cloudflare/d1";
 import type { Env } from "../../cloudflare/env";
 
@@ -40,6 +44,12 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
     super(ctx, env);
     const sql = ctx.storage.sql;
     const app = githubAppOf(env), fork = forkOf(env);
+    const deploys = () => {
+      if (!env.PIPELINE) throw new Error("This Worker has no deploys (no PIPELINE binding): only the control Worker deploys.");
+      return env.PIPELINE.getByName("deploys");
+    };
+    /** An event to every admin listening on /api/events. */
+    const publish = async (event: { type: string } & Record<string, unknown>) => deploys().publish(event);
     this.repo = new SourceRepo({
       db: { exec: <T>(q: string, ...params: (string | number | null)[]) => sql.exec(q, ...params).toArray() as T[] },
       artifacts: async () => {
@@ -56,8 +66,8 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
       // GitHub's tokens: minted here with the App's key (erga.dev), or at upstream over the fork's secret (an install).
       ...(app || fork ? { githubToken: (id: number) => githubTokenFor(env, id), githubUninstall: (id: number) => githubUninstallFor(env, id) } : {}),
       moved: (m) => {
-        ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
-        ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${byLine(m.by, m.via)}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        ctx.waitUntil(publish({ type: "source", branch: m.branch, commit: m.new }).catch(() => {}));
+        ctx.waitUntil(deploys().hook(m.branch, m.new, `${m.how} by ${byLine(m.by, m.via)}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
         // main moved: the production deploy, in the change log (/admin/changes), with the commits it brought.
         if (m.branch == "main") {
           ctx.waitUntil((async () => {
@@ -67,8 +77,8 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
         }
       },
       // A release cut (a tag): the deploys' object puts it on stable (once its build is in the store).
-      released: (r) => ctx.waitUntil(releaseHook(r.tag, r.commit, byLine(r.by, r.via), env).catch((e) => console.error(`release hook (${r.tag}):`, e))),
-      changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
+      released: (r) => ctx.waitUntil(deploys().tagged({ tag: r.tag, commit: r.commit, by: byLine(r.by, r.via), at: Date.now() }).catch((e) => console.error(`release hook (${r.tag}):`, e))),
+      changed: () => ctx.waitUntil(publish({ type: "source" }).catch(() => {})),
       background: (work) => ctx.waitUntil(work),
       // A downstream (an install's control Worker: UPSTREAM names erga.dev's): its upstream's Git endpoint, read for anyone.
       upstream: () => upstreamOf(env),

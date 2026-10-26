@@ -20,11 +20,10 @@ import {
 } from "../deploys/pipeline";
 import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf, type Installed } from "./install";
 import { hashSecret } from "./forks";
-import { githubAppOf } from "../cloudflare/github-app";
+import { githubAppOf, releaseStoreOf } from "../cloudflare";
 import { mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
 import { open, seal, type Sealed } from "../deploys/seal";
 import type { Env } from "../../cloudflare/env";
-import { releaseStoreOf } from "../cloudflare/release-bucket";
 import { randomString, randomToken } from "../../shared/bytes";
 
 const SESSION = "session", RUN = "run";

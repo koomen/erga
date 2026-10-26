@@ -35,7 +35,7 @@ import { base64url, randomToken, sha256 } from "../../shared/bytes.ts";
 import { whoOf, type Platform } from "../../server/platform";
 import { cookies, setCookie } from "../../server/identity/index.ts";
 import type { Env } from "../../cloudflare/env";
-import { releaseStoreOf } from "../cloudflare/release-bucket";
+import { releaseStoreOf } from "../cloudflare";
 
 const COOKIE = "erga_deploy", OAUTH_COOKIE = DEPLOY_OAUTH_COOKIE;
 

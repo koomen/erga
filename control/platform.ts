@@ -11,8 +11,7 @@
 // database itself (not a copy), so a token whose hash is there is good
 // (Tokens, byHash).
 
-import type { ArtifactsBinding } from "./cloudflare/artifacts";
-import { githubAppOf } from "./cloudflare/github-app";
+import { type ArtifactsBinding, githubAppOf } from "./cloudflare";
 import { directoryOf, sqlOn } from "../cloudflare/d1";
 import type { Env } from "../cloudflare/env";
 import type { Pipeline } from "./deploys/pipeline-object";
@@ -55,7 +54,7 @@ export interface ControlEnv {
   /** The app's address (https://erga.dev): links back, and the stylesheet the Ops page uses. */
   APP_URL: string;
   /**
-   * Erga's GitHub App (control/cloudflare/github-app.ts): sign-in here (its user authorization, callback
+   * Erga's GitHub App (control/cloudflare.ts): sign-in here (its user authorization, callback
    * https://ops.erga.dev/auth/github/callback), Connect GitHub on the Ops page, and the webhook. erga.dev's control Worker
    * has its secrets (the client secret, the private key as PKCS#8 PEM, the webhook secret: set from files, never printed);
    * an install's has the public parts, and goes through erga.dev (UPSTREAM) for the rest.

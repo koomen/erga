@@ -1,4 +1,4 @@
-import type { ArtifactsBinding } from "../control/cloudflare/artifacts";
+import type { ArtifactsBinding } from "../control/cloudflare";
 import type { AdminAgentHost } from "./objects/admin-agent";
 import type { Deployer } from "../control/install/session";
 import type { DocumentObject } from "./objects/document";
@@ -136,7 +136,7 @@ export interface Env {
    */
   ARTIFACTS?: ArtifactsBinding;
   /**
-   * Erga's GitHub App (control/source/github.ts; control/cloudflare/github-app.ts), on a control Worker: its id, slug and client
+   * Erga's GitHub App (control/source/github.ts; control/cloudflare.ts), on a control Worker: its id, slug and client
    * id; and on erga.dev's, its secrets: the client secret (sign-in's code exchange), the private key (PKCS#8 PEM:
    * installation tokens) and the webhook secret. An install's control Worker has the public parts only.
    */
