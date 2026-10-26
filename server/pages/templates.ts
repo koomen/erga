@@ -1,5 +1,5 @@
 // What a new document can start from: the templates the + button offers
-// (the viewer's, the homepage's and the editor's), and /new?template=<id>
+// (the viewer's, the homepage's, the editor's and the documents page's New), and /new?template=<id>
 // makes. One registry, so a new template is one entry in TEMPLATES (its
 // starting files in assets/templates/<name>/, index.html and text files
 // beside it, which the Worker reads as text). No server code: the editor's
@@ -50,9 +50,12 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 
 const PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.1538) translate(-12 -12)" stroke-width="1.3867"><path d="M12 5.5v13M5.5 12h13"/></g></svg>`;
 
-/** The + button: `cls` gives it the look of the controls it sits with (the viewer's erga-view-button, the editor's icon-btn). */
-export const newDocButton = (cls: string) =>
-  `<button type="button" class="${cls} erga-new-btn" aria-label="New document" data-tip="New document" aria-haspopup="menu" aria-expanded="false" aria-controls="erga-new-menu">${PLUS}</button>`;
+/**
+ * The + button: `cls` gives it the look of the controls it sits with (the viewer's erga-view-button, the editor's icon-btn,
+ * the documents page's pill), and `label` a word beside the + (the documents page's "New").
+ */
+export const newDocButton = (cls: string, label = "") =>
+  `<button type="button" class="${cls} erga-new-btn" aria-label="New document"${label ? "" : ` data-tip="New document"`} aria-haspopup="menu" aria-expanded="false" aria-controls="erga-new-menu">${PLUS}${esc(label)}</button>`;
 
 /**
  * The picker, one on each page (or shadow root) whatever + buttons it has:
