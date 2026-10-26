@@ -1,3 +1,16 @@
+// What the control Worker has of Cloudflare: Erga's repository in Artifacts,
+// Erga's GitHub App as the Worker's settings and secrets have it, and the
+// release bucket.
+
+import { forkGithubToken, forkGithubUninstall, forkRemote, type ForkAccess } from "./install/forks";
+import type { InstallSpec } from "./install/install";
+import { githubOrigins, installationToken, uninstall, type GithubApp, type Remote } from "./source/index.ts";
+import { memoryBlobs, r2Blobs, ReleaseStore } from "./deploys/releases";
+import type { Env } from "../cloudflare/env";
+import { hex } from "../shared/bytes";
+
+// ---- Erga's repository
+
 // Where Erga's repository is: one Cloudflare Artifacts repo,
 // "erga", reached through the Worker's Artifacts binding (ARTIFACTS,
 // cloudflare.config.ts, only when the deploy names a namespace). Erga uses the
@@ -18,12 +31,6 @@
 // this file mints tokens for it the way Artifacts would (read or write, with
 // an expiry), signed with the dev server's secret. GitHub is a pretend GitHub
 // there too (dev/github-mock.ts): local development never reaches the real ones.
-
-import { forkRemote, type ForkAccess } from "../install/forks";
-import type { InstallSpec } from "../install/install";
-import type { Remote } from "../source/index.ts";
-import type { Env } from "../../cloudflare/env";
-import { hex } from "../../shared/bytes";
 
 /** The repository's name in the namespace. */
 export const REPO = "erga";
@@ -104,3 +111,61 @@ async function localToken(secret: string, repo: string, scope: string, exp: numb
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${scope}:${exp}:${repo}`)));
   return `art_local_${scope}_${exp}_${hex(mac).slice(0, 40)}?expires=${exp}`;
 }
+
+// ---- the GitHub App
+
+// Erga's GitHub App, as a Worker has it (control/source/github.ts): erga.dev's
+// control Worker has the App whole (its id, slug and client id in
+// deploy/targets.json, control.vars; the client secret, the private key and the webhook
+// secret as its secrets). An install's control Worker has only the public
+// parts (its install set them), and reaches the rest through erga.dev over
+// its fork's secret (control/install/forks.ts): installation tokens, the uninstall,
+// the consent's relay. Local development has the pretend GitHub
+// (dev/github-mock.ts) at the dev server, ERGA_GITHUB_ORIGIN.
+
+export type GithubAppEnv = Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_SLUG" | "GITHUB_APP_CLIENT_ID" | "GITHUB_APP_CLIENT_SECRET" | "GITHUB_APP_PRIVATE_KEY" | "GITHUB_WEBHOOK_SECRET" | "ERGA_GITHUB_ORIGIN" | "UPSTREAM" | "INSTALL" | "FORK_SECRET">;
+
+/** The App as this Worker knows it (the public parts at least), or null where there's none (an app Worker). */
+export function githubAppOf(env: GithubAppEnv): GithubApp | null {
+  const clientId = env.GITHUB_APP_CLIENT_ID?.trim();
+  if (!clientId) return null;
+  const { www, api } = githubOrigins(env.ERGA_GITHUB_ORIGIN);
+  return {
+    appId: env.GITHUB_APP_ID?.trim() ?? "", slug: env.GITHUB_APP_SLUG?.trim() || "erga-editor", clientId,
+    ...(env.GITHUB_APP_CLIENT_SECRET ? { clientSecret: env.GITHUB_APP_CLIENT_SECRET } : {}),
+    ...(env.GITHUB_APP_PRIVATE_KEY ? { privateKey: env.GITHUB_APP_PRIVATE_KEY } : {}),
+    ...(env.GITHUB_WEBHOOK_SECRET ? { webhookSecret: env.GITHUB_WEBHOOK_SECRET } : {}),
+    www, api,
+  };
+}
+
+/** An installation token: minted here with the App's key, or at upstream over the fork's secret (an install). */
+export async function githubTokenFor(env: GithubAppEnv, installationId: number): Promise<{ token: string; expiresAt: number }> {
+  const app = githubAppOf(env);
+  if (app?.privateKey) return installationToken(app, installationId);
+  const fork = forkOf(env);
+  if (fork) return forkGithubToken(fork, installationId);
+  throw new Error("This server can't reach GitHub as the App: it has no private key, and no upstream to ask.");
+}
+
+/** The App uninstalled from the account: here with the key, or through upstream. */
+export async function githubUninstallFor(env: GithubAppEnv, installationId: number): Promise<void> {
+  const app = githubAppOf(env);
+  if (app?.privateKey) return uninstall(app, installationId);
+  const fork = forkOf(env);
+  if (fork) await forkGithubUninstall(fork, installationId);
+}
+
+// ---- the release store
+
+// The release store (control/deploys/releases.ts) as this Worker has it: the control
+// Worker's bucket (RELEASES, control/wrangler.jsonc); in local development,
+// over the mock Cloudflare, one in memory that the deploys' object and the
+// routes that serve it share. The app Workers on erga.dev have none.
+
+/** Local development's release store (ERGA_DEPLOY_MOCK): in memory, one per isolate. */
+export const DEV_BLOBS = memoryBlobs();
+
+/** The release store this Worker has, or null. */
+export const releaseStoreOf = (env: Pick<Env, "RELEASES" | "ERGA_DEPLOY_MOCK">): ReleaseStore | null =>
+  env.RELEASES ? new ReleaseStore(r2Blobs(env.RELEASES)) : env.ERGA_DEPLOY_MOCK == "1" ? new ReleaseStore(DEV_BLOBS) : null;

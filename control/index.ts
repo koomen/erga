@@ -17,13 +17,12 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Actor, GithubLink, PushEvent, SourceRead } from "./source/index.ts";
 import { CONTROL } from "../deploy/targets";
-import { releaseStoreOf } from "./cloudflare/release-bucket";
+import { githubAppOf, releaseStoreOf } from "./cloudflare";
 import { installFleet } from "./deploys/fleet";
 import { deployDoor } from "./install/routes";
 import type { Env } from "../cloudflare/env";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
-import { githubAppOf } from "./cloudflare/github-app";
 import { sealKeyFrom } from "./deploys/credential";
 import { hashSecret } from "./install/forks";
 import { remoteAssets } from "../server/pages/index.ts";

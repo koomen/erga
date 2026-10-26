@@ -91,7 +91,7 @@ export function httpBackend(root: string, req: GitRequest): Promise<GitResponse>
 
 const mac = (secret: string, scope: string, exp: number, repo: string) => createHmac("sha256", secret).update(`${scope}:${exp}:${repo}`).digest("hex").slice(0, 40);
 
-/** A local repo token (the Worker's stand-in binding makes them the same way, control/cloudflare/artifacts.ts). */
+/** A local repo token (the Worker's stand-in binding makes them the same way, control/cloudflare.ts). */
 export function localToken(secret: string, repo: string, scope: "read" | "write", ttl = 3600): string {
   const exp = Math.floor(Date.now() / 1000) + ttl;
   return `art_local_${scope}_${exp}_${mac(secret, scope, exp, repo)}?expires=${exp}`;

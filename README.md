@@ -182,7 +182,7 @@ health checks and rollbacks work.
                       pipeline-object.ts), the release store (releases.ts), the deploys' API (api.ts), and the app's
                       own deploy routes (app-routes.ts)
       install/        /deploy: installs in other accounts (install.ts, forks.ts, the page, its routes and session)
-      cloudflare/     what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
+      cloudflare.ts   what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
     deploy/       what a person runs on a machine: a deploy (run.ts), the release build (release.ts), the setup
                   runbook (setup.ts), the targets (targets.json, targets.ts), the settings a deploy locks
                   (locked-settings.ts)

@@ -4,7 +4,7 @@
 // control/source/routes.ts.
 
 import { tar, type SourceService } from "./index.ts";
-import { artifactsRemote, hasSource } from "../cloudflare/artifacts";
+import { artifactsRemote, hasSource } from "../cloudflare";
 import type { Env } from "../../cloudflare/env";
 
 /** Erga's repository, as the app reaches it; null on a server with no repository. */

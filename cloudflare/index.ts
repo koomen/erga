@@ -18,14 +18,13 @@
 //                              served here in local development
 //   /__erga/...                the dev server's (dev.ts)
 
-import { githubAppOf } from "../control/cloudflare/github-app";
+import { githubAppOf, releaseStoreOf } from "../control/cloudflare";
 import { sealKeyFrom } from "../control/deploys/credential";
 import { hashSecret } from "../control/install/forks";
 import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
 import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
-import { releaseStoreOf } from "../control/cloudflare/release-bucket";
 import { CONTROL } from "../deploy/targets";
 import type { DeploysObject } from "../control/deploys/api";
 import { deploysDoor, isDeploysPath } from "../control/deploys/app-routes";

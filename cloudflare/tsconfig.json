@@ -11,5 +11,5 @@
     "allowImportingTsExtensions": true,
     "types": []
   },
-  "include": ["*.ts", "../control/deploys/hook.ts", "../shared/text-imports.d.ts", "../.cloudflare/types"]
+  "include": ["*.ts", "../shared/text-imports.d.ts", "../.cloudflare/types"]
 }
