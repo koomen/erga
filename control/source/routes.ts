@@ -42,7 +42,11 @@ import type { SourceAnswer, SourceRead } from "./browse.ts";
 import { gitHttp } from "./http.ts";
 import type { Remote } from "./remote.ts";
 import type { GithubLink, PushEvent } from "./github.ts";
-import type { Actor, BranchInfo, GithubStatus, MergeConflict, Released, TagInfo, UpdateResult, UpstreamView } from "./repo.ts";
+import type { Actor, BranchInfo } from "./repo.ts";
+import type { GithubStatus } from "./github-sync.ts";
+import type { MergeConflict } from "./conflicts.ts";
+import type { Released, TagInfo } from "./releases.ts";
+import type { UpdateResult, UpstreamView } from "./upstream.ts";
 import { json } from "../../shared/http";
 
 /** The repository's object (one, "erga"): pushes and merges happen there one at a time. Calls name the address the request came to (`origin`). */
