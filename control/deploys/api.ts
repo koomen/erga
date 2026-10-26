@@ -34,7 +34,7 @@ import { whoOf } from "../../server/platform.ts";
 import type { DashboardDeploys } from "../../agents/admin/sessions.ts";
 import { json } from "../../shared/http";
 
-/** The pipeline's object, as these routes need it: the dashboard's calls, a target's history, and the event stream. */
+/** The pipeline's object, as these routes need it: the Ops page's calls, a target's history, and the event stream. */
 export interface DeploysObject extends DashboardDeploys {
   historyOf(name: string, limit?: number): Promise<object[] | null>;
   /** The Cloudflare credential (control/deploys/credential.ts): its status; a consent's grant kept; forgotten (the control Worker's /install). */
