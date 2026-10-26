@@ -3,9 +3,9 @@
 // follows the build's output line by line; the release it hands back is
 // the one the pipeline deploys.
 
-import { DeployError, type Release } from "../../deploy/pipeline";
-import { unpackRelease } from "../../deploy/bundle";
-import type { Builder } from "../../deploy/branches";
+import { DeployError, type Release } from "../deploys/pipeline";
+import { unpackRelease } from "../deploys/bundle";
+import type { Builder } from "../deploys/branches";
 
 /** A builder behind `fetcher`: the control Worker's own builderFetch (worker.ts), or a service binding to one. */
 export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: (ms: number) => Promise<void> } = {}): Builder {

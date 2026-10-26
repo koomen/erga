@@ -1,9 +1,9 @@
-import type { ArtifactsBinding } from "./artifacts";
+import type { ArtifactsBinding } from "../control/cloudflare/artifacts";
 import type { AdminAgentHost } from "./objects/admin-agent";
-import type { Deployer } from "./deploy-session";
+import type { Deployer } from "../control/install/session";
 import type { DocumentObject } from "./document-object";
-import type { SourceHost } from "./objects/source";
-import type { Pipeline } from "./pipeline";
+import type { SourceHost } from "../control/source/source-host";
+import type { Pipeline } from "../control/deploys/pipeline-object";
 import type { Home } from "./objects/home";
 import type { OwnStorage } from "./objects/own";
 import type { PersonAgent } from "./objects/person-agent";
@@ -55,7 +55,7 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   /** The OpenAI key, a Worker secret: the same fallback, for OpenAI's models. */
   OPENAI_API_KEY?: string;
-  /** The deploy page's sessions (/deploy, cloudflare/deploy-routes.ts): one Durable Object each, holding the Cloudflare token for the deploy only. */
+  /** The deploy page's sessions (/deploy, control/install/routes.ts): one Durable Object each, holding the Cloudflare token for the deploy only. */
   DEPLOYS: DurableObjectNamespace<Deployer>;
   /**
    * The deploy page's Cloudflare OAuth client (a public client, PKCE): with
@@ -70,7 +70,7 @@ export interface Env {
    * Where documents' pages run: one origin each under this domain
    * (<id>-<owner>.<PAGES_DOMAIN>, a wildcard route), production's pages domain (deploy/targets.json) when
    * unset; or PAGES_HOST, one host they all share (a server on workers.dev,
-   * which has no wildcards; deploy/pipeline.ts sets one or the other).
+   * which has no wildcards; control/deploys/pipeline.ts sets one or the other).
    */
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
@@ -101,14 +101,14 @@ export interface Env {
   CONTROL_URL?: string;
   /** The control Worker only: its build containers (control/builder/worker.ts), and its own version (the release cache's key). */
   BUILDS?: DurableObjectNamespace<import("../control/builder/worker").Builder>;
-  /** The control Worker only: the release store's bucket (deploy/releases.ts). */
+  /** The control Worker only: the release store's bucket (control/deploys/releases.ts). */
   RELEASES?: R2Bucket;
-  /** An install's control Worker only (deploy/install.ts): erga.dev's control Worker, whose store it upgrades from and whose OAuth callback relays its consent; and its one target, as JSON (InstallSpec). */
+  /** An install's control Worker only (control/install/install.ts): erga.dev's control Worker, whose store it upgrades from and whose OAuth callback relays its consent; and its one target, as JSON (InstallSpec). */
   UPSTREAM?: string;
   INSTALL?: string;
   /** An install's control Worker only: the channel it follows (stable unless "edge"). */
   CHANNEL?: string;
-  /** An install's control Worker only (a secret): what it reaches its fork's repository and builds at upstream with (deploy/forks.ts). */
+  /** An install's control Worker only (a secret): what it reaches its fork's repository and builds at upstream with (control/install/forks.ts). */
   FORK_SECRET?: string;
   CF_VERSION_METADATA?: { id?: string };
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare, never the real one. */
@@ -136,7 +136,7 @@ export interface Env {
    */
   ARTIFACTS?: ArtifactsBinding;
   /**
-   * Erga's GitHub App (server/source/github.ts; cloudflare/github-app.ts), on a control Worker: its id, slug and client
+   * Erga's GitHub App (control/source/github.ts; control/cloudflare/github-app.ts), on a control Worker: its id, slug and client
    * id; and on erga.dev's, its secrets: the client secret (sign-in's code exchange), the private key (PKCS#8 PEM:
    * installation tokens) and the webhook secret. An install's control Worker has the public parts only.
    */

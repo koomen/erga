@@ -22,7 +22,7 @@
 
 import { pageAddress } from "../../document/pages.ts";
 import type { ViewAnswer } from "../../document/document.ts";
-import { mayDeploy } from "../deploys/access.ts";
+import { mayDeploy } from "../../control/deploys/access.ts";
 import { ID, OWNER, type Role, roleMay } from "../directory/index.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";

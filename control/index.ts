@@ -15,31 +15,31 @@
 // the app serves at /admin/ops, as the admin.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { Actor, GithubLink, PushEvent, SourceRead } from "../server/source/index.ts";
+import type { Actor, GithubLink, PushEvent, SourceRead } from "./source/index.ts";
 import { CONTROL } from "../deploy/targets";
-import { releaseStoreOf } from "../cloudflare/releases";
-import { installFleet } from "../deploy/fleet";
-import { deployDoor } from "../cloudflare/deploy-routes";
+import { releaseStoreOf } from "./cloudflare/release-bucket";
+import { installFleet } from "./deploys/fleet";
+import { deployDoor } from "./install/routes";
 import type { Env } from "../cloudflare/env";
 import { controlPlatform, type ControlEnv } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
-import { githubAppOf } from "../cloudflare/github-app";
-import { sealKeyFrom } from "../deploy/credential";
-import { hashSecret } from "../deploy/forks";
+import { githubAppOf } from "./cloudflare/github-app";
+import { sealKeyFrom } from "./deploys/credential";
+import { hashSecret } from "./install/forks";
 import { remoteAssets } from "../server/pages/index.ts";
 import { withSecurity } from "../server/security.ts";
 
 export { Builder } from "./builder/worker";
-export { Pipeline } from "../cloudflare/pipeline";
-export { SourceHost } from "../cloudflare/objects/source";
-export { Deployer } from "../cloudflare/deploy-session";
+export { Pipeline } from "./deploys/pipeline-object";
+export { SourceHost } from "./source/source-host";
+export { Deployer } from "./install/session";
 
 /** What the app calls over its CONTROL binding: the repository's object and the deploys', for the admin's agent. */
 export class App extends WorkerEntrypoint<ControlEnv> {
   private get source() { return this.env.SOURCE.getByName("erga"); }
   private get deploys() { return this.env.PIPELINE.getByName("deploys"); }
 
-  // The repository (server/source/routes.ts SourceObject, but a push).
+  // The repository (control/source/routes.ts SourceObject, but a push).
   advertise(origin: string) { return this.source.advertise(origin); }
   branches(origin: string) { return this.source.branches(origin); }
   // GitHub: the status, a sync now, the repository connected (the consent's end), disconnected, a push there (the webhook).
@@ -72,7 +72,7 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   domains() { return this.deploys.domains(); }
   addDomain(name: string, hostname: string, by: string) { return this.deploys.addDomain(name, hostname, by); }
   removeDomain(name: string, hostname: string, by: string) { return this.deploys.removeDomain(name, hostname, by); }
-  // The release store (deploy/releases.ts).
+  // The release store (control/deploys/releases.ts).
   releases() { return this.deploys.releases(); }
   /** GET /api/events, the deploys' event stream: the app's Ops page (erga.dev/admin/ops) listens to it through the app. */
   fetch(request: Request) { return this.deploys.fetch(request); }

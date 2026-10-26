@@ -45,7 +45,7 @@ admin-scope token. The guard is `server/identity/admins-only.ts`, from
 
 The control Worker deploys with an OAuth grant that an admin gave once. No
 API token is stored anywhere. An admin gives the grant with Connect
-Cloudflare on the Ops page (a consent in a popup, `deploy/credential.ts`).
+Cloudflare on the Ops page (a consent in a popup, `control/deploys/credential.ts`).
 When Cloudflare refuses the grant, the Ops page's Cloudflare card shows
 Cloudflare's own words, and Connect Cloudflare. The deploys that waited
 start after the new grant.
@@ -60,7 +60,7 @@ start after the new grant.
 ## The control Worker's own deploy
 
 After production deploys, the control Worker deploys itself from the same
-commit (`deploy/control.ts`). So a change under `control/` reaches the
+commit (`control/deploys/control-worker.ts`). So a change under `control/` reaches the
 control Worker when it reaches `main`.
 
 Two changes still need wrangler from a machine

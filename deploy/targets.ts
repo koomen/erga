@@ -12,7 +12,7 @@
 // ops.erga.dev, control/), which holds Erga's repository, the pipeline, the
 // Ops page and the build container, apart from the app, so a broken app
 // never takes the way to fix it down with it. It is the one Worker in the
-// account that deploys, with the one credential: an admin's OAuth grant (deploy/credential.ts).
+// account that deploys, with the one credential: an admin's OAuth grant (control/deploys/credential.ts).
 //
 // Both targets are in the same Cloudflare account (targets.json `account`:
 // the control Worker's CLOUDFLARE_ACCOUNT_ID; CLOUDFLARE_ACCOUNT_ID in the
@@ -72,7 +72,7 @@ export interface TargetSpec {
  * the build container, on its own hostname. It deploys itself too, from
  * `branch` (main), after production: the release carries its bundle
  * (deploy/release.ts), and the pipeline uploads it with the same health
- * check and rollback as the app's targets (deploy/control.ts). Its
+ * check and rollback as the app's targets (control/deploys/control-worker.ts). Its
  * container image, and a new Durable Object class, still need wrangler
  * (deploy/setup.ts --control).
  */
@@ -82,7 +82,7 @@ export interface ControlSpec {
   /** Its hostname (a Workers custom domain), and the zone it's on. */
   host: string;
   zone: string;
-  /** The release store's R2 bucket (deploy/releases.ts; deploy/setup.ts makes it). */
+  /** The release store's R2 bucket (control/deploys/releases.ts; deploy/setup.ts makes it). */
   releases: string;
   /** Text bindings over control/wrangler.jsonc's: Erga's GitHub App (id, slug, client id) and its OAuth client on Cloudflare. */
   vars: Record<string, string>;
@@ -122,7 +122,7 @@ export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([nam
 export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
 
-/** Everything a control Worker deploys: Erga's own targets and the control Worker itself (last: after production, on main); an install's app ("app") and its control Worker (deploy/fleet.ts). */
+/** Everything a control Worker deploys: Erga's own targets and the control Worker itself (last: after production, on main); an install's app ("app") and its control Worker (control/deploys/fleet.ts). */
 export type DeployName = TargetName | "control" | "app";
 /** Erga's own deploys: what deploy/run.ts and the setup deploy from a machine. */
 export type OwnDeployName = TargetName | "control";

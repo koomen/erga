@@ -1,6 +1,6 @@
 // A pretend GitHub, for the tests and local development: the parts of
 // github.com and api.github.com that Erga's GitHub App touches
-// (server/source/github.ts), in front of the pretend Git host
+// (control/source/github.ts), in front of the pretend Git host
 // (git-server.ts, /__github/<owner>/<repo>.git). One origin, the dev
 // server's, under /__github:
 //

@@ -28,14 +28,14 @@ import { restoredLog } from "../checkpoint.ts";
 import type { ToolWho } from "../tools.ts";
 import { isModelChoice, MODELS } from "../document/session.ts";
 import { emptyLog, type Log, type Offer } from "../../shared/agent-log.ts";
-import type { CredentialStatus } from "../../deploy/credential.ts";
+import type { CredentialStatus } from "../../control/deploys/credential.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { forgetHome } from "../../server/home/index.ts";
 import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
 import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
-import type { GithubStatus, SourceAnswer, SourceRead } from "../../server/source/index.ts";
+import type { GithubStatus, SourceAnswer, SourceRead } from "../../control/source/index.ts";
 
 const enc = new TextEncoder();
 
@@ -47,13 +47,13 @@ export interface DashboardDeploys {
   redeployWith(name: string, trigger: string, o: { fresh?: boolean }): Promise<{ ok: boolean; status?: unknown; error?: string }>;
   /** Back to the Worker version before the target's live deploy (its restore point). */
   rollback(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
-  /** The release store (deploy/releases.ts): both channels (null: no store). */
+  /** The release store (control/deploys/releases.ts): both channels (null: no store). */
   releases(): Promise<object | null>;
-  /** Each environment's domains, and one added or removed (deploy/branches.ts). */
+  /** Each environment's domains, and one added or removed (control/deploys/branches.ts). */
   domains(): Promise<object>;
   addDomain(target: string, hostname: string, by: string): Promise<object>;
   removeDomain(target: string, hostname: string, by: string): Promise<object>;
-  /** The control Worker's Cloudflare credential (deploy/credential.ts): its status, and revoked (the Ops page's card). */
+  /** The control Worker's Cloudflare credential (control/deploys/credential.ts): its status, and revoked (the Ops page's card). */
   credentialStatus(): Promise<CredentialStatus>;
   disconnectCredential(): Promise<void>;
 }
@@ -89,7 +89,10 @@ export class AdminAgents {
   /** Erga's repository, where this server has one. */
   private source() {
     const source = this.platform.source;
-    if (!source) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and server/source/import.ts fills it.");
+    if (!source)
+      throw new Error(
+        "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and control/source/import.ts fills it."
+      );
     return source.object;
   }
 

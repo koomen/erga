@@ -7,7 +7,7 @@
 import type { AgentToken, AppValues, AuthStorage, Tokens } from "./identity/index.ts";
 import type { TargetName } from "../deploy/targets.ts";
 import type { HomeObject } from "./home/index.ts";
-import type { SourceService } from "./source/index.ts";
+import type { SourceService } from "../control/source/index.ts";
 import type { AdminAgentObject, DashboardDeploys } from "../agents/admin/sessions.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
@@ -128,14 +128,14 @@ export interface Platform {
     googleApp?: AppValues;
     /** A stand-in for Google's sign-in endpoints (the tests'); null or absent: Google's own. */
     google?: string | null;
-    /** An install's server: erga.dev's control Worker, whose GitHub callback (the App's one) relays the sign-in here (server/source/github.ts); null elsewhere. */
+    /** An install's server: erga.dev's control Worker, whose GitHub callback (the App's one) relays the sign-in here (control/source/github.ts); null elsewhere. */
     relay: string | null;
     /** Local development: the login signed in without GitHub; null elsewhere. */
     devLogin: string | null;
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */
     encryptionKey: string | null;
   };
-  /** Erga's own repository (server/source), where this server hosts it; null where it doesn't. */
+  /** Erga's own repository (control/source), where this server hosts it; null where it doesn't. */
   source: SourceService | null;
   /** The deploys, as the admin agent's dashboard asks them: the pipeline's object (the control Worker's, over its binding, on erga.dev). */
   deploys: DashboardDeploys;

@@ -10,10 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitServers, localToken } from "../dev/git-server.ts";
 import { mockGithub, type MockGithub } from "../dev/github-mock.ts";
-import { gitHttp } from "../server/source/http.ts";
-import { installationToken, linkOf, uninstall, type GithubLink } from "../server/source/github.ts";
-import { SourceRepo, type Move } from "../server/source/repo.ts";
-import type { Remote } from "../server/source/remote.ts";
+import { gitHttp } from "../control/source/http.ts";
+import { installationToken, linkOf, uninstall, type GithubLink } from "../control/source/github.ts";
+import { SourceRepo, type Move } from "../control/source/repo.ts";
+import type { Remote } from "../control/source/remote.ts";
 
 export interface Fixture {
   url: string;
@@ -95,7 +95,7 @@ export function startFixture(opts: { upstream?: boolean; /** The pretend GitHub'
       const gh = await mock.fetch(request);
       if (gh) return gh;
       if (url.pathname.startsWith("/git/erga.git")) {
-        // As server/source/routes.ts, but anyone with credentials is Ada.
+        // As control/source/routes.ts, but anyone with credentials is Ada.
         const basic = /^Basic\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
         if (!basic) return new Response("who?", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga"' } });
         return gitHttp(request, url.pathname.slice("/git/erga.git".length), {

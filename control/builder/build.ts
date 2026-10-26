@@ -3,11 +3,11 @@
 // machine. A Worker can't run `bun install` or Vite, so this
 // is the one part of a deploy that runs outside the Worker.
 //
-//   1. fetch the commit from the source repo, depth 1 (a Git remote and a read token: deploy/source.ts)
+//   1. fetch the commit from the source repo, depth 1 (a Git remote and a read token: control/deploys/build-source.ts)
 //   2. bun install --frozen-lockfile    (the image has the packages in Bun's cache: Dockerfile)
 //   3. bun run build                     (the client's files, into .build/)
 //   4. bun run release                   (cf build: the Worker and its config, into .build/release/)
-//   5. pack .build/release/ as one bundle (deploy/bundle.ts reads it)
+//   5. pack .build/release/ as one bundle (control/deploys/bundle.ts reads it)
 //
 // Self-contained (no imports from the rest of the repo), so the container
 // image needs only this file and server.ts.

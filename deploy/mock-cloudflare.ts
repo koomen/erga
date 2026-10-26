@@ -46,8 +46,8 @@
 // Worker uploaded (the tests restart the server that deployed itself).
 
 import { createHash } from "node:crypto";
-import type { Fetch, Release } from "./pipeline";
-import type { Builder } from "./branches";
+import type { Fetch, Release } from "../control/deploys/pipeline";
+import type { Builder } from "../control/deploys/branches";
 import { memoryStore, snapshotDoor, type DocStore } from "./snapshot";
 
 export interface MockState {
@@ -152,9 +152,9 @@ const jwt = (claims: Record<string, unknown>) => `${btoa(JSON.stringify({ alg: "
 const UPLOAD = (single: boolean) => jwt({ kind: "upload", ...(single ? { wrangler_single_asset_uploads: true } : {}) });
 const COMPLETE = jwt({ kind: "complete" });
 
-/** Erga's own account in the fleet mock (deploy/branches.ts's tests and the dev server's ERGA_DEPLOY_MOCK). */
+/** Erga's own account in the fleet mock (control/deploys/branches.ts's tests and the dev server's ERGA_DEPLOY_MOCK). */
 export const FLEET_ACCOUNT = ACCOUNT_ID;
-/** What the mock's consent grants (deploy/credential.ts CONTROL_OAUTH_SCOPES, as Cloudflare echoes them in the token's `scope`). */
+/** What the mock's consent grants (control/deploys/credential.ts CONTROL_OAUTH_SCOPES, as Cloudflare echoes them in the token's `scope`). */
 export const MOCK_OAUTH_SCOPES = "workers-scripts.edit containers.write cloudchamber.write d1.write artifacts.write workers-routes.write dns.write zone.read account-settings.read offline_access";
 export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 /** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
@@ -173,7 +173,7 @@ export function mockCloudflare(opts: {
   /**
    * Whether a token made through the API (mock-scoped-…) without Workers Containers Write may upload a version
    * that names a container's class. Cloudflare's answer isn't known yet: "refuse" (the default) plays the cautious
-   * one. (Erga deploys with an OAuth grant now, deploy/credential.ts; the mock's tokens stay for the API's shape.)
+   * one. (Erga deploys with an OAuth grant now, control/deploys/credential.ts; the mock's tokens stay for the API's shape.)
    */
   scopedContainers?: "refuse" | "accept";
 } = {}): { fetch: Fetch; state: MockState; tokenValues: Map<string, string> } {
@@ -513,7 +513,7 @@ export function mockCloudflare(opts: {
         if (!opts.fleet || r[1] != "erga" || !state.repos.includes(r[2])) return fail(404, 10404, "repo not found");
         return ok({ name: r[2], namespace: r[1], remote: `https://artifacts.mock/git/erga/${r[2]}.git`, default_branch: "main" });
       }
-      // A repo made (an install's fork: deploy/forks.ts).
+      // A repo made (an install's fork: control/install/forks.ts).
       if (m == "POST" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos$/.exec(rest))) {
         const b = await body();
         if (!opts.fleet || r[1] != "erga") return fail(404, 10404, "namespace not found");

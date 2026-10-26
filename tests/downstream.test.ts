@@ -1,4 +1,4 @@
-// An install in another Cloudflare account (deploy/install.ts, from /deploy on
+// An install in another Cloudflare account (control/install/install.ts, from /deploy on
 // the control Worker): both Workers, what each is told, the order; the GitHub
 // App manifest flow's return; and the consent relay for an install's control
 // Worker (control/routes.ts).
@@ -6,10 +6,10 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { controlRoutes, relayOrigin, type Control } from "../control/routes";
-import { Cloudflare, loadRelease, type DeployPlan, type Release } from "../deploy/pipeline";
-import { controlHostOf, INSTALL_STEPS, installControlMetadata, runInstall, stagingHostOf } from "../deploy/install";
-import { builderEndpoint, forkBuilder, forkRemote, hashSecret } from "../deploy/forks";
-import { memoryBlobs, ReleaseStore } from "../deploy/releases";
+import { Cloudflare, loadRelease, type DeployPlan, type Release } from "../control/deploys/pipeline";
+import { controlHostOf, INSTALL_STEPS, installControlMetadata, runInstall, stagingHostOf } from "../control/install/install";
+import { builderEndpoint, forkBuilder, forkRemote, hashSecret } from "../control/install/forks";
+import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
 import { mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
@@ -204,7 +204,7 @@ describe("the consent relay", () => {
   });
 });
 
-describe("a fork at upstream (deploy/forks.ts)", () => {
+describe("a fork at upstream (control/install/forks.ts)", () => {
   test("its control Worker gets a token for the fork's repository with its secret, and nothing with another; a build of its commit streams back", async () => {
     const platform = { sessionOf: async () => null, directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } } } as unknown as Platform;
     const hash = await hashSecret(FORK.secret);

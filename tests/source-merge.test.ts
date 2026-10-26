@@ -1,4 +1,4 @@
-// The three-way merge (server/source/merge.ts) against real git: the tree
+// The three-way merge (control/source/merge.ts) against real git: the tree
 // git's own merge makes, `git merge-file` for the text, and a pack git takes.
 
 import { describe, expect, test } from "bun:test";
@@ -6,8 +6,18 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { hashObject, parseTree, readPack, text, treeBytes, utf8, writePack, type GitObject, type TreeEntry } from "../server/source/git.ts";
-import { isBinary, mergeText, mergeTrees, type ObjectReader } from "../server/source/merge.ts";
+import {
+  hashObject,
+  parseTree,
+  readPack,
+  text,
+  treeBytes,
+  utf8,
+  writePack,
+  type GitObject,
+  type TreeEntry,
+} from "../control/source/git.ts";
+import { isBinary, mergeText, mergeTrees, type ObjectReader } from "../control/source/merge.ts";
 
 const env = { ...process.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "", GIT_AUTHOR_NAME: "Ada", GIT_AUTHOR_EMAIL: "ada@example.com", GIT_COMMITTER_NAME: "Ada", GIT_COMMITTER_EMAIL: "ada@example.com" };
 const scratch = () => mkdtempSync(join(tmpdir(), "erga-merge-"));

@@ -8,10 +8,10 @@
 //
 //   /                           the Ops page (the environments, the Cloudflare credential, the source and deploys);
 //                               /admin/ops too, and /source, /admin/source and /admin/factory redirect to it
-//   /api/source/...             its API (server/source/routes.ts)
-//   /api/deploys..., /api/events    the deploys' API and the event stream (server/deploys/api.ts)
+//   /api/source/...             its API (control/source/routes.ts)
+//   /api/deploys..., /api/events    the deploys' API and the event stream (control/deploys/api.ts)
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
-//   /git, /git/tree/...         Erga's source for anyone, read-only: branches, commits, files (server/source/public.ts)
+//   /git, /git/tree/...         Erga's source for anyone, read-only: branches, commits, files (control/source/public.ts)
 //   /auth/github[/callback], /auth/logout   signing in (Erga's GitHub App: its user authorization) and out. The callback is the
 //                               App's one: an install's consent (its origin in the state) is relayed to it from here, and
 //                               Connect GitHub comes back to it too (installation_id)
@@ -33,15 +33,15 @@
 //   GET  /install/callback      back from it: the code exchanged, the grant kept, checked with one read, the deploys that
 //                               waited for it started. In a popup, a page that tells the Ops page that opened it (postMessage
 //                               to Erga's own origins, a BroadcastChannel here) and closes; else back to /install. Also the
-//                               deploy page's return (cloudflare/deploy-routes.ts, its cookie says so), and the relay: a
+//                               deploy page's return (control/install/routes.ts, its cookie says so), and the relay: a
 //                               consent an install's control Worker started comes back here and goes on to it
 //   POST /install/disconnect    the grant revoked and forgotten (the Ops page's card: POST /api/deploys/credential/disconnect)
 //   GET  /api/install           the credential's status, as JSON
-//   /deploy, /deploy/...        install Erga in your own Cloudflare account (cloudflare/deploy-routes.ts); not on an install's
+//   /deploy, /deploy/...        install Erga in your own Cloudflare account (control/install/routes.ts); not on an install's
 //                               control Worker
 //   (the pages here are the app's markup, and name the app's own stylesheet and typeface, at the app's origin: control/index.ts)
 //   GET  /releases, /releases/<channel>.json, /releases/<version>/...
-//                               the release store, for anyone (deploy/releases.ts): the channels, and each release's files
+//                               the release store, for anyone (control/deploys/releases.ts): the channels, and each release's files
 //   GET  /api/releases          admins: both channels (the Ops page marks edge's latest and stable's tag on the log)
 //   GET  /api/domains           admins: each environment's domains (its Worker's custom domains; the first is its own address)
 //   POST /api/domains           admins: { target, hostname }: a domain added to an environment (a hostname on one of the account's zones)
@@ -59,38 +59,68 @@
 // admin-scope token made on the app. A broken app changes nothing here: the
 // admins and their tokens are read from production's database directly.
 
-import { authorizeUrl, CONTROL_OAUTH_SCOPES, exchangeCode, pkce, randomToken, sealKeyFrom, type CredentialStatus } from "../deploy/credential.ts";
-import { mockConsentPage } from "../deploy/page.ts";
-import { Cloudflare, type Fetch } from "../deploy/pipeline.ts";
-import { releasesDoor, type ReleaseStore } from "../deploy/releases.ts";
+import {
+  authorizeUrl,
+  CONTROL_OAUTH_SCOPES,
+  exchangeCode,
+  pkce,
+  randomToken,
+  sealKeyFrom,
+  type CredentialStatus,
+} from "./deploys/credential.ts";
+import { mockConsentPage } from "./install/page.ts";
+import { Cloudflare, type Fetch } from "./deploys/pipeline.ts";
+import { releasesDoor, type ReleaseStore } from "./deploys/releases.ts";
 import { CONTROL, TARGETS } from "../deploy/targets.ts";
-import { DEPLOY_OAUTH_COOKIE } from "../deploy/install.ts";
-import { deploysApi, isDeploysApiPath, type DeploysObject } from "../server/deploys/api.ts";
+import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
+import { deploysApi, isDeploysApiPath, type DeploysObject } from "./deploys/api.ts";
 import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
 import { googleEndpoints } from "../server/identity/apps.ts";
 import { googleToken } from "../server/identity/sign-in.ts";
-import { open, seal, type Sealed } from "../deploy/seal.ts";
-import { createRepo, exchangeUserCode, GithubError, installationOf, installationRepos, installUrl, linkOf, openRelay, randomNonce, relayNonce, relayOrigin, relaySignature, relayState, sealRelay, userOf, verifyRelay, verifyWebhook, type GithubApp, type GithubRepo, type PushEvent, type UserToken } from "../server/source/index.ts";
+import { open, seal, type Sealed } from "./deploys/seal.ts";
+import {
+  createRepo,
+  exchangeUserCode,
+  GithubError,
+  installationOf,
+  installationRepos,
+  installUrl,
+  linkOf,
+  openRelay,
+  randomNonce,
+  relayNonce,
+  relayOrigin,
+  relaySignature,
+  relayState,
+  sealRelay,
+  userOf,
+  verifyRelay,
+  verifyWebhook,
+  type GithubApp,
+  type GithubRepo,
+  type PushEvent,
+  type UserToken,
+} from "./source/index.ts";
 import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
-import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "../server/source/index.ts";
+import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
 
 /** What the routes run on. */
 export interface Control {
   platform: Platform;
   deploys: DeploysObject;
-  /** The release store (deploy/releases.ts), read here for anyone; null where there's none. */
+  /** The release store (control/deploys/releases.ts), read here for anyone; null where there's none. */
   releases?: ReleaseStore | null;
   /** The deploy page (/deploy: installs from the store), where this Worker offers it. */
   deploy?: (request: Request) => Promise<Response>;
-  /** Each environment's hostname, for the Ops page: the fleet's (deploy/fleet.ts); erga.dev's own when not given. */
+  /** Each environment's hostname, for the Ops page: the fleet's (control/deploys/fleet.ts); erga.dev's own when not given. */
   hosts?: Record<"production" | "staging" | "control", string>;
   /** A downstream: its upstream's origin (the page names it). */
   upstream?: string;
-  /** erga.dev's control Worker: the forks' repositories and builds (cloudflare/pipeline.ts), for downstreams' control Workers; and their GitHub installations. */
+  /** erga.dev's control Worker: the forks' repositories and builds (control/deploys/pipeline-object.ts), for downstreams' control Workers; and their GitHub installations. */
   forks?: {
     access(id: string, secret: string, scope: "read" | "write"): Promise<{ remote: string; token: string; expiresAt: string } | null>;
     builder(id: string, secret: string, request: Request): Promise<Response>;
@@ -102,13 +132,13 @@ export interface Control {
     /** Whose an installation is: the install's control Worker, and its fork secret's hash (the relayed webhook's signature). */
     ofInstallation(installation: number): Promise<{ control: string; secretHash: string } | null>;
   };
-  /** Erga's GitHub App (cloudflare/github-app.ts): whole on erga.dev's control Worker (its secrets), the public parts on an install's; null where none is set. */
+  /** Erga's GitHub App (control/cloudflare/github-app.ts): whole on erga.dev's control Worker (its secrets), the public parts on an install's; null where none is set. */
   github: GithubApp | null;
   /** Erga's Google OAuth client, on erga.dev's control Worker (GOOGLE_APP_CLIENT_ID, GOOGLE_APP_CLIENT_SECRET): installs sign in with Google through it. */
   google?: { clientId: string; secret: string; origin?: string | null } | null;
   /** An install's control Worker: its fork secret's hash, the key relayed webhooks are signed with. */
   forkSecretHash?: string;
-  /** This Worker's sealing key (deploy/seal.ts): the person's GitHub token between the connect popup's pages (from its session secret unless given). */
+  /** This Worker's sealing key (control/deploys/seal.ts): the person's GitHub token between the connect popup's pages (from its session secret unless given). */
   sealKey?: string | Promise<string>;
   /** Work after the response (the webhook's sync); unless given, it runs on its own. */
   background?(work: Promise<unknown>): void;
@@ -175,7 +205,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/auth/logout") return signOut(p, request);
   if (path == "/github/webhook" && method == "POST") return githubWebhook(request, url, c);
   if (path == "/api/health" && read) {
-    // ?self=1: the pipeline's own check of this Worker after its self-deploy (deploy/control.ts): the version only, no call
+    // ?self=1: the pipeline's own check of this Worker after its self-deploy (control/deploys/control-worker.ts): the version only, no call
     // into the deploys' object, which is the one running that check.
     if (url.searchParams.get("self") == "1") return json({ ok: true, worker: "control", version: c.version, build: c.build ?? null, checks: {} });
     const started = Date.now();
@@ -529,7 +559,7 @@ async function githubWebhook(request: Request, url: URL, c: Control): Promise<Re
 const INSTALL_COOKIE = "erga_install";
 /** What the consent's popup posts to the page that opened it (the Ops page, here or on the app), and on CONSENT_CHANNEL. */
 export const CONSENT_MESSAGE = "erga-deploy-credential";
-/** An install's consent state: its control Worker's origin (base64url), a dot, a random part (server/source/github.ts relayState; relayOrigin reads the origin back). */
+/** An install's consent state: its control Worker's origin (base64url), a dot, a random part (control/source/github.ts relayState; relayOrigin reads the origin back). */
 const b64u = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s: string) => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
 export { relayOrigin };

@@ -6,7 +6,7 @@
 // first time by deploy/setup.ts --control, which runs `bunx wrangler deploy`
 // on the filled-in config: wrangler builds the container image
 // (builder/Dockerfile) with Docker, pushes it, and uploads the Worker.
-// After that it deploys itself, from main after production (deploy/control.ts):
+// After that it deploys itself, from main after production (control/deploys/control-worker.ts):
 // deploy/release.ts reads the filled-in config into each release, and the pipeline
 // uploads the Worker with these bindings (a Durable Object class matched to
 // its namespace, the container's class named so the container stays). So a
@@ -44,7 +44,7 @@
   "d1_databases": [{ "binding": "DB" }],
   // Erga's repository (deploy/targets.json: source.namespace).
   "artifacts": [{ "binding": "ARTIFACTS" }],
-  // The release store (deploy/releases.ts): every release production deployed, served at /releases/ for anyone. deploy/setup.ts makes
+  // The release store (control/deploys/releases.ts): every release production deployed, served at /releases/ for anyone. deploy/setup.ts makes
   // the bucket (deploy/targets.json: control.releases).
   "r2_buckets": [{ "binding": "RELEASES" }],
   // The text bindings come from deploy/targets.json (targets.ts controlVars): ADMINS, CLOUDFLARE_ACCOUNT_ID, APP_URL (production's
@@ -52,6 +52,6 @@
   // the callback https://<control host>/auth/github/callback; Connect GitHub on the Ops page; its webhook,
   // https://<control host>/github/webhook, push events; its secrets are secrets, above), and Erga's OAuth client on Cloudflare
   // (CLOUDFLARE_OAUTH_CLIENT_ID: Manage account › OAuth clients, redirect https://<control host>/install/callback; an admin's
-  // consent on the Ops page gives this Worker its deploy credential, deploy/credential.ts).
+  // consent on the Ops page gives this Worker its deploy credential, control/deploys/credential.ts).
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": true } }
 }

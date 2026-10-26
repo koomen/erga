@@ -33,10 +33,22 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { targetFor } from "./branches";
+import { targetFor } from "../control/deploys/branches";
 import { buildIn } from "../control/builder/build";
-import { unpackRelease } from "./bundle";
-import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, targetPagesShown, type Fetch, type Release, type Target } from "./pipeline";
+import { unpackRelease } from "../control/deploys/bundle";
+import {
+  ALL_STEPS,
+  Cloudflare,
+  guardTarget,
+  loadRelease,
+  runPipeline,
+  stepsFor,
+  targetHost,
+  targetPagesShown,
+  type Fetch,
+  type Release,
+  type Target,
+} from "../control/deploys/pipeline";
 import { machineCredential } from "./local-credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock-cloudflare";
 import { ACCOUNT, isDeployName, specOf, TARGETS, type OwnDeployName } from "./targets";

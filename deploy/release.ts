@@ -2,7 +2,7 @@
 // Makes the release the deploy page (/deploy) deploys to other people's
 // Cloudflare accounts: this checkout's Worker exactly as `cf build` builds it
 // for erga.dev, into .build/release/, which goes up with the server's static
-// assets (the Worker reads it from there, cloudflare/deploy-routes.ts; nothing serves it
+// assets (the Worker reads it from there, control/install/routes.ts; nothing serves it
 // to browsers).
 //
 //   bun deploy/release.ts
@@ -17,12 +17,12 @@
 // editor's files, as .build has them), migrations/ (server/migrations/) and
 // control/ (the control Worker's modules, bundled here from control/index.ts
 // with its config from control/wrangler.jsonc and deploy/targets.json in release.json: the control
-// Worker deploys itself from it, deploy/control.ts). (The landing project
+// Worker deploys itself from it, control/deploys/control-worker.ts). (The landing project
 // is built into the Worker itself.)
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { ControlConfig, ReleaseIndex } from "./pipeline.ts";
+import type { ControlConfig, ReleaseIndex } from "../control/deploys/pipeline.ts";
 import { controlWrangler } from "./targets.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");

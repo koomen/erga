@@ -11,11 +11,11 @@ import { join } from "path";
 import {
   assetHash, checkPlan, Cloudflare, deploy, DeployError, HEADERS_FILE, loadRelease, registerDomain, searchDomains, STEPS, tokenTemplateUrl,
   type DeployPlan, type Release,
-} from "../deploy/pipeline";
+} from "../control/deploys/pipeline";
 import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { HEADERS } from "../client/build.ts";
 import { ASSET_PREFIX, type AssetManifest } from "../shared/assets.ts";
-import { open, seal } from "../deploy/seal";
+import { open, seal } from "../control/deploys/seal";
 import { pagesHost, pagesOrigin, pagesToken } from "../server/documents/index.ts";
 import type { Platform } from "../server/platform";
 import { quietConsole } from "./quiet.ts";

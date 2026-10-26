@@ -21,7 +21,7 @@
 //
 // The control Worker's Cloudflare credential is an OAuth grant, not a token
 // anyone assembles: once it runs, an admin clicks Connect Cloudflare on the
-// Ops page and consents in the browser (deploy/credential.ts). Erga's OAuth
+// Ops page and consents in the browser (control/deploys/credential.ts). Erga's OAuth
 // client ("Erga", public, PKCE) is made once on the dashboard (Manage account ›
 // OAuth clients) and its id goes in deploy/targets.json; nothing here
 // makes tokens. (Making account API tokens through the API was refused on
@@ -34,8 +34,8 @@ import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CONTROL_OAUTH_SCOPES } from "./credential";
-import { Cloudflare, DeployError, findDatabase, zoneIdOf, type Fetch } from "./pipeline";
+import { CONTROL_OAUTH_SCOPES } from "../control/deploys/credential";
+import { Cloudflare, DeployError, findDatabase, zoneIdOf, type Fetch } from "../control/deploys/pipeline";
 import { machineCredential } from "./local-credential";
 import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock-cloudflare";
 import { ask, deployFromMachine } from "./run";
@@ -52,7 +52,7 @@ const secret = () => randomBytes(32).toString("hex");
 /** The wrangler that deploys the control Worker (its containers need a recent one). */
 export const WRANGLER = "wrangler@4.147.0";
 const CONTROL_DIR = new URL("../control/", import.meta.url).pathname;
-/** The release store's bucket (the control Worker's RELEASES; deploy/releases.ts). */
+/** The release store's bucket (the control Worker's RELEASES; control/deploys/releases.ts). */
 const RELEASES_BUCKET = CONTROL.releases;
 /** The filled-in config wrangler deploys (controlWranglerConfig), next to control/wrangler.jsonc so its paths hold; deleted after. */
 const DEPLOY_CONFIG = join(CONTROL_DIR, "wrangler.deploy.json");
@@ -157,8 +157,14 @@ try {
     const repo = await cf.call<{ remote?: string }>("GET", `${base}/${SOURCE.repo}`, "find the source repo", undefined, { allow404: true });
     if (repo) console.log(`   It's there (${repo.remote ?? "no remote said"}).`);
     else if (ask(`   Make the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (default branch main)?`, yes)) {
-      await cf.call("POST", base, "make the source repo", { name: SOURCE.repo, default_branch: "main", description: "Erga's source: staging and main" });
-      console.log("   Made. Push the history to it through the control Worker's Git endpoint (bun server/source/import.ts), or straight to Artifacts.");
+      await cf.call("POST", base, "make the source repo", {
+        name: SOURCE.repo,
+        default_branch: "main",
+        description: "Erga's source: staging and main",
+      });
+      console.log(
+        "   Made. Push the history to it through the control Worker's Git endpoint (bun control/source/import.ts), or straight to Artifacts."
+      );
     } else console.log("   Skipped: the control Worker has no repository until it's there.");
     const buckets = ((await cf.call<{ buckets?: { name: string }[] }>("GET", `${acc}/r2/buckets?name_contains=${RELEASES_BUCKET}`, "list the R2 buckets"))?.buckets ?? []).map((b) => b.name);
     if (buckets.includes(RELEASES_BUCKET)) console.log(`   The release store's bucket ${RELEASES_BUCKET} is there.`);

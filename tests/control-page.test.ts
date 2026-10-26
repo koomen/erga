@@ -2,7 +2,7 @@
 // in it. That script reads window.ergaView at once, so the shell must set it first.
 import { expect, test } from "bun:test";
 import { controlLayout } from "../control/routes";
-import { adminSourcePage } from "../server/source/index";
+import { adminSourcePage } from "../control/source/index";
 import type { Session } from "../server/identity/index";
 
 test("the Ops page on the control Worker sets window.ergaView before its script reads it", async () => {

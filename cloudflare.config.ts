@@ -54,7 +54,7 @@ export default defineConfig(({ mode }) => ({
     exports: {
       // Each document (cloudflare/document-object.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
-      // The deploy page's sessions (/deploy, cloudflare/deploy-session.ts): each holds one person's Cloudflare token, only while they deploy.
+      // The deploy page's sessions (/deploy, control/install/session.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),
       // Erga's repository ("erga") and the deploys ("deploys") are the control Worker's objects (control/wrangler.jsonc).
       // The app hosts them only in local development, where it plays the control Worker over the mock Cloudflare.
