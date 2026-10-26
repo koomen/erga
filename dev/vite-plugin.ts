@@ -34,7 +34,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { ALPHABET } from "../server/directory/index.ts";
-import { ignored } from "../document/content.ts";
+import { ignored } from "../document/pages.ts";
 import { gitServers } from "./git-server.ts";
 import { mockGithub } from "./github-mock.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";

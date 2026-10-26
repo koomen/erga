@@ -45,8 +45,22 @@ import {
 } from "./api";
 import type { Naming } from "./names";
 import { digest, StoreError, type FileStore, type Room } from "./room";
-import { TreeError, checkNewName, cleanTreePath, isPage, pageRefusal, type DocKind, pageAddress, parentsOf, resolvePage, titleOf, treeEntries, type TreeOp } from "./pages";
-import { ignored, isTextPath as isTextFile } from "./content";
+import {
+  TreeError,
+  checkNewName,
+  cleanRel,
+  cleanTreePath,
+  isPage,
+  pageRefusal,
+  type DocKind,
+  pageAddress,
+  parentsOf,
+  resolvePage,
+  titleOf,
+  treeEntries,
+  type TreeOp,
+} from "./pages";
+import { isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";
 import { encodeStart } from "../shared/room-socket";
@@ -111,20 +125,6 @@ const VIEWER_OFF = "You can only view this document, so you can't ask its agent.
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
 interface Tab { user: string; send: (msg: unknown) => void; watch?: boolean }
-
-/** A request's path inside the folder, or null if it would leave it (or is ignored). */
-export function cleanRel(raw: string | undefined): string | null {
-  const parts: string[] = [];
-  let decoded: string;
-  try { decoded = decodeURIComponent(raw ?? ""); } catch { return null; }
-  for (const seg of decoded.split(/[\\/]/)) {
-    if (!seg || seg == ".") continue;
-    if (seg == "..") return null;
-    parts.push(seg);
-  }
-  const rel = parts.join("/");
-  return rel && !ignored(rel) ? rel : null;
-}
 
 export const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".md": "text/markdown; charset=utf-8",

@@ -79,11 +79,10 @@ import { AuthError, type AgentToken, type AuthOps, type AuthStatus } from "../se
 import { forwarded, makeDoc, startingFiles } from "../server/documents/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
 import { TEMPLATES, templateById } from "../server/pages/index.ts";
-import { isDocKind, type DocKind } from "../document/pages.ts";
+import { cleanRel, isDocKind, type DocKind } from "../document/pages.ts";
 import { nameOf } from "../document/names.ts";
 import type { FileData } from "../document/document.ts";
 import type { ToolContent } from "../document/agent.ts";
-import { cleanRel } from "../document/host.ts";
 import { CHANGES, documentToolSpecs } from "./document/tools.ts";
 import { byLine } from "../shared/attribution.ts";
 import { fromBase64 } from "../shared/bytes.ts";
@@ -1008,7 +1007,7 @@ const MAX_FILE = 2_000_000, MAX_TOTAL = 50_000_000, MAX_FILES = 2000;
 
 /** A file's path as an outside agent gives it, inside the document. */
 export function cleanFilePath(p: string): string {
-  const rel = cleanRel(p.replace(/^\.?\//, ""));
+  const rel = cleanRel(p);
   if (!rel) throw new ToolError(`"${p}" isn't a path inside the document (no "..", no hidden files or node_modules).`);
   return rel;
 }
