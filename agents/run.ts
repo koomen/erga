@@ -12,7 +12,18 @@ import * as Redacted from "effect/Redacted";
 import { fileRefs, messageContent, type Attachment } from "../shared/attach";
 import { emptyLog, offerOf, reduce, type Log, type LogEvent } from "../shared/agent-log";
 import { CUT, Checkpoints, restoredLog, sendLate, type ChatStore, type StoredChat } from "./checkpoint";
-import { DEFAULT_MODEL, describeModel, isModelChoice, isScript, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "./models";
+import {
+  DEFAULT_MODEL,
+  describeModel,
+  isModelChoice,
+  isScript,
+  patchPayload,
+  resultImage,
+  resultText,
+  scriptModel,
+  type AgentConfig,
+  type ModelChoice,
+} from "./models";
 
 export interface LoopHooks {
   /** What a tool call is about, for the panel: a path, a setting's key, a login. */
@@ -72,7 +83,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   let cfg = opts.cfg;
   /** The model the store kept, if it's one of MODELS. */
   const kept = stored && isModelChoice(stored.state.model ?? "") ? (stored.state.model as ModelChoice) : null;
-  let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : kept ?? cfg.model;
+  let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : (kept ?? cfg.model);
   let agent: PiAgent | null = null;
   /** The model's messages while it has no model side yet (the agent off): the stored ones, until a reset. */
   let offMessages = stored?.messages ?? [];
@@ -94,7 +105,9 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   };
   // Each step of a run, kept in the store; a restart goes on from the last.
   const checkpoints = new Checkpoints(opts.store, {
-    log, stored, meta: opts.meta,
+    log,
+    stored,
+    meta: opts.meta,
     messages: () => agent?.state.messages ?? offMessages,
     busy: () => !!agent?.state.isStreaming,
     model: () => choice,
@@ -135,17 +148,32 @@ export function startLoop(opts: LoopOptions): AgentLoop {
           offer: e.isError ? undefined : offerOf(e.result),
         });
         break;
-      case "agent_start": hooks.busy?.(true); emit({ t: "busy", busy: true }); break;
-      case "agent_end": hooks.busy?.(false); emit({ t: "busy", busy: false }); if (agent) sendLate(agent, failed); break;
+      case "agent_start":
+        hooks.busy?.(true);
+        emit({ t: "busy", busy: true });
+        break;
+      case "agent_end":
+        hooks.busy?.(false);
+        emit({ t: "busy", busy: false });
+        if (agent) sendLate(agent, failed);
+        break;
     }
   };
 
   return {
     log,
-    get agent() { return agent; },
-    get cfg() { return cfg; },
-    get model() { return agent?.state.model.name ?? null; },
-    get modelChoice() { return choice; },
+    get agent() {
+      return agent;
+    },
+    get cfg() {
+      return cfg;
+    },
+    get model() {
+      return agent?.state.model.name ?? null;
+    },
+    get modelChoice() {
+      return choice;
+    },
     emit,
     subscribe(listener) {
       listeners.add(listener);
@@ -154,7 +182,13 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     start(first, systemPrompt, tools) {
       choice = first.model == "script" ? null : kept ?? first.model;
       const a = new PiAgent({
-        initialState: { systemPrompt, model: choice == null ? scriptModel() : describeModel(choice), thinkingLevel: "medium", tools, messages: offMessages },
+        initialState: {
+          systemPrompt,
+          model: choice == null ? scriptModel() : describeModel(choice),
+          thinkingLevel: "medium",
+          tools,
+          messages: offMessages,
+        },
         getApiKey: () => (cfg ? Redacted.value(cfg.apiKey) : "") || "none",
         onPayload: isScript(first) ? undefined : patchPayload(() => cfg ?? first, () => choice ?? DEFAULT_MODEL),
         beforeToolCall: checkpoints.beforeToolCall,
@@ -175,16 +209,30 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     prompt(text, context, files, refresh) {
       emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
       const a = agent;
-      if (!a || !cfg) { emit({ t: "error", text: "The agent is off." }); return; }
+      if (!a || !cfg) {
+        emit({ t: "error", text: "The agent is off." });
+        return;
+      }
       const content = messageContent(context ? `<${opts.tag}>\n${context}\n</${opts.tag}>\n\n${text}` : text, files);
       if (isScript(cfg)) scriptModel();
       const message = { role: "user" as const, content, timestamp: Date.now() };
       // Kept until the model has it: a restart before then doesn't lose it.
       checkpoints.queue(message);
-      if (a.state.isStreaming || starting) { a.steer(message); return; }
-      if (!refresh) { a.prompt(message).catch(failed); return; }
+      if (a.state.isStreaming || starting) {
+        a.steer(message);
+        return;
+      }
+      if (!refresh) {
+        a.prompt(message).catch(failed);
+        return;
+      }
       starting = true;
-      refresh(a).then(() => { starting = false; return a.prompt(message); }).catch(failed);
+      refresh(a)
+        .then(() => {
+          starting = false;
+          return a.prompt(message);
+        })
+        .catch(failed);
     },
     abort: () => agent?.abort(),
     async reset(then) {
