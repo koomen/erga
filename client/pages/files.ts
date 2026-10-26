@@ -15,7 +15,8 @@
 // delete (a folder asks once). Errors show where they happened, in the
 // server's words.
 
-import { sha256Hex } from "../../shared/bytes";
+import { readableSize, sha256Hex } from "../../shared/bytes";
+import { baseName, encodePath, joinPath, parentOf } from "../../document/pages";
 import { plural, timeAgo } from "../../shared/time";
 import { esc } from "../../shared/html";
 
@@ -40,10 +41,6 @@ const collapsed = new Set<string>();
 let busy = false;
 let stale = false;
 
-const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
-const nameOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
-const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
-const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 const isFolder = (p: string) => p == "" || folderSet().has(p);
 
 function folderSet(): Set<string> {
@@ -67,16 +64,6 @@ function iconOf(f: FileRow): string {
   if (/^image\//.test(f.type)) return ICON.image;
   if (/\.html?$/i.test(f.path)) return ICON.page;
   return ICON.file;
-}
-
-/** A size as people read it: "820 B", "12 KB", "3.4 MB". */
-export function readableSize(n: number | null): string {
-  if (n == null) return "";
-  if (n < 1000) return `${n} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let v = n / 1000, u = 0;
-  while (v >= 1000 && u < units.length - 1) { v /= 1000; u++; }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
 }
 
 const when = (at: number | null) => (at ? timeAgo(at) : "");
@@ -165,13 +152,17 @@ function row(o: { path: string; folder: boolean; level: number; file?: FileRow }
   el.dataset.path = o.path;
   el.dataset.type = o.folder ? "folder" : "file";
   el.tabIndex = selected == o.path ? 0 : -1;
-  const twist = o.folder ? `<button type="button" class="twist" aria-label="${collapsed.has(o.path) ? "Open" : "Close"} ${esc(nameOf(o.path))}" aria-expanded="${!collapsed.has(o.path)}">${ICON.chevron}</button>` : `<span></span>`;
+  const twist = o.folder
+    ? `<button type="button" class="twist" aria-label="${collapsed.has(o.path) ? "Open" : "Close"} ${esc(baseName(o.path))}" aria-expanded="${!collapsed.has(o.path)}">${ICON.chevron}</button>`
+    : `<span></span>`;
   const icon = `<span class="icon">${o.folder ? ICON.folder : iconOf(o.file!)}</span>`;
-  const size = o.file ? `<span class="size">${readableSize(o.file.size)}</span>` : `<span></span>`;
+  const size = o.file ? `<span class="size">${o.file.size == null ? "" : readableSize(o.file.size)}</span>` : `<span></span>`;
   const time = o.file?.at ? `<time datetime="${new Date(o.file.at).toISOString()}" title="${esc(new Date(o.file.at).toLocaleString())}">${esc(when(o.file.at))}</time>` : `<span></span>`;
   const mine = listing.canEdit && o.path != listing.index;
-  const acts = mine ? `<span class="acts"><button type="button" class="rename" aria-label="Rename ${esc(nameOf(o.path))}" title="Rename">${ICON.rename}</button><button type="button" class="delete" aria-label="Delete ${esc(nameOf(o.path))}" title="Delete">${ICON.delete}</button></span>` : `<span></span>`;
-  el.innerHTML = `${twist}${icon}<span class="name" title="${esc(o.path)}">${esc(nameOf(o.path))}</span>${size}${time}${acts}`;
+  const acts = mine
+    ? `<span class="acts"><button type="button" class="rename" aria-label="Rename ${esc(baseName(o.path))}" title="Rename">${ICON.rename}</button><button type="button" class="delete" aria-label="Delete ${esc(baseName(o.path))}" title="Delete">${ICON.delete}</button></span>`
+    : `<span></span>`;
+  el.innerHTML = `${twist}${icon}<span class="name" title="${esc(o.path)}">${esc(baseName(o.path))}</span>${size}${time}${acts}`;
   if (mine) el.draggable = true;
   return el;
 }
@@ -192,17 +183,19 @@ function show(path: string): void {
   const f = listing.files.find((x) => x.path == path);
   viewEl.dataset.path = path;
   if (!f) {
-    viewEl.innerHTML = `<p class="nothing">${path ? `${esc(nameOf(path))}: a folder. ` : ""}Select a file to see it here.</p>`;
+    viewEl.innerHTML = `<p class="nothing">${path ? `${esc(baseName(path))}: a folder. ` : ""}Select a file to see it here.</p>`;
     return;
   }
   const url = pages + encodePath(f.path);
-  const about = [readableSize(f.size), f.type].filter(Boolean).map(esc).join(" · ") + (f.at ? ` · changed <time datetime="${new Date(f.at).toISOString()}">${esc(when(f.at))}</time>` : "");
+  const about =
+    [f.size == null ? "" : readableSize(f.size), f.type].filter(Boolean).map(esc).join(" · ") +
+    (f.at ? ` · changed <time datetime="${new Date(f.at).toISOString()}">${esc(when(f.at))}</time>` : "");
   viewEl.innerHTML = `<div class="view-head"><h2 title="${esc(f.path)}">${esc(f.path)}</h2><span class="about">${about}</span><a href="${esc(url)}" target="_blank" rel="noopener">Open in a new tab</a></div><div class="view-body"></div>`;
   const body = viewEl.querySelector<HTMLElement>(".view-body")!;
   if (/^image\//.test(f.type)) {
     const img = document.createElement("img");
     img.src = url;
-    img.alt = nameOf(f.path);
+    img.alt = baseName(f.path);
     body.append(img);
   } else if (/^video\//.test(f.type)) {
     const v = document.createElement("video");
@@ -218,7 +211,7 @@ function show(path: string): void {
   } else if (f.type == "application/pdf") {
     const frame = document.createElement("iframe");
     frame.src = url;
-    frame.title = nameOf(f.path);
+    frame.title = baseName(f.path);
     body.append(frame);
   } else if (f.kind == "text" || /^text\//.test(f.type) || f.type == "application/json" || f.type == "image/svg+xml") {
     const pre = document.createElement("pre");
@@ -229,7 +222,7 @@ function show(path: string): void {
       pre.textContent = r.ok ? await r.text() : await errorOf(r);
     });
   } else {
-    body.innerHTML = `<div class="other"><p>${esc(nameOf(f.path))}</p><p>${esc(about)}</p><p>The browser can't show this kind of file here. <a href="${esc(url)}" target="_blank" rel="noopener">Open it</a> to download it.</p></div>`;
+    body.innerHTML = `<div class="other"><p>${esc(baseName(f.path))}</p><p>${esc(about)}</p><p>The browser can't show this kind of file here. <a href="${esc(url)}" target="_blank" rel="noopener">Open it</a> to download it.</p></div>`;
   }
 }
 
@@ -255,8 +248,8 @@ function rename(el: HTMLElement): void {
   const path = el.dataset.path!;
   const name = el.querySelector<HTMLElement>(".name")!;
   const input = document.createElement("input");
-  input.value = nameOf(path);
-  input.setAttribute("aria-label", `New name for ${nameOf(path)}`);
+  input.value = baseName(path);
+  input.setAttribute("aria-label", `New name for ${baseName(path)}`);
   name.replaceChildren(input);
   busy = true;
   input.focus();
@@ -267,15 +260,20 @@ function rename(el: HTMLElement): void {
   const finish = async (save: boolean) => {
     if (done) return;
     done = true;
-    const to = join(parentOf(path), input.value.trim());
-    if (!save || input.value.trim() == nameOf(path)) { busy = false; render(); afterBusy(); return; }
+    const to = joinPath(parentOf(path), input.value.trim());
+    if (!save || input.value.trim() == baseName(path)) {
+      busy = false;
+      render();
+      afterBusy();
+      return;
+    }
     const bad = checkName(input.value.trim());
     if (bad) { done = false; rowError(el, bad); input.focus(); return; }
     const err = await treeOp({ op: "move", from: path, to });
     busy = false;
     if (err) { render(); rowError(treeEl.querySelector<HTMLElement>(`.row[data-path="${CSS.escape(path)}"]`) ?? treeEl, err); afterBusy(); return; }
     if (selected == path) selected = to;
-    say(`Renamed ${nameOf(path)} to ${nameOf(to)}.`);
+    say(`Renamed ${baseName(path)} to ${baseName(to)}.`);
     await load();
   };
   input.addEventListener("keydown", (e) => {
@@ -301,7 +299,7 @@ async function remove(el: HTMLElement): Promise<void> {
     el.parentElement?.querySelector(":scope > .confirm")?.remove();
     const box = document.createElement("div");
     box.className = "confirm";
-    box.innerHTML = `<span>Delete ${esc(nameOf(path))} and the ${plural(inside, "file")} in it?</span><button type="button" class="danger">Delete</button><button type="button" class="cancel">Cancel</button>`;
+    box.innerHTML = `<span>Delete ${esc(baseName(path))} and the ${plural(inside, "file")} in it?</span><button type="button" class="danger">Delete</button><button type="button" class="cancel">Cancel</button>`;
     el.after(box);
     busy = true;
     box.querySelector<HTMLButtonElement>(".cancel")!.onclick = () => { box.remove(); busy = false; afterBusy(); };
@@ -312,7 +310,7 @@ async function remove(el: HTMLElement): Promise<void> {
       const err = await treeOp({ op: "delete", path });
       if (err) { rowError(el, err); return; }
       if (selected == path || selected.startsWith(path + "/")) selected = parentOf(path);
-      say(`Deleted ${nameOf(path)} and the ${plural(inside, "file")} in it. They stay in the versions.`);
+      say(`Deleted ${baseName(path)} and the ${plural(inside, "file")} in it. They stay in the versions.`);
       await load();
     };
     return;
@@ -320,7 +318,7 @@ async function remove(el: HTMLElement): Promise<void> {
   const err = await treeOp({ op: "delete", path });
   if (err) { rowError(el, err); return; }
   if (selected == path) selected = parentOf(path);
-  say(`Deleted ${nameOf(path)}. It stays in the versions.`);
+  say(`Deleted ${baseName(path)}. It stays in the versions.`);
   await load();
 }
 
@@ -414,12 +412,12 @@ window.addEventListener("drop", (e) => {
 });
 
 async function move(from: string, folder: string): Promise<void> {
-  const to = join(folder, nameOf(from));
+  const to = joinPath(folder, baseName(from));
   if (to == from || folder == from || folder.startsWith(from + "/")) return;
   const err = await treeOp({ op: "move", from, to });
   if (err) { say(err, true); return; }
   if (selected == from) selected = to;
-  say(`Moved ${nameOf(from)} to ${folder || "the top folder"}.`);
+  say(`Moved ${baseName(from)} to ${folder || "the top folder"}.`);
   await load();
 }
 
@@ -427,19 +425,22 @@ async function move(from: string, folder: string): Promise<void> {
 async function droppedFiles(data: DataTransfer, folder: string): Promise<{ path: string; file: File }[]> {
   const out: { path: string; file: File }[] = [];
   const entries = [...data.items].map((i) => i.webkitGetAsEntry?.()).filter((x): x is FileSystemEntry => !!x);
-  if (!entries.length) { for (const file of data.files) out.push({ path: join(folder, file.name), file }); return out; }
+  if (!entries.length) {
+    for (const file of data.files) out.push({ path: joinPath(folder, file.name), file });
+    return out;
+  }
   const walk = async (entry: FileSystemEntry, dir: string): Promise<void> => {
     if (entry.name.startsWith(".")) return;
     if (entry.isFile) {
       const file = await new Promise<File>((ok, fail) => (entry as FileSystemFileEntry).file(ok, fail));
-      out.push({ path: join(dir, entry.name), file });
+      out.push({ path: joinPath(dir, entry.name), file });
       return;
     }
     const reader = (entry as FileSystemDirectoryEntry).createReader();
     for (;;) {
       const batch = await new Promise<FileSystemEntry[]>((ok, fail) => reader.readEntries(ok, fail));
       if (!batch.length) break;
-      for (const child of batch) await walk(child, join(dir, entry.name));
+      for (const child of batch) await walk(child, joinPath(dir, entry.name));
     }
   };
   for (const entry of entries) await walk(entry, folder);

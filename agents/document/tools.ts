@@ -18,6 +18,7 @@ import {
   type LiveResult,
 } from "../../shared/live-page";
 import { pageAddress, type TreeEntry, type TreeOp } from "../../document/pages";
+import { readableSize } from "../../shared/bytes";
 import type { Naming } from "../../document/names";
 import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../../document/versions";
 import { WorkspaceError, globToRegExp, modelPath, type Workspace } from "./workspace";
@@ -47,7 +48,6 @@ export const CHANGES = new Set([
   "restore_version",
 ]);
 
-const readableSize = (n: number | null) => n == null ? "?" : n < 1000 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)} KB` : n < 1e9 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB` : `${(n / 1e9).toFixed(1)} GB`;
 const stamp16 = (at: number | null) => at ? new Date(at).toISOString().slice(0, 16).replace("T", " ") : "";
 
 /** The agent's tools, over a workspace. */
@@ -202,7 +202,12 @@ export function makeTools(
         const rows = names.map((name) => {
           if (name.endsWith("/")) return ["dir", "", "", name];
           const s = stats.get(dir + name);
-          return [s?.kind == "file" ? "file" : "text", readableSize(s?.size ?? null), stamp16(s?.at ?? null), s?.kind == "file" ? `${name}  (${s.type})` : name];
+          return [
+            s?.kind == "file" ? "file" : "text",
+            s?.size == null ? "?" : readableSize(s.size),
+            stamp16(s?.at ?? null),
+            s?.kind == "file" ? `${name}  (${s.type})` : name,
+          ];
         });
         const width = [0, 1, 2].map((i) => Math.max(...rows.map((r) => r[i].length)));
         const files = names.filter((n) => !n.endsWith("/")).length;

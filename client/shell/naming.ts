@@ -2,7 +2,7 @@
 
 import type { DocName } from "../../document/api";
 import { files } from "../../document/content";
-import { pageUrl } from "../../document/pages";
+import { pageUrl, slugify } from "../../document/pages";
 import { BASE } from "./base";
 import { live } from "../live/client";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";
@@ -51,7 +51,6 @@ export function mountNaming(shell: Shell) {
     return at;
   }
   if (shell.info.docName) showName(shell.info.docName);
-  const slugify = (s: string) => s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
   let slugTouched = false;
   const sayNaming = (text: string, error = false) => { namingStatus.textContent = text; namingStatus.classList.toggle("error", error); };
   const namingHint = () => sayNaming(!titleIn.value.trim() ? "Empty, the title follows the page's first heading."

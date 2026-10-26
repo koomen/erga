@@ -136,6 +136,33 @@ export function checkNewName(path: string, type: "page" | "folder" | "file"): vo
   }
 }
 
+/** The folder a path is in ("a/b/c.html" → "a/b"; "" at the top). */
+export const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+/** A path's last name ("a/b/c.html" → "c.html"). */
+export const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+/** A name in a folder ("" is the top). */
+export const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
+/** A path as an address has it: each name encoded. */
+export const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+
+/** How long a slug may be: a document's (/<owner>/<slug>); a page's file name may be longer (the tree's). */
+export const SLUG_MAX = 60;
+
+/** A slug from any text: "Field & notes, 2026" → "field-notes-2026" ("" if it has no letters or digits); longer than `max`, cut at a word if one ends late enough. */
+export function slugify(text: string, max = SLUG_MAX): string {
+  const s = text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max + 1),
+    dash = cut.lastIndexOf("-");
+  return (dash > max / 2 ? cut.slice(0, dash) : s.slice(0, max)).replace(/-+$/, "");
+}
+
 /** Every folder a path is in ("a/b/c.html" → ["a", "a/b"]). */
 export function parentsOf(path: string): string[] {
   const parts = path.split("/");
@@ -186,8 +213,9 @@ export function pageAddress(file: string): string {
 
 /** A page's full address, given the document's (/<owner>/<slug>): no trailing slash, ever. */
 export const pageUrl = (docAddress: string, file: string) => {
-  const rest = pageAddress(file);
-  return rest ? `${docAddress}/${rest.split("/").map(encodeURIComponent).join("/")}` : docAddress;
+  const rest = pageAddress(file),
+    base = docAddress.replace(/\/+$/, "");
+  return rest ? `${base}/${encodePath(rest)}` : base;
 };
 
 /**
