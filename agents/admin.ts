@@ -226,6 +226,7 @@ export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
   list_settings: ["Reading the settings", "Read the settings"],
   set_setting: ["Changing", "Changed"],
   reset_setting: ["Resetting", "Reset"],
+  search_documents: ["Finding a document", "Found documents"],
   list_setting_changes: ["Reading the change log", "Read the change log"],
   list_api_keys: ["Reading the API keys' status", "Read the API keys' status"],
   list_users: ["Listing the users", "Listed the users"],
@@ -284,6 +285,8 @@ For the server (the admin pages, /admin), you act as ${owner}, with their admin 
   default, and who set it last. set_setting changes one (the value as JSON: a number, a
   string, true, false or null, as the setting takes); reset_setting puts it back to its
   default. A setting the deploy locks (deploy/locked-settings.ts) can't be changed: say so.
+  The homepage (landing_document, "Homepage Project") may be any document or project on the
+  server: search_documents finds one by its title, owner or address.
 - list_setting_changes reads the change log (/admin/changes): who changed what, when.
   Each change you make goes there under ${owner}'s name, as if they made it on /admin.
 - list_api_keys says which API keys are set (never a key); clear_api_key clears one. Keys

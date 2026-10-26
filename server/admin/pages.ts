@@ -11,6 +11,8 @@
 //   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
 //   GET /admin/auth/status     the same as JSON {here, other} (server/auth.ts, AuthStatus: never a secret), with live checks
 //   POST /admin/auth           server (here or other), provider (github or google), and do=save (clientId, secret), do=discard (the values that wait for a test sign-in), do=clear (force=1: even if sign-in would stop) or do=providers (provider, on: 1 or 0)
+//   GET /admin/documents       q (a part of a title, owner or address), limit: the server's documents and projects, everyone's,
+//                              as JSON {found: [{id, title, owner, address, kind}]}, for the Homepage Project picker
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role: the user, and a rule for that one account with write), do=role (login, role), do=deploy (login, deploy: 1 or 0), do=remove (login)
 //   POST /admin/access         do=add_rule (kind, value, access), do=change_rule (id, access), do=remove_rule (id): the access rules
@@ -74,6 +76,10 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
       return url.pathname == "/admin/auth" ? authPage(session!, status) : Response.json(status, { headers: { "Cache-Control": "no-store" } });
     }
     if (url.pathname == "/admin/access") return accessPage(platform, session!);
+    if (url.pathname == "/admin/documents") {
+      const found = await platform.directory.search(who!, url.searchParams.get("q") ?? "", Number(url.searchParams.get("limit")) || 20);
+      return Response.json({ found }, { headers: { "Cache-Control": "no-store" } });
+    }
     return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
   }
   if (request.method != "POST") return notFound();
@@ -185,8 +191,14 @@ function valueInput(e: Shown, never: boolean): string {
       </div>`;
   }
   if (e.kind == "document") {
+    // Find as you type: any of the server's documents and projects, by title, owner or address (GET /admin/documents);
+    // choosing one saves it. The value is its address, kept by id.
     const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
-    return `<input class="input" ${attrs} data-kind="document" value="${esc(value)}" placeholder="/owner/slug" autocomplete="off" spellcheck="false">`;
+    return `<div class="doc-pick">
+        <input class="input find" id="find-${esc(e.key)}" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="found-${esc(e.key)}" placeholder="Find a document or project" autocomplete="off" autocapitalize="off" spellcheck="false"${locked ? " disabled" : ""}>
+        <ul class="found" id="found-${esc(e.key)}" role="listbox" aria-label="Documents and projects" hidden></ul>
+        <input type="hidden" ${attrs} data-kind="document" value="${esc(value)}">
+      </div>`;
   }
   if (never && typeof e.default == "number") {
     const off = e.value === null, unit = e.key.endsWith("_hours") ? "hours" : "";
@@ -198,9 +210,10 @@ function valueInput(e: Shown, never: boolean): string {
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
 
-/** How a setting is set: "switch" and "choice" save as soon as they change; the rest have Save. */
-function controlOf(e: Shown): "switch" | "choice" | "users" | "typed" {
+/** How a setting is set: "switch", "choice" and "document" save as soon as they change; the rest have Save. */
+function controlOf(e: Shown): "switch" | "choice" | "users" | "document" | "typed" {
   if (e.kind == "users") return "users";
+  if (e.kind == "document") return "document";
   if (typeof e.default == "boolean" || (e.choices?.length == 2 && e.choices.includes("off") && e.choices.includes("on"))) return "switch";
   if (e.choices?.length) return "choice";
   return "typed";
@@ -225,12 +238,12 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
   const set = e.source == "set" && e.updated != null
     ? `<p class="set" title="${esc(def)}">Last set at ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}</p>`
     : "";
-  // Save for what's typed in; Reset only where the control can't simply pick the default (a switch, a choice, an empty document can).
+  // Save for what's typed in (a document saves as it's chosen); Reset where the control can't simply pick the default (a switch, a choice can).
   const buttons = e.locked || control == "switch" || control == "choice" ? ""
-    : `<button class="pill save" disabled>Save</button>${e.source == "set" && e.kind != "document" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default, e.kind))}">Reset</button>` : ""}`;
-  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}">
+      : `${control == "document" ? "" : `<button class="pill save" disabled>Save</button>`}${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(e.kind == "document" ? "the repo's demo page" : shown(e.default, e.kind))}">Reset</button>` : ""}`;
+  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}"${control == "document" ? ` data-search="${esc(link("/admin/documents", session))}"` : ""}>
     <div class="about">
-      <div class="head"><label class="key" for="set-${esc(e.key)}">${esc(e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
+      <div class="head"><label class="key${e.label ? " named" : ""}" for="${control == "document" ? "find-" : "set-"}${esc(e.key)}"${e.label ? ` title="${esc(e.key)}"` : ""}>${esc(e.label ?? e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
       <p class="desc">${esc(e.description)}</p>
       ${set}
     </div>
@@ -401,7 +414,7 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
   for (const li of document.querySelectorAll("li.setting")) {
     const form = li.querySelector("form"), input = form.elements.value, mode = li.querySelector("select.mode"), save = li.querySelector(".save"), reset = li.querySelector(".reset"), hint = li.querySelector(".hint");
     if (input.disabled) continue;
-    const instant = li.dataset.control == "switch" || li.dataset.control == "choice";
+    const instant = li.dataset.control == "switch" || li.dataset.control == "choice" || li.dataset.control == "document";
     const state = () => (mode ? mode.value + ":" : "") + (input.type == "checkbox" ? input.checked : input.value);
     const was = state();
     const asJson = () => {
@@ -444,6 +457,52 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
       pick.addEventListener("keydown", (e) => { if (e.key == "Enter") { e.preventDefault(); add(); } });
       chips.addEventListener("click", (e) => { const x = e.target.closest(".unpick"); if (x) { x.closest(".chip").remove(); changed(); } });
       form.addEventListener("submit", () => add(), { capture: true });
+    }
+    // A document setting: find as you type, among all the server's documents and projects; choosing one saves it.
+    const find = li.querySelector("input.find");
+    if (find) {
+      const list = li.querySelector(".found");
+      let found = [], at = -1, asked = 0, timer = 0;
+      const escHtml = (t) => String(t).replace(/[&<>"]/g, (c) => "&#" + c.charCodeAt(0) + ";");
+      const open = (on) => { list.hidden = !on; find.setAttribute("aria-expanded", String(on)); if (!on) { at = -1; find.removeAttribute("aria-activedescendant"); } };
+      const mark = (i) => {
+        at = i;
+        list.querySelectorAll("[role=option]").forEach((o, j) => o.setAttribute("aria-selected", String(j == i)));
+        const o = list.children[i];
+        if (o?.id) { find.setAttribute("aria-activedescendant", o.id); o.scrollIntoView({ block: "nearest" }); }
+      };
+      const show = () => {
+        list.innerHTML = found.length ? found.map((d, i) => '<li role="option" id="' + li.dataset.key + '-opt-' + i + '" aria-selected="false" data-i="' + i + '">'
+          + '<span class="title">' + escHtml(d.title || d.address) + '</span><span class="badge">' + (d.kind == "project" ? "Project" : "Document") + '</span>'
+          + '<span class="where">' + escHtml(d.owner) + ' \u00B7 ' + escHtml(d.address) + '</span></li>').join("")
+          : '<li class="none">Nothing matches.</li>';
+        open(true);
+      };
+      const search = async () => {
+        const n = ++asked, url = new URL(li.dataset.search, location.href);
+        url.searchParams.set("q", find.value);
+        try {
+          const r = await fetch(url, { headers: { Accept: "application/json" } });
+          const body = await r.json();
+          if (n != asked) return;
+          if (!r.ok) throw new Error(body.error || "The search didn't work.");
+          found = body.found; show();
+        } catch (err) { if (n == asked) say(hint, err.message, true); }
+      };
+      const choose = (i) => { const d = found[i]; if (!d) return; input.value = d.address; find.value = d.title || d.address; open(false); submit(); };
+      find.addEventListener("input", () => { say(hint, ""); clearTimeout(timer); timer = setTimeout(search, 150); });
+      find.addEventListener("focus", () => { if (list.hidden) search(); });
+      find.addEventListener("keydown", (e) => {
+        if (e.key == "ArrowDown" || e.key == "ArrowUp") {
+          e.preventDefault();
+          if (list.hidden) { search(); return; }
+          if (found.length) mark((at + (e.key == "ArrowDown" ? 1 : found.length - 1)) % found.length);
+        } else if (e.key == "Enter") { e.preventDefault(); if (!list.hidden && at >= 0) choose(at); }
+        else if (e.key == "Escape" && !list.hidden) { e.preventDefault(); open(false); }
+      });
+      // mousedown, not click: the box keeps its focus, so it doesn't close first.
+      list.addEventListener("mousedown", (e) => { const o = e.target.closest("[role=option]"); if (o) { e.preventDefault(); choose(Number(o.dataset.i)); } });
+      find.addEventListener("blur", () => open(false));
     }
     // "Never" hides the number; "After" shows it again, ready to type.
     mode?.addEventListener("change", () => {

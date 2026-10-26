@@ -44,7 +44,7 @@
 import { ConfigError, ServerConfig } from "./settings.ts";
 import { type Access, AccessRules, type Facts } from "./access.ts";
 
-import { NotAllowed, type User, Users } from "./users.ts";
+import { type Actor, NotAllowed, type User, Users } from "./users.ts";
 
 import { Credentials } from "./api-keys.ts";
 import { Identities, type Vouched, vouchedEmails, workspaceOf } from "./identities.ts";
@@ -79,6 +79,18 @@ export interface DocRow {
   test: boolean;
   /** A document (one page) or a project (pages); null for one from before kinds that hasn't opened since. */
   kind: DocKind | null;
+}
+
+/** A document or project an admin's search finds (Directory.search). */
+export interface DocFound {
+  id: string;
+  title: string;
+  /** The owner's login. */
+  owner: string;
+  /** Its canonical address, "/<owner>/<slug>". */
+  address: string;
+  /** A document (one page) or a project (pages); a document for one from before kinds. */
+  kind: DocKind;
 }
 
 /** What a document is called, as the editor, its agents and /docs show it. */
@@ -233,13 +245,16 @@ export class Directory {
       locked: opts.locked,
       defaults: opts.defaults,
       changed: opts.changed,
-      // The front page shows a document to everyone, and runs its scripts on this site itself: an admin
-      // who may edit it puts it there, and only if everyone who may edit it is an admin. Kept by id, which a rename never changes.
+      // The front page shows a document or project to everyone, and runs its scripts on this site itself: an admin
+      // puts any of the server's there (config.set checks they're one), but only if everyone who may edit it is an admin.
+      // Kept by id, which a rename never changes.
       checks: {
-        landing_document: async (by, value) => {
+        landing_document: async (_by, value) => {
           const doc = await this.find(String(value));
-          if (!doc || doc.test) throw new ConfigError(`landing_document: there's no document at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`);
-          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test, admin: by.admin }, "edit", doc))) throw new NotAllowed(`Only someone who may edit /${doc.owner}/${doc.slug} can make it the front page: it shows the document to everyone.`);
+          if (!doc || doc.test)
+            throw new ConfigError(
+              `landing_document: there's no document or project at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`
+            );
           const blocked = await this.homeBlocked(doc.id);
           if (blocked) throw new NotAllowed(blocked);
           return doc.id;
@@ -528,6 +543,36 @@ export class Directory {
        FROM permissions p JOIN documents d ON d.id = p.doc_id
        WHERE p.login = ?1 AND d.test = 0 ORDER BY COALESCE(d.modified, d.created) DESC`, login.toLowerCase());
     return rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
+  }
+
+  /**
+   * The server's documents and projects (test ones aside) whose title, owner,
+   * address (/<owner>/<slug>, or a URL with it) or id has `query` in it, most
+   * recently edited first, at most `limit`; with no query, the most recent.
+   * For an admin choosing one (the homepage, the landing_document setting):
+   * admins only, since it names everyone's documents.
+   */
+  async search(by: Actor, query: string, limit = 20): Promise<DocFound[]> {
+    await this.users.mustAdmin(by);
+    let q = query.trim();
+    try {
+      if (/^https?:\/\//i.test(q)) q = new URL(q).pathname;
+    } catch {
+      /* searched as typed */
+    }
+    q = q.replace(/^\/+|\/+$/g, "").toLowerCase();
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await this.sql.all<Row>(
+      `SELECT * FROM documents WHERE test = 0 AND (?1 = '' OR LOWER(title) LIKE ?2 ESCAPE '\\' OR owner LIKE ?2 ESCAPE '\\'
+         OR (owner || '/' || slug) LIKE ?2 ESCAPE '\\' OR id = ?1)
+       ORDER BY COALESCE(modified, created) DESC LIMIT ?3`,
+      q,
+      like,
+      Math.max(1, Math.min(100, Math.floor(limit)))
+    );
+    return rows
+      .map(fromRow)
+      .map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: `/${d.owner}/${d.slug}`, kind: d.kind ?? "document" }));
   }
 
   /** The role someone's own permission gives them ("*" for anyone's), not counting anyone's. */
