@@ -37,7 +37,7 @@ import { forgetHome } from "../../server/home/index.ts";
 import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
 import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
-import type { GithubStatus, SourceAnswer, SourceRead } from "../../control/source/index.ts";
+import { NOT_SET_UP, type GithubStatus, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
 import { json } from "../../shared/http";
 
 const enc = new TextEncoder();
@@ -73,10 +73,7 @@ export class AdminAgents {
   /** Erga's repository, where this server has one. */
   private source() {
     const source = this.platform.source;
-    if (!source)
-      throw new Error(
-        "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and deploy/import-source.ts fills it."
-      );
+    if (!source) throw new Error(NOT_SET_UP);
     return source.object;
   }
 

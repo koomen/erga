@@ -92,7 +92,8 @@ declare module "../../server/platform.ts" {
   }
 }
 
-const notSetUp =
+/** What a server without Erga's repository answers. */
+export const NOT_SET_UP =
   "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and deploy/import-source.ts fills it.";
 
 /** A read (clone, fetch, ls-remote: git-upload-pack's two requests), which anyone may make without credentials. */
@@ -111,7 +112,8 @@ export async function sourceGit(request: Request, platform: Platform, url: URL):
   const howTo = `Pushing to Erga's Git endpoint needs an admin token: make one at ${url.origin}/tokens (scope: admin), then give any username and the token as the password.`;
   const read = isGitRead(request, rest, url);
   const source = platform.source;
-  const anonymous = () => source ? git(request, source, url, rest, { login: "anonymous", name: "Anonymous" }) : new Response(`${notSetUp}\n`, { status: 503 });
+  const anonymous = () =>
+    source ? git(request, source, url, rest, { login: "anonymous", name: "Anonymous" }) : new Response(`${NOT_SET_UP}\n`, { status: 503 });
   // Anyone may clone and fetch; only a push (git-receive-pack) asks who's there.
   if (!secret) return read ? anonymous() : challenge(howTo);
   // A token with the admin scope, whose person is an admin now. A read with any other credential is a read all the same.
@@ -125,7 +127,7 @@ export async function sourceGit(request: Request, platform: Platform, url: URL):
   if (!(await users.allowed(who.login)) || !(await users.isAdmin({ login: who.login, test: false }))) {
     return read ? anonymous() : refuse(`Only admins can push to Erga's repository, and ${who.login} isn't one.`);
   }
-  if (!source) return new Response(`${notSetUp}\n`, { status: 503 });
+  if (!source) return new Response(`${NOT_SET_UP}\n`, { status: 503 });
   return git(request, source, url, rest, who);
 }
 
@@ -159,7 +161,7 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
   if (who instanceof Response) return who;
   if (request.method == "POST" && !who.bearer && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   const source = platform.source;
-  if (!source) return json({ error: notSetUp }, 503);
+  if (!source) return json({ error: NOT_SET_UP }, 503);
   try {
     if (url.pathname == "/api/source/branches" && request.method == "GET") {
       const view = await source.object.branches(url.origin);
