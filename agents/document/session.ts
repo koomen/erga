@@ -243,7 +243,11 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   };
   // Each step of a run, kept in the person's store; a restart goes on from the last (agents/checkpoint.ts).
   const loop = startLoop({
-    cfg: opts.cfg, stored, store: opts.store ?? null, meta: { person: owner.id, name: owner.name, ...opts.meta }, tag: "editor",
+    cfg: opts.cfg,
+    stored,
+    store: opts.store ?? null,
+    meta: { person: owner.id, name: owner.name, ...opts.meta },
+    tag: "editor",
     hooks: {
       about: (_name, args) => toolPath(args),
       toolStarted: (name, path) => {
@@ -251,7 +255,10 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
         presence({ activity: `${TOOL_ACTIVITY[name] ?? server?.activity ?? name}${path ? ` ${path}` : ""}` });
       },
       toolEnded: () => presence({ activity: "thinking" }),
-      busy: (on) => { busy.agent = on; syncBusy(on ? "thinking" : undefined); },
+      busy: (on) => {
+        busy.agent = on;
+        syncBusy(on ? "thinking" : undefined);
+      },
     },
   });
   const emit = loop.emit;
@@ -310,20 +317,29 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       leave();
       awareness.destroy();
     },
-    get model() { return loop.model; },
-    get modelChoice() { return loop.modelChoice; },
+    get model() {
+      return loop.model;
+    },
+    get modelChoice() {
+      return loop.modelChoice;
+    },
     setModel: loop.setModel,
     async configure(next) {
       loop.configure(next);
-      if (next && !loop.agent) await (making ??= makeAgent(next).finally(() => { making = null; }));
+      if (next && !loop.agent)
+        await (making ??= makeAgent(next).finally(() => {
+          making = null;
+        }));
     },
     log: () => loop.log,
     prompt(text, context, files = []) {
       // The tools beyond the document as the owner may use them now (an admin's, say).
-      loop.prompt(text, context, files, (agent) => beyond().then((more) => {
-        agent.state.tools = [...mine(), ...more];
-        agent.state.systemPrompt = prompted(more);
-      }));
+      loop.prompt(text, context, files, (agent) =>
+        beyond().then((more) => {
+          agent.state.tools = [...mine(), ...more];
+          agent.state.systemPrompt = prompted(more);
+        })
+      );
     },
     abort: loop.abort,
     async reset() {

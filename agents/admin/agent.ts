@@ -423,11 +423,22 @@ function about(name: string, args: unknown): string | null {
  */
 export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; store?: ChatStore; stored?: StoredChat | null; meta?: Record<string, string> }): AdminAgent {
   const { owner } = opts;
-  const loop = startLoop({ cfg: opts.cfg, stored: opts.stored ?? null, store: opts.store ?? null, meta: { login: owner, ...opts.meta }, tag: "page", hooks: { about } });
+  const loop = startLoop({
+    cfg: opts.cfg,
+    stored: opts.stored ?? null,
+    store: opts.store ?? null,
+    meta: { login: owner, ...opts.meta },
+    tag: "page",
+    hooks: { about },
+  });
   const agent = loop.start(opts.cfg, systemPrompt(owner), opts.tools);
   return {
-    get model() { return loop.model; },
-    get modelChoice() { return loop.modelChoice; },
+    get model() {
+      return loop.model;
+    },
+    get modelChoice() {
+      return loop.modelChoice;
+    },
     setModel: loop.setModel,
     configure: loop.configure,
     log: () => loop.log,
