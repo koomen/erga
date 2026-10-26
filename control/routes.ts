@@ -73,7 +73,7 @@ import { releasesDoor, type ReleaseStore } from "./deploys/releases.ts";
 import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "./deploys/api.ts";
-import { cookies, finishSignIn, signOut, startSignIn } from "../server/identity/index.ts";
+import { cookies, finishSignIn, setCookie, signOut, startSignIn } from "../server/identity/index.ts";
 import { googleEndpoints } from "../server/identity/apps.ts";
 import { googleToken } from "../server/identity/sign-in.ts";
 import { open, seal, type Sealed } from "./deploys/seal.ts";
@@ -225,7 +225,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/install/callback" && read) {
     if (c.deploy && cookies(request).has(DEPLOY_OAUTH_COOKIE)) return c.deploy(request);
     const relayTo = relayOrigin(url.searchParams.get("state"));
-    if (relayTo && !cookieOf(request, INSTALL_COOKIE)) {
+    if (relayTo && !cookies(request).get(INSTALL_COOKIE)) {
       if (!(await c.deploys.isInstall(relayTo))) return page("Not an install", `This consent names ${esc(relayTo)}, which isn't a control Worker installed from here.`, 400);
       return new Response(null, { status: 302, headers: { Location: `${relayTo}/install/callback${url.search}`, "Cache-Control": "no-store" } });
     }
@@ -323,9 +323,13 @@ const GITHUB_COOKIE = "erga_github";
 export const GITHUB_MESSAGE = "erga-github";
 /** The consent in flight, in its cookie: the state, whether it runs in a popup; and, while the person picks a repository, the installation and their token (sealed). */
 interface GithubConsent { state: string; popup: boolean; installation?: number; token?: Sealed }
-const githubCookie = (value: string, maxAge: number) => `${GITHUB_COOKIE}=${value}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 const readGithubConsent = (request: Request): GithubConsent | null => {
-  try { const c = JSON.parse(unb64u(cookieOf(request, GITHUB_COOKIE))) as GithubConsent; return c?.state ? c : null; } catch { return null; }
+  try {
+    const c = JSON.parse(unb64u(cookies(request).get(GITHUB_COOKIE) ?? "")) as GithubConsent;
+    return c?.state ? c : null;
+  } catch {
+    return null;
+  }
 };
 /** Where this repository lives, for the source object's calls (the control Worker's own origin, wherever the page is). */
 const sourceOrigin = (c: Control, url: URL) => c.platform.control?.url ?? url.origin;
@@ -405,7 +409,7 @@ if (window.opener) for (const o of ${JSON.stringify(origins)}) try { window.open
 ${o.ok && !o.warning ? "setTimeout(() => window.close(), 300);" : ""}
 </script>`, o.ok ? 200 : 400);
   r.headers.set("Cache-Control", "no-store");
-  for (const x of [githubCookie("", 0), ...setCookies]) r.headers.append("Set-Cookie", x);
+  for (const x of [setCookie(url, GITHUB_COOKIE, "", 0), ...setCookies]) r.headers.append("Set-Cookie", x);
   return r;
 }
 
@@ -464,8 +468,17 @@ async function githubPick(request: Request, url: URL, c: Control, o: { token: st
     } else if (repos.length == 1) repo = repos[0];
     if (!repo) {
       // The pick page: the repositories the installation reaches, or a new one; the token kept sealed in the cookie for the choice.
-      const consent: GithubConsent = { state: o.state, popup: o.popup, installation: o.installationId, token: await seal(o.token, await sealKeyOf(c)) };
-      return githubPickPage(c, { account: installation.account, repos, problem, state: o.state }, githubCookie(b64u(JSON.stringify(consent)), 600));
+      const consent: GithubConsent = {
+        state: o.state,
+        popup: o.popup,
+        installation: o.installationId,
+        token: await seal(o.token, await sealKeyOf(c)),
+      };
+      return githubPickPage(
+        c,
+        { account: installation.account, repos, problem, state: o.state },
+        setCookie(url, GITHUB_COOKIE, b64u(JSON.stringify(consent)), 600)
+      );
     }
     const link = linkOf(o.installationId, installation.account, repo, o.by);
     const source = c.platform.source;
@@ -508,7 +521,14 @@ async function githubConnectRoutes(request: Request, url: URL, c: Control, sessi
     // An install's consent names this origin for erga.dev's callback (the App's one) to relay it here.
     const state = c.oauth.relay ? relayState(url.origin, randomToken(18)) : randomToken(18);
     const consent: GithubConsent = { state, popup };
-    return new Response(null, { status: 302, headers: { Location: installUrl(app, state), "Set-Cookie": githubCookie(b64u(JSON.stringify(consent)), 600), "Cache-Control": "no-store" } });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: installUrl(app, state),
+        "Set-Cookie": setCookie(url, GITHUB_COOKIE, b64u(JSON.stringify(consent)), 600),
+        "Cache-Control": "no-store",
+      },
+    });
   }
   if (path == "/github/connect/pick" && request.method == "POST") {
     if (request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
@@ -567,12 +587,15 @@ export const CONSENT_MESSAGE = "erga-deploy-credential";
 const b64u = (s: string) => base64url(new TextEncoder().encode(s));
 const unb64u = (s: string) => new TextDecoder().decode(fromBase64url(s));
 export { relayOrigin };
-const installCookie = (value: string, maxAge: number) => `${INSTALL_COOKIE}=${value}; Max-Age=${maxAge}; Path=/install; HttpOnly; Secure; SameSite=Lax`;
-const cookieOf = (request: Request, name: string) => request.headers.get("cookie")?.split(/;\s*/).map((c) => c.split("=")).find(([k]) => k == name)?.slice(1).join("=") ?? "";
 /** The consent in flight, in its cookie: the state, the PKCE verifier, and whether it runs in a popup. */
 interface Consent { state: string; verifier: string; popup: boolean }
 const readConsent = (request: Request): Consent | null => {
-  try { const c = JSON.parse(unb64u(cookieOf(request, INSTALL_COOKIE))) as Consent; return c?.state && c.verifier ? c : null; } catch { return null; }
+  try {
+    const c = JSON.parse(unb64u(cookies(request).get(INSTALL_COOKIE) ?? "")) as Consent;
+    return c?.state && c.verifier ? c : null;
+  } catch {
+    return null;
+  }
 };
 /** What a consent came to: connected (with what its first read said), or why not. */
 type Outcome = { ok: true; check?: string; missing?: string; norefresh?: boolean } | { ok: false; error: string } | { ok: true; disconnected: true };
@@ -604,12 +627,19 @@ async function installRoutes(request: Request, url: URL, c: Control, session: Ad
     const state = c.oauth.relay ? relayState(url.origin, randomToken(16)) : randomToken(16), { verifier, challenge } = await pkce();
     const to = authorizeUrl({ ...(c.oauth.mock ? { authorize: `${url.origin}/install/mock/consent` } : {}), clientId: c.oauth.clientId || "mock", redirect, state, challenge });
     const consent: Consent = { state, verifier, popup };
-    return new Response(null, { status: 302, headers: { Location: to, "Set-Cookie": installCookie(b64u(JSON.stringify(consent)), 600), "Cache-Control": "no-store" } });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: to,
+        "Set-Cookie": setCookie(url, INSTALL_COOKIE, b64u(JSON.stringify(consent)), 600, "/install"),
+        "Cache-Control": "no-store",
+      },
+    });
   }
   if (path == "/install/mock/consent" && c.oauth.mock) return mockConsentPage(url);
   if (path == "/install/callback" && method == "GET") {
     const consent = readConsent(request), popup = !!consent?.popup;
-    const clear = installCookie("", 0);
+    const clear = setCookie(url, INSTALL_COOKIE, "", 0, "/install");
     if (url.searchParams.get("error")) {
       const why = url.searchParams.get("error_description") || url.searchParams.get("error");
       return done({ ok: false, error: url.searchParams.get("error") == "access_denied" ? "You didn't authorize Erga on Cloudflare, so nothing changed." : `Cloudflare didn't authorize Erga: ${why}` }, popup, clear);

@@ -33,7 +33,7 @@ import { page } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { base64url, randomToken, sha256 } from "../../shared/bytes.ts";
 import { whoOf, type Platform } from "../../server/platform";
-import { cookieName, cookies } from "../../server/identity/index.ts";
+import { cookies, setCookie } from "../../server/identity/index.ts";
 import type { Env } from "../../cloudflare/env";
 import { releaseStoreOf } from "../cloudflare/release-bucket";
 
@@ -80,13 +80,25 @@ export async function deployDoor(request: Request, host: DeployHost): Promise<Re
       verifier = randomToken(32);
     const challenge = base64url(await sha256(verifier));
     const to = new URL(mock ? `${url.origin}/deploy/mock/consent` : OAUTH.authorize);
-    for (const [k, v] of Object.entries({ response_type: "code", client_id: env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock", redirect_uri: callback, scope: env.CLOUDFLARE_OAUTH_SCOPES?.trim() || DEFAULT_OAUTH_SCOPES, state, code_challenge: challenge, code_challenge_method: "S256" })) to.searchParams.set(k, v);
-    return new Response(null, { status: 302, headers: { Location: to.toString(), "Set-Cookie": cookie(request, OAUTH_COOKIE, `${state}.${verifier}`, 600, "/") } });
+    for (const [k, v] of Object.entries({
+      response_type: "code",
+      client_id: env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock",
+      redirect_uri: callback,
+      scope: env.CLOUDFLARE_OAUTH_SCOPES?.trim() || DEFAULT_OAUTH_SCOPES,
+      state,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    }))
+      to.searchParams.set(k, v);
+    return new Response(null, {
+      status: 302,
+      headers: { Location: to.toString(), "Set-Cookie": setCookie(request, OAUTH_COOKIE, `${state}.${verifier}`, 600, "/") },
+    });
   }
   if (path == "/deploy/mock/consent" && mock) return mockConsentPage(url);
   if (path == host.oauthCallback && request.method == "GET" && isDeployOAuthReturn(request)) {
     const [state, verifier] = (cookies(request).get(OAUTH_COOKIE) ?? "").split(".");
-    const clear = cookie(request, OAUTH_COOKIE, "", 0, "/");
+    const clear = setCookie(request, OAUTH_COOKIE, "", 0, "/");
     if (url.searchParams.get("error")) return back(`Cloudflare didn't authorize Erga (${url.searchParams.get("error_description") || url.searchParams.get("error")}). Try again, or use an API token.`, clear);
     if (!state || !verifier || url.searchParams.get("state") != state) return back("That authorization didn't come from this page (or took too long): try again.", clear);
     const net = mock ? mockCloudflare().fetch : globalThis.fetch.bind(globalThis);
@@ -163,7 +175,7 @@ const back = (error: string, ...setCookies: string[]) => {
 async function newSession(request: Request, env: DeployHost["env"]) {
   const id = randomToken(18),
     half = randomToken(32);
-  return { id, key: await sealKey(env, half), cookie: cookie(request, COOKIE, `${id}.${half}`, 2 * 60 * 60, "/deploy") };
+  return { id, key: await sealKey(env, half), cookie: setCookie(request, COOKIE, `${id}.${half}`, 2 * 60 * 60, "/deploy") };
 }
 async function sessionOf(request: Request, env: DeployHost["env"]): Promise<{ id: string; key: string } | null> {
   const [id, half] = (cookies(request).get(COOKIE) ?? "").split(".");
@@ -176,5 +188,3 @@ async function sealKey(env: DeployHost["env"], half: string): Promise<string> {
   return base64url(new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(half))));
 }
 
-const cookie = (request: Request, name: string, value: string, maxAge: number, path: string) =>
-  `${cookieName(request, name)}=${value}; Path=${path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;

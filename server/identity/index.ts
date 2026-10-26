@@ -19,7 +19,7 @@ export { authOps, providersOn } from "./settings.ts";
 export { adminsOnlyGate } from "./admins-only.ts";
 export { tokenPath } from "./token-paths.ts";
 export { expiryOf, tokensDoor } from "./tokens-page.ts";
-export { cookieName, cookies } from "./cookies.ts";
+export { cookieName, cookies, setCookie } from "./cookies.ts";
 export { LOCKED, NotAllowed, Users, type Actor, type ServerRole, type User } from "../directory/index.ts";
 export {
   LABEL_MAX,

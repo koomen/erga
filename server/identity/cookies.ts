@@ -4,15 +4,21 @@
 // cookies for its port (erga_session_4400): signing in or out on one never
 // touches another. On a real hostname the names are as they are.
 
+const urlOf = (at: Request | URL) => (at instanceof URL ? at : new URL(at.url));
+
 /** The suffix this server's cookies carry: "_<port>" on a loopback host with a port, else "". */
-function suffix(request: Request): string {
-  const url = new URL(request.url);
+function suffix(at: Request | URL): string {
+  const url = urlOf(at);
   const local = url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" || url.hostname == "[::1]";
   return local && url.port ? `_${url.port}` : "";
 }
 
 /** A cookie's name on this server (`name`, or `name_<port>` locally). */
-export const cookieName = (request: Request, name: string) => name + suffix(request);
+export const cookieName = (at: Request | URL, name: string) => name + suffix(at);
+
+/** The Set-Cookie for this server's cookie `name` (Max-Age 0 clears it): HttpOnly, SameSite=Lax, Secure over HTTPS. */
+export const setCookie = (at: Request | URL, name: string, value: string, maxAge: number, path = "/") =>
+  `${cookieName(at, name)}=${value}; Path=${path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${urlOf(at).protocol == "https:" ? "; Secure" : ""}`;
 
 /** This server's cookies, by their plain names (another port's, locally, are left out). */
 export function cookies(request: Request): Map<string, string> {
