@@ -16,7 +16,8 @@
 // It's an ordinary socket: a document on disk never sleeps.
 
 import { DurableObject } from "cloudflare:workers";
-import { Document, personOf, type DocumentDeps, type FileData, type OnDisk, type ViewAnswer } from "../../document/document";
+import { Document, personOf, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
+import type { ViewAnswer } from "../../document/view";
 import type { DocKind } from "../../document/pages";
 import { Tabs, type Tab } from "../../document/tabs";
 import { PING, PONG } from "../../shared/room-socket";

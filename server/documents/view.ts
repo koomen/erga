@@ -21,7 +21,7 @@
 // adds to the site's other pages, reading them back).
 
 import { pageAddress } from "../../document/pages.ts";
-import type { ViewAnswer } from "../../document/document.ts";
+import type { ViewAnswer } from "../../document/view.ts";
 import { mayDeploy } from "../identity/index.ts";
 import { ID, OWNER, roleMay } from "../directory/index.ts";
 import type { Role } from "../../document/access.ts";

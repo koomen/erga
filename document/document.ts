@@ -12,8 +12,8 @@
 // the signed-in person in x-erga-person and who they are in x-erga-who.
 // The document keeps a copy of its permissions (the directory pushes every
 // change; D1 stays the truth) and decides with the directory's own rule
-// (`authorize`, Directory.decide), so a request here asks the database
-// nothing. What they may do goes on as x-erga-access ("edit", or "view":
+// (access.ts), so a request here asks the database nothing. What they may do
+// goes on as x-erga-access ("edit", or "view":
 // their room connection is then read-only, and so are their agent and
 // the files they send whole). A read of a file with a key the front door checked (the
 // viewer's files, the editor's pages origin) says so in x-erga-checked. A request that came with an agent token also has x-erga-agent:
@@ -21,8 +21,8 @@
 // the token stands for, who may do what they last could.
 //
 // Storage keys: `info` (what the document is, read once and kept in
-// memory), `perms` (its permissions, as the directory last said), `view`
-// (the version viewers see, while no file changes), `files/<path>` (a file's bytes), `folders/<path>` (a folder made
+// memory), `perms` (its permissions, as the directory last said: access.ts), `view`
+// (the version viewers see, while no file changes: view.ts), `files/<path>` (a file's bytes), `folders/<path>` (a folder made
 // as one, empty ones too), `room/...` (the room's journal: storage.ts), and
 // the versions' (versions.ts).
 //
@@ -42,19 +42,19 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Y from "yjs";
 import { nameOf, namingFor, UNTITLED, type NamedRow, type Naming, type NamesDirectory } from "./names.ts";
-import { accessOf, type Asker, type Role } from "./access.ts";
+import { DocumentAccess, type Asker, type Role } from "./access.ts";
+import { DocumentView, type ViewAnswer } from "./view.ts";
 import type { DocumentAgents } from "./agent.ts";
 import { docFile, makeHost, typeOf } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, DocName, Hello } from "./api.ts";
-import { cleanRel, resolvePage, titleOf } from "./pages.ts";
 import { digest, FileStore, Room, StateStore, type Connection } from "./room.ts";
 import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storage } from "./storage.ts";
 import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
-import { kindOf, pageRefusal, parentsOf, type DocKind } from "./pages.ts";
+import { cleanRel, kindOf, pageRefusal, parentsOf, titleOf, type DocKind } from "./pages.ts";
 import { json } from "../shared/http.ts";
 import { sleep, throttle } from "../shared/time.ts";
 
@@ -165,33 +165,9 @@ export interface DocumentDeps {
 export type FileData = string | Uint8Array | BlobRef;
 
 const { file: FILE, ref: REF, meta: INFO } = KEYS;
-const PERMS = "perms", VIEW = "view";
 /** Set once every file and version blob kept in the object before blobs has been copied to the blob store (copyToBlobs). */
 const COPIED = "blobs-copied";
 
-
-/** How long a document trusts its copy of its permissions before it reads them again (in the background): changes are pushed, so this only covers one that didn't arrive. */
-const PERMISSIONS_FRESH_MS = 5 * 60_000;
-
-/** What viewers see: its version (a digest), its page and its files' paths. */
-export interface ViewState { ver: string; index: string; paths: string[] }
-
-/** Document.view's answer: what the person may do, the document's name as last told, and (if they may view) the version and file, with its text. */
-export interface ViewAnswer {
-  role: Role | null;
-  name: DocName | null;
-  test: boolean;
-  ver?: string;
-  /** The page's file, or null: no such page. */
-  file?: string | null;
-  /** The page's own address under the document's (resolvePage's canonical). */
-  canonical?: string | null;
-  /** No file changed in QUIET_MS: the answer may be kept a moment (server/documents/view.ts). */
-  quiet?: boolean;
-}
-
-/** How long without a file changing before a viewer's answer may be kept (a document being edited is asked each time). */
-const QUIET_MS = 60_000;
 
 /** A file over this many bytes, uploaded without its hash, is refused (its bytes would be held in memory to hash them). */
 const BUFFER_MAX = 25 * 1_000_000;
@@ -199,12 +175,6 @@ const MB = 1_000_000, GB = 1_000_000_000;
 const megabytes = (n: number) => (n >= GB ? `${(n / GB).toFixed(2)} GB` : `${(n / MB).toFixed(n < 10 * MB ? 1 : 0)} MB`);
 /** Where the versions keep a blob in the object (document/versions.ts). */
 const VERSION_BLOB = "blobs/";
-
-/** A short digest of a text, for versions. */
-const hashText = (text: string) => digest(new TextEncoder().encode(text));
-
-/** What a role lets someone do inside a document (x-erga-access). */
-
 
 const HOUR = 60 * 60 * 1000;
 
@@ -243,14 +213,10 @@ export class Document {
    * at their latest request.
    */
   private editors = new Map<string, boolean>();
-  /** Its permissions as the directory last said, and when (undefined: not read yet; null: none kept). */
-  private perms: { list: { login: string; role: Role }[]; at: number } | null | undefined = undefined;
-  /** What viewers see, while no file changes (null: work it out again). */
-  private latestView: ViewState | null = null;
-  /** Whether storage may hold `view` (so a change deletes it, once). */
-  private viewKept = true;
-  /** When a file last changed while this object ran (0: not since it started). */
-  private lastChange = 0;
+  /** Who may do what: its copy of its permissions, and the directory's rule (access.ts). */
+  private access: DocumentAccess;
+  /** What viewers see (view.ts). */
+  private views: DocumentView;
   /** What the document is, as storage has it (read once; undefined: not read yet, null: no document). */
   private info: DocumentInfo | null | undefined = undefined;
   /** Whether the unedited document's alarm is known to be gone (an edited one never goes). */
@@ -265,6 +231,24 @@ export class Document {
   constructor(private deps: DocumentDeps) {
     this.storage = deps.storage;
     this.versions = new Versions(kvOf(this.storage), Date.now, deps.blobs);
+    this.access = new DocumentAccess({
+      storage: this.storage,
+      directory: deps.directory,
+      info: () => this.readInfo(),
+      background: deps.background,
+      log: deps.log,
+    });
+    this.views = new DocumentView({
+      storage: this.storage,
+      log: deps.log,
+      isOpen: () => !!this.opened,
+      closing: () => this.closing,
+      doc: async () => (await this.room())?.room.doc ?? null,
+      changedAfterQuiet: () => {
+        const id = this.info?.id;
+        if (id) deps.viewChanged?.(id);
+      },
+    });
   }
 
   private get idleMs() { return this.deps.timing.idleMs; }
@@ -286,9 +270,8 @@ export class Document {
   private forgetStorage(): void {
     this.info = undefined;
     this.kept = false;
-    this.perms = undefined;
-    this.latestView = null;
-    this.viewKept = true;
+    this.access.forget();
+    this.views.forget();
     this.versions = new Versions(kvOf(this.storage), Date.now, this.deps.blobs);
   }
 
@@ -377,7 +360,7 @@ export class Document {
     if (this.deps.blobs && !Object.values(files).some((d) => d instanceof Uint8Array)) await this.storage.put(COPIED, { at: Date.now() });
     await this.versions.cut(first, index, [info.owner], "First version");
     // Who may open it, from the start: its first viewer needn't wait for the directory.
-    await this.readPermissions(id).catch((e) => this.deps.log(`couldn't read ${id}'s permissions: ${e}`));
+    await this.access.readPermissions(id).catch((e) => this.deps.log(`couldn't read ${id}'s permissions: ${e}`));
     return true;
   }
 
@@ -843,121 +826,25 @@ export class Document {
 
   // ---------------------------------------------------------------- who may, and what viewers see
 
-  /**
-   * A request from the front door, decided here: who it's from (x-erga-who,
-   * the person the front door signed in) and what their permission lets them
-   * do, from this document's copy of its permissions (Directory.decide, the
-   * directory's own rule). It goes on with x-erga-access; a Response refuses
-   * it. A GET of a file with a key the front door checked (x-erga-checked:
-   * the viewer's files, the editor's pages origin) needs no one.
-   */
-  async authorize(request: Request): Promise<Request | Response> {
-    const headers = new Headers(request.headers);
-    headers.delete("x-erga-access");
-    const url = new URL(request.url);
-    const read = request.method == "GET" || request.method == "HEAD";
-    if (headers.has("x-erga-checked")) {
-      headers.delete("x-erga-who");
-      if (read && url.pathname.startsWith("/doc/") && !headers.get("upgrade")) return new Request(request, { headers });
-      return new Response("Not allowed", { status: 403 });
-    }
-    let who: Asker | null = null;
-    try {
-      who = JSON.parse(headers.get("x-erga-who") ?? "null") as Asker | null;
-    } catch {
-      /* nobody */
-    }
-    if (!who || typeof who.login != "string") return new Response("Sign in first", { status: 401 });
-    const info = await this.readInfo();
-    if (!info) return new Response("No such document", { status: 404 });
-    const access = accessOf(await this.roleOf(who));
-    if (!access) return new Response("Not allowed", { status: 403 });
-    headers.set("x-erga-access", access);
-    return new Request(request, { headers });
+  /** A request from the front door, decided here (access.ts): it goes on with x-erga-access; a Response refuses it. */
+  authorize(request: Request): Promise<Request | Response> {
+    return this.access.authorize(request);
   }
 
   /** What `who` may do with the document, as a role (null: nothing), from its copy of its permissions. */
-  async roleOf(who: Asker): Promise<Role | null> {
-    const info = await this.readInfo();
-    if (!info) return null;
-    return this.directory.decide(who, { id: info.id, owner: info.owner, test: !!info.test }, await this.permissions(info.id));
+  roleOf(who: Asker): Promise<Role | null> {
+    return this.access.roleOf(who);
   }
 
   /** The directory says who may do what with this document now (every change is pushed here). */
-  async setPermissions(list: readonly { login: string; role: Role }[], at = Date.now()): Promise<void> {
-    if (this.perms === undefined) this.perms = (await this.storage.get<{ list: { login: string; role: Role }[]; at: number }>(PERMS)) ?? null;
-    if (this.perms && this.perms.at > at) return;
-    this.perms = { list: list.map((p) => ({ login: p.login, role: p.role })), at };
-    await this.storage.put(PERMS, this.perms);
+  setPermissions(list: readonly { login: string; role: Role }[], at?: number): Promise<void> {
+    return this.access.setPermissions(list, at);
   }
-
-  /**
-   * Its permissions: the copy it keeps, read from the directory when it has
-   * none, and again (meanwhile answering with the copy) once the copy is
-   * older than PERMISSIONS_FRESH_MS, in case a change didn't reach it.
-   */
-  private async permissions(id: string): Promise<{ login: string; role: Role }[]> {
-    if (this.perms === undefined) this.perms = (await this.storage.get<{ list: { login: string; role: Role }[]; at: number }>(PERMS)) ?? null;
-    const kept = this.perms;
-    if (kept && Date.now() - kept.at < PERMISSIONS_FRESH_MS) return kept.list;
-    const fresh = this.readPermissions(id);
-    if (!kept) return fresh;
-    this.deps.background(fresh.catch((e) => this.deps.log(`couldn't read ${id}'s permissions: ${e}`)));
-    return kept.list;
-  }
-
-  private async readPermissions(id: string): Promise<{ login: string; role: Role }[]> {
-    const at = Date.now();
-    const list = await this.directory.permissions(id);
-    // (None: a row not there yet, or gone. Nothing is kept, so the next request asks again.)
-    if (list.length) await this.setPermissions(list, at);
-    return list;
-  }
-
-  /** A file changed: what viewers see is worked out again. */
-  private viewChanged(): void {
-    // The first change after a quiet while: a viewer's answer kept meanwhile (view's `quiet`) is out of date.
-    if (Date.now() - this.lastChange > QUIET_MS) { const id = this.info?.id; if (id) this.deps.viewChanged?.(id); }
-    this.lastChange = Date.now();
-    this.latestView = null;
-    if (!this.viewKept) return;
-    this.viewKept = false;
-    void this.storage.delete(VIEW).catch((e) => this.deps.log(`couldn't forget the view: ${e}`));
-  }
-
-  /**
-   * What viewers see now, and its version: a digest of the files (their paths
-   * and digests) and the page, so the same files are always the same version,
-   * whatever happened between: the files as they are now (from the room, or
-   * kept in storage while no file has changed: a request needn't open the room).
-   */
-  private async viewNow(info: DocumentInfo): Promise<ViewState> {
-    if (this.latestView && this.latestView.index == info.index) return this.latestView;
-    if (!this.opened && !info.disk) {
-      await this.closing;
-      const kept = await this.storage.get<ViewState>(VIEW);
-      if (kept && kept.index == info.index) { this.viewKept = true; return (this.latestView = kept); }
-    }
-    const opened = await this.room();
-    if (!opened) { this.open = null; throw new Error("There's no such document."); }
-    const doc = opened.room.doc, encoder = new TextEncoder();
-    const entries: [string, string][] = [];
-    for (const [path, text] of texts(doc).entries()) entries.push([path, digest(encoder.encode(text.toString()))]);
-    for (const [path, d] of assets(doc).entries()) if (!texts(doc).has(path)) entries.push([path, d]);
-    entries.sort(([a], [b]) => (a < b ? -1 : 1));
-    const state: ViewState = { ver: "l" + hashText(JSON.stringify([info.index, entries])), index: info.index, paths: entries.map(([p]) => p) };
-    this.latestView = state;
-    this.viewKept = true;
-    if (!info.disk) await this.storage.put(VIEW, state);
-    return state;
-  }
-
-
 
   /**
    * A document's page for a viewer (the front door's viewer, server/documents/view.ts), in one call: what `who` may do
    * (`anyone`: the front page, which everyone may view), which file the address `page` is (its path under the
-   * document's; "" its own page) in what viewers see, that version, and the document's name (the page itself comes
+   * document's; "" its own page) in what viewers see (view.ts), that version, and the document's name (the page itself comes
    * from the document's pages origin: server/documents/pages-origin.ts). Null if there's no such document.
    */
   async view(who: Asker | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
@@ -966,18 +853,8 @@ export class Document {
     const role = who ? await this.roleOf(who) : null;
     const name = info.name ?? null;
     if (!role && !opts.anyone) return { role: null, name, test: !!info.test };
-    return this.hold(async () => {
-      const state = await this.viewNow(info);
-      const paths = new Set(state.paths);
-      const found = opts.page ? resolvePage((p) => paths.has(p), opts.page, state.index) : paths.has(state.index) ? { file: state.index, canonical: "" } : null;
-      // Quiet: no file changed in a while, so the front door may keep this answer a moment. A document being edited is
-      // asked each time.
-      const quiet = Date.now() - this.lastChange > QUIET_MS;
-      return { role, name, test: !!info.test, ver: state.ver, file: found?.file ?? null, canonical: found?.canonical ?? null, quiet };
-    });
+    return this.hold(() => this.views.answer(info, role, name, opts.page));
   }
-
-
 
   // ---------------------------------------------------------------- versions
 
@@ -1408,7 +1285,7 @@ export class Document {
     // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).
     room.doc.on("afterTransaction", (tr: Y.Transaction) => {
       if (!touchesFiles(room.doc, tr)) return;
-      this.viewChanged();
+      this.views.changed();
       const a = authorOf(room.doc, tr);
       this.noteEdit(a ? (a.kind == "disk" ? (info.disk ? "on disk" : this.publisher ?? "files published") : editorOf(a)) : null);
     });

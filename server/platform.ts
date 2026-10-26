@@ -12,7 +12,8 @@ import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/access.ts";
 import type { RestoreResult, VersionsState } from "../document/versions.ts";
-import type { FileData, ViewAnswer } from "../document/document.ts";
+import type { FileData } from "../document/document.ts";
+import type { ViewAnswer } from "../document/view.ts";
 import type { DocKind } from "../document/pages.ts";
 import { VIA } from "../shared/attribution.ts";
 
