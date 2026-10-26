@@ -6,10 +6,29 @@
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, js, openTreeEditor, paths } from "./tree";
 
-/** Opens the settings once the gear can be clicked (the editor's controls fade in and out), and waits for them. */
+/** Waits until a control can be clicked (the editor's controls fade in and out), then clicks it. */
+async function clickWhenShown(page: Page, selector: string, what: string) {
+  await until(
+    () =>
+      page.evaluate((sel) => {
+        const g = document.querySelector(sel),
+          r = g?.getBoundingClientRect();
+        return (
+          !!r?.width &&
+          document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest(sel) == g &&
+          getComputedStyle(g!.closest(".chrome") ?? g!).opacity == "1"
+        );
+      }, selector),
+    10_000,
+    `${what} can be clicked`
+  );
+  await clickOn(page, selector);
+}
+
+/** Opens the settings once the gear can be clicked, and waits for them. */
 async function openSettings(page: Page) {
-  await until(() => page.evaluate(() => { const g = document.getElementById("btn-settings"), r = g?.getBoundingClientRect(); return !!r?.width && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest("#btn-settings") == g && getComputedStyle(g!.closest(".chrome")!).opacity == "1"; }), 10_000, "the gear can be clicked");
-  if (await page.evaluate(`document.getElementById("doc-settings")?.hidden !== false`)) await clickOn(page, "#btn-settings");
+  if (await page.evaluate(`document.getElementById("doc-settings")?.hidden !== false`))
+    await clickWhenShown(page, "#btn-settings", "the gear");
   await until(() => page.evaluate(`document.getElementById("doc-settings")?.hidden === false`), 5000, "the settings open");
 }
 
@@ -37,7 +56,7 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
   const caret = (p = page) => p.evaluate(`getComputedStyle(document.querySelector("#doc-title .nav-caret")).display != "none"`) as Promise<boolean>;
   expect(await caret()).toBe(false);
   expect(await caret(other)).toBe(false);
-  await clickOn(page, "#doc-title");
+  await clickWhenShown(page, "#doc-title", "the title");
   expect(await js(page, `[document.getElementById("naming").hidden, document.getElementById("pages").hidden]`)).toEqual([false, true]);
   await page.keyboard.press("Escape");
 
@@ -55,7 +74,7 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
   await until(() => caret(other), 5000, "the other tab's caret shows, with no reload");
   await other.close();
   await page.keyboard.press("Escape");
-  await clickOn(page, "#doc-title");
+  await clickWhenShown(page, "#doc-title", "the title");
   await until(() => js(page, `!document.getElementById("pages").hidden && [...document.querySelectorAll("#pages .et-foot .et-add")].filter((b) => !b.hidden).map((b) => b.textContent).join()`), 5000, "a project's pages open, with New page")
     .then((v) => expect(v).toBe("New page,New folder"));
   await page.keyboard.press("Escape");
@@ -117,7 +136,7 @@ test("New, then Project: a project from the start, its caret shown, and its two 
     5000,
     "a project's caret shows"
   );
-  await clickOn(page, "#doc-title");
+  await clickWhenShown(page, "#doc-title", "the title");
   await until(() => js(page, `!document.getElementById("pages").hidden`), 5000, "the pages open");
   await until(
     async () =>
