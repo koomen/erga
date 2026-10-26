@@ -9,7 +9,7 @@
 // Ops page: no merge, deploys, logs, mirror or settings. Git itself (clone,
 // fetch) is routes.ts's sourceGit, which also needs no sign-in.
 
-import { appPage, crumbs, inlineStyle, TIMES_SCRIPT } from "../../server/pages/index.ts";
+import { appPage, crumbs, inlineScript, inlineStyle } from "../../server/pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import type { Platform } from "../../server/platform.ts";
 import type { SourceView } from "./browse.ts";
@@ -119,12 +119,8 @@ function shell(app: string, title: string, body: string): string {
 <main class="src">
   ${body}
 </main>
-<script>
-${TIMES_SCRIPT}
-  const copy = document.getElementById("copy");
-  copy?.addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(document.getElementById("clone").textContent); copy.textContent = "Copied"; setTimeout(() => (copy.textContent = "Copy"), 1500); } catch {}
-  });
-</script>`, false);
+${inlineScript("source")}`,
+    false
+  );
 }
 

@@ -25,7 +25,7 @@
 //                                  local development only: a pretend provider's sign-in, through the same steps
 
 import type { Platform, Session } from "../platform.ts";
-import { page, safeNext } from "../pages/index.ts";
+import { inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
 import { cookies, setCookie } from "./cookies.ts";
@@ -206,31 +206,8 @@ function usernamePage(v: Vouched, value: string, error: string | null, taken?: s
   <button class="new" type="submit">Make my account</button></p>
   <p class="hint${error ? " error" : ""}" role="status" id="username-hint">${error ? esc(error) : "Lowercase letters, digits and dashes."}</p>
 </form>
-<style>
-  form.username label { display: block; font-weight: 600; margin-bottom: 6px; }
-  form.username .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0; }
-  form.username .input { flex: 1; min-width: 180px; font: inherit; padding: 8px 10px; border: 1px solid var(--line, #8886); border-radius: 8px; background: transparent; color: inherit; }
-  form.username .hint { font-size: 13px; color: var(--chrome); margin-top: 8px; }
-  form.username .hint.error { color: #c0392b; }
-</style>
-<script>
-  const input = document.getElementById("username"), hint = document.getElementById("username-hint");
-  let timer = 0, asked = "";
-  input.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      const name = input.value.trim().toLowerCase();
-      if (!name || name == asked) return;
-      asked = name;
-      try {
-        const r = await (await fetch("/auth/username?check=" + encodeURIComponent(name))).json();
-        if (asked != name) return;
-        hint.textContent = r.ok ? '"' + name + '" is free.' : r.problem;
-        hint.classList.toggle("error", !r.ok);
-      } catch {}
-    }, 250);
-  });
-</script><p>`;
+<style>${inlineStyle("username")}</style>
+${inlineScript("username")}<p>`;
   return page("Choose a username", body, error ? 400 : 200);
 }
 
