@@ -1,7 +1,8 @@
 // The start page: what Erga is, when there's no landing document and none can be made.
 
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { appPage, crumbs, esc, link } from "./chrome.ts";
+import { appPage, crumbs, link } from "./chrome.ts";
+import { esc } from "../../shared/html.ts";
 
 /** The front page when there's no landing document and none can be made (seedLanding): what Erga is, and the way in. */
 export async function startPage(platform: Platform, session: Session | null): Promise<Response> {

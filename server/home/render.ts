@@ -13,7 +13,24 @@
 
 import type { DocRow } from "../directory/index.ts";
 import { imgFallbackScript } from "../pages/index.ts";
-import { ACCOUNT_STYLE, accountMarkup, cloneButton, crumbsFont, editButton, esc, FADE, filesButton, link, NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, VIEW_STYLE, viewCrumbs, type Account } from "../pages/index.ts";
+import {
+  ACCOUNT_STYLE,
+  accountMarkup,
+  cloneButton,
+  crumbsFont,
+  editButton,
+  FADE,
+  filesButton,
+  link,
+  NEW_DOC_SCRIPT,
+  NEW_DOC_STYLE,
+  newDocButton,
+  newDocMenu,
+  VIEW_STYLE,
+  viewCrumbs,
+  type Account,
+} from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home/";

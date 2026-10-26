@@ -104,7 +104,8 @@ import {
 import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
-import { appPage, crumbs, esc, page } from "../server/pages/index.ts";
+import { appPage, crumbs, page } from "../server/pages/index.ts";
+import { esc } from "../shared/html.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
 import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
 

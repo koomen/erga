@@ -33,7 +33,6 @@ import {
   appPage,
   asset,
   crumbs as trail,
-  esc,
   ICON,
   imgFallbackScript,
   inlineCall,
@@ -42,6 +41,7 @@ import {
   page,
   scriptTag,
 } from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { MARK } from "../../assets/logo/logo.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";

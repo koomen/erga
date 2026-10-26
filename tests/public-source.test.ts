@@ -122,7 +122,7 @@ describe("the page, with no sign-in", () => {
   test("a folder, a file (its text escaped), a binary file, staging's files, and a path that isn't there", async () => {
     expect(await (await page("/git/tree/main/src")).text()).toContain(`href="/git/tree/main/src/page"`);
     const file = await (await page("/git/tree/main/src/page/main.ts")).text();
-    expect(file).toContain("export const greeting = '&lt;b&gt;hello&lt;/b&gt;';");
+    expect(file).toContain("export const greeting = &#39;&lt;b&gt;hello&lt;/b&gt;&#39;;");
     expect(file).not.toContain("<b>hello</b>");
     expect(await (await page("/git/tree/main/logo.png")).text()).toContain("A binary file");
     const staging = await (await page("/git/tree/staging")).text();
@@ -130,7 +130,7 @@ describe("the page, with no sign-in", () => {
     expect(staging).toContain("A change for staging");
     const missing = await page("/git/tree/main/nothing.ts");
     expect(missing.status).toBe(404);
-    expect(await missing.text()).toContain("There's no file or folder nothing.ts.");
+    expect(await missing.text()).toContain("There&#39;s no file or folder nothing.ts.");
     expect((await page("/git/tree/main/..%2F..%2Fetc")).status).toBe(404);
   });
 });

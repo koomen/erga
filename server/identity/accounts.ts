@@ -25,7 +25,8 @@
 //                                  local development only: a pretend provider's sign-in, through the same steps
 
 import type { Platform, Session } from "../platform.ts";
-import { esc, page, safeNext } from "../pages/index.ts";
+import { page, safeNext } from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
 import { cookieName, cookies } from "./cookies.ts";
 import { b64, sign, unb64, unsign } from "./session.ts";

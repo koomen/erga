@@ -8,7 +8,8 @@
 // files.js), loaded only here.
 
 import type { Session } from "../platform.ts";
-import { appPage, crumbs, esc } from "./chrome.ts";
+import { appPage, crumbs } from "./chrome.ts";
+import { esc } from "../../shared/html.ts";
 import { scriptTag } from "./assets.ts";
 
 export interface FilesPageOptions {

@@ -7,7 +7,6 @@ import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permi
 import { type Listed, type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
 import {
-  esc,
   confirmAction,
   docsPage,
   fromElsewhere,
@@ -19,6 +18,7 @@ import {
   TEMPLATES,
   withEdit,
 } from "../pages/index.ts";
+import { esc } from "../../shared/html.ts";
 
 /** A template's starting files (server/pages/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
 export function templateFiles(

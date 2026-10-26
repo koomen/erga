@@ -17,6 +17,7 @@
 // asked is in `state`, which the tests read.
 
 import { MOCK_GITHUB_TOKEN } from "./git-server.ts";
+import { esc } from "../shared/html.ts";
 
 /** The id the pretend GitHub gives a login (/users/<login>): the same each time. */
 export const mockGithubId = (login: string) =>
@@ -58,7 +59,6 @@ export interface MockGithubState {
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const html = (body: string, status = 200) => new Response(`<!doctype html><meta charset="utf-8"><title>Pretend GitHub</title><style>body{font:15px system-ui;max-width:560px;margin:40px auto;padding:0 16px}button,.btn{display:inline-block;padding:8px 14px;border:1px solid #888;border-radius:8px;background:#fff;color:#000;text-decoration:none;cursor:pointer}h1{font-size:20px}label{display:block;margin:6px 0}</style>${body}`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 /** Git's receive-pack request: the ref updates it carries (old, new, ref), before the pack. */
 export function pushCommands(body: Uint8Array): { old: string; new: string; ref: string }[] {

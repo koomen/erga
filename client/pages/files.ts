@@ -15,6 +15,8 @@
 // delete (a folder asks once). Errors show where they happened, in the
 // server's words.
 
+import { esc } from "../../shared/html";
+
 interface FileRow { path: string; kind: "text" | "file"; size: number | null; at: number | null; type: string }
 interface Listing { files: FileRow[]; folders: string[]; index: string; canEdit: boolean }
 
@@ -179,10 +181,6 @@ function row(o: { path: string; folder: boolean; level: number; file?: FileRow }
   el.innerHTML = `${twist}${icon}<span class="name" title="${esc(o.path)}">${esc(nameOf(o.path))}</span>${size}${time}${acts}`;
   if (mine) el.draggable = true;
   return el;
-}
-
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 function select(path: string): void {

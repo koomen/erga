@@ -61,7 +61,7 @@ describe("/install", () => {
     expect(calls).toEqual([]); // no token exchange
     expect(await credential.status()).toMatchObject({ connected: false, by: null });
     const html = await (await go(where.pathname + where.search)).text();
-    expect(html).toContain("not allowed to request scope 'cloudchamber.write'");
+    expect(html).toContain("not allowed to request scope &#39;cloudchamber.write&#39;");
     expect(html).toContain("Not connected");
   });
 

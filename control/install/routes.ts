@@ -29,7 +29,8 @@ import { controlHostOf, DEPLOY_OAUTH_COOKIE, INSTALL_CONTROL_WORKER } from "./in
 import { mockCloudflare } from "../../dev/mock-cloudflare";
 import { deployPage, mockConsentPage } from "./page";
 import { mayDeploy } from "../deploys/access";
-import { esc, page } from "../../server/pages/index.ts";
+import { page } from "../../server/pages/index.ts";
+import { esc } from "../../shared/html.ts";
 import { whoOf, type Platform } from "../../server/platform";
 import { cookieName, cookies } from "../../server/identity/index.ts";
 import type { Env } from "../../cloudflare/env";
