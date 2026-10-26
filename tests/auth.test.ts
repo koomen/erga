@@ -145,14 +145,27 @@ test("discard drops only the values that wait; clear goes back to the deploy's, 
 
 test("the status: what's in use and where from, never a secret, the URLs GitHub needs, and the steps where there's no app", async () => {
   const { c } = server({ clientId: "", secret: "" }, [GOOD]);
-  const none = await statusOf(c, { origin: "https://staging.erga.dev", target: "staging", dev: false, takesFrom: "production", worker: "erga-staging", pagePlace: "on production's page" });
+  const none = await statusOf(c, {
+    origin: "https://staging.erga.dev",
+    target: "staging",
+    dev: false,
+    worker: "erga-staging",
+    pagePlace: "on this server's page",
+  });
   expect(none.check.state).toBe("not_set_up");
   expect(none.callbackUrl).toBe("https://staging.erga.dev/auth/github/callback");
   expect(none.homepageUrl).toBe("https://staging.erga.dev");
   const steps = none.setup!.join("\n");
-  for (const s of ["https://github.com/settings/applications/new", "https://staging.erga.dev/auth/github/callback", "on production's page", "targets.staging.vars.GITHUB_CLIENT_ID", "--name erga-staging"]) expect(steps).toContain(s);
+  for (const s of [
+    "https://github.com/settings/applications/new",
+    "https://staging.erga.dev/auth/github/callback",
+    "on this server's page",
+    "targets.staging.vars.GITHUB_CLIENT_ID",
+    "--name erga-staging",
+  ])
+    expect(steps).toContain(s);
   await saveApp(c, "staging", GOOD, { login: "koomen" });
-  const set = await statusOf(c, { origin: "https://staging.erga.dev", target: "staging", dev: false, takesFrom: "production", pagePlace: "here" });
+  const set = await statusOf(c, { origin: "https://staging.erga.dev", target: "staging", dev: false, pagePlace: "here" });
   expect(set.check.state).toBe("working");
   expect(set.inUse).toEqual({ clientId: GOOD.clientId, secretSet: true, source: "page" });
   expect(set.setup).toBeNull();

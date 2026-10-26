@@ -22,9 +22,6 @@
 //                                   so nothing but the client build's own output may ever go under /_erga/
 //   GET /api/deploys/version        the release and target, which the deploy pipeline waits on
 //   GET /api/health                 the health check the pipeline runs after (ok, the release, the checks: no data)
-//   /api/sign-in/... with DEPLOY_HOOK_SECRET
-//                                   production's Authentication page reads staging's sign-in status, and sets staging's
-//                                   GitHub app: until staging has one, no admin can sign in there
 //   /api/snapshot/...               the deploy copying production's documents in, and staging reading a blob its copy
 //                                   lacks (/api/snapshot/blob/<sha-256>), both with SNAPSHOT_TOKEN
 //   /__erga/...                     local development only, behind the dev server's secret
@@ -48,8 +45,6 @@ import { TARGETS } from "../../deploy/targets.ts";
 import { isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
 import { esc, isAssetPath, page, safeNext } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
-import { isPeer } from "./peer.ts";
-import { isSignInPath } from "./settings.ts";
 import { tokenPath } from "./token-paths.ts";
 
 /** The request needs no admin: one of the exemptions above. */
@@ -59,7 +54,6 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   if (path == "/auth/sign-in" || path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/google" || path == "/auth/google/callback" || path == "/auth/logout") return true;
   if (isAssetPath(path) || path == "/logo.png") return method == "GET" || method == "HEAD";
   if (path == "/api/deploys/version" || path == "/api/health") return method == "GET" || method == "HEAD";
-  if (isSignInPath(path) && isPeer(request, base)) return true;
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/__erga/")) return true;
   return false;

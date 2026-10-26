@@ -17,8 +17,6 @@
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
-//   /api/sign-in/...           another of Erga's servers reads this one's sign-in status, or sets its GitHub app
-//                              (server/identity/settings.ts, with DEPLOY_HOOK_SECRET)
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /api/docs/<id>/home        whether a document is the homepage, and its deploys (/admin chooses it)
@@ -47,7 +45,18 @@ import { serverApi, tokensDoor } from "./api.ts";
 import { mayDeploy } from "./deploys/access.ts";
 import { frontDoor, isPagesSite } from "./documents/index.ts";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
-import { adminsOnlyGate, chooseSignIn, devSignIn, finishGoogleSignIn, finishSignIn, startGoogleSignIn, isSignInPath, signInDoor, signOut, startSignIn, testSignIn, usernameStep } from "./identity/index.ts";
+import {
+  adminsOnlyGate,
+  chooseSignIn,
+  devSignIn,
+  finishGoogleSignIn,
+  finishSignIn,
+  startGoogleSignIn,
+  signOut,
+  startSignIn,
+  testSignIn,
+  usernameStep,
+} from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
@@ -114,8 +123,6 @@ async function route(request: Request, p: Platform, url: URL, outside: Outside):
     const refused = await adminGate(p, request);
     if (refused) return refused;
   }
-  // Sign-in's status and GitHub app, server to server.
-  if (isSignInPath(path)) return signInDoor(request, p);
   // Branch deploys and their status, /deploy, the dev server's routes: outside the app.
   const elsewhere = await outside(request, url);
   if (elsewhere) return elsewhere;

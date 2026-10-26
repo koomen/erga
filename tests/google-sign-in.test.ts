@@ -1,10 +1,11 @@
 // Signing in with Google (server/identity/sign-in.ts), against the pretend Google (dev/google-mock.ts): the live check
-// of a client, the switch that turns Google on (and its lockout rules), and a sign-in from start to session, by the sub.
+// of a client, the switch that turns Google on (and its lockout rules), a sign-in from start to session, by the sub, and
+// the way back in: values set on the page that stop working give way to the deploy's.
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mockGoogle, type MockGoogleUser } from "../dev/google-mock";
 import { AuthApps, checkGoogleApp } from "../server/identity/apps";
-import { authOps, providersOn } from "../server/identity/settings";
+import { authOps, providersOn, signInApp } from "../server/identity/settings";
 import { chooseSignIn, finishGoogleSignIn, startGoogleSignIn, startSignIn } from "../server/identity/sign-in";
 import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
@@ -195,4 +196,18 @@ test("a Google account's picture is Google's, kept at each sign-in; with none, n
   google.state.user = { ...ADA, picture: "https://evil.example/a.png" };
   expect((await signInWithGoogle(platform)).status).toBe(302);
   expect((await directory.users.get("ada"))?.avatar).toBeNull();
+});
+
+test("values set on the page that the provider refuses give way to the deploy's, while those work: an admin can still sign in", async () => {
+  const { platform, own } = server();
+  // Values kept as the page keeps them, for a client Google doesn't know (deleted since, say).
+  const gone = { clientId: "999999999999-deletedclient0000.apps.googleusercontent.com", secret: "GOCSPX-deleted-deleted-del" };
+  await new AuthApps(own, "factory-key", "").keep("google", "active", gone, { login: "koomen" });
+  expect(await signInApp(platform, "active", "google")).toEqual(APP);
+  // With no deploy values that work, the page's stand: nothing else to fall back to.
+  const noDeploy = {
+    ...platform,
+    signIn: { ...platform.signIn, googleApp: { clientId: APP.clientId, secret: "GOCSPX-wrong-wrong-wrong" } },
+  } as Platform;
+  expect((await signInApp(noDeploy, "active", "google"))?.clientId).toBe(gone.clientId);
 });

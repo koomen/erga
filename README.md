@@ -135,7 +135,7 @@ health checks and rollbacks work.
                       access rules, settings and their change log, the API keys admins store
       identity/       who is asking: sessions (session.ts), agent tokens (tokens.ts), sign-in with GitHub or Google
                       (sign-in.ts, accounts.ts) and its settings (settings.ts, apps.ts), cookies, the staging guard
-                      (admins-only.ts), the other of a deployment's servers (peer.ts)
+                      (admins-only.ts)
       documents/      the front door for documents: a document's address and access (front-door.ts), the pages origin
                       and its tokens (pages-origin.ts), the viewer (view.ts), new/list/delete/share (make.ts), the
                       front page's document (landing.ts)
