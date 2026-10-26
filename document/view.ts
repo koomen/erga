@@ -1,0 +1,140 @@
+// What a document's viewers see: its files as they are now, under a version
+// that's a digest of them (so the same files are always the same version),
+// and which file a page's address is. The front door's viewer
+// (server/documents/view.ts) asks for it in one call (Document.view); the
+// answer is kept in the document's storage while no file changes, so a
+// viewer's request needn't open the room.
+
+import type * as Y from "yjs";
+import type { DocName } from "./api.ts";
+import { assets, files as texts } from "./content.ts";
+import { resolvePage } from "./pages.ts";
+import { digest } from "./room.ts";
+import type { Storage } from "./storage.ts";
+import type { Role } from "./access.ts";
+
+/** What viewers see: its version (a digest), its page and its files' paths. */
+export interface ViewState {
+  ver: string;
+  index: string;
+  paths: string[];
+}
+
+/** Document.view's answer: what the person may do, the document's name as last told, and (if they may view) the version and file, with its text. */
+export interface ViewAnswer {
+  role: Role | null;
+  name: DocName | null;
+  test: boolean;
+  ver?: string;
+  /** The page's file, or null: no such page. */
+  file?: string | null;
+  /** The page's own address under the document's (resolvePage's canonical). */
+  canonical?: string | null;
+  /** No file changed in QUIET_MS: the answer may be kept a moment (server/documents/view.ts). */
+  quiet?: boolean;
+}
+
+/** How long with no file changed before a viewer's answer may be kept (ViewAnswer.quiet). */
+const QUIET_MS = 60_000;
+
+/** Where what viewers see is kept in the document's storage, while no file changes. */
+const VIEW = "view";
+
+const hashText = (text: string) => digest(new TextEncoder().encode(text));
+
+/** What the document's view needs: its storage, and its room's shared doc (opened if it isn't; null: no document). */
+export interface ViewOptions {
+  storage: Storage;
+  /** Whether the room is open now (else a kept view saves opening it). */
+  isOpen: () => boolean;
+  /** The room closing: its last writes land first. */
+  closing: () => Promise<void>;
+  /** The room's shared doc, opened if it isn't (null: there's no such document). */
+  doc: () => Promise<Y.Doc | null>;
+  /** The first change after a quiet while: a viewer's answer kept meanwhile is out of date. */
+  changedAfterQuiet?: () => void;
+  log: (line: string) => void;
+}
+
+/** A document's view: what viewers see, worked out once for each change. */
+export class DocumentView {
+  /** What viewers see, while no file changes (null: work it out again). */
+  private latest: ViewState | null = null;
+  /** Whether storage may hold VIEW (so a change deletes it, once). */
+  private kept = true;
+  /** When a file last changed while this object ran (0: not since it started). */
+  private lastChange = 0;
+
+  constructor(private o: ViewOptions) {}
+
+  /** Storage was emptied or replaced: what was read of it is forgotten. */
+  forget(): void {
+    this.latest = null;
+    this.kept = true;
+  }
+
+  /** A file changed: what viewers see is worked out again. */
+  changed(): void {
+    // The first change after a quiet while: a viewer's answer kept meanwhile (view's `quiet`) is out of date.
+    if (Date.now() - this.lastChange > QUIET_MS) this.o.changedAfterQuiet?.();
+    this.lastChange = Date.now();
+    this.latest = null;
+    if (!this.kept) return;
+    this.kept = false;
+    void this.o.storage.delete(VIEW).catch((e) => this.o.log(`couldn't forget the view: ${e}`));
+  }
+
+  /**
+   * What viewers see now, and its version: a digest of the files (their paths
+   * and digests) and the page, so the same files are always the same version,
+   * whatever happened between: the files as they are now (from the room, or
+   * kept in storage while no file has changed: a request needn't open the room).
+   */
+  private async now(info: { index: string; disk?: unknown }): Promise<ViewState> {
+    if (this.latest && this.latest.index == info.index) return this.latest;
+    if (!this.o.isOpen() && !info.disk) {
+      await this.o.closing();
+      const kept = await this.o.storage.get<ViewState>(VIEW);
+      if (kept && kept.index == info.index) {
+        this.kept = true;
+        return (this.latest = kept);
+      }
+    }
+    const doc = await this.o.doc();
+    if (!doc) throw new Error("There's no such document.");
+    const encoder = new TextEncoder();
+    const entries: [string, string][] = [];
+    for (const [path, text] of texts(doc).entries()) entries.push([path, digest(encoder.encode(text.toString()))]);
+    for (const [path, d] of assets(doc).entries()) if (!texts(doc).has(path)) entries.push([path, d]);
+    entries.sort(([a], [b]) => (a < b ? -1 : 1));
+    const state: ViewState = {
+      ver: "l" + hashText(JSON.stringify([info.index, entries])),
+      index: info.index,
+      paths: entries.map(([p]) => p),
+    };
+    this.latest = state;
+    this.kept = true;
+    if (!info.disk) await this.o.storage.put(VIEW, state);
+    return state;
+  }
+
+  /** The answer for someone who may view (`role`, or anyone: the front page): which file the address `page` is, in what viewers see now, and that version. */
+  async answer(
+    info: { index: string; test?: boolean; disk?: unknown },
+    role: Role | null,
+    name: DocName | null,
+    page: string
+  ): Promise<ViewAnswer> {
+    const state = await this.now(info);
+    const paths = new Set(state.paths);
+    const found = page
+      ? resolvePage((p) => paths.has(p), page, state.index)
+      : paths.has(state.index)
+        ? { file: state.index, canonical: "" }
+        : null;
+    // Quiet: no file changed in a while, so the front door may keep this answer a moment. A document being edited is
+    // asked each time.
+    const quiet = Date.now() - this.lastChange > QUIET_MS;
+    return { role, name, test: !!info.test, ver: state.ver, file: found?.file ?? null, canonical: found?.canonical ?? null, quiet };
+  }
+}
