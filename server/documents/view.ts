@@ -233,10 +233,7 @@ async function render(platform: Platform, request: Request, session: Session | n
   const dir = platform.directory;
   const canEdit = !!session && !session.agent && roleMay(d.role, "edit");
   const editing = canEdit && url.searchParams.has("edit");
-  const [admin, deploy] = await Promise.all([
-    session && !session.test ? dir.users.isAdmin(whoOf(session)) : false,
-    mayDeploy(dir, session),
-  ]);
+  const [admin, deploy] = await Promise.all([session ? dir.users.isAdmin(whoOf(session)) : false, mayDeploy(dir, session)]);
   // On a server for admins alone (staging), the token names the admin.
   const by = platform.adminsOnly && session ? session.login : null;
   const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, { ...(by ? { by } : {}), ...(canEdit ? { edit: true } : {}) });

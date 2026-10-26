@@ -81,7 +81,7 @@ export async function handle(request: Request, platform: Platform, outside: Outs
   const page = await withAccount(response, async () => {
     const session = await platform.sessionOf(request);
     const dir = platform.directory;
-    return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
+    return accountOf(session, !!session && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
   }, url.pathname + url.search);
   // And every page of the site's own follows a redeploy; not the editor's own files (editor.html is a part of a page).
   // Then what every answer says about how a browser may use it: HTTPS only, no other site's frame (security.ts).
