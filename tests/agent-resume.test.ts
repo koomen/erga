@@ -20,6 +20,7 @@ import { STOPPED, STOPPED_SHOWN, type ChatSave, type ChatStore } from "../agents
 import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
 import type { Log } from "../shared/agent-log.ts";
+import { documentAgents } from "../agents/document/session";
 
 const SCRIPT = `@script [{"tool":"count","args":{}},{"text":"Done."}]`;
 
@@ -60,14 +61,18 @@ async function openDocument(data: Map<string, Uint8Array>, store: ChatStore, run
     execute: async () => { runs.n++; return { content: [{ type: "text", text: `run ${runs.n}` }], details: {} }; },
   };
   const host = makeHost({
-    room, files, agent: { apiKey: Redacted.make(""), model: "script", effort: "medium" },
+    room,
+    files,
+    docId: "d1",
+    agents: documentAgents({
+      settings: async () => ({ apiKey: Redacted.make(""), model: "script", effort: "medium" }),
+      serverTools: async () => [count],
+      chats: () => store,
+    }),
     doc: { name: "index.html", path: "index.html", dir: "ada" },
     personOf: () => ({ id: "ada", name: "Ada" }),
     agentOf: () => null,
     baseUrl: () => "",
-    serverTools: async () => [count],
-    chats: () => store,
-    chatMeta: { doc: "d1" },
   });
   const call = async (method: "GET" | "POST", body?: unknown) =>
     (await host.handler(new Request("http://doc.test/api/agent", { method, ...(body ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } } : {}) }))).json() as Promise<{ log: Log }>;

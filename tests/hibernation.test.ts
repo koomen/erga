@@ -18,6 +18,7 @@ import { Tabs, type Tab, type TabSocket } from "../document/tabs";
 import { files } from "../document/content";
 import { decodeStart } from "../shared/room-socket";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { documentAgents } from "../agents/document/session";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -76,7 +77,7 @@ class World {
         attach: (opened) => this.tabs.attachAll(opened),
         detach: () => this.tabs.detachAll(),
       },
-      agentSettings: async () => ({ missing: "no key in the tests" }), serverTools: async () => [],
+      agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }) }),
       home: { forget: async () => {}, changed: async () => {} },
       timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
       background: () => {}, log: () => {},

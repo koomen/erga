@@ -5,7 +5,17 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { ConfigError, deployedSettings, Directory, NameError, NotAllowed, type Param, parseDeployed, SETTINGS, slugify, type Sql } from "../server/directory/index.ts";
+import {
+  ConfigError,
+  deployedSettings,
+  Directory,
+  NotAllowed,
+  type Param,
+  parseDeployed,
+  SETTINGS,
+  type Sql,
+} from "../server/directory/index.ts";
+import { NameError, slugify } from "../document/names.ts";
 import serverConfig from "../deploy/locked-settings";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

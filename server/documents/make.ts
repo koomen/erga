@@ -3,7 +3,8 @@
 
 import type { FileData } from "../../document/document.ts";
 import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
-import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, UNTITLED, type Who } from "../directory/index.ts";
+import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, type Who } from "../directory/index.ts";
+import { UNTITLED } from "../../document/names.ts";
 import { type Listed, type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
 import {
