@@ -12,8 +12,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
 import { beyondPrompt } from "../agents/document/prompt";
 import { documentToolSpecs } from "../agents/document/tools";
-import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../agents/admin/agent";
-import { SERVER_TOOLS, type ToolWho } from "../agents/tools";
+import { dashboardTools, sourceTools, type DashboardOps } from "../agents/admin/tools";
+import { systemPrompt } from "../agents/admin/prompt";
+import { SERVER_TOOLS, toolsOf } from "../agents/tools";
 
 const ROOT = new URL("../", import.meta.url).pathname;
 const read = (file: string) => readFileSync(ROOT + file, "utf8");
@@ -86,10 +87,19 @@ const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRou
 const audited = new Set(AGENT_ACTIONS.flatMap((a) => [a.route, a.route.replace(/ (do|op)=\w+$/, "")]));
 
 /** The agents' tools, as they're made (no ops behind them: only their names matter here). */
-const none = async () => {};
-const as = (): ToolWho => { throw new Error("not here"); };
-const ADMIN = [...adminTools(as, none), ...sourceTools(async () => { throw new Error("not here"); }, none), ...dashboardTools({} as DashboardOps, none)].map((t) => t.name);
-const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...SERVER_TOOLS.filter((t) => !t.admin).map((t) => t.name)];
+const ADMIN = [
+  ...SERVER_TOOLS.filter((t) => t.admin),
+  ...sourceTools(async () => {
+    throw new Error("not here");
+  }),
+  ...dashboardTools({} as DashboardOps),
+].map((t) => t.name);
+const DOCUMENT = [
+  ...documentToolSpecs().map((t) => t.name),
+  ...toolsOf("agent")
+    .filter((t) => !t.admin)
+    .map((t) => t.name),
+];
 
 test("the route tables are read: the known routes are found", () => {
   const found = every();
@@ -157,7 +167,7 @@ test("the admin agent's system prompt names every tool it has, and no longer say
 });
 
 test("the document agent's system prompt names every server tool it has", () => {
-  const names = SERVER_TOOLS.map((t) => t.name);
+  const names = toolsOf("agent").map((t) => t.name);
   const prompt = beyondPrompt("Ada", names);
   for (const t of names) expect(prompt).toContain(t);
 });

@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql, type Who } from "../server/directory/index.ts";
-import { agentToolsFor, runServerTool, SERVER_TOOLS, ToolError, toolsFor, type ToolWho } from "../agents/tools";
+import { agentToolsFor, runTool, ToolError, toolsFor, toolsOf, type ToolWho } from "../agents/tools";
 import type { Platform } from "../server/platform";
 import { newDocMenu, templateById } from "../server/pages/templates.ts";
 
@@ -25,14 +25,15 @@ function fresh(opts: ConstructorParameters<typeof Directory>[1] = {}): Directory
   return new Directory(sql, opts);
 }
 
-const tool = (name: string) => SERVER_TOOLS.find((t) => t.name == name)!;
-const run = (ctx: ToolWho, name: string, args: Record<string, unknown> = {}) => runServerTool(tool(name), args, ctx) as Promise<any>;
+const tool = (name: string) => toolsOf("agent").find((t) => t.name == name)!;
+const run = (ctx: ToolWho, name: string, args: Record<string, unknown> = {}) => runTool(tool(name), args, ctx) as Promise<any>;
 const failure = async (p: Promise<unknown>) => { try { await p; } catch (e) { return e as ToolError; } throw new Error("it didn't fail"); };
 
 test("admin tools are offered to admins only, and refused to anyone else", async () => {
   const dir = fresh({ admins: ["root"] });
   await dir.users.add({ login: "root", admin: true }, "bo");
-  const names = async (who: Who) => (await toolsFor(dir, who)).map((t) => t.name);
+  // With a platform: the documents list's tools too.
+  const names = async (who: Who) => (await toolsFor({ dir, who, platform: {} as Platform }, "agent")).map((t) => t.name);
   expect(await names({ login: "root", admin: true })).toContain("set_setting");
   expect(await names({ login: "bo" })).toEqual(["document_access", "share_document", "list_documents", "create_document", "delete_document"]);
   expect(await names({ login: "root", test: true })).not.toContain("list_users");
@@ -100,9 +101,9 @@ test("users: add by provider account with a role, make admin, demote, remove; bo
   });
   expect((await run(root, "set_user_role", { login: "bo", role: "admin" })).role).toBe("admin");
   // Bo, an admin now, has the tools.
-  expect((await toolsFor(dir, { login: "bo", admin: true })).some((t) => t.name == "list_users")).toBe(true);
+  expect((await toolsFor({ dir, who: { login: "bo", admin: true } }, "agent")).some((t) => t.name == "list_users")).toBe(true);
   // Without admin power (a token without the admin scope), an admin has none of them, and each is refused, saying so.
-  expect((await toolsFor(dir, { login: "bo" })).some((t) => t.name == "list_users")).toBe(false);
+  expect((await toolsFor({ dir, who: { login: "bo" } }, "agent")).some((t) => t.name == "list_users")).toBe(false);
   expect((await failure(run({ dir, who: { login: "bo" } }, "list_users"))).message).toMatch(/no admin power/);
   expect((await run({ dir, who: { login: "bo", admin: true } }, "list_users")).map((u: { login: string; bootstrap: boolean }) => `${u.login}${u.bootstrap ? "*" : ""}`)).toEqual(["bo", "root*"]);
   let e = await failure(run(root, "set_user_role", { login: "root", role: "write" }));
@@ -236,5 +237,9 @@ test("API keys: an admin clears one (the change log says who), and is never offe
   expect([log.changes[0].by, log.changes[0].changes[0].key, log.changes[0].changes[0].credential]).toEqual(["root", "OPENAI_API_KEY", "cleared"]);
   expect((await failure(run(root, "clear_api_key", { name: "nope" }))).status).toBe(400);
   expect((await failure(run({ dir, who: { login: "bo" } }, "clear_api_key", { name: "openai" }))).status).toBe(403);
-  expect(SERVER_TOOLS.map((t) => t.name).filter((n) => /^set_.*key|token/.test(n))).toEqual([]);
+  expect(
+    toolsOf("agent")
+      .map((t) => t.name)
+      .filter((n) => /^set_.*key|token/.test(n))
+  ).toEqual([]);
 });

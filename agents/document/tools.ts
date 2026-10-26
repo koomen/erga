@@ -23,6 +23,7 @@ import { unifiedDiff, type RestoreResult, type Version, type VersionsState } fro
 import { WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 import { fromBase64 } from "../../shared/bytes";
+import type { ToolSpec } from "../tools";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -699,10 +700,6 @@ export function documentToolSpecs(): ToolSpec[] {
   }).map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
 
-/** What a tool returns: text, and for read on an image or view_page, a picture; for read on a PDF, the PDF (a range of its pages). */
-export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | { type: "document"; data: string; mimeType: "application/pdf" };
-/** A tool as an external agent sees it: its arguments as JSON Schema. */
-export interface ToolSpec { name: string; description: string; parameters: unknown }
 
 export function toolPath(args: unknown): string | null {
   const a = args as { path?: unknown; from?: unknown } | null;
