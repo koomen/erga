@@ -37,8 +37,9 @@ export function mountStyleBar(shell: Shell) {
   }
   function placeFmt(rect: { left: number; top: number; width: number; bottom: number }) {
     const f = shell.frame.getBoundingClientRect();
-    // On touch, the system's own copy and paste menu takes the space above a selection.
-    const below = rect.top < 56 || coarse.matches;
+    // On touch, the system's own copy and paste menu takes the space above a selection. Above the text, the link bar
+    // (about 106 px and its gap) must clear the top bar (58 px): else it covers the document's title (a page's nav link).
+    const below = rect.top < 56 || (!!linking && f.top + rect.top < 58 + 114) || coarse.matches;
     const half = (linking ? 300 : coarse.matches ? 220 : 200) / 2 + 10; // half the bar (its buttons are bigger on touch), and a margin
     fmt.style.left = Math.max(half, Math.min(window.innerWidth - half, f.left + rect.left + rect.width / 2)) + "px";
     fmt.style.top = f.top + (below ? rect.bottom : rect.top) + "px";
