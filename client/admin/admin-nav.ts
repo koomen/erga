@@ -17,7 +17,7 @@
 // reload. Anything that isn't an admin page of the layout (a redirect to sign
 // in, an error, another kind of answer) opens as a whole page instead.
 //
-// Every admin page has the same stylesheet (admin.css, server/admin/style.ts)
+// Every admin page has the same stylesheet (admin.css, client/styles/admin.css)
 // and no style of its own, so a page brings none. A page of another build
 // names another admin.css: it opens whole, with that build's look.
 //

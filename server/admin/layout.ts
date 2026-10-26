@@ -24,7 +24,7 @@
 // (and the title, the breadcrumb and the sidebar's mark), so the agent panel
 // and its conversation stay. Each page is still made whole here, for a deep
 // link or a reload. Every page has the same look: the one stylesheet,
-// admin.css (server/admin/style.ts), and no style of its own.
+// admin.css (client/styles/admin.css), and no style of its own.
 //
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in server/app.ts; and each page's own door).
@@ -103,7 +103,7 @@ const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent
   </div></aside></div>
 <button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${MARK}</button>`;
 
-/** The admin pages' one stylesheet (server/admin/style.ts, built as admin.css): the same file on every admin page, the control Worker's too. */
+/** The admin pages' one stylesheet (client/styles/admin.css and ops.css, built as admin.css): the same file on every admin page, the control Worker's too. */
 export const adminStyleTag = () => `<link rel="stylesheet" id="erga-admin-style" href="${asset("admin.css")}">`;
 
 /** The sidebar's remembered state, before it paints. */

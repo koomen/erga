@@ -68,9 +68,6 @@ test("rule 3: an area of server/ is imported from outside only through its index
       const m = /^server\/([a-z-]+)\/(.+)$/.exec(i);
       if (!m || !AREAS.includes(m[1]) || m[2] == "index") continue;
       if (f.startsWith(`server/${m[1]}/`)) continue;
-      // An area's style.ts is plain strings, which the admin pages' stylesheet (server/admin/style.ts) and the build
-      // (client/build.ts, admin.css) read without the area's index and all it imports.
-      if (m[2] == "style") continue;
       wrong.push(`${f} imports ${i}`);
     }
   }
