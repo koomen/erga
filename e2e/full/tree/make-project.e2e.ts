@@ -7,11 +7,13 @@ import { expect, servers, test, until, type Page } from "../../helpers/fixtures"
 import { clickOn, js, openTreeEditor, paths } from "./tree";
 
 /**
- * Clicks a control of the editor's chrome once it can take the click. The chrome hides while the page changes (the
- * editor's own first changes too, later on a busy machine) and comes back as the pointer moves: so the pointer moves,
- * as a person's would, until it shows.
+ * Clicks a control of the editor's chrome until `opened` holds, as a person would. The chrome hides while the page
+ * changes (the editor's own first changes too, later on a busy machine) and comes back as the pointer moves; and a
+ * new page's caret can start in a link, whose bar may lie over the control for a moment. So the pointer moves until
+ * the control shows, and a click that something else took is made again. (A click that reaches the control opens
+ * its card at once, so a second one never closes it.)
  */
-async function clickWhenShown(page: Page, selector: string, what: string) {
+async function clickUntil(page: Page, selector: string, opened: string, what: string) {
   const shown = () =>
     page.evaluate((sel) => {
       const g = document.querySelector(sel),
@@ -23,17 +25,18 @@ async function clickWhenShown(page: Page, selector: string, what: string) {
       );
     }, selector);
   let x = 200;
-  const woken = async () => (await shown()) || (await page.mouse.move((x = x == 200 ? 400 : 200), 300, { steps: 4 }), false);
-  await until(woken, 10_000, `${what} can be clicked`);
-  await clickOn(page, selector);
+  const tried = async () => {
+    if (await js(page, opened)) return true;
+    if (await shown()) await clickOn(page, selector);
+    else await page.mouse.move((x = x == 200 ? 400 : 200), 300, { steps: 4 });
+    return js(page, opened);
+  };
+  await until(tried, 10_000, what);
 }
 
-/** Opens the settings once the gear can be clicked, and waits for them. */
-async function openSettings(page: Page) {
-  if (await page.evaluate(`document.getElementById("doc-settings")?.hidden !== false`))
-    await clickWhenShown(page, "#btn-settings", "the gear");
-  await until(() => page.evaluate(`document.getElementById("doc-settings")?.hidden === false`), 5000, "the settings open");
-}
+/** Opens the settings with the gear, and waits for them. */
+const openSettings = (page: Page) =>
+  clickUntil(page, "#btn-settings", `document.getElementById("doc-settings")?.hidden === false`, "the settings open");
 
 await servers.main();
 
@@ -59,7 +62,7 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
   const caret = (p = page) => p.evaluate(`getComputedStyle(document.querySelector("#doc-title .nav-caret")).display != "none"`) as Promise<boolean>;
   expect(await caret()).toBe(false);
   expect(await caret(other)).toBe(false);
-  await clickWhenShown(page, "#doc-title", "the title");
+  await clickUntil(page, "#doc-title", `!document.getElementById("naming").hidden`, "the title opens its name");
   expect(await js(page, `[document.getElementById("naming").hidden, document.getElementById("pages").hidden]`)).toEqual([false, true]);
   await page.keyboard.press("Escape");
 
@@ -77,7 +80,7 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
   await until(() => caret(other), 5000, "the other tab's caret shows, with no reload");
   await other.close();
   await page.keyboard.press("Escape");
-  await clickWhenShown(page, "#doc-title", "the title");
+  await clickUntil(page, "#doc-title", `!document.getElementById("pages").hidden`, "the title opens the pages");
   await until(() => js(page, `!document.getElementById("pages").hidden && [...document.querySelectorAll("#pages .et-foot .et-add")].filter((b) => !b.hidden).map((b) => b.textContent).join()`), 5000, "a project's pages open, with New page")
     .then((v) => expect(v).toBe("New page,New folder"));
   await page.keyboard.press("Escape");
@@ -139,8 +142,7 @@ test("New, then Project: a project from the start, its caret shown, and its two 
     5000,
     "a project's caret shows"
   );
-  await clickWhenShown(page, "#doc-title", "the title");
-  await until(() => js(page, `!document.getElementById("pages").hidden`), 5000, "the pages open");
+  await clickUntil(page, "#doc-title", `!document.getElementById("pages").hidden`, "the title opens the pages");
   await until(
     async () =>
       (await paths(page, "#pages")).join() == "index.html,about.html" || (await paths(page, "#pages")).join() == "about.html,index.html",
