@@ -73,9 +73,16 @@ import { releasesDoor, type ReleaseStore } from "./deploys/releases.ts";
 import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
 import { deploysApi, isDeploysApiPath, type DeploysObject } from "./deploys/api.ts";
-import { actingAdmin, cookies, finishSignIn, setCookie, signOut, startSignIn } from "../server/identity/index.ts";
-import { googleEndpoints } from "../server/identity/apps.ts";
-import { googleToken } from "../server/identity/sign-in.ts";
+import {
+  actingAdmin,
+  cookies,
+  finishSignIn,
+  googleEndpoints,
+  googleToken,
+  setCookie,
+  signOut,
+  startSignIn,
+} from "../server/identity/index.ts";
 import { open, seal, type Sealed } from "./deploys/seal.ts";
 import {
   createRepo,
@@ -96,9 +103,8 @@ import {
 } from "./source/index.ts";
 import { openRelay, relayNonce, relayOrigin, relayState, sealRelay } from "../shared/relay.ts";
 import { byLine } from "../shared/attribution.ts";
-import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
-import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
-import { appPage, crumbs, page } from "../server/pages/index.ts";
+import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/index.ts";
+import { accountHtml, accountOf, appPage, crumbs, page } from "../server/pages/index.ts";
 import { esc, jsonInScript } from "../shared/html.ts";
 import { base64url, fromBase64url, randomToken } from "../shared/bytes.ts";
 import { whoOf, type Platform } from "../server/platform.ts";

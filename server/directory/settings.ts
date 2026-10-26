@@ -15,7 +15,7 @@
 // changes.
 
 import type { Sql, Statement } from "./directory.ts";
-import { type SignInChange } from "../identity/index.ts";
+import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
 
 /** A value a setting won't take; the message says why. */
@@ -202,6 +202,16 @@ export interface SettingChange {
   signIn?: SignInChange;
   /** Before #69, how the version's `by` did it, kept on the change; now on the version (SettingsVersion.via). */
   via?: string;
+}
+
+/** A server's sign-in app changed (server/identity/apps.ts): its line in the change log. */
+export interface SignInChange {
+  provider: SignInProvider;
+  /** The server whose app changed ("" for one that isn't a deploy target). */
+  target: string;
+  event: "set" | "pending" | "tested" | "discarded" | "cleared" | "on" | "off";
+  /** The client ID it changed to (public), if any. */
+  clientId?: string | null;
 }
 
 /** A version of the settings (server_config_versions): who changed them, when, and what changed. */

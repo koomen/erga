@@ -5,7 +5,7 @@
 export default function adminPaneEarly(): void {
   try {
     const w = document.currentScript!.parentElement!,
-      l = JSON.parse(localStorage.getItem("erga:factory-layout:v1") || "null");
+      l = JSON.parse(localStorage.getItem("erga:admin-pane:v1") || "null");
     if (l && l.side == "right") w.classList.add("agent-right");
     if (l && typeof l.width == "number" && Number.isFinite(l.width))
       w.style.setProperty(

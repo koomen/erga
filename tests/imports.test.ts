@@ -1,15 +1,27 @@
-// The shape of the code, as rules the imports must keep (README.md, "The layout"):
+// The shape of the code, as rules its imports keep (README.md, "The layout"). The layers, lowest first: a file
+// imports only its own layer and the layers below it.
 //
-//   1. Only cloudflare/ and control/ import cloudflare:workers or a file of
-//      cloudflare/: the Workers' bindings and types stay there. The tests test
-//      cloudflare/'s files directly.
-//   2. server/ and document/ never import cloudflare/: the app runs on the
-//      Platform alone (server/platform.ts), so the tests run it under bun.
-//   3. An area of server/ (directory, identity, documents, pages, home,
-//      admin) is imported from outside only through its index.ts, its
-//      interface; its other files are its own. Tests may look inside, and so
-//      may deploy/locked-settings.ts, which the Worker's config loads before
-//      anything else and which reads the settings' definitions alone.
+//   1. shared/        nothing of ours (assets/ is data: any layer may import it)
+//   2. document/      shared/. It gets the directory and the agents through DocumentDeps.
+//   3. server/'s areas (directory, identity, documents, pages, home, admin) and its other files but app.ts and
+//                     api.ts: platform.ts, security.ts, live.ts, health.ts. directory/ never imports identity/.
+//   4. control/       the control plane: Erga's repository, its deploys, installs, the Ops page. Also deploy/targets.ts.
+//   5. agents/        both embedded agents (the admin agent's tools work the control plane)
+//   6. server/app.ts and server/api.ts: the route table, and the HTTP API for outside agents
+//   7. cloudflare/    the app Worker. Also deploy/targets.ts.
+//   8. client/        the browser: shared/, and of document/ only content.ts, pages.ts, merge.ts and api.ts's types
+//                     (tests/browser-imports.test.ts follows what the bundles reach)
+//   9. deploy/, dev/, tests/, e2e/, client/build.ts and the scripts at the top: anything. Nothing imports them but
+//      deploy/targets.ts (layers 4 and 7) and dev/mock-cloudflare.ts, the pretend Cloudflare of local development
+//      and the tests (layers 4 and 7, when ERGA_DEPLOY_MOCK is set).
+//
+// And:
+//   - control/ is a Worker too: it may import the Worker plumbing it shares with the app Worker (WORKER_PLUMBING).
+//   - An area of server/ is imported from outside only through its index.ts. Tools may look inside, and so may
+//     deploy/locked-settings.ts, which the Worker's config loads before anything else and which reads the settings'
+//     definitions alone.
+//   - Only cloudflare/ and control/ import cloudflare:workers: the Workers' bindings and types stay there.
+//   - A layer adds its part of server/platform.ts's Platform with a `declare module`, not an import the other way.
 //
 // Type-only imports count too: a type from the wrong place is a dependency on it.
 
@@ -19,6 +31,11 @@ import { expect, test } from "bun:test";
 
 const ROOT = resolve(import.meta.dir, "..");
 const AREAS = ["directory", "identity", "documents", "pages", "home", "admin"];
+/** cloudflare/'s files the control Worker uses too: the bindings, the database, the blobs, a document's object. */
+const WORKER_PLUMBING = ["cloudflare/env", "cloudflare/d1", "cloudflare/blobs", "cloudflare/objects/document-stub"];
+/** The repository's folders (an import that names none is a package's). */
+const REPO = readdirSync(ROOT).filter((n) => !n.startsWith(".") && n != "node_modules" && statSync(join(ROOT, n)).isDirectory());
+const BROWSER_DOCUMENT = ["document/content", "document/pages", "document/merge"];
 
 /** Every .ts file under these folders, as repo paths. */
 function files(dirs: string[]): string[] {
@@ -26,50 +43,110 @@ function files(dirs: string[]): string[] {
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const p = join(dir, name);
-      if (statSync(p).isDirectory()) { if (name != "node_modules") walk(p); } else if (name.endsWith(".ts")) out.push(relative(ROOT, p));
+      if (statSync(p).isDirectory()) {
+        if (name != "node_modules") walk(p);
+      } else if (name.endsWith(".ts")) out.push(relative(ROOT, p));
     }
   };
   for (const d of dirs) walk(join(ROOT, d));
   return out;
 }
 
-/** A file's import specifiers (static and dynamic), relative ones resolved to repo paths without the extension. */
-function imports(file: string): string[] {
+/** A file's imports (static and dynamic), relative ones as repo paths without the extension, and whether each is type-only. */
+function imports(file: string): { spec: string; type: boolean }[] {
   const src = readFileSync(join(ROOT, file), "utf8");
-  const out: string[] = [];
-  for (const m of src.matchAll(/(?:from\s+|import\s*\(\s*)["']([^"']+)["']/g)) {
-    const spec = m[1];
-    if (!spec.startsWith(".")) { out.push(spec); continue; }
-    out.push(relative(ROOT, resolve(join(ROOT, file), "..", spec)).replace(/\.ts$/, ""));
+  const out: { spec: string; type: boolean }[] = [];
+  for (const m of src.matchAll(/(?:^\s*(?:import|export)\s+(type\s+)?[^;]*?from\s+|import\s*\(\s*)["']([^"']+)["']/gm)) {
+    const spec = m[2];
+    const path = spec.startsWith(".")
+      ? relative(ROOT, resolve(join(ROOT, file), "..", spec))
+          .replace(/\.ts$/, "")
+          .replace(/\/index$/, "/index")
+      : spec;
+    out.push({ spec: path, type: !!m[1] });
   }
   return out;
 }
 
-const CODE = ["server", "document", "agents", "dev", "shared", "client", "cloudflare", "deploy"];
+/** A file's layer (1-8, as above), or 9 for the tools. */
+function layer(path: string): number {
+  const top = path.split("/")[0];
+  if (top == "shared") return 1;
+  if (top == "document") return 2;
+  if (top == "server") return path == "server/app" || path == "server/api" ? 6 : 3;
+  if (top == "control") return 4;
+  if (top == "agents") return 5;
+  if (top == "cloudflare") return 7;
+  if (top == "client") return path == "client/build" ? 9 : 8;
+  return 9;
+}
 
-test("rule 1: only cloudflare/ and control/ import cloudflare:workers or cloudflare/'s files", () => {
-  const wrong: string[] = [];
-  for (const f of files(CODE.filter((d) => d != "cloudflare"))) {
-    for (const i of imports(f)) if (i == "cloudflare:workers" || i.startsWith("cloudflare/")) wrong.push(`${f} imports ${i}`);
+/** What is wrong with `from` importing `to` (repo paths without .ts), or null. */
+function wrong(from: string, to: string, type: boolean): string | null {
+  if (to.startsWith("cloudflare:"))
+    return from.startsWith("cloudflare/") || from.startsWith("control/") ? null : "only cloudflare/ and control/ import cloudflare:workers";
+  if (!REPO.includes(to.split("/")[0])) return null;
+  const mine = layer(from),
+    theirs = layer(to);
+  if (mine == 9 || to.startsWith("assets/")) return null;
+  if (mine == 8) {
+    if (to.startsWith("client/") || to.startsWith("shared/") || BROWSER_DOCUMENT.includes(to) || (type && to == "document/api"))
+      return null;
+    return "the browser imports only shared/ and a few files of document/";
   }
-  expect(wrong).toEqual([]);
-});
+  if (theirs == 9) {
+    if ((to == "deploy/targets" || to == "dev/mock-cloudflare") && (mine == 4 || mine == 7)) return null;
+    return "nothing above the tools imports them";
+  }
+  if (theirs == 8) return "only the browser imports client/";
+  if (mine == 4 && WORKER_PLUMBING.includes(to)) return null;
+  if (theirs > mine) return `layer ${mine} imports layer ${theirs}`;
+  const area = /^server\/([a-z-]+)\/(.+)$/.exec(to);
+  if (area && AREAS.includes(area[1]) && area[2] != "index" && !from.startsWith(`server/${area[1]}/`))
+    return `server/${area[1]} is imported through its index.ts`;
+  if (from.startsWith("server/directory/") && to.startsWith("server/identity/")) return "directory/ never imports identity/";
+  return null;
+}
 
-test("rule 2: server/ and document/ never import cloudflare/", () => {
-  const wrong: string[] = [];
-  for (const f of files(["server", "document"])) for (const i of imports(f)) if (i.startsWith("cloudflare")) wrong.push(`${f} imports ${i}`);
-  expect(wrong).toEqual([]);
-});
-
-test("rule 3: an area of server/ is imported from outside only through its index.ts", () => {
-  const wrong: string[] = [];
-  for (const f of files(CODE).filter((f) => f != "deploy/locked-settings.ts")) {
-    for (const i of imports(f)) {
-      const m = /^server\/([a-z-]+)\/(.+)$/.exec(i);
-      if (!m || !AREAS.includes(m[1]) || m[2] == "index") continue;
-      if (f.startsWith(`server/${m[1]}/`)) continue;
-      wrong.push(`${f} imports ${i}`);
+test("every import keeps the layers", () => {
+  const found: string[] = [];
+  const code = ["shared", "document", "server", "agents", "control", "cloudflare", "client", "deploy", "dev"];
+  for (const f of files(code)) {
+    const from = f.replace(/\.ts$/, "");
+    if (from == "deploy/locked-settings") continue;
+    for (const { spec, type } of imports(f)) {
+      const why = wrong(from, spec, type);
+      if (why) found.push(`${f} imports ${spec}: ${why}`);
     }
   }
-  expect(wrong).toEqual([]);
+  expect(found).toEqual([]);
+});
+
+test("the rules catch what they are for", () => {
+  const no = [
+    ["shared/html", "document/pages"],
+    ["document/document", "agents/models"],
+    ["server/directory/settings", "server/identity/index"],
+    ["server/documents/view", "server/directory/users"],
+    ["server/platform", "agents/admin/sessions"],
+    ["server/platform", "control/source/index"],
+    ["control/deploys/api", "agents/admin/sessions"],
+    ["control/routes", "server/identity/session"],
+    ["agents/tools", "server/api"],
+    ["server/identity/settings", "deploy/targets"],
+    ["cloudflare/objects/document", "dev/disk-storage"],
+    ["control/routes", "cloudflare/index"],
+    ["server/app", "cloudflare:workers"],
+    ["client/shell/main", "document/host"],
+  ];
+  for (const [from, to] of no) expect([from, to, wrong(from, to, true)]).not.toEqual([from, to, null]);
+  const yes = [
+    ["client/shell/main", "document/api", true],
+    ["agents/admin/sessions", "control/source/index", false],
+    ["control/source/page", "server/admin/index", false],
+    ["control/platform", "cloudflare/d1", false],
+    ["cloudflare/index", "control/index", false],
+    ["tests/room.test", "cloudflare/objects/document", false],
+  ] as const;
+  for (const [from, to, type] of yes) expect([from, to, wrong(from, to, type)]).toEqual([from, to, null]);
 });

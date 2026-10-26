@@ -7,7 +7,22 @@
 //.
 
 import { expect, test } from "bun:test";
-import { type AppCheck, type AppContext, type AppValues, AuthApps, AuthError, cachedCheck, checkGithubApp, checkValues, clearApp, discardApp, inUse, saveApp, type SignInChange, statusOf } from "../server/identity/apps";
+import {
+  type AppCheck,
+  type AppContext,
+  type AppValues,
+  AuthApps,
+  AuthError,
+  cachedCheck,
+  checkGithubApp,
+  checkValues,
+  clearApp,
+  discardApp,
+  inUse,
+  saveApp,
+  statusOf,
+} from "../server/identity/apps";
+import type { SignInChange } from "../server/directory/index.ts";
 import { startSignIn } from "../server/identity/sign-in";
 import { testedSignIn } from "../server/identity/settings";
 import type { Platform } from "../server/platform";

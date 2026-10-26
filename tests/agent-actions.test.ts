@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
 import { beyondPrompt } from "../agents/document/prompt";
 import { documentToolSpecs } from "../agents/document/tools";
-import { dashboardTools, sourceTools, type DashboardOps } from "../agents/admin/tools";
+import { opsTools, sourceTools, type OpsCalls } from "../agents/admin/tools";
 import { systemPrompt } from "../agents/admin/prompt";
 import { SERVER_TOOLS, toolsOf } from "../agents/tools";
 
@@ -91,7 +91,7 @@ const ADMIN = [
   ...sourceTools(async () => {
     throw new Error("not here");
   }),
-  ...dashboardTools({} as DashboardOps),
+  ...opsTools({} as OpsCalls),
 ].map((t) => t.name);
 const DOCUMENT = [
   ...documentToolSpecs().map((t) => t.name),
@@ -148,7 +148,7 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
   for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
 });
 
-test("the known gaps are closed: production's deploy, the dashboard, keys and tokens", () => {
+test("the known gaps are closed: production's deploy, the Ops page, keys and tokens", () => {
   for (const t of ["deploy_production", "github_status", "sync_github", "disconnect_github", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
     "clear_api_key", "list_agent_tokens", "revoke_agent_token", "get_sign_in_status", "clear_sign_in_app"]) expect(ADMIN).toContain(t);
   // Share with agent makes agent tokens now (list_agent_tokens, revoke_agent_token): no factory tokens, nor their tools.

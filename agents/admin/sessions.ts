@@ -23,7 +23,7 @@
 
 import { startAdminAgent, type AdminAgent } from "./agent.ts";
 import { adminGuide } from "../guides.ts";
-import { dashboardTools, sourceTools, type DashboardOps } from "./tools.ts";
+import { opsTools, sourceTools, type OpsCalls } from "./tools.ts";
 import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
@@ -41,25 +41,6 @@ import type { GithubStatus, SourceAnswer, SourceRead } from "../../control/sourc
 import { json } from "../../shared/http";
 
 const enc = new TextEncoder();
-
-/** This server's branch deploys, as the dashboard tools ask them (the pipeline's object answers, by RPC). */
-export interface DashboardDeploys {
-  status(history?: number): Promise<object>;
-  logOf(target: string, deploy?: string): Promise<object | null>;
-  redeploy(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
-  redeployWith(name: string, trigger: string, o: { fresh?: boolean }): Promise<{ ok: boolean; status?: unknown; error?: string }>;
-  /** Back to the Worker version before the target's live deploy (its restore point). */
-  rollback(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
-  /** The release store (control/deploys/releases.ts): both channels (null: no store). */
-  releases(): Promise<object | null>;
-  /** Each environment's domains, and one added or removed (control/deploys/branches.ts). */
-  domains(): Promise<object>;
-  addDomain(target: string, hostname: string, by: string): Promise<object>;
-  removeDomain(target: string, hostname: string, by: string): Promise<object>;
-  /** The control Worker's Cloudflare credential (control/deploys/credential.ts): its status, and revoked (the Ops page's card). */
-  credentialStatus(): Promise<CredentialStatus>;
-  disconnectCredential(): Promise<void>;
-}
 
 /**
  * What the agents need from where they run: their SQLite, the Platform (the
@@ -135,7 +116,7 @@ export class AdminAgents {
       cfg,
       owner: login,
       tools: agentTools(
-        [...SERVER_TOOLS.filter((t) => t.admin), ...sourceTools(readSource), ...dashboardTools(this.dashboard(login, state))],
+        [...SERVER_TOOLS.filter((t) => t.admin), ...sourceTools(readSource), ...opsTools(this.ops(login, state))],
         as,
         guard
       ),
@@ -152,10 +133,10 @@ export class AdminAgents {
   }
 
   /**
-   * The dashboard tools' work, as the admin: the same calls the Ops page's API
+   * The Ops page tools' work, as the admin: the same calls the Ops page's API
    * makes, and /settings' tokens, so the change log and a deploy's trigger name the admin, as when they click.
    */
-  private dashboard(login: string, state: { origin: string }): DashboardOps {
+  private ops(login: string, state: { origin: string }): OpsCalls {
     const source = () => this.source();
     const pipeline = () => this.platform.deploys;
     const withOffer = <T extends { credential?: CredentialStatus }>(o: T): T | (T & { offer: Offer; connect: string }) => !o.credential || o.credential.connected ? o : {
@@ -383,6 +364,13 @@ export class AdminAgents {
 
 /** What the routes ask of the admins' agents (the Durable Object answers, by RPC, forwarding to an AdminAgents). */
 export type AdminAgentObject = Pick<AdminAgents, "agentState" | "agentPrompt" | "agentControl" | "conversation" | "clearConversation" | "agentPrefs" | "setAgentPrefs" | "fetch">;
+
+declare module "../../server/platform.ts" {
+  interface Platform {
+    /** The admins' agents, one object per server. */
+    adminAgent: AdminAgentObject;
+  }
+}
 
 // ---------------------------------------------------------------- the routes
 
