@@ -2,7 +2,7 @@
 // address and where it opens; a click in a link shows it too, and typing at a link's ends joins it or ends it.
 // And for readers: a link that leaves the document opens a new tab, unless its author set it to open in this one.
 import { expect, servers, test } from "../../helpers/fixtures";
-import { openEditor, type Editor } from "../../helpers/editor";
+import { DISK_MS, openEditor, type Editor } from "../../helpers/editor";
 import { inPage, openViewer } from "../viewer/viewer";
 
 await servers.main();
@@ -90,6 +90,25 @@ test("the link bar changes a link's text; Esc closes it until a click in the lin
   await expect.poll(() => linkBar(ed)).toBe(true);
   await press(ed, "#fmt [data-link=remove]");
   await expect.poll(() => ed.source()).toContain("This paragraph has the example and");
+});
+
+test("a link near the top of the page (a nav's): its bar opens below it, clear of the top bar", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
+  // As the project template's nav: 56 px from the top, where the style bar would still fit above but the link bar doesn't.
+  ed.write(
+    ed
+      .disk()
+      .replace("<body>", `<body>\n<nav id="top" style="margin: 0; padding: 56px 16px 0"><a href="https://example.com/top">Home</a></nav>`)
+  );
+  await expect.poll(() => ed.frame<boolean>(`!!document.querySelector("#top a")`), { timeout: DISK_MS }).toBe(true);
+  const at = await ed.charAt("#top a", 1);
+  await ed.click(at.x, at.y);
+  await expect.poll(() => linkBar(ed)).toBe(true);
+  const covered = await shell<string[]>(
+    ed,
+    `(() => { const f = document.getElementById("fmt").getBoundingClientRect(); return [".chrome-nav", ".chrome-top"].filter((s) => { const t = document.querySelector(s).getBoundingClientRect(); return f.top < t.bottom && f.bottom > t.top && f.left < t.right && f.right > t.left; }); })()`
+  );
+  expect(covered).toEqual([]);
 });
 
 test("a click in the page while the link bar is open applies it to its own selection, not where the click goes; Esc applies nothing", async ({ tab }) => {
