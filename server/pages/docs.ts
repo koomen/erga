@@ -4,6 +4,7 @@ import type { Listed, Session } from "../platform.ts";
 import { asset } from "./assets.ts";
 import { fastClickScript } from "../../shared/fast-click.ts";
 import { appPage, crumbs, esc, ICON, link, TIMES_SCRIPT, withEdit } from "./chrome.ts";
+import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 import { editorScripts } from "./viewer.ts";
 
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
@@ -112,16 +113,19 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   .anyone .who { flex: 1; color: var(--fg-strong); }
   .anyone .who small { display: block; font-size: 12px; color: var(--soft); }
   #share .buttons { justify-content: space-between; }
+  /* The New menu (server/pages/templates.ts) follows the system, as this page does (:root: over its own style, which comes after this). */
+  @media (prefers-color-scheme: dark) { :root .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); } }
 `;
   const count = `${docs.length} document${docs.length == 1 ? "" : "s"}`;
   return appPage("Documents", style, `${crumbs(session, [{ label: "Documents" }])}<main>
   <header>
     <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
-    <a class="pill" href="${esc(link("/new", session))}" title="New document" aria-label="New document">${ICON.plus}New</a>
+    ${newDocButton("pill", "New")}
   </header>
   ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
 </main>
+${newDocMenu((path) => link(path, session), true)}${NEW_DOC_STYLE}
 <dialog id="share" aria-labelledby="share-title" data-action="${esc(link("/docs/share", session))}" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">
@@ -141,6 +145,9 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
 <script>
   // Times in the reader's own language and zone, and a question before deleting.
   ${TIMES_SCRIPT}
+  // New: the picker the viewer's and the editor's + open (server/pages/templates.ts).
+  ${NEW_DOC_SCRIPT}
+  ergaNewDoc(document);
   // The chevrons, Share and the share card's buttons act as the press starts (shared/fast-click.ts). Delete keeps its click.
   ${fastClickScript("document", "button.twist, button.share, #share .copy, #share .done")}
   for (const f of document.querySelectorAll("form[data-title]")) {

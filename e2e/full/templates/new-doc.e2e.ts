@@ -1,5 +1,5 @@
 // New documents from a template: /new?template=<id> makes each template's document and refuses
-// one that isn't there; the + button in the viewer, the editor and (signed out) the front page opens the picker,
+// one that isn't there; the + button in the viewer, the editor, the documents page and (signed out) the front page opens the picker,
 // in the app's typeface, and picking a template makes the document and opens it in the editor.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -109,6 +109,27 @@ test("the editor's + opens the picker under it, in the window, in one typeface; 
   await clickOn(page, '.erga-new-menu a[data-template="page"]');
   const from = new URL(address).pathname;
   await expect.poll(() => page.evaluate(() => location.pathname != "" && location.search == "?edit" && location.pathname)).not.toBe(from);
+});
+
+test("the documents page's New opens the same picker under it, without icons; Project makes a project and opens it", async ({ tab }) => {
+  const s = await servers.main();
+  const page = tab.page;
+  await openTab(tab, `${s.root}/docs`);
+  await clickOn(page, "header .erga-new-btn");
+  const m = await picker(page);
+  expect(m).toEqual({ open: true, rows: ROWS, note: "", expanded: "New document" });
+  expect(await page.evaluate(() => [...document.querySelectorAll(".erga-new-menu a")].some((a) => a.querySelector("svg")))).toBe(false);
+  await sameTypeface(page);
+  const place = await page.evaluate(() => ({ menu: document.querySelector(".erga-new-menu")!.getBoundingClientRect().toJSON(), btn: document.querySelector("header .erga-new-btn")!.getBoundingClientRect().toJSON(), w: innerWidth }));
+  expect(place.menu.top).toBeGreaterThan(place.btn.bottom);
+  expect(place.menu.right).toBeLessThanOrEqual(place.w);
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => (await picker(page)).open).toBe(false);
+  await clickOn(page, "header .erga-new-btn");
+  // (Not clickOn: the page leaves at once, before its settle.)
+  await page.click('.erga-new-menu a[data-template="project"]');
+  await expect.poll(() => { const u = new URL(page.url()); return u.pathname != "/docs" && u.search == "?edit"; }).toBe(true);
+  expect(await fileOf(s.root, s.root + new URL(page.url()).pathname)).toBe(template("assets/templates/project"));
 });
 
 test("signed out, the front page's + says you sign in first, and a template goes to sign-in and comes back to make it", async ({ tab }) => {
