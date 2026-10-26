@@ -25,7 +25,7 @@ export async function sourceForBuild(env: Env, commit: string, origin?: string):
   const source = env.SOURCE;
   if (!access || !source)
     throw new Error(
-      "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and control/source/import.ts fills it."
+      "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and deploy/import-source.ts fills it."
     );
   return {
     commit, remote: access.url, token: access.token, expiresAt: access.expiresAt,

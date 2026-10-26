@@ -86,7 +86,7 @@ export interface SourceService {
 }
 
 const notSetUp =
-  "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and control/source/import.ts fills it.";
+  "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and deploy/import-source.ts fills it.";
 
 /** A read (clone, fetch, ls-remote: git-upload-pack's two requests), which anyone may make without credentials. */
 export function isGitRead(request: Request, rest: string, url: URL): boolean {

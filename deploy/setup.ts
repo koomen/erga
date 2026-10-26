@@ -164,7 +164,7 @@ try {
         description: "Erga's source: staging and main",
       });
       console.log(
-        "   Made. Push the history to it through the control Worker's Git endpoint (bun control/source/import.ts), or straight to Artifacts."
+        "   Made. Push the history to it through the control Worker's Git endpoint (bun deploy/import-source.ts), or straight to Artifacts."
       );
     } else console.log("   Skipped: the control Worker has no repository until it's there.");
     const buckets = ((await cf.call<{ buckets?: { name: string }[] }>("GET", `${acc}/r2/buckets?name_contains=${RELEASES_BUCKET}`, "list the R2 buckets"))?.buckets ?? []).map((b) => b.name);

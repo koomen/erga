@@ -87,7 +87,7 @@ function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
     return `<div class="pane-head"><h2>Git Repository</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. The steps:</p>
-  <ol><li>Make the Artifacts repo <code>${esc(SOURCE.repo)}</code> in the namespace <code>${esc(SOURCE.namespace)}</code> (deploy/targets.json: source).</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=${esc(SOURCE.namespace)}</code>, which adds the binding.</li><li>Push the history in: <code>bun control/source/import.ts</code>.</li></ol></div>`;
+  <ol><li>Make the Artifacts repo <code>${esc(SOURCE.repo)}</code> in the namespace <code>${esc(SOURCE.namespace)}</code> (deploy/targets.json: source).</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=${esc(SOURCE.namespace)}</code>, which adds the binding.</li><li>Push the history in: <code>bun deploy/import-source.ts</code>.</li></ol></div>`;
   }
   const remote = `${c.origin}/git/erga.git`;
   const hosts = c.hosts ?? { production: TARGETS.production.host, staging: TARGETS.staging.host, control: CONTROL.host };
