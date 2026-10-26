@@ -115,5 +115,5 @@ test("the documents list: a project's row has its chevron and says so; a documen
   expect(html).not.toContain('data-id="aaaaaaaa" data-base');
   expect(html).toContain('data-id="bbbbbbbb" data-base');
   expect(html).toContain('data-id="cccccccc" data-base');
-  expect(html.match(/>Project</g)?.length).toBe(1);
+  expect(html.match(/class="note kind"[^>]*>Project</g)?.length).toBe(1);
 });
