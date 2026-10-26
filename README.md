@@ -111,10 +111,14 @@ health checks and rollbacks work.
 
 ## The layout
 
-    document/     one document, with no Cloudflare in it
+    document/     one document, with no Cloudflare, server or agent code in it (it gets them through DocumentDeps)
       document.ts     class Document: one running document over a Storage (files, room, versions, expiry)
+      access.ts       who may do what: the document's copy of its permissions, and the requests it decides with them
+      view.ts         what viewers see: the files as they are now, under a version that is their digest
+      names.ts        a document's name: its title and address (/<owner>/<slug>), and renames
+      agent.ts        what the document needs of its agents (agents/document/ fulfils it)
       storage.ts      the Storage a document needs; MemoryStorage for the tests
-      host.ts         the document's HTTP API: its routes, the agent sessions, the tabs
+      host.ts         the document's HTTP API: its routes, each person's agent session, the tabs
       snapshot.ts     a document's storage as one value: the export, the import and their endpoints
       tabs.ts         the document's tabs, over WebSockets that outlive the open document
       content.ts      what a document room holds: files, assets, authors, folders (the shared Yjs doc)
@@ -128,7 +132,7 @@ health checks and rollbacks work.
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
       app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
-      api.ts          the HTTP API for outside agents: tokens, /api, /mcp, the guide
+      api.ts          the HTTP API for outside agents: tokens, /api, /mcp (the tools: agents/tools.ts)
       health.ts       the health check, GET /api/health
       security.ts     the security headers on every answer of the app
       live.ts         open pages follow a redeploy
@@ -147,14 +151,17 @@ health checks and rollbacks work.
       admin/          the admin pages, one file for each (settings.ts, api-keys.ts, auth.ts, access.ts, changes.ts,
                       users.ts), their routes (routes.ts) and the layout they share
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
-    agents/       both embedded agents, and what they share
-      tools.ts        the tools both agents and the outside API share; actions.ts, the audit of every action and its tool
+    agents/       both embedded agents, their tools, and the guides for outside agents
+      run.ts          the agent loop both agents run: the model, the transcript, the checkpoints
+      tools.ts        the one tool registry: every server tool, for the embedded agents and the outside API;
+                      actions.ts, the audit of every action and its tool
+      guides.ts       what an outside agent reads first: the server's guide, a document's and the admin pages'
       models.ts       the models, their prices, the agent's configuration and the scripted test model
       checkpoint.ts   an agent's conversation, kept step by step (chat-store.ts, in a Durable Object's SQLite)
       document/       the document agent: session.ts (one session per person per document), workspace.ts, tools.ts,
-                      PROMPT.md
-      admin/          the admin agent: agent.ts (its tools, prompt and loop), sessions.ts (one session per admin, and
-                      its routes), panel.ts (the panel's preferences)
+                      prompt.ts, PROMPT.md
+      admin/          the admin agent: agent.ts (its session), tools.ts (its own tools), prompt.ts, sessions.ts (one
+                      session per admin, and its routes), panel.ts (the panel's preferences)
     shared/       code the server and the browser bundles both use: the agent's transcript (agent-log.ts), attached
                   files (attach.ts), who did something (attribution.ts), a page's text and its source (manuscript.ts,
                   page-html.ts), the room's socket (room-socket.ts), ... The browser's bundles may have shared/, and of
