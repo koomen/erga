@@ -7,6 +7,7 @@
 // Platform-neutral and synchronous: a snapshot is a commit's files in memory.
 
 import { isTreeMode, parseCommit, parseTree, text, type GitObject } from "./git.ts";
+import { isBinary } from "./merge.ts";
 
 export interface SnapshotFile { mode: string; size: number; data: Uint8Array }
 /** One commit's files, by path, and its folders. */
@@ -71,7 +72,6 @@ export function cleanPath(p: string | undefined): string {
   return parts.join("/");
 }
 
-const isBinary = (data: Uint8Array) => data.subarray(0, 8000).includes(0);
 const kib = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
 
 /** A folder's entries ("name/" for a folder, then each file and its size), or every file under it with `recursive`. */
