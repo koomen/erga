@@ -26,7 +26,7 @@ import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
 import type { ToolWho } from "../tools.ts";
-import { isModelChoice, MODELS } from "../document/session.ts";
+import { isModelChoice, MODELS } from "../models.ts";
 import { emptyLog, type Log, type Offer } from "../../shared/agent-log.ts";
 import type { CredentialStatus } from "../../control/deploys/credential.ts";
 import { checkAttachments } from "../../shared/attach.ts";

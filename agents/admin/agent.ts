@@ -44,7 +44,7 @@ import {
   scriptModel,
   type AgentConfig,
   type ModelChoice,
-} from "../document/session";
+} from "../models";
 import { fileRefs, messageContent, type Attachment } from "../../shared/attach";
 import { emptyLog, offerOf, reduce, type Log, type LogEvent, type Offer } from "../../shared/agent-log";
 import { agentName } from "../../document/content";

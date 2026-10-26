@@ -72,35 +72,6 @@ import {
   type VersionsAccess,
 } from "./tools";
 import { sleep } from "../../shared/time";
-export { beyondPrompt } from "./prompt";
-export {
-  CHANGES,
-  documentToolSpecs,
-  describeView,
-  type FilesAccess,
-  type VersionsAccess,
-  type PageTree,
-  type OpenResult,
-  type ToolContent,
-  type ToolSpec,
-} from "./tools";
-export { externalGuide } from "./guide";
-
-export {
-  MODELS,
-  DEFAULT_MODEL,
-  isModelChoice,
-  isScript,
-  agentConfigFrom,
-  describeModel,
-  patchPayload,
-  scriptModel,
-  resultImage,
-  resultText,
-  type AgentConfig,
-  type ModelChoice,
-} from "../models";
-
 export interface AgentSession {
   /** The model's name, or null when the embedded agent is off (its tools still work). */
   readonly model: string | null;

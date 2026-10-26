@@ -35,7 +35,7 @@
 import type { FileData } from "../document/document.ts";
 import { isDocKind, type DocKind } from "../document/pages.ts";
 import { validateToolArguments } from "@mariozechner/pi-ai";
-import { CHANGES, documentToolSpecs, type ToolContent, type ToolSpec } from "../agents/document/session";
+import { CHANGES, documentToolSpecs, type ToolContent, type ToolSpec } from "../agents/document/tools";
 import { type Action, type DocRow, ID, LOCKED, NO_WRITE, nameOf, newDocId, roleMay, type Route } from "./directory/index.ts";
 import { fromElsewhere } from "./pages/index.ts";
 import { forwarded, makeDoc, startingFiles } from "./documents/index.ts";
