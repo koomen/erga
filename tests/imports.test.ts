@@ -1,13 +1,12 @@
 // The shape of the code, as rules the imports must keep (README.md, "The layout"):
 //
-//   1. Only cloudflare/ imports cloudflare:workers or a file of cloudflare/: the
-//      Worker's bindings and types stay there. deploy/ is the control Worker's
-//      (its hook and builder run in Workers of their own), and the tests test
+//   1. Only cloudflare/ and control/ import cloudflare:workers or a file of
+//      cloudflare/: the Workers' bindings and types stay there. The tests test
 //      cloudflare/'s files directly.
 //   2. server/ and document/ never import cloudflare/: the app runs on the
 //      Platform alone (server/platform.ts), so the tests run it under bun.
 //   3. An area of server/ (directory, identity, documents, pages, home,
-//      admin, source) is imported from outside only through its index.ts, its
+//      admin) is imported from outside only through its index.ts, its
 //      interface; its other files are its own. Tests may look inside, and so
 //      may deploy/locked-settings.ts, which the Worker's config loads before
 //      anything else and which reads the settings' definitions alone.
@@ -48,9 +47,9 @@ function imports(file: string): string[] {
 
 const CODE = ["server", "document", "agents", "dev", "shared", "client", "cloudflare", "deploy"];
 
-test("rule 1: only cloudflare/ imports cloudflare:workers or cloudflare/'s files (deploy/ is the control Worker's)", () => {
+test("rule 1: only cloudflare/ and control/ import cloudflare:workers or cloudflare/'s files", () => {
   const wrong: string[] = [];
-  for (const f of files(CODE.filter((d) => d != "cloudflare" && d != "deploy"))) {
+  for (const f of files(CODE.filter((d) => d != "cloudflare"))) {
     for (const i of imports(f)) if (i == "cloudflare:workers" || i.startsWith("cloudflare/")) wrong.push(`${f} imports ${i}`);
   }
   expect(wrong).toEqual([]);
