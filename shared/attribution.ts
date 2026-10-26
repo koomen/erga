@@ -37,12 +37,6 @@ export function byLine(by: string | null | undefined, via?: string | null): stri
   return via ? `${by}, via ${via}` : by;
 }
 
-/** The login and how, back from a `byLine` (for stores that keep one string, as a version's authors do). */
-export function parseByLine(line: string): { by: string; via: string | null } {
-  if (line == "the system") return { by: SYSTEM, via: null };
-  const at = line.indexOf(", via ");
-  return at < 0 ? { by: line, via: null } : { by: line.slice(0, at), via: line.slice(at + 6) };
-}
 
 /** The statement that adds an entry to the change log (server_config_versions, server/directory/settings.ts): `changes` (SettingChange[]), by `by`, via `via`. */
 export function changeLogEntry(at: number, by: string, via: string | null | undefined, changes: object[]): [string, number, string, string, string | null] {

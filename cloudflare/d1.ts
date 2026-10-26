@@ -62,9 +62,6 @@ export function factoryKey(env: Env): string | null {
   return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
 }
 
-/** The Worker's bindings with the API keys admins stored in place of the Worker secrets: what the code that calls Anthropic or OpenAI reads. */
-export const withKeys = (env: Env): Promise<Env> => withCredentials(env, env.DB ? directoryOf(env).credentials : null);
-
 /** Agent tokens, on the same database. */
 export function tokensOf(env: Env): Tokens {
   return new Tokens(sqlOn(env.DB), env.SESSION_SECRET, directoryOf(env));

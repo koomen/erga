@@ -9,7 +9,7 @@
 // and how each is deployed, and nothing else about where they run.
 
 import { INSTALL_CONTROL_WORKER, type InstallSpec } from "../install/install";
-import { targetHost, type Target } from "./pipeline";
+import type { Target } from "./pipeline";
 import type { Channel } from "./releases";
 import { CONTROL, CONTROL_ENTRYPOINT, type DeployName } from "../../deploy/targets";
 
@@ -93,6 +93,4 @@ export function installFleet(env: InstallEnv): Fleet | null {
   };
 }
 
-/** Where a target answers (its hostname), for the fleet's words. */
-export const fleetHost = (t: Target) => targetHost(t);
 export { CONTROL };

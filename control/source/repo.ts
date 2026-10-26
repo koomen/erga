@@ -1350,7 +1350,3 @@ export function blobAt(objects: Map<string, GitObject>, root: string, path: stri
   return null;
 }
 
-/** A remote's URL as shown: no credentials in it. */
-export function publicUrl(url: string): string {
-  try { const u = new URL(url); u.username = ""; u.password = ""; return u.toString(); } catch { return url; }
-}

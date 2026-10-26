@@ -19,12 +19,23 @@ export {
   withEdit,
 } from "./chrome.ts";
 export { docsPage } from "./docs.ts";
-export { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX, readerPage, readerScript, readerVersion } from "./reader.ts";
+export { readerPage, readerVersion } from "./reader.ts";
 export { startPage } from "./start.ts";
 export { cloneButton, editButton, FADE, filesButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";
 export { filesPage } from "./files.ts";
-export { type Account, ACCOUNT_STYLE, accountHtml, accountMarkup, accountOf, OWN_ACCOUNT, signInUrl, withAccount } from "./account-menu.ts";
+export { type Account, ACCOUNT_STYLE, accountHtml, accountMarkup, accountOf, OWN_ACCOUNT, withAccount } from "./account-menu.ts";
 export { imgFallbackScript } from "./account-menu.ts";
 export { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, type Template, templateById, TEMPLATES } from "./templates.ts";
 export { inlineCall, inlineScript } from "./inline.ts";
-export { asset, assetManifest, assetScripts, fontTags, isAssetPath, loadAssets, remoteAssets, scriptTag, serveAsset, styleTag, useAssets } from "./assets.ts";
+export {
+  asset,
+  assetManifest,
+  assetScripts,
+  fontTags,
+  isAssetPath,
+  loadAssets,
+  remoteAssets,
+  scriptTag,
+  serveAsset,
+  useAssets,
+} from "./assets.ts";

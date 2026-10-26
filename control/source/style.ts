@@ -271,7 +271,6 @@ const PANES_STYLE = `
   /* Its headings look as every admin page's (server/admin/style.ts). */
   .pane-head h2 { margin: 0; }
   .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
-  .pane-note { margin: -4px 0 10px; font-size: 13px; color: var(--soft); }
 `;
 
 /** The Ops page's rules: the panes, and the source pane's, scoped to #source-pane. */

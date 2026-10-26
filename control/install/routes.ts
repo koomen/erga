@@ -25,7 +25,7 @@
 // GET /deploy/api/mock shows what Cloudflare was asked to do.
 
 import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploys/pipeline";
-import { controlHostOf, DEPLOY_OAUTH_COOKIE, INSTALL_CONTROL_WORKER } from "./install";
+import { DEPLOY_OAUTH_COOKIE, INSTALL_CONTROL_WORKER } from "./install";
 import { mockCloudflare } from "../../dev/mock-cloudflare";
 import { deployPage, mockConsentPage } from "./page";
 import { mayDeploy } from "../deploys/access";
@@ -162,8 +162,6 @@ async function releaseShown(env: DeployHost["env"]): Promise<{ version: string; 
 /** A hostname from the page (the app's, the control Worker's): lower case, letters, digits, dots and dashes, or null. */
 const hostOf = (s: string | null) => (s && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(s.trim()) ? s.trim().toLowerCase() : null);
 
-/** The page, with the control Worker's hostname rule, for the page's script (control/install/page.ts shows it before the install). */
-export const controlHostFor = controlHostOf;
 
 const back = (error: string, ...setCookies: string[]) => {
   const headers = new Headers({ Location: `/deploy?error=${encodeURIComponent(error)}` });

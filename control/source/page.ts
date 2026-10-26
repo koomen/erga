@@ -1,8 +1,7 @@
 // The Ops page, /admin/ops, for admins with admin access: the one place to
 // manage Erga's environments, its Cloudflare credential, its own source and
 // its deploys. It has the layout every admin page shares: the breadcrumb,
-// Share with agent, the admin's agent and the sidebar. /admin/ops,
-// /source, /admin/factory and /admin/deploys redirect here.
+// Share with agent, the admin's agent and the sidebar.
 //
 // Status, at the top: one card for each environment (production, staging,
 // the control Worker): its state, when, the commit that is live, and its

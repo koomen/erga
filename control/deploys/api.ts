@@ -20,7 +20,6 @@
 //   GET  /api/events                    admins: the events, over a WebSocket (Upgrade: websocket, as the Ops page asks), else
 //                                       as server-sent events: {type: "deploys"} on each change, {type: "deploy-log", target,
 //                                       deployId, lines} as a deploy's lines arrive, {type: "source"} on a push or merge
-//   GET  /admin/deploys                 redirects to /admin/ops: the dashboard of source and deploys
 //
 // "Admins" are the server's admins signed in, in a browser or with an
 // admin-scope token; a test person never. The caller (the control Worker's
@@ -54,7 +53,7 @@ export interface DeploysObject extends DashboardDeploys {
   fetch(request: Request): Promise<Response>;
 }
 
-export const isDeploysApiPath = (path: string) => path == "/api/deploys" || path.startsWith("/api/deploys/") || path == "/api/events" || path == "/admin/deploys";
+export const isDeploysApiPath = (path: string) => path == "/api/deploys" || path.startsWith("/api/deploys/") || path == "/api/events";
 
 /** The routes above, for `session` (an admin with admin power, checked by the caller). */
 export async function deploysApi(request: Request, session: Session, deploys: DeploysObject): Promise<Response> {
@@ -63,7 +62,6 @@ export async function deploysApi(request: Request, session: Session, deploys: De
   const method = request.method;
   const by = byLine(session.login.toLowerCase(), whoOf(session).via);
 
-  if (path == "/admin/deploys") return new Response(null, { status: 302, headers: { Location: "/admin/ops" } });
   if (path == "/api/events" && method == "GET") return deploys.fetch(new Request(url, request));
   if (path == "/api/deploys" && method == "GET") return json(await deploys.status(Number(url.searchParams.get("history") ?? 0) || 0));
   const [, logOf] = /^\/api\/deploys\/([a-z]+)\/log$/.exec(path) ?? [];

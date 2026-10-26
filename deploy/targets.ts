@@ -96,7 +96,7 @@ export const ACCOUNT: string = data.account;
 /** The bootstrap admins: the same on every target. */
 export const ADMINS: string = data.admins;
 
-/** The source: one Artifacts repo (task #39 hosts it, with branches main and staging). */
+/** The source: one Artifacts repo, with branches main and staging. */
 export const SOURCE: { namespace: string; repo: string } = data.source;
 
 /** The control Worker (control/): it deploys every target, and holds the build container. */
@@ -119,14 +119,12 @@ export const CONTROL_ENTRYPOINT = "App";
  */
 export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([name, t]) => [name, { ...t, vars: { ADMINS, ...t.vars } }])) as unknown as Record<TargetName, TargetSpec>;
 
-export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
 
 /** Everything a control Worker deploys: Erga's own targets and the control Worker itself (last: after production, on main); an install's app ("app") and its control Worker (control/deploys/fleet.ts). */
 export type DeployName = TargetName | "control" | "app";
 /** Erga's own deploys: what deploy/run.ts and the setup deploy from a machine. */
 export type OwnDeployName = TargetName | "control";
-export const deployNames: DeployName[] = [...targetNames, "control"];
 export const isDeployName = (s: string): s is OwnDeployName => isTargetName(s) || s == "control";
 /** What a deploy of `name` is: its branch, its Worker, its hostname, and (an app target) whose data it copies. */
 export const specOf = (name: OwnDeployName): { name: DeployName; branch: "main" | "staging"; worker: string; host: string; snapshotFrom?: TargetName; control: boolean } =>

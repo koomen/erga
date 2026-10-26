@@ -60,7 +60,7 @@ const MARK = "<!--erga:home-controls-->";
 const VIEWPORT = `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">`;
 /**
  * The controls' band (homeHeader): their height, 12px above and below them (more under a notch). The page starts below it,
- * so the controls never cover the top of it, as a document's always does (task #38).
+ * so the controls never cover the top of it, as a document's always does.
  */
 export const BAND = "calc(max(12px, env(safe-area-inset-top)) + 46px)";
 /**
@@ -251,5 +251,3 @@ const HEADER_SCRIPT = `(() => {
   }, { passive: true });
 })();`;
 
-/** The document's address, for its Edit link. */
-export const addressOf = (doc: Pick<DocRow, "owner" | "slug">) => `/${doc.owner}/${doc.slug}`;

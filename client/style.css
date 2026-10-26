@@ -157,15 +157,6 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
    width back by the same amount. So every icon in a header has the same height. */
 .icon-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
-/* Show the icon for the mode you would switch *to*. */
-.i-sun { display: none; }
-html.is-dark .i-moon { display: none; }
-html.is-dark .i-sun { display: block; }
-.i-pen { display: none; }
-body.previewing .i-eye { display: none; }
-body.previewing .i-pen { display: block; }
-body.previewing #btn-preview { color: var(--chrome-hover); }
-
 /* Tooltips, the same on every control: plain text, the moment the pointer is on it,
    just below the pointer with its right edge there, following it (server/pages/account-menu.ts sets
    --tip-x and --tip-y as it moves; without them, right-aligned under the control).
@@ -197,53 +188,6 @@ body.previewing #btn-preview { color: var(--chrome-hover); }
 .status { opacity: 0; transition: opacity 400ms ease; }
 .status.show { opacity: 1; }
 .status.error { opacity: 1; color: #d9534f; }
-
-/* ---------- Format bar ---------- */
-
-.format-bar {
-  position: fixed;
-  z-index: 15;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px;
-  border-radius: 10px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  box-shadow: var(--shadow);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  line-height: 1;
-  animation: pop 120ms var(--ease);
-}
-.format-bar button {
-  display: grid; place-items: center;
-  width: 32px; height: 30px;
-  padding: 0; border: 0; border-radius: 7px;
-  background: transparent;
-  color: var(--soft);
-  font-size: 15px;
-  cursor: pointer;
-  transition: color 120ms ease, background-color 120ms ease;
-}
-.format-bar button:hover { color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
-.format-bar button:focus-visible { outline: 2px solid var(--caret); outline-offset: -2px; }
-.format-bar button[aria-pressed="true"] { color: var(--caret); }
-.format-bar b { font-weight: 700; }
-.format-bar i { font-style: italic; font-weight: 500; }
-.format-bar svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.format-bar.editing-link button { display: none; }
-.format-link { display: flex; }
-.format-link[hidden] { display: none; }
-.format-link input {
-  width: min(280px, calc(100vw - 48px));
-  padding: 6px 8px;
-  border: 0; outline: none;
-  background: transparent;
-  color: var(--fg);
-  font: inherit; font-size: 14px;
-}
-.format-link input::placeholder { color: var(--mark); }
 
 /* ---------- Help panel & toast ---------- */
 
@@ -331,7 +275,7 @@ kbd {
 
 @media (prefers-reduced-motion: reduce) {
   :root { --hide-ms: 0ms; --show-ms: 0ms; }
-  body, .toast, .help, .format-bar { transition: none; animation: none; }
+  body, .toast, .help { transition: none; animation: none; }
 }
 
 @media print {

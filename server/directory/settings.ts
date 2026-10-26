@@ -47,8 +47,6 @@ export const text = (max: number) => (v: unknown): string => {
   if (v.trim().length > max) throw new ConfigError(`must be at most ${max} characters`);
   return v.trim();
 };
-/** Either null or what `inner` takes. */
-export const nullable = <T>(inner: (v: unknown) => T) => (v: unknown): T | null => (v === null ? null : inner(v));
 /** A list of GitHub logins (lowercased, no "@", each once); a string of them, split by commas or spaces, too. */
 export const logins = (v: unknown): string[] => {
   const list = typeof v == "string" ? v.split(/[\s,]+/) : v;

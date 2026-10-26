@@ -1,5 +1,5 @@
-// What the rest of the server calls to deploy: task #39 (the source repo
-// in Cloudflare Artifacts) calls deployHook after any push or merge that
+// What the rest of the server calls to deploy: the source repo (in
+// Cloudflare Artifacts) calls deployHook after any push or merge that
 // moves "staging" or "main", in the Worker. It hands the move to this
 // server's branch deploys, which
 // build and deploy it if this server is that branch's target, and answers at

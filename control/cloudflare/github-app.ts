@@ -28,8 +28,6 @@ export function githubAppOf(env: GithubAppEnv): GithubApp | null {
   };
 }
 
-/** Whether this Worker has the App whole (erga.dev's control Worker): it mints tokens and checks the webhook itself. */
-export const hasAppSecrets = (env: GithubAppEnv) => !!(env.GITHUB_APP_CLIENT_SECRET && env.GITHUB_APP_PRIVATE_KEY);
 
 /** An installation token: minted here with the App's key, or at upstream over the fork's secret (an install). */
 export async function githubTokenFor(env: GithubAppEnv, installationId: number): Promise<{ token: string; expiresAt: number }> {

@@ -7,7 +7,7 @@
 // Ops page and its tests run with `bun start`.
 //
 //   /                           the Ops page (the environments, the Cloudflare credential, the source and deploys);
-//                               /admin/ops too, and /source, /admin/source and /admin/factory redirect to it
+//                               /admin/ops too
 //   /api/source/...             its API (control/source/routes.ts)
 //   /api/deploys..., /api/events    the deploys' API and the event stream (control/deploys/api.ts)
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
@@ -168,8 +168,8 @@ export interface Control {
 export const isSourcePagePath = (path: string) =>
   OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/api/releases" || path.startsWith("/api/releases/") || path == "/api/domains";
 
-/** The Ops page's addresses: /admin/ops, and its old ones, which redirect to it. */
-const OPS_PATHS = new Set(["/admin/ops", "/admin/source", "/source", "/admin/factory"]);
+/** The Ops page's addresses: /admin/ops, and / on the control Worker. */
+const OPS_PATHS = new Set(["/admin/ops"]);
 export const isOpsPagePath = (path: string) => OPS_PATHS.has(path);
 
 /** The paths these routes own (the app answers the rest of them, all but isSourcePagePath, with a redirect to the control Worker when it is apart). */
