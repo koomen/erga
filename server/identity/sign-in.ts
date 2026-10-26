@@ -38,7 +38,7 @@ import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import { SESSION_COOKIE, sign, SIGNED_OUT, unsign } from "./session.ts";
 import { base64url, fromBase64url, randomToken } from "../../shared/bytes.ts";
-import { openRelay, relayNonce, relayState } from "../../control/source/index.ts";
+import { openRelay, relayNonce, relayState } from "../../shared/relay.ts";
 import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
 import { esc } from "../../shared/html.ts";

@@ -85,12 +85,7 @@ import {
   installationRepos,
   installUrl,
   linkOf,
-  openRelay,
-  relayNonce,
-  relayOrigin,
   relaySignature,
-  relayState,
-  sealRelay,
   userOf,
   verifyRelay,
   verifyWebhook,
@@ -99,6 +94,7 @@ import {
   type PushEvent,
   type UserToken,
 } from "./source/index.ts";
+import { openRelay, relayNonce, relayOrigin, relayState, sealRelay } from "../shared/relay.ts";
 import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/layout.ts";
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
@@ -579,10 +575,9 @@ async function githubWebhook(request: Request, url: URL, c: Control): Promise<Re
 const INSTALL_COOKIE = "erga_install";
 /** What the consent's popup posts to the page that opened it (the Ops page, here or on the app), and on CONSENT_CHANNEL. */
 export const CONSENT_MESSAGE = "erga-deploy-credential";
-/** An install's consent state: its control Worker's origin (base64url), a dot, a random part (control/source/github.ts relayState; relayOrigin reads the origin back). */
+/** An install's consent state: its control Worker's origin (base64url), a dot, a random part (shared/relay.ts relayState; relayOrigin reads the origin back). */
 const b64u = (s: string) => base64url(new TextEncoder().encode(s));
 const unb64u = (s: string) => new TextDecoder().decode(fromBase64url(s));
-export { relayOrigin };
 /** The consent in flight, in its cookie: the state, the PKCE verifier, and whether it runs in a popup. */
 interface Consent { state: string; verifier: string; popup: boolean }
 const readConsent = (request: Request): Consent | null => {

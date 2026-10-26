@@ -126,8 +126,6 @@ export interface Env {
   ERGA_GITHUB_ORIGIN?: string;
   /** Local development only: a stand-in for Google's sign-in endpoints. */
   ERGA_GOOGLE_ORIGIN?: string;
-  /** Local development only (the tests): the other deploy target's server, in place of https://<its host>. */
-  ERGA_PEER_ORIGIN?: string;
   /** Local development only: the repository's object ("erga"), hosted by the app in place of the control Worker. */
   SOURCE?: DurableObjectNamespace<SourceHost>;
   /**

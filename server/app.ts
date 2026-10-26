@@ -43,7 +43,6 @@
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
 import { serverApi } from "./api.ts";
-import { mayDeploy } from "../control/deploys/access.ts";
 import { frontDoor, isPagesSite } from "./documents/index.ts";
 import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
 import {
@@ -52,6 +51,7 @@ import {
   devSignIn,
   finishGoogleSignIn,
   finishSignIn,
+  mayDeploy,
   startGoogleSignIn,
   signOut,
   startSignIn,

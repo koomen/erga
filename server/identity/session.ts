@@ -15,7 +15,7 @@
 //     else the dev login, unless the browser signed out.
 
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import type { Users } from "../directory/index.ts";
+import type { Directory, Users } from "../directory/index.ts";
 import { cookies } from "./cookies.ts";
 import { base64url, fromBase64url } from "../../shared/bytes.ts";
 
@@ -115,3 +115,14 @@ const loginOf = (name: string) =>
  * test person never has; nor has an admin's token without the admin scope.
  */
 export const actingAdmin = async (users: Users, session: Session | null) => !!session && (await users.actsAsAdmin(whoOf(session)));
+
+/**
+ * Who may use /deploy: the deploy_page setting (off, admins and those with the deploy role, or users), and never a test
+ * person or an agent's token. It's a permission of its own: it gives nothing of an admin's (settings, users, the Ops page).
+ */
+export async function mayDeploy(directory: Directory, session: Session | null): Promise<boolean> {
+  if (!session || session.test || session.agent) return false;
+  const mode = await directory.config.get("deploy_page");
+  if (mode == "users") return true;
+  return mode == "admins" && (await directory.users.hasDeploy(whoOf(session)));
+}

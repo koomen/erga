@@ -10,8 +10,7 @@ import { sessionOf } from "../server/identity/index.ts";
 import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
-import { isAdminsOnly, isTargetName, TARGETS, type TargetName } from "../deploy/targets";
-import { MOCK_HOOK_SECRET } from "../dev/mock-cloudflare";
+import { isAdminsOnly, isTargetName, TARGETS } from "../deploy/targets";
 import { sourceService } from "../control/source/service";
 import type { App } from "../control/index";
 import type { SourceService } from "../control/source/index.ts";
@@ -129,8 +128,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     deploy: {
       target: isTargetName(target) ? target : null,
       version: env.ERGA_VERSION || null,
-      hookSecret: env.DEPLOY_HOOK_SECRET?.trim() || (env.ERGA_DEPLOY_MOCK == "1" ? MOCK_HOOK_SECRET : ""),
-      originOf: (t: TargetName) => standIn(env.ERGA_PEER_ORIGIN) ?? `https://${TARGETS[t].host}`,
+      targets: TARGETS,
     },
     signIn: {
       app: { clientId: env.GITHUB_CLIENT_ID?.trim() ?? "", secret: env.GITHUB_CLIENT_SECRET?.trim() ?? "" },

@@ -15,11 +15,6 @@ import {
   appJwt,
   GithubError,
   installationToken,
-  openRelay,
-  relayNonce,
-  relayOrigin,
-  relayState,
-  sealRelay,
   signWebhook,
   verifyRelay,
   verifyWebhook,
@@ -28,6 +23,7 @@ import {
   type GithubStatus,
   type PushEvent,
 } from "../control/source/github";
+import { openRelay, relayNonce, relayOrigin, relayState, sealRelay } from "../shared/relay";
 import { TEST_APP, testPrivateKey } from "./helpers/source-fixture";
 import { Directory } from "../server/directory/index.ts";
 import { memory } from "./helpers/memory-sql.ts";
