@@ -4,28 +4,12 @@
 // host reads and changes its name through `Naming`, as one person.
 
 import type { DocName } from "./api.ts";
+import { slugify } from "./pages.ts";
 
 /** A rename that can't be done; the message says why, for a person or an agent to act on. */
 export class NameError extends Error {}
 
-export const SLUG_MAX = 60;
 export const UNTITLED = "Untitled";
-
-/** A slug from any text: "Field & notes, 2026" → "field-notes-2026" ("" if it has no letters or digits). */
-export function slugify(text: string): string {
-  const s = text
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/['’]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (s.length <= SLUG_MAX) return s;
-  // Cut at a word if one ends late enough, else mid-word.
-  const cut = s.slice(0, SLUG_MAX + 1),
-    dash = cut.lastIndexOf("-");
-  return (dash > SLUG_MAX / 2 ? cut.slice(0, dash) : s.slice(0, SLUG_MAX)).replace(/-+$/, "");
-}
 
 /** What a name is made from: a document's row in the directory. */
 export interface NamedRow {

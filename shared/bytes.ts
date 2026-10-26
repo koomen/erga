@@ -50,3 +50,12 @@ export const randomToken = (n = 32) => base64url(randomBytes(n));
 
 /** `n` random characters of `alphabet`, one random byte each. */
 export const randomString = (n: number, alphabet: string) => Array.from(randomBytes(n), (b) => alphabet[b % alphabet.length]).join("");
+
+/** A byte count as people read it: "820 B", "12 KB", "3.4 MB" (one decimal under 10 of a unit). */
+export function readableSize(n: number): string {
+  if (n < 1000) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1000, u = 0;
+  while (v >= 1000 && u < units.length - 1) { v /= 1000; u++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
+}

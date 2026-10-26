@@ -15,7 +15,8 @@ import {
   SETTINGS,
   type Sql,
 } from "../server/directory/index.ts";
-import { NameError, slugify } from "../document/names.ts";
+import { NameError } from "../document/names.ts";
+import { slugify } from "../document/pages.ts";
 import serverConfig from "../deploy/locked-settings";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;

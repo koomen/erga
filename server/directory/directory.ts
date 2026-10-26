@@ -48,8 +48,8 @@ import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users
 
 import { Credentials } from "./api-keys.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
-import { isDocKind, type DocKind } from "../../document/pages.ts";
-import { NameError, SLUG_MAX, slugify, UNTITLED } from "../../document/names.ts";
+import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
+import { NameError, UNTITLED } from "../../document/names.ts";
 import type { Role } from "../../document/access.ts";
 import { randomString } from "../../shared/bytes.ts";
 

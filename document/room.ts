@@ -53,6 +53,7 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import { rebase } from "./merge";
 import { applyChanges, assets, files, folders, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "./content";
 import { TEXT_MAX, type BlobRef } from "./blobs";
+import { parentOf } from "./pages";
 
 /** Storage failed: a file couldn't be listed, read or written. */
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { message: Schema.String }) {}
@@ -644,7 +645,7 @@ export class Room {
       if (files(self.doc).has(path) || assets(self.doc).has(path)) {
         self.removeFile(path);
         // The folder it was in stays, as a folder on disk would, even if that was its last file.
-        if (path.includes("/")) yield* self.makeFolder(path.slice(0, path.lastIndexOf("/")));
+        if (path.includes("/")) yield* self.makeFolder(parentOf(path));
         return yield* self.write(true);
       }
       const inside = `${path}/`;
@@ -706,7 +707,7 @@ export class Room {
       if (files(self.doc).has(from) || assets(self.doc).has(from)) {
         yield* self.copyFile(from, to);
         self.removeFile(from);
-        if (from.includes("/")) yield* self.makeFolder(from.slice(0, from.lastIndexOf("/")));
+        if (from.includes("/")) yield* self.makeFolder(parentOf(from));
         return yield* self.write(true);
       }
       const inside = `${from}/`;

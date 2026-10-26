@@ -1,7 +1,8 @@
 // The small helpers every part shares: shared/html.ts, shared/bytes.ts, shared/time.ts, shared/http.ts.
 
 import { expect, test } from "bun:test";
-import { base64, base64url, fromBase64, fromBase64url, hex, randomToken, sha256, sha256Hex } from "../shared/bytes";
+import { base64, base64url, fromBase64, fromBase64url, hex, randomToken, readableSize, sha256, sha256Hex } from "../shared/bytes";
+import { baseName, joinPath, pageUrl, parentOf, slugify } from "../document/pages";
 import { dateTag, esc, jsonInScript } from "../shared/html";
 import { json } from "../shared/http";
 import { plural, sleep, timeAgo } from "../shared/time";
@@ -67,4 +68,39 @@ test("json is never cached, and takes more headers", async () => {
   expect(r.headers.get("cache-control")).toBe("no-store");
   expect(r.headers.get("x-a")).toBe("1");
   expect(await r.json()).toEqual({ ok: true });
+});
+
+test("readableSize: bytes, then one decimal under 10 of a unit", () => {
+  expect([820, 1234, 12_345, 3_400_000, 999_999, 5e9].map(readableSize)).toEqual([
+    "820 B",
+    "1.2 KB",
+    "12 KB",
+    "3.4 MB",
+    "1000 KB",
+    "5.0 GB",
+  ]);
+});
+
+test("one rule for slugs, for a document's (60) and a page's file name (longer)", () => {
+  expect(slugify("Field & notes, 2026")).toBe("field-notes-2026");
+  expect(slugify("Ça va? Déjà vu")).toBe("ca-va-deja-vu");
+  const long = "a very long title that goes on and on well past the sixty characters a slug may have";
+  expect(slugify(long)).toBe("a-very-long-title-that-goes-on-and-on-well-past-the-sixty");
+  expect(slugify(long, 80).length).toBeLessThanOrEqual(80);
+  expect(slugify(long, 80).endsWith("-")).toBe(false);
+});
+
+test("paths and page addresses: one set of helpers for the server and the browser", () => {
+  expect([parentOf("a/b/c.html"), parentOf("c.html"), baseName("a/b/c.html"), joinPath("", "x"), joinPath("a", "x")]).toEqual([
+    "a/b",
+    "",
+    "c.html",
+    "x",
+    "a/x",
+  ]);
+  expect([pageUrl("/ada/notes", "index.html"), pageUrl("/ada/notes/", "blog/index.html"), pageUrl("/ada/notes", "a b.html")]).toEqual([
+    "/ada/notes",
+    "/ada/notes/blog",
+    "/ada/notes/a%20b",
+  ]);
 });
