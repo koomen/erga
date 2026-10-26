@@ -28,7 +28,7 @@ import type { Platform, Session } from "../platform.ts";
 import { page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
-import { cookieName, cookies } from "./cookies.ts";
+import { cookies, setCookie } from "./cookies.ts";
 import { sign, unsign } from "./session.ts";
 import { base64url, fromBase64url } from "../../shared/bytes.ts";
 import { clearCookie, signIn } from "./sign-in.ts";
@@ -135,8 +135,7 @@ async function refusedPage(platform: Platform, v: Vouched, login?: string): Prom
 
 interface Pending { v: Vouched; next: string; exp: number; taken?: string }
 
-const cookieFor = (request: Request, value: string, maxAge: number) =>
-  `${cookieName(request, JOIN)}=${value}; Path=/auth; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
+const cookieFor = (request: Request, value: string, maxAge: number) => setCookie(request, JOIN, value, maxAge, "/auth");
 
 /** The username step's cookie: who they are, signed, for half an hour. */
 async function pendingCookie(platform: Platform, request: Request, v: Vouched, next: string, taken?: string): Promise<string> {

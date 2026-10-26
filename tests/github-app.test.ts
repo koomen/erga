@@ -151,7 +151,7 @@ describe("Connect GitHub (control/routes.ts)", () => {
     expect(linked).toHaveLength(1);
     expect(linked[0]).toMatchObject({ installationId: Number(back.searchParams.get("installation_id")), account: { login: "ada" }, repo: { fullName: "ada/erga", cloneUrl: `${www}/ada/erga.git` }, by: "ada" });
     // The cookie is cleared with the answer.
-    expect(done.headers.get("set-cookie")).toContain("erga_github=; Max-Age=0");
+    expect(done.headers.get("set-cookie")).toContain("erga_github=; Path=/; Max-Age=0");
   });
 
   test("no cookie, or another state: refused in place; no admin: refused", async () => {

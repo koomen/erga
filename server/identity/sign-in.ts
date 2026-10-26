@@ -33,7 +33,7 @@
 
 import { confirmAction, fromElsewhere, page, safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
-import { cookieName, cookies } from "./cookies.ts";
+import { cookies, setCookie } from "./cookies.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import { SESSION_COOKIE, sign, SIGNED_OUT, unsign } from "./session.ts";
@@ -70,19 +70,17 @@ export function githubAccounts(github: string): GithubLookup {
 const STATE = "erga_oauth";
 const DAY = 24 * 60 * 60;
 
-const cookie = (request: Request, name: string, value: string, maxAge: number) =>
-  `${cookieName(request, name)}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
 
 /** The cookie that clears the sign-in's state. */
-export const clearCookie = (request: Request) => cookie(request, STATE, "", 0);
+export const clearCookie = (request: Request) => setCookie(request, STATE, "", 0);
 
 /** Signs `session` in: its cookie, and on to `next`. */
 export async function signIn(platform: Pick<Platform, "secret">, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
   const value = base64url(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
   const headers = new Headers({ Location: next });
-  headers.append("Set-Cookie", cookie(request, SESSION_COOKIE, await sign(platform.secret, value), ttl));
-  headers.append("Set-Cookie", cookie(request, STATE, "", 0));
-  if (cookies(request).has(SIGNED_OUT)) headers.append("Set-Cookie", cookie(request, SIGNED_OUT, "", 0));
+  headers.append("Set-Cookie", setCookie(request, SESSION_COOKIE, await sign(platform.secret, value), ttl));
+  headers.append("Set-Cookie", setCookie(request, STATE, "", 0));
+  if (cookies(request).has(SIGNED_OUT)) headers.append("Set-Cookie", setCookie(request, SIGNED_OUT, "", 0));
   return new Response(null, { status: 302, headers });
 }
 
@@ -117,7 +115,10 @@ export async function startSignIn(platform: Platform, request: Request): Promise
   github.searchParams.set("allow_signup", "false");
   return new Response(null, {
     status: 302,
-    headers: { Location: github.toString(), "Set-Cookie": cookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600) },
+    headers: {
+      Location: github.toString(),
+      "Set-Cookie": setCookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600),
+    },
   });
 }
 
@@ -287,7 +288,10 @@ export async function startGoogleSignIn(platform: Platform, request: Request): P
   google.searchParams.set("prompt", "select_account");
   return new Response(null, {
     status: 302,
-    headers: { Location: google.toString(), "Set-Cookie": cookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600) },
+    headers: {
+      Location: google.toString(),
+      "Set-Cookie": setCookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600),
+    },
   });
 }
 
@@ -393,9 +397,9 @@ export function signOut(platform: Platform, request: Request): Response {
   const url = new URL(request.url);
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
   const headers = new Headers({ Location: "/" });
-  headers.append("Set-Cookie", cookie(request, SESSION_COOKIE, "", 0));
+  headers.append("Set-Cookie", setCookie(request, SESSION_COOKIE, "", 0));
   // Locally someone is always signed in (the dev login), unless the browser signs out: then nobody, as on erga.dev.
-  if (platform.dev(url)) headers.append("Set-Cookie", cookie(request, SIGNED_OUT, "1", 30 * DAY));
+  if (platform.dev(url)) headers.append("Set-Cookie", setCookie(request, SIGNED_OUT, "1", 30 * DAY));
   return new Response(null, { status: 302, headers });
 }
 
