@@ -2,7 +2,7 @@
 // so it says where it's scrolled to and where the pointer is over it (server/pages/reader.ts: erga-scroll,
 // erga-pointer). The pointer over the band and the controls is this page's own.
 
-import ergaFade from "./fade";
+import ergaFade from "../common/fade";
 
 export default function viewerFade(): void {
   const fade = ergaFade(document.documentElement, document);

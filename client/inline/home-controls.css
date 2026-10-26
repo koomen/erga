@@ -1,0 +1,12 @@
+/* The homepage's controls' host (server/home/render.ts, homeHeader), from inside its shadow root: nothing of the page's
+   applies to it (its own !important rules win over the page's). Fixed, the width of the window (scrollbar included, as
+   the viewer's controls sit over the frame's scrollbar), no height. On a phone they stay at the top of the page, as the
+   viewer's do. */
+:host { all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important;
+  right: calc(-1 * var(--erga-scrollbar, 0px)) !important; width: auto !important; height: 0 !important; margin: 0 !important; padding: 0 !important;
+  z-index: 2147483647 !important; contain: none !important; transform: none !important; filter: none !important; visibility: visible !important; opacity: 1 !important; }
+@media (max-width: 640px), (max-height: 480px) { :host { position: absolute !important; } }
+/* The band the controls sit in, above the page (which starts below it by the same height: BAND, server/home/render.ts),
+   in the page's own background (the script sets it; until then it's see-through, over the page's padding, which shows
+   the same colour). */
+.band { position: absolute; top: 0; left: 0; right: 0; height: calc(max(12px, env(safe-area-inset-top)) + 46px); background: var(--erga-band, transparent); }

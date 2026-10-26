@@ -22,7 +22,7 @@ import { isPage, pageUrl } from "../../document/pages";
 import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../page-editor/zoom";
-import { fastClick } from "../../shared/fast-click";
+import { fastClick } from "../common/fast-click";
 import { $, editing, isMac, store, type Shell } from "./shell";
 import { mountNaming } from "./naming";
 import { mountRoom } from "./room";
@@ -400,7 +400,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
 
   shell.pause = mountPause(shell);
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
-  // The controls act as the press starts (shared/fast-click.ts): the top bar's, the title, the agent's open and close,
+  // The controls act as the press starts (client/common/fast-click.ts): the top bar's, the title, the agent's open and close,
   // the text style bar (all but its link that opens a new tab) and Refresh. The agent's undo and reset keep their click.
   fastClick(document, `.chrome-top button, #doc-title, #agent-fab, #agent-close, #fmt button:not([data-link="open"]), #refresh-pill`);
   document.addEventListener("mousedown", (e) => {

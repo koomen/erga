@@ -12,17 +12,16 @@
 // after changes; serve.ts serves it at /; api.ts is the homepage's API.
 
 import type { DocRow } from "../directory/index.ts";
-import { imgFallbackScript } from "../pages/index.ts";
 import {
   ACCOUNT_STYLE,
   accountMarkup,
   cloneButton,
   crumbsFont,
   editButton,
-  FADE,
   filesButton,
+  inlineScript,
+  inlineStyle,
   link,
-  NEW_DOC_SCRIPT,
   NEW_DOC_STYLE,
   newDocButton,
   newDocMenu,
@@ -60,7 +59,7 @@ const MARK = "<!--erga:home-controls-->";
 const VIEWPORT = `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">`;
 /**
  * The controls' band (homeHeader): their height, 12px above and below them (more under a notch). The page starts below it,
- * so the controls never cover the top of it, as a document's always does.
+ * so the controls never cover the top of it, as a document's always does. client/inline/home-controls.css has the same height.
  */
 export const BAND = "calc(max(12px, env(safe-area-inset-top)) + 46px)";
 /**
@@ -181,73 +180,7 @@ export function homeHeader(o: { clone: string; edit: string | null; files?: stri
   const session = o.account?.session ?? null;
   const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.files ? filesButton(o.files) : ""}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session), !!session && !session.test)}`;
   // The font goes outside the shadow root: a font declared inside one isn't used.
-  return `${crumbsFont(session)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style><div class="band"></div>${viewCrumbs(session, null)}${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
+  return `${crumbsFont(session)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("home-controls")}</style><div class="band"></div>${viewCrumbs(session, null)}${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls>${inlineScript("home-controls")}`;
 }
 
-// The host: nothing of the page's applies to it (its own !important rules win over the page's, from inside the shadow root).
-// Fixed, the width of the window (scrollbar included, as the viewer's controls sit over the frame's scrollbar), no height.
-// On a phone they stay at the top of the page, as the viewer's do.
-const HOST_STYLE = `:host { all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important;
-  right: calc(-1 * var(--erga-scrollbar, 0px)) !important; width: auto !important; height: 0 !important; margin: 0 !important; padding: 0 !important;
-  z-index: 2147483647 !important; contain: none !important; transform: none !important; filter: none !important; visibility: visible !important; opacity: 1 !important; }
-@media (max-width: 640px), (max-height: 480px) { :host { position: absolute !important; } }
-/* The band the controls sit in, above the page (which starts below it: STILL), in the page's own background (the script
-   sets it; until then it's see-through, over the page's padding, which shows the same colour). */
-.band { position: absolute; top: 0; left: 0; right: 0; height: ${BAND}; background: var(--erga-band, transparent); }`;
-
-const HEADER_SCRIPT = `(() => {
-  const host = document.currentScript.previousElementSibling;
-  let root = host.shadowRoot;
-  // A browser without declarative shadow roots: made here instead.
-  if (!root) { const t = host.querySelector("template"); if (!t) return; root = host.attachShadow({ mode: "open" }); root.append(t.content); t.remove(); }
-  ${imgFallbackScript("root")}
-  document.documentElement.append(host);
-  const bar = () => host.style.setProperty("--erga-scrollbar", Math.max(0, innerWidth - document.documentElement.clientWidth) + "px");
-  bar();
-  addEventListener("resize", bar);
-  addEventListener("load", bar);
-  if (window.ResizeObserver) new ResizeObserver(bar).observe(document.documentElement);
-  // The band takes the page's background: its root's, else its body's (which the root shows), else the canvas's.
-  const clear = (c) => !c || c == "transparent" || /^rgba\(.*,\s*0\)$/.test(c);
-  const band = () => {
-    let c = "";
-    for (const el of [document.documentElement, document.body]) { const b = el && getComputedStyle(el).backgroundColor; if (!clear(b)) { c = b; break; } }
-    host.style.setProperty("--erga-band", c || "Canvas");
-  };
-  band();
-  addEventListener("load", band);
-  new MutationObserver(band).observe(document.documentElement, { attributes: true, subtree: false });
-  if (document.body) new MutationObserver(band).observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
-  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", band);
-  // Who you are (server/pages/account-menu.ts's corner): its menu opens and closes as everywhere else on the site.
-  const acc = root.querySelector(".erga-account"), btn = acc && acc.querySelector("button"), menu = acc && acc.querySelector(".erga-account-menu");
-  if (btn && menu) {
-    const show = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
-    btn.addEventListener("click", () => { show(menu.hidden); if (!menu.hidden) menu.querySelector("a")?.focus({ preventScroll: true }); });
-    document.addEventListener("pointerdown", (e) => { if (!e.composedPath().includes(acc)) show(false); });
-    document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
-    addEventListener("blur", () => show(false));
-  }
-  // New document's picker.
-  ${NEW_DOC_SCRIPT}
-  ergaNewDoc(root);
-  // The controls fade once the page is scrolled, as on any document's page: on the host, whose own opacity
-  // the page can't touch; the band stays as it is.
-  ${FADE}
-  const fade = ergaFade(host, root);
-  const scrolled = () => fade.scroll(scrollY);
-  addEventListener("scroll", scrolled, { passive: true });
-  scrolled();
-  document.addEventListener("pointermove", (e) => { if (e.pointerType == "mouse") fade.pointer(e.clientX, e.clientY, false); }, { capture: true, passive: true });
-  document.addEventListener("pointerdown", (e) => { if (e.pointerType != "mouse") fade.pointer(e.clientX, e.clientY, true); }, { capture: true, passive: true });
-  document.addEventListener("mouseout", (e) => { if (!e.relatedTarget) fade.leave(); });
-  // Tooltips follow the pointer while it's on a control.
-  root.addEventListener("pointermove", (e) => {
-    const el = e.pointerType == "mouse" && e.target.closest?.("[data-tip]");
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    el.style.setProperty("--tip-x", e.clientX - r.left - 6 + "px");
-    el.style.setProperty("--tip-y", e.clientY - r.top + 30 + "px");
-  }, { passive: true });
-})();`;
 

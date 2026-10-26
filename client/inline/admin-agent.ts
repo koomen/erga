@@ -1,5 +1,9 @@
 // The admin agent's collapse and expand (server/admin/layout.ts): its button, the round one, Esc in the panel, ⌘J;
-// remembered on a wide window.
+// remembered on a wide window. The panel's and the sidebar's toggles, Share and Copy act as the press starts
+// (client/common/fast-click.ts), on every page admin-nav.js brings in too; Save, Clear, Remove and the rest keep a
+// deliberate click.
+
+import { fastClick } from "../common/fast-click";
 
 declare global {
   interface Window {
@@ -56,4 +60,5 @@ export default function adminAgent(): void {
   });
   sync();
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("agent-ready")));
+  fastClick(document, "#agent-fab, #agent-close, #side-toggle, #btn-share, button.copy");
 }

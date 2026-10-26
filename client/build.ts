@@ -112,7 +112,10 @@ export async function inlineCode(): Promise<string> {
   }
   const styles: string[] = [];
   for (const f of files.filter((f) => f.endsWith(".css"))) {
-    const css = readFileSync(join(dir, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\n\s*/g, "\n").trim();
+    const css = readFileSync(join(dir, f), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\n\s*/g, "\n")
+      .trim();
     if (/<\/style/i.test(css)) throw new Error(`client/inline/${f} holds </style>`);
     styles.push(`  ${JSON.stringify(f.replace(/\.css$/, ""))}: ${JSON.stringify(css)},`);
   }

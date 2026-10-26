@@ -27,7 +27,10 @@ export interface FilesPageOptions {
 export function filesPage(o: FilesPageOptions): string {
   const meta = `<meta name="erga-doc" content="${esc(o.docId)}"><meta name="erga-base" content="/d/${esc(o.docId)}"><meta name="erga-address" content="${esc(o.address)}"><meta name="erga-pages" content="${esc(o.pages)}"><meta name="erga-can-edit" content="${o.canEdit ? "1" : ""}">`;
   const trail = [{ label: "Documents", href: "/docs" }, { label: o.title, href: o.address }, { label: "Files" }];
-  return appPage(`Files · ${o.title}`, inlineStyle("files"), `${meta}${crumbs(o.session, o.session.test ? trail.slice(1) : trail)}
+  return appPage(
+    `Files · ${o.title}`,
+    inlineStyle("files"),
+    `${meta}${crumbs(o.session, o.session.test ? trail.slice(1) : trail)}
 <main class="files" aria-busy="true">
   <section class="tree-pane" aria-label="Files">
     <h1 class="visually-hidden">Files of ${esc(o.title)}</h1>
