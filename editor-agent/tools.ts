@@ -156,7 +156,7 @@ export function makeTools(
         }), { description: "One or more targeted replacements, each matched against the current file" }),
       }),
       execute: async (_id, p: { path: string; edits: { oldText: string; newText: string }[] }) => {
-        const r = Effect.runSync(Effect.match(ws.edit(p.path, p.edits), { onFailure: (e) => e, onSuccess: (r) => r }));
+        const r = await Effect.runPromise(Effect.match(ws.edit(p.path, p.edits), { onFailure: (e) => e, onSuccess: (r) => r }));
         if (r instanceof WorkspaceError) throw new Error(r.reason == "changed" ? await changedSince(r.message, run(cleanPath(p.path))) : r.message);
         opts.edited(r.path, r.at);
         return text(r.summary);

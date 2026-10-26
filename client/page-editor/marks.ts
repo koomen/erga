@@ -326,15 +326,8 @@ export abstract class EditorMarks extends EditorCore {
             layer.append(box);
           }
       }
-      // An agent's caret can sit between blocks (after an edit to the markup):
-      // show it at the end of the text before, or the start of the text after.
-      let caretAt = Math.min(p.head ?? anchor, len);
-      if (!M.unitAt(this.units, caretAt)) {
-        const prev = [...this.units].reverse().find((u) => u.to <= caretAt && this.els[u.id]);
-        const near = prev ?? this.units.find((u) => u.from >= caretAt && this.els[u.id]);
-        if (!near) continue;
-        caretAt = near == prev ? M.textEnd(near) : M.textStart(near);
-      }
+      const caretAt = this.visibleNear(Math.min(p.head ?? anchor, len));
+      if (caretAt == null) continue;
       const rect = this.coordsAtPos(Math.min(caretAt, len), -1);
       if (!rect || (!rect.height && !rect.width && !rect.top)) continue;
       const caret = doc.createElement("erga-peer");
@@ -345,6 +338,41 @@ export abstract class EditorMarks extends EditorCore {
       caret.append(label);
       layer.append(caret);
     }
+  }
+
+  /**
+   * The place nearest a source position that shows on the page: the position
+   * itself in text, else the nearest end of a text run in its block, else the
+   * nearest end of the text of the block whose tag it's in, else the nearer of
+   * the end of the text before and the start of the text after (an agent's
+   * caret in an edit to the markup: a tag, an attribute).
+   */
+  protected visibleNear(pos: number): number | null {
+    const u = M.unitAt(this.units, pos);
+    if (u && this.els[u.id]) {
+      const runs = u.runs.filter((r) => r.editable);
+      if (!runs.length || runs.some((r) => r.from <= pos && pos <= r.to)) return pos;
+      let best = pos,
+        gap = Infinity;
+      for (const r of runs)
+        for (const at of [r.from, r.to])
+          if (Math.abs(at - pos) < gap) {
+            best = at;
+            gap = Math.abs(at - pos);
+          }
+      return best;
+    }
+    // In a block's own tags: the start of its text for its opening tag, the end for its closing one.
+    const own = this.units.find((x) => x.from <= pos && pos <= x.to && this.els[x.id]);
+    if (own) return pos < own.contentFrom ? M.textStart(own) : M.textEnd(own);
+    const prev = [...this.units].reverse().find((x) => x.to <= pos && this.els[x.id]);
+    const next = this.units.find((x) => x.from >= pos && this.els[x.id]);
+    if (!prev && !next) return null;
+    const end = prev ? M.textEnd(prev) : null,
+      start = next ? M.textStart(next) : null;
+    if (end == null) return start;
+    if (start == null) return end;
+    return pos - end <= start - pos ? end : start;
   }
 
   /** Where a source position is on the page: inside text (a caret rect), or else at the start of the next paragraph. */

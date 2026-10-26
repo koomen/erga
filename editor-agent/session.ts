@@ -11,7 +11,7 @@
 // the small Workspace interface in editor-agent/workspace.ts, so the same agent could
 // run elsewhere (a browser) if it ever needs to. Others see only its edits,
 // attributed ("Pete's agent"), and its presence while it works: a labelled
-// cursor where it last edited, and whether it's busy, on awareness.
+// caret that follows its edits as they apply, and whether it's busy, on awareness.
 //
 // This module is the Promise edge: pi's SDK is async, and document/host.ts wraps
 // what it exposes in Effect.
@@ -45,7 +45,7 @@ import { byLine, VIA } from "../shared/attribution";
 import { pageRefusal, type DocKind, type TreeOp } from "../document/pages";
 import { joinLocal, type Room } from "../document/room";
 import type { Naming } from "../server/directory/index.ts";
-import { YjsWorkspace } from "./workspace";
+import { YjsWorkspace, type Pacer } from "./workspace";
 
 import {
   DEFAULT_MODEL,
@@ -225,8 +225,31 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   introduce(doc, me);
 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
-  const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
-  const ws = new YjsWorkspace(doc, () => acting, opts.canEdit, origin, opts.only ?? null, (path) => opts.kind ? pageRefusal(opts.kind(), path, opts.docName) : null);
+  // One undo step per tool call: its steps merge until the call ends (edited, stopCapturing).
+  const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: Infinity });
+  // Others see each edit as it applies: the agent's selection on the old text, then the new typed in (workspace.ts, Pacer).
+  const pacer: Pacer = {
+    cursor: (path, anchor, head) =>
+      presence({ cursor: { path, anchor: Y.relativePositionToJSON(anchor), head: head && Y.relativePositionToJSON(head) } }),
+    wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+    revert: () => {
+      doc.transact(() => {
+        undo.undo();
+        stamp(doc, acting);
+      }, undoOrigin);
+      undo.redoStack.pop();
+      undo.stopCapturing();
+    },
+  };
+  const ws = new YjsWorkspace(
+    doc,
+    () => acting,
+    opts.canEdit,
+    origin,
+    opts.only ?? null,
+    (path) => (opts.kind ? pageRefusal(opts.kind(), path, opts.docName) : null),
+    pacer
+  );
   let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
 
   // The conversation as it was at its last checkpoint, if there is one (a reload, a restart).
@@ -437,6 +460,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       if (!undo.undoStack.length) return false;
       // Stamped, so the undo is attributed to the agent even when it only deletes.
       doc.transact(() => { undo.undo(); stamp(doc, acting); }, undoOrigin);
+      // A call still under way goes on in a step of its own.
+      undo.stopCapturing();
       undoable();
       return true;
     },
