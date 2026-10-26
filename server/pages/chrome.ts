@@ -105,5 +105,8 @@ export const signInFirst = (next: string) => new Response(null, { status: 302, h
  * the typeface are the app's own files (pages/assets.ts), which the control Worker names at the app's origin.
  */
 export function page(title: string, html: string, status: number): Response {
-  return new Response(appPage(title, inlineStyle("plain"), `<main class="plain"><h1>${title}</h1><p>${html}</p></main>`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  return new Response(appPage(title, inlineStyle("plain"), `<main class="plain"><h1>${title}</h1><p>${html}</p></main>`), {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }

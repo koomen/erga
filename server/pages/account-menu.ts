@@ -13,10 +13,9 @@
 
 import { link, safeNext } from "./chrome.ts";
 import { esc } from "../../shared/html.ts";
-import { inlineStyle } from "./inline.ts";
+import { inlineScript, inlineStyle } from "./inline.ts";
 import type { Session } from "../platform.ts";
 import { colorFor } from "../../document/content.ts";
-import { fastClickScript } from "../../shared/fast-click.ts";
 
 /** A response header: this page shows the account itself (the editor), so leave it be. */
 export const OWN_ACCOUNT = "x-erga-own-account";
@@ -102,32 +101,5 @@ export async function withAccount(response: Response, account: () => Promise<Acc
 /** The corner's look (client/inline/account.css): its own colours, since pages differ. */
 export const ACCOUNT_STYLE = `<style>${inlineStyle("account")}</style>`;
 
-/**
- * For an inline script: a picture marked data-erga-fallback in `root` (a document or a shadow root) that doesn't load
- * goes, and the initial under it shows. (Not an onerror attribute: the site's pages run no inline handler, server/security.ts.)
- */
-export const imgFallbackScript = (root: string) => `((root) => {
-  for (const img of root.querySelectorAll("img[data-erga-fallback]")) if (img.complete && !img.naturalWidth) img.remove();
-  root.addEventListener("error", (e) => { if (e.target.matches?.("img[data-erga-fallback]")) e.target.remove(); }, true);
-})(${root});`;
-
-const ACCOUNT_SCRIPT = `<script>(() => {
-  const root = document.currentScript.previousElementSibling.previousElementSibling, btn = root.querySelector("button"), menu = root.querySelector(".erga-account-menu");
-  ${imgFallbackScript("root")}
-  const show = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
-  btn.addEventListener("click", () => { show(menu.hidden); if (!menu.hidden) menu.querySelector("a")?.focus({ preventScroll: true }); });
-  // It opens as the press starts (shared/fast-click.ts).
-  ${fastClickScript("root", ".erga-account-btn")}
-  document.addEventListener("pointerdown", (e) => { if (!root.contains(e.target)) show(false); });
-  document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
-  window.addEventListener("blur", () => show(false));
-  // Every control's tooltip on the page (the editor's too) follows the pointer while it's on the control: where, for its CSS.
-  document.addEventListener("pointermove", (e) => {
-    const el = e.pointerType == "mouse" && e.target.closest?.("[data-tip]");
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    // Clear of the pointer's arrow, which reaches down and right of its tip.
-    el.style.setProperty("--tip-x", e.clientX - r.left - 6 + "px");
-    el.style.setProperty("--tip-y", e.clientY - r.top + 30 + "px");
-  }, { passive: true });
-})();</script>`;
+/** The menu's open and close (client/inline/account-menu.ts), after the corner and its style. */
+const ACCOUNT_SCRIPT = inlineScript("account-menu");

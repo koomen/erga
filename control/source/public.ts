@@ -112,7 +112,10 @@ function viewHtml(ref: string, v: SourceView): string {
 }
 
 function shell(app: string, title: string, body: string): string {
-  return appPage(title, inlineStyle("source"), `${crumbs(null, [{ label: "Source" }], "h1", app)}
+  return appPage(
+    title,
+    inlineStyle("source"),
+    `${crumbs(null, [{ label: "Source" }], "h1", app)}
 <main class="src">
   ${body}
 </main>

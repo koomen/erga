@@ -1,6 +1,6 @@
 /* A document's page (server/pages/viewer.ts): the controls on the band, upper right, and, for someone signed in, the
    breadcrumbs upper left. Also inside the homepage's controls (server/home/render.ts). Faded controls are at 0.2:
-   faint, but still there to find (client/inline/fade.ts). */
+   faint, but still there to find (client/common/fade.ts). */
 
 /* The editor's look (client/style.css, .icon-btn): small icons. Right of them is who you are. Upper left, for
    someone signed in, the breadcrumbs (viewCrumbs), where the editor's are (client/editor.html, .chrome-nav) and as they look. */

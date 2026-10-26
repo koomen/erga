@@ -10,12 +10,11 @@
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { asset, assetScripts, editorShell } from "./assets.ts";
-import { inlineCall, inlineFunction, inlineStyle } from "./inline.ts";
+import { inlineCall, inlineScript, inlineStyle } from "./inline.ts";
 import { crumbsFont, link, viewCrumbs } from "./chrome.ts";
 import { esc } from "../../shared/html.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
-import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
-import { FAST_CLICK_DEFINE } from "../../shared/fast-click.ts";
+import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
 /** The viewer's Clone button (a copy of your own, at `href`): also the homepage's. */
 export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0345) translate(-12 -13.25)" stroke-width="1.5467"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></g></svg></a>`;
@@ -28,9 +27,6 @@ export const editButton = (href: string, editing: boolean) => `<a href="${esc(hr
 
 /** What a page kept for its reload (client/live/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";
-
-/** The editor's script and the chunks it imports first (page.js, a module): the only files it fetches (its shell is in the page). */
-export const editorScripts = () => JSON.stringify(assetScripts("page.js"));
 
 /** The editor's shell, inert in the page until someone edits: its styles, then its controls. */
 export const shellTemplate = () => {
@@ -85,10 +81,7 @@ export const STEPS_BOOT = inlineCall("viewer-steps");
 /** The steps' bar and panel (client/inline/viewer-steps.css). */
 export const STEPS_STYLE = `<style>${inlineStyle("viewer-steps")}</style>`;
 
-/** The viewer's controls' fade, for a page script: `ergaFade(target, root)` (client/inline/fade.ts). Also the homepage's. */
-export const FADE = `var ergaFade=${inlineFunction("fade")};`;
-
-/** The fade (FADE) on a document's page, from the frame's scroll and pointer (client/inline/viewer-fade.ts). */
+/** The fade (client/common/fade.ts) on a document's page, from the frame's scroll and pointer (client/inline/viewer-fade.ts). */
 export const FADE_BOOT = inlineCall("viewer-fade");
 
 /** The controls and the breadcrumbs on the band (client/inline/viewer.css). */
@@ -104,11 +97,7 @@ export function viewerPage(o: { title: string; docId: string; pages: string; src
   // Opened with ?edit, for whoever may edit: the page is the editor's from its first moment (editingHead, EDITING_BODY),
   // the page in the frame starts on its half of the editor at once (FRAME_SRC), and the editor's files are fetched as the
   // page parses, rather than one after another once its script runs (editBoot).
-  // (And the buttons that act as the press starts, for the editor's modules: shared/fast-click.ts.)
-  const opening = o.editable
-    ? `${shellTemplate()}<script>${editingHead()}
-${FAST_CLICK_DEFINE}</script>`
-    : "";
+  const opening = o.editable ? `${shellTemplate()}<script>${editingHead()}</script>` : "";
   // The page on its own origin, connected to from the start; it may play media only on the editor's say (EDITOR_ALLOW).
   const editing = o.editable && o.editing;
   const frame = `<iframe id="frame" class="erga-view" ${editing ? `data-src="${esc(o.src)}"` : `src="${esc(o.src)}"`} title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
@@ -129,7 +118,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 <body>${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}${editing ? `<script>${FRAME_SRC}</script>` : ""}`;
   const after = `
-${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${o.files ?? ""}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}<script>${NEW_DOC_SCRIPT}ergaNewDoc(document);</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}
+${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${o.files ?? ""}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}
 `;
   return { before, after };
 }
