@@ -53,7 +53,7 @@ import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storag
 import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
-import { decodeValue, exportPage, type DocSnapshot, type Page } from "../deploy/snapshot.ts";
+import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
 import { kindOf, pageRefusal, parentsOf, type DocKind } from "./pages.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { withBlobs, type ChatStore } from "../agents/checkpoint.ts";

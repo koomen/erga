@@ -10,7 +10,7 @@ import { Cloudflare, loadRelease, type DeployPlan, type Release } from "../contr
 import { controlHostOf, INSTALL_STEPS, installControlMetadata, runInstall, stagingHostOf } from "../control/install/install";
 import { builderEndpoint, forkBuilder, forkRemote, hashSecret } from "../control/install/forks";
 import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
-import { mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
+import { mockBuilder, mockCloudflare } from "../dev/mock-cloudflare";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
 import { quietConsole } from "./quiet.ts";

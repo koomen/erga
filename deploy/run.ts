@@ -50,7 +50,7 @@ import {
   type Target,
 } from "../control/deploys/pipeline";
 import { machineCredential } from "./local-credential";
-import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock-cloudflare";
+import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "../dev/mock-cloudflare";
 import { ACCOUNT, isDeployName, specOf, TARGETS, type OwnDeployName } from "./targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;

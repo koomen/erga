@@ -112,7 +112,7 @@ export interface TargetStatus {
   steps: StepStatus[];
 }
 
-/** Builds a commit into a release (control/builder/client.ts in production; deploy/mock-cloudflare.ts's in tests); an install's fetches a release from upstream's store instead (control/deploys/releases.ts storeBuilder: no source). */
+/** Builds a commit into a release (control/builder/client.ts in production; dev/mock-cloudflare.ts's in tests); an install's fetches a release from upstream's store instead (control/deploys/releases.ts storeBuilder: no source). */
 export interface Builder {
   /** `signal` stops the build (and its container's work) when the deploy is cancelled. */
   build(o: { commit: string; branch: string; source: Source | null }, log: (line: string) => void, signal?: AbortSignal): Promise<Release>;

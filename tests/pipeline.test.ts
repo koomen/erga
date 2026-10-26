@@ -60,12 +60,12 @@ import {
   PROD_DOCS,
   scriptTag,
   type MockState,
-} from "../deploy/mock-cloudflare";
+} from "../dev/mock-cloudflare";
 import { memoryBlobs, ReleaseStore, storeBuilder } from "../control/deploys/releases";
 import { installFleet } from "../control/deploys/fleet";
 import type { UpdateResult } from "../control/source/index.ts";
 import { runInstall } from "../control/install/install";
-import { memoryStore, snapshotDoor } from "../deploy/snapshot";
+import { memoryStore, snapshotDoor } from "../document/snapshot";
 import { ACCOUNT, ADMINS, CONTROL, SOURCE, TARGETS } from "../deploy/targets";
 import { controlConfig, controlWranglerConfig } from "../deploy/release";
 import { quietConsole } from "./quiet.ts";

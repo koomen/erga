@@ -12,7 +12,7 @@ import {
   assetHash, checkPlan, Cloudflare, deploy, DeployError, HEADERS_FILE, loadRelease, registerDomain, searchDomains, STEPS, tokenTemplateUrl,
   type DeployPlan, type Release,
 } from "../control/deploys/pipeline";
-import { mockCloudflare } from "../deploy/mock-cloudflare";
+import { mockCloudflare } from "../dev/mock-cloudflare";
 import { HEADERS } from "../client/build.ts";
 import { ASSET_PREFIX, type AssetManifest } from "../shared/assets.ts";
 import { open, seal } from "../control/deploys/seal";

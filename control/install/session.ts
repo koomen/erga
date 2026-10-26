@@ -21,7 +21,7 @@ import {
 import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf, type Installed } from "./install";
 import { hashSecret } from "./forks";
 import { githubAppOf } from "../cloudflare/github-app";
-import { mockCloudflare, type MockState } from "../../deploy/mock-cloudflare";
+import { mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
 import { open, randomSecret, seal, type Sealed } from "../deploys/seal";
 import type { Env } from "../../cloudflare/env";
 import { releaseStoreOf } from "../cloudflare/release-bucket";

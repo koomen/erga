@@ -37,7 +37,7 @@ import { join } from "node:path";
 import { CONTROL_OAUTH_SCOPES } from "../control/deploys/credential";
 import { Cloudflare, DeployError, findDatabase, zoneIdOf, type Fetch } from "../control/deploys/pipeline";
 import { machineCredential } from "./local-credential";
-import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock-cloudflare";
+import { MOCK_HOOK_SECRET, mockCloudflare } from "../dev/mock-cloudflare";
 import { ask, deployFromMachine } from "./run";
 import { controlWranglerConfig } from "./release";
 import { ACCOUNT, CONTROL, SOURCE, TARGETS } from "./targets";

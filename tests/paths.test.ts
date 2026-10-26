@@ -36,10 +36,10 @@ test("every repo path a comment or a doc names exists", () => {
       .forEach((line, i) => {
         for (const m of comment(f, line).matchAll(PATH)) {
           const p = m[0].replace(/[.,]+$/, "");
-        if (!/\.[a-z]+$/.test(p) && !p.endsWith("/")) continue;
+          if (!/\.[a-z]+$/.test(p) && !p.endsWith("/")) continue;
         if (!existsSync(join(ROOT, p))) wrong.push(`${f}:${i + 1} names ${p}`);
         }
-    });
+      });
   }
   expect(wrong).toEqual([]);
 });
