@@ -64,17 +64,20 @@ test("the live check tells a working client from an unknown client ID, a wrong s
   expect((await checkGoogleApp({ clientId: "", secret: "" }, { fetch: f, origin: GOOGLE })).state).toBe("not_set_up");
 });
 
-test("Google is off until an admin turns it on: its sign-in says so in place and offers GitHub; the choice page offers both once on", async () => {
+test("Google is off until an admin turns it on: its sign-in says so in place and offers Sign in; the choice page offers both once on", async () => {
   const { platform } = server();
   expect(await providersOn(platform)).toEqual({ github: true, google: false });
   const off = await startGoogleSignIn(platform, new Request(`${ORIGIN}/auth/google?next=/docs`));
   expect(off.status).toBe(403);
-  expect(await off.text()).toContain('href="/auth/github?next=%2Fdocs"');
+  expect(await off.text()).toContain('href="/auth/sign-in?next=%2Fdocs"');
   expect((await chooseSignIn(platform, new Request(`${ORIGIN}/auth/sign-in?next=/docs`))).headers.get("location")).toBe("/auth/github?next=%2Fdocs");
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
   const choose = await (await chooseSignIn(platform, new Request(`${ORIGIN}/auth/sign-in?next=/docs`))).text();
   expect(choose).toContain('href="/auth/github?next=%2Fdocs"');
   expect(choose).toContain('href="/auth/google?next=%2Fdocs"');
+  expect(choose).toContain("Continue with GitHub");
+  expect(choose).toContain("Continue with Google");
+  expect(choose).not.toContain("same account");
   const start = new URL((await startGoogleSignIn(platform, new Request(`${ORIGIN}/auth/google?next=/docs`))).headers.get("location")!);
   expect(start.origin + start.pathname).toBe(`${GOOGLE}/o/oauth2/v2/auth`);
   expect(Object.fromEntries(start.searchParams)).toMatchObject({ client_id: APP.clientId, redirect_uri: `${ORIGIN}/auth/google/callback`, response_type: "code", scope: "openid email profile" });

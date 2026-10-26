@@ -32,7 +32,7 @@ test("signed out: a person in a circle whose menu has only Sign in, which comes 
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.goto(`${root}/nobody-here`);
   await clickOn(page, "[data-erga-account] button");
-  await clickOn(page, ".erga-account-github");
+  await clickOn(page, ".erga-account-sign-in");
   await until(async () => (await corner(page)).state == "in", 10_000, "signed in again");
   expect(await page.evaluate(() => location.pathname)).toBe("/nobody-here");
 });

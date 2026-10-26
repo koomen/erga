@@ -3,7 +3,7 @@
 // load), which opens a small menu (your name, Documents, Settings, Deploy
 // your own for those the deploy_page setting lets in, Admin settings for
 // admins, Sign out); or, signed out, a person in a circle whose
-// menu has only Sign in (with GitHub, coming back to the same page).
+// menu has only Sign in (to the sign-in page, coming back to the same page).
 //
 // The Worker adds it to each of the site's HTML pages (`withAccount`,
 // server/app.ts), so every page has it without each building it. The
@@ -46,7 +46,6 @@ export const avatarsOf = (logins: string[]): Record<string, string> =>
   Object.fromEntries(logins.filter((l) => l != "*" && !l.startsWith("test-")).map((l) => [l, avatarUrl(l)]));
 
 const PERSON = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9.25" r="3.25"/><path d="M5.75 19c.9-3.1 3.3-4.75 6.25-4.75s5.35 1.65 6.25 4.75"/></svg>`;
-const GITHUB = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>`;
 
 /** Where signing in from `here` (a path and query on this site) starts, and comes back to. */
 export const signInUrl = (here: string) => `/auth/sign-in?next=${encodeURIComponent(safeNext(here.startsWith("/auth/") ? "/" : here))}`;
@@ -63,7 +62,7 @@ export function accountMarkup(account: Account | null, here: string): string {
     return `<div class="erga-account" data-erga-account="out">
 <button type="button" class="erga-account-btn erga-account-out" aria-label="Sign in" data-tip="Sign in" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">${PERSON}</button>
 <div class="erga-account-menu" id="${id}" hidden>
-<a class="erga-account-github" href="${esc(signInUrl(here))}">${GITHUB}<span>Sign in</span></a>
+<a class="erga-account-sign-in" href="${esc(signInUrl(here))}">Sign in</a>
 </div>
 </div>`;
   }
@@ -135,13 +134,9 @@ export const ACCOUNT_STYLE = `<style>
   .erga-account-who b { display: block; color: var(--acc-fg); font-weight: 600; font-size: 14px; }
   .erga-account-menu a { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; color: var(--acc-fg); text-decoration: none; font-size: 14px; white-space: nowrap; }
   .erga-account-menu a:hover, .erga-account-menu a:focus-visible { background: var(--acc-hover); outline: none; }
-  .erga-account-menu .erga-account-github { justify-content: center; margin: 2px 4px 4px; padding: 8px 14px; font-weight: 600; color: #fff; background: #1f2328; border-radius: 999px; }
-  .erga-account-menu .erga-account-github:hover, .erga-account-menu .erga-account-github:focus-visible { background: #32383f; }
-  @media (prefers-color-scheme: dark) {
-    .erga-account-menu .erga-account-github { color: #1f2328; background: #ececf1; }
-    .erga-account-menu .erga-account-github:hover, .erga-account-menu .erga-account-github:focus-visible { background: #fff; }
-  }
-  .erga-account-github svg { width: 16px; height: 16px; }
+  /* Sign in: the editor's primary button (client/style.css, .share-primary). */
+  .erga-account-menu .erga-account-sign-in { justify-content: center; margin: 2px; padding: 8px 14px; font-weight: 600; color: #fff; background: #3b7cf0; border-radius: 7px; }
+  .erga-account-menu .erga-account-sign-in:hover, .erga-account-menu .erga-account-sign-in:focus-visible { background: #2f6ad8; }
   @media (pointer: coarse) { .erga-account-menu a { padding: 11px 12px; } }
 </style>`;
 
