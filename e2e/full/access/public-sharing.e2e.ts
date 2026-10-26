@@ -1,4 +1,4 @@
-// "People can share content publicly", the Access page's switch (/admin/access), end to end on a server of this file's
+// "Users can share content publicly", the Access page's switch (/admin/access), end to end on a server of this file's
 // own (it changes the whole server). On: a document shared with anyone with the link opens for people who aren't
 // signed in, as viewers. Off: the share menu doesn't offer anyone with the link, a new such share is refused saying
 // why, and those made before stay but open for nobody signed out, until it's on again. The homepage is public either
@@ -42,7 +42,7 @@ test("on: anyone with the link opens for people signed out; off: not offered, re
   await page.goto(`${root}/docs`);
   const refused = await share(unshared.id, "viewer");
   expect(refused.status).toBe(403);
-  expect(refused.body.error).toContain("doesn't let people share content publicly");
+  expect(refused.body.error).toContain("doesn't let users share content publicly");
   // The share menu doesn't offer it for a document without one; for the one shared before, it shows, kept, to stop.
   await page.click(`button.share[data-id="${unshared.id}"]`);
   await until(async () => (await page.textContent("#share-hint")) == "", 5000, "the share dialog loaded");

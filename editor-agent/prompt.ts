@@ -19,7 +19,7 @@ export function beyondPrompt(owner: string, names: string[]): string {
   const lines: string[] = [];
   if (names.includes("share_document")) lines.push(`- document_access and share_document show who the document is shared with and share it
   (editor, viewer, or none to stop; "*" is anyone with the link, people not signed in too,
-  only where the server lets people share content publicly). Only its owner
+  only where the server lets users share content publicly). Only its owner
   may; leave out "document" for this one. Share only when ${owner} asks you to.`);
   if (names.includes("list_documents")) lines.push(`- list_documents, create_document and delete_document do what ${owner} does on the
   documents list (/docs): list their documents (and the ones shared with them), make a
@@ -36,10 +36,12 @@ export function beyondPrompt(owner: string, names: string[]): string {
   in (switch_sign_in_provider turns sign-in with GitHub or Google on or off; clear_sign_in_app
   clears a provider's app values set on /admin/auth; they are set only
   there, never in this conversation), and list_users, add_user, set_user_role,
-  set_user_deploy and remove_user for the users, who's an admin and who has the deploy role,
-  and list_access_rules, add_access_rule, change_access_rule and remove_access_rule for who
-  "Can authenticate" and who "Can create and edit content" (or "No access"), and
-  set_public_sharing for whether people can share content publicly. These change the whole server, for
+  set_user_deploy and remove_user for the users (each a GitHub or Google account with one role:
+  "Admin", "Can create and edit content" or "Can authenticate") and the deploy role,
+  and list_access_rules, add_access_rule, change_access_rule and remove_access_rule for the
+  groups (everybody, Workspaces, GitHub organizations: "No access", "Can authenticate" or
+  "Can create and edit content"), and
+  set_public_sharing for whether users can share content publicly. These change the whole server, for
   everyone: use them only when ${owner} asks, and say exactly what you changed.`);
   return lines.length ? `\n${lines.join("\n")}` : "";
 }

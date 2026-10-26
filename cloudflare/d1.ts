@@ -2,7 +2,7 @@
 // settings, on D1, through D1's API. A batch is one transaction.
 
 import { Directory, type Param, parseDeployed, type Permission, type Sql, withCredentials } from "../server/directory/index.ts";
-import { Tokens } from "../server/identity/index.ts";
+import { githubAccounts, Tokens } from "../server/identity/index.ts";
 import { forgetDecisions } from "../server/documents/index.ts";
 
 import type { Env } from "./env";
@@ -35,10 +35,20 @@ export function directoryOf(env: Env): Directory {
     const changed = async (key: string) => { if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged(); };
     // A document's permissions changed: its object keeps a copy, and decides with it (document/document.ts, authorize).
     const permissionsChanged = async (id: string, permissions: Permission[]) => { forgetDecisions(id); if (permissions.length) await documentOf(env, id).setPermissions(permissions.map((p) => ({ login: p.login, role: p.role }))); };
-    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG),
+    const dir = new Directory(sqlOn(env.DB), {
+      admins: adminsOf(env),
+      locked: parseDeployed(env.SERVER_CONFIG),
       // Local development offers anyone with the link, as before the Access page's switch (a server starts with it off).
       // And everyone may sign in there (server/identity/accounts.ts, mayJoin), so anyone may get a share.
-      ...(env.DEV_LOGIN?.trim() ? { defaults: { public_sharing: true }, local: true } : {}), changed, permissionsChanged, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
+      ...(env.DEV_LOGIN?.trim() ? { defaults: { public_sharing: true }, local: true } : {}),
+      // A GitHub account added on the Users page: its id, from GitHub's public users API (locally, the pretend GitHub's).
+      github: githubAccounts((env.DEV_LOGIN && env.ERGA_GITHUB_ORIGIN?.trim().replace(/\/+$/, "")) || "https://github.com"),
+      changed,
+      permissionsChanged,
+      credentialSecret: factoryKey(env),
+      fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim(),
+    });
+    directory = { db: env.DB, dir };
   }
   return directory.dir;
 }

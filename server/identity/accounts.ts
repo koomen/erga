@@ -41,14 +41,14 @@ export type Outcome =
   | { kind: "refused"; login?: string; taken?: string };
 
 /**
- * Whether someone a provider vouched for may make a new account here: a rule matches them with read or write. Local
- * development stands in for an admin while the rules let in only accounts one by one (the list after a fresh start):
- * everyone may join there, and gets a rule for their account. Rules for organizations or emails decide there as anywhere.
+ * Whether someone a provider vouched for may make a new account here: an admin added them (Users), or a group rule
+ * matches them with read or write (Access). Local development stands in for an admin while the group rules are as a
+ * server starts: everyone may join there, and may write. A group's rule decides there as anywhere.
  */
 export async function mayJoin(platform: Pick<Platform, "dev" | "directory">, url: URL, v: Vouched): Promise<boolean> {
   if (await platform.directory.mayJoin(v)) return true;
   if (!platform.dev(url)) return false;
-  return (await platform.directory.rules.all()).every((r) => r.kind == "account" || (r.kind == "everybody" && r.access == "none"));
+  return platform.directory.defaultRules(await platform.directory.rules.all());
 }
 
 /**
@@ -115,7 +115,7 @@ async function refusedPage(platform: Platform, v: Vouched, login?: string): Prom
   const rules = await platform.directory.rules.all().catch(() => []);
   const workspaces = rules.filter((r) => r.kind == "workspace" && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
   const orgs = rules.filter((r) => r.kind == "github_org" && r.access != "none").map((r) => `<b>${esc(r.value)}</b>`);
-  const ways = ["accounts an admin added"];
+  const ways = ["the people an admin added"];
   if (workspaces.length) ways.push(`Google Workspace accounts of ${workspaces.join(" or ")}`);
   if (orgs.length) ways.push(`members of the GitHub organization${orgs.length > 1 ? "s" : ""} ${orgs.join(" or ")}`);
   let why = `<b>${esc(who)}</b> (${esc(label(v.provider))}) isn't one of them.`;
@@ -176,12 +176,15 @@ export async function usernameStep(platform: Platform, request: Request): Promis
   // Who may join is asked again: a rule could have changed while they chose.
   if (!(await mayJoin(platform, url, v))) return refusedPage(platform, v);
   try {
-    // A rule let them in, or local development did (everyone may there): then a rule for this one account, with
-    // write, as an admin's would be.
-    const dir = platform.directory, byRule = await dir.mayJoin(v);
-    const login = await dir.identities.createAccount(wanted, v, {
-      extra: byRule ? [] : [["INSERT OR IGNORE INTO access_rules (kind, value, access, created) VALUES ('account', ?1, 'write', ?2)", wanted, Date.now()]],
-    });
+    // The role an admin added them with (their wait ends), or none (a group's rule let them in), or local
+    // development's (everyone may there): write.
+    const dir = platform.directory,
+      { may, person } = await dir.joining(v);
+    const login = await dir.identities.createAccount(
+      wanted,
+      v,
+      person ? { role: person.role, extra: [dir.people.claimed(person.id)] } : may ? {} : { role: "write" }
+    );
     const answer = await signIn(platform, request, sessionFor(login, v), pending.next);
     answer.headers.append("Set-Cookie", cookieFor(request, "", 0));
     return answer;

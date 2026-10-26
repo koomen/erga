@@ -3,7 +3,17 @@
 // app imports identity through this file.
 
 export { sessionOf } from "./session.ts";
-export { chooseSignIn, finishGoogleSignIn, finishSignIn, mintTestToken, signOut, startGoogleSignIn, startSignIn, testSignIn } from "./sign-in.ts";
+export {
+  chooseSignIn,
+  finishGoogleSignIn,
+  finishSignIn,
+  githubAccounts,
+  mintTestToken,
+  signOut,
+  startGoogleSignIn,
+  startSignIn,
+  testSignIn,
+} from "./sign-in.ts";
 export { devSignIn, usernameStep } from "./accounts.ts";
 export { authOps, isSignInPath, providersOn, signInDoor } from "./settings.ts";
 export { isPeer } from "./peer.ts";

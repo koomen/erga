@@ -42,12 +42,12 @@
 // and the host reads them afresh when it has none, or an old copy.
 
 import { ConfigError, ServerConfig } from "./settings.ts";
-import { type Access, AccessRules, type Facts } from "./access.ts";
-
-import { type Actor, NotAllowed, type User, Users } from "./users.ts";
+import { type Access, AccessRules, type Facts, higher } from "./access.ts";
+import { type GithubLookup, People, type Person, personHandle } from "./people.ts";
+import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users.ts";
 
 import { Credentials } from "./api-keys.ts";
-import { Identities, type Vouched, vouchedEmails, workspaceOf } from "./identities.ts";
+import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, type DocKind } from "../../document/pages.ts";
 
 
@@ -126,10 +126,11 @@ export interface Who {
 /** What making a document answers someone the write rule (/admin/users) leaves out. */
 export const NO_WRITE = "Your access on this server is Can authenticate: you may open what is shared with you or public, but not make or edit documents. An admin can give you Can create and edit content on the Users page.";
 
-/** What sharing with anyone with the link answers while the server doesn't let people share content publicly. */
-export const NO_PUBLIC = "This server doesn't let people share content publicly, so this document can't be shared with anyone with the link. An admin can turn on \"People can share content publicly\" on the Access page (/admin/access). Share it with people by their username instead.";
+/** What sharing with anyone with the link answers while the server doesn't let users share content publicly. */
+export const NO_PUBLIC =
+  "This server doesn't let users share content publicly, so this document can't be shared with anyone with the link. An admin can turn on \"Users can share content publicly\" on the Access page (/admin/access). Share it with people by their username instead.";
 
-/** The login a permission for anyone with the link is under: anyone signed in, and, while the server lets people share content publicly, people who aren't signed in too (as viewers). */
+/** The login a permission for anyone with the link is under: anyone signed in, and, while the server lets users share content publicly, people who aren't signed in too (as viewers). */
 export const ANYONE = "*";
 
 /** One person's (or anyone's, "*") permission on a document. */
@@ -216,8 +217,12 @@ export class Directory {
   readonly credentials: Credentials;
   /** How each account signs in (its GitHub and Google identities), and usernames. */
   readonly identities: Identities;
-  /** Who may use the server: the access rules (the Users page). */
+  /** Who may use the server, by group: the access rules (the Access page). */
   readonly rules: AccessRules;
+  /** The people an admin added before their first sign-in (the Users page). */
+  readonly people: People;
+  /** GitHub's public users API, for a GitHub account added by its login. */
+  private readonly github: GithubLookup | null;
 
   /**
    * `admins`: the deploy's bootstrap admins. `locked`: settings
@@ -231,15 +236,30 @@ export class Directory {
   /** Local development, where everyone may sign in while the access rules let in accounts one by one (accounts.ts, mayJoin). */
   private readonly local: boolean;
 
-  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; defaults?: Record<string, unknown>; local?: boolean; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean; permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void> } = {}) {
+  constructor(
+    private sql: Sql,
+    opts: {
+      admins?: Iterable<string>;
+      locked?: Record<string, unknown>;
+      defaults?: Record<string, unknown>;
+      local?: boolean;
+      github?: GithubLookup;
+      changed?: (key: string) => Promise<void>;
+      credentialSecret?: string | null;
+      fallback?: (env: string) => boolean;
+      permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void>;
+    } = {}
+  ) {
     this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
     this.local = !!opts.local;
     this.users = new Users(sql, opts.admins);
     this.identities = new Identities(sql, this.users);
     this.rules = new AccessRules(sql, this.users);
-    // The access rules decide who may sign in (Users.allowed, Users.signedIn): read or write.
+    this.people = new People(sql, this.users);
+    this.github = opts.github ?? null;
+    // A user's role and the group rules decide who may sign in (Users.allowed, Users.signedIn): read or write.
     this.users.gate = async (user) => (await this.accessOf(user)) != "none";
-    this.users.rulesChanged = () => this.rules.forget();
+    this.users.accessChanged = () => this.rules.forget();
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
@@ -613,12 +633,13 @@ export class Directory {
 
   private known = new Map<string, { access: Access; at: number; version: number }>();
 
-  /** An account's access now: write for an admin, else the highest of the rules that match it (remembered a few seconds). */
+  /** An account's access now: write for an admin, else the higher of its own role and the group rules that match it (remembered a few seconds). */
   async accessOf(user: User): Promise<Access> {
     if (user.role == "admin") return "write";
     const had = this.known.get(user.login);
     if (had && had.version == this.rules.version && Date.now() - had.at < 10_000) return had.access;
-    const version = this.rules.version, access = await this.rules.accessFor(await this.factsOf(user.login));
+    const version = this.rules.version,
+      access = higher(user.access ?? "none", await this.rules.accessFor(await this.factsOf(user.login)));
     if (this.known.size > 10_000) this.known.clear();
     this.known.set(user.login, { access, at: Date.now(), version });
     return access;
@@ -629,16 +650,57 @@ export class Directory {
     this.known.delete(login.toLowerCase());
   }
 
-  /** What the rules read of an account: its username, its Google Workspace, its GitHub organizations, its Google email. */
+  /** What the group rules read of an account: its Google Workspace and its GitHub organizations, at its last sign-in. */
   async factsOf(login: string): Promise<Facts> {
-    const [emails, identities] = await Promise.all([this.identities.emailsOf(login), this.identities.of(login)]);
-    return { login: login.toLowerCase(), emails, workspaces: identities.flatMap((i) => (i.hd ? [i.hd] : [])), orgs: identities.flatMap((i) => (i.provider == "github" ? i.orgs ?? [] : [])) };
+    const identities = await this.identities.of(login);
+    return {
+      workspaces: identities.flatMap((i) => (i.hd ? [i.hd] : [])),
+      orgs: identities.flatMap((i) => (i.provider == "github" ? (i.orgs ?? []) : [])),
+    };
   }
 
-  /** What the rules read of someone with no account yet, from what their provider vouched for. */
+  /** What the group rules read of someone with no account yet, from what their provider vouched for. */
   factsOfVouched(v: Vouched): Facts {
     const hd = workspaceOf(v);
-    return { emails: vouchedEmails(v), workspaces: hd ? [hd] : [], orgs: v.provider == "github" ? v.orgs ?? [] : [] };
+    return { workspaces: hd ? [hd] : [], orgs: v.provider == "github" ? (v.orgs ?? []) : [] };
+  }
+
+  /**
+   * Adds a user by their provider account, with a role (the Users page's Add user): a GitHub login (GitHub's id for it
+   * found now; refused when GitHub has no such account) or a Google email. An account that signs in with it already
+   * gets the role; anyone else waits for their first sign-in (people.ts). A bootstrap admin is an admin already:
+   * `note` says so, and nothing changes.
+   */
+  async addUser(
+    by: Actor,
+    input: { provider: unknown; handle: unknown; role: unknown },
+    role: UserRole
+  ): Promise<{ user?: User; person?: Person; note?: string }> {
+    await this.users.mustAdmin(by);
+    const { provider, handle } = personHandle(input.provider, input.handle);
+    if (provider == "github") {
+      if (this.users.isBootstrapAdmin(handle)) return { user: (await this.users.get(handle))!, note: `${handle} is already an admin.` };
+      if (!this.github) throw new NotAllowed("This server can't ask GitHub for an account's id.");
+      const found = await this.github(handle);
+      if (!found) throw new NotAllowed(`GitHub has no account "${handle}": check the login.`);
+      const known = await this.identities.find("github", found.id);
+      // One from before identities, with this login as its username, which this GitHub account claims at its first sign-in.
+      const login =
+        known?.login ??
+        ((await this.users.get(found.login))?.created && (await this.identities.unclaimed(found.login)) ? found.login.toLowerCase() : null);
+      if (login) return this.roleOfUser(by, login, role);
+      return { person: await this.people.add(by, { provider, handle: found.login.toLowerCase(), subject: found.id }, role) };
+    }
+    const [had] = await this.sql.all<{ login: string }>("SELECT login FROM emails WHERE provider = 'google' AND email = ?1", handle);
+    if (had) return this.roleOfUser(by, had.login, role);
+    return { person: await this.people.add(by, { provider, handle, subject: null }, role) };
+  }
+
+  /** Gives a user that role, or says they have it already (an admin). */
+  private async roleOfUser(by: Actor, login: string, role: UserRole): Promise<{ user: User; note?: string }> {
+    const user = await this.users.get(login);
+    if (user?.role == "admin" && role == "admin") return { user, note: `${login} is already an admin.` };
+    return { user: await this.users.setUserRole(by, login, role) };
   }
 
   /**
@@ -652,33 +714,44 @@ export class Directory {
 
   /**
    * Why `login` can't be given a share, or null if they can: they may sign in. That is: everybody may (at least Can
-   * authenticate); or a rule names their account (its username, or the Google email it signed in with); or they signed
-   * in before, and what their providers vouched for then (Workspace, GitHub organizations) matches a rule. Someone who
-   * never signed in and could match only an organization's rule can't be checked: they sign in once first.
+   * authenticate); or they're a user whose role or groups (as at their last sign-in) let them in. A username comes at
+   * the first sign-in, so someone who never signed in has none to share with yet: they sign in once first.
    */
   async whyNoShare(login: string): Promise<string | null> {
     login = login.toLowerCase();
     const rules = await this.rules.all();
     if (rules.some((r) => r.kind == "everybody" && r.access != "none")) return null;
-    // Local development: everyone may sign in (and gets a rule for their account), unless an admin added a rule for an
-    // organization or an email there.
-    if (this.local && rules.every((r) => r.kind == "account" || (r.kind == "everybody" && r.access == "none"))) return null;
+    // Local development: everyone may sign in, unless an admin added a group's rule there.
+    if (this.local && this.defaultRules(rules)) return null;
     const user = await this.users.get(login);
     if (user && (await this.accessOf(user)) != "none") return null;
-    const signedInBefore = !!user && (await this.identities.of(login)).length > 0;
-    const orgRules = rules.some((r) => (r.kind == "workspace" || r.kind == "github_org") && r.access != "none");
-    if (!signedInBefore && orgRules) return `${login} hasn't signed in to this server yet, so Erga can't check whether their Google Workspace or GitHub organization lets them in. They sign in once first; then share it with them. Or an admin adds a rule for their account on the Access page.`;
-    return `${login} isn't allowed to sign in to this server, so they couldn't open it. An admin can let them in with a rule on the Access page (/admin/access).`;
+    if (!user && (rules.some((r) => r.access != "none") || (await this.people.any())))
+      return `There's no user ${login} on this server yet: a username comes at the first sign-in. If they may sign in, they sign in once first; then share it with them.`;
+    return `${login} isn't allowed to sign in to this server, so they couldn't open it. An admin can give them a role on the Users page (/admin/users).`;
   }
 
-  /** Whether someone with no account yet may make one at their first sign-in: a rule that matches them gives read or write. */
+  /** Whether the group rules are as a server starts: everybody no access, and no other group. */
+  defaultRules(rules: { kind: string; access: Access }[]): boolean {
+    return rules.every((r) => r.kind == "everybody" && r.access == "none");
+  }
+
+  /**
+   * What someone with no account yet gets at their first sign-in: the role an admin added them with (`person`), and
+   * whether that or a group rule lets them in at all.
+   */
+  async joining(v: Vouched): Promise<{ may: boolean; person: Person | null }> {
+    const person = await this.people.match(v);
+    return { may: !!person || (await this.rules.accessFor(this.factsOfVouched(v))) != "none", person };
+  }
+
+  /** Whether someone with no account yet may make one at their first sign-in. */
   async mayJoin(v: Vouched): Promise<boolean> {
-    return (await this.rules.accessFor(this.factsOfVouched(v))) != "none";
+    return (await this.joining(v)).may;
   }
 
   /**
    * Whether a document opens for people who aren't signed in: the homepage always does (the front door's own path), and
-   * one shared with anyone with the link does while the server lets people share content publicly. They view it only.
+   * one shared with anyone with the link does while the server lets users share content publicly. They view it only.
    */
   async isPublic(id: string): Promise<boolean> {
     if (!(await this.config.get("public_sharing"))) return false;
@@ -712,7 +785,7 @@ export class Directory {
     if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login)) throw new NotAllowed(`"${login}" isn't a login (or "*" for anyone with the link).`);
     if (login == doc.owner) throw new NotAllowed("The owner's own permission can't be changed.");
     if (role != null && role != "editor" && role != "viewer") throw new NotAllowed(`"${role}" isn't a role: editor or viewer.`);
-    // Anyone with the link: only while the server lets people share content publicly (the Access page). Stopping one
+    // Anyone with the link: only while the server lets users share content publicly (the Access page). Stopping one
     // made before is always allowed.
     if (login == ANYONE && role != null && !(await this.config.get("public_sharing"))) throw new NotAllowed(NO_PUBLIC);
     // A person: only one who may sign in (the access rules). A share made before stays: sign-in checks them anyway.

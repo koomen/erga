@@ -75,3 +75,52 @@ test("rules: a Workspace with write, a GitHub organization with read, everybody'
   await until(async () => new URL(page.url()).pathname == "/docs", 10_000, "Amy signs in");
   expect((await page.goto(`${root}/new`))?.status()).toBe(403);
 });
+
+test("users: added by provider account before their first sign-in, with one role; an admin by the deploy is one already", async ({
+  tab,
+}) => {
+  const page = tab.page,
+    root = (await server()).root;
+  const users = () => page.goto(`${root}/admin/users?user=tester`);
+  const hint = () => page.textContent("#users-hint");
+  const add = async (provider: string, handle: string, role: string) => {
+    await users();
+    await page.selectOption("form.add-user select[name=provider]", provider);
+    await page.fill("form.add-user input[name=handle]", handle);
+    await page.selectOption("form.add-user select[name=role]", role);
+    await page.click("form.add-user button");
+  };
+  const id = unique("");
+  // A Google account by its email, with Can authenticate: it waits on the Users page.
+  await add("google", `ann.${id}@example.net`, "read");
+  const waiting = `ol.users > li.waiting:has(.handle:text-is("ann.${id}@example.net"))`;
+  await until(async () => !!(await page.$(waiting)), 5000, "Ann waits");
+  expect(await page.inputValue(`${waiting} select.role`)).toBe("read");
+  // A GitHub login GitHub doesn't know: refused, in place.
+  await add("github", `no-such-${id}`, "read");
+  await until(async () => (await hint())?.includes("GitHub has no account"), 5000, "an unknown login refused");
+  // The deploy's admin: already an admin, said, not refused.
+  await add("github", "tester", "read");
+  await until(async () => (await hint()) == "tester is already an admin.", 5000, "tester is already an admin");
+  // Ann's first sign-in, with that email verified: her account, with that role (no new documents).
+  await page.goto(`${root}/auth/dev?provider=google&subject=a${id}&handle=ann.${id}@example.net&email=ann.${id}@example.net&next=/docs`);
+  expect(new URL(page.url()).pathname).toBe("/auth/username");
+  await page.fill("#username", `ann${id}`);
+  await page.click("form.username button");
+  await until(async () => new URL(page.url()).pathname == "/docs", 10_000, "Ann's account made");
+  expect((await page.goto(`${root}/new`))?.status()).toBe(403);
+  await users();
+  expect(await page.$(waiting)).toBeNull();
+  expect(await page.inputValue(`ol.users > li[data-login="ann${id}"] select.role`)).toBe("read");
+  // Her role changed on the page: she may write now.
+  await page.selectOption(`ol.users > li[data-login="ann${id}"] select.role`, "write");
+  await until(
+    async () =>
+      (await page.inputValue(`ol.users > li[data-login="ann${id}"] select.role`)) == "write" && !(await hint())?.includes("Saving"),
+    5000,
+    "the role saved"
+  );
+  await page.goto(`${root}/auth/dev?provider=google&subject=a${id}&handle=ann.${id}@example.net&email=ann.${id}@example.net&next=/docs`);
+  await page.goto(`${root}/new`);
+  await until(async () => new URL(page.url()).pathname.startsWith(`/ann${id}/`), 10_000, "Ann makes a document");
+});

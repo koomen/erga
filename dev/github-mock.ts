@@ -8,7 +8,7 @@
 //   POST /login/oauth/access_token           the code for the person's token (the App's client id and secret checked)
 //   GET|POST /apps/<slug>/installations/new  the App's install page: which repositories; Install comes back to the callback
 //                                            with the installation's id (and a code: user authorization during installation)
-//   /api/...                                 api.github.com: the person (/user, /user/memberships/orgs), their installations and the repositories each
+//   /api/...                                 api.github.com: a person's profile (/users/<login>), the person (/user, /user/memberships/orgs), their installations and the repositories each
 //                                            reaches, a new repository, installation tokens (a JWT signed with the App's key),
 //                                            the App uninstalled, the webhook's deliveries
 //
@@ -17,6 +17,10 @@
 // asked is in `state`, which the tests read.
 
 import { MOCK_GITHUB_TOKEN } from "./git-server.ts";
+
+/** The id the pretend GitHub gives a login (/users/<login>): the same each time. */
+export const mockGithubId = (login: string) =>
+  1_000_000 + [...login.toLowerCase()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1_000_000, 7);
 
 export interface MockGithubApp {
   slug: string; clientId: string; clientSecret: string;
@@ -203,6 +207,13 @@ ${state.repos.map((r) => `<label><input type="checkbox" name="repo" value="${r.i
         return new Response(null, { status: 204 });
       }
       return json({ message: "Not Found" }, 404);
+    }
+    // A person's public profile, for a GitHub account's access rule: every login is a person (its id a number made from
+    // the login, the same each time), but no-such-* ones, which GitHub doesn't know.
+    if ((m = /^\/users\/([^/]+)$/.exec(p)) && request.method == "GET") {
+      const login = decodeURIComponent(m[1]);
+      if (login.toLowerCase().startsWith("no-such-")) return json({ message: "Not Found" }, 404);
+      return json({ login, id: mockGithubId(login), type: "User" });
     }
     const me = userToken(request);
     if (!me) return json({ message: "Bad credentials" }, 401);

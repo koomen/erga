@@ -230,7 +230,10 @@ const PAGES_STYLE = `
   .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
   .add-user .input { flex: 1; }
   #users-hint { margin: -6px 0 12px; }
-  .labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 7.5rem 4.5rem 4.5rem 34px; align-items: center; column-gap: 12px; }
+  .labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 5.5rem 5.5rem 14rem 3.5rem 34px; align-items: center; column-gap: 12px; }
+  ol.users select.role { justify-self: stretch; }
+  .add-user { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+  .add-user .input { flex: 1; min-width: 180px; }
   .labels { padding: 0 4px 6px; font-size: 12px; color: var(--soft); }
   .labels .c, ol.users .switch { justify-self: center; }
   .labels .t, ol.users time { justify-self: start; margin: 0; }
@@ -239,7 +242,7 @@ const PAGES_STYLE = `
   ol.users .who .badge { align-self: center; }
   ol.users .who .added { flex-basis: 100%; font-size: 12px; color: var(--chrome); }
   ol.users .never { font-style: italic; }
-  @media (max-width: 640px) { .labels .seen, ol.users time.seen { display: none; } .labels, ol.users > li { grid-template-columns: minmax(0, 1fr) 6.5rem 3.5rem 3.5rem 34px; } }
+  @media (max-width: 640px) { .labels, ol.users time { display: none; } ol.users > li { grid-template-columns: minmax(0, 1fr) 3.5rem 34px; row-gap: 6px; } ol.users select.role { grid-row: 2; grid-column: 1 / -1; } }
   ol.rules { margin: 0 0 14px; }
   ol.rules > li { display: grid; grid-template-columns: minmax(0, 1fr) 15.5rem 34px; align-items: center; column-gap: 12px; padding: 10px 4px; }
   ol.rules .who { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }

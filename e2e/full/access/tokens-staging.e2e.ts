@@ -1,7 +1,8 @@
 // Staging: an admin's token without the admin scope reaches the API, MCP and its documents,
 // within its own scope, while its person is an admin; nothing of the admins' (pages, APIs, settings, deploys, Git).
 import { expect, servers, test, until } from "../../fixtures";
-import { getter, mint, publish, signIn, tool } from "./access";
+import { mockGithubId } from "../../../dev/github-mock";
+import { getter, mint, publish, tool } from "./access";
 
 const staging = () => servers.of("staging-tokens", { env: { ERGA_DEPLOY_TARGET: "staging" } });
 await staging();
@@ -58,7 +59,7 @@ test("on staging an admin's document token reads and edits its document (API, MC
   expect((await (await run("read", { path: "index.html" })).text())).toContain("Edited by the Share prompt");
   expect((await get("/api/ext", { headers: bearer })).status).toBe(200);
   expect((await tool(root, share, "list_documents")).text).toContain("Staging two");
-  expect((await tool(root, share, "set_user_role", { login: "tester", role: "user" })).status).toBe(403);
+  expect((await tool(root, share, "set_user_role", { login: "tester", role: "write" })).status).toBe(403);
 
   for (const t of [token, share]) {
     for (const [method, path] of ADMINS(one)) {
@@ -72,15 +73,41 @@ test("on staging a token works only while its person is an admin: refused once t
   const root = (await staging()).root, get = getter(root);
   const admin = (await mint(root, null, { label: "Admin", scope: "admin" })).token;
   expect(admin).toBeTruthy();
-  const login = `bo${crypto.randomUUID().slice(0, 6)}`, cookie = await signIn(root, login);
-  expect((await tool(root, admin, "add_user", { login, role: "admin" })).status).toBe(200);
+  // Added by their GitHub login, as an admin, before their first sign-in; then that sign-in (the pretend provider, with
+  // the id the pretend GitHub gives the login) and the username step make their account, an admin's.
+  const login = `bo${crypto.randomUUID().slice(0, 6)}`;
+  expect((await tool(root, admin, "add_user", { provider: "github", handle: login, role: "admin" })).status).toBe(200);
+  const joining = await get(`/auth/dev?provider=github&subject=${mockGithubId(login)}&handle=${login}&next=/docs`);
+  expect(joining.headers.get("location")).toBe("/auth/username");
+  const join = joining.headers
+    .getSetCookie()
+    .map((x) => x.split(";")[0])
+    .find((x) => x.includes("erga_join"))!;
+  const made = await get("/auth/username", {
+    method: "POST",
+    headers: { Cookie: join, Origin: root },
+    body: new URLSearchParams({ username: login }),
+  });
+  const cookie = made.headers
+    .getSetCookie()
+    .map((x) => x.split(";")[0])
+    .find((x) => /^erga_session(_\d+)?=/.test(x))!;
+  expect(cookie).toBeTruthy();
   const theirs = await until(async () => (await mint(root, cookie, { label: "Bo's", scope: "documents" })).token, 15_000, "a token for the new admin");
-  const made = await publish(root, theirs, "Bo on staging");
-  expect((await tool(root, theirs, "read", { document: made.id, path: "index.html" })).text).toContain("Bo on staging");
+  const doc = await publish(root, theirs, "Bo on staging");
+  expect((await tool(root, theirs, "read", { document: doc.id, path: "index.html" })).text).toContain("Bo on staging");
 
-  expect((await tool(root, admin, "set_user_role", { login, role: "user" })).status).toBe(200);
-  await until(async () => (await tool(root, theirs, "read", { document: made.id, path: "index.html" })).status == 403, 15_000, "the token refused");
-  const refused = await get("/mcp", { method: "POST", headers: { Authorization: `Bearer ${theirs}`, "Content-Type": "application/json" }, body: "{}" });
+  expect((await tool(root, admin, "set_user_role", { login, role: "write" })).status).toBe(200);
+  await until(
+    async () => (await tool(root, theirs, "read", { document: doc.id, path: "index.html" })).status == 403,
+    15_000,
+    "the token refused"
+  );
+  const refused = await get("/mcp", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${theirs}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
   expect(refused.status).toBe(403);
   expect(((await refused.json()) as { adminsOnly?: boolean }).adminsOnly).toBe(true);
   // Not an admin: staging lets them make no token at all.

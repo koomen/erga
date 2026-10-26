@@ -1,7 +1,8 @@
-// The access rules (server/directory/access.ts): one list, each rule WHO (everybody, a Google Workspace organization by
-// the hd claim, a GitHub organization, one account, one Google account by email) and ACCESS (read, write). A person
-// gets the highest access of the rules that match them; none: they can't sign in. Admins always have write. On an
-// in-memory database with D1's migrations, 0240's translation of the invite list included.
+// Who may use the server: the specific people are users, each with one role (server/directory/users.ts, people.ts:
+// Admin, write, read; added by their GitHub or Google account before their first sign-in too), and the group rules
+// (server/directory/access.ts: everybody, a Google Workspace organization by the hd claim, a GitHub organization; each
+// none, read or write). A person gets the highest of their role and the rules that match them; none: they can't sign
+// in. Admins always have write. On an in-memory database with D1's migrations, 0240's and 0250's translations included.
 
 import { expect, test } from "bun:test";
 import { Directory, type Vouched } from "../server/directory/index.ts";
@@ -14,20 +15,25 @@ quietConsole();
 const ADMIN = { login: "koomen", admin: true };
 const google = (sub: string, email: string, hd: string | null = null, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: null, emails: [{ email, verified }], hd });
 const github = (id: number, login: string, orgs: string[] | null = null): Vouched => ({ provider: "github", subject: String(id), handle: login, name: null, emails: [], orgs });
-const fresh = () => new Directory(memory(), { admins: ["koomen"] });
+/** The pretend GitHub's public users API: every login is an account (its id from its length and first letter), but no-such-*. */
+const lookup = async (login: string) =>
+  login.startsWith("no-such-") ? null : { id: String(1000 + login.length * 100 + login.charCodeAt(0)), login };
+const fresh = () => new Directory(memory(), { admins: ["koomen"], github: lookup });
 /** An account someone made at their first sign-in (no rule of its own). */
 const joined = (dir: Directory, name: string, v: Vouched) => dir.identities.createAccount(name, v);
 const everybody = async (dir: Directory, access: string) => dir.rules.change(ADMIN, (await dir.rules.list(ADMIN)).find((r) => r.kind == "everybody")!.id, access);
 const accessOf = async (dir: Directory, login: string) => dir.accessOf((await dir.users.get(login))!);
 
-test("0240 translates the invite list: everybody none, and each account on it a rule with write", async () => {
+test("0240 and 0250 translate the invite list: everybody none; each account on it a user with write; an invited email waits", async () => {
   const dir = new Directory(memory({ at: "0240", run: (db) => {
     db.exec("INSERT INTO users (login, name, role, created, added_by) VALUES ('ada', 'Ada', 'user', 1, 'koomen'), ('bo', 'Bo', 'admin', 2, NULL)");
     db.exec("INSERT INTO invites (email, role, created) VALUES ('cy@example.com', 'user', 3)");
   } }), { admins: ["koomen"] });
   const rules = (await dir.rules.list(ADMIN)).map((r) => `${r.kind}:${r.value}:${r.access}`);
-  expect(rules).toEqual(["everybody::none", "account:ada:write", "account:bo:write", "email:cy@example.com:write"]);
+  expect(rules).toEqual(["everybody::none"]);
+  expect((await dir.users.get("ada"))?.access).toBe("write");
   expect(await dir.users.allowed("ada")).toBe(true);
+  expect((await dir.people.list(ADMIN)).map((p) => `${p.provider}:${p.handle}:${p.role}`)).toEqual(["google:cy@example.com:write"]);
 });
 
 test("the highest access of the rules that match; none signs in nowhere; admins always write", async () => {
@@ -42,8 +48,15 @@ test("the highest access of the rules that match; none signs in nowhere; admins 
   await everybody(dir, "write");
   expect(await accessOf(dir, "dee")).toBe("write");
   await everybody(dir, "none");
-  await dir.rules.add(ADMIN, { kind: "account", value: "dee", access: "write" });
+  await dir.users.setUserRole(ADMIN, "dee", "write");
   expect(await accessOf(dir, "dee")).toBe("write");
+  // Their role, and the groups: the higher of the two.
+  await dir.users.setUserRole(ADMIN, "dee", "read");
+  await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "write" });
+  expect(await accessOf(dir, "dee")).toBe("write");
+  await dir.users.setUserRole(ADMIN, "dee", "none");
+  await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "none" });
+  expect(await dir.users.allowed("dee")).toBe(false);
   expect(await accessOf(dir, "koomen")).toBe("write");
 });
 
@@ -74,18 +87,41 @@ test("GitHub organizations: as GitHub answered at each sign-in, recorded on the 
   expect((await dir.identities.find("github", "1"))?.orgs).toEqual([]);
 });
 
-test("one account, and one Google account by its verified email", async () => {
+test("users added before their first sign-in: a GitHub account by its id, a Google account by its verified email, then its sub", async () => {
   const dir = fresh();
-  await dir.rules.add(ADMIN, { kind: "email", value: "ida@example.com", access: "read" });
-  expect(await dir.mayJoin(google("g-ida", "ida@example.com"))).toBe(true);
+  const join = async (name: string, v: Vouched) => {
+    const { may, person } = await dir.joining(v);
+    expect(may).toBe(true);
+    return dir.identities.createAccount(name, v, person ? { role: person.role, extra: [dir.people.claimed(person.id)] } : {});
+  };
+  // GitHub: the login resolved to GitHub's id now; a login GitHub doesn't know is refused.
+  const { person: jo } = await dir.addUser(ADMIN, { provider: "github", handle: "Jo" }, "read");
+  expect(jo).toMatchObject({ provider: "github", handle: "jo", subject: String((await lookup("jo"))!.id), role: "read" });
+  await expect(dir.addUser(ADMIN, { provider: "github", handle: "no-such-person" }, "read")).rejects.toThrow("GitHub has no account");
+  // The id matches, whatever the login is now; the login on another account (it changed hands) doesn't.
+  expect(await dir.mayJoin(github(9999, "jo"))).toBe(false);
+  await join("joanna", github(Number(jo!.subject), "jo-renamed"));
+  expect(await accessOf(dir, "joanna")).toBe("read");
+  expect(await dir.people.list(ADMIN)).toEqual([]);
+  // Google: the verified email, at the first sign-in; then only that sub.
+  await dir.addUser(ADMIN, { provider: "google", handle: "ida@example.com" }, "write");
   expect(await dir.mayJoin(google("g-ida", "ida@example.com", null, false))).toBe(false);
   expect(await dir.mayJoin({ ...github(5, "ida"), emails: [{ email: "ida@example.com", verified: true }] })).toBe(false);
-  await joined(dir, "ida", google("g-ida", "ida@example.com"));
-  expect(await accessOf(dir, "ida")).toBe("read");
-  // A rule for an account that hasn't signed in yet adds it: a GitHub account with that login claims it.
-  await dir.rules.add(ADMIN, { kind: "account", value: "jo", access: "read" });
-  expect(await resolve(dir, github(6, "jo"), { join: false })).toEqual({ kind: "in", login: "jo", claimed: true });
-  expect(await accessOf(dir, "jo")).toBe("read");
+  expect(await dir.mayJoin(google("g-ida", "ida@example.com"))).toBe(true);
+  expect(await dir.mayJoin(google("g-other", "ida@example.com"))).toBe(false);
+  await join("ida", google("g-ida", "ida@example.com"));
+  expect(await accessOf(dir, "ida")).toBe("write");
+  // Adding the account of someone who's a user already gives them the role.
+  expect((await dir.addUser(ADMIN, { provider: "google", handle: "ida@example.com" }, "admin")).user?.role).toBe("admin");
+  expect((await dir.addUser(ADMIN, { provider: "github", handle: "jo-renamed" }, "write")).person?.handle).toBe("jo-renamed");
+  // An admin by the deploy is one already: said, not refused.
+  expect((await dir.addUser(ADMIN, { provider: "github", handle: "koomen" }, "read")).note).toBe("koomen is already an admin.");
+  // A role for someone waiting changes; removed, they can't join.
+  const { person: kai } = await dir.addUser(ADMIN, { provider: "github", handle: "kai" }, "read");
+  expect((await dir.people.setRole(ADMIN, kai!.id, "write")).role).toBe("write");
+  await dir.people.remove(ADMIN, kai!.id);
+  expect(await dir.mayJoin(github(Number(kai!.subject), "kai"))).toBe(false);
+  await expect(dir.addUser({ login: "joanna" }, { provider: "github", handle: "lee" }, "read")).rejects.toThrow("Only an admin");
 });
 
 test("write: someone with read opens their documents and those shared with them as a viewer, and makes none", async () => {
@@ -95,26 +131,30 @@ test("write: someone with read opens their documents and those shared with them 
   await dir.add({ id: "aaaaaaaa", owner: "kit", title: "Plan", created: 1, expires: null });
   expect(await dir.access({ login: "kit" }, (await dir.get("aaaaaaaa"))!)).toBe("viewer");
   expect(await dir.mayWrite("kit")).toBe(false);
-  await dir.rules.add(ADMIN, { kind: "account", value: "kit", access: "write" });
+  await dir.users.setUserRole(ADMIN, "kit", "write");
   expect(await dir.access({ login: "kit" }, (await dir.get("aaaaaaaa"))!)).toBe("owner");
 });
 
-test("the rules' own rules: admins only; everybody's stays and alone may be none; values checked; a removed account's rule goes", async () => {
+test("the rules' own rules: admins only; groups only; everybody's stays; values checked; a removed user's role goes", async () => {
   const dir = fresh();
   await expect(dir.rules.add({ login: "bo" }, { kind: "workspace", value: "example.com", access: "read" })).rejects.toThrow("Only an admin");
   const all = await dir.rules.list(ADMIN), every = all.find((r) => r.kind == "everybody")!;
   await expect(dir.rules.remove(ADMIN, every.id)).rejects.toThrow("always there");
-  await expect(dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "none" })).rejects.toThrow();
+  await expect(dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "some" })).rejects.toThrow();
+  await expect(dir.rules.add(ADMIN, { kind: "account", value: "ada", access: "read" })).rejects.toThrow("isn't a kind of rule");
   await expect(dir.rules.add(ADMIN, { kind: "workspace", value: "not a domain", access: "read" })).rejects.toThrow("isn't a domain");
-  await expect(dir.rules.add(ADMIN, { kind: "email", value: "1+x@users.noreply.github.com", access: "read" })).rejects.toThrow();
+  await expect(dir.addUser(ADMIN, { provider: "google", handle: "1+x@users.noreply.github.com" }, "read")).rejects.toThrow(
+    "isn't a Google account"
+  );
   const org = await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "read" });
   expect((await dir.rules.change(ADMIN, org.id, "write")).access).toBe("write");
   await dir.rules.remove(ADMIN, org.id);
   expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "github_org")).toBe(false);
   await dir.users.add(ADMIN, "lu");
-  expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "account" && r.value == "lu")).toBe(true);
+  expect(await accessOf(dir, "lu")).toBe("write");
   await dir.users.remove(ADMIN, "lu");
-  expect((await dir.rules.list(ADMIN)).some((r) => r.kind == "account" && r.value == "lu")).toBe(false);
+  expect(await dir.users.allowed("lu")).toBe(false);
+  await expect(dir.users.setUserRole(ADMIN, "koomen", "read")).rejects.toThrow("by the deploy");
 });
 
 test("suggestions: the Workspace domains and GitHub organizations of people who signed in here", async () => {
@@ -142,7 +182,7 @@ test("public sharing: off by default; then anyone with the link is refused, sayi
   await dir.users.add(ADMIN, "ada");
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1, expires: null });
   expect(await dir.config.get("public_sharing")).toBe(false);
-  await expect(dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer")).rejects.toThrow("doesn't let people share content publicly");
+  await expect(dir.share({ login: "ada" }, "aaaaaaaa", "*", "viewer")).rejects.toThrow("doesn't let users share content publicly");
   // Sharing with people by name is unaffected (Bo may sign in).
   await dir.users.add(ADMIN, "bo");
   await dir.share({ login: "ada" }, "aaaaaaaa", "bo", "viewer");
@@ -186,21 +226,20 @@ test("a share goes only to someone who may sign in, and the page says why not; o
   const shareTo = (login: string) => dir.share({ login: "ada" }, "cccccccc", login, "viewer");
   // Nobody lets them in: refused, saying so.
   await expect(shareTo("nobody")).rejects.toThrow("isn't allowed to sign in");
-  // A rule names their account (made with it): yes.
-  await dir.rules.add(ADMIN, { kind: "account", value: "bea", access: "read" });
-  await shareTo("bea");
-  // A rule names their Google email, and they signed in with it: yes.
-  await dir.rules.add(ADMIN, { kind: "email", value: "cal@example.com", access: "read" });
-  await dir.identities.createAccount("cal", google("g-cal", "cal@example.com"));
+  // A user with a role: yes.
+  await dir.identities.createAccount("cal", google("g-cal", "cal@example.com"), { role: "read" });
   await shareTo("cal");
+  // A user without one, whom no group lets in: no.
+  await dir.identities.createAccount("bea", google("g-bea", "bea@example.com"));
+  await expect(shareTo("bea")).rejects.toThrow("isn't allowed to sign in");
   // An organization's rule: someone whose last sign-in recorded it, yes; someone else, no.
   await dir.rules.add(ADMIN, { kind: "github_org", value: "acme", access: "read" });
   await dir.identities.createAccount("dan", github(10, "dan", ["acme"]));
   await shareTo("dan");
   await dir.identities.createAccount("eli", github(11, "eli", ["other"]));
   await expect(shareTo("eli")).rejects.toThrow("isn't allowed to sign in");
-  // Never signed in, and only an organization's rule could let them in: they sign in once first.
-  await expect(shareTo("fox")).rejects.toThrow("hasn't signed in to this server yet");
+  // Never signed in: no username yet, so they sign in once first.
+  await expect(shareTo("fox")).rejects.toThrow("There's no user fox on this server yet");
   await dir.rules.add(ADMIN, { kind: "workspace", value: "example.org", access: "read" });
   await expect(shareTo("gil")).rejects.toThrow("sign in once first");
   // Everybody may sign in: anyone may get a share.

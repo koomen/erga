@@ -4,9 +4,11 @@
 //
 //   /admin                     the Settings page (GET /admin/settings redirects here)
 //   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
-//   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined and last came, remove
-//   /admin/access              the Access page: the access rules (who, and No access, Can authenticate or Can create and edit
-//                              content), and whether people can share content publicly
+//   /admin/users               the Users page: the specific people, each a GitHub or Google account with one role (Admin, Can
+//                              create and edit content, Can authenticate), the deploy role as a switch, when they joined and last came;
+//                              add one (before their first sign-in too), remove one
+//   /admin/access              the Access page: the group rules (everybody, a Google Workspace, a GitHub organization: No
+//                              access, Can authenticate or Can create and edit content), and whether users can share content publicly
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
 //   GET /admin/auth/status     the same as JSON {here, other} (server/auth.ts, AuthStatus: never a secret), with live checks
@@ -14,9 +16,11 @@
 //   GET /admin/documents       q (a part of a title, owner or address), limit: the server's documents and projects, everyone's,
 //                              as JSON {found: [{id, title, owner, address, kind}]}, for the Homepage Project picker
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
-//   POST /admin/users          do=add (login, role: the user, and a rule for that one account with write), do=role (login, role), do=deploy (login, deploy: 1 or 0), do=remove (login)
-//   POST /admin/access         do=add_rule (kind, value, access), do=change_rule (id, access), do=remove_rule (id): the access rules
-//   POST /admin/access         do=public_sharing (on: 1 or 0): whether people can share content publicly
+//   POST /admin/users          do=add (provider: github or google, handle: the login or email, role: admin, write or read)
+//   POST /admin/users          do=role (login, or person: one waiting; role: admin, write, read, or none for an account), do=remove (login or person)
+//   POST /admin/users          do=deploy (login, deploy: 1 or 0)
+//   POST /admin/access         do=add_rule (kind, value, access), do=change_rule (id, access), do=remove_rule (id): the group rules
+//   POST /admin/access         do=public_sharing (on: 1 or 0): whether users can share content publicly
 //   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
 //   POST /admin/share          rotate=1 (optional): Share with agent's admin token, for an outside
 //                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
@@ -42,7 +46,30 @@
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all.
 
-import { type Access, ACCESS_LABEL, ACCESS_SETTINGS, type AccessRule, type ConfigEntry, ConfigError, KIND_LABEL, type RuleKind, type CredentialEntry, CredentialError, type DeploySecretEntry, NotAllowed, type ServerRole, type SettingChange, type Settings, type SettingsVersion, type User } from "../directory/index.ts";
+import {
+  type Access,
+  ACCESS_LABEL,
+  ACCESS_SETTINGS,
+  type AccessRule,
+  type ConfigEntry,
+  ConfigError,
+  type Identity,
+  KIND_LABEL,
+  type Person,
+  type RuleKind,
+  ROLE_LABEL,
+  roleValue,
+  type CredentialEntry,
+  CredentialError,
+  type DeploySecretEntry,
+  NotAllowed,
+  type SettingChange,
+  type Settings,
+  type SettingsVersion,
+  type User,
+  USER_ROLES,
+  type UserRole,
+} from "../directory/index.ts";
 import { avatarUrl, esc, ICON, link, page, TIMES_SCRIPT } from "../pages/index.ts";
 import { colorFor } from "../../document/content.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
@@ -130,22 +157,33 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
       try { value = JSON.parse(field("value")); } catch { throw new ConfigError(`${key} needs a value as JSON (a number, true or false, "text" in quotes...).`); }
       return Response.json({ entry: await platform.directory.config.set(who!, key, value) });
     }
-    const users = platform.directory.users, login = field("login"), role = field("role") as ServerRole;
-    if (role && role != "user" && role != "admin") throw new NotAllowed(`"${role}" isn't a role: user or admin.`);
+    const dir = platform.directory,
+      users = dir.users,
+      login = field("login"),
+      person = Number(field("person"));
     switch (field("do")) {
-      case "add": {
-        if ((await users.get(login.trim()))?.created) throw new NotAllowed(`${login.trim().toLowerCase()} is already a user.`);
-        // With its rule: this one account, with write.
-        return Response.json({ user: await users.add(who!, login, { role: role || "user" }) });
+      case "add":
+        return Response.json(
+          await dir.addUser(
+            who!,
+            { provider: field("provider"), handle: field("handle"), role: field("role") },
+            roleValue(field("role")) as UserRole
+          )
+        );
+      case "role": {
+        if (person) return Response.json({ person: await dir.people.setRole(who!, person, roleValue(field("role")) as UserRole) });
+        return Response.json({ user: await users.setUserRole(who!, login, roleValue(field("role"), { none: true })) });
       }
-      case "role": return Response.json({ user: await users.setRole(who!, login, role || "user") });
       case "deploy": {
         const deploy = field("deploy");
         if (deploy != "1" && deploy != "0") throw new NotAllowed("deploy= 1 to grant the deploy role, or 0 to revoke it.");
         return Response.json({ user: await users.setDeploy(who!, login, deploy == "1") });
       }
-      case "remove": await users.remove(who!, login); return Response.json({ ok: true });
-      default: return Response.json({ error: "do= add, role, deploy or remove" }, { status: 400 });
+      case "remove":
+        await (person ? dir.people.remove(who!, person) : users.remove(who!, login));
+        return Response.json({ ok: true });
+      default:
+        return Response.json({ error: "do= add, role, deploy or remove" }, { status: 400 });
     }
   } catch (e) {
     if (e instanceof NotAllowed || e instanceof ScopeError) return Response.json({ error: e.message }, { status: 403 });
@@ -712,44 +750,67 @@ function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]
 /** A date as the page shows it before its script makes it relative (TIMES_SCRIPT). */
 const when = (t: number, cls = "") => `<time${cls ? ` class="${cls}"` : ""} datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>`;
 
-/**
- * A role's switch: a checkbox (role="switch"), never typed text. Off, with
- * why in its title, where it can't change here: a bootstrap admin's admin
- * role, and the last admin's.
- */
-function roleSwitch(u: User, role: "admin" | "deploy", on: boolean, fixed: string): string {
-  const label = role == "admin" ? "Admin" : "Deploy";
-  const title = role == "admin" ? "Admin: may change the server's settings and users" : "Deploy: may use /deploy when deploy_page is admins";
-  return `<label class="switch" title="${esc(fixed || title)}">
-      <input type="checkbox" role="switch" class="${role}" aria-label="${label} role for ${esc(u.login)}"${on ? " checked" : ""}${fixed ? " disabled" : ""}><span class="track" aria-hidden="true"></span>
+/** The deploy role's switch: a checkbox (role="switch"); off, with why in its title, for an admin (who may always deploy). */
+function deploySwitch(u: User): string {
+  const fixed = u.role == "admin" ? "An admin: admins may always deploy" : "";
+  return `<label class="switch" title="${esc(fixed || "Deploy: may use /deploy when deploy_page is admins")}">
+      <input type="checkbox" role="switch" class="deploy" aria-label="Deploy role for ${esc(u.login)}"${u.mayDeploy ? " checked" : ""}${fixed ? " disabled" : ""}><span class="track" aria-hidden="true"></span>
     </label>`;
 }
 
-function userRow(u: User, session: Session, lastAdmin: boolean): string {
+/** A role's select: the three roles, and for an account "No role" (only the groups decide). */
+function roleSelect(now: UserRole | "none", label: string, o: { none?: boolean; fixed?: string } = {}): string {
+  const roles: (UserRole | "none")[] = o.none ? [...USER_ROLES, "none"] : [...USER_ROLES];
+  return `<select class="role" aria-label="Role for ${esc(label)}"${o.fixed ? ` disabled title="${esc(o.fixed)}"` : ""}>${roles.map((r) => `<option value="${r}"${r == now ? " selected" : ""}>${esc(ROLE_LABEL[r])}</option>`).join("")}</select>`;
+}
+
+/** What a user signs in with: their GitHub or Google account (a bootstrap admin's, or one from before: its GitHub login). */
+const accountOf = (u: User, ids: Identity[]) =>
+  (ids.length ? ids : [{ provider: "github", handle: u.login }])
+    .map((i) => `${i.provider == "github" ? "GitHub" : "Google"} ${i.handle ?? u.login}`)
+    .join(", ");
+
+function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean): string {
   const me = u.login == session.login.toLowerCase();
   const joined = u.created ? when(u.created, "joined") : `<time class="joined never">not yet</time>`;
   const seen = u.lastSeen != null ? when(u.lastSeen, "seen") : `<time class="seen never">never</time>`;
   const added = u.bootstrap ? "Admin by the deploy (ADMINS)" : u.addedBy ? `Added by ${byLine(u.addedBy, u.addedVia)}` : "Made their account at their first sign-in";
   // The same reason keeps them from being removed.
-  const fixedAdmin = u.bootstrap ? "An admin by the deploy (ADMINS): change it there"
-    : lastAdmin ? `${me ? "You're" : "The"} last admin: make someone else an admin first` : "";
+  const fixed = u.bootstrap
+    ? "An admin by the deploy (ADMINS): change it there"
+    : lastAdmin
+      ? `${me ? "You're" : "The"} last admin: make someone else an admin first`
+      : "";
+  const role: UserRole | "none" = u.role == "admin" ? "admin" : (u.access ?? "none");
   return `  <li data-login="${esc(u.login)}">
-    <div class="who"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}<span class="added">${esc(added)}</span></div>
+    <div class="who"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}<span class="added">${esc(`${accountOf(u, ids)} · ${added}`)}</span></div>
     ${joined}
     ${seen}
-    ${roleSwitch(u, "admin", u.role == "admin", fixedAdmin)}
-    ${roleSwitch(u, "deploy", u.mayDeploy, u.role == "admin" ? "An admin: admins may always deploy" : "")}
-    <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${esc(fixedAdmin || "Remove: they can't sign in any more")}"${fixedAdmin ? " disabled" : ""}>${ICON.delete}</button>
+    ${roleSelect(role, u.login, { none: true, fixed })}
+    ${deploySwitch(u)}
+    <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${esc(fixed || "Remove: they can't sign in any more, unless a group lets them in")}"${fixed ? " disabled" : ""}>${ICON.delete}</button>
   </li>`;
 }
 
-/** /admin/users: every user, when they joined and last came, and their roles as switches; add one, remove one. */
-/** The access rules on the Users page: each rule a row (who, and its access); a form adds one. */
+/** Someone an admin added who hasn't signed in yet: their provider account and its role. */
+function personRow(p: Person): string {
+  const label = `${p.provider == "github" ? "GitHub" : "Google"} ${p.handle}`;
+  return `  <li data-person="${p.id}" class="waiting">
+    <div class="who"><span class="title handle">${esc(p.handle)}</span><span class="added">${p.provider == "github" ? "GitHub" : "Google"} account · hasn't signed in yet · Added by ${esc(byLine(p.addedBy ?? "an admin", p.addedVia))}</span></div>
+    <time class="joined never">not yet</time>
+    <time class="seen never">never</time>
+    ${roleSelect(p.role, label)}
+    <span></span>
+    <button type="button" class="act remove" aria-label="Remove ${esc(label)}" title="Remove: they can't sign in, unless a group lets them in">${ICON.delete}</button>
+  </li>`;
+}
+
+/** The group rules on the Access page: each rule a row (who, and its access); a form adds one. */
 function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; orgs: string[] }, session: Session): string {
   const option = (v: Access, now: Access) => `<option value="${v}"${v == now ? " selected" : ""}>${ACCESS_LABEL[v]}</option>`;
   const row = (r: AccessRule) => `  <li data-id="${r.id}" data-kind="${r.kind}">
     <div class="who">${r.kind == "everybody" ? `<span class="title">Everybody</span><span class="note">anyone who signs in with a provider that's on</span>` : `<span class="kind">${esc(KIND_LABEL[r.kind])}</span><span class="title">${esc(r.value)}</span>`}</div>
-    <select class="access" aria-label="Access for ${esc(r.kind == "everybody" ? "everybody" : r.value)}">${(r.kind == "everybody" ? ["none", "read", "write"] as Access[] : ["read", "write"] as Access[]).map((v) => option(v, r.access)).join("")}</select>
+    <select class="access" aria-label="Access for ${esc(r.kind == "everybody" ? "everybody" : r.value)}">${(["none", "read", "write"] as Access[]).map((v) => option(v, r.access)).join("")}</select>
     ${r.kind == "everybody" ? `<span></span>` : `<button type="button" class="act remove-rule" aria-label="Remove the rule for ${esc(r.value)}" title="Remove this rule">${ICON.delete}</button>`}
   </li>`;
   return `<section class="rules" aria-labelledby="rules-head">
@@ -761,11 +822,9 @@ ${rules.map(row).join("\n")}
       <select name="kind" aria-label="Who">
         <option value="workspace">Google Workspace organization</option>
         <option value="github_org">GitHub organization</option>
-        <option value="account">Account (username)</option>
-        <option value="email">Google account (email)</option>
       </select>
-      <input class="input" name="value" list="suggest-workspace" placeholder="example.com" aria-label="The organization, username or email" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-      <select name="access" aria-label="Access"><option value="read">${ACCESS_LABEL.read}</option><option value="write" selected>${ACCESS_LABEL.write}</option></select>
+      <input class="input" name="value" list="suggest-workspace" placeholder="example.com" aria-label="The domain or the organization" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <select name="access" aria-label="Access"><option value="none">${ACCESS_LABEL.none}</option><option value="read">${ACCESS_LABEL.read}</option><option value="write" selected>${ACCESS_LABEL.write}</option></select>
       <button class="new">Add</button>
     </form>
     <datalist id="suggest-workspace">${suggestions.workspaces.map((d) => `<option value="${esc(d)}">`).join("")}</datalist>
@@ -774,16 +833,26 @@ ${rules.map(row).join("\n")}
   </section>`;
 }
 
+/** /admin/users: every user and everyone waiting for their first sign-in, each with one role; add one, remove one. */
 async function usersPage(platform: Platform, session: Session): Promise<Response> {
-  const users = await platform.directory.users.list(whoOf(session));
+  const who = whoOf(session),
+    dir = platform.directory;
+  const [users, people, ids] = await Promise.all([dir.users.list(who), dir.people.list(who), dir.identities.byLogin()]);
   const admins = users.filter((u) => u.role == "admin");
   return adminResponse({ session, title: "Users", here: "users", body: `
   <section aria-label="Users">
     <h2>Users</h2>
+    <form class="add-user" method="post" action="${esc(link("/admin/users", session))}">
+      <select name="provider" aria-label="Provider"><option value="github">GitHub</option><option value="google">Google</option></select>
+      <input class="input" name="handle" placeholder="a GitHub login" aria-label="The GitHub login or Google email" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <select name="role" aria-label="Role">${USER_ROLES.map((r) => `<option value="${r}"${r == "write" ? " selected" : ""}>${esc(ROLE_LABEL[r])}</option>`).join("")}</select>
+      <button class="new">Add user</button>
+    </form>
     <p class="hint" id="users-hint" role="status"></p>
-    <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span class="c">Admin</span><span class="c">Deploy</span><span></span></div>
+    <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span>Role</span><span class="c">Deploy</span><span></span></div>
     <ol class="rows users">
-${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1)).join("\n")}
+${users.map((u) => userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1)).join("\n")}
+${people.map(personRow).join("\n")}
     </ol>
   </section>
 <script>
@@ -791,29 +860,36 @@ ${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1))
   ${POST_SCRIPT}
   const me = ${JSON.stringify(session.login.toLowerCase())};
   const action = ${JSON.stringify(link("/admin/users", session))};
-  const hint = document.getElementById("users-hint");
+  const hint = document.getElementById("users-hint"), addForm = document.querySelector("form.add-user");
   // Each change goes to the server, which checks it (admins only, and never the last admin); the page reloads to show the list as it is now.
   async function change(fields, saying, undo) {
     say(hint, saying);
-    try { await post(action, fields); reload(); } catch (err) { undo?.(); say(hint, err.message, true); }
+    try { const answer = await post(action, fields); if (answer.note) { say(hint, answer.note); undo?.(); } else reload(); } catch (err) { undo?.(); say(hint, err.message, true); }
   }
+  addForm.elements.provider.addEventListener("change", () => { addForm.elements.handle.placeholder = addForm.elements.provider.value == "github" ? "a GitHub login" : "someone@gmail.com"; });
+  addForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    change({ do: "add", provider: addForm.elements.provider.value, handle: addForm.elements.handle.value.trim(), role: addForm.elements.role.value }, "Adding…");
+  });
   for (const li of document.querySelectorAll("ol.users > li")) {
-    const login = li.dataset.login, admin = li.querySelector("input.admin"), deploy = li.querySelector("input.deploy"), remove = li.querySelector(".remove");
-    admin.addEventListener("change", () => {
-      const undo = () => { admin.checked = !admin.checked; };
-      if (login == me && !admin.checked && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
-      change({ do: "role", login, role: admin.checked ? "admin" : "user" }, "Saving…", undo);
+    const login = li.dataset.login, person = li.dataset.person, role = li.querySelector("select.role"), deploy = li.querySelector("input.deploy"), remove = li.querySelector(".remove");
+    const whom = login ? { login } : { person };
+    let was = role.value;
+    role.addEventListener("change", () => {
+      const undo = () => { role.value = was; };
+      if (login == me && was == "admin" && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
+      change({ do: "role", ...whom, role: role.value }, "Saving…", undo);
     });
-    deploy.addEventListener("change", () => change({ do: "deploy", login, deploy: deploy.checked ? "1" : "0" }, "Saving…", () => { deploy.checked = !deploy.checked; }));
+    deploy?.addEventListener("change", () => change({ do: "deploy", login, deploy: deploy.checked ? "1" : "0" }, "Saving…", () => { deploy.checked = !deploy.checked; }));
     remove.addEventListener("click", () => {
-      if (!confirm(login == me ? "Remove yourself? You'll be signed out, and can't sign in again until an admin adds you." : "Remove " + login + "? They won't be able to sign in. Their documents stay.")) return;
-      change({ do: "remove", login }, "Removing…");
+      if (!confirm(login == me ? "Remove yourself? You'll be signed out, and can't sign in again unless an admin adds you or a group lets you in." : "Remove " + (login || "this person") + "? They can't sign in unless a group lets them in. Their documents stay.")) return;
+      change({ do: "remove", ...whom }, "Removing…");
     });
   }
 </script>` });
 }
 
-/** /admin/access: the access rules, one list, and whether people can share content publicly. */
+/** /admin/access: the access rules, one list, and whether users can share content publicly. */
 async function accessPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
   const [rules, suggestions, publicSharing] = await Promise.all([platform.directory.rules.list(who), platform.directory.rules.suggestions(who), platform.directory.config.get("public_sharing")]);
@@ -821,7 +897,7 @@ async function accessPage(platform: Platform, session: Session): Promise<Respons
   ${rulesSection(rules, suggestions, session)}
   <section class="public-sharing" aria-labelledby="public-head">
     <h2 id="public-head">Sharing</h2>
-    <label class="switch public"><input type="checkbox" role="switch" id="public-sharing"${publicSharing ? " checked" : ""}><span class="track" aria-hidden="true"></span><span>People can share content publicly</span></label>
+    <label class="switch public"><input type="checkbox" role="switch" id="public-sharing"${publicSharing ? " checked" : ""}><span class="track" aria-hidden="true"></span><span>Users can share content publicly</span></label>
     <p class="hint" id="public-hint" role="status"></p>
   </section>
 <script>
@@ -829,13 +905,13 @@ async function accessPage(platform: Platform, session: Session): Promise<Respons
   const action = ${JSON.stringify(link("/admin/access", session))};
   const publicBox = document.getElementById("public-sharing"), publicHint = document.getElementById("public-hint");
   publicBox.addEventListener("change", async () => {
-    if (publicBox.checked && !confirm("Let people share content publicly? Documents already shared with anyone with the link will open for people who aren't signed in too.")) { publicBox.checked = false; return; }
+    if (publicBox.checked && !confirm("Let users share content publicly? Documents already shared with anyone with the link will open for people who aren't signed in too.")) { publicBox.checked = false; return; }
     say(publicHint, "Saving…");
     try { await post(action, { do: "public_sharing", on: publicBox.checked ? "1" : "0" }); say(publicHint, "Saved."); }
     catch (err) { publicBox.checked = !publicBox.checked; say(publicHint, err.message, true); }
   });
   const rulesHint = document.getElementById("rules-hint"), ruleForm = document.querySelector("form.add-rule");
-  const PLACEHOLDER = { workspace: "example.com", github_org: "my-org", account: "a username", email: "someone@example.com" };
+  const PLACEHOLDER = { workspace: "example.com", github_org: "my-org" };
   ruleForm.elements.kind.addEventListener("change", () => {
     const kind = ruleForm.elements.kind.value;
     ruleForm.elements.value.placeholder = PLACEHOLDER[kind];
