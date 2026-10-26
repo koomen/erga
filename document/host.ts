@@ -20,18 +20,10 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
-import {
-  CHANGES,
-  MODELS,
-  externalGuide,
-  isModelChoice,
-  startSession,
-  type AgentConfig,
-  type AgentSession,
-  type FilesAccess,
-  type OpenResult,
-  type PageTree,
-} from "../agents/document/session";
+import { startSession, type AgentSession } from "../agents/document/session";
+import { CHANGES, type FilesAccess, type OpenResult, type PageTree, type VersionsAccess } from "../agents/document/tools";
+import { externalGuide } from "../agents/document/guide";
+import { MODELS, isModelChoice, type AgentConfig } from "../agents/models";
 import {
   AgentOff,
   Api,
@@ -65,7 +57,6 @@ import { blobPointer, byteRange, INLINE_HEADER, type BlobStore } from "./blobs";
 import { sha256Hex } from "../shared/bytes";
 import { pdfText } from "./pdf";
 import * as Y from "yjs";
-import type { VersionsAccess } from "../agents/document/session";
 import type { ChatStore } from "../agents/checkpoint";
 
 export interface HostOptions {

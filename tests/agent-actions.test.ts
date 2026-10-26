@@ -10,7 +10,8 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
-import { beyondPrompt, documentToolSpecs } from "../agents/document/session";
+import { beyondPrompt } from "../agents/document/prompt";
+import { documentToolSpecs } from "../agents/document/tools";
 import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../agents/admin/agent";
 import { SERVER_TOOLS, type ToolWho } from "../agents/tools";
 
