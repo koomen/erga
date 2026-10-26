@@ -1,0 +1,7 @@
+/* The page that asks a new person for a username (server/identity/accounts.ts, usernamePage). */
+
+form.username label { display: block; font-weight: 600; margin-bottom: 6px; }
+form.username .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0; }
+form.username .input { flex: 1; min-width: 180px; font: inherit; padding: 8px 10px; border: 1px solid var(--line, #8886); border-radius: 8px; background: transparent; color: inherit; }
+form.username .hint { font-size: 13px; color: var(--chrome); margin-top: 8px; }
+form.username .hint.error { color: #c0392b; }

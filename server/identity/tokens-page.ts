@@ -3,7 +3,7 @@
 
 
 import { nameOf } from "../../document/names.ts";
-import { appPage, crumbs, ICON, page, safeNext, TIMES_SCRIPT } from "../pages/index.ts";
+import { appPage, crumbs, ICON, inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
@@ -139,59 +139,11 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   <pre>ERGA_TEST_TOKEN=<span class="secret">${esc(test.token)}</span> bun run test:prod</pre>
 </section>` : "";
   const docOptions = docs.map((d) => `<option value="${esc(d.id)}">${esc(d.title)} (/${esc(d.owner)}/${esc(d.slug)})</option>`).join("");
-  const style = `
-  .part { margin-bottom: 56px; }
-  .part h2 { margin: 0; font-size: 17px; font-weight: 620; letter-spacing: -0.01em; color: var(--fg-strong); }
-  .part > header { margin-bottom: 20px; align-items: flex-end; }
-  .part > .sub { margin-bottom: 16px; }
-  .part .sub a { color: inherit; text-decoration-color: var(--rule); text-underline-offset: 0.2em; }
-  .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 7rem 7rem 40px; align-items: center; column-gap: 16px; }
-  .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
-  ol.rows > li, ol.rows > li:first-child { border: 0; }
-  ol.rows > li.expired { opacity: 0.55; }
-  ol.rows { padding-top: 6px; margin-bottom: 20px; }
-  .name { min-width: 0; display: flex; align-items: center; gap: 12px; padding: 11px 0; }
-  .what { min-width: 0; font-size: 13px; color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .scope { font-weight: 550; color: var(--fg-strong); }
-  .addr { color: var(--chrome); }
-  .note { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
-  time, .never { margin: 0; text-align: left; font-size: 13px; color: var(--soft); }
-  .acts { display: flex; justify-content: flex-end; }
-  .acts .act { position: relative; }
-  .acts .act[data-tip]::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); z-index: 40;
-    white-space: pre; font: 400 12px/1.3 var(--font-text); letter-spacing: 0.01em; color: var(--soft); opacity: 0; pointer-events: none; }
-  @media (hover: hover) { .acts .act[data-tip]:hover::after { opacity: 1; } }
-  .empty { margin-bottom: 20px; padding: 32px 24px; }
-  form.add { display: grid; gap: 14px; max-width: 560px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 12px; }
-  form.add h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
-  form.add label.field { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--soft); }
-  form.add fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 8px; }
-  form.add legend { margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--soft); }
-  form.add .choice { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--fg-strong); }
-  form.add .choice small { color: var(--soft); font-size: 12.5px; }
-  form.add select, form.add input[type=date] { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px; background: transparent; color: var(--fg-strong); max-width: 100%; }
-  form.add .doc-pick { margin-left: 26px; }
-  form.add .buttons { display: flex; }
-  .card { margin: 0 0 24px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
-  .card h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
-  .card p { margin: 0 0 10px; }
-  .made, .approve { border-color: var(--caret); }
-  .card .buttons { display: flex; align-items: center; gap: 12px; }
-  .card button.new, .card button.deny { font: inherit; font-size: 13.5px; font-weight: 550; }
-  .card button.deny { padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--soft); cursor: pointer; }
-  dl.grant { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0 0 12px; font-size: 14px; }
-  dl.grant dt { color: var(--soft); }
-  dl.grant dd { margin: 0; font-weight: 550; color: var(--fg-strong); }
-  dl.grant dd.scope-admin { color: #c2410c; }
-  pre { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; color: var(--fg-strong); }
-  .secret { user-select: all; }
-  .code { font: 600 26px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; color: var(--fg-strong); }
-  .notice { margin: 0 0 24px; padding: 12px 14px; border-radius: 10px; font-size: 14px; background: color-mix(in srgb, var(--caret) 10%, transparent); }
-  .notice.error { background: color-mix(in srgb, #c2410c 12%, transparent); }
-  @media (max-width: 620px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 40px; } ol.rows .what, ol.rows > li > time:nth-of-type(2), ol.rows > li > .never:nth-of-type(2) { display: none; } }
-`;
   const title = url.pathname.startsWith("/settings") ? "Settings" : "Tokens";
-  const html = appPage(title, style, `${crumbs(session, [{ label: title }])}<main>
+  const html = appPage(
+    title,
+    inlineStyle("tokens"),
+    `${crumbs(session, [{ label: title }])}<main>
   <header><div><h1>${title}</h1></div></header>
   ${o.notice ?? ""}
   ${made}
@@ -215,14 +167,7 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   </section>
   ${testBlock}
 </main>
-<script>
-  ${TIMES_SCRIPT}
-  for (const t of document.querySelectorAll("time.day")) t.textContent = new Date(t.dateTime).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  for (const f of document.querySelectorAll("form[data-confirm]")) f.addEventListener("submit", (e) => { if (!confirm(f.dataset.confirm)) e.preventDefault(); });
-  for (const f of document.querySelectorAll("form[data-label]")) f.addEventListener("submit", (e) => { if (!confirm("Revoke \\u201c" + f.dataset.label + "\\u201d? Agents using it lose access at once.")) e.preventDefault(); });
-  // Picking a document picks the one-document scope.
-  const pick = document.querySelector(".doc-pick"), one = document.querySelector("input[name=scope][value=document]");
-  pick?.addEventListener("change", () => { if (one && !one.disabled) one.checked = true; });
-</script>`);
+${inlineScript("tokens")}`
+  );
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
