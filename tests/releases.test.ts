@@ -6,7 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
 import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor } from "../control/deploys/releases";
 import { sha256Hex } from "../shared/bytes";
-import { DeployError, type Release } from "../control/deploys/pipeline";
+import { DeployError } from "../control/deploys/cloudflare-api";
+import type { Release } from "../control/deploys/release-format";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
 

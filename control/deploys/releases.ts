@@ -25,7 +25,8 @@
 // (No signature yet: a signed manifest comes with the first install that
 // reads the store from another account's control Worker.)
 
-import { DeployError, loadRelease, type Release, type ReleaseIndex } from "./pipeline";
+import { DeployError } from "./cloudflare-api";
+import { loadRelease, type Release, type ReleaseIndex } from "./release-format";
 import { sha256Hex } from "../../shared/bytes";
 
 export type Channel = "edge" | "stable";

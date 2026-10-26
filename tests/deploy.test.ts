@@ -8,10 +8,12 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import {
-  assetHash, checkPlan, Cloudflare, deploy, DeployError, HEADERS_FILE, loadRelease, registerDomain, searchDomains, STEPS, tokenTemplateUrl,
-  type DeployPlan, type Release,
-} from "../control/deploys/pipeline";
+import { assetHash, HEADERS_FILE } from "../control/deploys/account";
+import { checkPlan, type DeployPlan } from "../control/deploys/plan";
+import { Cloudflare, DeployError, tokenTemplateUrl } from "../control/deploys/cloudflare-api";
+import { deploy, STEPS } from "../control/deploys/pipeline";
+import { loadRelease, type Release } from "../control/deploys/release-format";
+import { registerDomain, searchDomains } from "../control/deploys/domains";
 import { mockCloudflare } from "../dev/mock-cloudflare";
 import { HEADERS } from "../client/build.ts";
 import { ASSET_PREFIX, type AssetManifest } from "../shared/assets.ts";

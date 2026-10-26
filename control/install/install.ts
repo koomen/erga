@@ -32,23 +32,11 @@
 // ops.<zone> for an app at the zone's apex, else <first label>-ops.<rest>
 // (one level under the zone, which the zone's own certificate covers).
 
-import {
-  Cloudflare,
-  DB_NAME,
-  DeployError,
-  checkHealth,
-  runPipeline,
-  STEPS,
-  targetHost,
-  targetOfPlan,
-  WORKER_TAG,
-  type Carry,
-  type DeployPlan,
-  type Fetch,
-  type Release,
-  type Report,
-  type Target,
-} from "../deploys/pipeline";
+import { Cloudflare, DeployError, type Fetch } from "../deploys/cloudflare-api";
+import { DB_NAME, type DeployPlan } from "../deploys/plan";
+import { checkHealth, WORKER_TAG } from "../deploys/account";
+import { runPipeline, STEPS, targetHost, targetOfPlan, type Carry, type Report, type Target } from "../deploys/pipeline";
+import type { Release } from "../deploys/release-format";
 import { installControlMetadata } from "../deploys/control-worker";
 import { CONTROL_ENTRYPOINT } from "../../deploy/targets";
 import { sleep } from "../../shared/time";

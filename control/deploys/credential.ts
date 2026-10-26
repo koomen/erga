@@ -25,7 +25,7 @@
 // The machine paths (deploy/run.ts, deploy/setup.ts) keep using the person's
 // own cf CLI login, which is the same kind of grant.
 
-import { DeployError, OAUTH, type Fetch } from "./pipeline";
+import { DeployError, OAUTH, type Fetch } from "./cloudflare-api";
 import { open, seal, type Sealed } from "./seal";
 import { base64url, randomToken, sha256 } from "../../shared/bytes";
 

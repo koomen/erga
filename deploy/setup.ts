@@ -35,7 +35,8 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTROL_OAUTH_SCOPES } from "../control/deploys/credential";
-import { Cloudflare, DeployError, findDatabase, zoneIdOf, type Fetch } from "../control/deploys/pipeline";
+import { Cloudflare, DeployError, type Fetch } from "../control/deploys/cloudflare-api";
+import { findDatabase, zoneIdOf } from "../control/deploys/account";
 import { machineCredential } from "./local-credential";
 import { MOCK_HOOK_SECRET, mockCloudflare } from "../dev/mock-cloudflare";
 import { ask, deployFromMachine } from "./run";

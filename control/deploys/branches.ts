@@ -45,7 +45,21 @@
 // id, commit, times, state, what started it) and its whole log, the last
 // HISTORY_KEEP of each target, in the same storage (control/deploys/history.ts).
 
-import { ALL_STEPS, API, BEFORE_BUILD, checkHealth, Cloudflare, dropCopies, DeployError, liveVersion, rollbackTo, runPipeline, stepsFor, targetHost, Unhealthy, workerVersion, type Carry, type Fetch, type Release, type RestorePoint, type StepId, type Target } from "./pipeline";
+import {
+  ALL_STEPS,
+  BEFORE_BUILD,
+  dropCopies,
+  runPipeline,
+  stepsFor,
+  targetHost,
+  type Carry,
+  type RestorePoint,
+  type StepId,
+  type Target,
+} from "./pipeline";
+import { API, Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
+import { checkHealth, liveVersion, rollbackTo, workerVersion } from "./account";
+import type { Release } from "./release-format";
 import { sourceFor, type Source } from "./build-source";
 import { CONTROL, CONTROL_ENTRYPOINT, PRODUCTION, TARGETS, type DeployName, type TargetSpec } from "../../deploy/targets";
 import { controlTarget } from "./control-worker";

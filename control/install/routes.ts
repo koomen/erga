@@ -24,7 +24,8 @@
 // (/deploy/mock/consent), and
 // GET /deploy/api/mock shows what Cloudflare was asked to do.
 
-import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploys/pipeline";
+import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl } from "../deploys/cloudflare-api";
+import type { DeployPlan } from "../deploys/plan";
 import { DEPLOY_OAUTH_COOKIE, INSTALL_CONTROL_WORKER } from "./install";
 import { mockCloudflare } from "../../dev/mock-cloudflare";
 import { deployPage, mockConsentPage } from "./page";

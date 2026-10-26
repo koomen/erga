@@ -22,7 +22,7 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { ControlConfig, ReleaseIndex } from "../control/deploys/pipeline.ts";
+import type { ControlConfig, ReleaseIndex } from "../control/deploys/release-format.ts";
 import { controlWrangler } from "./targets.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
