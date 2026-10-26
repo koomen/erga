@@ -70,7 +70,6 @@ import {
   type ToolContent,
   type ToolSpec,
   type VersionsAccess,
-  type ViewersAgentAccess,
 } from "./tools";
 export { beyondPrompt } from "./prompt";
 export {
@@ -79,7 +78,6 @@ export {
   describeView,
   type FilesAccess,
   type VersionsAccess,
-  type ViewersAgentAccess,
   type PageTree,
   type OpenResult,
   type ToolContent,
@@ -171,8 +169,6 @@ export interface SessionOptions {
   meta?: Record<string, string>;
   /** Every file's size, time and kind, PDFs' text, and writes of bytes (document/host.ts); without it the file tools see text and names only. */
   files?: FilesAccess;
-  /** Whether viewers may ask the agent here, and what they used: for the document's owner only (viewers_agent). */
-  viewersAgent?: ViewersAgentAccess;
 }
 
 /** A tool beyond the document (agents/tools.ts), with what the agent is doing while it runs. */
@@ -182,7 +178,6 @@ const TOOL_ACTIVITY: Record<string, string> = {
   new_page: "making a page",
   make_project: "making it a project",
   make_document: "making it a document",
-  viewers_agent: "looking at viewers and the agent",
   list_pages: "looking at the pages",
   open_page: "opening a page",
   mkdir: "making a folder",
@@ -286,7 +281,6 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     pages: opts.pages,
     open: opts.open,
     files: opts.files,
-    viewersAgent: opts.viewersAgent,
     tree: opts.tree && (async (op) => {
       if (!opts.canEdit()) throw new Error("Your user can only view this document, so you can't change it.");
       await opts.tree!(op);

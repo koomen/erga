@@ -21,7 +21,18 @@ const IMAGE_READ_MAX = 3_750_000;
 const WRITE_BYTES_MAX = 25_000_000;
 
 /** The tools that change the document: someone who may only view it (and their agent, and their token) has none of them. */
-export const CHANGES = new Set(["edit", "write", "mv", "rm", "mkdir", "new_page", "make_project", "make_document", "set_title", "restore_version", "viewers_agent"]);
+export const CHANGES = new Set([
+  "edit",
+  "write",
+  "mv",
+  "rm",
+  "mkdir",
+  "new_page",
+  "make_project",
+  "make_document",
+  "set_title",
+  "restore_version",
+]);
 
 /** What the file tools reach beyond the shared text: every file's size, time and kind, a file's bytes, a PDF's text, and a write of bytes. */
 export interface FilesAccess {
@@ -60,8 +71,6 @@ export function makeTools(
     open?: (path: string) => Promise<OpenResult>;
     /** Every file's size, time and kind, PDFs' text, writes of bytes; without it, ls lists names, grep text files, and write takes text only. */
     files?: FilesAccess;
-    /** Viewers and the agent, for the document's owner (viewers_agent); without it that tool is left out. */
-    viewersAgent?: ViewersAgentAccess;
   }
 ): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
@@ -278,7 +287,6 @@ export function makeTools(
     ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
     ...(opts.tree ? treeTools(opts.tree, opts.open) : []),
     ...(opts.naming ? namingTools(opts.naming) : []),
-    ...(opts.viewersAgent ? [viewersAgentTool(opts.viewersAgent)] : []),
     ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? (() => "agent"), opts.lastTurn ?? (async () => null), ws, opts.caughtUp ?? (async () => {})) : []),
   ] as AgentTool[];
 }
@@ -525,29 +533,6 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
   ] as AgentTool[];
 }
 
-/** Viewers and the agent, as the document's owner reads and sets it (document/host.ts, ViewersAgent). */
-export interface ViewersAgentAccess {
-  report(): Promise<{ on: boolean; limit: number; viewers: { login: string; today: number; total: number; last: number }[] }>;
-  set(on: boolean): Promise<void>;
-}
-
-/** viewers_agent: whether people who may only view may ask this document's agent, and what each of them used. */
-function viewersAgentTool(access: ViewersAgentAccess): AgentTool {
-  return {
-    name: "viewers_agent",
-    label: "Viewers and the agent",
-    description: "Whether people who may only view this document may ask its agent (off unless you turn it on; each of their turns uses this server's API key, so each viewer has a few a day), and what each viewer used: turns today and in all. on: true or false turns it on or off. Only the document's owner has this tool. Change it only when the user asks.",
-    parameters: Type.Object({ on: Type.Optional(Type.Boolean({ description: "Let viewers ask the agent (true), or not (false); leave out to only read" })) }),
-    execute: async (_id: string, p: { on?: boolean }) => {
-      if (typeof p.on == "boolean") await access.set(p.on);
-      const r = await access.report();
-      const lines = r.viewers.map((v) => `${v.login}: ${v.today} today, ${v.total} in all (last ${new Date(v.last).toISOString().slice(0, 16).replace("T", " ")} UTC)`);
-      const head = `Viewers ${r.on ? "may" : "may not"} ask the agent here${r.on ? `, ${r.limit} turns a day each (the server's viewer_agent_turns)` : ""}.`;
-      return { content: [{ type: "text" as const, text: `${head}\n${lines.length ? lines.join("\n") : "No viewer has asked it yet."}` }], details: {} };
-    },
-  } as AgentTool;
-}
-
 /**
  * new_page, mkdir, mv and rm: the document's file tree, with the same powers
  * a person has in the editor's file tree (document/host.ts, runTreeOp, checks each).
@@ -690,8 +675,16 @@ export function documentToolSpecs(): ToolSpec[] {
   const none = () => { throw new Error("no document"); };
   const naming = { get: none, set: none } as unknown as Naming;
   const versions = { state: none, version: none, file: none, files: none, current: none, restore: none } as unknown as VersionsAccess;
-  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none, versions, pages: none, open: none, viewersAgent: { report: none, set: none } })
-    .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
+  return makeTools(null as unknown as Workspace, {
+    view: none,
+    readAsset: none,
+    edited: none,
+    naming,
+    tree: none,
+    versions,
+    pages: none,
+    open: none,
+  }).map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
 
 /** What a tool returns: text, and for read on an image or view_page, a picture; for read on a PDF, the PDF (a range of its pages). */

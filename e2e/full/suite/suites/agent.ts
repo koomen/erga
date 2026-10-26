@@ -245,15 +245,21 @@ export const agent: Test[] = [
       await d.share!("*", null);
       await d.share!("Bo", "editor");
       await d.share!("Dee", "viewer");
-      // Viewers may ask the agent here (its owner's choice: off unless turned on).
-      const on = await d.fetch("/api/viewers-agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true }) });
-      expect(on.ok, "the owner lets viewers ask the agent", on.status);
       const b = await Participant.join(d, "Bo");
       ctx.defer(() => b.destroy());
-      const log = await runScript(d, "Dee", [edit(d.path, "<h1>Launch notes", "<h1>Dee's notes"), { text: "Tried." }]);
-      // Its agent has no tool that changes the document (its prompt says why): a call to one fails.
-      const failed = log.items.find((i) => i.kind == "tool" && i.name == "edit");
-      expect(failed?.status == "error" && /only view|not found/.test(failed.detail ?? ""), "the viewer's agent's edit fails", failed);
+      // Someone who may only view has no agent here (its turns use the server's key): it's off, saying why, and a prompt is refused.
+      const state = (await (await d.fetch("/api/agent?user=Dee", {}, "Dee")).json()) as { enabled: boolean; reason?: string };
+      expect(!state.enabled && /only view/.test(state.reason ?? ""), "the viewer's agent is off, saying why", state);
+      const asked = await d.fetch(
+        "/api/agent?user=Dee",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: `Tried @script ${JSON.stringify([edit(d.path, "<h1>Launch notes", "<h1>Dee's notes")])}` }),
+        },
+        "Dee"
+      );
+      expect(!asked.ok, "the viewer's prompt is refused", asked.status);
       // Nor do the viewer's own edits, in the room or as a publish, go anywhere.
       const v = await Participant.join(d, "Dee");
       ctx.defer(() => v.destroy());
