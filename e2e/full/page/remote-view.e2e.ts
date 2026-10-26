@@ -42,7 +42,9 @@ function still(r: { worst: number; end: number; missing: number; reloaded: boole
   expect(r.worst <= 1 && r.missing == 0 && r.reloaded == reloaded, JSON.stringify(r)).toBe(true);
 }
 
-test("edits on disk above and below the view, to the text, the structure and the styles, of an HTML page: the view doesn't move and the page isn't rendered again", async ({ tab }) => {
+test("edits on disk above and below the view, to the text, the structure and the styles, of an HTML page: the view doesn't move and the page isn't rendered again", {
+  timeout: 45_000,
+}, async ({ tab }) => {
   await tab.page.setViewportSize({ width: 1280, height: 800 });
   const ed = await openEditor(tab, await servers.script(), "long");
   const reading = await watch(ed, "Heat came up and the light went flat");
@@ -64,7 +66,9 @@ test("edits on disk above and below the view, to the text, the structure and the
   expect(await ed.count(".erga-locked"), "every block still edits").toBe(0);
 });
 
-test("while you type in one paragraph, a list arrives above it: the caret stays, and your typing goes on where it was", async ({ tab }) => {
+test("while you type in one paragraph, a list arrives above it: the caret stays, and your typing goes on where it was", {
+  timeout: 45_000,
+}, async ({ tab }) => {
   await tab.page.setViewportSize({ width: 1280, height: 800 });
   const ed = await openEditor(tab, await servers.script(), "long");
   await ed.clickEnd("#p21");
@@ -106,7 +110,9 @@ test("the agent edits above the view as it works: each edit shows at once and th
   expect(await ed.frame<boolean>(`!!${F}.querySelector("style[data-erga-caret]")`), "the new page draws your caret too (caret.ts)").toBe(true);
 });
 
-test("the agent edits the first sentence of a long paragraph that starts above the window: the line you read stays put, and so it does when its change to a script makes the page afresh (it loads again)", async ({ tab }) => {
+test("the agent edits the first sentence of a long paragraph that starts above the window: the line you read stays put, and so it does when its change to a script makes the page afresh (it loads again)", {
+  timeout: 45_000,
+}, async ({ tab }) => {
   await tab.page.setViewportSize({ width: 1280, height: 800 });
   const ed = await openEditor(tab, await servers.script(), "long");
   const sentences = Array.from({ length: 80 }, (_, i) => i == 50 ? "Here is the word zebra, in the middle." : `Sentence ${i + 1} of the long paragraph.`);

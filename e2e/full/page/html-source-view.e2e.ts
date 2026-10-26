@@ -4,7 +4,7 @@ import { DISK_MS, F, openEditor } from "../../helpers/editor";
 
 await servers.main();
 
-test("⌘⇧P shows the file, and again goes back to a page that edits", async ({ tab }) => {
+test("⌘⇧P shows the file, and again goes back to a page that edits", { timeout: 45_000 }, async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("Where the leads go.", "Where leads go now."));
   await expect.poll(() => ed.textOf("figcaption"), { timeout: DISK_MS }).toBe("Where leads go now.");

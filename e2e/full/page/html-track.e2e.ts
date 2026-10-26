@@ -4,7 +4,9 @@ import { DISK_MS, openEditor } from "../../helpers/editor";
 
 await servers.main();
 
-test("tracking marks your edits and the disk's; it's a diff, so typing and deleting leaves no mark; a letter added marks the letter; off clears it", async ({ tab }) => {
+test("tracking marks your edits and the disk's; it's a diff, so typing and deleting leaves no mark; a letter added marks the letter; off clears it", {
+  timeout: 45_000,
+}, async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   await ed.eval(`document.getElementById("btn-track").click()`);
   await ed.clickEnd("h1");

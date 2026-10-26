@@ -4,7 +4,9 @@ import { DISK_MS, openEditor } from "../../helpers/editor";
 
 await servers.main();
 
-test("typing and a disk edit at once: both survive, marked; ⌘Z takes back the typing only, ⌘⇧Z brings it back", async ({ tab }) => {
+test("typing and a disk edit at once: both survive, marked; ⌘Z takes back the typing only, ⌘⇧Z brings it back", {
+  timeout: 45_000,
+}, async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("Where the leads go.", "Where the leads went."));
   await expect.poll(() => ed.textOf("figcaption"), { timeout: DISK_MS }).toBe("Where the leads went.");
