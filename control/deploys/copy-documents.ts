@@ -2,7 +2,7 @@
 // "documents" step, control/deploys/pipeline.ts), through the snapshot
 // endpoints of both (document/snapshot.ts).
 
-import { DeployError, type Fetch } from "./pipeline";
+import { DeployError, type Fetch } from "./cloudflare-api";
 import type { DocSnapshot } from "../../document/snapshot";
 
 /**

@@ -46,7 +46,8 @@
 // Worker uploaded (the tests restart the server that deployed itself).
 
 import { createHash } from "node:crypto";
-import type { Fetch, Release } from "../control/deploys/pipeline";
+import type { Fetch } from "../control/deploys/cloudflare-api";
+import type { Release } from "../control/deploys/release-format";
 import type { Builder } from "../control/deploys/branches";
 import { memoryStore, snapshotDoor, type DocStore } from "../document/snapshot";
 import { base64, fromBase64, hex, randomBytes } from "../shared/bytes";

@@ -3,7 +3,8 @@
 // follows the build's output line by line; the release it hands back is
 // the one the pipeline deploys.
 
-import { DeployError, type Release } from "../deploys/pipeline";
+import { DeployError } from "../deploys/cloudflare-api";
+import type { Release } from "../deploys/release-format";
 import { unpackRelease } from "../deploys/bundle";
 import type { Builder } from "../deploys/branches";
 import { sleep } from "../../shared/time";

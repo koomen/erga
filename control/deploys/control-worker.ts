@@ -19,7 +19,10 @@
 // the step after the upload), and a rollback of it restarts the object into
 // the older one (the deploy's record is written before the call).
 
-import { checkHealth, CONTROL_STEPS, DeployError, findDatabase, liveVersion, targetHost, Unhealthy, workerVersion, WORKER_TAG, type Carry, type Cloudflare, type Fetch, type Release, type Report, type RestorePoint, type StepId, type Target } from "./pipeline";
+import { checkHealth, findDatabase, liveVersion, workerVersion, WORKER_TAG } from "./account";
+import { CONTROL_STEPS, targetHost, type Carry, type Report, type RestorePoint, type StepId, type Target } from "./pipeline";
+import { DeployError, Unhealthy, type Cloudflare, type Fetch } from "./cloudflare-api";
+import type { Release } from "./release-format";
 import { CONTROL } from "../../deploy/targets";
 import { sleep } from "../../shared/time";
 

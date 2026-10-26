@@ -8,7 +8,7 @@
 // (control/source/service.ts, sourceForBuild, through Deps.source in control/deploys/branches.ts);
 // this, with the REST API, is for one without.
 
-import { DeployError, type Cloudflare } from "./pipeline";
+import { DeployError, type Cloudflare } from "./cloudflare-api";
 import { SOURCE } from "../../deploy/targets";
 
 /** A Git remote and a token that reads it (sent as HTTP Basic, any username). */

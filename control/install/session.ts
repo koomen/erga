@@ -14,10 +14,10 @@
 // store) and records each step as it goes; the page polls `info` to show them.
 
 import { DurableObject } from "cloudflare:workers";
-import {
-  checkPlan, Cloudflare, DeployError, loadRelease, OAUTH, pagesShown, appHost, registerDomain, registrationStatus, searchDomains,
-  type DeployPlan, type DomainOffer, type Fetch, type Release,
-} from "../deploys/pipeline";
+import { checkPlan, pagesShown, appHost, type DeployPlan } from "../deploys/plan";
+import { Cloudflare, DeployError, OAUTH, type Fetch } from "../deploys/cloudflare-api";
+import { loadRelease, type Release } from "../deploys/release-format";
+import { registerDomain, registrationStatus, searchDomains, type DomainOffer } from "../deploys/domains";
 import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf, type Installed } from "./install";
 import { hashSecret } from "./forks";
 import { githubAppOf, releaseStoreOf } from "../cloudflare";

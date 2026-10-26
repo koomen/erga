@@ -36,19 +36,9 @@ import { join } from "node:path";
 import { targetFor } from "../control/deploys/branches";
 import { buildIn } from "../control/builder/build";
 import { unpackRelease } from "../control/deploys/bundle";
-import {
-  ALL_STEPS,
-  Cloudflare,
-  guardTarget,
-  loadRelease,
-  runPipeline,
-  stepsFor,
-  targetHost,
-  targetPagesShown,
-  type Fetch,
-  type Release,
-  type Target,
-} from "../control/deploys/pipeline";
+import { ALL_STEPS, guardTarget, runPipeline, stepsFor, targetHost, targetPagesShown, type Target } from "../control/deploys/pipeline";
+import { Cloudflare, type Fetch } from "../control/deploys/cloudflare-api";
+import { loadRelease, type Release } from "../control/deploys/release-format";
 import { machineCredential } from "./local-credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "../dev/mock-cloudflare";
 import { ACCOUNT, isDeployName, specOf, TARGETS, type OwnDeployName } from "./targets";

@@ -17,7 +17,8 @@
 import type { Builder } from "../deploys/branches";
 import { containerBuilder } from "../builder/client";
 import { bundleOf } from "../deploys/bundle";
-import type { Fetch, Release } from "../deploys/pipeline";
+import type { Fetch } from "../deploys/cloudflare-api";
+import type { Release } from "../deploys/release-format";
 import { storeBuilder, type ReleaseStore } from "../deploys/releases";
 import { sha256Hex } from "../../shared/bytes";
 

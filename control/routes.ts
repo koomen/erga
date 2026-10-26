@@ -68,7 +68,7 @@ import {
   type CredentialStatus,
 } from "./deploys/credential.ts";
 import { mockConsentPage } from "./install/page.ts";
-import { Cloudflare, type Fetch } from "./deploys/pipeline.ts";
+import { Cloudflare, type Fetch } from "./deploys/cloudflare-api.ts";
 import { releasesDoor, type ReleaseStore } from "./deploys/releases.ts";
 import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
