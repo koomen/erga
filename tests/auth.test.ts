@@ -194,7 +194,7 @@ function serverOn(own: Platform["own"]): Platform {
     deploy: { target: "production", version: null, targets: TARGETS },
     own,
     directory: { config: { record: async () => {} } } as unknown as Directory,
-  } as Platform;
+  } as unknown as Platform;
 }
 
 test("sign-in uses the page's values over the deploy's, and ?app=pending tests the values that wait", async () => {

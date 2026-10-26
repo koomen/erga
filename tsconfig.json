@@ -1,3 +1,11 @@
+// The typecheck has three projects, one for each place the code runs (bun run typecheck checks all three):
+//
+//   tsconfig.json           the tools: what runs under Bun (deploy/, dev/, tests/, e2e/, the build scripts), DOM and Bun types
+//   tsconfig.workers.json   the Workers: server/, document/, agents/, control/, cloudflare/, Workers types, no DOM
+//   tsconfig.browser.json   the browser: client/ and shared/, DOM types, no Bun
+//
+// A file a project imports is checked with that project's types too: shared/ under all three.
+// tests/typecheck.test.ts fails on a .ts file that no project names.
 {
   "compilerOptions": {
     "target": "ES2022",
@@ -11,6 +19,19 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["shared/text-imports.d.ts", "shared", "document", "agents/models.ts", "client", "dev", "vite.config.ts", "server/documents", "server/pages", "agents/document/session.ts", "document/room.ts", "agents/document/workspace.ts", "deploy", "control/routes.ts", "control/builder", "control/source", "control/deploys", "e2e", "e2e.config.ts", "tests/deploy.test.ts", "tests/deploy-targets.test.ts", "tests/deploy-run.test.ts", "tests/deploy-rollback.test.ts", "tests/deploy-upstream.test.ts", "tests/deploy-builder.test.ts", "tests/deploy-credential.test.ts", "tests/helpers/deploys.ts", "tests/source.test.ts", "tests/helpers/source-fixture.ts"],
-  "exclude": ["control/builder/worker.ts", "control/index.ts", "control/platform.ts", "control/deploys/pipeline-object.ts", "control/deploys/app-routes.ts", "control/source/source-host.ts", "control/source/service.ts"]
+  "include": [
+    "shared/text-imports.d.ts",
+    "deploy",
+    "dev",
+    "tests",
+    "e2e",
+    "e2e.config.ts",
+    "vite.config.ts",
+    "client/build.ts",
+    "control/builder/build.ts",
+    "control/builder/server.ts",
+    "assets/logo"
+  ],
+  // It tests a Worker file with the Workers' types: tsconfig.workers.json checks it.
+  "exclude": ["tests/document-host.test.ts"]
 }

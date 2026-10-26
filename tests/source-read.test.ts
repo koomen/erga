@@ -50,9 +50,18 @@ beforeAll(async () => {
   const db = new Database(":memory:");
   repo = new SourceRepo({
     db: { exec: <T>(q: string, ...p: (string | number | null)[]) => db.query(q).all(...p) as T[] },
-    artifacts: async () => { throw new Error("the write token is never used to read"); },
-    reader: async () => ({ url: `${fx.url}/__artifacts/git/erga/erga.git`, headers: { Authorization: `Bearer ${localToken("test-secret", "erga/erga", "read")}` } }),
-    github: () => null, moved: () => { throw new Error("no branch moves"); }, changed: () => {}, background: () => {},
+    artifacts: async () => {
+      throw new Error("the write token is never used to read");
+    },
+    reader: async () => ({
+      url: `${fx.url}/__artifacts/git/erga/erga.git`,
+      headers: { Authorization: `Bearer ${localToken("test-secret", "erga/erga", "read")}` },
+    }),
+    moved: () => {
+      throw new Error("no branch moves");
+    },
+    changed: () => {},
+    background: () => {},
   });
 });
 afterAll(() => fx?.stop());

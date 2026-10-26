@@ -37,7 +37,7 @@ function resolveImport(from: string, spec: string): string | null {
 
 test("the browser's bundles import nothing of the server, Cloudflare, the agents, the deploy or the dev server", () => {
   const seen = new Map<string, string>();
-  const queue = ENTRIES.map((e) => [resolve(ROOT, e), "an entry"] as const);
+  const queue: [string, string][] = ENTRIES.map((e) => [resolve(ROOT, e), "an entry"]);
   while (queue.length) {
     const [file, by] = queue.shift()!;
     if (seen.has(file)) continue;

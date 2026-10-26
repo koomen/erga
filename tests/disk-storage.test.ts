@@ -47,7 +47,7 @@ test("files and folders live on the folder, the other keys in the wrapped storag
 
   expect(new TextDecoder().decode(await s.get<Uint8Array>("files/index.html"))).toBe("<h1>Hi</h1>");
   expect(await s.get("files/nope.html")).toBeUndefined();
-  expect(await s.get("folders/img")).toBe(true);
+  expect(await s.get<boolean>("folders/img")).toBe(true);
   expect(await s.get("folders/nope")).toBeUndefined();
   expect([...(await s.list({ prefix: "files/" })).keys()]).toEqual(["files/img/a.png", "files/index.html"]);
   expect([...(await s.list({ prefix: "files/img/" })).keys()]).toEqual(["files/img/a.png"]);
@@ -59,7 +59,7 @@ test("files and folders live on the folder, the other keys in the wrapped storag
   expect(f.text("two.txt")).toBe("two");
   expect(inner.data.get("info")).toEqual({ id: "x" });
   expect(f.disk.has("info")).toBe(false);
-  expect(await s.get("info")).toEqual({ id: "x" });
+  expect(await s.get<{ id: string }>("info")).toEqual({ id: "x" });
   await s.put("folders/docs", true);
   expect(f.folders.has("docs")).toBe(true);
   expect(await s.delete("files/two.txt")).toBe(true);
@@ -116,15 +116,15 @@ test("the room's file store over it reads, writes and removes on the folder, and
   expect(await Effect.runPromise(files.list)).toEqual(["index.html"]);
   await Effect.runPromise(files.write("index.html", "<h1>Two</h1>"));
   expect(f.text("index.html")).toBe("<h1>Two</h1>");
-  await Effect.runPromise(files.mkdir("a/b"));
+  await Effect.runPromise(files.mkdir!("a/b"));
   expect([...f.folders]).toEqual(["a", "a/b"]);
-  await Effect.runPromise(files.writeBytes("a/b/x.bin", new Uint8Array([1, 2])));
+  await Effect.runPromise(files.writeBytes!("a/b/x.bin", new Uint8Array([1, 2])));
   expect([...f.disk.get("a/b/x.bin")!]).toEqual([1, 2]);
-  expect(await Effect.runPromise(files.folders)).toEqual(["a", "a/b"]);
-  await Effect.runPromise(files.rmdir("a"));
+  expect(await Effect.runPromise(files.folders!)).toEqual(["a", "a/b"]);
+  await Effect.runPromise(files.rmdir!("a"));
   expect(f.disk.has("a/b/x.bin")).toBe(false);
   expect(f.folders.has("a")).toBe(false);
-  await Effect.runPromise(files.remove("index.html"));
+  await Effect.runPromise(files.remove!("index.html"));
   expect(f.disk.size).toBe(0);
   // write, mkdir, writeBytes, rmdir and remove each count as a change to the document.
   expect(touched).toBe(5);

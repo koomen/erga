@@ -292,7 +292,7 @@ test("server config: each change is a version, with who, when, and from what to 
   const hours = raced.filter((c) => c.key == "delete_docs_after_hours");
   for (let i = 1; i < hours.length; i++) expect(hours[i].from).toEqual(hours[i - 1].to);
   expect(hours[0].from).toBe(24);
-  expect(hours.at(-1)?.to ?? 24).toBe(await config.get("delete_docs_after_hours"));
+  expect<unknown>(hours.at(-1)?.to ?? 24).toBe(await config.get("delete_docs_after_hours"));
   // A locked key can't change, so it makes no version.
   const locked = fresh({ admins: ["root"], locked: { deploy_page: "off" } });
   await expect(locked.config.set(root, "deploy_page", "admins")).rejects.toBeInstanceOf(NotAllowed);

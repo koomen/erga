@@ -50,7 +50,13 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
   };
   const put = (path: string, body: Uint8Array | string, headers: Record<string, string> = {}) => {
     const bytes = typeof body == "string" ? new TextEncoder().encode(body) : body;
-    return doc.handle(new Request(`http://doc/api/files/${path}`, { method: "PUT", body: bytes, headers: as({ "content-length": String(bytes.length), ...headers }) }));
+    return doc.handle(
+      new Request(`http://doc/api/files/${path}`, {
+        method: "PUT",
+        body: bytes as Uint8Array<ArrayBuffer>,
+        headers: as({ "content-length": String(bytes.length), ...headers }),
+      })
+    );
   };
   return { doc, dir, blobs, storage, log, get, put, deps };
 }

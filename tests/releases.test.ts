@@ -9,7 +9,7 @@ import { sha256Hex } from "../shared/bytes";
 import { DeployError } from "../control/deploys/cloudflare-api";
 import type { Release } from "../control/deploys/release-format";
 import type { Platform } from "../server/platform";
-import type { Session } from "../server/identity/index";
+import type { Session } from "../server/platform";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const V1 = "111111111111", V2 = "222222222222", C1 = "1".repeat(40), C2 = "2".repeat(40);
@@ -146,8 +146,20 @@ describe("the routes", () => {
     expect((await s.channel("stable")).releases[0]).toMatchObject({ version: V1, by: "ada", tag: "v0.1.0" });
     const ORIGIN = "https://ops.erga.test";
     let who: Session | null = { login: "ada", name: "Ada" } as unknown as Session;
-    const platform = { sessionOf: async () => who, directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } } } as unknown as Platform;
-    const c: Control = { platform, deploys: { releases: () => s.view() } as never, releases: s, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body), oauth: { clientId: "", accountId: "", worker: "erga-control", net: fetch } };
+    const platform = {
+      sessionOf: async () => who,
+      directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } },
+    } as unknown as Platform;
+    const c: Control = {
+      platform,
+      github: null,
+      deploys: { releases: () => s.view() } as never,
+      releases: s,
+      app: "https://erga.test",
+      version: "v1",
+      layout: (o) => new Response(o.body),
+      oauth: { clientId: "", accountId: "", worker: "erga-control", net: fetch },
+    };
     const go = (path: string) => controlRoutes(new Request(`${ORIGIN}${path}`, { headers: { accept: "application/json" } }), c);
     who = null;
     expect((await go("/releases/stable.json")).status).toBe(200);

@@ -602,7 +602,7 @@ export const SERVER_TOOLS: Tool[] = [
       }),
     }),
     run: async (args, { dir, who }) => {
-      const r = await dir.addUser(who, { provider: args.provider, handle: args.handle, role: args.role }, roleValue(args.role) as UserRole);
+      const r = await dir.addUser(who, { provider: args.provider, handle: args.handle }, roleValue(args.role) as UserRole);
       return {
         ...(r.user ? { user: userOf(r.user) } : {}),
         ...(r.person ? { person: personOf(r.person) } : {}),
