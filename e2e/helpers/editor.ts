@@ -24,6 +24,11 @@ const MOD: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8, Con
 
 /** The editor's timers run at this fraction of real time in the tests (client/page-editor/editor.ts, `ms`). */
 export const TIMESCALE = 0.1;
+/**
+ * How long an edit on disk may take to reach the tab, or the tab's to reach the disk: the file watcher, the dev server
+ * and the room. Well under a second alone; seconds while bun run test:full keeps the machine busy.
+ */
+export const DISK_MS = 15_000;
 
 export interface OpenOptions {
   /** The fixture's file the document is. */

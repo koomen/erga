@@ -3,7 +3,7 @@
 // loaded again, so its scripts keep their state; the caret stays where you type. Only a change to a script makes the
 // page afresh: it loads again, and opens at the same spot (client/page-editor/editor.ts, restoreView; morph.ts).
 import { expect, servers, test, until } from "../../helpers/fixtures";
-import { F, W, openEditor, type Editor } from "../../helpers/editor";
+import { DISK_MS, F, W, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.script();
 
@@ -50,7 +50,7 @@ test("edits on disk above and below the view, to the text, the structure and the
     const next = f(ed.disk());
     expect(next).not.toBe(ed.disk());
     ed.write(next);
-    await until(() => ed.frame<boolean>(shows), 5000, shows);
+    await until(() => ed.frame<boolean>(shows), DISK_MS, shows);
   };
   await edit((s) => s.replace(/(<p id="p3">[^<]*)\./, `$1.${LONG}`), `${F}.getElementById("p3").textContent.includes("wraps onto more lines")`);
   await edit((s) => s.replace(`<h2 id="s1">`, `<ul id="added"><li>One</li><li>Two</li></ul>\n    <h2 id="s1">`), `${F}.querySelectorAll("#added li").length == 2`);
@@ -71,7 +71,7 @@ test("while you type in one paragraph, a list arrives above it: the caret stays,
   await ed.type(" Mine");
   const reading = await watch(ed, "Heat came up and the light went flat");
   ed.write(ed.disk().replace(`<h2 id="s1">`, `<ul id="added"><li>One</li><li>Two</li></ul>\n    <h2 id="s1">`));
-  await until(() => ed.frame<boolean>(`!!${F}.getElementById("added")`), 5000, "the list shows");
+  await until(() => ed.frame<boolean>(`!!${F}.getElementById("added")`), DISK_MS, "the list shows");
   await ed.type(" and more");
   await ed.idle();
   expect(await ed.textOf("#p21")).toContain(" Mine and more");
@@ -111,7 +111,7 @@ test("the agent edits the first sentence of a long paragraph that starts above t
   const ed = await openEditor(tab, await servers.script(), "long");
   const sentences = Array.from({ length: 80 }, (_, i) => i == 50 ? "Here is the word zebra, in the middle." : `Sentence ${i + 1} of the long paragraph.`);
   ed.write(ed.disk().replace(`<h2 id="s3">`, `<p id="long">${sentences.join(" ")}</p>\n    <h2 id="s3">`));
-  await until(() => ed.frame<boolean>(`!!${F}.getElementById("long")`), 5000, "the long paragraph shows");
+  await until(() => ed.frame<boolean>(`!!${F}.getElementById("long")`), DISK_MS, "the long paragraph shows");
   await ed.openAgent();
   // The word "zebra" 300 px down the window, the paragraph's start far above it.
   const word = `(() => { const d = document; const p = d.getElementById("long"); const t = p && [...p.childNodes].find((n) => n.nodeType == 3 && n.nodeValue.includes("zebra")); if (!t) return null; const r = d.createRange(); const i = t.nodeValue.indexOf("zebra"); r.setStart(t, i); r.setEnd(t, i + 5); return r.getBoundingClientRect().top; })()`;
