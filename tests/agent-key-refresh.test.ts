@@ -1,12 +1,13 @@
 // A key an admin stores, replaces or clears on /admin/api-keys reaches the
 // agent of a document that is already open, at its next turn (document/host.ts reads
-// the settings at each turn: cloudflare/agent-settings.ts). No real API call: a
+// the settings at each turn: agents/models.ts). No real API call: a
 // fake fetch answers for Anthropic and records the key each request sent.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
@@ -14,9 +15,8 @@ import { startAdminAgent } from "../agents/admin/agent.ts";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
-import { agentSettingsFrom, UNREADABLE_KEY } from "../cloudflare/agent-settings.ts";
 import { documentAgents } from "../agents/document/session";
-import type { AgentSettings } from "../agents/models";
+import { agentSettingsFrom, UNREADABLE_KEY, type AgentSettings } from "../agents/models";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const KEY1 = "sk-ant-api03-" + "a".repeat(80) + "One1", KEY2 = "sk-ant-api03-" + "b".repeat(80) + "Two2";
@@ -70,7 +70,11 @@ async function openDocument(settings: () => Promise<AgentSettings>) {
     const r = await host.handler(new Request("http://doc.test/api/agent", { method, ...(body ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } } : {}) }));
     return { status: r.status, body: (await r.json()) as { ok?: boolean; reason?: string; enabled?: boolean } };
   };
-  return { prompt: (text: string) => call("POST", { text }), state: () => call("GET"), close: () => Effect.runPromise(Scope.close(scope, Effect.void)) };
+  return {
+    prompt: (text: string) => call("POST", { text }),
+    state: () => call("GET"),
+    close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
+  };
 }
 
 /** Waits until the fake Anthropic has had `n` requests. */

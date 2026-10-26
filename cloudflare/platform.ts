@@ -14,7 +14,7 @@ import { isAdminsOnly, isTargetName, TARGETS } from "../deploy/targets";
 import { sourceService } from "../control/source/service";
 import type { App } from "../control/index";
 import type { SourceService } from "../control/source/index.ts";
-import { agentSettings } from "./agent-settings";
+import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
 import { BLOB_HEADER, INLINE_HEADER, serveBlob } from "../document/blobs";
@@ -145,7 +145,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     adminAgent: env.ADMIN_AGENT.getByName("admin"),
     deploys: control ?? env.PIPELINE?.getByName("deploys") ?? noDeploys,
     ...(env.CONTROL_URL?.trim() ? { control: { url: env.CONTROL_URL.trim().replace(/\/+$/, "") } } : {}),
-    agentSettings: () => agentSettings(env),
+    agentSettings: () => agentSettingsFrom(env, env.DB ? directoryOf(env).credentials : null),
     edge: {
       cache: edgeCache(),
       background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },
