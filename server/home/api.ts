@@ -11,8 +11,8 @@ import { fromElsewhere } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { IDLE } from "./render.ts";
 import { forgetHome } from "./serve.ts";
+import { json } from "../../shared/http.ts";
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
 /**
  * The homepage's API for a document (`id`): whether it's the homepage, and

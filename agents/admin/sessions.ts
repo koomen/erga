@@ -36,6 +36,7 @@ import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
 import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
 import type { GithubStatus, SourceAnswer, SourceRead } from "../../control/source/index.ts";
+import { json } from "../../shared/http";
 
 const enc = new TextEncoder();
 
@@ -370,7 +371,6 @@ export type AdminAgentObject = Pick<AdminAgents, "agentState" | "agentPrompt" | 
 
 // ---------------------------------------------------------------- the routes
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
 /** An admin, signed in (the person, in a browser: for their own agent panel, which no token reaches). */
 async function adminOf(platform: Platform, request: Request): Promise<{ login: string; name: string } | null> {

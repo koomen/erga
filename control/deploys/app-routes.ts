@@ -16,6 +16,7 @@ import type { Platform } from "../../server/platform";
 import type { Env } from "../../cloudflare/env";
 import { documentOf } from "../../cloudflare/objects/document-stub";
 import { snapshotBlob } from "../../cloudflare/blobs";
+import { json } from "../../shared/http";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) => path == "/api/deploys/version" || path == "/api/health" || path.startsWith("/api/snapshot/");
@@ -27,7 +28,7 @@ export async function deploysDoor(request: Request, env: Env, platform: Platform
   if (path == "/api/deploys/version" && (method == "GET" || method == "HEAD")) return Response.json({ version: env.ERGA_VERSION ?? null, target: env.DEPLOY_TARGET || null }, { headers: { "Cache-Control": "no-store" } });
   if (path == "/api/health" && (method == "GET" || method == "HEAD")) {
     const h = await health(platform);
-    return Response.json(h, { status: h.ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
+    return json(h, h.ok ? 200 : 503);
   }
   // One blob, for staging's copy of production's documents (cloudflare/blobs.ts).
   const blob = await snapshotBlob(request, env);

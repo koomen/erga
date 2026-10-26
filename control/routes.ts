@@ -107,6 +107,7 @@ import { esc, jsonInScript } from "../shared/html.ts";
 import { base64url, fromBase64url, randomToken } from "../shared/bytes.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
 import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
+import { json } from "../shared/http.ts";
 
 /** What the routes run on. */
 export interface Control {
@@ -190,7 +191,6 @@ export function appAnswer(path: string, has: { control: boolean; controlUrl: boo
   return has.pipeline ? "here" : "none";
 }
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
 export async function controlRoutes(request: Request, c: Control): Promise<Response> {
   const url = new URL(request.url);

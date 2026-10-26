@@ -46,6 +46,7 @@ import { cleanRel } from "../document/host";
 import { authOps, expiryOf, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { TEMPLATES, templateById } from "./pages/index.ts";
 import { base64, fromBase64 } from "../shared/bytes";
+import { json } from "../shared/http";
 
 // ---------------------------------------------------------------- the registry
 
@@ -367,8 +368,6 @@ const stringList = (v: unknown, what: string): string[] => {
 
 // ---------------------------------------------------------------- HTTP
 
-const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
-  Response.json(body, { status, headers: { "Cache-Control": "no-store", ...headers } });
 const failure = (error: string, status: number) =>
   json({ ok: false, error }, status, status == 401 ? { "WWW-Authenticate": 'Bearer realm="erga"' } : {});
 const NO_TOKEN = (origin: string) => `This needs an agent token, sent as "Authorization: Bearer <token>". Your person can make one at ${origin}/tokens, or you can ask for one: POST ${origin}/api/auth/request (see ${origin}/llms.txt). If yours stopped working it was revoked.`;

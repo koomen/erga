@@ -32,6 +32,7 @@ import { cookieName, cookies } from "./cookies.ts";
 import { sign, unsign } from "./session.ts";
 import { base64url, fromBase64url } from "../../shared/bytes.ts";
 import { clearCookie, signIn } from "./sign-in.ts";
+import { json } from "../../shared/http.ts";
 
 const JOIN = "erga_join";
 const JOIN_SECONDS = 30 * 60;
@@ -168,7 +169,7 @@ export async function usernameStep(platform: Platform, request: Request): Promis
   if (request.method == "GET" && url.searchParams.has("check")) {
     if (!pending) return Response.json({ problem: "This sign-in expired: sign in again." }, { status: 400 });
     const problem = await platform.directory.identities.usernameProblem(url.searchParams.get("check") ?? "");
-    return Response.json(problem ? { problem } : { ok: true }, { headers: { "Cache-Control": "no-store" } });
+    return json(problem ? { problem } : { ok: true });
   }
   if (!pending) return page("Sign-in expired", "This sign-in waited too long, or it finished already. <a href=\"/auth/sign-in\">Sign in again</a>.", 400);
   const { v } = pending;

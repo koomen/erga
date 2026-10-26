@@ -45,6 +45,7 @@ import { adminSourcePage } from "./page.ts";
 import type { Remote } from "./remote.ts";
 import type { GithubLink, PushEvent } from "./github.ts";
 import type { Actor, BranchInfo, GithubStatus, MergeConflict, Released, TagInfo, UpdateResult, UpstreamView } from "./repo.ts";
+import { json } from "../../shared/http";
 
 /** The repository's object (one, "erga"): pushes and merges happen there one at a time. Calls name the address the request came to (`origin`). */
 export interface SourceObject {
@@ -82,7 +83,6 @@ export interface SourceService {
   remote(scope: "read" | "write", origin?: string): Promise<RepoAccess | null>;
 }
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 const notSetUp =
   "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and control/source/import.ts fills it.";
 

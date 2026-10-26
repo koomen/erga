@@ -19,6 +19,7 @@ import {
   withEdit,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
+import { json } from "../../shared/http.ts";
 
 /** A template's starting files (server/pages/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
 export function templateFiles(
@@ -239,5 +240,5 @@ export async function shareToken(platform: Platform, request: Request, session: 
   if (origin && origin != new URL(request.url).origin) return refuse("Forbidden");
   const body = (await request.json().catch(() => ({}))) as { rotate?: unknown };
   const { token } = await platform.tokens.share({ login: session.login, name: session.name, testBy: session.test?.by }, body?.rotate === true);
-  return Response.json({ token }, { headers: { "Cache-Control": "no-store" } });
+  return json({ token });
 }
