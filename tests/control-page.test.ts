@@ -4,13 +4,19 @@ import { expect, test } from "bun:test";
 import { controlLayout } from "../control/routes";
 import { adminSourcePage } from "../control/source/index";
 import type { Session } from "../server/identity/index";
+import { readFileSync } from "node:fs";
+import { inlineFunction } from "../server/pages/inline";
+
+/** The Ops page's script as written (client/inline/ops.ts): the page carries it built (server/pages/inline-code.ts). */
+const OPS = readFileSync(new URL("../client/inline/ops.ts", import.meta.url), "utf8");
 
 test("the Ops page on the control Worker sets window.ergaView before its script reads it", async () => {
   const session = { login: "ada", name: "Ada" } as unknown as Session;
   const r = adminSourcePage({ session, admin: true, ready: true, origin: "https://ops.erga.test", layout: controlLayout("https://erga.test") });
   const html = await r.text();
   const set = html.search(/window\.ergaView\s*=/);
-  const read = html.indexOf("const pageView = window.ergaView");
+  const read = html.indexOf(inlineFunction("ops"));
+  expect(OPS).toContain("const pageView = window.ergaView;");
   expect(read).toBeGreaterThan(0);
   expect(set).toBeGreaterThan(0);
   expect(set).toBeLessThan(read);
@@ -41,11 +47,12 @@ test("the Ops page asks for the log and statuses at once, and its live updates h
   // An EventSource holds one of the browser's six HTTP/1.1 connections to the host while the page is open: a few admin
   // tabs, and the page's own requests wait minutes. The events come over a WebSocket.
   expect(html).not.toContain("new EventSource");
-  expect(html).toContain('new WebSocket((location.protocol == "https:" ? "wss://" : "ws://") + location.host + "/api/events")');
+  expect(html).toContain(inlineFunction("ops"));
+  expect(OPS).not.toContain("new EventSource");
+  expect(OPS).toContain('new WebSocket((location.protocol == "https:" ? "wss://" : "ws://") + location.host + "/api/events")');
   // The first render's requests go out as the script starts, before the socket, and the socket's first open asks again for nothing.
-  const start = html.indexOf("\n  load(); loadDeploys(); loadReleases(); loadDomains();\n  listen();");
-  expect(start).toBeGreaterThan(0);
-  expect(html).toContain("events.onopen = () => { if (opened) {");
+  expect(OPS).toContain("\n  load();\n  loadDeploys();\n  loadReleases();\n  loadDomains();\n  listen();");
+  expect(OPS).toContain("events.onopen = () => {\n      if (opened) {");
   // Until the statuses come, a column says it is loading, not "not set up".
   expect(html.match(/id="target-[a-z]+"[^]*?<span class="st"><i><\/i><span>([^<]*)</)?.[1]).toBe("…");
 });

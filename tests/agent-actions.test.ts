@@ -41,7 +41,6 @@ const ROUTE_TABLES = [
 const PAGE_SCRIPTS = [
   ...(readdirSync(ROOT + "client", { recursive: true }) as string[]).filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
   "control/source/page.ts",
-  "control/source/page-script.ts",
   "server/identity/tokens-page.ts",
   "control/install/page.ts",
   "server/admin/pages.ts",
