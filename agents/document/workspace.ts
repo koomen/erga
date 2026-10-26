@@ -58,9 +58,9 @@ export const PACE = {
   showBudgetMs: 600,
   /** The time between steps, and the characters each second (a tag counts as one). */
   stepMs: 33,
-  cps: 300,
+  cps: 600,
   /** A call's time: when its text wouldn't fit at `cps`, the rate rises so it does. */
-  budgetMs: 4000,
+  budgetMs: 2000,
   /** A call that inserts more characters than this applies at once. */
   wholeChars: 20_000,
 };
