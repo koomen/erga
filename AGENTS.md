@@ -118,7 +118,7 @@ For example:
    Reach the data through `Directory` (`server/directory/`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.
 4. **Keep the module boundaries.** Each area of `server/` (directory,
-   identity, documents, pages, home, admin, source) is imported
+   identity, documents, pages, home, admin) is imported
    through its `index.ts`. Only `cloudflare/` and `control/` read the
    Worker's bindings; `server/` and `document/` never import them. The
    browser's bundles may import `shared/`, and of `document/` only

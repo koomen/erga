@@ -115,6 +115,7 @@ health checks and rollbacks work.
       document.ts     class Document: one running document over a Storage (files, room, versions, expiry)
       storage.ts      the Storage a document needs; MemoryStorage for the tests
       host.ts         the document's HTTP API: its routes, the agent sessions, the tabs
+      snapshot.ts     a document's storage as one value: the export, the import and their endpoints
       tabs.ts         the document's tabs, over WebSockets that outlive the open document
       content.ts      what a document room holds: files, assets, authors, folders (the shared Yjs doc)
       pages.ts        a document's files as pages, and their addresses
@@ -127,15 +128,15 @@ health checks and rollbacks work.
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
       app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
-      api.ts          the HTTP API for outside agents: tokens, /api, /mcp, the guide, /tokens, /settings
+      api.ts          the HTTP API for outside agents: tokens, /api, /mcp, the guide
       health.ts       the health check, GET /api/health
       security.ts     the security headers on every answer of the app
       live.ts         open pages follow a redeploy
       directory/      the database: documents, owners and permissions (directory.ts), users, sign-in identities,
                       access rules, settings and their change log, the API keys admins store
-      identity/       who is asking: sessions (session.ts), agent tokens (tokens.ts), sign-in with GitHub or Google
-                      (sign-in.ts, accounts.ts) and its settings (settings.ts, apps.ts), cookies, the staging guard
-                      (admins-only.ts)
+      identity/       who is asking: sessions (session.ts), agent tokens (tokens.ts) and their page (tokens-page.ts:
+                      /tokens, /settings), sign-in with GitHub or Google (sign-in.ts, accounts.ts) and its settings
+                      (settings.ts, apps.ts), cookies, the staging guard (admins-only.ts)
       documents/      the front door for documents: a document's address and access (front-door.ts), the pages origin
                       and its tokens (pages-origin.ts), the viewer (view.ts), new/list/delete/share (make.ts), the
                       front page's document (landing.ts)
@@ -143,48 +144,60 @@ health checks and rollbacks work.
                       own script (reader.ts), the files view (files.ts), the documents list (docs.ts), the start page,
                       the account menu, the templates, and what every page shares (chrome.ts)
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
-      admin/          the admin pages (pages.ts), the layout and style they share, each admin's agent (agent.ts)
-      deploys/        who may use the deploy page (access.ts), the deploys' API (api.ts)
-      source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts), Git itself (git.ts,
-                      http.ts, merge.ts), the GitHub App (github.ts), the Ops page (page.ts)
+      admin/          the admin pages (pages.ts), the layout and style they share
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
-    agents/document/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
-    agents/       what the agents share, and the admin agent
+    agents/       both embedded agents, and what they share
       tools.ts        the tools both agents and the outside API share; actions.ts, the audit of every action and its tool
       models.ts       the models, their prices, the agent's configuration and the scripted test model
       checkpoint.ts   an agent's conversation, kept step by step (chat-store.ts, in a Durable Object's SQLite)
-      admin.ts        the admin agent, with admin-chats.ts
+      document/       the document agent: session.ts (one session per person per document), workspace.ts, tools.ts,
+                      PROMPT.md
+      admin/          the admin agent: agent.ts (its tools, prompt and loop), sessions.ts (one session per admin, and
+                      its routes), panel.ts (the panel's preferences)
     shared/       code the server and the browser bundles both use: the agent's transcript (agent-log.ts), attached
                   files (attach.ts), who did something (attribution.ts), a page's text and its source (manuscript.ts,
-                  page.ts), the room's socket (room-socket.ts), ... The browser's bundles may have shared/, and of
+                  page-html.ts), the room's socket (room-socket.ts), ... The browser's bundles may have shared/, and of
                   document/ only content.ts, pages.ts, merge.ts and api.ts's types: tests/browser-imports.test.ts keeps it so
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
-                  (main.ts and shell/ the editor's shell, frame.ts, editor.ts and page-editor/ the page editor, collab.ts
-                  the room, agent-chat.ts the agent's panel, files.ts, settings.ts, pages-tree.ts, admin-agent.ts, ...)
+      shell/          the editor's shell (page.js): main.ts, the room (collab.ts), the source view, the shell's parts
+      page-editor/    the page editor in the page (frame.js: frame.ts), and what the shell shares with it
+      agent/          the agent panel both the editor and the admin pages use (agent-chat.ts, layout.ts, ...)
+      admin/          the admin pages' scripts (admin-agent.ts, admin-nav.ts, admin-share.ts)
+      pages/          the other pages' scripts: the files view, the settings, the pages tree
+      live/           open pages across a redeploy (live.ts, client.ts, restore.ts)
+      inline/         the scripts a page carries inline (build.ts --inline writes server/pages/inline-scripts.ts)
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
-                  (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the Durable Objects (document-object.ts and objects/:
+                  (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the app's Durable Objects (objects/:
                   each gives its logic in server/, agents/ or document/ storage, alarms and sockets, and decides
-                  nothing), the dev server's routes (dev.ts, dev-entry.ts), the app's own deploy routes
-                  (branch-deploys.ts) and /deploy's (deploy-routes.ts, deploy-session.ts)
+                  nothing), the dev server's routes (dev.ts, dev-entry.ts)
     control/      the control Worker: Erga's repository and Git endpoint, the deploy pipeline, the Ops page and its
                   sign-in, and the build container (builder/), apart from the app, so a broken app never takes the
                   way to fix it down (index.ts the entry, routes.ts, platform.ts, wrangler.jsonc: its bindings). The app reaches it
                   over a service binding; locally the app hosts its routes.
-    deploy/       the deploy pipeline (pipeline.ts, and control.ts for the control Worker's own deploy), its Cloudflare
-                  credential (credential.ts: an OAuth grant), branch deploys (branches.ts), the release build
-                  (release.ts) and the release store (releases.ts), installs in other accounts (install.ts, forks.ts),
-                  the targets (targets.json), the setup runbook (setup.ts), the settings a deploy locks
-                  (locked-settings.ts), and the mock Cloudflare the tests use
+      source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts) and its Durable
+                      Object (source-host.ts), Git itself (git.ts, http.ts, merge.ts), the GitHub App (github.ts),
+                      the Ops page (page.ts)
+      deploys/        the deploy pipeline (pipeline.ts; control-worker.ts for the control Worker's own deploy), its
+                      Cloudflare credential (credential.ts: an OAuth grant), branch deploys (branches.ts, in
+                      pipeline-object.ts), the release store (releases.ts), the deploys' API (api.ts), and the app's
+                      own deploy routes (app-routes.ts)
+      install/        /deploy: installs in other accounts (install.ts, forks.ts, the page, its routes and session)
+      cloudflare/     what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
+    deploy/       what a person runs on a machine: a deploy (run.ts), the release build (release.ts), the setup
+                  runbook (setup.ts), the targets (targets.json, targets.ts), the settings a deploy locks
+                  (locked-settings.ts)
     dev/          local development: start.ts (`bun start`), the Vite plugin, live reload, the formatter on changed
-                  lines (format.ts, `bun run format`), a Git server and a mock GitHub and Google for tests, and a
-                  document's files on disk as its Storage (disk-storage.ts, over the mirror the plugin serves)
+                  lines (format.ts, `bun run format`), a Git server, a mock GitHub, Google and Cloudflare
+                  (mock-cloudflare.ts) for tests, and a document's files on disk as its Storage (disk-storage.ts,
+                  over the mirror the plugin serves)
     assets/       files the server ships: logo/, landing/ (the first homepage) and templates/ (new documents)
     docs/         self-host.md (deploy your own Erga), operations.md (how a deployment deploys), the screenshot above
-    tests/        the unit tests (bun test); e2e/ the end-to-end tests (e2e/smoke, e2e/full) and benchmarks (e2e/bench)
+    tests/        the unit tests (bun test, no browser), their helpers in tests/helpers/; e2e/ the browser tests
+                  (e2e/smoke, e2e/full), benchmarks (e2e/bench) and their helpers (e2e/helpers/)
     .github/      the tests on each pull request and push (workflows/test.yml)
 
 Each area of `server/` (directory, identity, documents, pages, home,
-admin, source) is imported through its `index.ts`, its interface. Only
+admin) is imported through its `index.ts`, its interface. Only
 `cloudflare/` and `control/` read the Worker's bindings; `server/` and
 `document/` never import them. The configs at the root are the ones their
 tools look for there: `cloudflare.config.ts` (the Worker and its bindings),
