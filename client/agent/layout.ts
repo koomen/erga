@@ -160,10 +160,10 @@ export function save(storage: Pick<Storage, "setItem"> | null, layout: Layout) {
  * same grip and drag as the editor's agent, in a grid of two, the agent and
  * the board's column, either way round. Kept in this browser (PANE_KEY).
  */
-export const PANE_KEY = "erga:factory-layout:v1"; // its old name, so a layout from before stays
+export const PANE_KEY = "erga:admin-pane:v1";
 export interface PaneLayout { side: Side; width: number }
 export const PANE_DEFAULT: PaneLayout = { side: "left", width: AGENT_DEFAULT };
-/** The narrowest the board and the dashboard get while the agent is resized, and the gap between them and the agent. */
+/** The narrowest the board and the Ops page get while the agent is resized, and the gap between them and the agent. */
 export const PANES_MIN = 480, PANE_GAP = 20;
 
 export function normalizePane(raw: unknown): PaneLayout {

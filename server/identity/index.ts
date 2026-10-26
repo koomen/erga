@@ -8,6 +8,7 @@ export {
   finishGoogleSignIn,
   finishSignIn,
   githubAccounts,
+  googleToken,
   signOut,
   startGoogleSignIn,
   startSignIn,
@@ -23,6 +24,7 @@ export { cookies, setCookie } from "./cookies.ts";
 export { REQUEST_MINUTES, SCOPES, ScopeError, SHARE_ADMIN_HOURS, Tokens, type AgentToken, type Scope } from "./tokens.ts";
 export {
   AuthError,
+  googleEndpoints,
   PROVIDERS,
   type AppValues,
   type AuthOps,
@@ -31,5 +33,4 @@ export {
   type AuthStatus,
   type AuthStorage,
   type CheckState,
-  type SignInChange,
 } from "./apps.ts";

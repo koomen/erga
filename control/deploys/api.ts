@@ -31,11 +31,36 @@ import type { DomainsView } from "./domains.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../../server/platform.ts";
 import { whoOf } from "../../server/platform.ts";
-import type { DashboardDeploys } from "../../agents/admin/sessions.ts";
 import { json } from "../../shared/http";
 
+/** This server's branch deploys, as the admin agent's Ops page tools ask them (the pipeline's object answers, by RPC). */
+export interface OpsDeploys {
+  status(history?: number): Promise<object>;
+  logOf(target: string, deploy?: string): Promise<object | null>;
+  redeploy(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
+  redeployWith(name: string, trigger: string, o: { fresh?: boolean }): Promise<{ ok: boolean; status?: unknown; error?: string }>;
+  /** Back to the Worker version before the target's live deploy (its restore point). */
+  rollback(name: string, trigger?: string): Promise<{ ok: boolean; status?: unknown; error?: string }>;
+  /** The release store (control/deploys/releases.ts): both channels (null: no store). */
+  releases(): Promise<object | null>;
+  /** Each environment's domains, and one added or removed (control/deploys/branches.ts). */
+  domains(): Promise<object>;
+  addDomain(target: string, hostname: string, by: string): Promise<object>;
+  removeDomain(target: string, hostname: string, by: string): Promise<object>;
+  /** The control Worker's Cloudflare credential (control/deploys/credential.ts): its status, and revoked (the Ops page's card). */
+  credentialStatus(): Promise<CredentialStatus>;
+  disconnectCredential(): Promise<void>;
+}
+
+declare module "../../server/platform.ts" {
+  interface Platform {
+    /** The deploys: the pipeline's object (the control Worker's, over its binding, on erga.dev). */
+    deploys: OpsDeploys;
+  }
+}
+
 /** The pipeline's object, as these routes need it: the Ops page's calls, a target's history, and the event stream. */
-export interface DeploysObject extends DashboardDeploys {
+export interface DeploysObject extends OpsDeploys {
   historyOf(name: string, limit?: number): Promise<object[] | null>;
   /** The Cloudflare credential (control/deploys/credential.ts): its status; a consent's grant kept; forgotten (the control Worker's /install). */
   credentialStatus(): Promise<CredentialStatus>;

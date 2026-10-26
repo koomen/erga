@@ -56,6 +56,13 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
 
+declare module "../server/platform.ts" {
+  interface Platform {
+    /** The agents' settings as they are now: the Anthropic key an admin stored, else the deploy's; or why there's none. Read at each turn. */
+    agentSettings(): Promise<AgentSettings>;
+  }
+}
+
 /** What the agent pane says when the stored key doesn't open on this server. */
 export const UNREADABLE_KEY = "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again in the admin agent's panel";
 

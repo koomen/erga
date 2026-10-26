@@ -1,5 +1,5 @@
 // The admin agent's own tools, beside the admin tools of agents/tools.ts: the
-// Ops page's (`dashboardTools`: staging and main, production's deploy, GitHub,
+// Ops page's (`opsTools`: staging and main, production's deploy, GitHub,
 // the deploys and their logs, releases, domains, the homepage's deploy, and the
 // admin's own agent tokens) and read-only reads of Erga's own source
 // (`sourceTools`). agents/admin/sessions.ts gives them to the agent with
@@ -9,8 +9,8 @@ import { Type, type TObject } from "typebox";
 import type { Tool } from "../tools";
 import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
 
-/** What the dashboard tools do, as the admin: the source and deploys dashboard on /admin/ops, and agent tokens. */
-export interface DashboardOps {
+/** What the Ops page tools do, as the admin: the source and deploys on /admin/ops, and agent tokens. */
+export interface OpsCalls {
   branches(): Promise<object>;
   /** main to staging's head (or to that staging commit): production deploys it. */
   release(commit?: string): Promise<object>;
@@ -57,7 +57,7 @@ const times = (o: object) =>
  * (/settings: read and revoke; made, and an agent's request approved, only there). They act as the admin: the
  * change log and the deploys' triggers name them.
  */
-export function dashboardTools(ops: DashboardOps): Tool[] {
+export function opsTools(ops: OpsCalls): Tool[] {
   const tool = (
     name: string,
     label: string,
@@ -70,14 +70,14 @@ export function dashboardTools(ops: DashboardOps): Tool[] {
     tool(
       "list_branches",
       "Read staging and main",
-      "The source dashboard's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), GitHub's status (github), and the merge waiting on conflicts, if one (conflict: from upstream or from GitHub).",
+      "The Ops page's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), GitHub's status (github), and the merge waiting on conflicts, if one (conflict: from upstream or from GitHub).",
       Type.Object({}),
       () => ops.branches()
     ),
     tool(
       "deploy_production",
       "Deploy production",
-      "Moves main forward to staging's head (or to an earlier staging commit), as the dashboard's merge to main does: production deploys it. main only follows staging. The change log (/admin/changes) says who did it, with the commits it released. Use it only when the admin asks in this conversation to release or deploy production.",
+      "Moves main forward to staging's head (or to an earlier staging commit), as the Ops page's merge to main does: production deploys it. main only follows staging. The change log (/admin/changes) says who did it, with the commits it released. Use it only when the admin asks in this conversation to release or deploy production.",
       Type.Object({
         commit: Type.Optional(Type.String({ description: "A staging commit's sha, to release up to it only (default: staging's head)" })),
       }),
@@ -128,7 +128,7 @@ export function dashboardTools(ops: DashboardOps): Tool[] {
     tool(
       "deploy_log",
       "Read a deploy's log",
-      "A deploy's log, as the dashboard shows it: the target's latest deploy, or the one named. The last 200 lines unless you ask for more (up to 1000).",
+      "A deploy's log, as the Ops page shows it: the target's latest deploy, or the one named. The last 200 lines unless you ask for more (up to 1000).",
       Type.Object({
         target: TARGET,
         deploy: Type.Optional(Type.String({ description: "The deploy's id (list_deploys); default: the latest" })),
@@ -147,7 +147,7 @@ export function dashboardTools(ops: DashboardOps): Tool[] {
     tool(
       "redeploy",
       "Redeploy a target",
-      "Deploys a target's branch head again now (staging: staging; production: main), as the dashboard's Redeploy does. The deploy says who asked for it. Staging's copy of production's data is frozen: a deploy keeps it (new migrations run on it in place); fresh_data: true makes this redeploy of staging copy production's data afresh, the only way to refresh it.",
+      "Deploys a target's branch head again now (staging: staging; production: main), as the Ops page's Redeploy does. The deploy says who asked for it. Staging's copy of production's data is frozen: a deploy keeps it (new migrations run on it in place); fresh_data: true makes this redeploy of staging copy production's data afresh, the only way to refresh it.",
       Type.Object({
         target: TARGET,
         fresh_data: Type.Optional(
@@ -159,7 +159,7 @@ export function dashboardTools(ops: DashboardOps): Tool[] {
     tool(
       "rollback",
       "Roll a target back",
-      "Puts back the version a target ran before its live deploy, as the dashboard's Roll back does: one deployment of that Worker version, in seconds, with no build. The database keeps its schema (migrations only add). Only when the admin asks in this conversation to roll back; list_deploys shows which deploy is live and what it would go back to (restore).",
+      "Puts back the version a target ran before its live deploy, as the Ops page's Roll back does: one deployment of that Worker version, in seconds, with no build. The database keeps its schema (migrations only add). Only when the admin asks in this conversation to roll back; list_deploys shows which deploy is live and what it would go back to (restore).",
       Type.Object({ target: TARGET }),
       (a) => ops.rollback(String(a.target ?? ""))
     ),

@@ -56,7 +56,7 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   resolveUpdate(origin: string, who: Actor, path: string, content: string | null) { return this.source.resolveUpdate(origin, who, path, content); }
   finishUpdate(origin: string, who: Actor) { return this.source.finishUpdate(origin, who); }
   abandonUpdate(origin: string) { return this.source.abandonUpdate(origin); }
-  // The deploys (agents/admin/sessions.ts DashboardDeploys).
+  // The deploys (control/deploys/api.ts OpsDeploys).
   status(history?: number) { return this.deploys.status(history); }
   logOf(target: string, deploy?: string) { return this.deploys.logOf(target, deploy); }
   historyOf(target: string, limit?: number) { return this.deploys.historyOf(target, limit); }

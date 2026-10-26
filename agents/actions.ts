@@ -2,7 +2,7 @@
 // domain, so they can ask for anything there in words.
 //
 //   the admin agent     (agents/admin/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
-//                       sign-in (Authentication), the change log, the users, the dashboard of source and deploys (Ops), the
+//                       sign-in (Authentication), the change log, the users, the Ops page (source and deploys), the
 //                       homepage's deploy, and the admin's own agent tokens (/settings)
 //   the document agent  (agents/document/session.ts, with agents/tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
@@ -150,7 +150,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/admin/agent/prefs", domain: "none", action: "The admin agent's panel, as the admin left it", exempt: PANEL },
   { route: "PUT /api/admin/agent/prefs", domain: "none", action: "Keep the admin agent's panel layout", exempt: PANEL },
 
-  // ------------------------------------------------------------ /admin/ops: the dashboard of source and deploys
+  // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys
   { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "list_source" },
   { route: "GET /git/tree/<ref>/<path>", domain: "admin", action: "Read a folder or a file of Erga's source (the public page, for anyone)", tool: "read_source" },
   { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main, GitHub's status and any merge waiting on conflicts (Ops)", tool: "list_branches" },
@@ -195,7 +195,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /install/disconnect", domain: "admin", action: "Disconnect: revoke and forget the control Worker's Cloudflare credential (/install)", tool: "disconnect_deploy_credential" },
   { route: "POST /api/deploys/credential/disconnect", domain: "admin", action: "Disconnect the control Worker's Cloudflare credential (the Ops page's Cloudflare card)", tool: "disconnect_deploy_credential" },
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
-  { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
+  { route: "GET /api/events", domain: "none", action: "The Ops page's live updates", exempt: STREAM },
   { route: "GET /api/release", domain: "none", action: "An open page asks whether its code is still the server's (after a redeploy)", exempt: "the page's own check, not a person's action" },
   { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },

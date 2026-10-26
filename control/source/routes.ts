@@ -85,6 +85,13 @@ export interface SourceService {
   remote(scope: "read" | "write", origin?: string): Promise<RepoAccess | null>;
 }
 
+declare module "../../server/platform.ts" {
+  interface Platform {
+    /** Erga's own repository, where this server hosts it; null where it doesn't. */
+    source: SourceService | null;
+  }
+}
+
 const notSetUp =
   "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and deploy/import-source.ts fills it.";
 

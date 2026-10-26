@@ -50,6 +50,7 @@
 
 import type { Act } from "../../shared/attribution.ts";
 import { base64, fromBase64, randomBytes, sha256 } from "../../shared/bytes.ts";
+import type { SignInChange } from "../directory/index.ts";
 
 /** The sign-in providers. */
 export const PROVIDERS = {
@@ -322,15 +323,6 @@ export interface AppContext {
   log(by: Act, change: SignInChange): Promise<void>;
 }
 
-/** A change log line. */
-export interface SignInChange {
-  provider: Provider;
-  /** The server whose app changed ("" for one that isn't a deploy target). */
-  target: string;
-  event: "set" | "pending" | "tested" | "discarded" | "cleared" | "on" | "off";
-  /** The client ID it changed to (public), if any. */
-  clientId?: string | null;
-}
 
 /** The values the server signs in with now: the page's while they open, else the deploy's. */
 export async function inUse(c: Pick<AppContext, "apps" | "provider" | "deploy">): Promise<AppValues & { source: "page" | "deploy" }> {

@@ -165,7 +165,7 @@ git push erga HEAD:staging</code></pre>
 `;
 }
 
-/** /admin/ops: the source and deploy dashboard (admins). */
+/** /admin/ops: the Ops page, source and deploys (admins). */
 export function adminSourcePage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return (c.layout ?? adminResponse)({ session: c.session, title: "Ops", here: "ops", wide: true, body: `

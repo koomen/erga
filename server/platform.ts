@@ -6,9 +6,6 @@
 
 import type { AgentToken, AppValues, AuthStorage, Tokens } from "./identity/index.ts";
 import type { HomeObject } from "./home/index.ts";
-import type { SourceService } from "../control/source/index.ts";
-import type { AdminAgentObject, DashboardDeploys } from "../agents/admin/sessions.ts";
-import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/access.ts";
 import type { RestoreResult, VersionsState } from "../document/versions.ts";
@@ -62,7 +59,12 @@ export interface Listed {
   kind?: DocKind;
 }
 
-/** What the front door needs from the platform it runs on. */
+/**
+ * What the front door needs from the platform it runs on. The layers above server/ add the parts that are theirs, each
+ * where it is defined (a `declare module` of this file): control/ adds `source` (control/source/routes.ts) and
+ * `deploys` (control/deploys/api.ts); agents/ adds `agentSettings` (agents/models.ts) and `adminAgent`
+ * (agents/admin/sessions.ts). cloudflare/platform.ts builds the whole of it.
+ */
 export interface Platform {
   /** Who's asking, if anyone: a signed-in person, or an agent with their token (server/identity/session.ts). */
   sessionOf(request: Request): Promise<Session | null>;
@@ -134,20 +136,12 @@ export interface Platform {
     /** What encrypts the secrets admins store (sign-in's secret, the API keys); null where the server can't keep them. */
     encryptionKey: string | null;
   };
-  /** Erga's own repository (control/source), where this server hosts it; null where it doesn't. */
-  source: SourceService | null;
-  /** The deploys, as the admin agent's Ops page tools ask them: the pipeline's object (the control Worker's, over its binding, on erga.dev). */
-  deploys: DashboardDeploys;
   /**
    * The control Worker (control/), where the repository, the Ops page and the deploys live, when it's apart from
    * this server: its address. The app sends admins there for those pages, and answers their routes with a redirect.
    * Absent in local development and on a server /deploy made, where this server hosts them itself.
    */
   control?: { url: string };
-  /** The admins' agents (agents/admin/sessions.ts), one object per server. */
-  adminAgent: AdminAgentObject;
-  /** The agents' settings as they are now: the Anthropic key an admin stored, else the deploy's; or why there's none. Read at each turn. */
-  agentSettings(): Promise<AgentConfig | { missing: string }>;
   /** The homepage's deploys and its snapshot (server/home/deploys.ts), one object per server. */
   home: HomeObject;
   /** What runs at the edge, around a request. */
