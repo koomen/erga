@@ -37,7 +37,7 @@ import { ALPHABET } from "../server/directory/index.ts";
 import { ignored } from "../document/pages.ts";
 import { gitServers } from "./git-server.ts";
 import { mockGithub } from "./github-mock.ts";
-import type { FromDisk, ToDisk } from "./mirror.ts";
+import type { FromDisk, ToDisk } from "../document/disk.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
 import { sleep } from "../shared/time.ts";
 

@@ -12,7 +12,7 @@
 // the object awake while tabs only sit open.
 //
 // The dev server's link to a document on disk (/api/mirror) is here too:
-// the files then stay on disk, reached over that WebSocket (dev/disk-storage.ts).
+// the files then stay on disk, reached over that WebSocket (document/disk.ts).
 // It's an ordinary socket: a document on disk never sleeps.
 
 import { DurableObject } from "cloudflare:workers";
@@ -33,7 +33,7 @@ import { directoryOf } from "../d1";
 import { forgetDecisions } from "../../server/documents/index.ts";
 import { platform } from "../platform";
 import { CALLS, DeployGate, DEPLOYED_HEADER, deployedOf, STALE, staleResponse, type Call } from "./document-stub";
-import { DiskLink } from "../../dev/disk-storage";
+import { DiskLink } from "../../document/disk";
 import { homeChanged } from "../current-files";
 import type { Env } from "../env";
 import { blobsOf } from "../blobs";

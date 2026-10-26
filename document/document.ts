@@ -138,7 +138,7 @@ export interface DocumentDeps {
   agents: DocumentAgents;
   /** The homepage forgets a deleted document; and its next deploy is scheduled when the homepage has a new version. */
   home: { forget: (docId: string) => Promise<void>; changed: (docId: string) => Promise<void> };
-  /** Local development: this document's storage with its files on disk (dev/disk-storage.ts), for a document that is one. */
+  /** Local development: this document's storage with its files on disk (document/disk.ts), for a document that is one. */
   disk?: { storage: (only: string | null) => Storage };
   /**
    * When versions are cut: how long edits pause first, and the longest burst
