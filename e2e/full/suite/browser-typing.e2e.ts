@@ -28,6 +28,13 @@ browserTest(FILE, "your other tabs' carets aren't drawn, and someone with severa
   const a1 = await openAs(tab, ctx, d, "Ada"), a2 = await openAs(tab, ctx, d, "Ada"), b = await openAs(tab, ctx, d, "Bo");
   await b.clickEnd("li:first-child");
   await a1.clickEnd("h1");
+  // Her first tab's caret reaches the room before she uses the second (on a busy machine, the two could arrive the other way round).
+  await until(
+    async () => (await peerNames(b)) == "Ada" && (await caretIn(b, "h1")),
+    5000,
+    "Bo sees Ada's caret from her first tab",
+    async () => peerNames(b)
+  );
   await a2.clickEnd("figcaption");
   await until(async () => (await peerNames(b)) == "Ada" && (await caretIn(b, "figcaption")), 5000, "Bo sees one Ada caret, from the tab she used last", async () => peerNames(b));
   for (const [t, who] of [[a1, "Ada's first tab"], [a2, "Ada's second tab"]] as const) {
