@@ -16,6 +16,7 @@
 
 import type { Platform } from "./platform.ts";
 import { assetManifest, scriptTag } from "./pages/index.ts";
+import { hex, sha256 } from "../shared/bytes.ts";
 
 export const CHECK_HEADER = "x-erga-check";
 export const BUILD_HEADER = "x-erga-build";
@@ -37,8 +38,7 @@ export async function pageBuild(html: string): Promise<string> {
     const src = /\bsrc\s*=\s*["']?([^"'\s>]+)/i.exec(m[1])?.[1];
     code += src ? `\u0000src:${src}` : `\u0000${m[2]}`;
   }
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(code)));
-  return [...bytes.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hex((await sha256(code)).slice(0, 8));
 }
 
 /** A page of the site's own, with live.js and its build; or, asked with X-Erga-Check, only its build. */

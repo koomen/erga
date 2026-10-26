@@ -64,7 +64,6 @@ import {
   CONTROL_OAUTH_SCOPES,
   exchangeCode,
   pkce,
-  randomToken,
   sealKeyFrom,
   type CredentialStatus,
 } from "./deploys/credential.ts";
@@ -87,7 +86,6 @@ import {
   installUrl,
   linkOf,
   openRelay,
-  randomNonce,
   relayNonce,
   relayOrigin,
   relaySignature,
@@ -106,6 +104,7 @@ import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW
 import { accountHtml, accountOf } from "../server/pages/account-menu.ts";
 import { appPage, crumbs, page } from "../server/pages/index.ts";
 import { esc, jsonInScript } from "../shared/html.ts";
+import { base64url, fromBase64url, randomToken } from "../shared/bytes.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
 import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
 
@@ -507,7 +506,7 @@ async function githubConnectRoutes(request: Request, url: URL, c: Control, sessi
   if (path == "/github/connect" && request.method == "GET") {
     const popup = url.searchParams.get("popup") == "1";
     // An install's consent names this origin for erga.dev's callback (the App's one) to relay it here.
-    const state = c.oauth.relay ? relayState(url.origin, randomNonce()) : randomNonce();
+    const state = c.oauth.relay ? relayState(url.origin, randomToken(18)) : randomToken(18);
     const consent: GithubConsent = { state, popup };
     return new Response(null, { status: 302, headers: { Location: installUrl(app, state), "Set-Cookie": githubCookie(b64u(JSON.stringify(consent)), 600), "Cache-Control": "no-store" } });
   }
@@ -565,8 +564,8 @@ const INSTALL_COOKIE = "erga_install";
 /** What the consent's popup posts to the page that opened it (the Ops page, here or on the app), and on CONSENT_CHANNEL. */
 export const CONSENT_MESSAGE = "erga-deploy-credential";
 /** An install's consent state: its control Worker's origin (base64url), a dot, a random part (control/source/github.ts relayState; relayOrigin reads the origin back). */
-const b64u = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const unb64u = (s: string) => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+const b64u = (s: string) => base64url(new TextEncoder().encode(s));
+const unb64u = (s: string) => new TextDecoder().decode(fromBase64url(s));
 export { relayOrigin };
 const installCookie = (value: string, maxAge: number) => `${INSTALL_COOKIE}=${value}; Max-Age=${maxAge}; Path=/install; HttpOnly; Secure; SameSite=Lax`;
 const cookieOf = (request: Request, name: string) => request.headers.get("cookie")?.split(/;\s*/).map((c) => c.split("=")).find(([k]) => k == name)?.slice(1).join("=") ?? "";

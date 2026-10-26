@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { Cloudflare, DeployError, type Fetch } from "./cloudflare-api";
 import type { Release } from "./release-format";
 import type { RestorePoint, Target } from "./pipeline";
+import { base64, fromBase64url, sha256Hex } from "../../shared/bytes";
 
 /** The tag the deploy puts on the Workers it makes, so a second run knows them as its own. */
 export const WORKER_TAG = "erga-deploy";
@@ -268,8 +269,7 @@ export async function importD1(cf: Cloudflare, acc: string, dbId: string, name: 
 /** The static assets' 32-hex hash, as Cloudflare's direct upload takes it: SHA-256 of the base64 contents and the extension. */
 export async function assetHash(path: string, bytes: Uint8Array): Promise<string> {
   const ext = /\.([^./]+)$/.exec(path)?.[1] ?? "";
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(b64(bytes) + ext)));
-  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  return (await sha256Hex(base64(bytes) + ext)).slice(0, 32);
 }
 
 const TYPES: Record<string, string> = { html: "text/html", js: "application/javascript", css: "text/css", json: "application/json", svg: "image/svg+xml", woff2: "font/woff2", woff: "font/woff", png: "image/png", ico: "image/x-icon", txt: "text/plain", md: "text/markdown", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", pdf: "application/pdf", xml: "application/xml", mp4: "video/mp4", webmanifest: "application/manifest+json" };
@@ -311,8 +311,13 @@ export async function uploadAssets(cf: Cloudflare, acc: string, worker: string, 
           done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload/${bucket[0]}`, `upload ${path}`, new Blob([new Uint8Array(assets[path])], { type: typeOf(path) }), { bearer: session.jwt });
         } else {
           const form = new FormData();
-          for (const hash of bucket) { const path = pathOf(hash); form.append(hash, new File([b64(assets[path])], hash, { type: typeOf(path) })); }
-          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload?base64=true`, `upload ${label}`, form, { bearer: session.jwt });
+          for (const hash of bucket) {
+            const path = pathOf(hash);
+            form.append(hash, new File([base64(assets[path])], hash, { type: typeOf(path) }));
+          }
+          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload?base64=true`, `upload ${label}`, form, {
+            bearer: session.jwt,
+          });
         }
         if (done?.jwt) jwt = done.jwt;
         break;
@@ -328,7 +333,11 @@ export async function uploadAssets(cf: Cloudflare, acc: string, worker: string, 
 
 /** A JWT's claims, unchecked (only to read how Cloudflare wants the files sent). */
 function jwtClaims(jwt: string): Record<string, unknown> {
-  try { return JSON.parse(atob(jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { return {}; }
+  try {
+    return JSON.parse(new TextDecoder().decode(fromBase64url(jwt.split(".")[1])));
+  } catch {
+    return {};
+  }
 }
 
 /** One statement (or a few, separated by semicolons) on a D1 database, through the API: the first statement's rows. */
@@ -365,12 +374,6 @@ export async function d1(
   );
   return answer?.[0]?.results ?? [];
 }
-
-export const b64 = (bytes: Uint8Array) => {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-};
 
 /** MD5, as hex: the checksum D1's import takes (etag). */
 const md5hex = (text: string) => createHash("md5").update(text).digest("hex");

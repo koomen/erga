@@ -31,6 +31,7 @@ import { deployPage, mockConsentPage } from "./page";
 import { mayDeploy } from "../deploys/access";
 import { page } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
+import { base64url, randomToken, sha256 } from "../../shared/bytes.ts";
 import { whoOf, type Platform } from "../../server/platform";
 import { cookieName, cookies } from "../../server/identity/index.ts";
 import type { Env } from "../../cloudflare/env";
@@ -75,8 +76,9 @@ export async function deployDoor(request: Request, host: DeployHost): Promise<Re
   // OAuth: to Cloudflare (or the pretend consent page), and back with a code, exchanged for a token with the PKCE verifier.
   if (path == "/deploy/auth/cloudflare" && request.method == "GET") {
     if (!oauth) return back("This server has no Cloudflare OAuth client: use an API token instead.");
-    const state = rand(16), verifier = rand(32);
-    const challenge = b64u(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+    const state = randomToken(16),
+      verifier = randomToken(32);
+    const challenge = base64url(await sha256(verifier));
     const to = new URL(mock ? `${url.origin}/deploy/mock/consent` : OAUTH.authorize);
     for (const [k, v] of Object.entries({ response_type: "code", client_id: env.CLOUDFLARE_OAUTH_CLIENT_ID || "mock", redirect_uri: callback, scope: env.CLOUDFLARE_OAUTH_SCOPES?.trim() || DEFAULT_OAUTH_SCOPES, state, code_challenge: challenge, code_challenge_method: "S256" })) to.searchParams.set(k, v);
     return new Response(null, { status: 302, headers: { Location: to.toString(), "Set-Cookie": cookie(request, OAUTH_COOKIE, `${state}.${verifier}`, 600, "/") } });
@@ -159,7 +161,8 @@ const back = (error: string, ...setCookies: string[]) => {
 
 /** A new session: its Durable Object's name, the key the token is sealed with, and the cookie that carries both halves. */
 async function newSession(request: Request, env: DeployHost["env"]) {
-  const id = rand(18), half = rand(32);
+  const id = randomToken(18),
+    half = randomToken(32);
   return { id, key: await sealKey(env, half), cookie: cookie(request, COOKIE, `${id}.${half}`, 2 * 60 * 60, "/deploy") };
 }
 async function sessionOf(request: Request, env: DeployHost["env"]): Promise<{ id: string; key: string } | null> {
@@ -170,10 +173,8 @@ async function sessionOf(request: Request, env: DeployHost["env"]): Promise<{ id
 /** The AES key: an HMAC of the browser's half with the server's secret, so neither alone opens the token. */
 async function sealKey(env: DeployHost["env"], half: string): Promise<string> {
   const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-deploy:${env.SESSION_SECRET}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return b64u(new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(half))));
+  return base64url(new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(half))));
 }
 
-const rand = (n: number) => b64u(crypto.getRandomValues(new Uint8Array(n)));
-const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const cookie = (request: Request, name: string, value: string, maxAge: number, path: string) =>
   `${cookieName(request, name)}=${value}; Path=${path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;

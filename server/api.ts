@@ -45,6 +45,7 @@ import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } fr
 import { cleanRel } from "../document/host";
 import { authOps, expiryOf, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { TEMPLATES, templateById } from "./pages/index.ts";
+import { base64, fromBase64 } from "../shared/bytes";
 
 // ---------------------------------------------------------------- the registry
 
@@ -322,7 +323,11 @@ function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
     let data: string | Uint8Array;
     if (typeof v == "string") data = v;
     else if (v && typeof v == "object" && typeof (v as { base64?: unknown }).base64 == "string") {
-      try { data = Uint8Array.from(atob((v as { base64: string }).base64.replace(/\s+/g, "")), (c) => c.charCodeAt(0)); } catch { throw new ToolError(`${path}: that isn't base64.`); }
+      try {
+        data = fromBase64((v as { base64: string }).base64.replace(/\s+/g, ""));
+      } catch {
+        throw new ToolError(`${path}: that isn't base64.`);
+      }
     } else if (v && typeof v == "object" && typeof (v as { text?: unknown }).text == "string") data = (v as { text: string }).text;
     else throw new ToolError(`${path}: give its text as a string, or {"base64": "..."}.`);
     addFile(out, rel, data, () => total, (n) => { total = n; });
@@ -494,13 +499,26 @@ async function publish(request: Request, ctx: ToolContext): Promise<object> {
       }
       const file = value as File;
       const p = key == "file" || key == "files" || key == "files[]" ? file.name : key;
-      addFile(files, cleanPath(p), new Uint8Array(await file.arrayBuffer()), () => total, (n) => { total = n; });
+      addFile(
+        files,
+        cleanPath(p),
+        new Uint8Array(await file.arrayBuffer()),
+        () => total,
+        (n) => {
+          total = n;
+        }
+      );
     }
     // Text files as text, so they're edited as text.
-    for (const [p, data] of Object.entries(files)) if (typeof data != "string" && /\.(html?|md|markdown|css|m?js|json|svg|txt|xml|csv)$/i.test(p)) {
-      try { files[p] = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(data); } catch { /* left as bytes */ }
-    }
-    args.files = Object.fromEntries(Object.entries(files).map(([p, d]) => [p, typeof d == "string" ? d : { base64: toBase64(d) }]));
+    for (const [p, data] of Object.entries(files))
+      if (typeof data != "string" && /\.(html?|md|markdown|css|m?js|json|svg|txt|xml|csv)$/i.test(p)) {
+        try {
+          files[p] = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(data);
+        } catch {
+          /* left as bytes */
+        }
+      }
+    args.files = Object.fromEntries(Object.entries(files).map(([p, d]) => [p, typeof d == "string" ? d : { base64: base64(d) }]));
   } else {
     const body = await request.json().catch(() => null);
     if (!body || typeof body != "object" || Array.isArray(body)) throw new ToolError("Send the files as multipart/form-data, or JSON: {\"files\": {\"index.html\": \"...\"}, \"title\": \"...\"}.");
@@ -513,12 +531,6 @@ async function publish(request: Request, ctx: ToolContext): Promise<object> {
   if (!args.files || !Object.keys(args.files as object).length) throw new ToolError("No files: send at least the page (index.html).");
   const content = await runTool("create_document", args, ctx);
   return { created: true, ...JSON.parse((content[0] as { text: string }).text) };
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
 }
 
 // ---------------------------------------------------------------- MCP

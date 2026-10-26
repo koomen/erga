@@ -30,6 +30,7 @@
 
 import type { Directory, Sql } from "../directory/index.ts";
 import { changeLogEntry } from "../../shared/attribution";
+import { base64url, randomString, randomToken, sha256Hex } from "../../shared/bytes.ts";
 
 
 /** A token as its person's list shows it (never the token itself). */
@@ -84,12 +85,6 @@ const TOUCH_MS = 5 * 60 * 1000;
 const ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 
-const random = (n: number, alphabet: string) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => alphabet[b % alphabet.length]).join("");
-const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-async function sha256(s: string): Promise<string> {
-  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
-  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
-}
 const clipLabel = (s: string | null | undefined, fallback: string) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || fallback;
 
 interface Row { id: string; login: string; name: string; label: string; kind: string; test_by: string | null; scope: string; doc_id: string | null; expires: number | null; created: number; last_used: number | null }
@@ -113,7 +108,7 @@ export class Tokens {
   /** The token with this id: an HMAC of it with the server's secret. */
   private async tokenFor(id: string): Promise<string> {
     const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-agent-token:${this.secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    return TOKEN_PREFIX + b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id))));
+    return TOKEN_PREFIX + base64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id))));
   }
 
   /**
@@ -123,7 +118,7 @@ export class Tokens {
   private async ownToken(id: string): Promise<string | null> {
     const token = await this.tokenFor(id);
     const [row] = await this.sql.all<{ hash: string }>("SELECT hash FROM agent_tokens WHERE id = ?1", id);
-    return row?.hash == (await sha256(token)) ? token : null;
+    return row?.hash == (await sha256Hex(token)) ? token : null;
   }
 
   /**
@@ -147,12 +142,33 @@ export class Tokens {
   async mint(who: Who, label: string, grant: Grant, kind: "agent" | "share" = "agent"): Promise<{ token: string; info: AgentToken }> {
     const { scope, docId, expires } = await this.check(who, grant);
     const info: AgentToken = {
-      id: random(12, ID_ALPHABET), login: who.login.toLowerCase(), name: who.name || who.login, label: clipLabel(label, "Agent"), kind,
-      testBy: who.testBy?.toLowerCase() ?? null, scope, docId, expires, created: Date.now(), lastUsed: null,
+      id: randomString(12, ID_ALPHABET),
+      login: who.login.toLowerCase(),
+      name: who.name || who.login,
+      label: clipLabel(label, "Agent"),
+      kind,
+      testBy: who.testBy?.toLowerCase() ?? null,
+      scope,
+      docId,
+      expires,
+      created: Date.now(),
+      lastUsed: null,
     };
     const token = await this.tokenFor(info.id);
-    await this.sql.run("INSERT INTO agent_tokens (id, hash, login, name, label, kind, test_by, scope, doc_id, expires, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
-      info.id, await sha256(token), info.login, info.name, info.label, info.kind, info.testBy, info.scope, info.docId, info.expires, info.created);
+    await this.sql.run(
+      "INSERT INTO agent_tokens (id, hash, login, name, label, kind, test_by, scope, doc_id, expires, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+      info.id,
+      await sha256Hex(token),
+      info.login,
+      info.name,
+      info.label,
+      info.kind,
+      info.testBy,
+      info.scope,
+      info.docId,
+      info.expires,
+      info.created
+    );
     return { token, info };
   }
 
@@ -196,7 +212,7 @@ export class Tokens {
 
   async verify(token: string): Promise<AgentToken | null> {
     if (!token.startsWith(TOKEN_PREFIX) || token.length > 200) return null;
-    const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE hash = ?1`, await sha256(token));
+    const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE hash = ?1`, await sha256Hex(token));
     // The row must be this server's: a copy of another server's database (staging takes production's) holds
     // its tokens' hashes, but their tokens were made with that server's secret, not ours.
     if (!row || (!this.byHash && await this.tokenFor(row.id) != token)) return null;
@@ -246,12 +262,21 @@ export class Tokens {
     const now = Date.now();
 
     await this.sql.run("DELETE FROM token_requests WHERE expires < ?1", now);
-    const code = "ergareq_" + b64url(crypto.getRandomValues(new Uint8Array(24)));
-    const userCode = `${random(4, CODE_ALPHABET)}-${random(4, CODE_ALPHABET)}`;
+    const code = "ergareq_" + randomToken(24);
+    const userCode = `${randomString(4, CODE_ALPHABET)}-${randomString(4, CODE_ALPHABET)}`;
     const expires = now + REQUEST_MINUTES * 60 * 1000;
     const clipped = clipLabel(label, "An agent");
-    await this.sql.run("INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8)",
-      await sha256(code), userCode, clipped, now, expires, grant.scope, grant.scope == "document" ? String(grant.docId).slice(0, 300) : null, grant.expires == null ? null : Number(grant.expires));
+    await this.sql.run(
+      "INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8)",
+      await sha256Hex(code),
+      userCode,
+      clipped,
+      now,
+      expires,
+      grant.scope,
+      grant.scope == "document" ? String(grant.docId).slice(0, 300) : null,
+      grant.expires == null ? null : Number(grant.expires)
+    );
 
     return { code, userCode, label: clipped, expires };
   }
@@ -286,7 +311,7 @@ export class Tokens {
 
   /** The agent polls: its token once approved (handed over once), "pending" until then, "gone" if it expired or was collected. */
   async collect(code: string): Promise<{ status: "pending" } | { status: "gone" } | { status: "ready"; token: string; login: string }> {
-    const hash = await sha256(code);
+    const hash = await sha256Hex(code);
     const [row] = await this.sql.all<{ expires: number; login: string | null; token_id: string | null }>("SELECT expires, login, token_id FROM token_requests WHERE code_hash = ?1", hash);
     if (!row) return { status: "gone" };
     if (row.token_id && row.login) {

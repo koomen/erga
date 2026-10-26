@@ -31,6 +31,8 @@
 // The same handler runs in the Worker and in the mock
 // Cloudflare's pretend servers, so the tests exercise it.
 
+import { base64, fromBase64 } from "../shared/bytes.ts";
+
 export type Encoded = { b: string } | { j: unknown };
 /** A document's storage, or a part of it: `more` on export (another part follows), `append` on import (a part after the first). */
 export interface DocSnapshot { id: string; entries: [string, Encoded][]; alarm: number | null; more?: string; append?: boolean }
@@ -56,15 +58,8 @@ export const VALUE_LIMIT = 2 * 1024 * 1024;
  */
 export const SNAPSHOT_BUDGET = 8 * 1024 * 1024;
 
-export const encodeValue = (v: unknown): Encoded =>
-  v instanceof Uint8Array ? { b: b64(v) } : v instanceof ArrayBuffer ? { b: b64(new Uint8Array(v)) } : { j: v };
-export const decodeValue = (e: Encoded): unknown => ("b" in e ? Uint8Array.from(atob(e.b), (c) => c.charCodeAt(0)) : e.j);
-
-const b64 = (bytes: Uint8Array) => {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-};
+export const encodeValue = (v: unknown): Encoded => (v instanceof Uint8Array || v instanceof ArrayBuffer ? { b: base64(v) } : { j: v });
+export const decodeValue = (e: Encoded): unknown => ("b" in e ? fromBase64(e.b) : e.j);
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 

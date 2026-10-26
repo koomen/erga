@@ -38,6 +38,8 @@
 //   - Only a full 40-hex commit id is a key (a short one could name another
 //     commit later), and only a build that ended with a release is kept.
 
+import { sha256Hex } from "../../shared/bytes";
+
 /** The cache's format: change it to drop every release kept before. */
 export const CACHE_FORMAT = 1;
 /** How many releases are kept (the oldest go first): ~15 MB each. */
@@ -54,8 +56,7 @@ export interface ReleaseStore {
 /** The toolchain's part of the key: a hash of the cache's format, Bun's version and the builder's version; null if there's no version. */
 export async function toolchainKey(o: { bun: string; builderVersion: string | null | undefined }): Promise<string | null> {
   if (!o.builderVersion) return null;
-  const bytes = new TextEncoder().encode(`format ${CACHE_FORMAT}\nbun ${o.bun}\nbuilder ${o.builderVersion}\n`);
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 24);
+  return (await sha256Hex(`format ${CACHE_FORMAT}\nbun ${o.bun}\nbuilder ${o.builderVersion}\n`)).slice(0, 24);
 }
 
 /** A release's key: the full commit id and the toolchain, or null (not cached). */

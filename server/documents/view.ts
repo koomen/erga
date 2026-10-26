@@ -44,6 +44,7 @@ import {
   withEdit,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
+import { base64url, sha256 } from "../../shared/bytes.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -219,8 +220,7 @@ const accountMeta = (session: Session, admin: boolean, deploy: boolean) => {
 
 /** A short digest of text, for the page's ETag. */
 async function digestOf(text: string): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
-  return btoa(String.fromCharCode(...bytes.slice(0, 16))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return base64url((await sha256(text)).slice(0, 16));
 }
 
 /**

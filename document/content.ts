@@ -21,6 +21,7 @@
 import * as Y from "yjs";
 import { byLine, VIA } from "../shared/attribution.ts";
 import { ChangeSet, type ChangeSpec } from "@codemirror/state";
+import { base64, fromBase64 } from "../shared/bytes.ts";
 
 export type AuthorKind = "person" | "agent" | "disk";
 
@@ -130,23 +131,10 @@ export function deltaToChanges(delta: Y.YTextEvent["delta"], length: number): Ch
  * A participant's state vector, so another can wait until it has seen
  * everything the first had (view_page renders the agent's latest edits).
  */
-export const stateVector = (doc: Y.Doc) => toBase64(Y.encodeStateVector(doc));
+export const stateVector = (doc: Y.Doc) => base64(Y.encodeStateVector(doc));
 
 export function hasSeen(doc: Y.Doc, vector: string): boolean {
   const want = Y.decodeStateVector(fromBase64(vector));
   for (const [client, clock] of want) if (Y.getState(doc.store, client) < clock) return false;
   return true;
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s);
-}
-
-function fromBase64(s: string): Uint8Array {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
 }

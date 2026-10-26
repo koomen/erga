@@ -5,7 +5,7 @@
 
 import { expect, test } from "bun:test";
 import { PDFDocument } from "pdf-lib";
-import { sha256 } from "../document/blobs";
+import { sha256Hex } from "../shared/bytes";
 import { withDocuments } from "../agents/models";
 import { withBlobs, GONE, type ChatSave, type ChatStore, type StoredChat } from "../agents/checkpoint";
 import { MemoryBlobs } from "../document/blobs";
@@ -100,7 +100,10 @@ test("grep searches PDFs through their text, page by page, extracted once and ke
     "receipts/2026-11-redcross.pdf:1: Thank you for your charitable gift",
   ]);
   // Kept by the PDF's hash (for every isolate: in the blob store), so a copy of the same PDF elsewhere is the same text.
-  expect(JSON.parse(blobs.keptValues.get(`pdf-text/${await sha256(goodwill)}`)!)).toEqual(["Goodwill Industries", "Charitable contribution receipt"]);
+  expect(JSON.parse(blobs.keptValues.get(`pdf-text/${await sha256Hex(goodwill)}`)!)).toEqual([
+    "Goodwill Industries",
+    "Charitable contribution receipt",
+  ]);
   await put("copy/goodwill.pdf", goodwill);
   expect((await tool("grep", { pattern: "contribution", glob: "copy/*.pdf" })).text).toBe("copy/goodwill.pdf:2: Charitable contribution receipt");
 });

@@ -19,6 +19,7 @@ import { agentSettings } from "./agent-settings";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
 import { BLOB_HEADER, INLINE_HEADER, serveBlob } from "../document/blobs";
+import { fromBase64 } from "../shared/bytes";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -41,7 +42,7 @@ const landingFile = (path: string, file: string | Uint8Array) => {
 // (Vite wants each glob written out.)
 for (const [path, text] of Object.entries(import.meta.glob(["../assets/landing/**", "!../assets/landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}"], { query: "?raw", import: "default", eager: true }) as Record<string, string>)) landingFile(path, text);
 for (const [path, url] of Object.entries(import.meta.glob("../assets/landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}", { query: "?inline", import: "default", eager: true }) as Record<string, string>)) {
-  landingFile(path, Uint8Array.from(atob(url.slice(url.indexOf(",") + 1)), (c) => c.charCodeAt(0)));
+  landingFile(path, fromBase64(url.slice(url.indexOf(",") + 1)));
 }
 
 /** Whose the front page is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */

@@ -19,6 +19,7 @@ import { containerBuilder } from "../builder/client";
 import { bundleOf } from "../deploys/bundle";
 import type { Fetch, Release } from "../deploys/pipeline";
 import { storeBuilder, type ReleaseStore } from "../deploys/releases";
+import { sha256Hex } from "../../shared/bytes";
 
 /** The fork's repository in Erga's Artifacts namespace. */
 export const forkRepo = (id: string) => `fork-${id}`;
@@ -33,7 +34,7 @@ export const isForkId = (s: string) => /^[a-z0-9]{8,40}$/.test(s);
 export interface ForkRecord { id: string; secretHash: string; commit: string; by: string; at: number; installations?: number[]; hosts?: string[] }
 
 export async function hashSecret(secret: string): Promise<string> {
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return sha256Hex(secret);
 }
 
 /** What a downstream's control Worker knows of its fork: upstream's origin, the fork's id, its secret. */

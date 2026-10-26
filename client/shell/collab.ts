@@ -48,6 +48,7 @@ import {
 import { changesBetween } from "../../document/merge";
 import { BASE } from "./base";
 import { decodeStart, PING, PONG } from "../../shared/room-socket";
+import { base64, fromBase64 } from "../../shared/bytes";
 
 /** Someone in the room, from awareness. */
 export interface Presence {
@@ -466,15 +467,17 @@ export class Collab {
   held(max = 1_500_000): { epoch: string; update: string } | null {
     const u = Y.encodeStateAsUpdate(this.doc);
     if (u.length * 4 / 3 > max) return null;
-    let bin = "";
-    for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode(...u.subarray(i, i + 0x8000));
-    return { epoch: String(roomInfo(this.doc).get("epoch") ?? ""), update: btoa(bin) };
+    return { epoch: String(roomInfo(this.doc).get("epoch") ?? ""), update: base64(u) };
   }
 
   /** Merges what the page before a reload held (held()), if it's of this same room's history. */
   merge(held: { epoch: string; update: string } | undefined): void {
     if (!held || typeof held.update != "string" || held.epoch != String(roomInfo(this.doc).get("epoch") ?? "")) return;
-    try { Y.applyUpdate(this.doc, Uint8Array.from(atob(held.update), (c) => c.charCodeAt(0)), "held"); } catch (e) { console.warn("couldn't merge the edits kept across the reload", e); }
+    try {
+      Y.applyUpdate(this.doc, fromBase64(held.update), "held");
+    } catch (e) {
+      console.warn("couldn't merge the edits kept across the reload", e);
+    }
   }
 
   /** This tab's state vector, so the host can wait until the room has its edits. */

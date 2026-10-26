@@ -15,6 +15,7 @@
 // delete (a folder asks once). Errors show where they happened, in the
 // server's words.
 
+import { sha256Hex } from "../../shared/bytes";
 import { esc } from "../../shared/html";
 
 interface FileRow { path: string; kind: "text" | "file"; size: number | null; at: number | null; type: string }
@@ -456,11 +457,6 @@ async function droppedFiles(data: DataTransfer, folder: string): Promise<{ path:
 /** Files over this size are sent with their sha-256, so they stream to storage (the server asks for it over 25 MB). */
 const HASH_FROM = 20_000_000;
 
-async function sha256Hex(file: File): Promise<string> {
-  const bytes = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 function send(path: string, file: File, hash: string | null, progress: (sent: number) => void): Promise<{ ok: boolean; replaced?: boolean; error?: string }> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
@@ -494,8 +490,11 @@ async function dropped(data: DataTransfer, folder: string): Promise<void> {
       if (item.file.size > 1_000_000) li.append(bar);
       uploadsEl.append(li);
       const pct = li.querySelector<HTMLElement>(".pct")!;
-      const hash = item.file.size > HASH_FROM ? (pct.textContent = "reading…", await sha256Hex(item.file)) : null;
-      const r = await send(item.path, item.file, hash, (sent) => { bar.value = sent; pct.textContent = `${Math.round((100 * sent) / (item!.file.size || 1))}%`; });
+      const hash = item.file.size > HASH_FROM ? ((pct.textContent = "reading…"), await sha256Hex(await item.file.arrayBuffer())) : null;
+      const r = await send(item.path, item.file, hash, (sent) => {
+        bar.value = sent;
+        pct.textContent = `${Math.round((100 * sent) / (item!.file.size || 1))}%`;
+      });
       if (r.ok) {
         if (r.replaced) replaced++; else added++;
         li.remove();

@@ -26,6 +26,7 @@
 import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
 import type { Actor, Users } from "./index.ts";
+import { base64, fromBase64, randomBytes, sha256 } from "../../shared/bytes.ts";
 
 /**
  * The keys there are, by name: the Worker secret each stands in for, the
@@ -88,8 +89,6 @@ export class CredentialError extends Error {}
 interface Row { name: string; iv: string; data: string; last4: string; updated: number; updated_by: string; updated_via?: string | null }
 
 const enc = new TextEncoder();
-const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 /** Checks and tidies a key as pasted: its own provider's, one line, no spaces. */
 export function checkKey(name: CredentialName, value: string): string {
@@ -112,7 +111,7 @@ export class Credentials {
    */
   constructor(private sql: Sql, private users: Users, secret: string | null, private fallback: (env: string) => boolean = () => false) {
     this.aesKey = secret ? (async () => {
-      const raw = await crypto.subtle.digest("SHA-256", enc.encode(`erga-credentials:${secret}`));
+          const raw = await sha256(`erga-credentials:${secret}`);
       return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
     })() : null;
   }
@@ -143,13 +142,20 @@ export class Credentials {
     const n = this.nameOf(name);
     const key = checkKey(n, value);
     if (!this.aesKey) throw new CredentialError("This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts makes it.");
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const iv = randomBytes(12);
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(n) }, await this.aesKey, enc.encode(key)));
     const had = await this.has(n), at = Date.now(), login = by.login.toLowerCase();
     await this.sql.batch([
       [`INSERT INTO credentials (name, iv, data, last4, updated, updated_by, updated_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         ON CONFLICT (name) DO UPDATE SET iv = excluded.iv, data = excluded.data, last4 = excluded.last4, updated = excluded.updated, updated_by = excluded.updated_by, updated_via = excluded.updated_via`,
-        n, b64(iv), b64(data), key.slice(-4), at, login, by.via ?? null],
+        n,
+        base64(iv),
+        base64(data),
+        key.slice(-4),
+        at,
+        login,
+        by.via ?? null,
+      ],
       this.logged(n, had ? "replaced" : "set", at, login, by.via),
     ]);
     return (await this.list(by)).find((e) => e.name == n)!;
@@ -188,7 +194,13 @@ export class Credentials {
   private async decrypt(name: CredentialName, r: Pick<Row, "iv" | "data">): Promise<string | null> {
     if (!this.aesKey) return null;
     try {
-      return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(r.iv), additionalData: enc.encode(name) }, await this.aesKey, unb64(r.data)));
+      return new TextDecoder().decode(
+        await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: fromBase64(r.iv), additionalData: enc.encode(name) },
+          await this.aesKey,
+          fromBase64(r.data)
+        )
+      );
     } catch {
       return null;
     }

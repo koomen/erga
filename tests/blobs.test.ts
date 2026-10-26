@@ -3,7 +3,8 @@
 // moved, restored and copied, and what a Worker from before blobs still finds.
 
 import { expect, test } from "bun:test";
-import { BLOB_HEADER, OBJECT_MAX, sha256 } from "../document/blobs";
+import { BLOB_HEADER, OBJECT_MAX } from "../document/blobs";
+import { sha256Hex } from "../shared/bytes";
 import { KEYS } from "../document/storage";
 import { bytesOf, setup, sleep } from "./helpers/files-fixture";
 import { files } from "../document/content";
@@ -12,7 +13,7 @@ import type { Room } from "../document/room";
 test("an upload over 2 MB is a blob: only its ref in the object, served by hash with ranges, and in the versions by hash", async () => {
   const { doc, blobs, storage, get, put } = await setup();
   const pdf = bytesOf(3_000_000);
-  const hash = await sha256(pdf);
+  const hash = await sha256Hex(pdf);
   const r = await put("receipts/tax.pdf", pdf);
   expect(r.status).toBe(200);
   expect(await r.json()).toEqual({ ok: true, path: "receipts/tax.pdf", kind: "file", size: pdf.length, hash, replaced: false });
@@ -51,7 +52,7 @@ test("a small upload is a blob too, with its bytes kept in the object for a Work
   const png = bytesOf(5_000, 3);
   expect((await (await put("logo.png", png)).json()).kind).toBe("file");
   expect(storage.data.get(KEYS.file + "logo.png")).toEqual(png);
-  expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash: await sha256(png) });
+  expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash: await sha256Hex(png) });
   expect(new Uint8Array(await (await get("/doc/logo.png")).arrayBuffer())).toEqual(png);
 });
 
@@ -95,7 +96,7 @@ test("uploads past the limits are refused, with the setting that says so", async
 test("a big upload streams with its hash given, and a wrong hash stores nothing", async () => {
   const { blobs, put } = await setup();
   const video = bytesOf(4_000_000, 11);
-  const hash = await sha256(video);
+  const hash = await sha256Hex(video);
   const had = blobs.data.size;
   const wrong = await put("clip.mp4", video, { "x-erga-sha256": "0".repeat(64) });
   expect(wrong.status).toBe(400);
@@ -114,13 +115,13 @@ test("a blob moves by its ref, is deleted with its file, and comes back with a r
   const handle = (op: object) => doc.handle(new Request("http://doc/api/tree", { method: "POST", body: JSON.stringify(op), headers: { "content-type": "application/json", "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) } }));
   expect((await handle({ op: "move", from: "a.pdf", to: "docs/b.pdf" })).status).toBe(200);
   expect(storage.data.has(KEYS.ref + "a.pdf")).toBe(false);
-  expect(storage.data.get(KEYS.ref + "docs/b.pdf")).toMatchObject({ hash: await sha256(pdf) });
+  expect(storage.data.get(KEYS.ref + "docs/b.pdf")).toMatchObject({ hash: await sha256Hex(pdf) });
   expect(new Uint8Array(await (await get("/doc/docs/b.pdf")).arrayBuffer())).toEqual(pdf);
   expect((await handle({ op: "delete", path: "docs/b.pdf" })).status).toBe(200);
   expect(storage.data.has(KEYS.ref + "docs/b.pdf")).toBe(false);
   expect((await get("/doc/docs/b.pdf")).status).toBe(404);
   // The blob stays: a version has it.
-  expect(blobs.data.has(await sha256(pdf))).toBe(true);
+  expect(blobs.data.has(await sha256Hex(pdf))).toBe(true);
   const r = await doc.restore(before, "ada");
   expect(r.ok).toBe(true);
   expect(new Uint8Array(await (await get("/doc/a.pdf")).arrayBuffer())).toEqual(pdf);
@@ -165,14 +166,14 @@ test("what the object kept before blobs is copied to the blob store as it opens,
   expect(new Uint8Array(await (await get("/doc/logo.png")).arrayBuffer())).toEqual(logo);
   await doc.paths();
   for (let i = 0; i < 50 && !storage.data.has("blobs-copied"); i++) await sleep(10);
-  expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash: await sha256(logo), size: 1000 });
-  expect(blobs.data.get(await sha256(logo))).toEqual(logo);
+  expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash: await sha256Hex(logo), size: 1000 });
+  expect(blobs.data.get(await sha256Hex(logo))).toEqual(logo);
   for (const k of [...kept.keys()].filter((k) => k.startsWith("blobs/"))) expect(blobs.data.has(k.slice("blobs/".length))).toBe(true);
   // Copied, not moved: every key the object had is still there, as it was.
   for (const [k, v] of kept) if (k.startsWith("files/") || k.startsWith("blobs/") || k.startsWith("versions/")) expect(storage.data.get(k)).toEqual(v);
   // And now it's served as a blob.
   const served = await get("/doc/logo.png");
-  expect(served.headers.get("etag")).toBe(`"${await sha256(logo)}"`);
+  expect(served.headers.get("etag")).toBe(`"${await sha256Hex(logo)}"`);
 });
 
 test("a blob the store doesn't have (a copy of the data without it) is served from the object's copy", async () => {
@@ -191,5 +192,5 @@ test("a copy of a document takes its blobs by their refs", async () => {
   await put("a.pdf", pdf);
   const snap = (await doc.snapshot())!;
   expect(snap.files["index.html"]).toBe("<h1>Files</h1>");
-  expect(snap.files["a.pdf"]).toMatchObject({ hash: await sha256(pdf), size: pdf.length });
+  expect(snap.files["a.pdf"]).toMatchObject({ hash: await sha256Hex(pdf), size: pdf.length });
 });

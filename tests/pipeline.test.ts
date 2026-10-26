@@ -30,7 +30,8 @@ import {
   type TargetStatus,
 } from "../control/deploys/branches";
 import { CONTROL_OAUTH_SCOPES, exchangeCode, fixedCredential, OAuthCredential, pkce } from "../control/deploys/credential";
-import { fromBase64, unpackRelease } from "../control/deploys/bundle";
+import { unpackRelease } from "../control/deploys/bundle";
+import { fromBase64 } from "../shared/bytes";
 import { artifactsNamespace, packRelease } from "../control/builder/build";
 import { handle as builderServer } from "../control/builder/server";
 import { containerBuilder, ndjsonLines } from "../control/builder/client";

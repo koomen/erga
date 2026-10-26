@@ -6,8 +6,49 @@
 export { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "./browse.ts";
 export { tar, ZERO } from "./git.ts";
 export type { Remote } from "./remote.ts";
-export { compareVersions, isReleaseTag, nextVersion, SourceError, SourceRepo, type Actor, type GithubStatus, type MergeConflict, type Released, type TagInfo, type UpdateResult, type UpstreamSource, type UpstreamView } from "./repo.ts";
-export { api as githubApi, createRepo, exchangeUserCode, GithubError, githubOrigins, installationOf, installationRepos, installationToken, installUrl, linkOf, openRelay, randomNonce, relayNonce, relayOrigin, relaySignature, relayState, sealRelay, signWebhook, uninstall, userOf, verifyRelay, verifyWebhook, type GithubApp, type GithubLink, type GithubRepo, type PushEvent, type UserToken } from "./github.ts";
+export {
+  compareVersions,
+  isReleaseTag,
+  nextVersion,
+  SourceError,
+  SourceRepo,
+  type Actor,
+  type GithubStatus,
+  type MergeConflict,
+  type Released,
+  type TagInfo,
+  type UpdateResult,
+  type UpstreamSource,
+  type UpstreamView,
+} from "./repo.ts";
+export {
+  api as githubApi,
+  createRepo,
+  exchangeUserCode,
+  GithubError,
+  githubOrigins,
+  installationOf,
+  installationRepos,
+  installationToken,
+  installUrl,
+  linkOf,
+  openRelay,
+  relayNonce,
+  relayOrigin,
+  relaySignature,
+  relayState,
+  sealRelay,
+  signWebhook,
+  uninstall,
+  userOf,
+  verifyRelay,
+  verifyWebhook,
+  type GithubApp,
+  type GithubLink,
+  type GithubRepo,
+  type PushEvent,
+  type UserToken,
+} from "./github.ts";
 export type { Conflict } from "./merge.ts";
 export { isGitRead, sourceApi, sourceDoor, sourceGit, type RepoAccess, type SourceObject, type SourceService } from "./routes.ts";
 export { adminSourcePage, type SourcePageConfig } from "./page.ts";

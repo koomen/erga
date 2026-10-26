@@ -4,7 +4,8 @@
 // Worker's routes: the store for anyone, the channels for admins.
 import { describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
-import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor, sha256 } from "../control/deploys/releases";
+import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor } from "../control/deploys/releases";
+import { sha256Hex } from "../shared/bytes";
 import { DeployError, type Release } from "../control/deploys/pipeline";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
@@ -36,7 +37,7 @@ describe("the store", () => {
     const m = await s.publish(release(V1), C1);
     expect(m).toMatchObject({ version: V1, commit: C1, built: "2026-10-13T10:00:00.000Z" });
     expect(Object.keys(m.files).sort()).toEqual(["assets/fonts/inter.css", "assets/page.js", "bundle/index.js", "control/index.js", "migrations/0001_erga.sql", "release.json"]);
-    expect(m.files["assets/page.js"]).toEqual({ sha256: await sha256(enc("page")), size: 4 });
+    expect(m.files["assets/page.js"]).toEqual({ sha256: await sha256Hex(enc("page")), size: 4 });
     expect([...blobs.map.keys()].sort()).toEqual([...Object.keys(m.files).map((p) => `releases/${V1}/${p}`), `releases/${V1}/manifest.json`].sort());
     expect(blobs.map.get(`releases/${V1}/bundle/index.js`)!.type).toBe("application/javascript; charset=utf-8");
     expect(blobs.map.get(`releases/${V1}/assets/fonts/inter.css`)!.type).toBe("text/css; charset=utf-8");

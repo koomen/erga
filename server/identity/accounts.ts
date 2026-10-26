@@ -29,7 +29,8 @@ import { page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
 import { cookieName, cookies } from "./cookies.ts";
-import { b64, sign, unb64, unsign } from "./session.ts";
+import { sign, unsign } from "./session.ts";
+import { base64url, fromBase64url } from "../../shared/bytes.ts";
 import { clearCookie, signIn } from "./sign-in.ts";
 
 const JOIN = "erga_join";
@@ -139,7 +140,7 @@ const cookieFor = (request: Request, value: string, maxAge: number) =>
 /** The username step's cookie: who they are, signed, for half an hour. */
 async function pendingCookie(platform: Platform, request: Request, v: Vouched, next: string, taken?: string): Promise<string> {
   const pending: Pending = { v, next: safeNext(next), exp: Math.floor(Date.now() / 1000) + JOIN_SECONDS, ...(taken ? { taken } : {}) };
-  const value = await sign(platform.secret, `join:${b64(new TextEncoder().encode(JSON.stringify(pending)))}`);
+  const value = await sign(platform.secret, `join:${base64url(new TextEncoder().encode(JSON.stringify(pending)))}`);
   return cookieFor(request, value, JOIN_SECONDS);
 }
 
@@ -155,7 +156,7 @@ async function pendingOf(platform: Platform, request: Request): Promise<Pending 
   const value = raw && (await unsign(platform.secret, raw));
   if (!value?.startsWith("join:")) return null;
   try {
-    const p = JSON.parse(new TextDecoder().decode(unb64(value.slice("join:".length)))) as Pending;
+    const p = JSON.parse(new TextDecoder().decode(fromBase64url(value.slice("join:".length)))) as Pending;
     return p.exp > Date.now() / 1000 && p.v?.subject ? p : null;
   } catch { return null; }
 }

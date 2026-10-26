@@ -11,6 +11,7 @@ import type { Platform } from "../platform.ts";
 import { forwarded } from "./front-door.ts";
 import { markPage, sourceDigest } from "../../shared/page-html.ts";
 import { readerPage, readerVersion } from "../pages/index.ts";
+import { base64url, fromBase64url } from "../../shared/bytes.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -34,7 +35,7 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
   if (shared && url.hostname == shared) {
     const claims = /^\/t\/([^/.]+)\./.exec(url.pathname)?.[1];
     try {
-      const d = claims && (JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: unknown }).d;
+      const d = claims && (JSON.parse(new TextDecoder().decode(fromBase64url(claims))) as { d?: unknown }).d;
       const [owner, id] = typeof d == "string" ? d.split("/") : [];
       return owner && id && OWNER.test(owner) && ID.test(id) ? { owner, id } : null;
     } catch { return null; }
@@ -63,10 +64,8 @@ const hmac = async (secret: string, value: string) => {
     if (hmacKeys.size > 4) hmacKeys.clear();
     hmacKeys.set(secret, key);
   }
-  return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", await key, new TextEncoder().encode(value))));
+  return base64url(new Uint8Array(await crypto.subtle.sign("HMAC", await key, new TextEncoder().encode(value))));
 };
-
-const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 /**
  * A token that opens one document's files on its pages origin, for a week, for the viewer at `shell` (whose origin it names);
@@ -78,7 +77,17 @@ export async function pagesToken(secret: string, owner: string, id: string, shel
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
   // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
   // scripts can read its address).
-  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.by ? { a: opts.by.toLowerCase() } : {}), ...(opts.edit ? { w: 1 } : {}) })));
+  const claims = base64url(
+    new TextEncoder().encode(
+      JSON.stringify({
+        d: `${owner.toLowerCase()}/${id}`,
+        e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY,
+        s: shell,
+        ...(opts.by ? { a: opts.by.toLowerCase() } : {}),
+        ...(opts.edit ? { w: 1 } : {}),
+      })
+    )
+  );
   return `${claims}.${await hmac(secret, claims)}`;
 }
 
@@ -92,7 +101,13 @@ export async function readPagesClaims(secret: string, token: string, owner: stri
   const [claims, mac, extra] = token.split(".");
   if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
   try {
-    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; a?: unknown; w?: unknown };
+    const c = JSON.parse(new TextDecoder().decode(fromBase64url(claims))) as {
+      d?: string;
+      e?: number;
+      s?: string;
+      a?: unknown;
+      w?: unknown;
+    };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
     return new URL(c.s).origin == c.s ? { shell: c.s, ...(typeof c.a == "string" ? { by: c.a } : {}), ...(c.w === 1 ? { edit: true } : {}) } : null;
   } catch { return null; }

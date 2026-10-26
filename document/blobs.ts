@@ -9,11 +9,8 @@
 // No blob is ever deleted yet. A sweep that deletes the blobs nothing
 // refers to (no file, no version, no copy of a document) comes later.
 
-const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
-/** The sha-256 of bytes, hex: a blob's hash, and a version's name for a file. */
-export async function sha256(bytes: Uint8Array): Promise<string> {
-  return hex(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>));
-}
+import { sha256Hex } from "../shared/bytes.ts";
+
 
 /** A file's bytes as a blob: its hash (the sha256 of the bytes, hex), how many bytes, and when it was written (ms). */
 export interface BlobRef { hash: string; size: number; at: number }
@@ -51,7 +48,7 @@ export const TEXT_MAX = 2_000_000;
 
 /** A blob's ref, for bytes in memory: their hash and size, written now. */
 export async function refOf(bytes: Uint8Array, at = Date.now()): Promise<BlobRef> {
-  return { hash: await sha256(bytes), size: bytes.length, at };
+  return { hash: await sha256Hex(bytes), size: bytes.length, at };
 }
 
 /** Stores bytes in `blobs` (once: a blob that's there isn't written again) and gives their ref. */
@@ -84,7 +81,7 @@ export class MemoryBlobs implements BlobStore {
   async put(hash: string, data: Uint8Array | ReadableStream<Uint8Array>, size: number) {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(await new Response(data).arrayBuffer());
     if (bytes.length != size) throw new Error(`the blob is ${bytes.length} bytes, not ${size}`);
-    if ((await sha256(bytes)) != hash) throw new Error("the bytes aren't the blob's: their sha256 differs");
+    if ((await sha256Hex(bytes)) != hash) throw new Error("the bytes aren't the blob's: their sha256 differs");
     this.data.set(hash, bytes.slice());
   }
 }
