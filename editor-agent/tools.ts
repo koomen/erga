@@ -174,7 +174,7 @@ export function makeTools(
       execute: async (_id, p: { path: string; content?: string; content_base64?: string }) => {
         if ((p.content == null) == (p.content_base64 == null)) throw new Error("Give the file's content as text (content) or as bytes (content_base64): one of them.");
         if (p.content_base64 != null) return text(await writeBytes(p.path, p.content_base64));
-        const r = run(ws.write(p.path, p.content!));
+        const r = await Effect.runPromise(Effect.mapError(ws.write(p.path, p.content!), (e) => new Error(e.message)));
         opts.edited(r.path, r.at);
         return text(r.summary);
       },

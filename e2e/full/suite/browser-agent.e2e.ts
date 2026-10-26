@@ -22,20 +22,26 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
   noErrors(a, "Ada"); noErrors(b, "Bo");
 });
 
-/** Each frame on Bo's page while the agent edits: its selection boxes, its caret's name and whether it's in the first paragraph, the heading. */
+/** Each frame on Bo's page while the agent edits: its selection boxes, its caret's name and whether it's in the first paragraph, the heading, the new paragraph. */
 const RECORD = `(() => {
   const F = document, seen = window.__seen = [];
   const look = () => {
     const c = F.querySelector("erga-peer[data-agent]"), p = F.querySelector("p.lede")?.getBoundingClientRect();
+    const news = F.querySelector("p.news");
     if (c) {
       const y = parseFloat(c.style.top) - scrollY;
-      seen.push({ sel: F.querySelectorAll("erga-peer-sel").length, name: c.textContent, h1: F.querySelector("h1")?.textContent ?? "", inP: !!p && y >= p.top - 2 && y < p.bottom });
+      seen.push({ sel: F.querySelectorAll("erga-peer-sel").length, name: c.textContent, h1: F.querySelector("h1")?.textContent ?? "", inP: !!p && y >= p.top - 2 && y < p.bottom, t: performance.now(), news: news ? news.textContent : null, links: news ? news.querySelectorAll("a, b, i").length : 0 });
     }
     requestAnimationFrame(look);
   };
   look();
   return true;
 })()`;
+
+/** About 300 characters, with tags and an entity in them. */
+const NEWS =
+  '<p class="news">The <b>spring release</b> brings three things: faster pages, a new <a href="/docs">guide</a> for teams &amp; their agents, ' +
+  "and <i>live</i> carets. Each of them took a season of work, and each shows on every page from today, for every reader and writer.</p>";
 
 const AS_IT_HAPPENS = "others see the agent's edit as it happens: its selection on the old text, then its caret as the new text types in";
 browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) => {
@@ -47,6 +53,10 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
   const script = JSON.stringify([
     { tool: "edit", args: { path: d.path, edits: [{ oldText: "<h1>Launch notes", newText: "<h1>Release notes for the spring" }] } },
     { tool: "edit", args: { path: d.path, edits: [{ oldText: '<p class="lede">', newText: '<p class="lede big">' }] } },
+    {
+      tool: "edit",
+      args: { path: d.path, edits: [{ oldText: "<h2>What changed</h2>", newText: `${NEWS}\n\n    <h2>What changed</h2>` }] },
+    },
     { text: "Renamed." },
   ]);
   const message = JSON.stringify(`Rename it @script ${script}`);
@@ -56,7 +66,7 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
   const done = () => a.eval<boolean>(`[...document.querySelectorAll(".msg-assistant")].some((e) => e.textContent == "Renamed.")`);
   await until(done, 10_000, "the agent is done");
   expect((await b.textOf("h1")).includes("Release notes for the spring"), "Bo's page shows the agent's edit");
-  type Seen = { sel: number; name: string; h1: string; inP: boolean };
+  type Seen = { sel: number; name: string; h1: string; inP: boolean; t: number; news: string | null; links: number };
   const seen = await b.frame<Seen[]>(`window.__seen`);
   const said = JSON.stringify(seen.slice(0, 40));
   const selected = seen.some((s) => s.sel > 0 && s.h1.includes("Launch notes") && /Ada, via their agent/.test(s.name));
@@ -65,6 +75,15 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
   expect(typing.size >= 3, "and its caret as the new text came in, in a few steps", said);
   const inP = seen.some((s) => s.inP);
   expect(inP, "an edit in a tag puts the caret at the text of its paragraph", said);
+  // The new paragraph streams in over about a second, in many steps, and never shows a half tag or entity.
+  const news = seen.filter((s) => s.news != null);
+  const steps = new Set(news.map((s) => s.news)).size;
+  const took = news.length ? [...news].reverse().find((s) => s.news!.length < news[news.length - 1].news!.length)!.t - news[0].t : 0;
+  const saidNews = JSON.stringify(news.map((s) => [Math.round(s.t - news[0].t), s.news!.length, s.links]));
+  expect(steps >= 15, `Bo saw the paragraph arrive in many steps (${steps})`, saidNews);
+  expect(took > 600 && took < 2500, `over about a second (${Math.round(took)} ms)`, saidNews);
+  const half = news.filter((s) => /[<>]|&\w/.test(s.news!));
+  expect(!half.length, "and never a half tag or entity", JSON.stringify(half.slice(0, 3)));
   const idle = async () => !(await peerNames(b)).includes("Ada, via their agent");
   await until(idle, 10_000, "the caret goes once the agent is idle", async () => peerNames(b));
   noErrors(a, "Ada");
