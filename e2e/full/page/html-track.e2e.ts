@@ -19,3 +19,18 @@ test("tracking marks your edits and the disk's; it's a diff, so typing and delet
   await ed.eval(`document.getElementById("btn-track").click()`);
   await expect.poll(async () => { const m = await ed.marks(); return m.added.length + m.gone.length; }).toBe(0);
 });
+
+test("with tracking on, typing hides the top bar with its Track changes button, as with tracking off", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
+  await ed.eval(`document.getElementById("btn-track").click()`);
+  expect(await ed.eval<string>(`document.getElementById("btn-track").getAttribute("aria-pressed")`)).toBe("true");
+  await ed.clickEnd("h1");
+  await ed.type(" too");
+  await expect
+    .poll(() =>
+      ed.eval<string>(
+        `document.body.classList.contains("chrome-hidden") && getComputedStyle(document.querySelector(".chrome-top")).opacity`
+      )
+    )
+    .toBe("0");
+});
