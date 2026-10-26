@@ -21,7 +21,7 @@ import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type 
 import { fixedCredential, OAuthCredential, sealKeyFrom, type CredentialStatus, type TokenAnswer } from "./credential";
 import { Cloudflare, DeployError, loadRelease, type Release } from "./pipeline";
 import { httpBlobs, ReleaseStore, type ReleasesView } from "./releases";
-import { builderEndpoint, forkBuildBody, forkBuilder, forkRepo, hashSecret, isForkId, type ForkRecord } from "../install/forks";
+import { builderEndpoint, forkBuildBody, forkBuilder, forkHosts, forkRepo, hashSecret, isForkId, type ForkRecord } from "../install/forks";
 import { installFleet } from "./fleet";
 import { SOURCE } from "../../deploy/targets";
 import { releaseStoreOf } from "../cloudflare/release-bucket";
@@ -117,6 +117,8 @@ export class Pipeline extends DurableObject<Env> {
           channel: () => upstream!.channel(installed.upstream!.channel),
           update: () => repo().update(devOrigin, { login: SYSTEM, name: "Erga" }),
           heads: () => repo().heads(devOrigin),
+          // Its hosts, told to its fork at upstream when a domain is added or removed (the consent relay's allowed returns).
+          ...(fork ? { hosts: (hosts: string[]) => forkHosts(fork, hosts, net) } : {}),
         },
       } : {}),
       // The build container, in this Worker (the control Worker's BUILDS objects), or the mock; a downstream fetches upstream's

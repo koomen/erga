@@ -8,7 +8,10 @@ import { join } from "path";
 import { controlRoutes, relayOrigin, type Control } from "../control/routes";
 import { Cloudflare, loadRelease, type DeployPlan, type Release } from "../control/deploys/pipeline";
 import { controlHostOf, INSTALL_STEPS, installControlMetadata, runInstall, stagingHostOf } from "../control/install/install";
-import { builderEndpoint, forkBuilder, forkRemote, hashSecret } from "../control/install/forks";
+import { builderEndpoint, forkBuilder, forkHosts, forkRemote, hashSecret } from "../control/install/forks";
+import { BranchDeploys } from "../control/deploys/branches";
+import { fixedCredential } from "../control/deploys/credential";
+import { installFleet } from "../control/deploys/fleet";
 import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
 import { mockBuilder, mockCloudflare } from "../dev/mock-cloudflare";
 import type { Platform } from "../server/platform";
@@ -238,5 +241,40 @@ describe("a fork at upstream (control/install/forks.ts)", () => {
     expect(Object.keys(built.modules)).toEqual(Object.keys(release.modules));
     expect(builds).toEqual([`/forks/${FORK.id}/builder/build`]);
     expect(lines.some((l) => l.includes("building it there"))).toBe(true);
+  });
+
+  test("a domain added to or taken off an install's environment: its control Worker tells its fork at upstream every host it answers at", async () => {
+    const { mock } = await install(plan());
+    const b = bindingsOf(mock.state, "erga-control");
+    const fleet = installFleet({ CLOUDFLARE_ACCOUNT_ID: ACC, UPSTREAM: b.UPSTREAM.text, INSTALL: b.INSTALL.text })!;
+    // erga.dev's control Worker: it keeps what the fork's secret tells it.
+    const hash = await hashSecret(FORK.secret);
+    const told: string[][] = [];
+    const c: Control = {
+      platform: { sessionOf: async () => null } as unknown as Platform, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body),
+      deploys: {} as never,
+      oauth: { clientId: "erga-client", accountId: ACC, worker: "erga-control", net: fetch },
+      forks: {
+        hosts: async (id, secret, hosts) => {
+          if (id != FORK.id || (await hashSecret(secret)) != hash) return { error: "No such fork, or the secret is wrong.", status: 403 };
+          told.push(hosts);
+          return { ok: true };
+        },
+      } as Control["forks"],
+    };
+    const upstream = (input: RequestInfo | URL, init?: RequestInit) => controlRoutes(new Request(input, init), c);
+    // The install's deploys, as its Pipeline object makes them (control/deploys/pipeline-object.ts).
+    const storage = new Map<string, unknown>();
+    const deploys = new BranchDeploys({
+      storage: { get: async (k) => storage.get(k) as never, put: async (k, v) => { storage.set(k, v); }, delete: async (k) => storage.delete(k) },
+      env: { CLOUDFLARE_ACCOUNT_ID: ACC }, credential: fixedCredential("mock-token"), net: mock.fetch, builder: null, schedule: () => {}, changed: () => {}, fleet,
+      upstream: { channel: async () => { throw new Error("not read here"); }, hosts: (hosts) => forkHosts({ upstream: UPSTREAM.origin, ...FORK }, hosts, upstream as typeof fetch) },
+    });
+    const own = ["erga.ada-mock.workers.dev", "erga-staging.ada-mock.workers.dev", "erga-control.ada-mock.workers.dev"];
+    expect(await deploys.addDomain("production", "docs.ada-example.com", "ada")).not.toHaveProperty("error");
+    expect(told.at(-1)!.sort()).toEqual([...own, "docs.ada-example.com"].sort());
+    expect(await deploys.removeDomain("production", "docs.ada-example.com", "ada")).not.toHaveProperty("error");
+    expect(told.at(-1)!.sort()).toEqual([...own].sort());
+    expect(told).toHaveLength(2);
   });
 });
