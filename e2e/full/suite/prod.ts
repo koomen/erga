@@ -2,12 +2,13 @@
 // Runs the multiplayer suite against erga.dev, or any deployment (ERGA_PROD_URL), with a test token
 // from its /tokens page:
 //
-//   ERGA_TEST_TOKEN=erga_test_... bun run test:prod [e2e run arguments: --grep, files under e2e/suite, ...]
+//   ERGA_TEST_TOKEN=erga_test_... bun run test:prod [e2e run arguments: --grep, files under e2e/full/suite, ...]
 //
 // The token signs in test people (Tester, Ada, Bo, ...), each with their own session cookie, and the suite's
 // remote target makes each test a fresh test document (/new?id=test...), whose agent is the
 // scripted one if the deployment runs it (ERGA_TARGET_CAPS, "browser,scriptedAgent" by default; leave scriptedAgent
-// out for production). The correctness tests run first, then the latency bench (budget 400 ms, or ERGA_SUITE_P95_MS).
+// out for production). The correctness tests run first, then the latency bench (e2e/bench/latency.e2e.ts:
+// budget 400 ms, or ERGA_SUITE_P95_MS).
 // The cookies go to the tests in a file only this user can read (ERGA_SUITE_TARGET, e2e/full/suite/suite.ts), removed after.
 
 import { spawnSync } from "node:child_process";
@@ -57,10 +58,10 @@ const root = new URL("../../..", import.meta.url).pathname;
 let code = 0;
 try {
   // Four tests at a time: each makes its documents and people on the deployment. Everything runs, with a retry each.
-  const files = args.some((a) => a.startsWith("e2e/")) ? [] : ["e2e/suite"];
-  code = spawnSync("bun", ["e2e/run.ts", "--all", "--workers", "4", ...files, ...args], { cwd: root, env, stdio: "inherit", timeout: 30 * 60_000 }).status ?? 1;
+  const files = args.some((a) => a.startsWith("e2e/")) ? [] : ["e2e/full/suite"];
+  code = spawnSync("bun", ["e2e/run.ts", "--e2e", "--workers", "4", ...files, ...args], { cwd: root, env, stdio: "inherit", timeout: 30 * 60_000 }).status ?? 1;
   if (!args.some((a) => a.startsWith("e2e/"))) {
-    const bench = spawnSync("bun", ["e2e/run.ts", "--bench", "e2e/full/suite/latency.bench.e2e.ts", ...args], { cwd: root, env, stdio: "inherit", timeout: 10 * 60_000 }).status ?? 1;
+    const bench = spawnSync("bun", ["e2e/run.ts", "--e2e", "e2e/bench/latency.e2e.ts", ...args], { cwd: root, env, stdio: "inherit", timeout: 10 * 60_000 }).status ?? 1;
     code ||= bench;
   }
 } finally {

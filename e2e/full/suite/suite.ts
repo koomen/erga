@@ -4,7 +4,7 @@
 // one test runs against a worker's dev server here and against a deployment;
 // each e2e/full/suite/<name>.e2e.ts file registers some of them with
 // `register`. The browser tests are e2e files of their own (browser-*.e2e.ts,
-// with `openAs` below), and the latency tests are a bench (latency.bench.e2e.ts).
+// with `openAs` below), and the latency tests are a bench (e2e/bench/latency.e2e.ts).
 //
 // The target:
 //   local (the default)   documents on the worker's suite server (servers.suite: the scripted agent, a short
