@@ -22,7 +22,10 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
   noErrors(a, "Ada"); noErrors(b, "Bo");
 });
 
-/** Each frame on Bo's page while the agent edits: its selection boxes, its caret's name and whether it's in the first paragraph, the heading, the new paragraph. */
+/**
+ * Bo's page while the agent edits, at each frame and at each change of the page (a busy machine paints few frames):
+ * its selection boxes, its caret's name and whether it's in the first paragraph, the heading, the new paragraph.
+ */
 const RECORD = `(() => {
   const F = document, seen = window.__seen = [];
   const look = () => {
@@ -32,9 +35,10 @@ const RECORD = `(() => {
       const y = parseFloat(c.style.top) - scrollY;
       seen.push({ sel: F.querySelectorAll("erga-peer-sel").length, name: c.textContent, h1: F.querySelector("h1")?.textContent ?? "", inP: !!p && y >= p.top - 2 && y < p.bottom, t: performance.now(), news: news ? news.textContent : null, links: news ? news.querySelectorAll("a, b, i").length : 0 });
     }
-    requestAnimationFrame(look);
   };
-  look();
+  const frame = () => { look(); requestAnimationFrame(frame); };
+  frame();
+  new MutationObserver(look).observe(F.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
   return true;
 })()`;
 
