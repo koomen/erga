@@ -33,7 +33,18 @@
 import { Agent as PiAgent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import * as Redacted from "effect/Redacted";
 import { Type } from "typebox";
-import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "../document/session";
+import {
+  DEFAULT_MODEL,
+  describeModel,
+  isScript,
+  MODELS,
+  patchPayload,
+  resultImage,
+  resultText,
+  scriptModel,
+  type AgentConfig,
+  type ModelChoice,
+} from "../document/session";
 import { fileRefs, messageContent, type Attachment } from "../../shared/attach";
 import { emptyLog, offerOf, reduce, type Log, type LogEvent, type Offer } from "../../shared/agent-log";
 import { agentName } from "../../document/content";
@@ -201,23 +212,64 @@ export function sourceTools(read: (q: SourceRead) => Promise<SourceAnswer>, guar
   const str = (v: unknown) => (typeof v == "string" ? v : undefined);
   const num = (v: unknown) => (v == null || v === "" ? undefined : Number(v));
   return [
-    tool("list_source", "List source files", "Lists a folder of Erga's own source (the server's copy of its repository): its folders (name/) and files, with their sizes. recursive: every file under it, with its path. Read-only.",
-      Type.Object({ ref: REF, path: Type.Optional(Type.String({ description: "The folder, from the repository's root, e.g. client (default: the root)" })), recursive: Type.Optional(Type.Boolean({ description: "Every file under the folder, not only its own entries" })) }),
-      (a) => ({ op: "list", ref: str(a.ref), path: str(a.path), recursive: a.recursive === true })),
-    tool("read_source", "Read a source file", `Reads a file of Erga's own source, with line numbers: all of it, or lines from to to (1-based, both included). At most ${MAX_LINES} lines at a time; the answer says how to read on. README.md maps the repository; AGENTS.md says how work is done. Read-only.`,
-      Type.Object({ ref: REF, path: Type.String({ description: "The file, from the repository's root, e.g. agents/admin/agent.ts" }), from: Type.Optional(Type.Integer({ description: "The first line (default 1)" })), to: Type.Optional(Type.Integer({ description: "The last line (default: the end)" })) }),
-      (a) => ({ op: "read", ref: str(a.ref), path: String(a.path ?? ""), from: num(a.from), to: num(a.to) })),
-    tool("search_source", "Search the source", `Searches the text files of Erga's own source, as grep does: each line that matches, as path:line: text. query is plain text unless regex is true (a JavaScript regular expression). path keeps to a folder or a file; glob to file names (*.ts) or paths (src/**/*.css). limit: at most this many lines (default 100, at most ${MAX_MATCHES}). Read-only.`,
+    tool(
+      "list_source",
+      "List source files",
+      "Lists a folder of Erga's own source (the server's copy of its repository): its folders (name/) and files, with their sizes. recursive: every file under it, with its path. Read-only.",
       Type.Object({
-        ref: REF, query: Type.String({ description: "What to find" }),
-        regex: Type.Optional(Type.Boolean({ description: "query is a regular expression" })), ignoreCase: Type.Optional(Type.Boolean({ description: "Match upper and lower case alike" })),
-        path: Type.Optional(Type.String({ description: "Only under this folder (or in this file)" })), glob: Type.Optional(Type.String({ description: "Only files that match, e.g. *.ts" })),
+        ref: REF,
+        path: Type.Optional(Type.String({ description: "The folder, from the repository's root, e.g. client (default: the root)" })),
+        recursive: Type.Optional(Type.Boolean({ description: "Every file under the folder, not only its own entries" })),
+      }),
+      (a) => ({ op: "list", ref: str(a.ref), path: str(a.path), recursive: a.recursive === true })
+    ),
+    tool(
+      "read_source",
+      "Read a source file",
+      `Reads a file of Erga's own source, with line numbers: all of it, or lines from to to (1-based, both included). At most ${MAX_LINES} lines at a time; the answer says how to read on. README.md maps the repository; AGENTS.md says how work is done. Read-only.`,
+      Type.Object({
+        ref: REF,
+        path: Type.String({ description: "The file, from the repository's root, e.g. agents/admin/agent.ts" }),
+        from: Type.Optional(Type.Integer({ description: "The first line (default 1)" })),
+        to: Type.Optional(Type.Integer({ description: "The last line (default: the end)" })),
+      }),
+      (a) => ({ op: "read", ref: str(a.ref), path: String(a.path ?? ""), from: num(a.from), to: num(a.to) })
+    ),
+    tool(
+      "search_source",
+      "Search the source",
+      `Searches the text files of Erga's own source, as grep does: each line that matches, as path:line: text. query is plain text unless regex is true (a JavaScript regular expression). path keeps to a folder or a file; glob to file names (*.ts) or paths (src/**/*.css). limit: at most this many lines (default 100, at most ${MAX_MATCHES}). Read-only.`,
+      Type.Object({
+        ref: REF,
+        query: Type.String({ description: "What to find" }),
+        regex: Type.Optional(Type.Boolean({ description: "query is a regular expression" })),
+        ignoreCase: Type.Optional(Type.Boolean({ description: "Match upper and lower case alike" })),
+        path: Type.Optional(Type.String({ description: "Only under this folder (or in this file)" })),
+        glob: Type.Optional(Type.String({ description: "Only files that match, e.g. *.ts" })),
         limit: Type.Optional(Type.Integer({ description: "At most this many matching lines" })),
       }),
-      (a) => ({ op: "search", ref: str(a.ref), query: String(a.query ?? ""), regex: a.regex === true, ignoreCase: a.ignoreCase === true, path: str(a.path), glob: str(a.glob), limit: num(a.limit) })),
-    tool("source_log", "Read the git log", "The git log of a branch of Erga's own source, newest first: each commit's short sha, time (UTC), author and subject. limit: how many (default 20, at most 100); skip: how many of the newest to pass over, to read further back. Read-only.",
-      Type.Object({ ref: REF, limit: Type.Optional(Type.Integer({ description: "How many commits (default 20)" })), skip: Type.Optional(Type.Integer({ description: "How many of the newest to pass over" })) }),
-      (a) => ({ op: "log", ref: str(a.ref), limit: num(a.limit), skip: num(a.skip) })),
+      (a) => ({
+        op: "search",
+        ref: str(a.ref),
+        query: String(a.query ?? ""),
+        regex: a.regex === true,
+        ignoreCase: a.ignoreCase === true,
+        path: str(a.path),
+        glob: str(a.glob),
+        limit: num(a.limit),
+      })
+    ),
+    tool(
+      "source_log",
+      "Read the git log",
+      "The git log of a branch of Erga's own source, newest first: each commit's short sha, time (UTC), author and subject. limit: how many (default 20, at most 100); skip: how many of the newest to pass over, to read further back. Read-only.",
+      Type.Object({
+        ref: REF,
+        limit: Type.Optional(Type.Integer({ description: "How many commits (default 20)" })),
+        skip: Type.Optional(Type.Integer({ description: "How many of the newest to pass over" })),
+      }),
+      (a) => ({ op: "log", ref: str(a.ref), limit: num(a.limit), skip: num(a.skip) })
+    ),
   ];
 }
 

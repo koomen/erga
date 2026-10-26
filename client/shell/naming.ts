@@ -128,12 +128,16 @@ export function mountNaming(shell: Shell) {
   // tab, as Documents does (the same key), so the next page shows it straight
   // away and reads it again behind.
   let treeScript: Promise<TreeModule> | null = null;
-  const loadTree = () => treeScript ??= import("../pages/pages-tree").then((m): TreeModule => m, () => {
-    treeScript = null;
-    // (A chunk that isn't there any more is a new release: the page asks the server, and reloads: live.ts.)
-    live((l) => l.check("a request failed"));
-    throw new Error("Couldn't load the pages: check your connection and try again.");
-  });
+  const loadTree = () =>
+    (treeScript ??= import("../pages/pages-tree").then(
+      (m): TreeModule => m,
+      () => {
+        treeScript = null;
+        // (A chunk that isn't there any more is a new release: the page asks the server, and reloads: live.ts.)
+        live((l) => l.check("a request failed"));
+        throw new Error("Couldn't load the pages: check your connection and try again.");
+      }
+    ));
   const keptKey = () => `erga:docs-tree:${shell.docName!.id}`;
   const kept = () => { try { return JSON.parse(sessionStorage.getItem(keptKey()) || "null") as Parameters<typeof mountTree>[1]["initial"]; } catch { return null; } };
   const keep = (a: { entries: unknown[]; canEdit: boolean; kind: string }) => { try { sessionStorage.setItem(keptKey(), JSON.stringify({ entries: a.entries, canEdit: a.canEdit, kind: a.kind })); } catch { /* private mode */ } };

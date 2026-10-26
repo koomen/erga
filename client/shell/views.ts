@@ -10,12 +10,16 @@ export function mountViews(shell: Shell) {
   // view's edits land in the same file. The source view's code (source-view.ts: CodeMirror's view and the HTML
   // language) loads the first time it opens. Its own edits go to the room.
   let sourceCode: Promise<typeof import("./source-view")> | null = null;
-  const loadSource = () => sourceCode ??= import("./source-view").then((m) => (shell.source = m), (e) => {
-    sourceCode = null;
-    // A chunk that isn't there any more is a new release: the page asks the server, and reloads (live.ts).
-    live((l) => l.check("a request failed"));
-    throw e;
-  });
+  const loadSource = () =>
+    (sourceCode ??= import("./source-view").then(
+      (m) => (shell.source = m),
+      (e) => {
+        sourceCode = null;
+        // A chunk that isn't there any more is a new release: the page asks the server, and reloads (live.ts).
+        live((l) => l.check("a request failed"));
+        throw e;
+      }
+    ));
   const sourceHooks = {
     edited(changes: ChangeSet) {
       shell.collab.push(changes);
