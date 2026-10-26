@@ -17,7 +17,8 @@
 // "production", both in the mock.
 
 import { DurableObject } from "cloudflare:workers";
-import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type ReleaseTag, type TargetStatus } from "./branches";
+import { BranchDeploys, type DeployEnv, type ReleaseTag, type TargetStatus } from "./branches";
+import type { DeployLog, DeployRecord } from "./history";
 import { fixedCredential, OAuthCredential, sealKeyFrom, type CredentialStatus, type TokenAnswer } from "./credential";
 import { Cloudflare, DeployError, loadRelease, type Release } from "./pipeline";
 import { httpBlobs, ReleaseStore, type ReleasesView } from "./releases";
