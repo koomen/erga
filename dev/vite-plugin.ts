@@ -360,6 +360,18 @@ class Mirror {
       if (bytes) this.disk.set(rel, digest(bytes)); else this.disk.delete(rel);
       return { b64: bytes ? bytes.toString("base64") : null };
     }
+    // A change on disk that the document hasn't heard of yet (the watcher's moment, longer on a busy machine) is never
+    // written over: the document hears of it first, merges it in, and writes again.
+    const known = this.disk.get(rel),
+      there = known == null ? null : await readFile(full).catch(() => null);
+    if (there && digest(there) != known) {
+      this.changed.add(rel);
+      this.timer ??= setTimeout(() => {
+        this.timer = undefined;
+        this.take().catch(() => {});
+      }, 0);
+      return { error: `${rel} changed on disk: the document reads it first` };
+    }
     const bytes = m.b64 != null ? Buffer.from(m.b64, "base64") : new TextEncoder().encode(m.text ?? "");
     this.disk.set(rel, digest(bytes));
     await writeAtomic(full, bytes);
