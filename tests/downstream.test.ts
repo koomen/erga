@@ -251,7 +251,10 @@ describe("a fork at upstream (control/install/forks.ts)", () => {
     const hash = await hashSecret(FORK.secret);
     const told: string[][] = [];
     const c: Control = {
-      platform: { sessionOf: async () => null } as unknown as Platform, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body),
+      platform: { sessionOf: async () => null } as unknown as Platform,
+      app: "https://erga.test",
+      version: "v1",
+      layout: (o) => new Response(o.body),
       deploys: {} as never,
       oauth: { clientId: "erga-client", accountId: ACC, worker: "erga-control", net: fetch },
       forks: {
@@ -266,9 +269,26 @@ describe("a fork at upstream (control/install/forks.ts)", () => {
     // The install's deploys, as its Pipeline object makes them (control/deploys/pipeline-object.ts).
     const storage = new Map<string, unknown>();
     const deploys = new BranchDeploys({
-      storage: { get: async (k) => storage.get(k) as never, put: async (k, v) => { storage.set(k, v); }, delete: async (k) => storage.delete(k) },
-      env: { CLOUDFLARE_ACCOUNT_ID: ACC }, credential: fixedCredential("mock-token"), net: mock.fetch, builder: null, schedule: () => {}, changed: () => {}, fleet,
-      upstream: { channel: async () => { throw new Error("not read here"); }, hosts: (hosts) => forkHosts({ upstream: UPSTREAM.origin, ...FORK }, hosts, upstream as typeof fetch) },
+      storage: {
+        get: async (k) => storage.get(k) as never,
+        put: async (k, v) => {
+          storage.set(k, v);
+        },
+        delete: async (k) => storage.delete(k),
+      },
+      env: { CLOUDFLARE_ACCOUNT_ID: ACC },
+      credential: fixedCredential("mock-token"),
+      net: mock.fetch,
+      builder: null,
+      schedule: () => {},
+      changed: () => {},
+      fleet,
+      upstream: {
+        channel: async () => {
+          throw new Error("not read here");
+        },
+        hosts: (hosts) => forkHosts({ upstream: UPSTREAM.origin, ...FORK }, hosts, upstream as typeof fetch),
+      },
     });
     const own = ["erga.ada-mock.workers.dev", "erga-staging.ada-mock.workers.dev", "erga-control.ada-mock.workers.dev"];
     expect(await deploys.addDomain("production", "docs.ada-example.com", "ada")).not.toHaveProperty("error");

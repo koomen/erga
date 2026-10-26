@@ -67,7 +67,11 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
       ...(app || fork ? { githubToken: (id: number) => githubTokenFor(env, id), githubUninstall: (id: number) => githubUninstallFor(env, id) } : {}),
       moved: (m) => {
         ctx.waitUntil(publish({ type: "source", branch: m.branch, commit: m.new }).catch(() => {}));
-        ctx.waitUntil(deploys().hook(m.branch, m.new, `${m.how} by ${byLine(m.by, m.via)}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        ctx.waitUntil(
+          deploys()
+            .hook(m.branch, m.new, `${m.how} by ${byLine(m.by, m.via)}`)
+            .catch((e) => console.error(`deploy hook (${m.branch}):`, e))
+        );
         // main moved: the production deploy, in the change log (/admin/changes), with the commits it brought.
         if (m.branch == "main") {
           ctx.waitUntil((async () => {
@@ -77,7 +81,12 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
         }
       },
       // A release cut (a tag): the deploys' object puts it on stable (once its build is in the store).
-      released: (r) => ctx.waitUntil(deploys().tagged({ tag: r.tag, commit: r.commit, by: byLine(r.by, r.via), at: Date.now() }).catch((e) => console.error(`release hook (${r.tag}):`, e))),
+      released: (r) =>
+        ctx.waitUntil(
+          deploys()
+            .tagged({ tag: r.tag, commit: r.commit, by: byLine(r.by, r.via), at: Date.now() })
+            .catch((e) => console.error(`release hook (${r.tag}):`, e))
+        ),
       changed: () => ctx.waitUntil(publish({ type: "source" }).catch(() => {})),
       background: (work) => ctx.waitUntil(work),
       // A downstream (an install's control Worker: UPSTREAM names erga.dev's): its upstream's Git endpoint, read for anyone.
