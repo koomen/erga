@@ -16,27 +16,30 @@
 // It's an ordinary socket: a document on disk never sleeps.
 
 import { DurableObject } from "cloudflare:workers";
-import { Document, personOf, type DocumentDeps, type FileData, type OnDisk, type ViewAnswer } from "../document/document";
-import type { DocKind } from "../document/pages";
-import { Tabs, type Tab } from "../document/tabs";
-import { PING, PONG } from "../shared/room-socket";
-import type { DocRow, Role, Who } from "../server/directory/index.ts";
-import { agentToolsFor } from "../agents/tools";
-import { VIA } from "../shared/attribution";
-import type { RestoreResult, VersionsState } from "../document/versions";
-import type { DocSnapshot, Page } from "../document/snapshot";
-import { directoryOf } from "./d1";
-import { forgetDecisions } from "../server/documents/index.ts";
-import { platform } from "./platform";
-import { CALLS, DeployGate, DEPLOYED_HEADER, deployedOf, STALE, staleResponse, type Call } from "./document-host";
-import { DiskLink } from "../dev/disk-storage";
-import { homeChanged } from "./current-files";
-import type { Env } from "./env";
-import { blobsOf } from "./blobs";
-import { safeAvatar } from "../shared/avatars";
+import { Document, personOf, type DocumentDeps, type FileData, type OnDisk, type ViewAnswer } from "../../document/document";
+import type { DocKind } from "../../document/pages";
+import { Tabs, type Tab } from "../../document/tabs";
+import { PING, PONG } from "../../shared/room-socket";
+import type { DocRow, Role, Who } from "../../server/directory/index.ts";
+import { agentToolsFor } from "../../agents/tools";
+import { VIA } from "../../shared/attribution";
+import type { RestoreResult, VersionsState } from "../../document/versions";
+import type { DocSnapshot, Page } from "../../document/snapshot";
+import { directoryOf } from "../d1";
+import { forgetDecisions } from "../../server/documents/index.ts";
+import { platform } from "../platform";
+import { CALLS, DeployGate, DEPLOYED_HEADER, deployedOf, STALE, staleResponse, type Call } from "./document-stub";
+import { DiskLink } from "../../dev/disk-storage";
+import { homeChanged } from "../current-files";
+import type { Env } from "../env";
+import { blobsOf } from "../blobs";
+import { safeAvatar } from "../../shared/avatars";
 
 /** The new-document template's page, which a new page starts from. */
-const TEMPLATE = Object.values(import.meta.glob("../assets/templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>)[0] ?? "";
+const TEMPLATE =
+  Object.values(
+    import.meta.glob("../../assets/templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>
+  )[0] ?? "";
 
 export class DocumentObject extends DurableObject<Env> {
   /** The dev server's sockets (ordinary ones): a document on disk. */

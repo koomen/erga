@@ -94,7 +94,7 @@ export interface HostOptions {
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** A person's picture, if the platform knows one (hosted: the one the front door sent, shared/avatars.ts). */
   readonly avatarOf?: (person: { id: string; name: string; avatar?: string }) => string | undefined;
-  /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/document-object.ts). */
+  /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/objects/document.ts). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
   /** Whether a request may publish a file (PUT /api/stored): everyone, if not given. */
   readonly mayPublish?: (request: HttpServerRequest.HttpServerRequest) => boolean;
@@ -166,7 +166,7 @@ export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase()
  * before it's used (no-cache), so a page always loads the latest version, but
  * by its digest (ETag), so a file that hasn't changed since the browser last
  * had it comes back as a 304 with no body. Shared by the host's route and the
- * Durable Object's own (cloudflare/document-object.ts, which serves stored files before
+ * Durable Object's own (cloudflare/objects/document.ts, which serves stored files before
  * the room is open).
  *
  * A Range request (`range`, one range of bytes, as audio and video ask: Safari

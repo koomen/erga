@@ -2,7 +2,7 @@
 // script and image), cut now and then as it's edited: its history, to look
 // back at and restore. Readers always see the document as it is now.
 //
-// Storage is the document's own (its Durable Object, cloudflare/document-object.ts),
+// Storage is the document's own (its Durable Object, cloudflare/objects/document.ts),
 // behind the small `KV` interface so the unit tests run it on a Map, and the
 // blob store (R2: document/blobs.ts). Files are content-addressed blobs, by
 // their sha-256, shared by every version that has them, so a version that

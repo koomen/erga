@@ -8,7 +8,7 @@ import { HomeDeploys, type HomeObject } from "../../server/home/index.ts";
 import { directoryOf } from "../d1";
 import type { Env } from "../env";
 import { currentFiles } from "../current-files";
-import { documentOf } from "../document-host";
+import { documentOf } from "./document-stub";
 
 const FIVE_MINUTES = 5 * 60 * 1000;
 

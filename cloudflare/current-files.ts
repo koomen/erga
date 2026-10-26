@@ -4,7 +4,7 @@
 // someone leaving).
 
 import type { Env } from "./env";
-import { documentOf } from "./document-host";
+import { documentOf } from "./objects/document-stub";
 
 /** A document's files as they are now: its page, its files and its current version's number. */
 export interface CurrentFiles { index: string; files: Record<string, string | Uint8Array>; version: number | null }

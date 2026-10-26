@@ -1,4 +1,4 @@
-// Helpers for the versions and settings tests (document/versions.ts, cloudflare/document-object.ts,
+// Helpers for the versions and settings tests (document/versions.ts, cloudflare/objects/document.ts,
 // client/settings.ts), on servers.short(): people signed in by cookie, a
 // document's versions over the HTTP API, an agent token and its
 // tools, and someone in the document's room (a headless Yjs participant, as an

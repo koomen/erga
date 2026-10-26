@@ -12,7 +12,7 @@ import type { Platform } from "../server/platform";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
 import { isDev } from "./platform";
-import { documentOf } from "./document-host";
+import { documentOf } from "./objects/document-stub";
 
 /** The dev server's routes: null for a path that isn't one of them; refused unless it's local development and the request carries the secret (?link=). */
 export async function devRoutes(request: Request, env: Env, platform: Platform, url: URL): Promise<Response | null> {

@@ -1,8 +1,16 @@
 // A document's object from an older deploy restarts when a newer Worker calls
-// it (cloudflare/document-host.ts): the call goes again, to the new code.
+// it (cloudflare/objects/document-stub.ts): the call goes again, to the new code.
 
 import { describe, expect, test } from "bun:test";
-import { DEPLOYED_HEADER, DeployGate, deployedOf, documentHost, STALE, staleResponse, type DocumentStub } from "../cloudflare/document-host";
+import {
+  DEPLOYED_HEADER,
+  DeployGate,
+  deployedOf,
+  documentHost,
+  STALE,
+  staleResponse,
+  type DocumentStub,
+} from "../cloudflare/objects/document-stub";
 
 /**
  * A document's object as Cloudflare runs it across a deploy: it runs deploy

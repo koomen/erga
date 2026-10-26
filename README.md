@@ -72,7 +72,7 @@ flowchart LR
   holds nothing but its own document. The server gives each page the source
   marks that the editor needs. When you start to edit, the shell loads the
   page editor into the page, and the page editor edits the page in place.
-- **The document** is a Durable Object (`cloudflare/document-object.ts`)
+- **The document** is a Durable Object (`cloudflare/objects/document.ts`)
   around a `Document` (`document/`) that has no Cloudflare code in it. The
   document keeps its files and versions in the object's storage, and large
   files in R2. Its room is a shared Yjs document: each editor tab joins it

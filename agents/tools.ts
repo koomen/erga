@@ -1,5 +1,5 @@
 // Tools both kinds of agent have, defined once: the editor's own agent
-// (agents/document/session.ts, given them by its document's host, cloudflare/document-object.ts) and an
+// (agents/document/session.ts, given them by its document's host, cloudflare/objects/document.ts) and an
 // external agent holding one of the person's agent tokens (server/api.ts,
 // over HTTP, /mcp and the guide). They need only the directory (server/directory/:
 // documents' permissions, the server's users and settings) and who's asking,

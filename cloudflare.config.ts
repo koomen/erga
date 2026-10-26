@@ -52,7 +52,7 @@ export default defineConfig(({ mode }) => ({
     // (/_erga/ is shared/assets.ts's ASSET_PREFIX, written out: the dev server can't load a module this file imports into the Worker too.)
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: mode == "development" ? true : ["/*", "!/_erga/*"] },
     exports: {
-      // Each document (cloudflare/document-object.ts), named by its id.
+      // Each document (cloudflare/objects/document.ts), named by its id.
       DocumentObject: exports.durableObject({ storage: "sqlite" }),
       // The deploy page's sessions (/deploy, control/install/session.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),

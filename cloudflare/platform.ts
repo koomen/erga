@@ -16,7 +16,7 @@ import { sourceService } from "../control/source/service";
 import type { App } from "../control/index";
 import type { SourceService } from "../control/source/index.ts";
 import { agentSettings } from "./agent-settings";
-import { documentOf } from "./document-host";
+import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
 import { BLOB_HEADER, INLINE_HEADER, serveBlob } from "../document/blobs";
 

@@ -16,8 +16,8 @@
 // `call(deployed, method, args)` is the one method each version of the object
 // shares with the next: keep its signature.
 
-import type { DocumentObject } from "./document-object";
-import type { Env } from "./env";
+import type { DocumentObject } from "./document";
+import type { Env } from "../env";
 
 /** The header a fetch to a document carries the caller's deploy in. */
 export const DEPLOYED_HEADER = "x-erga-deployed";
