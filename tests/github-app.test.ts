@@ -9,7 +9,7 @@ import { sealKeyFrom } from "../control/deploys/credential";
 import { mockGithub, type MockGithub } from "../dev/github-mock";
 import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
-import type { Session } from "../server/identity/index";
+import type { Session } from "../server/platform";
 import {
   api,
   appJwt,
@@ -20,9 +20,9 @@ import {
   verifyWebhook,
   type GithubApp,
   type GithubLink,
-  type GithubStatus,
   type PushEvent,
 } from "../control/source/github";
+import type { GithubStatus } from "../control/source/index.ts";
 import { openRelay, relayNonce, relayOrigin, relayState, sealRelay } from "../shared/relay";
 import { TEST_APP, testPrivateKey } from "./helpers/source-fixture";
 import { Directory } from "../server/directory/index.ts";

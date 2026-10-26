@@ -1,0 +1,21 @@
+// The Workers (the app's and the control Worker's): Cloudflare's runtime types (.cloudflare/types, which
+// `bun run typecheck` makes from cloudflare.config.ts first), no DOM and no Bun. See tsconfig.json.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["ES2022"], "types": [] },
+  "include": [
+    "shared/text-imports.d.ts",
+    ".cloudflare/types",
+    "server",
+    "document",
+    "agents",
+    "control",
+    "cloudflare",
+    "cloudflare.config.ts",
+    // A test of a Worker file: bun:test's types alone, with the Workers' own.
+    "node_modules/bun-types/test.d.ts",
+    "tests/document-host.test.ts"
+  ],
+  // The build container's server runs under Bun: tsconfig.json checks it.
+  "exclude": ["control/builder/build.ts", "control/builder/server.ts"]
+}

@@ -19,7 +19,7 @@ import { installFleet } from "../control/deploys/fleet";
 import { memoryBlobs, ReleaseStore } from "../control/deploys/releases";
 import { mockBuilder, mockCloudflare } from "../dev/mock-cloudflare";
 import type { Platform } from "../server/platform";
-import type { Session } from "../server/identity/index";
+import type { Session } from "../server/platform";
 import { quietConsole } from "./helpers/quiet.ts";
 
 quietConsole();
@@ -62,9 +62,18 @@ describe("the control Worker's address", () => {
   });
   test("beside the app's: workers.dev, the zone's apex, a name under the zone", () => {
     expect(controlHostOf({ app: { kind: "workers.dev" }, subdomain: "ada-mock" })).toBe("erga-control.ada-mock.workers.dev");
-    expect(controlHostOf({ app: { kind: "domain", zoneId: "z", zoneName: "example.com", hostname: "example.com" } })).toBe("ops.example.com");
-    expect(controlHostOf({ app: { kind: "domain", zoneId: "z", zoneName: "example.com", hostname: "erga.example.com" } })).toBe("erga-ops.example.com");
-    expect(controlHostOf({ app: { kind: "domain", zoneId: "z", zoneName: "example.com", hostname: "Docs.Team.Example.com" } })).toBe("docs-ops.team.example.com");
+    expect(
+      controlHostOf({ subdomain: "ada-mock", app: { kind: "domain", zoneId: "z", zoneName: "example.com", hostname: "example.com" } })
+    ).toBe("ops.example.com");
+    expect(
+      controlHostOf({ subdomain: "ada-mock", app: { kind: "domain", zoneId: "z", zoneName: "example.com", hostname: "erga.example.com" } })
+    ).toBe("erga-ops.example.com");
+    expect(
+      controlHostOf({
+        subdomain: "ada-mock",
+        app: { kind: "domain", zoneId: "z", zoneName: "example.com", hostname: "Docs.Team.Example.com" },
+      })
+    ).toBe("docs-ops.team.example.com");
   });
 });
 
@@ -170,6 +179,7 @@ describe("the consent relay", () => {
     const installs = new Set([origin]);
     const platform = { sessionOf: async () => null, directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } } } as unknown as Platform;
     const c: Control = {
+      github: null,
       platform, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body),
       deploys: { isInstall: async (o: string) => installs.has(o) } as never,
       oauth: { clientId: "erga-client", accountId: ACC, worker: "erga-control", net: fetch },
@@ -191,6 +201,7 @@ describe("the consent relay", () => {
     const mock = mockCloudflare();
     const connected: string[] = [];
     const c: Control = {
+      github: null,
       platform, app: "https://erga.ada-mock.workers.dev", version: "v1", layout: (o) => new Response(o.body),
       deploys: { credentialStatus: async () => ({ connected: false }), connectCredential: async (answer: { access_token?: string }, by: string) => { connected.push(by); return answer.access_token!; } } as never,
       oauth: { clientId: "erga-client", accountId: ACC, worker: "erga-control", net: mock.fetch, relay: "https://ops.erga.test" },
@@ -219,13 +230,14 @@ describe("a fork at upstream (control/install/forks.ts)", () => {
     // erga.dev's control Worker: the fork's token, and its builder over the mock builder (the container's protocol).
     const endpoint = builderEndpoint(mockBuilder(async () => ({ ...release, version: "f0f0f0f0f0f0" }), { delayMs: 1 }), async () => ({ cloneUrl: `https://artifacts.mock/git/erga/fork-${FORK.id}.git`, token: "art-read-token" }));
     const c: Control = {
+      github: null,
       platform, app: "https://erga.test", version: "v1", layout: (o) => new Response(o.body),
       deploys: {} as never,
       oauth: { clientId: "erga-client", accountId: ACC, worker: "erga-control", net: fetch },
       forks: {
         access: async (id, secret, scope) => (id == FORK.id && (await hashSecret(secret)) == hash ? { remote: `https://artifacts.mock/git/erga/fork-${id}.git`, token: `art-${scope}-token`, expiresAt: new Date(Date.now() + 3600_000).toISOString() } : null),
         builder: async (id, secret, request) => { if (id != FORK.id || (await hashSecret(secret)) != hash) return Response.json({ error: "no" }, { status: 403 }); builds.push(new URL(request.url).pathname); return endpoint(request); },
-      },
+      } as NonNullable<Control["forks"]>,
     };
     const net = (input: RequestInfo | URL, init?: RequestInit) => controlRoutes(new Request(input, init), c);
     const access = await forkRemote({ upstream: "https://ops.erga.test", ...FORK }, "write", net as typeof fetch);
@@ -255,6 +267,7 @@ describe("a fork at upstream (control/install/forks.ts)", () => {
     const hash = await hashSecret(FORK.secret);
     const told: string[][] = [];
     const c: Control = {
+      github: null,
       platform: { sessionOf: async () => null } as unknown as Platform,
       app: "https://erga.test",
       version: "v1",

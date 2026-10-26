@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { controlLayout } from "../control/routes";
 import { adminSourcePage } from "../control/source/index";
-import type { Session } from "../server/identity/index";
+import type { Session } from "../server/platform";
 import { readFileSync } from "node:fs";
 import { inlineFunction } from "../server/pages/inline";
 

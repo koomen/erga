@@ -10,6 +10,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
@@ -75,8 +76,19 @@ async function openDocument(data: Map<string, Uint8Array>, store: ChatStore, run
     baseUrl: () => "",
   });
   const call = async (method: "GET" | "POST", body?: unknown) =>
-    (await host.handler(new Request("http://doc.test/api/agent", { method, ...(body ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } } : {}) }))).json() as Promise<{ log: Log }>;
-  return { prompt: (text: string) => call("POST", { text }), state: () => call("GET"), close: () => Effect.runPromise(Scope.close(scope, Effect.void)) };
+    (
+      await host.handler(
+        new Request("http://doc.test/api/agent", {
+          method,
+          ...(body ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } } : {}),
+        })
+      )
+    ).json() as Promise<{ log: Log }>;
+  return {
+    prompt: (text: string) => call("POST", { text }),
+    state: () => call("GET"),
+    close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
+  };
 }
 
 async function until(f: () => boolean | Promise<boolean>, what: string) {

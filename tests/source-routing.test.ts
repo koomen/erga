@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { appAnswer, controlRoutes, isOpsPagePath, type Control } from "../control/routes";
 import type { Platform } from "../server/platform";
-import type { Session } from "../server/identity/index";
+import type { Session } from "../server/platform";
 
 describe("the app's Worker", () => {
   const apart = { control: true, controlUrl: true, pipeline: false };
@@ -44,7 +44,11 @@ describe("the Ops page, served by the app", () => {
     control: { url: "https://ops.erga.test" },
   } as unknown as Platform;
   const control = (releases: unknown): Control => ({
-    platform, app: "https://erga.test", version: null, page: "/admin/ops",
+    platform,
+    github: null,
+    app: "https://erga.test",
+    version: null,
+    page: "/admin/ops",
     layout: (o) => new Response(`<title>${o.title}</title>${o.body}`, { headers: { "Content-Type": "text/html" } }),
     deploys: { releases: async () => releases } as never,
     oauth: { clientId: "", accountId: "", worker: "erga-control", net: fetch },

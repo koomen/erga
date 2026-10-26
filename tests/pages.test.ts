@@ -100,7 +100,7 @@ test("a redirect to a page's file is relative, keeping what's before the documen
 
 /** Files and folders in memory, as a Durable Object keeps them. */
 function memoryStore(init: Record<string, string>, dirs: string[] = []) {
-  const data = new Map(Object.entries(init).map(([k, v]) => [k, new TextEncoder().encode(v)]));
+  const data = new Map<string, Uint8Array>(Object.entries(init).map(([k, v]) => [k, new TextEncoder().encode(v)]));
   const folderSet = new Set(dirs);
   const layer = StateStore.none.pipe(Layer.provideMerge(Layer.succeed(FileStore, {
     list: Effect.sync(() => [...data.keys()]),

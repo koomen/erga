@@ -10,7 +10,7 @@ test("get, put and delete, one key or many; list in key order, by prefix, after 
   const s = new MemoryStorage();
   await s.put("b", 2);
   await s.put({ a: 1, c: 3, "p:x": "x", "p:y": "y" });
-  expect(await s.get("a")).toBe(1);
+  expect(await s.get<number>("a")).toBe(1);
   expect(await s.get("nope")).toBeUndefined();
   expect([...(await s.get(["a", "c", "nope"])).entries()]).toEqual([["a", 1], ["c", 3]]);
   expect([...(await s.list()).keys()]).toEqual(["a", "b", "c", "p:x", "p:y"]);
@@ -51,7 +51,7 @@ test("files and folders go through the storage, each change noted", async () => 
   expect(await run(files.folders!)).toEqual(["drafts", "drafts/old"]);
   expect(new TextDecoder().decode((await run(files.read("index.html")))!)).toBe("<h1>Hi</h1>");
   expect(await run(files.read("nope.html"))).toBeNull();
-  expect(await s.get(KEYS.file + "img/logo.png")).toEqual(new Uint8Array([1, 2, 3]));
+  expect(await s.get<Uint8Array>(KEYS.file + "img/logo.png")).toEqual(new Uint8Array([1, 2, 3]));
   await run(files.rmdir!("drafts"));
   expect(await run(files.folders!)).toEqual([]);
   await run(files.remove!("notes/a.md"));

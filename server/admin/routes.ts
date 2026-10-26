@@ -151,11 +151,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     switch (field("do")) {
       case "add":
         return Response.json(
-          await dir.addUser(
-            who!,
-            { provider: field("provider"), handle: field("handle"), role: field("role") },
-            roleValue(field("role")) as UserRole
-          )
+          await dir.addUser(who!, { provider: field("provider"), handle: field("handle") }, roleValue(field("role")) as UserRole)
         );
       case "role": {
         if (person) return Response.json({ person: await dir.people.setRole(who!, person, roleValue(field("role")) as UserRole) });

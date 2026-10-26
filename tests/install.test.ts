@@ -8,7 +8,7 @@ import { CONTROL_OAUTH_SCOPES, OAuthCredential, sealKeyFrom, type CredentialStat
 import { OAUTH } from "../control/deploys/cloudflare-api";
 import { ACCOUNT_ID, mockCloudflare, MOCK_OAUTH_SCOPES } from "../dev/mock-cloudflare";
 import type { Platform } from "../server/platform";
-import type { Session } from "../server/identity/index";
+import type { Session } from "../server/platform";
 
 const ORIGIN = "https://ops.erga.test";
 const session = { login: "ada", name: "Ada" } as unknown as Session;
@@ -21,6 +21,7 @@ function control(net: typeof fetch, mock = false) {
   const credential = new OAuthCredential({ storage: storage as never, net: net as never, client: { id: "erga-client" }, sealKey: sealKeyFrom("s") });
   const calls: string[] = [];
   const c: Control = {
+    github: null,
     platform, app: "https://erga.test", version: "v1",
     layout: (o) => new Response(`<title>${o.title}</title>${o.body}`, { headers: { "Content-Type": "text/html" } }),
     deploys: { credentialStatus: () => credential.status(), connectCredential: (a: never, by: string) => credential.connect(a, by), disconnectCredential: () => credential.disconnect() } as never,

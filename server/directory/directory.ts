@@ -645,7 +645,7 @@ export class Directory {
    */
   async addUser(
     by: Actor,
-    input: { provider: unknown; handle: unknown; role: unknown },
+    input: { provider: unknown; handle: unknown },
     role: UserRole
   ): Promise<{ user?: User; person?: Person; note?: string }> {
     await this.users.mustAdmin(by);

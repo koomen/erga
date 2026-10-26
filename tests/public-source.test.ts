@@ -53,6 +53,7 @@ beforeAll(async () => {
     directory: { users: { allowed: async () => true, isAdmin: async (w: { login: string }) => w.login == "ada", actsAsAdmin: async () => true } },
   } as unknown as Platform;
   const c: Control = {
+    github: null,
     platform, app: APP, version: "v1", deploys: {} as never, oauth: {} as never,
     layout: () => new Response("the admin layout", { headers: { "Content-Type": "text/html" } }),
   };

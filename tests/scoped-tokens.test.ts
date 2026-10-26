@@ -37,7 +37,10 @@ async function server() {
   for (const [id, owner] of [["oneoneon", "ada"], ["twotwotw", "ada"], ["threethr", "bo"]]) await dir.add({ id, owner, title: id, created: 1, expires: null });
   const tokens = new Tokens(sql, "secret-".repeat(6), dir);
   const platform = {
-    directory: dir, tokens, sessionOf: (request) => sessionOf(platform, request), dev: () => false,
+    directory: dir,
+    tokens,
+    sessionOf: (request: Request) => sessionOf(platform, request),
+    dev: () => false,
     docs: { list: async (login: string) => (await dir.list(login)).map((d) => ({ ...d, modified: d.created })) },
   } as unknown as Platform;
   /** Calls one of the server API's tools with a token: its status and body. */
