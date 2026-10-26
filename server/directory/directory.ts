@@ -49,6 +49,7 @@ import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users
 import { Credentials } from "./api-keys.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, type DocKind } from "../../document/pages.ts";
+import { randomString } from "../../shared/bytes.ts";
 
 
 /** What SQL a platform gives the directory (D1, bun:sqlite). Parameters are `?1`, `?2`... */
@@ -873,4 +874,4 @@ export const isSlug = (s: string) => SLUG.test(s) && s.length <= SLUG_MAX;
 export const TEST_ID = /^test[a-z0-9]{4}$/;
 export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 /** A new document's id: 8 characters of ALPHABET. */
-export const newDocId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => ALPHABET[b % ALPHABET.length]).join("");
+export const newDocId = () => randomString(8, ALPHABET);

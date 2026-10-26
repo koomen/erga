@@ -26,6 +26,7 @@
 // reads the store from another account's control Worker.)
 
 import { DeployError, loadRelease, type Release, type ReleaseIndex } from "./pipeline";
+import { sha256Hex } from "../../shared/bytes";
 
 export type Channel = "edge" | "stable";
 export const CHANNELS: Channel[] = ["edge", "stable"];
@@ -77,10 +78,6 @@ export const releaseType = (path: string) =>
   path.endsWith(".json") ? "application/json; charset=utf-8" : path.endsWith(".js") || path.endsWith(".mjs") ? "application/javascript; charset=utf-8"
   : path.endsWith(".css") ? "text/css; charset=utf-8" : path.endsWith(".html") ? "text/html; charset=utf-8" : path.endsWith(".sql") ? "text/plain; charset=utf-8"
   : path.endsWith(".woff2") ? "font/woff2" : path.endsWith(".png") ? "image/png" : path.endsWith(".svg") ? "image/svg+xml" : "application/octet-stream";
-
-export async function sha256(bytes: Uint8Array): Promise<string> {
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource))].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 /** A release's files as the store lays them out (release.json included), by path. */
 export function releaseFiles(release: Release): Record<string, Uint8Array> {
@@ -136,7 +133,7 @@ export class ReleaseStore {
     const manifest: Manifest = { version: release.version, commit, built: release.built, published: this.now(), files: {} };
     for (const [path, bytes] of Object.entries(files)) {
       await this.blobs.put(releaseKey(release.version, path), bytes, releaseType(path));
-      manifest.files[path] = { sha256: await sha256(bytes), size: bytes.byteLength };
+      manifest.files[path] = { sha256: await sha256Hex(bytes), size: bytes.byteLength };
     }
     await this.blobs.put(releaseKey(release.version, "manifest.json"), json(manifest), releaseType("manifest.json"));
     return manifest;
@@ -173,7 +170,8 @@ export class ReleaseStore {
       if (!bytes) return null;
       const want = m.files[path];
       if (!want) throw new DeployError(`Release ${version} has a file its manifest doesn't list: ${path}.`);
-      if (bytes.byteLength != want.size || (await sha256(bytes)) != want.sha256) throw new DeployError(`Release ${version}'s ${path} doesn't match its manifest: the store is damaged, or someone changed it.`);
+      if (bytes.byteLength != want.size || (await sha256Hex(bytes)) != want.sha256)
+        throw new DeployError(`Release ${version}'s ${path} doesn't match its manifest: the store is damaged, or someone changed it.`);
       return bytes;
     });
   }

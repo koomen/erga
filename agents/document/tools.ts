@@ -22,6 +22,7 @@ import type { Naming } from "../../server/directory/index.ts";
 import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../../document/versions";
 import { WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
+import { fromBase64 } from "../../shared/bytes";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -126,7 +127,7 @@ export function makeTools(
     const clean = b64.replace(/\s+/g, "");
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean) || clean.length % 4 == 1) throw new Error("content_base64 isn't base64.");
     if ((clean.length * 3) / 4 > WRITE_BYTES_MAX) throw new Error(`That's more than ${WRITE_BYTES_MAX / 1e6} MB: too much for one call.`);
-    const bytes = Uint8Array.from(Buffer.from(clean, "base64"));
+    const bytes = fromBase64(clean);
     const r = await opts.files.writeBytes(path, bytes, opts.by?.() ?? "agent");
     await opts.caughtUp?.();
     return `${r.replaced ? "Replaced" : "Wrote"} ${path} (${readableSize(bytes.length)}, ${r.kind == "text" ? "as text" : "a file kept whole"}).`;

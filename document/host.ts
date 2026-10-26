@@ -61,7 +61,8 @@ import { ignored, isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";
 import { encodeStart } from "../shared/room-socket";
-import { blobPointer, byteRange, INLINE_HEADER, sha256, type BlobStore } from "./blobs";
+import { blobPointer, byteRange, INLINE_HEADER, type BlobStore } from "./blobs";
+import { sha256Hex } from "../shared/bytes";
 import { pdfText } from "./pdf";
 import * as Y from "yjs";
 import type { VersionsAccess } from "../agents/document/session";
@@ -324,7 +325,7 @@ export function makeHost(opts: HostOptions) {
       const read = () => Effect.runPromise(Effect.orElseSucceed(files.read(path), () => null));
       // Kept by the PDF's hash: its blob's, or (a file the object keeps, from before blobs) its bytes'.
       const bytes = ref ? null : await read();
-      const hash = ref?.hash ?? (bytes ? await sha256(bytes) : null);
+      const hash = ref?.hash ?? (bytes ? await sha256Hex(bytes) : null);
       return hash ? pdfText(hash, async () => bytes ?? (await read()), opts.blobs) : null;
     },
     writeBytes: async (path, bytes, by) => {

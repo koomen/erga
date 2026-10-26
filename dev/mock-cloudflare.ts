@@ -49,6 +49,7 @@ import { createHash } from "node:crypto";
 import type { Fetch, Release } from "../control/deploys/pipeline";
 import type { Builder } from "../control/deploys/branches";
 import { memoryStore, snapshotDoor, type DocStore } from "../document/snapshot";
+import { base64, fromBase64, hex, randomBytes } from "../shared/bytes";
 
 export interface MockState {
   account: { id: string; name: string };
@@ -127,7 +128,6 @@ export const namespaceId = (script: string, className: string) => createHash("md
 export const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
 /** A custom domain's id: fixed by its hostname, here. */
 const domainId = (hostname: string) => createHash("md5").update(`domain:${hostname}`).digest("hex");
-const b64 = (bytes: Uint8Array) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
 
 /**
  * What a hostname on the mock's custom domains would answer for `path`: the
@@ -142,7 +142,7 @@ export function mockSite(state: MockState, hostname: string, path: string): { by
   const p = decodeURIComponent(path.replace(/^\/+/, ""));
   for (const c of [p, `${p}.html`, `${p.replace(/\/$/, "")}/index.html`, p == "" ? "index.html" : null]) {
     const hash = c != null ? files["/" + c] : undefined;
-    if (hash && state.blobs[hash] != null) return { bytes: Uint8Array.from(atob(state.blobs[hash]), (ch) => ch.charCodeAt(0)), path: "/" + c };
+    if (hash && state.blobs[hash] != null) return { bytes: fromBase64(state.blobs[hash]), path: "/" + c };
   }
   return null;
 }
@@ -196,7 +196,7 @@ export function mockCloudflare(opts: {
   let subFor: string | null = null, flaked = false;
   const ok = (result: unknown, status = 200) => Response.json({ success: true, errors: [], messages: [], result }, { status });
   const fail = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
-  const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const randomHex = (n: number) => hex(randomBytes(n));
   const tokenOf = (value: string) => state.tokens.find((t) => tokenValues.get(t.id) == value);
 
   /** What a token made through the API may do (its policies), as Cloudflare checks it: a refusal, or null to go on. */
@@ -277,7 +277,8 @@ export function mockCloudflare(opts: {
               if (!w && !z && !(a && a[1] == ACCOUNT_ID)) return fail(400, 400, `unknown resource ${key}`);
             }
           }
-          const id = hex(16), value = `mock-scoped-${hex(16)}`;
+          const id = randomHex(16),
+            value = `mock-scoped-${randomHex(16)}`;
           state.tokens.push({ id, name: b.name, policies: b.policies });
           tokenValues.set(id, value);
           return ok({ id, name: b.name, status: "active", policies: b.policies, value });
@@ -302,7 +303,13 @@ export function mockCloudflare(opts: {
         if (m == "POST" && rest == "/d1/database") {
           const { name } = await body();
           if (state.databases.some((d) => d.name == name)) return fail(400, 7502, "A database with that name already exists");
-          const db = { uuid: `${hex(4)}-${hex(2)}-${hex(2)}-${hex(2)}-${hex(6)}`, name, statements: [], migrations: [], tables: [] };
+          const db = {
+            uuid: `${randomHex(4)}-${randomHex(2)}-${randomHex(2)}-${randomHex(2)}-${randomHex(6)}`,
+            name,
+            statements: [],
+            migrations: [],
+            tables: [],
+          };
           state.databases.push(db);
           return ok({ uuid: db.uuid, name });
         }
@@ -318,7 +325,7 @@ export function mockCloudflare(opts: {
         if (m == "GET" && tt) {
           const ttDb = state.databases.find((d) => d.uuid == tt[1]);
           if (!ttDb) return fail(404, 7404, "The database could not be found");
-          return ok({ bookmark: `${hex(8)}-00000000-00000000-${hex(8)}` });
+          return ok({ bookmark: `${randomHex(8)}-00000000-00000000-${randomHex(8)}` });
         }
         const ex = /^\/d1\/database\/([^/]+)\/export$/.exec(rest);
         const exDb = ex && state.databases.find((d) => d.uuid == ex[1]);
@@ -328,7 +335,7 @@ export function mockCloudflare(opts: {
           if (output_format != "polling") return fail(400, 7400, "output_format must be polling");
           // The first call starts it; the next (with its bookmark) finds it done.
           if (!current_bookmark) return ok({ success: true, type: "export", at_bookmark: `bm-${exDb.uuid}`, status: "active", messages: ["Generating"] });
-          const url = `https://d1-export.mock/${exDb.uuid}/${hex(4)}.sql`;
+          const url = `https://d1-export.mock/${exDb.uuid}/${randomHex(4)}.sql`;
           exportsAt.set(url, dumpOf(exDb));
           return ok({ success: true, type: "export", at_bookmark: current_bookmark, status: "complete", result: { filename: url.split("/").pop(), signed_url: url } });
         }
@@ -345,7 +352,7 @@ export function mockCloudflare(opts: {
             const sql = uploads.get(`${imDb.uuid}/${b.etag}`);
             if (sql == null) return fail(400, 7400, "Nothing was uploaded for that etag");
             applySql(imDb, sql);
-            importing.set(imDb.uuid, `bm-import-${hex(4)}`);
+            importing.set(imDb.uuid, `bm-import-${randomHex(4)}`);
             return ok({ success: true, at_bookmark: importing.get(imDb.uuid), status: "active" });
           }
           if (b.action == "poll") {
@@ -380,7 +387,7 @@ export function mockCloudflare(opts: {
         if (one) {
           if (!opts.singleAssetUploads) return fail(400, 10002, "single asset uploads aren't enabled for this session");
           if (!known(one[1])) return fail(400, 10002, `unexpected ${one[1]}`);
-          state.blobs[one[1]] = b64(new Uint8Array(await req.arrayBuffer()));
+          state.blobs[one[1]] = base64(await req.arrayBuffer());
           state.assets.uploaded.push(one[1]);
         } else if (rest == "/workers/assets/upload?base64=true") {
           if (opts.singleAssetUploads) return fail(400, 10002, "this session takes one file at a time");
@@ -525,7 +532,12 @@ export function mockCloudflare(opts: {
       if (m == "POST" && (r = /^\/artifacts\/namespaces\/([^/]+)\/tokens$/.exec(rest))) {
         const b = await body();
         if (!opts.fleet || r[1] != "erga" || !state.repos.includes(b?.repo)) return fail(404, 10404, "repo not found");
-        return ok({ id: hex(8), token: `art-read-${hex(8)}`, scope: b.scope ?? "write", expires_at: new Date(Date.now() + (b.ttl ?? 3600) * 1000).toISOString() });
+        return ok({
+          id: randomHex(8),
+          token: `art-read-${randomHex(8)}`,
+          scope: b.scope ?? "write",
+          expires_at: new Date(Date.now() + (b.ttl ?? 3600) * 1000).toISOString(),
+        });
       }
       if (m == "GET" && rest.startsWith("/workers/domains")) {
         const q = new URLSearchParams(rest.split("?")[1] ?? ""), hostname = q.get("hostname"), service = q.get("service");
@@ -561,7 +573,7 @@ export function mockCloudflare(opts: {
         const c = check(domain_name);
         if (!c.registrable) return fail(400, 10500, `${domain_name} is not available`);
         state.registrations.push({ domain: domain_name, price: c.pricing?.registration_cost });
-        state.zones.push({ id: `zone${hex(14)}`, name: domain_name, status: "active" });
+        state.zones.push({ id: `zone${randomHex(14)}`, name: domain_name, status: "active" });
         return ok({ domain_name, state: "succeeded", completed: true, context: { registration: { status: "active" } } }, 201);
       }
       if (m == "GET" && (r = /^\/registrar\/registrations\/([^/]+)\/registration-status$/.exec(rest))) {
@@ -587,7 +599,11 @@ export function mockCloudflare(opts: {
       if (rest == "/workers/routes") {
         const list = state.routes[zone] ??= [];
         if (m == "GET") return ok(list);
-        if (m == "POST") { const d = await body(); list.push({ pattern: d.pattern, script: d.script }); return ok({ id: hex(16), ...d }); }
+        if (m == "POST") {
+          const d = await body();
+          list.push({ pattern: d.pattern, script: d.script });
+          return ok({ id: randomHex(16), ...d });
+        }
       }
       // Every zone's free Universal SSL certificate: the zone and one level down.
       if (rest == "/ssl/certificate_packs" && m == "GET") {
@@ -685,7 +701,18 @@ export function mockCloudflare(opts: {
     // rotated, as Cloudflare's are), and revoke. The access tokens it gives are the mock's full-access ones.
     if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/token" && req.method == "POST") {
       const form = new URLSearchParams(await req.text());
-      const grant = (scope: string) => { const refresh = `mock-refresh-${hex(8)}`; state.refreshTokens.push(refresh); state.oauthGrants++; return Response.json({ access_token: `mock-oauth-${hex(8)}`, token_type: "bearer", expires_in: state.oauthExpiresIn ?? 3600, refresh_token: refresh, scope }); };
+      const grant = (scope: string) => {
+        const refresh = `mock-refresh-${randomHex(8)}`;
+        state.refreshTokens.push(refresh);
+        state.oauthGrants++;
+        return Response.json({
+          access_token: `mock-oauth-${randomHex(8)}`,
+          token_type: "bearer",
+          expires_in: state.oauthExpiresIn ?? 3600,
+          refresh_token: refresh,
+          scope,
+        });
+      };
       if (form.get("grant_type") == "refresh_token") {
         // A test's 429 (Cloudflare's rate limit): once, then the refresh goes as usual.
         if (state.oauthRefreshStatus) { const status = state.oauthRefreshStatus; state.oauthRefreshStatus = undefined; return Response.json({ error: "rate_limited" }, { status }); }
@@ -696,7 +723,14 @@ export function mockCloudflare(opts: {
       }
       // mock-code-dead (the tests'): a grant whose access token has expired and whose refresh token Cloudflare no longer
       // takes, as one revoked on the dashboard is: its first use refreshes, and the refresh is refused.
-      if (form.get("code") == "mock-code-dead" && form.get("code_verifier")) return Response.json({ access_token: `mock-oauth-${hex(8)}`, token_type: "bearer", expires_in: 0, refresh_token: `mock-refresh-dead-${hex(8)}`, scope: state.oauthScopes || MOCK_OAUTH_SCOPES });
+      if (form.get("code") == "mock-code-dead" && form.get("code_verifier"))
+        return Response.json({
+          access_token: `mock-oauth-${randomHex(8)}`,
+          token_type: "bearer",
+          expires_in: 0,
+          refresh_token: `mock-refresh-dead-${randomHex(8)}`,
+          scope: state.oauthScopes || MOCK_OAUTH_SCOPES,
+        });
       if (form.get("code") != "mock-code" || !form.get("code_verifier")) return Response.json({ error: "invalid_grant" }, { status: 400 });
       return grant(state.oauthScopes || form.get("scope") || MOCK_OAUTH_SCOPES);
     }
@@ -731,7 +765,7 @@ function deployVersion(state: MockState, name: string, script: MockState["script
 }
 /** A made-up id in Cloudflare's shape. */
 function uuid(): string {
-  const h = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const h = (n: number) => hex(randomBytes(n));
   return `${h(4)}-${h(2)}-${h(2)}-${h(2)}-${h(6)}`;
 }
 

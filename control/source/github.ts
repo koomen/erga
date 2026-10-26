@@ -21,6 +21,8 @@
 // a `net` to reach GitHub (the tests' and local development's pretend GitHub,
 // dev/github-mock.ts, answers the same routes).
 
+import { base64url, fromBase64url, hex, randomBytes, sha256 } from "../../shared/bytes";
+
 export interface GithubApp {
   /** The App's id (the JWT's issuer), slug (its install page: github.com/apps/<slug>) and client id (sign-in). */
   appId: string; slug: string; clientId: string;
@@ -50,9 +52,6 @@ export class GithubError extends Error {
 
 type Net = (input: string, init?: RequestInit) => Promise<Response>;
 const enc = new TextEncoder();
-const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
-const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 const UA = "Erga";
 
 /** GitHub's origins from the App's setting: github.com and api.github.com, or the pretend GitHub (one origin, its API under /api). */
@@ -66,14 +65,24 @@ export function githubOrigins(standIn?: string | null): { www: string; api: stri
 /** A JWT for the App itself (RS256, 9 minutes): GET /app, installation tokens, the webhook's deliveries. */
 export async function appJwt(appId: string, privateKey: string, now = Date.now()): Promise<string> {
   const pem = privateKey.trim();
-  if (!pem.includes("BEGIN PRIVATE KEY")) throw new GithubError("The App's private key must be PKCS#8 (-----BEGIN PRIVATE KEY-----): convert GitHub's .pem with openssl pkcs8 -topk8 -nocrypt.", 500);
-  const der = unb64u(pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "").replace(/\+/g, "-").replace(/\//g, "_"));
+  if (!pem.includes("BEGIN PRIVATE KEY"))
+    throw new GithubError(
+      "The App's private key must be PKCS#8 (-----BEGIN PRIVATE KEY-----): convert GitHub's .pem with openssl pkcs8 -topk8 -nocrypt.",
+      500
+    );
+  const der = fromBase64url(
+    pem
+      .replace(/-----[^-]+-----/g, "")
+      .replace(/\s+/g, "")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+  );
   const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   const at = Math.floor(now / 1000);
-  const head = b64u(enc.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
-  const body = b64u(enc.encode(JSON.stringify({ iat: at - 60, exp: at + 9 * 60, iss: appId })));
+  const head = base64url(enc.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const body = base64url(enc.encode(JSON.stringify({ iat: at - 60, exp: at + 9 * 60, iss: appId })));
   const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, enc.encode(`${head}.${body}`)));
-  return `${head}.${body}.${b64u(sig)}`;
+  return `${head}.${body}.${base64url(sig)}`;
 }
 
 /** An installation token: an hour's access to the installation's repositories (Contents read and write). */
@@ -205,31 +214,31 @@ export function linkOf(installationId: number, account: { login: string; type: s
  * A state for a consent an install's Worker starts: its origin (base64url), a dot, a random nonce. erga.dev's callback
  * reads the origin and relays the answer there; the nonce (in the install's cookie, never sent on) opens what it relays.
  */
-export const relayState = (origin: string, nonce: string) => `${b64u(enc.encode(origin))}.${nonce}`;
+export const relayState = (origin: string, nonce: string) => `${base64url(enc.encode(origin))}.${nonce}`;
 export function relayOrigin(state: string | null): string | null {
   const [head, rest] = (state ?? "").split(".");
   if (!head || !rest) return null;
   try {
-    const origin = new TextDecoder().decode(unb64u(head));
+    const origin = new TextDecoder().decode(fromBase64url(head));
     return /^https:\/\/[a-z0-9.-]+$/i.test(origin) ? origin : null;
   } catch { return null; }
 }
 export const relayNonce = (state: string) => state.split(".")[1] ?? "";
-export const randomNonce = (n = 18) => b64u(crypto.getRandomValues(new Uint8Array(n)));
 
-const relayKey = async (nonce: string) => crypto.subtle.importKey("raw", await crypto.subtle.digest("SHA-256", enc.encode(`erga-github-relay:${nonce}`)), "AES-GCM", false, ["encrypt", "decrypt"]);
+const relayKey = async (nonce: string) =>
+  crypto.subtle.importKey("raw", await sha256(`erga-github-relay:${nonce}`), "AES-GCM", false, ["encrypt", "decrypt"]);
 
 /** What erga.dev relays to an install (the person's token, GitHub's answer), sealed under the consent's nonce: only the browser that started it (its cookie) and the install's Worker open it. */
 export async function sealRelay(nonce: string, payload: object): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const iv = randomBytes(12);
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await relayKey(nonce), enc.encode(JSON.stringify(payload))));
   const out = new Uint8Array(iv.length + ct.length);
   out.set(iv); out.set(ct, iv.length);
-  return b64u(out);
+  return base64url(out);
 }
 export async function openRelay<T extends object>(nonce: string, sealed: string): Promise<T | null> {
   try {
-    const bytes = unb64u(sealed);
+    const bytes = fromBase64url(sealed);
     const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.subarray(0, 12) }, await relayKey(nonce), bytes.subarray(12));
     return JSON.parse(new TextDecoder().decode(plain)) as T;
   } catch { return null; }

@@ -12,6 +12,7 @@
 
 import type { FromDisk, ToDisk } from "./mirror.ts";
 import { KEYS, type Storage } from "../document/storage.ts";
+import { base64, fromBase64 } from "../shared/bytes.ts";
 
 type Ask = { t: "list" } | { t: "read"; path: string } | { t: "write"; path: string; text?: string; b64?: string }
   | { t: "remove"; path: string } | { t: "folders" } | { t: "mkdir"; path: string } | { t: "rmdir"; path: string };
@@ -171,7 +172,7 @@ class DiskStorage implements Storage {
     const path = key.slice(FILE.length);
     if (this.only != null && path != this.only) return undefined;
     const { b64 } = await this.link.ask({ t: "read", path });
-    return b64 == null ? undefined : (Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) as T);
+    return b64 == null ? undefined : (fromBase64(b64) as T);
   }
   private async write(key: string, value: unknown): Promise<void> {
     if (key.startsWith(DIR)) { await this.link.ask({ t: "mkdir", path: key.slice(DIR.length) }); return; }
@@ -179,7 +180,7 @@ class DiskStorage implements Storage {
     if (this.only != null && path != this.only) return;
     const bytes = value instanceof Uint8Array ? value : typeof value == "string" ? new TextEncoder().encode(value) : null;
     if (!bytes) throw new Error(`${path}: a file on disk holds bytes, not ${typeof value}`);
-    await this.link.ask({ t: "write", path, b64: toBase64(bytes) });
+    await this.link.ask({ t: "write", path, b64: base64(bytes) });
   }
   private async remove(key: string): Promise<boolean> {
     if (key.startsWith(DIR)) { await this.link.ask({ t: "rmdir", path: key.slice(DIR.length) }); return true; }
@@ -189,10 +190,4 @@ class DiskStorage implements Storage {
     if (was) await this.link.ask({ t: "remove", path });
     return was;
   }
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
 }

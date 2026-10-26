@@ -27,6 +27,7 @@
 
 import { DeployError, OAUTH, type Fetch } from "./pipeline";
 import { open, seal, type Sealed } from "./seal";
+import { base64url, randomToken, sha256 } from "../../shared/bytes";
 
 /**
  * What the control Worker asks for: Workers (upload, settings, secrets,
@@ -227,13 +228,10 @@ export class OAuthCredential implements Credential {
 
 // ---------------------------------------------------------------- the consent flow's pieces (control/routes.ts runs them)
 
-const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-export const randomToken = (n = 32) => b64u(crypto.getRandomValues(new Uint8Array(n)));
-
 /** PKCE: a verifier and its S256 challenge. */
 export async function pkce(): Promise<{ verifier: string; challenge: string }> {
   const verifier = randomToken(32);
-  const challenge = b64u(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  const challenge = base64url(await sha256(verifier));
   return { verifier, challenge };
 }
 
@@ -257,5 +255,5 @@ export async function exchangeCode(net: Fetch, o: { code: string; redirect: stri
 
 /** The Worker's sealing key from its session secret: 32 bytes, base64url (control/deploys/seal.ts's shape). */
 export async function sealKeyFrom(secret: string): Promise<string> {
-  return b64u(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`erga-credential:${secret}`))));
+  return base64url(await sha256(`erga-credential:${secret}`));
 }

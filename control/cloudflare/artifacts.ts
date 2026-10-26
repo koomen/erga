@@ -23,6 +23,7 @@ import { forkRemote, type ForkAccess } from "../install/forks";
 import type { InstallSpec } from "../install/install";
 import type { Remote } from "../source/index.ts";
 import type { Env } from "../../cloudflare/env";
+import { hex } from "../../shared/bytes";
 
 /** The repository's name in the namespace. */
 export const REPO = "erga";
@@ -101,5 +102,5 @@ const access = (url: string, token: string, expires: number): RepoAccess => ({ u
 async function localToken(secret: string, repo: string, scope: string, exp: number): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${scope}:${exp}:${repo}`)));
-  return `art_local_${scope}_${exp}_${Array.from(mac, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 40)}?expires=${exp}`;
+  return `art_local_${scope}_${exp}_${hex(mac).slice(0, 40)}?expires=${exp}`;
 }

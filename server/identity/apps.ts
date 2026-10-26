@@ -49,6 +49,7 @@
 // GitHub and Google, each with its own app and the same rules.
 
 import type { Act } from "../../shared/attribution.ts";
+import { base64, fromBase64, randomBytes, sha256 } from "../../shared/bytes.ts";
 
 /** The sign-in providers. */
 export const PROVIDERS = {
@@ -216,8 +217,6 @@ interface Record_ { active?: Kept; pending?: Kept & { test?: TestResult } }
 export interface KeptView { clientId: string; updated: number; updatedBy: string; updatedVia?: string | null; test?: TestResult }
 
 const enc = new TextEncoder();
-const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const view = (k: Kept & { test?: TestResult }): KeptView => ({ clientId: k.clientId, updated: k.updated, updatedBy: k.updatedBy, ...(k.updatedVia ? { updatedVia: k.updatedVia } : {}), ...(k.test ? { test: k.test } : {}) });
 
 export class AuthApps {
@@ -226,7 +225,7 @@ export class AuthApps {
   /** `secret`: FACTORY_KEY (null: this server can't keep values). `target`: this server's deploy target ("" for none). */
   constructor(private storage: AuthStorage, secret: string | null, private target: string) {
     this.aesKey = secret ? (async () => {
-      const raw = await crypto.subtle.digest("SHA-256", enc.encode(`erga-auth-apps:${secret}`));
+          const raw = await sha256(`erga-auth-apps:${secret}`);
       return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
     })() : null;
   }
@@ -255,7 +254,13 @@ export class AuthApps {
     const k = (await this.record(p))[which];
     if (!k || !this.aesKey) return null;
     try {
-      const secret = new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(k.iv), additionalData: this.aad(p, k.clientId) }, await this.aesKey, unb64(k.data)));
+      const secret = new TextDecoder().decode(
+        await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: fromBase64(k.iv), additionalData: this.aad(p, k.clientId) },
+          await this.aesKey,
+          fromBase64(k.data)
+        )
+      );
       return { clientId: k.clientId, secret };
     } catch {
       return null;
@@ -265,10 +270,17 @@ export class AuthApps {
   /** Keeps values, as the ones in use (active) or waiting for a test sign-in (pending). */
   async keep(p: Provider, which: "active" | "pending", v: AppValues, by: Act): Promise<void> {
     if (!this.aesKey) throw new AuthError("This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.");
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const iv = randomBytes(12);
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: this.aad(p, v.clientId) }, await this.aesKey, enc.encode(v.secret)));
     const r = await this.record(p);
-    r[which] = { clientId: v.clientId, iv: b64(iv), data: b64(data), updated: Date.now(), updatedBy: by.login.toLowerCase(), updatedVia: by.via ?? null };
+    r[which] = {
+      clientId: v.clientId,
+      iv: base64(iv),
+      data: base64(data),
+      updated: Date.now(),
+      updatedBy: by.login.toLowerCase(),
+      updatedVia: by.via ?? null,
+    };
     // Values in use make any that waited stale.
     if (which == "active") delete r.pending;
     await this.write(p, r);
@@ -476,7 +488,7 @@ export interface ProvidersOn { github: boolean; google: boolean }
 export function cachedCheck(check: (v: AppValues) => Promise<AppCheck>, ttlMs = 60_000): (v: AppValues) => Promise<AppCheck> {
   const seen = new Map<string, { at: number; check: Promise<AppCheck> }>();
   return async (v) => {
-    const key = b64(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`${v.clientId}\n${v.secret}`))));
+    const key = base64(await sha256(`${v.clientId}\n${v.secret}`));
     const hit = seen.get(key);
     if (hit && Date.now() - hit.at < ttlMs) return hit.check;
     const p = check(v);

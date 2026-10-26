@@ -20,7 +20,8 @@
 
 import { createTwoFilesPatch, structuredPatch } from "diff";
 import Anthropic from "@anthropic-ai/sdk";
-import { OBJECT_MAX, sha256, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
+import { OBJECT_MAX, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
+import { sha256Hex } from "../shared/bytes.ts";
 import { isTextPath } from "./content.ts";
 
 /** A version as the API shows it (the contract shared with the settings UI, client/pages/versions.ts, and the homepage deploy, server/home/deploys.ts). */
@@ -64,8 +65,6 @@ export function versionNumber(ref: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-export { sha256 };
-
 export const publicVersion = (v: StoredVersion): Version => ({ id: v.id, n: v.n, at: v.at, authors: v.authors, description: v.description });
 
 export class Versions {
@@ -102,7 +101,7 @@ export class Versions {
     const bytesOf = new Map<string, Uint8Array>();
     for (const [path, data] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
       if (!(data instanceof Uint8Array)) { manifest[path] = data.hash; continue; }
-      const digest = await sha256(data);
+      const digest = await sha256Hex(data);
       manifest[path] = digest;
       bytesOf.set(digest, data);
     }

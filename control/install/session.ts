@@ -22,13 +22,14 @@ import { controlHostOf, INSTALL_STEPS, runInstall, stagingHostOf, type Installed
 import { hashSecret } from "./forks";
 import { githubAppOf } from "../cloudflare/github-app";
 import { mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
-import { open, randomSecret, seal, type Sealed } from "../deploys/seal";
+import { open, seal, type Sealed } from "../deploys/seal";
 import type { Env } from "../../cloudflare/env";
 import { releaseStoreOf } from "../cloudflare/release-bucket";
+import { randomString, randomToken } from "../../shared/bytes";
 
 const SESSION = "session", RUN = "run";
 /** A fork's id: 16 lowercase letters and digits (control/install/forks.ts isForkId). */
-const forkId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+const forkId = () => randomString(16, "abcdefghijklmnopqrstuvwxyz0123456789");
 const LIFETIME_MS = 2 * 60 * 60 * 1000;
 
 interface Session { owner: string; via: "oauth" | "token"; created: number; sealed: Sealed | null; accounts: { id: string; name: string }[] }
@@ -193,13 +194,21 @@ export class Deployer extends DurableObject<Env> {
       try {
         // The install's fork first (control/install/forks.ts): its repository here, seeded at the release's commit, which its
         // control Worker reaches with a secret only it and the hash here know.
-        const fork = { id: forkId(), secret: randomSecret() };
+        const fork = { id: forkId(), secret: randomToken() };
         const made = await this.env.PIPELINE?.getByName("deploys").makeFork(fork.id, await hashSecret(fork.secret), (await this.commitOf(release)) ?? null, owner.toLowerCase());
         if (!made) throw new DeployError("This server has no deploys' object to keep the install's fork.");
         if (!made.ok) throw new DeployError(`The install's repository (a fork of Erga's) couldn't be made: ${made.error}`);
         run.result = await runInstall(new Cloudflare(t.token, net), release, plan, {
-          sessionSecret: randomSecret(), controlSecret: randomSecret(), snapshotToken: randomSecret(), fork,
-          upstream: { origin, clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : ""), github: { clientId: github.clientId, slug: github.slug }, ...(this.env.GOOGLE_APP_CLIENT_ID?.trim() ? { google: { clientId: this.env.GOOGLE_APP_CLIENT_ID.trim() } } : {}) },
+          sessionSecret: randomToken(),
+          controlSecret: randomToken(),
+          snapshotToken: randomToken(),
+          fork,
+          upstream: {
+            origin,
+            clientId: this.env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() || (mock ? "mock" : ""),
+            github: { clientId: github.clientId, slug: github.slug },
+            ...(this.env.GOOGLE_APP_CLIENT_ID?.trim() ? { google: { clientId: this.env.GOOGLE_APP_CLIENT_ID.trim() } } : {}),
+          },
           site: net,
           report: (id, status, detail) => {
             const step = run.steps.find((s) => s.id == id)!;

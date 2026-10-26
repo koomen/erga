@@ -21,6 +21,7 @@
 import type { Agent as PiAgent, AgentEvent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 import { validateToolArguments, type AssistantMessage, type ToolResultMessage } from "@mariozechner/pi-ai";
 import type { Log, LogItem } from "../shared/agent-log";
+import { base64, fromBase64, sha256Hex } from "../shared/bytes";
 
 /** A run's state at its last checkpoint. */
 export interface ChatState {
@@ -313,8 +314,8 @@ export function withBlobs(store: ChatStore, blobs: { head(hash: string): Promise
   type Block = { type?: string; data?: string; mimeType?: string };
   const out = async (block: Block): Promise<Block> => {
     if (block?.type != "image" || typeof block.data != "string" || block.data.length <= KEEP_OUT) return block;
-    const bytes = Uint8Array.from(atob(block.data), (c) => c.charCodeAt(0));
-    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const bytes = fromBase64(block.data);
+    const hash = await sha256Hex(bytes);
     if (!(await blobs.head(hash))) await blobs.put(hash, bytes, bytes.length);
     return { ...block, data: MARK + hash };
   };
@@ -322,9 +323,7 @@ export function withBlobs(store: ChatStore, blobs: { head(hash: string): Promise
     if (block?.type != "image" || typeof block.data != "string" || !block.data.startsWith(MARK)) return block;
     const bytes = await blobs.bytes(block.data.slice(MARK.length)).catch(() => null);
     if (!bytes) return { type: "text", text: GONE };
-    let s = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return { ...block, data: btoa(s) };
+    return { ...block, data: base64(bytes) };
   };
   const each = async (messages: AgentMessage[], f: (b: Block) => Promise<unknown>) => Promise.all(messages.map(async (m) => {
     const content = (m as { content?: unknown }).content;

@@ -18,6 +18,7 @@
 
 import { MOCK_GITHUB_TOKEN } from "./git-server.ts";
 import { esc } from "../shared/html.ts";
+import { fromBase64, fromBase64url, hex } from "../shared/bytes.ts";
 
 /** The id the pretend GitHub gives a login (/users/<login>): the same each time. */
 export const mockGithubId = (login: string) =>
@@ -100,7 +101,7 @@ export function mockGithub(opts: MockGithubOptions) {
   let publicKey: Promise<CryptoKey | null> | null = null;
   const verifier = () => (publicKey ??= (async () => {
     if (!opts.app.privateKey) return null;
-    const der = Uint8Array.from(atob(opts.app.privateKey.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "")), (c) => c.charCodeAt(0));
+    const der = fromBase64(opts.app.privateKey.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""));
     const priv = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["sign"]);
     const jwk = await crypto.subtle.exportKey("jwk", priv);
     const pub = { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RS256", ext: true };
@@ -112,12 +113,16 @@ export function mockGithub(opts: MockGithubOptions) {
     const parts = t?.split(".") ?? [];
     if (parts.length != 3) return false;
     try {
-      const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
-      const claims = JSON.parse(new TextDecoder().decode(unb64u(parts[1]))) as { exp?: number; iss?: string };
+      const claims = JSON.parse(new TextDecoder().decode(fromBase64url(parts[1]))) as { exp?: number; iss?: string };
       if (!claims.iss || !claims.exp || claims.exp * 1000 < Date.now()) { state.badJwts++; return false; }
       const key = await verifier();
       if (!key) return true;
-      const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, unb64u(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
+      const ok = await crypto.subtle.verify(
+        "RSASSA-PKCS1-v1_5",
+        key,
+        fromBase64url(parts[2]),
+        new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
+      );
       if (!ok) state.badJwts++;
       return ok;
     } catch { state.badJwts++; return false; }
@@ -258,7 +263,7 @@ ${state.repos.map((r) => `<label><input type="checkbox" name="repo" value="${r.i
     for (const c of pushCommands(body)) {
       const payload = JSON.stringify({ ref: c.ref, before: c.old, after: c.new, repository: { id: repo.id, name: repo.name, full_name: `${repo.owner}/${repo.name}`, owner: { login: repo.owner } }, installation: { id: installation.id }, sender: { login: user }, pusher: { name: user } });
       const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(opts.app.webhookSecret ?? ""), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-      const sig = `sha256=${Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload))), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+      const sig = `sha256=${hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)))}`;
       const r = await net(opts.webhook, { method: "POST", headers: { "Content-Type": "application/json", "X-GitHub-Event": "push", "X-GitHub-Delivery": crypto.randomUUID(), "X-Hub-Signature-256": sig, "User-Agent": "GitHub-Hookshot/mock" }, body: payload }).catch(() => null);
       state.deliveries.push({ event: "push", ref: c.ref, after: c.new, status: r?.status ?? 0, body: r ? await r.text().catch(() => "") : "" });
     }

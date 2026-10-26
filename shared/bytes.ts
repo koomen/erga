@@ -3,16 +3,26 @@
 
 const utf8 = new TextEncoder();
 
-/** Bytes as base64, with its padding. Any length: the bytes go to btoa in parts. */
+type Native = { toBase64?: () => string };
+const NativeArray = Uint8Array as unknown as { fromBase64?: (s: string) => Uint8Array<ArrayBuffer> };
+
+/** Bytes as base64, with its padding: natively where the runtime can (Bun, the Workers, new browsers). */
 export function base64(bytes: Uint8Array | ArrayBuffer): string {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (typeof (b as Native).toBase64 == "function") return (b as Native).toBase64!();
   let s = "";
   for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
   return btoa(s);
 }
 
-/** Base64 (padded or not) as bytes. Throws on a character that isn't base64. */
-export const fromBase64 = (s: string): Uint8Array<ArrayBuffer> => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+/** Base64 (padded or not) as bytes, natively where the runtime can. Throws on a character that isn't base64. */
+export function fromBase64(s: string): Uint8Array<ArrayBuffer> {
+  if (typeof NativeArray.fromBase64 == "function") return NativeArray.fromBase64(s);
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 /** Bytes as base64url: "-" and "_" for "+" and "/", no padding. */
 export const base64url = (bytes: Uint8Array | ArrayBuffer) => base64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -37,3 +47,6 @@ export const randomBytes = (n: number) => crypto.getRandomValues(new Uint8Array(
 
 /** `n` random bytes as base64url: a nonce, a secret, a token. */
 export const randomToken = (n = 32) => base64url(randomBytes(n));
+
+/** `n` random characters of `alphabet`, one random byte each. */
+export const randomString = (n: number, alphabet: string) => Array.from(randomBytes(n), (b) => alphabet[b % alphabet.length]).join("");

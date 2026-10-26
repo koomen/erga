@@ -36,8 +36,9 @@ import type { Platform, Session } from "../platform.ts";
 import { cookieName, cookies } from "./cookies.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
-import { b64, SESSION_COOKIE, sign, SIGNED_OUT, unb64, unsign } from "./session.ts";
-import { openRelay, randomNonce, relayNonce, relayState } from "../../control/source/index.ts";
+import { SESSION_COOKIE, sign, SIGNED_OUT, unsign } from "./session.ts";
+import { base64url, fromBase64url, randomToken } from "../../shared/bytes.ts";
+import { openRelay, relayNonce, relayState } from "../../control/source/index.ts";
 import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
 import { esc } from "../../shared/html.ts";
@@ -77,7 +78,7 @@ export const clearCookie = (request: Request) => cookie(request, STATE, "", 0);
 
 /** Signs `session` in: its cookie, and on to `next`. */
 export async function signIn(platform: Pick<Platform, "secret">, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
-  const value = b64(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
+  const value = base64url(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
   const headers = new Headers({ Location: next });
   headers.append("Set-Cookie", cookie(request, SESSION_COOKIE, await sign(platform.secret, value), ttl));
   headers.append("Set-Cookie", cookie(request, STATE, "", 0));
@@ -105,7 +106,7 @@ export async function startSignIn(platform: Platform, request: Request): Promise
   // No GitHub OAuth app yet (staging's, until an admin makes one): GitHub would answer a 404, so say so here instead.
   if (!app?.clientId) return noOAuthApp(url.origin);
   // An install: the state names this origin, for erga.dev's callback to relay the answer here.
-  const state = relay ? relayState(url.origin, randomNonce()) : (testing ? TESTING : offTest ? OFF_TEST : "") + b64(crypto.getRandomValues(new Uint8Array(18)));
+  const state = relay ? relayState(url.origin, randomToken(18)) : (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);
   const github = new URL(`${originsOf(platform).www}/login/oauth/authorize`);
   github.searchParams.set("client_id", app.clientId);
   github.searchParams.set("redirect_uri", `${relay ?? url.origin}/auth/github/callback`);
@@ -120,7 +121,7 @@ export async function startSignIn(platform: Platform, request: Request): Promise
   });
 }
 
-/** A state that starts so is a test sign-in with the pending values ("." is never in b64's output). */
+/** A state that starts so is a test sign-in with the pending values ("." is never in base64url). */
 const TESTING = "p.";
 /** A state that starts so is an admin's test sign-in with a provider that's off. */
 const OFF_TEST = "t.";
@@ -276,7 +277,7 @@ export async function startGoogleSignIn(platform: Platform, request: Request): P
   if (testing && !app) return nothingToTest();
   if (!app?.clientId) return noGoogleClient(url.origin);
   // An install: the state names this origin, for erga.dev's callback to relay the answer here, as GitHub's does.
-  const state = relay ? relayState(url.origin, randomNonce()) : (testing ? TESTING : offTest ? OFF_TEST : "") + b64(crypto.getRandomValues(new Uint8Array(18)));
+  const state = relay ? relayState(url.origin, randomToken(18)) : (testing ? TESTING : offTest ? OFF_TEST : "") + randomToken(18);
   const google = new URL(googleEndpoints(platform.signIn.google ?? null).authorize);
   google.searchParams.set("client_id", app.clientId);
   google.searchParams.set("redirect_uri", `${relay ?? url.origin}/auth/google/callback`);
@@ -362,7 +363,7 @@ const TOKEN = "erga_test_", TOKEN_DAYS = 7;
 export async function mintTestToken(platform: Pick<Platform, "secret">, by: string): Promise<{ token: string; expires: Date }> {
   const exp = Math.floor(Date.now() / 1000) + TOKEN_DAYS * DAY;
   // Signed with a "test-token:" prefix, so a token can never pass for a session cookie or the other way round.
-  const payload = b64(new TextEncoder().encode(JSON.stringify({ by, exp })));
+  const payload = base64url(new TextEncoder().encode(JSON.stringify({ by, exp })));
   const signed = await sign(platform.secret, `test-token:${payload}`);
   return { token: TOKEN + signed.slice("test-token:".length), expires: new Date(exp * 1000) };
 }
@@ -372,7 +373,7 @@ async function readTestToken(platform: Platform, token: string): Promise<{ by: s
   const value = await unsign(platform.secret, `test-token:${token.slice(TOKEN.length)}`);
   if (!value) return null;
   try {
-    const t = JSON.parse(new TextDecoder().decode(unb64(value.slice("test-token:".length)))) as { by: string; exp: number };
+    const t = JSON.parse(new TextDecoder().decode(fromBase64url(value.slice("test-token:".length)))) as { by: string; exp: number };
     return t.exp > Date.now() / 1000 && (await platform.directory.users.allowed(t.by)) ? t : null;
   } catch { return null; }
 }
