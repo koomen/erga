@@ -18,6 +18,7 @@
 
 import type { DocumentObject } from "./document";
 import type { Env } from "../env";
+import { sleep } from "../../shared/time";
 
 /** The header a fetch to a document carries the caller's deploy in. */
 export const DEPLOYED_HEADER = "x-erga-deployed";
@@ -63,7 +64,6 @@ export interface DocumentStub {
   fetch(request: Request): Promise<Response>;
 }
 
-const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** The document `id`'s object, for code of this deploy. */
 export const documentOf = (env: Pick<Env, "DOCUMENTS" | "ERGA_DEPLOYED">, id: string): DocumentHost =>
@@ -82,7 +82,7 @@ export function documentHost(stub: () => DocumentStub, deployed: number): Docume
         const answer = await stub().call(deployed, method, args);
         if (answer !== STALE) return answer;
         if (i == TRIES) throw new Error(`The document still runs the code before this deploy (${method})`);
-        await pause(WAIT_MS * i);
+        await sleep(WAIT_MS * i);
       }
     };
   }
@@ -93,7 +93,7 @@ export function documentHost(stub: () => DocumentStub, deployed: number): Docume
       sent.headers.set(DEPLOYED_HEADER, String(deployed));
       const response = await stub().fetch(sent);
       if (response.headers.get(DEPLOYED_HEADER) != STALE || i == TRIES) return response;
-      await pause(WAIT_MS * i);
+      await sleep(WAIT_MS * i);
     }
   };
   return host as DocumentHost;

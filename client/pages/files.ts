@@ -16,6 +16,7 @@
 // server's words.
 
 import { sha256Hex } from "../../shared/bytes";
+import { plural, timeAgo } from "../../shared/time";
 import { esc } from "../../shared/html";
 
 interface FileRow { path: string; kind: "text" | "file"; size: number | null; at: number | null; type: string }
@@ -78,16 +79,7 @@ export function readableSize(n: number | null): string {
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
 }
 
-const rtf = typeof Intl != "undefined" ? new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }) : null;
-function when(at: number | null): string {
-  if (!at || !rtf) return "";
-  const s = (at - Date.now()) / 1000, a = Math.abs(s);
-  if (a < 60) return rtf.format(Math.round(s), "second");
-  if (a < 3600) return rtf.format(Math.round(s / 60), "minute");
-  if (a < 86400) return rtf.format(Math.round(s / 3600), "hour");
-  if (a < 86400 * 30) return rtf.format(Math.round(s / 86400), "day");
-  return new Date(at).toLocaleDateString();
-}
+const when = (at: number | null) => (at ? timeAgo(at) : "");
 
 // The times say how long ago, so they move on with the clock.
 setInterval(() => {
@@ -309,7 +301,7 @@ async function remove(el: HTMLElement): Promise<void> {
     el.parentElement?.querySelector(":scope > .confirm")?.remove();
     const box = document.createElement("div");
     box.className = "confirm";
-    box.innerHTML = `<span>Delete ${esc(nameOf(path))} and the ${inside} file${inside == 1 ? "" : "s"} in it?</span><button type="button" class="danger">Delete</button><button type="button" class="cancel">Cancel</button>`;
+    box.innerHTML = `<span>Delete ${esc(nameOf(path))} and the ${plural(inside, "file")} in it?</span><button type="button" class="danger">Delete</button><button type="button" class="cancel">Cancel</button>`;
     el.after(box);
     busy = true;
     box.querySelector<HTMLButtonElement>(".cancel")!.onclick = () => { box.remove(); busy = false; afterBusy(); };
@@ -320,7 +312,7 @@ async function remove(el: HTMLElement): Promise<void> {
       const err = await treeOp({ op: "delete", path });
       if (err) { rowError(el, err); return; }
       if (selected == path || selected.startsWith(path + "/")) selected = parentOf(path);
-      say(`Deleted ${nameOf(path)} and the ${inside} file${inside == 1 ? "" : "s"} in it. They stay in the versions.`);
+      say(`Deleted ${nameOf(path)} and the ${plural(inside, "file")} in it. They stay in the versions.`);
       await load();
     };
     return;
@@ -476,7 +468,7 @@ function send(path: string, file: File, hash: string | null, progress: (sent: nu
 async function dropped(data: DataTransfer, folder: string): Promise<void> {
   const files = await droppedFiles(data, folder);
   if (!files.length) return;
-  say(`Adding ${files.length} file${files.length == 1 ? "" : "s"}…`);
+  say(`Adding ${plural(files.length, "file")}…`);
   let added = 0, replaced = 0, failed = 0;
   const queue = [...files];
   const one = async () => {
@@ -508,7 +500,11 @@ async function dropped(data: DataTransfer, folder: string): Promise<void> {
     }
   };
   await Promise.all([one(), one(), one()]);
-  const parts = [added ? `Added ${added} file${added == 1 ? "" : "s"}.` : "", replaced ? `Replaced ${replaced} file${replaced == 1 ? "" : "s"} (the old ones stay in the versions).` : "", failed ? `${failed} couldn't be added: see below.` : ""];
+  const parts = [
+    added ? `Added ${plural(added, "file")}.` : "",
+    replaced ? `Replaced ${plural(replaced, "file")} (the old ones stay in the versions).` : "",
+    failed ? `${failed} couldn't be added: see below.` : "",
+  ];
   say(parts.filter(Boolean).join(" "), failed > 0);
   await load();
 }

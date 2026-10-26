@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, type Context, type Model } from "@mariozechner/pi-ai";
+import { sleep } from "../shared/time";
 
 /** The models a person can switch between, by key; prices per million tokens. */
 export const MODELS = {
@@ -147,7 +148,7 @@ async function scriptStep(context: Context) {
   }
   if (at < 0) return fauxAssistantMessage("(no script)");
   const step = steps[msgs.slice(at + 1).filter((m) => m.role == "assistant").length];
-  if (step?.delay) await new Promise((r) => setTimeout(r, step.delay));
+  if (step?.delay) await sleep(step.delay);
   if (!step) return fauxAssistantMessage("(script done)");
   if (step.error) return fauxAssistantMessage([], { stopReason: "error", errorMessage: step.error });
   if (step.tool) return fauxAssistantMessage([fauxToolCall(step.tool, step.args ?? {})], { stopReason: "toolUse" });

@@ -25,6 +25,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { cachedBuild, storageStore, toolchainKey } from "./cache";
+import { sleep } from "../../shared/time";
 
 /** What the build container needs of the Worker's bindings. */
 export interface BuilderEnv { BUILDS: DurableObjectNamespace<Builder>; CF_VERSION_METADATA?: { id?: string } }
@@ -61,7 +62,7 @@ export class Builder extends DurableObject<BuilderEnv> {
     for (let i = 0; ; i++) {
       try { const r = await port.fetch("http://container/health"); if (r.ok) break; } catch { /* not yet */ }
       if (i > 120) return Response.json({ error: "The build container didn't start." }, { status: 503 });
-      await new Promise((r) => setTimeout(r, 500));
+      await sleep(500);
     }
     const r = await port.fetch(new Request(`http://container${path}`, request));
     if (!r.body) { this.ctx.waitUntil(container.destroy().catch(() => {})); return r; }

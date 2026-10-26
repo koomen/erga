@@ -21,6 +21,7 @@
 
 import { checkHealth, CONTROL_STEPS, DeployError, findDatabase, liveVersion, targetHost, Unhealthy, workerVersion, WORKER_TAG, type Carry, type Cloudflare, type Fetch, type Release, type Report, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { CONTROL } from "../../deploy/targets";
+import { sleep } from "../../shared/time";
 
 /** The control Worker as a target of the pipeline: its own steps, secrets kept, in the account. */
 export function controlTarget(env: { CLOUDFLARE_ACCOUNT_ID?: string }): Target {
@@ -76,7 +77,7 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
 }): Promise<{ url: string; pages: string; database: string; worker: string }> {
   const { report, signal } = opts;
   const site = opts.site ?? globalThis.fetch;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const wait = opts.sleep ?? sleep;
   const carry: Carry = opts.carry ?? {};
   const acc = `/accounts/${target.accountId}`;
   const host = targetHost(target);
@@ -151,13 +152,16 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
         const body = r ? ((await r.json().catch(() => null)) as { version?: string } | null) : null;
         if (body?.version == want) {
           let h = await checkHealth(site, host, want, { query: "self=1" });
-          for (let again = 0; !h.ok && again < 2; again++) { await sleep(5000); h = await checkHealth(site, host, want, { query: "self=1" }); }
+          for (let again = 0; !h.ok && again < 2; again++) {
+            await wait(5000);
+            h = await checkHealth(site, host, want, { query: "self=1" });
+          }
           if (!h.ok) throw new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why);
           return `https://${host}, release ${want}, healthy (${h.summary})`;
         }
         if (body?.version) seen = body.version;
         if (Date.now() > until) throw new DeployError(`The control Worker is uploaded, but https://${host} hasn't answered with release ${want} yet${seen ? ` (it still says ${seen})` : ""}. Check it in a little while; if it still doesn't answer, deploy again.`);
-        await sleep(Math.min(5000, 1000 + tries * 500));
+        await wait(Math.min(5000, 1000 + tries * 500));
       }
     },
   } as Record<StepId, () => Promise<string | undefined>>;

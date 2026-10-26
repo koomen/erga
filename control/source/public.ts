@@ -10,7 +10,7 @@
 // fetch) is routes.ts's sourceGit, which also needs no sign-in.
 
 import { appPage, crumbs, TIMES_SCRIPT } from "../../server/pages/index.ts";
-import { esc } from "../../shared/html.ts";
+import { dateTag, esc } from "../../shared/html.ts";
 import type { Platform } from "../../server/platform.ts";
 import type { SourceView } from "./browse.ts";
 
@@ -55,8 +55,13 @@ export async function publicSourcePage(platform: Platform, url: URL, app: string
   const top = branch?.commits[0];
   const where = `<p class="src-at">${branch ? `${esc(BRANCHES.find((b) => b.name == view.ref)?.about ?? "")}: ` : "commit "}<code>${view.commit.slice(0, 10)}</code>${top && top.sha == view.commit ? ` ${esc(top.subject)}` : ""}</p>`;
   const commits = branch?.commits.length
-    ? `<aside class="src-commits" aria-labelledby="commits-head"><h3 id="commits-head">Recent commits on ${esc(view.ref)}</h3><ol>${branch.commits.slice(0, 25).map((c) =>
-      `<li><span class="subject">${esc(c.subject)}</span><span class="meta"><code>${c.sha.slice(0, 7)}</code> ${esc(c.author)} · <time datetime="${new Date(c.at).toISOString()}">${new Date(c.at).toISOString().slice(0, 10)}</time></span></li>`).join("")}</ol></aside>`
+    ? `<aside class="src-commits" aria-labelledby="commits-head"><h3 id="commits-head">Recent commits on ${esc(view.ref)}</h3><ol>${branch.commits
+        .slice(0, 25)
+        .map(
+          (c) =>
+            `<li><span class="subject">${esc(c.subject)}</span><span class="meta"><code>${c.sha.slice(0, 7)}</code> ${esc(c.author)} · ${dateTag(c.at)}</span></li>`
+        )
+        .join("")}</ol></aside>`
     : "";
   const body = `${head(remote)}
   <div class="src-branch"><nav class="src-tabs" aria-label="Branches">${tabs}</nav>${where}</div>

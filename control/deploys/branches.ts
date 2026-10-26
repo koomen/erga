@@ -53,6 +53,7 @@ import type { Credential, CredentialStatus } from "./credential";
 import type { ChannelFile, ReleaseStore } from "./releases";
 import type { Fleet } from "./fleet";
 import { compareVersions, type UpdateResult } from "../source/index.ts";
+import { plural } from "../../shared/time";
 
 /** "rolled-back": a deploy that was live until a rollback put the version before it back. */
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled" | "rolled-back";
@@ -446,9 +447,12 @@ export class BranchDeploys {
       if (last?.latest == file.latest && !last.error) return status;
       const r = await read.update();
       if ("error" in r) throw new DeployError(r.error);
-      status.update = r.result == "up-to-date" ? `${file.latest}: staging has it`
-        : r.result == "conflicts" ? `${r.conflict.version}: the merge conflicts in ${r.conflict.files.length} file${r.conflict.files.length == 1 ? "" : "s"} (${r.conflict.files.map((f) => f.path).join(", ")})`
-        : `${r.version} ${r.result == "fast-forward" ? "fast-forwarded" : "merged"} into staging (${r.brought} commit${r.brought == 1 ? "" : "s"})`;
+      status.update =
+        r.result == "up-to-date"
+          ? `${file.latest}: staging has it`
+          : r.result == "conflicts"
+            ? `${r.conflict.version}: the merge conflicts in ${plural(r.conflict.files.length, "file")} (${r.conflict.files.map((f) => f.path).join(", ")})`
+            : `${r.version} ${r.result == "fast-forward" ? "fast-forwarded" : "merged"} into staging (${plural(r.brought, "commit")})`;
       if (r.result == "conflicts") status.error = `Update from ${up.origin} stopped: ${status.update}. Resolve the files it lists (your admin agent can), or merge in a checkout and push staging.`;
       await this.deps.storage.put("upstream", status);
       this.deps.changed();

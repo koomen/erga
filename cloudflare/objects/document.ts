@@ -34,6 +34,7 @@ import { homeChanged } from "../current-files";
 import type { Env } from "../env";
 import { blobsOf } from "../blobs";
 import { safeAvatar } from "../../shared/avatars";
+import { sleep } from "../../shared/time";
 
 /** The new-document template's page, which a new page starts from. */
 const TEMPLATE =
@@ -49,7 +50,10 @@ export class DocumentObject extends DurableObject<Env> {
     changed: (path) => { this.document.diskChanged(path).catch((e) => console.log(`couldn't take ${path} from disk: ${e}`)); },
     connected: () => { this.document.diskConnected().catch(() => {}); },
     // Edits already on their way (another socket, a busy machine) land first: a tenth of a second is nothing to wait when stopping.
-    flush: async () => { await new Promise((r) => setTimeout(r, 100)); await this.document.flush(); },
+    flush: async () => {
+      await sleep(100);
+      await this.document.flush();
+    },
   });
   private document = new Document(this.deps());
   /** The tabs' sockets, joined to the document whenever it's open. */

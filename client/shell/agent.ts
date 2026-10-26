@@ -11,6 +11,7 @@ import { mountLayout } from "../agent/layout";
 import { backoff, transient } from "../live/client";
 import { ms } from "../page-editor/timescale";
 import { $, store, type Shell } from "./shell";
+import { sleep } from "../../shared/time";
 
 export function mountAgent(shell: Shell) {
 
@@ -136,7 +137,7 @@ export function mountAgent(shell: Shell) {
       res = await fetch(shell.api("/api/agent"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context, after: shell.collab.vector(), files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
       if (res instanceof Response ? res.ok || !transient(res) : res.name == "TimeoutError" || !transient(res)) break;
       if (Date.now() + backoff(i) > until) break;
-      await new Promise((r) => setTimeout(r, backoff(i)));
+      await sleep(backoff(i));
     }
     if (!(res instanceof Response) || !res.ok) {
       const reason = res instanceof Response ? ((await res.json().catch(() => null)) as { reason?: string } | null)?.reason ?? `the host answered ${res.status}` : res.name == "TimeoutError" ? "the editor's host didn't answer in time" : "the editor's host didn't answer";

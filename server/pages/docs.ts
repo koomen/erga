@@ -7,14 +7,15 @@ import { appPage, crumbs, ICON, link, TIMES_SCRIPT, withEdit } from "./chrome.ts
 import { esc } from "../../shared/html.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 import { editorScripts } from "./viewer.ts";
+import { plural } from "../../shared/time.ts";
 
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
 export function ago(t: number, now: number): string {
   const min = Math.round((now - t) / 60000);
   if (min < 1) return "just now";
-  if (min < 60) return `${min} minute${min == 1 ? "" : "s"} ago`;
+  if (min < 60) return `${plural(min, "minute")} ago`;
   const hours = Math.round(min / 60);
-  if (hours < 24) return `${hours} hour${hours == 1 ? "" : "s"} ago`;
+  if (hours < 24) return `${plural(hours, "hour")} ago`;
   const days = Math.round(hours / 24);
   if (days == 1) return "yesterday";
   if (days < 30) return `${days} days ago`;
@@ -117,14 +118,18 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   /* The New menu (server/pages/templates.ts) follows the system, as this page does (:root: over its own style, which comes after this). */
   @media (prefers-color-scheme: dark) { :root .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); } }
 `;
-  const count = `${docs.length} document${docs.length == 1 ? "" : "s"}`;
+  const count = plural(docs.length, "document");
   return appPage("Documents", style, `${crumbs(session, [{ label: "Documents" }])}<main>
   <header>
     <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
     ${newDocButton("pill", "New")}
   </header>
-  ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
-  <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
+  ${
+    docs.length
+      ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
+  <ol class="rows">\n${rows}\n  </ol>`
+      : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${plural(hours, "hour")} if you never edit it.`}</p>`
+  }
 </main>
 ${newDocMenu((path) => link(path, session), true)}${NEW_DOC_STYLE}
 <dialog id="share" aria-labelledby="share-title" data-action="${esc(link("/docs/share", session))}" data-me="${esc(session.login.toLowerCase())}">

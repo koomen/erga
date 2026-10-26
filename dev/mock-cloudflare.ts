@@ -50,6 +50,7 @@ import type { Fetch, Release } from "../control/deploys/pipeline";
 import type { Builder } from "../control/deploys/branches";
 import { memoryStore, snapshotDoor, type DocStore } from "../document/snapshot";
 import { base64, fromBase64, hex, randomBytes } from "../shared/bytes";
+import { sleep } from "../shared/time";
 
 export interface MockState {
   account: { id: string; name: string };
@@ -696,7 +697,7 @@ export function mockCloudflare(opts: {
   const fetch: Fetch = async (input, init) => {
     const req = new Request(input, init);
     const url = new URL(req.url);
-    if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
+    if (opts.delayMs) await sleep(opts.delayMs);
     // Cloudflare's OAuth: a code (always mock-code) for a grant, a refresh token for a new access token (the refresh token
     // rotated, as Cloudflare's are), and revoke. The access tokens it gives are the mock's full-access ones.
     if (url.origin == "https://dash.cloudflare.com" && url.pathname == "/oauth2/token" && req.method == "POST") {
@@ -746,7 +747,7 @@ export function mockCloudflare(opts: {
       const upload = path.startsWith("/accounts/") && path.includes("/workers/assets/upload");
       state.calls.push(`${req.method} ${path}`);
       if (!upload && (!token.startsWith("mock-") || state.refusedTokens?.includes(token))) return fail(401, 1000, "Invalid API Token");
-      if (token == "mock-slow") await new Promise((r) => setTimeout(r, 150));
+      if (token == "mock-slow") await sleep(150);
       return api(req, path, upload ? subFor ?? "" : token);
     }
     return (await site(req, url)) ?? new Response("This mock doesn't know that address", { status: 502 });
@@ -877,7 +878,7 @@ export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: numb
       if (!source.token) throw new Error("no read token for the source");
       log(`fetching ${commit.slice(0, 12)} (${branch}) from ${source.cloneUrl}`);
       for (const step of ["bun install --frozen-lockfile", "bun run build", "bun run release"]) {
-        if (o.delayMs) await new Promise((r) => setTimeout(r, o.delayMs));
+        if (o.delayMs) await sleep(o.delayMs);
         if (signal?.aborted) { b.stopped.push(commit); log("the build was stopped"); throw signal.reason; }
         log(`$ ${step}`);
       }

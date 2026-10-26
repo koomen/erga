@@ -20,6 +20,7 @@ import {
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { json } from "../../shared/http.ts";
+import { sleep } from "../../shared/time.ts";
 
 /** A template's starting files (server/pages/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
 export function templateFiles(
@@ -155,7 +156,7 @@ async function decideKinds(platform: Platform, docs: Listed[]): Promise<void> {
     if (paths?.length) d.kind = kindOf(paths);
   }));
   platform.edge.background(work);
-  await Promise.race([work, new Promise((r) => setTimeout(r, KINDS_WAIT_MS))]);
+  await Promise.race([work, sleep(KINDS_WAIT_MS)]);
 }
 
 /** /docs: the signed-in person's documents, most recently edited first. */

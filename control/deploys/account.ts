@@ -6,6 +6,7 @@ import { Cloudflare, DeployError, type Fetch } from "./cloudflare-api";
 import type { Release } from "./release-format";
 import type { RestorePoint, Target } from "./pipeline";
 import { base64, fromBase64url, sha256Hex } from "../../shared/bytes";
+import { sleep } from "../../shared/time";
 
 /** The tag the deploy puts on the Workers it makes, so a second run knows them as its own. */
 export const WORKER_TAG = "erga-deploy";
@@ -323,7 +324,7 @@ export async function uploadAssets(cf: Cloudflare, acc: string, worker: string, 
         break;
       } catch (e) {
         if (attempt >= 4 || (e instanceof DeployError && e.status >= 400 && e.status < 500 && e.status != 429)) throw e;
-        await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+        await sleep(500 * 2 ** attempt);
       }
     }
   }

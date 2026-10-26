@@ -58,6 +58,7 @@ import { kindOf, pageRefusal, parentsOf, type DocKind } from "./pages.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { withBlobs, type ChatStore } from "../agents/checkpoint.ts";
 import { json } from "../shared/http.ts";
+import { sleep } from "../shared/time.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -1016,7 +1017,7 @@ export class Document {
 
   private async cutNow(_reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
     // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
-    await new Promise((r) => setTimeout(r, 0));
+    await sleep(0);
     const opened = this.opened;
     const info = await this.readInfo();
     if (!opened || !info) return null;

@@ -67,6 +67,7 @@ import { isBinary, mergeTrees, type Conflict } from "./merge.ts";
 import { GithubError, githubRemote as asRemote, type GithubLink, type PushEvent } from "./github.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { TARGETS } from "../../deploy/targets.ts";
+import { plural } from "../../shared/time.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
 export type Branch = (typeof BRANCHES)[number];
@@ -552,7 +553,7 @@ export class SourceRepo {
     const merged = await mergeTrees({ get: (sha) => objects.get(sha) }, base ? treeOf(base) : null, treeOf(ours), treeOf(theirs), o.labels);
     const files = merged.conflicts;
     const message = files.length
-      ? `${o.message}: ${files.length} file${files.length == 1 ? "" : "s"} conflict\n\n${files.map((f) => `${f.path} (${f.kind})`).join("\n")}\n`
+      ? `${o.message}: ${plural(files.length, "file")} conflict\n\n${files.map((f) => `${f.path} (${f.kind})`).join("\n")}\n`
       : `${o.message}\n`;
     const commit = this.commitObject({ tree: merged.tree, parents: [ours, theirs], who: o.who, message });
     const sha = await hashObject(commit);
@@ -1184,7 +1185,9 @@ export class SourceRepo {
     const merged = await this.threeWay(remote, { ours, theirs, base: this.mergeBase(ours, theirs), who, labels: { ours: "staging", theirs: `github/staging` }, kind: "github", version: theirs.slice(0, 12), branch: `${GITHUB_MERGE_BRANCH}${theirs.slice(0, 12)}`, message: `Merge GitHub's staging (${short})` });
     if (merged.result == "merged") return { head: merged.commit };
     const n = merged.conflict.files.length;
-    return { problem: `GitHub's staging (${short}) conflicts with staging here in ${n} file${n == 1 ? "" : "s"}: the merge waits on ${merged.conflict.branch}` };
+    return {
+      problem: `GitHub's staging (${short}) conflicts with staging here in ${plural(n, "file")}: the merge waits on ${merged.conflict.branch}`,
+    };
   }
 
   // ---- Reading a commit, for a build -------------------------------------------------

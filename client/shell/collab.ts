@@ -49,6 +49,7 @@ import { changesBetween } from "../../document/merge";
 import { BASE } from "./base";
 import { decodeStart, PING, PONG } from "../../shared/room-socket";
 import { base64, fromBase64 } from "../../shared/bytes";
+import { sleep } from "../../shared/time";
 
 /** Someone in the room, from awareness. */
 export interface Presence {
@@ -453,8 +454,11 @@ export class Collab {
     for (let i = 0; i < 60; i++) {
       const ws = this.ws;
       if (!this.open || !this.syncedNow || !ws) return false;
-      if (ws.bufferedAmount == 0) { await new Promise((r) => setTimeout(r, 150)); return this.open; }
-      await new Promise((r) => setTimeout(r, 50));
+      if (ws.bufferedAmount == 0) {
+        await sleep(150);
+        return this.open;
+      }
+      await sleep(50);
     }
     return false;
   }

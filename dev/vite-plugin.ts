@@ -39,6 +39,7 @@ import { gitServers } from "./git-server.ts";
 import { mockGithub } from "./github-mock.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
+import { sleep } from "../shared/time.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 /** The largest file a document on disk takes: the room reads each whole when it opens, over a WebSocket. */
@@ -167,7 +168,7 @@ export function ergaDev(opts: DevOptions): Plugin {
         }
         const headers: Record<string, string> = req.headers.cookie ? { Cookie: req.headers.cookie } : {};
         // Asked for as soon as the server answers (a test): not before the database has its tables.
-        while (!migrated) await new Promise((r) => setTimeout(r, 20));
+        while (!migrated) await sleep(20);
         await migrated;
         const l = await link(target, { headers, user });
         log(`opened ${target.shown}: ${shown}/${l.owner}/${l.slug}`);
@@ -484,7 +485,7 @@ function watchEditor(log: (line: string) => void, built: () => void): () => void
 async function workerReady(base: string): Promise<void> {
   for (let i = 0; i < 200; i++) {
     try { if ((await fetch(`${base}/logo.png`)).ok) return; } catch { /* not yet */ }
-    await new Promise((r) => setTimeout(r, 50));
+    await sleep(50);
   }
 }
 

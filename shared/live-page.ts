@@ -17,6 +17,8 @@
 // Pure: the logs and the words for the agent are here, tested in tests/live-page.test.ts;
 // the tab's side is client/page-editor/live-page-tab.ts.
 
+import { plural } from "./time";
+
 export type ConsoleLevel = "error" | "warn" | "info" | "log" | "debug";
 export const CONSOLE_LEVELS: ConsoleLevel[] = ["error", "warn", "info", "log", "debug"];
 
@@ -332,7 +334,6 @@ export interface Activation { isActive: boolean; hasBeenActive: boolean }
 
 // ------------------------------------------------------------------ the words for the agent
 
-const plural = (n: number, one: string, many = one + "s") => `${n} ${n == 1 ? one : many}`;
 
 export function describeConsole(r: NonNullable<LiveResult["console"]>): string {
   if (!r.entries.length) return r.total ? `No console messages match (the tab has logged ${plural(r.total, "message")}).` : "The console is empty: nothing logged since the page loaded in this tab.";

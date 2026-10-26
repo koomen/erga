@@ -5,6 +5,7 @@
 // what makes a page slow or fast; e2e/bench/run.ts --waterfall prints the requests.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { sleep } from "../shared/time";
 
 interface Tally { db: number; dbMs: number; doc: number; docMs: number }
 const current = new AsyncLocalStorage<Tally>();
@@ -34,7 +35,7 @@ export async function counted<T>(kind: "db" | "doc", call: () => Promise<T>): Pr
   const started = Date.now();
   if (t) t[kind]++;
   try {
-    if (latency) await new Promise((r) => setTimeout(r, latency));
+    if (latency) await sleep(latency);
     return await call();
   } finally { if (t) t[kind == "db" ? "dbMs" : "docMs"] += Date.now() - started; }
 }

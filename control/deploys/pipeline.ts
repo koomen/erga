@@ -53,6 +53,7 @@ import {
   workerMetadata,
   zoneIdOf,
 } from "./account";
+import { sleep } from "../../shared/time";
 export * from "./cloudflare-api";
 export * from "./release-format";
 export * from "./plan";
@@ -330,7 +331,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   if (target.control) return runControlPipeline(cf, release, target, opts);
   const { report, signal } = opts;
   const site = opts.site ?? globalThis.fetch;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const wait = opts.sleep ?? sleep;
   const carry: Carry = opts.carry ?? {};
   const acc = `/accounts/${target.accountId}`;
   const host = targetHost(target);
@@ -447,8 +448,8 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       const source = await findDatabase(cf, acc, snap.databaseName);
       if (!source) throw new DeployError(`There's no database called ${snap.databaseName} to copy.`);
       if (source == carry.dbId) throw new DeployError("The snapshot's source and target are the same database: stopped.");
-      const sql = await exportD1(cf, acc, source, snap.databaseName, site, sleep);
-      await importD1(cf, acc, carry.dbId!, target.databaseName, sql, site, sleep);
+      const sql = await exportD1(cf, acc, source, snap.databaseName, site, wait);
+      await importD1(cf, acc, carry.dbId!, target.databaseName, sql, site, wait);
       return `${snap.databaseName} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
     },
 
@@ -554,7 +555,10 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
           if (v == want) {
             // Healthy, or unhealthy three times over ten seconds (one slow cold start isn't a broken release).
             let h = await checkHealth(site, host, want);
-            for (let again = 0; !h.ok && again < 2; again++) { await sleep(5000); h = await checkHealth(site, host, want); }
+            for (let again = 0; !h.ok && again < 2; again++) {
+              await wait(5000);
+              h = await checkHealth(site, host, want);
+            }
             if (!h.ok) throw new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why);
             return `https://${host}, release ${want}, healthy (${h.summary})`;
           }
@@ -564,7 +568,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
           if (r?.ok) break;
         }
         if (Date.now() > until) throw new DeployError(`The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`);
-        await sleep(Math.min(5000, 1000 + tries * 500));
+        await wait(Math.min(5000, 1000 + tries * 500));
       }
       return `https://${host}${target.checkVersion && want ? `, release ${want}` : ""}`;
     },

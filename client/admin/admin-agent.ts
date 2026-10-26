@@ -24,6 +24,7 @@ import type { Log, LogEvent } from "../../shared/agent-log";
 import { mountPaneLayout, type PaneLayout } from "../agent/layout";
 import { backoff, live, transient } from "../live/client";
 import { restoredFor } from "../live/restore";
+import { sleep } from "../../shared/time";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
 // (window.ergaAgent: client/inline/admin-agent.ts.)
@@ -151,7 +152,7 @@ async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
     res = await fetch("/api/admin/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context: ctx, files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
     if (res instanceof Response ? res.ok || !transient(res) : res.name == "TimeoutError" || !transient(res)) break;
     if (Date.now() + backoff(i) > until) break;
-    await new Promise((r) => setTimeout(r, backoff(i)));
+    await sleep(backoff(i));
   }
   if (!(res instanceof Response) || !res.ok) {
     const reason = res instanceof Response ? ((await res.json().catch(() => null)) as { reason?: string; error?: string } | null)?.reason ?? `the server answered ${res.status}` : res.name == "TimeoutError" ? "the server didn't answer in time" : "the server didn't answer";
