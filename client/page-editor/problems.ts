@@ -4,7 +4,7 @@ import type { PageProblem } from "./types";
 
 export type RawProblem = { kind: "resource"; tag: string; url: string } | { kind: "script"; message: string; file: string; line: number };
 
-/** A page that lets the editor pause it (editor-agent/PROMPT.md, rule 10). */
+/** A page that lets the editor pause it (agents/document/PROMPT.md, rule 10). */
 export type PausableWindow = Window & { ergaPause?: unknown };
 
 /** A problem the page reported, in words, with a prompt for the agent to fix it. */

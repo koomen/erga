@@ -1,4 +1,4 @@
-// How the agent's new text streams in (editor-agent/workspace.ts, paced): cut
+// How the agent's new text streams in (agents/document/workspace.ts, paced): cut
 // into pieces a few characters long, so others see it arrive as a model's
 // streamed answer does. The page stays whole at every step: a tag or an
 // entity goes in whole, an element's closing tag goes in with its opening

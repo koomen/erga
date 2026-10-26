@@ -86,7 +86,7 @@ export const servers = {
     ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
     ERGA_HOME_DELAY_MS: String(SHORT.homeDelay), ERGA_HOME_RECHECK_MS: "0",
   } })),
-  // The scripted model (editor-agent/session.ts, "@script [...]"): a message plays the tool calls and replies it lists.
+  // The scripted model (agents/document/session.ts, "@script [...]"): a message plays the tool calls and replies it lists.
   script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script" } })),
   suite: once("suite", () => startServer({ env: SUITE_ENV })),
   /**

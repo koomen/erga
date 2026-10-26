@@ -1,7 +1,7 @@
 // The admin's agent panel, on every admin page (server/admin/layout.ts has its markup, and collapses it to a round
 // button in the lower left). The panel is the editor's (the same markup, styles and conversation,
-// agent-chat.ts), talking to the admin's own agent session in the AdminAgent object (agents/admin.ts,
-// server/admin/agent.ts):
+// agent-chat.ts), talking to the admin's own agent session in the AdminAgent object (agents/admin/agent.ts,
+// agents/admin/sessions.ts):
 //
 //   GET  /api/admin/agent              the state: on or off (and why), the model, the conversation so far
 //   POST /api/admin/agent              { text, context }: a message; context says which admin page is open

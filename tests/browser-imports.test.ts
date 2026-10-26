@@ -2,7 +2,7 @@
 // outside client/: shared/ and the document's content, pages, merge and
 // API types. Those must stay free of server and Cloudflare code: this test
 // follows every value import from the entries and fails on one that reaches
-// server/, cloudflare/, agents/, editor-agent/, deploy/ or dev/, or a file of
+// server/, cloudflare/, agents/, agents/document/, deploy/ or dev/, or a file of
 // document/ the browser isn't meant to have. Type-only imports are erased by
 // the bundler, so they may come from anywhere.
 

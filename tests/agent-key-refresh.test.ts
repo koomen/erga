@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
-import { startAdminAgent } from "../agents/admin.ts";
+import { startAdminAgent } from "../agents/admin/agent.ts";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
@@ -127,7 +127,7 @@ test("the admin agent: a key replaced after its session started reaches its next
   const agent = startAdminAgent({ cfg: { apiKey: Redacted.make(KEY1), model: "sonnet", effort: "medium" }, owner: "ada", tools: [] });
   agent.prompt("hello", null);
   expect(await requests(1)).toEqual([KEY1]);
-  // server/admin/agent.ts reads the settings at each turn and gives them to the session it keeps.
+  // agents/admin/sessions.ts reads the settings at each turn and gives them to the session it keeps.
   agent.configure({ apiKey: Redacted.make(KEY2), model: "sonnet", effort: "medium" });
   await new Promise((r) => setTimeout(r, 50));
   agent.prompt("again", null);

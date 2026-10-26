@@ -2,7 +2,7 @@
 // /admin/api-keys, /admin/auth): a breadcrumb in the upper left (Erga › Admin › the page),
 // Share with agent in the header bar upper right (the editor's button and
 // card: admin-share.js, built from client/admin-share.ts), the admin's agent
-// (agents/admin.ts: its panel is admin-agent.js, built from
+// (agents/admin/agent.ts: its panel is admin-agent.js, built from
 // client/admin-agent.ts) in a column left of the page, and, on the left, a
 // sidebar that links to Settings, API keys, Authentication, Access, Change log, Users and Ops.
 //

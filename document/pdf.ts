@@ -1,4 +1,4 @@
-// PDFs for the agents (editor-agent/session.ts): how many pages one has, a
+// PDFs for the agents (agents/document/session.ts): how many pages one has, a
 // range of its pages as a PDF of its own (pdf-lib), and its text, page by
 // page (PDF.js, through unpdf, which runs in a Worker). A PDF's text is
 // extracted once and kept by the PDF's hash (the blob store's `kept`), so

@@ -46,7 +46,7 @@ function imports(file: string): string[] {
   return out;
 }
 
-const CODE = ["server", "document", "agents", "editor-agent", "dev", "shared", "client", "cloudflare", "deploy"];
+const CODE = ["server", "document", "agents", "dev", "shared", "client", "cloudflare", "deploy"];
 
 test("rule 1: only cloudflare/ imports cloudflare:workers or cloudflare/'s files (deploy/ is the control Worker's)", () => {
   const wrong: string[] = [];

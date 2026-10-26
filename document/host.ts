@@ -20,8 +20,39 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
-import { CHANGES, MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type FilesAccess, type OpenResult, type PageTree } from "../editor-agent/session";
-import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type DocInfo, type Hello, type ModelState } from "./api";
+import {
+  CHANGES,
+  MODELS,
+  externalGuide,
+  isModelChoice,
+  startSession,
+  type AgentConfig,
+  type AgentSession,
+  type FilesAccess,
+  type OpenResult,
+  type PageTree,
+} from "../agents/document/session";
+import {
+  AgentOff,
+  Api,
+  BadAttachment,
+  BadRequest,
+  ExplainBadRequests,
+  ModelFixed,
+  NameRefused,
+  NoSuchModel,
+  NoSuchTool,
+  Person,
+  PersonFromRequest,
+  SessionFailed,
+  ExternalAgent,
+  ToolFailed,
+  Unauthorized,
+  type AgentState,
+  type DocInfo,
+  type Hello,
+  type ModelState,
+} from "./api";
 import type { DocName, Naming } from "../server/directory/index.ts";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
@@ -33,7 +64,7 @@ import { encodeStart } from "../shared/room-socket";
 import { blobPointer, byteRange, INLINE_HEADER, sha256, type BlobStore } from "./blobs";
 import { pdfText } from "./pdf";
 import * as Y from "yjs";
-import type { VersionsAccess } from "../editor-agent/session";
+import type { VersionsAccess } from "../agents/document/session";
 import type { ChatStore } from "../agents/checkpoint";
 
 export interface HostOptions {

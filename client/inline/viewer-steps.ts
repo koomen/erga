@@ -1,5 +1,5 @@
 // A presentation's steps, on a document's page (server/pages/viewer.ts), viewing and editing alike: the page says when
-// it has steps (server/pages/reader.ts: erga-steps; editor-agent/PROMPT.md, "Presentations"), and this shows back and
+// it has steps (server/pages/reader.ts: erga-steps; agents/document/PROMPT.md, "Presentations"), and this shows back and
 // forward under the page, the step it's at, and a list of the steps that opens over its right side. The arrow keys
 // step too, pressed here or in the page, except in text. The list shows each step's picture where the page draws them
 // (erga-step-image), kept until the page changes (another rev: an edit, another page), else its number and label.

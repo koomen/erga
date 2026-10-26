@@ -1,13 +1,13 @@
 // The document agent's system prompt: who it works for, the document's rules (PROMPT.md), and the tools it has
 // beyond the document.
 
-import { agentName } from "../document/content";
-import { type DocKind } from "../document/pages";
+import { agentName } from "../../document/content";
+import { type DocKind } from "../../document/pages";
 import documentPrompt from "./PROMPT.md" with { type: "text" };
 
 /**
  * How to write documents the page editor can keep editing by hand
- * (editor-agent/PROMPT.md, the one copy of these rules), appended to the system prompt.
+ * (agents/document/PROMPT.md, the one copy of these rules), appended to the system prompt.
  */
 export const DOCUMENT_RULES = documentPrompt.trim();
 

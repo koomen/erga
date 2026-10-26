@@ -10,8 +10,8 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
-import { beyondPrompt, documentToolSpecs } from "../editor-agent/session";
-import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../agents/admin";
+import { beyondPrompt, documentToolSpecs } from "../agents/document/session";
+import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../agents/admin/agent";
 import { SERVER_TOOLS, type ToolWho } from "../agents/tools";
 
 const ROOT = new URL("../", import.meta.url).pathname;
@@ -19,8 +19,21 @@ const read = (file: string) => readFileSync(ROOT + file, "utf8");
 
 /** The files whose opening comment is a route table ("//   POST /api/...   what it does"). */
 const ROUTE_TABLES = [
-  "server/app.ts", "cloudflare/index.ts", "cloudflare/dev.ts", "server/admin/agent.ts", "server/source/routes.ts", "cloudflare/branch-deploys.ts", "cloudflare/deploy-routes.ts", "server/home/api.ts", "server/identity/settings.ts", "server/identity/accounts.ts",
-  "server/admin/pages.ts", "server/api.ts", "server/documents/front-door.ts", "server/home/render.ts", "document/host.ts",
+  "server/app.ts",
+  "cloudflare/index.ts",
+  "cloudflare/dev.ts",
+  "agents/admin/sessions.ts",
+  "server/source/routes.ts",
+  "cloudflare/branch-deploys.ts",
+  "cloudflare/deploy-routes.ts",
+  "server/home/api.ts",
+  "server/identity/settings.ts",
+  "server/identity/accounts.ts",
+  "server/admin/pages.ts",
+  "server/api.ts",
+  "server/documents/front-door.ts",
+  "server/home/render.ts",
+  "document/host.ts",
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
 const PAGE_SCRIPTS = [

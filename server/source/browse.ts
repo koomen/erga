@@ -1,4 +1,4 @@
-// Reading Erga's own source, for the admin's agent (agents/admin.ts,
+// Reading Erga's own source, for the admin's agent (agents/admin/agent.ts,
 // `sourceTools`): list a folder, read a file (or some of its lines) and search
 // the code, in one commit's files as Artifacts sent them (SourceRepo.read,
 // server/source/repo.ts, which also answers the log). Read-only: nothing here

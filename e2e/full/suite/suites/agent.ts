@@ -1,4 +1,4 @@
-// The agent editor as a participant, driven by the scripted model (editor-agent/session.ts:
+// The agent editor as a participant, driven by the scripted model (agents/document/session.ts:
 // a message with `@script [...]` plays tool calls in order), so every run is
 // the same and free. Checks the agent's edits are attributed and visible to
 // others, that stale aim fails cleanly, that `write` keeps edits made since
@@ -43,7 +43,7 @@ export const agent: Test[] = [
       const log = await runScript(d, "Ada", [edit(d.path, "<h1>Launch notes", "<h1>Launch notes, revised"), { text: "Done." }]);
       await until(() => b.str().includes("<h1>Launch notes, revised"), 3000, "Bo sees the agent's edit");
       ctx.metric("prompt to edit seen", performance.now() - t0);
-      // Typed in a few steps (editor-agent/workspace.ts, paced): each of them by the agent.
+      // Typed in a few steps (agents/document/workspace.ts, paced): each of them by the agent.
       const by = b.seen.filter((s) => s.inserted && ", revised".includes(s.inserted));
       const agents = by.length > 0 && by.every((s) => s.author == "Ada, via their agent" && s.kind == "agent");
       expect(agents, "attributed to Ada's agent", b.seen);
@@ -150,7 +150,7 @@ export const agent: Test[] = [
       const ed = await run("edit", edit(d.path, "<h1>Launch notes", "<h1>Launch notes EXT").args);
       expect(ed.body.ok, "edit succeeds", ed);
       await until(() => b.str().includes("Launch notes EXT"), 3000, "Bo sees the external agent's edit");
-      // (A share token's edits are its person's, via it, under its label: editor-agent/session.ts.)
+      // (A share token's edits are its person's, via it, under its label: agents/document/session.ts.)
       expect(b.seen.at(-1)?.author == "Ada, via a shared agent (Share button)", "attributed to Ada, via her shared agent", b.seen.slice(-2));
       const bad = await run("edit", { path: d.path });
       expect(bad.status == 400 && /edits/.test(bad.body.error ?? ""), "bad arguments say what's wrong", bad);

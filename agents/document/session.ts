@@ -8,7 +8,7 @@
 //
 // It runs on pi's agent core (https://github.com/badlogic/pi-mono:
 // @mariozechner/pi-agent-core + pi-ai) with our own tools, written against
-// the small Workspace interface in editor-agent/workspace.ts, so the same agent could
+// the small Workspace interface in agents/document/workspace.ts, so the same agent could
 // run elsewhere (a browser) if it ever needs to. Others see only its edits,
 // attributed ("Pete's agent"), and its presence while it works: a labelled
 // caret that follows its edits as they apply, and whether it's busy, on awareness.
@@ -35,16 +35,16 @@ import * as Redacted from "effect/Redacted";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { validateToolArguments } from "@mariozechner/pi-ai";
-import { fileRefs, messageContent, type Attachment } from "../shared/attach";
+import { fileRefs, messageContent, type Attachment } from "../../shared/attach";
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { emptyLog, offerOf, reduce, type Log, type LogEvent } from "../shared/agent-log";
-import { CUT, Checkpoints, restoredLog, sendLate, type ChatStore } from "../agents/checkpoint";
-import { type ViewRequest, type ViewResult } from "../shared/agent-log";
-import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../document/content";
-import { byLine, VIA } from "../shared/attribution";
-import { pageRefusal, type DocKind, type TreeOp } from "../document/pages";
-import { joinLocal, type Room } from "../document/room";
-import type { Naming } from "../server/directory/index.ts";
+import { emptyLog, offerOf, reduce, type Log, type LogEvent } from "../../shared/agent-log";
+import { CUT, Checkpoints, restoredLog, sendLate, type ChatStore } from "../checkpoint";
+import { type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
+import { byLine, VIA } from "../../shared/attribution";
+import { pageRefusal, type DocKind, type TreeOp } from "../../document/pages";
+import { joinLocal, type Room } from "../../document/room";
+import type { Naming } from "../../server/directory/index.ts";
 import { YjsWorkspace, type Pacer } from "./workspace";
 
 import {
@@ -58,7 +58,7 @@ import {
   scriptModel,
   type AgentConfig,
   type ModelChoice,
-} from "../agents/models";
+} from "../models";
 import { kindLine, systemPrompt } from "./prompt";
 import {
   CHANGES,
@@ -85,7 +85,20 @@ export {
 } from "./tools";
 export { externalGuide } from "./guide";
 
-export { MODELS, DEFAULT_MODEL, isModelChoice, isScript, agentConfigFrom, describeModel, patchPayload, scriptModel, resultImage, resultText, type AgentConfig, type ModelChoice } from "../agents/models";
+export {
+  MODELS,
+  DEFAULT_MODEL,
+  isModelChoice,
+  isScript,
+  agentConfigFrom,
+  describeModel,
+  patchPayload,
+  scriptModel,
+  resultImage,
+  resultText,
+  type AgentConfig,
+  type ModelChoice,
+} from "../models";
 
 export interface AgentSession {
   /** The model's name, or null when the embedded agent is off (its tools still work). */

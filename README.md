@@ -77,9 +77,9 @@ flowchart LR
   document keeps its files and versions in the object's storage, and large
   files in R2. Its room is a shared Yjs document: each editor tab joins it
   over a WebSocket, and each agent session joins it in the same process.
-- **The agents.** The document agent (`editor-agent/`) edits the files of
+- **The agents.** The document agent (`agents/document/`) edits the files of
   one document for one person, in the same room as the people. The admin
-  agent (`agents/admin.ts`) does what an admin does on the admin pages. An
+  agent (`agents/admin/agent.ts`) does what an admin does on the admin pages. An
   outside agent uses the same tools with a person's agent token, over the
   HTTP API or MCP (`server/api.ts`).
 - **The database** is D1: the users, the server's settings, and each
@@ -148,7 +148,7 @@ health checks and rollbacks work.
       source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts), Git itself (git.ts,
                       http.ts, merge.ts), the GitHub App (github.ts), the Ops page (page.ts)
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
-    editor-agent/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
+    agents/document/ the document agent: session.ts (one session per person per document), workspace.ts, PROMPT.md
     agents/       what the agents share, and the admin agent
       tools.ts        the tools both agents and the outside API share; actions.ts, the audit of every action and its tool
       models.ts       the models, their prices, the agent's configuration and the scripted test model

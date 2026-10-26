@@ -1,5 +1,5 @@
 // Custom edits: a document defines its own edits, beyond typing
-// (editor-agent/PROMPT.md, "Custom edits"). In the editor, the page gets
+// (agents/document/PROMPT.md, "Custom edits"). In the editor, the page gets
 // `window.ergaEditor`; its own controls (buttons it draws) call
 // `ergaEditor.apply(edits)` with a list of custom edits to its elements: insert HTML before, after or into one, remove one,
 // move one, replace one, set or remove an attribute. The page names the

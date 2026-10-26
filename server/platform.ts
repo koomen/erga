@@ -8,7 +8,7 @@ import type { AgentToken, AppValues, AuthStorage, Tokens } from "./identity/inde
 import type { TargetName } from "../deploy/targets.ts";
 import type { HomeObject } from "./home/index.ts";
 import type { SourceService } from "./source/index.ts";
-import type { AdminAgentObject, DashboardDeploys } from "./admin/index.ts";
+import type { AdminAgentObject, DashboardDeploys } from "../agents/admin/sessions.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
 import type { RestoreResult, VersionsState } from "../document/versions.ts";
@@ -145,7 +145,7 @@ export interface Platform {
    * Absent in local development and on a server /deploy made, where this server hosts them itself.
    */
   control?: { url: string };
-  /** The admins' agents (server/admin/agent.ts), one object per server. */
+  /** The admins' agents (agents/admin/sessions.ts), one object per server. */
   adminAgent: AdminAgentObject;
   /** The agents' settings as they are now: the Anthropic key an admin stored, else the deploy's; or why there's none. Read at each turn. */
   agentSettings(): Promise<AgentConfig | { missing: string }>;

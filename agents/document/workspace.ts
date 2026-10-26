@@ -17,8 +17,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Y from "yjs";
-import { changesBetween, rebase } from "../document/merge";
-import { applyChanges, assets, files, folders, stamp, type Author } from "../document/content";
+import { changesBetween, rebase } from "../../document/merge";
+import { applyChanges, assets, files, folders, stamp, type Author } from "../../document/content";
 import { aligned, pieces, type Piece } from "./typing";
 
 export interface Workspace {
@@ -38,7 +38,7 @@ export interface Workspace {
 export interface EditResult { path: string; at: number; summary: string }
 
 /**
- * How the agent's edits show while they apply (editor-agent/session.ts): its
+ * How the agent's edits show while they apply (agents/document/session.ts): its
  * selection on the text each change replaces, then the new text streamed in
  * many small steps, as a model's answer is. Without one, an edit applies at once.
  */
@@ -90,7 +90,7 @@ export class YjsWorkspace implements Workspace {
 
   constructor(
     private doc: Y.Doc,
-    /** Who its edits are by (a function: an outside agent's calls are by it, via its token: editor-agent/session.ts). */
+    /** Who its edits are by (a function: an outside agent's calls are by it, via its token: agents/document/session.ts). */
     private me: Author | (() => Author),
     /** The agent acts with its user's permissions, checked as it acts. */
     private canEdit: () => boolean,

@@ -32,7 +32,7 @@ import type { DomainsView } from "../../deploy/branches.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../platform.ts";
 import { whoOf } from "../platform.ts";
-import type { DashboardDeploys } from "../admin/index.ts";
+import type { DashboardDeploys } from "../../agents/admin/sessions.ts";
 
 /** The pipeline's object, as these routes need it: the dashboard's calls, a target's history, and the event stream. */
 export interface DeploysObject extends DashboardDeploys {

@@ -31,13 +31,15 @@ function comment(file: string, line: string): string {
 test("every repo path a comment or a doc names exists", () => {
   const wrong: string[] = [];
   for (const f of files()) {
-    readFileSync(join(ROOT, f), "utf8").split("\n").forEach((line, i) => {
-      for (const m of comment(f, line).matchAll(PATH)) {
+    readFileSync(join(ROOT, f), "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        for (const m of comment(f, line).matchAll(PATH)) {
         const p = m[0].replace(/[.,]+$/, "");
         if (!/\.[a-z]+$/.test(p) && !p.endsWith("/")) continue;
         if (!existsSync(join(ROOT, p))) wrong.push(`${f}:${i + 1} names ${p}`);
       }
-    });
+      });
   }
   expect(wrong).toEqual([]);
 });

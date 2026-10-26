@@ -1,5 +1,5 @@
 // Tools both kinds of agent have, defined once: the editor's own agent
-// (editor-agent/session.ts, given them by its document's host, cloudflare/document-object.ts) and an
+// (agents/document/session.ts, given them by its document's host, cloudflare/document-object.ts) and an
 // external agent holding one of the person's agent tokens (server/api.ts,
 // over HTTP, /mcp and the guide). They need only the directory (server/directory/:
 // documents' permissions, the server's users and settings) and who's asking,
@@ -28,7 +28,7 @@
 //
 // An admin tool is offered only to an admin with admin power (`toolsFor`;
 // Users.actsAsAdmin): an external agent with an admin-scope token,
-// and the admin's agent (agents/admin.ts, `adminTools`),
+// and the admin's agent (agents/admin/agent.ts, `adminTools`),
 // acting as the admin whose session it is. The editor's agent never has them (a document's host never
 // carries admin power, and a document's text could steer its agent). The
 // directory checks again on every call (Users.mustAdmin), so a tool list
