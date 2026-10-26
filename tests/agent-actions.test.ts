@@ -77,10 +77,7 @@ function tableRoutes(file: string): string[] {
 }
 
 /** The document API's endpoints, under a document's address. */
-const apiRoutes = () =>
-  [...read("document/api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map(
-    (m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`
-  );
+const apiRoutes = () => [...read("document/api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map((m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`);
 /** The page tree's operations: each a POST to the tree. */
 const treeRoutes = () => [...read("document/pages.ts").matchAll(/\{ op: "(\w+)"/g)].map((m) => `POST /api/docs/<id>/tree op=${m[1]}`);
 
@@ -105,40 +102,27 @@ const DOCUMENT = [
 
 test("the route tables are read: the known routes are found", () => {
   const found = every();
-  for (const r of [
-    "POST /api/admin/agent/model",
-    "POST /api/source/merge",
-    "POST /admin/users do=remove",
-    "POST /d/<id>/api/name",
-    "POST /api/docs/<id>/tree op=move",
-    "POST /api/docs/<id>/versions/<versionId>/restore",
-    "POST /docs/delete",
-  ])
-    expect(found).toContain(r);
+  for (const r of ["POST /api/admin/agent/model", "POST /api/source/merge", "POST /admin/users do=remove", "POST /d/<id>/api/name", "POST /api/docs/<id>/tree op=move", "POST /api/docs/<id>/versions/<versionId>/restore", "POST /docs/delete"]) expect(found).toContain(r);
   expect(found.length).toBeGreaterThan(80);
 });
 
 test("every route in the route tables, the document API and the page tree is in the audit", () => {
   const missing = every().filter((r) => !audited.has(r));
-  if (missing.length)
-    console.log(`Not in agents/actions.ts (add each, with the agent's tool, or why there's none):\n${missing.join("\n")}`);
+  if (missing.length) console.log(`Not in agents/actions.ts (add each, with the agent's tool, or why there's none):\n${missing.join("\n")}`);
   expect(missing).toEqual([]);
 });
 
 test("every route a page's script calls is in the audit", () => {
   // fetch("/api/..."), call("/api/..."), form action="/...": the routes' fixed part (up to a quote or a ${...}).
   const paths = AGENT_ACTIONS.map((a) => a.route.split(" ")[1].replace(/\[.*$/, "").replace(/\?.*$/, ""));
-  const covered = (p: string) =>
-    paths.some((r) => {
-      const re = new RegExp(`^${r.replace(/[.*+?^${}()|\\]/g, "\\$&").replace(/<[^>]+>|:\w+/g, "[^/]+")}`);
-      return re.test(p) || r.startsWith(p);
-    });
+  const covered = (p: string) => paths.some((r) => {
+    const re = new RegExp(`^${r.replace(/[.*+?^${}()|\\]/g, "\\$&").replace(/<[^>]+>|:\w+/g, "[^/]+")}`);
+    return re.test(p) || r.startsWith(p);
+  });
   const calls: string[] = [];
   let seen = 0;
   for (const file of PAGE_SCRIPTS) {
-    for (const m of read(file).matchAll(
-      /(?:fetch|call)\(\s*["'`](\/(?:api|admin|docs|tokens|deploy|new|d)\b[^"'`$?]*)|action="(?:\$\{esc\(link\(")?(\/(?:api|admin|docs|tokens|deploy|new)\b[^"'`$?]*)/g
-    )) {
+    for (const m of read(file).matchAll(/(?:fetch|call)\(\s*["'`](\/(?:api|admin|docs|tokens|deploy|new|d)\b[^"'`$?]*)|action="(?:\$\{esc\(link\(")?(\/(?:api|admin|docs|tokens|deploy|new)\b[^"'`$?]*)/g)) {
       const p = (m[1] ?? m[2]).replace(/\/$/, "");
       seen++;
       if (!covered(p)) calls.push(`${file}: ${p}`);
@@ -154,10 +138,8 @@ test("each action has a tool that its agent has, or says why there's none", () =
   for (const a of AGENT_ACTIONS as AgentAction[]) {
     if (!a.tool == !a.exempt) wrong.push(`${a.route} (${a.action}): give a tool or an exemption, not both or neither`);
     if (a.tool && a.domain == "none") wrong.push(`${a.route} (${a.action}): an action that is nobody's has no tool`);
-    if (a.tool && a.domain == "admin" && !ADMIN.includes(a.tool))
-      wrong.push(`${a.route} (${a.action}): the admin agent has no tool ${a.tool}`);
-    if (a.tool && a.domain == "document" && !DOCUMENT.includes(a.tool))
-      wrong.push(`${a.route} (${a.action}): the document agent has no tool ${a.tool}`);
+    if (a.tool && a.domain == "admin" && !ADMIN.includes(a.tool)) wrong.push(`${a.route} (${a.action}): the admin agent has no tool ${a.tool}`);
+    if (a.tool && a.domain == "document" && !DOCUMENT.includes(a.tool)) wrong.push(`${a.route} (${a.action}): the document agent has no tool ${a.tool}`);
   }
   expect(wrong).toEqual([]);
 });
@@ -167,23 +149,8 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
 });
 
 test("the known gaps are closed: production's deploy, the dashboard, keys and tokens", () => {
-  for (const t of [
-    "deploy_production",
-    "github_status",
-    "sync_github",
-    "disconnect_github",
-    "list_branches",
-    "list_deploys",
-    "deploy_log",
-    "redeploy",
-    "deploy_homepage",
-    "clear_api_key",
-    "list_agent_tokens",
-    "revoke_agent_token",
-    "get_sign_in_status",
-    "clear_sign_in_app",
-  ])
-    expect(ADMIN).toContain(t);
+  for (const t of ["deploy_production", "github_status", "sync_github", "disconnect_github", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
+    "clear_api_key", "list_agent_tokens", "revoke_agent_token", "get_sign_in_status", "clear_sign_in_app"]) expect(ADMIN).toContain(t);
   // Share with agent makes agent tokens now (list_agent_tokens, revoke_agent_token): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);
