@@ -46,6 +46,8 @@ export abstract class EditorCore {
   protected rendering = false;
   /** The text on the top line before the change keepView is making (and the change), for a render it asks for meanwhile. */
   protected viewBefore: { pos: number; top: number; changes: ChangeSet | null } | null = null;
+  /** The character keepView held still last (its source position, how far down the window, and the window's scroll then). */
+  protected heldText: { pos: number; top: number; scrollY: number } | null = null;
   /** Stopped (out of the editor): the page is the page alone again. */
   protected stopped = false;
   /** The page's own editability on the elements the editor made editable (contenteditable, spellcheck), to give back on stop. */
