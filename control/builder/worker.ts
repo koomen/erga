@@ -30,7 +30,7 @@ import { sleep } from "../../shared/time";
 /** What the build container needs of the Worker's bindings. */
 export interface BuilderEnv { BUILDS: DurableObjectNamespace<Builder>; CF_VERSION_METADATA?: { id?: string } }
 
-/** The image's Bun (Dockerfile's FROM; tests/pipeline.test.ts keeps them equal): part of the release cache's key. */
+/** The image's Bun (Dockerfile's FROM; tests/deploy-builder.test.ts keeps them equal): part of the release cache's key. */
 export const BUILDER_BUN = "1.4.2";
 /** The release cache's object. */
 const CACHE = "cache:releases";
