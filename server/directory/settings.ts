@@ -97,11 +97,6 @@ export const SETTINGS = {
     default: 5,
     parse: integer(1, 1000),
   }),
-  viewer_agent_turns: setting<number>({
-    description: "How many times a day someone who may only view a document may ask its agent, where its owner lets viewers ask (each turn uses this server's API key). 0: never.",
-    default: 20,
-    parse: integer(0, 1000),
-  }),
   public_sharing: setting<boolean>({
     description:
       "Users can share content publicly: a document shared with anyone with the link opens for people who aren't signed in too, as viewers (the Access page). Off: nobody may share with anyone with the link, and such shares made before open only for people who sign in. The homepage is public either way.",

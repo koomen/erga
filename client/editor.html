@@ -344,10 +344,6 @@
     .sharing-add .naming-input { grid-column: 1 / span 2; min-width: 0; margin: 0; }
     .sharing-add button { height: 30px; padding: 0; font: 600 12.5px var(--font-text); border-radius: 7px; border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); cursor: pointer; }
     .sharing-add button:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
-    .viewers-agent { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
-    .viewers-agent[hidden] { display: none; }
-    .viewers-agent label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg-strong, var(--fg)); cursor: pointer; }
-    .viewers-agent p { margin: 4px 0 0 24px; }
     .sharing-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
     .sharing-list li { min-height: 36px; }
     .sharing :is(.sharing-list, .sharing-anyone) .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); }
@@ -364,8 +360,10 @@
     .sharing-anyone select[hidden] { display: none; }
     .sharing-anyone .face, .sharing-anyone .role { margin-top: 1px; }
     .sharing-anyone label { display: block; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-    .link-row { display: flex; align-items: center; gap: 8px; }
-    .link-row .share-status { font-size: 12px; }
+    /* The link's row: Copy link, and who the link lets in, which wraps under it rather than being cut off. */
+    .sharing .sharing-anyone .who { white-space: normal; }
+    .link-row { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 1px; }
+    .link-row .share-status { font-size: 12px; line-height: 1.35; }
     .text-btn { padding: 0; border: 0; background: none; color: var(--caret); font: 500 12.5px/1.6 var(--font-text); cursor: pointer; }
     .text-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
     .sharing select.role { width: 104px; height: 30px; padding: 0 24px 0 9px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: 12.5px var(--font-text); cursor: pointer;
@@ -549,7 +547,7 @@
     <section id="sharing-people" aria-labelledby="sharing-title">
       <h2 id="sharing-title">Share with people</h2>
       <form id="sharing-add" class="share-grid sharing-add" autocomplete="off">
-        <input name="login" class="naming-input" placeholder="A GitHub login" aria-label="GitHub login to share with" autocapitalize="off" spellcheck="false" required>
+        <input name="login" class="naming-input" placeholder="Username" aria-label="Username to share with" autocapitalize="off" spellcheck="false" required>
         <select name="role" class="role" aria-label="Their role"><option value="editor">Can edit</option><option value="viewer">Can view</option></select>
         <button type="submit">Add</button>
       </form>
@@ -561,11 +559,6 @@
         <span></span>
       </div>
       <p id="sharing-status" class="share-status sharing-status" role="status" aria-live="polite"></p>
-      <!-- Viewers and the agent (its owner only): off unless turned on; each viewer's turns, as main.ts reads them (/api/viewers-agent). -->
-      <div id="viewers-agent" class="viewers-agent" hidden>
-        <label><input type="checkbox" id="viewers-agent-on"> Viewers can ask the agent</label>
-        <p id="viewers-agent-use" class="share-status"></p>
-      </div>
     </section>
     <section id="sharing-agent"></section>
   </div>

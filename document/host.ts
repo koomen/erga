@@ -11,8 +11,6 @@
 //   GET  /api/files          anyone who may view: every file (its kind, size and time) and the folders: the files view
 //   PUT  /api/files/<path>   editors: one file, its bytes the body (any kind, any size up to the limits: a text file is
 //                            text, anything else a blob in R2), replacing one at that path (document.ts, upload)
-//   GET  /api/viewers-agent  its owner: whether viewers may ask the agent, the day's limit, and each viewer's turns
-//   POST /api/viewers-agent  its owner: {on}, viewers may ask the agent (true) or not (false; the default)
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -75,8 +73,6 @@ export interface HostOptions {
   readonly kind?: () => DocKind;
   /** Changes the document's kind (make_project, make_document): kept and told to the directory. */
   readonly setKind?: (kind: DocKind) => Promise<void>;
-  /** Viewers and the embedded agent (its turns use the server's key): whether they may ask it, and what they used. */
-  readonly viewers?: ViewersAgent;
   /** The document's title and address in the directory, read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** The tools beyond the document a person's agent may use now (agents/tools.ts: sharing; settings and users for an admin). */
@@ -101,27 +97,8 @@ export interface HostOptions {
   readonly putFile?: (path: string, bytes: Uint8Array, by: string) => Promise<{ kind: "text" | "file"; replaced: boolean }>;
 }
 
-/** What viewers used of a document's agent, as its owner sees it. */
-export interface ViewersReport {
-  /** Viewers may ask the agent here (the owner's choice; off unless they turn it on). */
-  on: boolean;
-  /** How many turns a day each viewer has (the server's viewer_agent_turns). */
-  limit: number;
-  /** Each viewer who asked: their turns today (UTC), in all, and when they last asked. */
-  viewers: { login: string; today: number; total: number; last: number }[];
-}
-
-/**
- * Viewers and the embedded agent: its turns use the server's API key, so a viewer may ask it only where the
- * document's owner lets viewers ask, and only so many times a day (the viewer_agent_turns setting).
- */
-export interface ViewersAgent {
-  /** Why this viewer may not ask now; null if they may. `count`: this is a turn, so it counts. */
-  gate(person: { id: string; name: string }, count: boolean): Promise<string | null>;
-  isOwner(person: { id: string; name: string }): boolean;
-  report(): Promise<ViewersReport>;
-  set(on: boolean): Promise<void>;
-}
+/** Why someone who may only view gets no embedded agent: its turns use the server's API key. */
+const VIEWER_OFF = "You can only view this document, so you can't ask its agent.";
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
 interface Tab { user: string; send: (msg: unknown) => void; watch?: boolean }
@@ -212,8 +189,13 @@ export function makeHost(opts: HostOptions) {
   const sendAll = (msg: unknown) => { for (const t of tabs) t.send(msg); };
   /** A document (one page) or a project, as it is now. */
   const kindNow = (): DocKind => opts.kind?.() ?? "project";
-  /** Why someone may not ask the embedded agent now (a viewer: see ViewersAgent), counting the turn if `count`; null if they may. */
-  const viewerGate = opts.viewers && ((user: { id: string; name: string }, count: boolean) => (opts.canEdit?.(user) ?? true) ? Promise.resolve(null) : opts.viewers!.gate(user, count));
+  /** Why someone may not ask the embedded agent (someone who may only view: VIEWER_OFF); null if they may. */
+  const viewerGate = (user: { id: string; name: string }) => ((opts.canEdit?.(user) ?? true) ? null : VIEWER_OFF);
+  /** The agent's state for someone, off (saying why) if they may only view. */
+  const offForViewer = (user: { id: string; name: string }, state: AgentState): AgentState => {
+    const why = state.enabled && viewerGate(user);
+    return why ? { enabled: false, reason: why, log: state.log } : state;
+  };
   // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
   room.onTree(() => sendAll({ type: "tree" }));
   /** The latest moves, for a tab that missed one while it was loading (GET /api/tree). */
@@ -343,7 +325,6 @@ export function makeHost(opts: HostOptions) {
         store: opts.chats?.(user),
         meta: opts.chatMeta,
         files: filesAccess,
-        viewersAgent: opts.viewers?.isOwner(user) ? { report: () => opts.viewers!.report(), set: (on) => opts.viewers!.set(on) } : undefined,
       }));
       // Its events reach the person's tabs; then a run a restart cut off goes on (from its last checkpoint).
       s.then((session) => {
@@ -404,8 +385,6 @@ export function makeHost(opts: HostOptions) {
   /** The person's agent: on or off, its model, its conversation (GET /api/agent, and a tab's socket once its session is up). */
   const agentStateFor = (user: { id: string; name: string }): Promise<AgentState> => Effect.runPromise(session(user).pipe(
     Effect.flatMap((s) => Effect.map(configured(s), (off): AgentState => off ? { enabled: false, reason: off, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })),
-    // A viewer, where the owner hasn't let viewers ask, or past their turns for today: off, saying why.
-    Effect.flatMap((state) => state.enabled && viewerGate ? Effect.map(Effect.promise(() => viewerGate!(user, false)), (why): AgentState => why ? { enabled: false, reason: why, log: state.log } : state) : Effect.succeed(state)),
     Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
   ));
 
@@ -421,11 +400,11 @@ export function makeHost(opts: HostOptions) {
     })));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
-    .handle("state", () => Person.use((user) => Effect.promise(() => agentStateFor(user))))
+    .handle("state", () => Person.use((user) => Effect.promise(() => agentStateFor(user).then((state) => offForViewer(user, state)))))
     .handle("prompt", ({ payload }) => Effect.gen(function* () {
       const s = yield* agentSession;
-      // A viewer's turn: only where the owner lets viewers ask, and within their turns for today (this one counted).
-      const why = viewerGate ? yield* Person.use((user) => Effect.promise(() => viewerGate!(user, true))) : null;
+      // Someone who may only view never asks it.
+      const why = yield* Person.use((user) => Effect.succeed(viewerGate(user)));
       if (why) return yield* new AgentOff({ ok: false, reason: why });
       // The sender's last keystrokes travel over its WebSocket; let them land first.
       const files = checkAttachments(payload.files);
@@ -512,20 +491,6 @@ export function makeHost(opts: HostOptions) {
       return yield* HttpServerResponse.json({ files: list, folders: room.folderPaths(), index: doc.path, canEdit, kind: kindNow() }, { headers: { "Cache-Control": "no-store" } });
     })),
     // The document's file tree: its pages, other files and folders.
-    // Viewers and the agent: whether viewers may ask it here, and what each used. Its owner only.
-    HttpRouter.route("GET", "/api/viewers-agent", Effect.gen(function* () {
-      const req = yield* HttpServerRequest.HttpServerRequest;
-      if (!opts.viewers?.isOwner(opts.personOf(req))) return yield* HttpServerResponse.json({ error: "Only the document's owner sees this." }, { status: 403 });
-      return yield* HttpServerResponse.json(yield* Effect.promise(() => opts.viewers!.report()), { headers: { "Cache-Control": "no-store" } });
-    })),
-    HttpRouter.route("POST", "/api/viewers-agent", Effect.gen(function* () {
-      const req = yield* HttpServerRequest.HttpServerRequest;
-      if (!opts.viewers?.isOwner(opts.personOf(req))) return yield* HttpServerResponse.json({ error: "Only the document's owner may change this." }, { status: 403 });
-      const body = (yield* Effect.orElseSucceed(req.json, () => null)) as { on?: unknown } | null;
-      if (typeof body?.on != "boolean") return yield* HttpServerResponse.json({ error: 'Send {"on": true} or {"on": false}.' }, { status: 400 });
-      yield* Effect.promise(() => opts.viewers!.set(body.on as boolean));
-      return yield* HttpServerResponse.json(yield* Effect.promise(() => opts.viewers!.report()), { headers: { "Cache-Control": "no-store" } });
-    })),
     HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
       const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
@@ -624,7 +589,7 @@ export function makeHost(opts: HostOptions) {
     },
     /** What a tab hears first: the document's details as its person sees them, and its tree (`canEdit`: theirs to change). */
     hello: helloFor,
-    agentState: agentStateFor,
+    agentState: (user: { id: string; name: string }) => agentStateFor(user).then((state) => offForViewer(user, state)),
     /** Tells every open tab, whoever's (a new version, a restore: { type: "versions" }). */
     broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
