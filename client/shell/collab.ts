@@ -31,11 +31,23 @@ import * as decoding from "lib0/decoding";
 import * as sync from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
 import type { ChangeSet } from "@codemirror/state";
-import type { Hello } from "../document/api";
-import { applyChanges, assets, authorOf, deltaToChanges, files, hasSeen, introduce, roomInfo, stamp, stateVector, type Author } from "../document/content";
-import { changesBetween } from "../document/merge";
+import type { Hello } from "../../document/api";
+import {
+  applyChanges,
+  assets,
+  authorOf,
+  deltaToChanges,
+  files,
+  hasSeen,
+  introduce,
+  roomInfo,
+  stamp,
+  stateVector,
+  type Author,
+} from "../../document/content";
+import { changesBetween } from "../../document/merge";
 import { BASE } from "./base";
-import { decodeStart, PING, PONG } from "../shared/room-socket";
+import { decodeStart, PING, PONG } from "../../shared/room-socket";
 
 /** Someone in the room, from awareness. */
 export interface Presence {

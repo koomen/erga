@@ -1,13 +1,13 @@
 // The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/ops,
 // /admin/api-keys, /admin/auth): a breadcrumb in the upper left (Erga › Admin › the page),
 // Share with agent in the header bar upper right (the editor's button and
-// card: admin-share.js, built from client/admin-share.ts), the admin's agent
+// card: admin-share.js, built from client/admin/admin-share.ts), the admin's agent
 // (agents/admin/agent.ts: its panel is admin-agent.js, built from
-// client/admin-agent.ts) in a column left of the page, and, on the left, a
+// client/admin/admin-agent.ts) in a column left of the page, and, on the left, a
 // sidebar that links to Settings, API keys, Authentication, Access, Change log, Users and Ops.
 //
 // As in the editor, the user drags the agent by its head to the right of the
-// page, and its inner edge to resize it (client/layout.ts, mountPaneLayout;
+// page, and its inner edge to resize it (client/agent/layout.ts, mountPaneLayout;
 // kept in this browser). It collapses to a round button in the lower corner
 // on its side, as the editor's does (its own button, Esc in the panel, or
 // ⌘J), and expands from it again;
@@ -20,7 +20,7 @@
 // links above the page.
 //
 // In the browser the admin pages are one page (admin-nav.js, built from
-// client/admin-nav.ts): a link to another admin page changes only <main>
+// client/admin/admin-nav.ts): a link to another admin page changes only <main>
 // (and the title, the breadcrumb and the sidebar's mark), so the agent panel
 // and its conversation stay. Each page is still made whole here, for a deep
 // link or a reload. Every page has the same look: the one stylesheet,

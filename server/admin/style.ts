@@ -1,7 +1,7 @@
 // The one stylesheet of every admin page (server/admin/layout.ts: /admin, API keys, Authentication, the change log,
 // Users, Ops and the Cloudflare page), and of the control Worker's pages in the same layout (control/routes.ts). The
 // build writes it as admin.css, named by its hash (client/build.ts), and every admin page links the same file, so the
-// browser keeps one copy, and a page shown in place (client/admin-nav.ts) needs no style of its own. A page can't add
+// browser keeps one copy, and a page shown in place (client/admin/admin-nav.ts) needs no style of its own. A page can't add
 // its own: one look, the same on every page. Here are only plain strings, so the build can read them.
 //
 // The look of a thing is the same wherever it is: a section's heading, a lede, a row, a setting's row, a switch, a
@@ -33,7 +33,7 @@ const LAYOUT_STYLE = `
   :root:not(.side-ready) .admin-side, :root:not(.side-ready) .admin-side .label { transition: none; }
   @media (prefers-reduced-motion: reduce) { .admin-side, .admin-side .label { transition: none; } }
   /* The admin's agent and the page: a grid of two, the agent on the left, as the editor's card, or on the right. As in the
-     editor, the user drags the agent by its head to the other side, and its inner edge to resize it (client/layout.ts,
+     editor, the user drags the agent by its head to the other side, and its inner edge to resize it (client/agent/layout.ts,
      mountPaneLayout, sets --agent-w and .agent-right; the grip and the ghost are style.css's). Collapsed, the agent is a
      round button in the lower corner on its side; expanding grows the card out of that corner (a clip-path from the
      button's circle), and the page slides over. */

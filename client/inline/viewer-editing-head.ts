@@ -5,7 +5,7 @@
 // the document's details and its whole text), and the editor's script (`scripts`: it and its first chunks) is fetched.
 //
 // Reloaded in the editor (by hand, or for a new release), the page opens as the editor was, from its first frame: its
-// layout and its controls, as the editor kept them (client/main.ts, "shell"; client/restore.ts, under `restoreKey`).
+// layout and its controls, as the editor kept them (client/shell/main.ts, "shell"; client/live/restore.ts, under `restoreKey`).
 // Only for the window's same size, and at the same address.
 
 type Kept = {
@@ -22,7 +22,7 @@ type Kept = {
 export default function viewerEditingHead(scripts: string[], restoreKey: string): void {
   window.ergaConnect = () => {
     // The editor's start (its hello and the document's whole text: shared/room-socket.ts), on the connection this page
-    // came on, and the document's one socket, which needs a connection of its own: both at once. client/collab.ts takes
+    // came on, and the document's one socket, which needs a connection of its own: both at once. client/shell/collab.ts takes
     // them over (the socket with what came on it before then).
     const was = window.ergaSocket;
     if (was && was.readyState < 2) return was;

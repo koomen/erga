@@ -2,7 +2,7 @@
 // keys held while the editor can't take them.
 
 import * as M from "../../shared/manuscript";
-import { listenAsEditor } from "../text-guard";
+import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
 import { findDiff, norm, placeholderBr, STOPS } from "./source";
 import { isMac } from "./core";

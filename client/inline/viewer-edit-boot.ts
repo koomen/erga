@@ -2,13 +2,13 @@
 // editor's eye, the browser's back and forward, or a page opened with ?edit. Only the address's ?edit changes
 // (pushState), never the page. The first time, the editor's controls and styles (client/editor.html, in the page
 // already) go on, its socket opens (ergaConnect) and its code loads (`scripts`: it and its first chunks), which takes
-// the socket over; it loads the editor's half into the page in the frame, which stays as it is (client/remote.ts). The
-// editor's controls fade in over the viewer's once it's ready (client/main.ts calls ergaShell.ready), and out again on
+// the socket over; it loads the editor's half into the page in the frame, which stays as it is (client/shell/remote.ts). The
+// editor's controls fade in over the viewer's once it's ready (client/shell/main.ts calls ergaShell.ready), and out again on
 // the way back; the editor keeps running meanwhile (its half in the page stops), so going back in is immediate.
 // Viewing, it fetches the editor's files while the browser is idle, so that first time is quick too. `built`: the
-// editor's files this page uses that its elements don't name (client/live.ts compares them with the server's).
+// editor's files this page uses that its elements don't name (client/live/live.ts compares them with the server's).
 
-/** The editor, once it runs (client/main.ts, window.ergaPage): what this script asks of it. */
+/** The editor, once it runs (client/shell/main.ts, window.ergaPage): what this script asks of it. */
 type Editor = { pagePath?: string; setEditing(on: boolean): void };
 
 export default function viewerEditBoot(scripts: string[], built: Record<string, string>): void {
@@ -84,7 +84,7 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     sync();
     if (edit) load();
   }
-  // Whether the page was opened in the editor (with ?edit), rather than switched into it: client/main.ts restores
+  // Whether the page was opened in the editor (with ?edit), rather than switched into it: client/shell/main.ts restores
   // the agent as it was left only then, and otherwise opens it the way it does on any later switch.
   window.ergaShell = {
     ready() {

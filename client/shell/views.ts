@@ -2,15 +2,15 @@
 // undo history. ⌘⇧P goes between them.
 
 import type { ChangeSet, EditorState } from "@codemirror/state";
-import { live } from "../live-client";
+import { live } from "../live/client";
 import { $, type Mode, type Shell } from "./shell";
 
 export function mountViews(shell: Shell) {
   // One CodeMirror state serves both the page editor and the source view, so the undo history is shared and either
   // view's edits land in the same file. The source view's code (source-view.ts: CodeMirror's view and the HTML
   // language) loads the first time it opens. Its own edits go to the room.
-  let sourceCode: Promise<typeof import("../source-view")> | null = null;
-  const loadSource = () => sourceCode ??= import("../source-view").then((m) => (shell.source = m), (e) => {
+  let sourceCode: Promise<typeof import("./source-view")> | null = null;
+  const loadSource = () => sourceCode ??= import("./source-view").then((m) => (shell.source = m), (e) => {
     sourceCode = null;
     // A chunk that isn't there any more is a new release: the page asks the server, and reloads (live.ts).
     live((l) => l.check("a request failed"));
@@ -41,7 +41,7 @@ export function mountViews(shell: Shell) {
     }
     let handed: EditorState | null = null;
     if (next != "text") {
-      let code: typeof import("../source-view");
+      let code: typeof import("./source-view");
       try { code = await loadSource(); } catch { shell.toast.flash("Couldn't open the source: check your connection and try again.", 4000); return; }
       handed = (await shell.page.detach(code.sourceState(sourceHooks))).state;
     }

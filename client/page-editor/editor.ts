@@ -2,7 +2,7 @@
 // source is the model, an EditorState with the same change sets and undo
 // history as the source view. The editor runs in the page's own window
 // (frame.ts), which the pages origin served from the same text with its
-// manuscript elements marked (shared/page.ts); they're found by the
+// manuscript elements marked (shared/page-html.ts); they're found by the
 // deterministic analysis in manuscript.ts, which gives every text node a source range.
 //
 // Two regimes. Each manuscript unit is its own contenteditable host: click
@@ -23,13 +23,13 @@
 // clipboard.ts (paste and copy) and input.ts (keys, input, the pointer).
 
 import type { ChangeSet, EditorState } from "@codemirror/state";
-import * as M from "../shared/manuscript";
-import { changesBetween } from "../document/merge";
-import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageProblem, PageUpdate, Peer } from "./page-editor/types";
-import { touched } from "./page-editor/source";
-import { marksFor } from "./page-editor/marks";
-import { noHistory } from "./page-editor/core";
-import { EditorInput } from "./page-editor/input";
+import * as M from "../../shared/manuscript";
+import { changesBetween } from "../../document/merge";
+import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageProblem, PageUpdate, Peer } from "./types";
+import { touched } from "./source";
+import { marksFor } from "./marks";
+import { noHistory } from "./core";
+import { EditorInput } from "./input";
 
 export type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageProblem, PageUpdate, Peer };
 

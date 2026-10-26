@@ -4,7 +4,7 @@
 import type { ChangeSet } from "@codemirror/state";
 import * as M from "../../shared/manuscript";
 import { changesBetween } from "../../document/merge";
-import { ms } from "../timescale";
+import { ms } from "./timescale";
 import type { MarkAuthor, Peer } from "./types";
 import { copyUnit, textIn, unitsIn } from "./source";
 import { EditorCore } from "./core";

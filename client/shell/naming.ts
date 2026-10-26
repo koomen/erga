@@ -3,9 +3,9 @@
 import type { DocName } from "../../document/api";
 import { files } from "../../document/content";
 import { pageUrl } from "../../document/pages";
-import { BASE } from "../base";
-import { live } from "../live-client";
-import type { mountTree, TreeHandle } from "../pages-tree";
+import { BASE } from "./base";
+import { live } from "../live/client";
+import type { mountTree, TreeHandle } from "../pages/pages-tree";
 import { $, editing, type Shell } from "./shell";
 
 /** pages-tree.ts, once imported (a chunk of its own: pages-tree.js). */
@@ -128,7 +128,7 @@ export function mountNaming(shell: Shell) {
   // tab, as Documents does (the same key), so the next page shows it straight
   // away and reads it again behind.
   let treeScript: Promise<TreeModule> | null = null;
-  const loadTree = () => treeScript ??= import("../pages-tree").then((m): TreeModule => m, () => {
+  const loadTree = () => treeScript ??= import("../pages/pages-tree").then((m): TreeModule => m, () => {
     treeScript = null;
     // (A chunk that isn't there any more is a new release: the page asks the server, and reloads: live.ts.)
     live((l) => l.check("a request failed"));

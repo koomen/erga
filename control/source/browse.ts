@@ -62,8 +62,12 @@ const SEARCH_MAX_FILE = 2_000_000;
 
 /** A path as asked ("/src/", "./a.ts"), as the snapshot keeps it ("src", "a.ts"); never outside the repository. */
 export function cleanPath(p: string | undefined): string {
-  const parts = (p ?? "").replace(/\\/g, "/").split("/").filter((s) => s && s != ".");
-  if (parts.includes("..")) throw new BrowseError("A path can't go up (..): give it from the repository's root, e.g. client/main.ts.");
+  const parts = (p ?? "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((s) => s && s != ".");
+  if (parts.includes(".."))
+    throw new BrowseError("A path can't go up (..): give it from the repository's root, e.g. client/shell/main.ts.");
   return parts.join("/");
 }
 

@@ -100,13 +100,21 @@ test("the front door and the editor's files change together: the page comes back
   withoutOutage(tab.errors);
 });
 
-test("the editor's code changes (client/main.ts): the editor reloads, on the same document", { timeout: 45_000 }, async ({ tab }) => {
+test("the editor's code changes (client/shell/main.ts): the editor reloads, on the same document", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   const page = tab.page;
   await page.goto(`${root}/new`);
-  await until(() => page.evaluate(`!!document.querySelector("iframe") && /^\\/tester\\/./.test(location.pathname)`).catch(() => false), 10_000, "a new document opens in the editor");
-  const doc = await page.evaluate(`location.pathname`) as string;
-  await reloads(page, () => edit("client/main.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`), `location.pathname == ${JSON.stringify(doc)} && !!document.querySelector("iframe")`);
+  await until(
+    () => page.evaluate(`!!document.querySelector("iframe") && /^\\/tester\\/./.test(location.pathname)`).catch(() => false),
+    10_000,
+    "a new document opens in the editor"
+  );
+  const doc = (await page.evaluate(`location.pathname`)) as string;
+  await reloads(
+    page,
+    () => edit("client/shell/main.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`),
+    `location.pathname == ${JSON.stringify(doc)} && !!document.querySelector("iframe")`
+  );
 });
 
 test("only top-level pages get the reload script, not a frame or a fetch", async () => {

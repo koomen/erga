@@ -611,7 +611,7 @@ export function runAt(unit: Unit, pos: number, preferBefore = false): number {
  * Whitespace at the ends of a unit's text: the source's formatting when it
  * holds a line break or a tab. The page collapses it, so it holds no caret.
  * A run of spaces only is text someone typed: the editor shows it
- * (client/editor.ts, balanceWhitespace), and the caret stops in it.
+ * (client/page-editor/editor.ts, balanceWhitespace), and the caret stops in it.
  */
 const FORMATTING = /[\t\n\r\f]/;
 /** Characters the page can collapse; U+00A0 is not one. */

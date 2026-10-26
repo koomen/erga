@@ -1,7 +1,7 @@
 // The editor's layout as this browser keeps it, put on the page as its body starts (opened with ?edit,
 // viewer-editing-body.ts), so the first frame already has the document where it stays: the agent open or not
-// (client/main.ts, settings.agent), its side and width (client/layout.ts: KEY, geometry, and mountLayout's variables;
-// tests/layout.test.ts checks the two agree), and the document's zoom (client/main.ts, ZOOM_KEY), which the frame takes
+// (client/shell/main.ts, settings.agent), its side and width (client/agent/layout.ts: KEY, geometry, and mountLayout's variables;
+// tests/layout.test.ts checks the two agree), and the document's zoom (client/shell/main.ts, ZOOM_KEY), which the frame takes
 // (client/editor.html, html.erga-zoomed). The steps list isn't known yet: it takes no room.
 
 type Panel = "agent" | "doc" | "picker";

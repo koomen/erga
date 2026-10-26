@@ -1,5 +1,5 @@
 // `ergaEditor`, for the page's own script (server/pages/reader.ts puts it in a document's page): whether the editor is
-// on it now (`editing`, and data-erga-editing on its <html>, which the editor sets and takes off: client/frame.ts), with
+// on it now (`editing`, and data-erga-editing on its <html>, which the editor sets and takes off: client/page-editor/frame.ts), with
 // the event erga-editing on the window as it changes, and `apply(edits)` for its custom edits (agents/document/PROMPT.md,
 // "Custom edits"), which waits for the editor (window.__ergaApply: client/page-editor/render.ts).
 

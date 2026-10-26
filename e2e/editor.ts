@@ -22,7 +22,7 @@ const PAGE_AT = `({ left: 0, top: 0 })`;
 const RAW = { Home: 36, End: 35, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 } as const;
 const MOD: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8, ControlOrMeta: process.platform == "darwin" ? 4 : 2 };
 
-/** The editor's timers run at this fraction of real time in the tests (client/editor.ts, `ms`). */
+/** The editor's timers run at this fraction of real time in the tests (client/page-editor/editor.ts, `ms`). */
 export const TIMESCALE = 0.1;
 
 export interface OpenOptions {

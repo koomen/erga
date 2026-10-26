@@ -1,6 +1,6 @@
 // The admin's agent, one per admin, kept in one object: each session, its
 // conversation and panel layout, and the event stream its panel listens on.
-// The panel is client/admin-agent.ts, on every admin page. This is the logic
+// The panel is client/admin/admin-agent.ts, on every admin page. This is the logic
 // (AdminAgents) and the routes; the Durable Object
 // (cloudflare/objects/admin-agent.ts) gives it its SQLite and forwards the calls.
 //

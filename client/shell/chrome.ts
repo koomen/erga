@@ -1,8 +1,8 @@
 // The quiet chrome: the controls go out of sight while you type and come back as the pointer moves; the on-screen
 // keyboard; the help card; and the document's settings, behind the gear.
 
-import type { Settings } from "../settings";
-import { live } from "../live-client";
+import type { Settings } from "../pages/settings";
+import { live } from "../live/client";
 import { $, isMac, type Shell } from "./shell";
 
 export function mountChrome(shell: Shell) {
@@ -59,7 +59,7 @@ export function mountChrome(shell: Shell) {
   const settingsBtn = $("btn-settings");
   let settingsLoading: Promise<Settings | null> | null = null;
   function loadSettings(): Promise<Settings | null> {
-    return settingsLoading ??= import("../settings").then(() => {
+    return settingsLoading ??= import("../pages/settings").then(() => {
       shell.docSettings = window.ergaSettings?.mount({
         docId: shell.docId, query: shell.as, anchor: settingsBtn, admin: !!shell.people.accountLinks?.admin, kind: () => shell.docKind, onKind: shell.naming.applyKind,
         onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); shell.sharing.toggleSharing(false); shell.naming.toggleNaming(false); shell.naming.togglePages(false); shell.people.toggleAccount(false); } },

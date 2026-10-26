@@ -1,4 +1,4 @@
-// The admin agent's side and width as this browser keeps them (client/layout.ts: PANE_KEY, paneWidth;
+// The admin agent's side and width as this browser keeps them (client/agent/layout.ts: PANE_KEY, paneWidth;
 // tests/layout.test.ts checks the two agree), put on the workspace as it's parsed, before it paints: mountPaneLayout
 // finds them so. It runs in a script inside the workspace (server/admin/layout.ts).
 

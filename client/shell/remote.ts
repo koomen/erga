@@ -6,12 +6,22 @@
 // have sent it.
 
 import { EditorState, Transaction, type ChangeSet, type Extension, type StateField } from "@codemirror/state";
-import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
-import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "./editor";
-import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
-import type { LiveRequest, LiveResult } from "../shared/live-page";
-import { changesBetween } from "../document/merge";
-import { clampZoom, type ZoomBy } from "./zoom";
+import {
+  Authority,
+  changesFrom,
+  selectionFrom,
+  stateJSON,
+  type Backdrop,
+  type FromFrame,
+  type Keys,
+  type Snapshot,
+  type ToFrame,
+} from "../page-editor/bridge";
+import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "../page-editor/editor";
+import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import type { LiveRequest, LiveResult } from "../../shared/live-page";
+import { changesBetween } from "../../document/merge";
+import { clampZoom, type ZoomBy } from "../page-editor/zoom";
 
 export interface RemotePageConfig {
   frame: HTMLIFrameElement;

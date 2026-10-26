@@ -1,9 +1,9 @@
-// The page editor's core (client/editor.ts is the whole of it): its state, the page's units and their elements, and
+// The page editor's core (client/page-editor/editor.ts is the whole of it): its state, the page's units and their elements, and
 // positions between the source and the page's DOM, both ways, for the caret and the selection.
 
 import * as M from "../../shared/manuscript";
 import { EditorState, EditorSelection, type SelectionRange, Transaction, type ChangeSet, type Text as Source } from "@codemirror/state";
-import { insertHead } from "../../shared/page";
+import { insertHead } from "../../shared/page-html";
 import type { HeldInput, PageEditorConfig, PageUpdate } from "./types";
 import { HEADING, same, textIn } from "./source";
 import type { PausableWindow, RawProblem } from "./problems";

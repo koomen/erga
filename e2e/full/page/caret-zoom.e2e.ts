@@ -1,5 +1,5 @@
-// The caret drawn by the editor (client/caret.ts) keeps its shape at every zoom: on a page that scales its text
-// itself (the Canvas template's camera, a transform) and with the page zoomed in the editor (client/zoom.ts). It is
+// The caret drawn by the editor (client/page-editor/caret.ts) keeps its shape at every zoom: on a page that scales its text
+// itself (the Canvas template's camera, a transform) and with the page zoomed in the editor (client/page-editor/zoom.ts). It is
 // a thin bar 1.5 to 3 px wide on the screen (by the text's size there), and as tall as the line on the screen.
 // (The editor's zoom keys go to the canvas's camera, window.ergaZoom: the test takes that away to reach the editor's zoom.)
 // With CARET_SHOTS=<folder>, the test also saves a picture of the caret at each zoom there.

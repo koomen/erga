@@ -3,11 +3,11 @@
 
 import * as M from "../../shared/manuscript";
 import { Transaction, MapMode, type ChangeSet, type TransactionSpec } from "@codemirror/state";
-import { sourceDigest } from "../../shared/page";
-import { applyMorph, planMorph } from "../morph";
-import { planCustomEdits, type CustomEdit } from "../custom-edits";
-import { watchMoves } from "../moves";
-import { ms } from "../timescale";
+import { sourceDigest } from "../../shared/page-html";
+import { applyMorph, planMorph } from "./morph";
+import { planCustomEdits, type CustomEdit } from "./custom-edits";
+import { watchMoves } from "./moves";
+import { ms } from "./timescale";
 import { balanceWhitespace, same, skeletonOfSource } from "./source";
 import { PAGE_STYLE } from "./page-style";
 import { describeProblem, type RawProblem } from "./problems";
@@ -24,7 +24,7 @@ export abstract class EditorRender extends EditorMarks {
   protected abstract dispatch(spec: TransactionSpec | Transaction): void;
 
   /**
-   * Takes the page in the window, the first time: the pages origin made it from the text (shared/page.ts), its text
+   * Takes the page in the window, the first time: the pages origin made it from the text (shared/page-html.ts), its text
    * blocks marked as this editor's analysis of the same text numbers them; only if its text is this one (else, and
    * any later time: the page is made afresh from the text, as it loads again, onReload, and the editor with it).
    */

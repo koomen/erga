@@ -4,7 +4,7 @@
 // (server/pages/reader.ts). It does everything that needs the page's DOM:
 // typing, selections, marks and carets, pausing, and the agent's screenshots,
 // on the page as it is, which the pages origin served with the text's marks
-// (shared/page.ts). Everything else is the shell's, which it reaches only by
+// (shared/page-html.ts). Everything else is the shell's, which it reaches only by
 // message, and only the shell may command it. Out of the editor, it stops,
 // and the page carries on as it is.
 
@@ -17,10 +17,10 @@ import { listenAsEditor } from "./text-guard";
 import { Relay, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { catchZoomGestures, clampZoom } from "./zoom";
 import { evaluateIn } from "./evaluate";
-import { LivePage } from "./live-page";
-import { changesBetween } from "../document/merge";
-import { sourceDigest } from "../shared/page";
-import { evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../shared/agent-log";
+import { LivePage } from "./live-page-tab";
+import { changesBetween } from "../../document/merge";
+import { sourceDigest } from "../../shared/page-html";
+import { evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../../shared/agent-log";
 
 declare global {
   interface Window {
@@ -33,7 +33,7 @@ declare global {
 /**
  * What the frame's editor state needs: the history (undo, shared with the
  * source view). No language: the frame has no CodeMirror view to highlight
- * (its build has an inert stand-in for the view's module: client/frame-view.ts),
+ * (its build has an inert stand-in for the view's module: client/page-editor/frame-view.ts),
  * and the page is parsed by the page editor itself. The source view, in the
  * shell, has the HTML language. (Here, not in bridge.ts: the shell's main
  * script imports bridge.ts, and @codemirror/commands would bring the view.)

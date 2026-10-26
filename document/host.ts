@@ -514,7 +514,7 @@ export function makeHost(opts: HostOptions) {
       return HttpServerResponse.uint8Array(encodeStart(hello, Y.encodeStateAsUpdate(room.doc)), { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store" } });
     })),
     // Every file, with its kind (text, or a file kept whole: a blob), its size and its time, and the folders: the files
-    // view's list (client/files.ts).
+    // view's list (client/pages/files.ts).
     HttpRouter.route("GET", "/api/files", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
       const list = [...(yield* Effect.promise(fileStats))].map(([path, s]) => ({ path, kind: s.kind, size: s.size, at: s.at, type: s.type }));

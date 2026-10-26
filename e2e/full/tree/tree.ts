@@ -1,4 +1,4 @@
-// Helpers for the tree's tests (client/pages-tree.ts, built as pages-tree.js):
+// Helpers for the tree's tests (client/pages/pages-tree.ts, built as pages-tree.js):
 // a fresh copy of
 // e2e/fixtures/multi linked as one of DEV_LOGIN's documents, the server's
 // own view of its files, the agents' tools over a token, and the tree's rows

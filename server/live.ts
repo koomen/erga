@@ -1,5 +1,5 @@
 // Open pages across a redeploy, the server's side (the page's side is
-// client/live.ts):
+// client/live/live.ts):
 //
 //   - GET /api/release: the address of each of the editor's files, as the client
 //     build named them by their content's hash (client/build.ts, manifest.json),

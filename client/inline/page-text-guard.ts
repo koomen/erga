@@ -1,8 +1,17 @@
-// The text guard (client/text-guard.ts says what it does), while the editor is on the page (data-erga-editing):
+// The text guard (client/page-editor/text-guard.ts says what it does), while the editor is on the page (data-erga-editing):
 // first in a document's page (server/pages/reader.ts), so its listeners on the window, in the capture phase, run before
 // any of the page's. (Indexed loops and forEach, as the page's own script may change other ways to go through a list.)
 
-import { GUARD_DOWN, GUARD_END, GUARD_GRAB, GUARD_INTERACTIVE, GUARD_MOVE, GUARD_NOT_TEXT, GUARD_TEXT, GUARD_UP } from "../../shared/page";
+import {
+  GUARD_DOWN,
+  GUARD_END,
+  GUARD_GRAB,
+  GUARD_INTERACTIVE,
+  GUARD_MOVE,
+  GUARD_NOT_TEXT,
+  GUARD_TEXT,
+  GUARD_UP,
+} from "../../shared/page-html";
 
 type GuardWindow = Window & { __ergaOwn?: Record<string, ((e: Event) => void)[]> };
 
