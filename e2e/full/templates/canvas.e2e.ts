@@ -40,8 +40,8 @@ async function flies(page: Page, from: number) {
   expect(least).toBeLessThan(end.s * 0.6);
 }
 
-test("/new?template=canvas makes a document, in the Presentation group", async () => {
-  expect(templateById("canvas")?.group).toBe("Presentation");
+test("/new?template=canvas makes a document, which the New menu calls Canvas", async () => {
+  expect(templateById("canvas")?.name).toBe("Canvas");
   expect((await newDoc(await servers.main(), "canvas")).status).toBe(302);
 });
 

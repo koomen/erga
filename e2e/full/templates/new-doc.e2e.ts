@@ -13,13 +13,13 @@ await servers.main();
 
 // The picker's root: the page's own document, or the front page's controls' shadow root when it's served directly.
 const ROOT_OF = `(document.querySelector("erga-controls")?.shadowRoot ?? document)`;
-const ROWS = ["Page", "Project", "Design doc", "Presentation", "Slides", "Canvas presentation", "Solar system tour"];
+const ROWS = ["Document", "Slides", "Canvas", "Project"];
 
 const picker = (page: Page) => page.evaluate(`(() => {
   const r = ${ROOT_OF}, menu = r.querySelector(".erga-new-menu");
   return { open: !!menu && !menu.hidden, note: menu?.querySelector(".erga-new-note")?.textContent ?? "",
     expanded: r.querySelector('.erga-new-btn[aria-expanded="true"]')?.getAttribute("aria-label") ?? null,
-    rows: [...(menu?.querySelectorAll("a b, .erga-new-group-name, .erga-new-empty") ?? [])].map((e) => e.textContent.trim()) };
+    rows: [...(menu?.querySelectorAll("a b") ?? [])].map((e) => e.textContent.trim()) };
 })()`) as Promise<{ open: boolean; rows: string[]; note: string; expanded: string | null }>;
 
 /** Clicks the middle of the first visible element matching `selector` (in the picker's root). */
@@ -33,7 +33,7 @@ async function clickOn(page: Page, selector: string) {
 async function sameTypeface(page: Page) {
   await expect.poll(() => page.evaluate(() => document.fonts.load("600 14px Inter").then((f) => f.some((x) => x.family.replace(/["']/g, "") == "Inter" && x.status == "loaded")))).toBe(true);
   const t = await page.evaluate(`(() => {
-    const els = [...${ROOT_OF}.querySelectorAll(".erga-new-menu a b, .erga-new-group-name")];
+    const els = [...${ROOT_OF}.querySelectorAll(".erga-new-menu a b")];
     const font = (e) => { const c = getComputedStyle(e); return c.fontFamily + " " + c.fontSize + " " + c.fontWeight + " " + c.fontStyle; };
     return { fonts: [...new Set(els.map(font))], family: els.length ? getComputedStyle(els[0]).fontFamily : "" };
   })()`) as { fonts: string[]; family: string };
@@ -45,7 +45,7 @@ async function sameTypeface(page: Page) {
 const fileOf = async (root: string, address: string) => (await fetch(`${root}/d/${await idOf(address)}/doc/index.html`)).text();
 const template = (files: string) => readFileSync(join(ROOT, files, "index.html"), "utf8");
 
-test("/new?template=<id> makes each template's document, Page first; an unknown one (or the demo page) is a 404", async () => {
+test("/new?template=<id> makes each template's document, Document (id page) first; an unknown one (or the demo page) is a 404", async () => {
   const s = await servers.main();
   const page = await newDoc(s, "page");
   expect(page.status).toBe(302);
@@ -57,7 +57,9 @@ test("/new?template=<id> makes each template's document, Page first; an unknown 
   expect((await newDoc(s, "demo")).status).toBe(404);
 });
 
-test("the viewer's + opens the picker, in one typeface; Escape closes it; Page makes a blank document and opens it in the editor", async ({ tab }) => {
+test("the viewer's + opens the picker, in one typeface; Escape closes it; Document makes a blank document and opens it in the editor", async ({
+  tab,
+}) => {
   const s = await servers.main();
   const { address } = await newDoc(s, "page");
   const page = tab.page;
@@ -65,6 +67,11 @@ test("the viewer's + opens the picker, in one typeface; Escape closes it; Page m
   await clickOn(page, ".erga-view-buttons .erga-new-btn");
   const m = await picker(page);
   expect(m).toEqual({ open: true, rows: ROWS, note: "", expanded: "New document" });
+  // No icons: names and their lines only.
+  const icons = (await page.evaluate(
+    `[...${ROOT_OF}.querySelectorAll(".erga-new-menu a")].some((a) => a.querySelector("svg"))`
+  )) as boolean;
+  expect(icons).toBe(false);
   await sameTypeface(page);
   await page.keyboard.press("Escape");
   await expect.poll(async () => (await picker(page)).open).toBe(false);
@@ -76,7 +83,9 @@ test("the viewer's + opens the picker, in one typeface; Escape closes it; Page m
   expect(await fileOf(s.root, s.root + await page.evaluate(() => location.pathname))).toBe(template("assets/templates/doc"));
 });
 
-test("the editor's + opens the picker under it, in the window, in one typeface; Page makes a blank document and opens it", async ({ tab }) => {
+test("the editor's + opens the picker under it, in the window, in one typeface; Document makes a blank document and opens it", async ({
+  tab,
+}) => {
   const s = await servers.main();
   const { address } = await newDoc(s, "page");
   const page = tab.page;

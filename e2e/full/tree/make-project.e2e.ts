@@ -101,7 +101,6 @@ test("New, then Project: a project from the start, its caret shown, and its two 
   );
   await clickOn(page, "#btn-new");
   await until(() => js(page, `!document.querySelector(".erga-new-menu").hidden`), 5000, "the New menu opens");
-  expect(await js(page, `!!document.querySelector('.erga-new-menu a[data-template="project"] b svg')`)).toBe(true);
   await clickOn(page, '.erga-new-menu a[data-template="project"]');
   await until(
     () => page.evaluate((f) => location.pathname != f && location.search == "?edit", from),
