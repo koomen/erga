@@ -36,6 +36,32 @@ export interface Workspace {
 /** Where an edit landed: the first changed position, for the agent's cursor. */
 export interface EditResult { path: string; at: number; summary: string }
 
+/**
+ * How the agent's edits show while they apply (editor-agent/session.ts): its
+ * selection on the text each change replaces, then the new text typed in a
+ * few steps, as a person's would. Without one, an edit applies at once.
+ */
+export interface Pacer {
+  /** Puts the agent's selection (head null: a caret) in the file, as positions that move with others' typing. */
+  cursor(path: string, anchor: Y.RelativePosition, head: Y.RelativePosition | null): void;
+  wait(ms: number): Promise<void>;
+  /** Takes back what this call applied so far (it's one undo step), when a later change of it can't land. */
+  revert(): void;
+}
+
+/** The delays of a paced edit: the selection on the old text, then each step of the new. */
+export const PACE = {
+  showMs: 150,
+  stepMs: 40,
+  /** At most this many steps for one change's new text; at least this many characters in each. */
+  maxSteps: 5,
+  minStep: 4,
+  /** A change longer than this (old or new) applies at once, with the caret at its end. */
+  maxChars: 200,
+  /** Once a call has waited this long, its other changes apply at once. */
+  budgetMs: 1500,
+};
+
 export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
   reason: Schema.Literals(["outside", "noPath", "binary", "missing", "noEdits", "emptyEdit", "notFound", "changed", "ambiguous", "overlap", "readOnly", "single"]),
   message: Schema.String,
@@ -72,6 +98,8 @@ export class YjsWorkspace implements Workspace {
     private only: string | null = null,
     /** Why a new file can't be made at a path (a document's second page), or null. */
     private refuse: (path: string) => string | null = () => null,
+    /** Shows each edit as it applies; without it, an edit applies at once. */
+    private pacer: Pacer | null = null
   ) {}
 
   private text(path: string): Effect.Effect<Y.Text, WorkspaceError> {
@@ -134,35 +162,132 @@ export class YjsWorkspace implements Workspace {
       }
       spans.sort((a, b) => a.from - b.from);
       for (let i = 1; i < spans.length; i++) if (spans[i].from < spans[i - 1].to) return yield* fail("overlap", "two edits overlap; merge them into one");
-      return self.apply(path, t, current, edits, spans);
+      // Each as the smallest change: trim what old and new share at both ends.
+      const minimal = spans.map(({ from, to, insert }) => {
+        let s = 0;
+        while (from + s < to && s < insert.length && current[from + s] == insert[s]) s++;
+        let e = 0;
+        while (to - e > from + s && insert.length - e > s && current[to - 1 - e] == insert[insert.length - 1 - e]) e++;
+        return { from: from + s, to: to - e, insert: insert.slice(s, insert.length - e) };
+      }).filter((c) => c.from < c.to || c.insert);
+      if (!minimal.length) return { path, at: spans[0].from, summary: `No change: the new text is the same as the old.` };
+      const at = self.pacer ? yield* self.paced(path, t, current, minimal, self.pacer) : self.apply(t, minimal);
+      return self.edited(path, t, edits, minimal, at);
     });
   }
 
-  /** Applies edits that all landed, each as its smallest change, in one transaction. */
-  private apply(path: string, t: Y.Text, current: string, edits: { oldText: string; newText: string }[], spans: { from: number; to: number; insert: string }[]): EditResult {
-    // Each as the smallest change: trim what old and new share at both ends.
-    const minimal = spans.map(({ from, to, insert }) => {
-      let s = 0;
-      while (from + s < to && s < insert.length && current[from + s] == insert[s]) s++;
-      let e = 0;
-      while (to - e > from + s && insert.length - e > s && current[to - 1 - e] == insert[insert.length - 1 - e]) e++;
-      return { from: from + s, to: to - e, insert: insert.slice(s, insert.length - e) };
-    }).filter((c) => c.from < c.to || c.insert);
-    if (!minimal.length) return { path, at: spans[0].from, summary: `No change: the new text is the same as the old.` };
+  private by(): Author {
+    return typeof this.me == "function" ? this.me() : this.me;
+  }
+
+  /** Applies changes that all landed in one transaction (`current`'s positions); returns where the last one ends. */
+  private apply(t: Y.Text, changes: { from: number; to: number; insert: string }[]): number {
     this.doc.transact(() => {
-      for (const c of [...minimal].reverse()) {
+      for (const c of [...changes].reverse()) {
         if (c.to > c.from) t.delete(c.from, c.to - c.from);
         if (c.insert) t.insert(c.from, c.insert);
       }
-      if (minimal.every((c) => !c.insert)) stamp(this.doc, typeof this.me == "function" ? this.me() : this.me);
+      if (changes.every((c) => !c.insert)) stamp(this.doc, this.by());
     }, this.origin);
-    // What the agent now believes the file says: what it saw, with its edits.
+    const last = changes[changes.length - 1];
+    const shift = changes.slice(0, -1).reduce((n, c) => n + c.insert.length - (c.to - c.from), 0);
+    return last.from + shift + last.insert.length;
+  }
+
+  /**
+   * Applies the changes one by one, as a person would make them: the agent's
+   * selection on the text a change replaces for a moment, then its new text
+   * in a few steps, with the caret after it. Each change aims by positions
+   * that move with others' typing, and checks that its old text is still
+   * there right before it applies; if it isn't (someone typed in it), the
+   * call takes back what it applied and fails, as an edit against changed
+   * text does. A long change, and every change once the call has waited
+   * long enough, applies at once; new text with markup in it goes in whole.
+   */
+  private paced(
+    path: string,
+    t: Y.Text,
+    current: string,
+    changes: { from: number; to: number; insert: string }[],
+    pacer: Pacer
+  ): Effect.Effect<number, WorkspaceError> {
+    const self = this;
+    const rel = (i: number, assoc = 0) => Y.createRelativePositionFromTypeIndex(t, i, assoc);
+    const abs = (r: Y.RelativePosition) => Y.createAbsolutePositionFromRelativePosition(r, self.doc)?.index ?? -1;
+    // From the first character of the old text (or after the one before, for an insertion) to its last one.
+    const aims = changes.map((c) => ({
+      ...c,
+      old: current.slice(c.from, c.to),
+      start: c.to > c.from ? rel(c.from) : rel(c.from, -1),
+      end: rel(c.to, -1),
+    }));
+    return Effect.gen(function* () {
+      let waited = 0,
+        applied = false,
+        caret = 0;
+      const wait = (ms: number) =>
+        Effect.promise(async () => {
+          await pacer.wait(ms);
+          waited += ms;
+        });
+      /** Where the change's old text is now; null if it isn't there any more. */
+      const find = (a: (typeof aims)[number]) => {
+        const from = abs(a.start),
+          to = a.old ? abs(a.end) : from;
+        return from >= 0 && t.toString().slice(from, to) == a.old ? { from, to } : null;
+      };
+      for (const [i, a] of aims.entries()) {
+        let at = find(a);
+        const slow = waited < PACE.budgetMs && a.old.length <= PACE.maxChars && a.insert.length <= PACE.maxChars;
+        if (at && slow) {
+          pacer.cursor(path, a.start, a.old ? a.end : null);
+          yield* wait(PACE.showMs);
+          at = find(a);
+        }
+        if (!at) {
+          if (applied) pacer.revert();
+          return yield* fail(
+            "changed",
+            `The text of change ${i + 1} changed while you edited ${path} (someone typed there), so nothing was changed. Read ${path} again and retry.`
+          );
+        }
+        // New text with markup in it goes in whole: a tag typed in parts would break the page for a moment.
+        const steps = slow && !/[<>&]/.test(a.insert) ? Math.max(1, Math.min(PACE.maxSteps, Math.ceil(a.insert.length / PACE.minStep))) : 1;
+        const size = Math.ceil(a.insert.length / steps);
+        // The new text goes in after the last of it typed so far (after the deletion, at first).
+        let after = at.from > 0 ? rel(at.from, -1) : null;
+        for (let k = 0; k < steps; k++) {
+          const piece = a.insert.slice(k * size, (k + 1) * size);
+          self.doc.transact(() => {
+            const pos = after ? abs(after) : 0;
+            if (k == 0 && at!.to > at!.from) t.delete(at!.from, at!.to - at!.from);
+            if (piece) t.insert(k == 0 ? at!.from : pos, piece);
+            if (!a.insert) stamp(self.doc, self.by());
+          }, self.origin);
+          applied = true;
+          const end = (k == 0 ? at.from : abs(after!)) + piece.length;
+          caret = end;
+          after = end > 0 ? rel(end, -1) : null;
+          pacer.cursor(path, after ?? rel(0), null);
+          if (k < steps - 1) yield* wait(PACE.stepMs);
+        }
+      }
+      return caret;
+    });
+  }
+
+  /** The edit's result, and what the agent now believes the file says: what it saw, with its edits. */
+  private edited(
+    path: string,
+    t: Y.Text,
+    edits: { oldText: string; newText: string }[],
+    minimal: { from: number; to: number; insert: string }[],
+    at: number
+  ): EditResult {
     let seen: string | null = this.seen.get(path) ?? null;
     for (const e of edits) seen = seen != null && seen.split(e.oldText).length == 2 ? seen.replace(e.oldText, () => e.newText) : null;
     this.see(path, seen ?? t.toString());
-    const last = minimal[minimal.length - 1];
-    const shift = minimal.slice(0, -1).reduce((n, c) => n + c.insert.length - (c.to - c.from), 0);
-    return { path, at: last.from + shift + last.insert.length, summary: `Edited ${path} (${minimal.length} change${minimal.length > 1 ? "s" : ""}).` };
+    return { path, at, summary: `Edited ${path} (${minimal.length} change${minimal.length > 1 ? "s" : ""}).` };
   }
 
   write(path: string, content: string): Effect.Effect<EditResult, WorkspaceError> {
@@ -200,7 +325,7 @@ export class YjsWorkspace implements Workspace {
     changes.iterChanges((_fa, _ta, _fb, toB) => { at = toB; });
     this.doc.transact(() => {
       const { inserted, deleted } = applyChanges(t, changes);
-      if (deleted && !inserted) stamp(this.doc, typeof this.me == "function" ? this.me() : this.me);
+      if (deleted && !inserted) stamp(this.doc, this.by());
     }, this.origin);
     this.see(path, t.toString());
     return { path, at, summary: changes.empty ? `No change to ${path}.` : `Wrote ${path}.` };

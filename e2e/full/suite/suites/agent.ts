@@ -43,8 +43,10 @@ export const agent: Test[] = [
       const log = await runScript(d, "Ada", [edit(d.path, "<h1>Launch notes", "<h1>Launch notes, revised"), { text: "Done." }]);
       await until(() => b.str().includes("<h1>Launch notes, revised"), 3000, "Bo sees the agent's edit");
       ctx.metric("prompt to edit seen", performance.now() - t0);
-      const by = b.seen.find((s) => s.inserted.includes("revised"));
-      expect(by?.author == "Ada, via their agent" && by.kind == "agent", "attributed to Ada's agent", b.seen);
+      // Typed in a few steps (editor-agent/workspace.ts, paced): each of them by the agent.
+      const by = b.seen.filter((s) => s.inserted && ", revised".includes(s.inserted));
+      const agents = by.length > 0 && by.every((s) => s.author == "Ada, via their agent" && s.kind == "agent");
+      expect(agents, "attributed to Ada's agent", b.seen);
       expect(log.items.some((i) => i.kind == "tool" && i.name == "edit" && i.status == "done"), "the log shows the edit", log.items);
       expect(log.items.some((i) => i.kind == "assistant" && i.text == "Done."), "and the reply");
       await until(async () => (await d.stored(d.path))?.text.includes("<h1>Launch notes, revised"), 5000, "stored");
@@ -61,8 +63,10 @@ export const agent: Test[] = [
       const agentState = () => b.others().find((o) => o.user.kind == "agent" && o.user.name == "Ada, via their agent");
       await until(() => agentState()?.busy, 3000, "Bo sees the agent busy");
       await until(() => agentState()?.cursor, 3000, "with a caret");
-      const at = b.resolve(agentState()!.cursor!.anchor)!;
-      expect(b.str().slice(0, at).endsWith("<h1>Launch notes!"), "the caret sits at the end of its edit", b.str().slice(Math.max(0, at - 30), at + 10));
+      // At the edit first, then after it once the new text is in.
+      const caret = () => b.resolve(agentState()!.cursor!.anchor) ?? 0;
+      const near = () => b.str().slice(Math.max(0, caret() - 30), caret() + 10);
+      await until(() => b.str().slice(0, caret()).endsWith("<h1>Launch notes!"), 3000, "the caret sits at the end of its edit", near);
       await until(() => agentState() && !agentState()!.busy, 5000, "and idle when it's done");
     },
   },

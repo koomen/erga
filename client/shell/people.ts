@@ -9,7 +9,7 @@ import { safeAvatar } from "../../shared/avatars";
 export function mountPeople(shell: Shell) {
 
   // Everyone's caret on the page (or in the source view), with their name;
-  // agents' carets sit where they last edited, dashed. The avatars at the
+  // an agent's, dashed, while it works. The avatars at the
   // top say who's here and what each agent is doing. A person with several
   // tabs open is shown by the one they used last, and your own other tabs
   // not at all (Collab.shown).
@@ -30,12 +30,22 @@ export function mountPeople(shell: Shell) {
   function paintPeers() {
     const peers: Peer[] = [];
     for (const p of shell.collab.shown()) {
-      // Agents' carets aren't drawn: one left where an agent last edited
-      // lingers on the page and distracts. Their avatars say what they're doing.
-      if (p.user.kind == "agent") continue;
+      // An agent's caret shows while it works, so its edits read like a
+      // person's typing; once it's idle, a caret left where it last edited
+      // would only linger and distract.
+      const agent = p.user.kind == "agent";
+      if (agent && !p.busy) continue;
       const at = shell.collab.positions(p);
       if (!at) continue;
-      peers.push({ key: p.client, name: p.user.name, color: p.user.color, anchor: at.anchor, head: at.head, agent: false, activity: null });
+      peers.push({
+        key: p.client,
+        name: p.user.name,
+        color: p.user.color,
+        anchor: at.anchor,
+        head: at.head,
+        agent,
+        activity: agent ? (p.activity ?? null) : null,
+      });
     }
     if (shell.sourceView && shell.source) shell.sourceView.dispatch({ effects: shell.source.setPeers.of(peers) });
     else shell.page.setPeers(peers);

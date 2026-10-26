@@ -8,7 +8,7 @@ import { Awareness } from "y-protocols/awareness";
 import * as Layer from "effect/Layer";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import * as Effect from "effect/Effect";
-import { YjsWorkspace, type WorkspaceError } from "../editor-agent/workspace";
+import { YjsWorkspace, type Pacer, type WorkspaceError } from "../editor-agent/workspace";
 import { authorOf, files, introduce, type Author } from "../document/content";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */
@@ -196,4 +196,83 @@ test("the room writes an edit after its delay, and what's left when it closes", 
   // Closed before the delay was up: written on the way out.
   expect(m.get("index.html")).toBe("<p>not just one</p>");
   expect(m.writes).toEqual(["index.html", "index.html"]);
+});
+
+test("a paced edit shows the old text, types the new in steps, and ends as the edit at once would", async () => {
+  const start = "<h1>Notes</h1>\n<p>The quick brown fox.</p>\n<p>Jumps over the dog.</p>\n";
+  const edits = [
+    { oldText: "<h1>Notes</h1>", newText: "<h1>Field notes from the coast</h1>" },
+    { oldText: " brown", newText: "" },
+    { oldText: "the dog", newText: "the lazy old dog, twice" },
+  ];
+  const agentMe: Author = { user: "ada", name: "Ada’s agent", color: "#12a594", kind: "agent" };
+  // At once, for the text it should end with.
+  let once = "";
+  await withRoom(memoryStore({ "index.html": start }), async (room) => {
+    const agent = await peer(room, agentMe);
+    Effect.runSync(new YjsWorkspace(agent.doc, agentMe, () => true, {}).edit("index.html", edits));
+    once = agent.text().toString();
+  });
+  await withRoom(memoryStore({ "index.html": start }), async (room) => {
+    const ada = await peer(room, person("Ada"));
+    const agent = await peer(room, agentMe);
+    const origin = {};
+    const undo = new Y.UndoManager(files(agent.doc), { trackedOrigins: new Set([origin]), captureTimeout: Infinity });
+    const shown: { anchor: number; head: number | null }[] = [];
+    const abs = (r: Y.RelativePosition) => Y.createAbsolutePositionFromRelativePosition(r, agent.doc)!.index;
+    let waits = 0,
+      during: (() => void) | null = null;
+    const pacer: Pacer = {
+      cursor: (_path, anchor, head) => shown.push({ anchor: abs(anchor), head: head && abs(head) }),
+      wait: async () => {
+        waits++;
+        during?.();
+        during = null;
+        await tick();
+      },
+      revert: () => {
+        undo.undo();
+        undo.stopCapturing();
+      },
+    };
+    const ws = new YjsWorkspace(
+      agent.doc,
+      agentMe,
+      () => true,
+      origin,
+      null,
+      () => null,
+      pacer
+    );
+    // Ada types at the end while the agent shows its first selection.
+    during = () => ada.text().insert(ada.text().length, "<p>Ada's line.</p>\n");
+    const r = await Effect.runPromise(ws.edit("index.html", edits));
+    await tick();
+    expect(agent.text().toString()).toBe(once + "<p>Ada's line.</p>\n");
+    expect(ada.text().toString()).toBe(agent.text().toString());
+    // First the old heading selected, then the caret after each step of the new text.
+    expect(shown[0]).toEqual({ anchor: 4, head: 9 });
+    expect(shown.filter((s) => s.head == null).length).toBeGreaterThan(3);
+    expect(waits).toBeGreaterThan(3);
+    expect(r.at).toBe(agent.text().toString().indexOf(", twice") + ", twice".length);
+    // One undo step takes back the whole call, and keeps Ada's line.
+    undo.stopCapturing();
+    expect(undo.undoStack.length).toBe(1);
+    undo.undo();
+    expect(agent.text().toString()).toBe(start + "<p>Ada's line.</p>\n");
+
+    // Someone types in the old text of a later change while it shows: the call takes back what it applied, and fails.
+    during = () => {};
+    let selections = 0;
+    const cursor = pacer.cursor;
+    pacer.cursor = (path, anchor, head) => {
+      if (head && ++selections == 2) during = () => ada.text().insert(ada.text().toString().indexOf("brown") + 2, "o");
+      cursor(path, anchor, head);
+    };
+    undo.clear();
+    const err = await Effect.runPromise(Effect.flip(ws.edit("index.html", edits)));
+    await tick();
+    expect(err.reason).toBe("changed");
+    expect(agent.text().toString()).toBe(start.replace("brown", "broown") + "<p>Ada's line.</p>\n");
+  });
 });
