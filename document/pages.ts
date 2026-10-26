@@ -115,8 +115,6 @@ export function parentsOf(path: string): string[] {
   return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
 }
 
-/** The folder a path is in ("" at the root). */
-export const dirOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
 /**
  * The tree, from the files the document holds and the folders made as such:

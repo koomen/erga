@@ -869,7 +869,6 @@ export function namingFor(dir: Directory, id: string, pageTitle: () => string | 
 export const OWNER = /^[A-Za-z0-9-]{1,39}$/, ID = /^[a-z0-9]{8}$/;
 /** Whether a segment could be an id. */
 export const idShaped = (s: string) => ID.test(s);
-export const isSlug = (s: string) => SLUG.test(s) && s.length <= SLUG_MAX;
 /** Test documents: what test people may open, and where the scripted agent stands in for the model. */
 export const TEST_ID = /^test[a-z0-9]{4}$/;
 export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";

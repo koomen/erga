@@ -9,7 +9,7 @@
 // root they're in. Its caller tells it where the page is scrolled to (scroll(y)) and where the pointer is, in the
 // window's coordinates (pointer(x, y, tap)), or that it left the window (leave()).
 
-/** How near the pointer brings the controls back (server/pages/viewer.ts, FADE_NEAR: the same). */
+/** How near the pointer brings the controls back, in pixels. */
 const NEAR = 100;
 const CONTROLS = ".erga-view-buttons, .erga-account, .erga-crumbs";
 

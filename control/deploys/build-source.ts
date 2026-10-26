@@ -1,6 +1,5 @@
 // Where a build gets the commit it builds: the source repo in Cloudflare
-// Artifacts (task #39 hosts Erga's source there: one repo, branches main and
-// staging). The pipeline asks Artifacts for the repo's Git remote and a
+// Artifacts (Erga's source is there: one repo, branches main and staging). The pipeline asks Artifacts for the repo's Git remote and a
 // short-lived read-only token for it (15 minutes), and hands both to the
 // builder, which clones the commit with them. GitHub isn't
 // involved.

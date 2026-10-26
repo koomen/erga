@@ -127,9 +127,6 @@ export const STEPS_STYLE = `
   @media (max-width: 640px) { body.agent-open :is(.erga-steps, .erga-steps-panel) { display: none; } }
 </style>`;
 
-/** How near the pointer brings the faded controls back (client/inline/fade.ts, NEAR: the same). */
-export const FADE_NEAR = 100;
-
 /** How see-through the faded controls are: faint, but still there to find. */
 export const FADED = 0.2;
 

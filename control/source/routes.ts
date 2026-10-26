@@ -26,7 +26,6 @@
 //   POST /api/source/update/finish    the resolved merge moves staging; the branch goes
 //   POST /api/source/update/abandon   drops the waiting merge and its branch
 //   /admin/ops               the Ops page (admins): the history of staging and main, and their deploys
-//   /source, /admin/factory     redirect to /admin/ops
 //
 // The API takes the app's session or an admin-scope token ("Authorization:
 // Bearer erga_..."), an admin's either way. A POST with the session alone
@@ -41,7 +40,6 @@ import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
 import type { SourceAnswer, SourceRead } from "./browse.ts";
 import { gitHttp } from "./http.ts";
-import { adminSourcePage } from "./page.ts";
 import type { Remote } from "./remote.ts";
 import type { GithubLink, PushEvent } from "./github.ts";
 import type { Actor, BranchInfo, GithubStatus, MergeConflict, Released, TagInfo, UpdateResult, UpstreamView } from "./repo.ts";
@@ -198,11 +196,3 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
   return json({ error: "Not found" }, 404);
 }
 
-/** /admin/ops: the page, for admins in a browser (/source and /admin/factory redirect here). */
-export async function sourceDoor(request: Request, platform: Platform, url: URL): Promise<Response> {
-  if (url.pathname != "/admin/ops") return new Response(null, { status: 302, headers: { Location: "/admin/ops" } });
-  const session = await platform.sessionOf(request);
-  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/ops")}` } });
-  const admin = !session.test && !session.agent && (await platform.directory.users.actsAsAdmin(whoOf(session)));
-  return adminSourcePage({ session, admin, ready: !!platform.source, origin: url.origin });
-}

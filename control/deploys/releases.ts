@@ -29,7 +29,6 @@ import { DeployError, loadRelease, type Release, type ReleaseIndex } from "./pip
 import { sha256Hex } from "../../shared/bytes";
 
 export type Channel = "edge" | "stable";
-export const CHANNELS: Channel[] = ["edge", "stable"];
 export const isChannel = (s: string): s is Channel => s == "edge" || s == "stable";
 /** How many releases a channel lists (the oldest fall off; their files stay). */
 export const CHANNEL_KEEP = 50;

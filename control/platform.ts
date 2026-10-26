@@ -13,7 +13,7 @@
 
 import type { ArtifactsBinding } from "./cloudflare/artifacts";
 import { githubAppOf } from "./cloudflare/github-app";
-import { adminsOf, directoryOf, sqlOn } from "../cloudflare/d1";
+import { directoryOf, sqlOn } from "../cloudflare/d1";
 import type { Env } from "../cloudflare/env";
 import type { Pipeline } from "./deploys/pipeline-object";
 import type { SourceHost } from "./source/source-host";
@@ -117,5 +117,3 @@ export function controlPlatform(env: ControlEnv, ctx: ExecutionContext): Platfor
   return p;
 }
 
-/** The bootstrap admins, for the page. */
-export const controlAdmins = (env: ControlEnv) => adminsOf(env as unknown as Env);

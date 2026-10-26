@@ -273,57 +273,6 @@ export function sourceTools(read: (q: SourceRead) => Promise<SourceAnswer>, guar
   ];
 }
 
-/** What the panel shows while a tool runs, and after ("Changed theme"). */
-export const ADMIN_TOOL_VERBS: Record<string, [string, string]> = {
-  list_settings: ["Reading the settings", "Read the settings"],
-  set_setting: ["Changing", "Changed"],
-  reset_setting: ["Resetting", "Reset"],
-  search_documents: ["Finding a document", "Found documents"],
-  list_setting_changes: ["Reading the change log", "Read the change log"],
-  list_api_keys: ["Reading the API keys' status", "Read the API keys' status"],
-  list_users: ["Listing the users", "Listed the users"],
-  add_user: ["Adding", "Added"],
-  set_user_role: ["Changing the role of", "Changed the role of"],
-  set_user_deploy: ["Changing the deploy role of", "Changed the deploy role of"],
-  remove_user: ["Removing", "Removed"],
-  list_access_rules: ["Reading the access rules", "Read the access rules"],
-  add_access_rule: ["Adding an access rule for", "Added an access rule for"],
-  change_access_rule: ["Changing access rule", "Changed access rule"],
-  remove_access_rule: ["Removing access rule", "Removed access rule"],
-  set_public_sharing: ["Changing public sharing:", "Changed public sharing:"],
-  clear_api_key: ["Clearing", "Cleared"],
-  get_sign_in_status: ["Reading how people sign in", "Read how people sign in"],
-  clear_sign_in_app: ["Clearing the sign-in values of", "Cleared the sign-in values of"],
-  switch_sign_in_provider: ["Changing sign-in with", "Changed sign-in with"],
-  list_branches: ["Reading staging and main", "Read staging and main"],
-  deploy_production: ["Deploying production", "Deployed production"],
-  github_status: ["Reading the GitHub connection", "Read the GitHub connection"],
-  sync_github: ["Syncing with GitHub", "Synced with GitHub"],
-  disconnect_github: ["Disconnecting GitHub", "Disconnected GitHub"],
-  list_deploys: ["Reading the deploys", "Read the deploys"],
-  deploy_credential: ["Reading the deploy credential", "Read the deploy credential"],
-  disconnect_deploy_credential: ["Disconnecting the deploy credential", "Disconnected the deploy credential"],
-  deploy_log: ["Reading the deploy log of", "Read the deploy log of"],
-  redeploy: ["Redeploying", "Redeployed"],
-  rollback: ["Rolling back", "Rolled back"],
-  list_releases: ["Reading the release channels", "Read the release channels"],
-  cut_release: ["Cutting a release", "Cut a release"],
-  list_domains: ["Reading the domains", "Read the domains"],
-  add_domain: ["Adding the domain", "Added the domain"],
-  remove_domain: ["Removing the domain", "Removed the domain"],
-  update_from_upstream: ["Updating from upstream", "Updated from upstream"],
-  resolve_conflict_file: ["Resolving", "Resolved"],
-  finish_waiting_merge: ["Finishing the waiting merge", "Finished the waiting merge"],
-  drop_waiting_merge: ["Dropping the waiting merge", "Dropped the waiting merge"],
-  deploy_homepage: ["Redeploying the homepage", "Redeployed the homepage"],
-  list_agent_tokens: ["Reading your agent tokens", "Read your agent tokens"],
-  revoke_agent_token: ["Revoking the agent token", "Revoked the agent token"],
-  list_source: ["Listing", "Listed"],
-  read_source: ["Reading", "Read"],
-  search_source: ["Searching the source for", "Searched the source for"],
-  source_log: ["Reading the log of", "Read the log of"],
-};
-
 export const systemPrompt = (owner: string) => `
 You are ${agentName(owner)}, embedded in Erga's admin pages (/admin).
 ${owner} is an admin of this Erga server, and has an admin page open beside you.

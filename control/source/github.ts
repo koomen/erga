@@ -128,16 +128,6 @@ export interface PushEvent { ref?: string; before?: string; after?: string; repo
 
 // ---------------------------------------------------------------- the consent: sign-in, and Connect GitHub
 
-/** Where the browser goes to sign in with the App (the usual code flow). */
-export function authorizeUrl(app: GithubApp, o: { redirect: string; state: string }): string {
-  const u = new URL(`${app.www}/login/oauth/authorize`);
-  u.searchParams.set("client_id", app.clientId);
-  u.searchParams.set("redirect_uri", o.redirect);
-  u.searchParams.set("state", o.state);
-  u.searchParams.set("allow_signup", "false");
-  return u.toString();
-}
-
 /** Where the browser goes to install the App (Connect GitHub): GitHub asks which account and repositories, then comes back to the App's callback. */
 export function installUrl(app: GithubApp, state: string): string {
   const u = new URL(`${app.www}/apps/${app.slug}/installations/new`);

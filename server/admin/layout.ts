@@ -61,7 +61,6 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
   // app says so on this page (cloudflare/index.ts).
   { key: "ops", label: "Ops", path: "/admin/ops", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="6" rx="2"/><rect x="3.5" y="13.5" width="17" height="6" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/></svg>` },
 ];
-export const ADMIN_SECTIONS: readonly { key: AdminSection; label: string; path: string }[] = SECTIONS;
 
 /** The sidebar: the toggle and a link for each section, each at the address `hrefOf` gives (another host's, for the control Worker). */
 export function adminSidebar(here: AdminSection | undefined, hrefOf: (path: string) => string): string {
