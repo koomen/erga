@@ -61,8 +61,7 @@
 // events to the other). Only rows that changed are drawn again, so
 // the scroll, an open log or dialog, and the focus stay.
 
-import { SOURCE_SCRIPT } from "./page-script.ts";
-import { page as plainPage } from "../../server/pages/index.ts";
+import { inlineScript, page as plainPage } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import type { Session } from "../../server/platform";
 import { adminResponse, type AdminLayout } from "../../server/admin/index.ts";
@@ -173,5 +172,6 @@ export function adminSourcePage(c: SourcePageConfig): Response {
   <div class="panes">
     <section class="pane" id="source-pane" aria-label="Ops">${sourceMarkup(c)}</section>
   </div>
-${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}` });
+${c.ready ? inlineScript("ops") : ""}`,
+  });
 }
