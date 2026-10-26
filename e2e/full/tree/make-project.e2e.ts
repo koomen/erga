@@ -2,9 +2,9 @@
 // the switch makes it a project, and the caret shows at once, in this tab and in another (no reload), and opens its
 // pages. A request from elsewhere (an agent's) switches it too. A project with more than one page can't be a document:
 // the settings say why, in place. With one page again, it can. On Documents a document's row has no chevron; a
-// project's has, and says Project.
+// project's has, and says Project. The New menu's Project makes a project from the start, with two pages.
 import { expect, servers, test, until, type Page } from "../../fixtures";
-import { clickOn, js, openTreeEditor } from "./tree";
+import { clickOn, js, openTreeEditor, paths } from "./tree";
 
 /** Opens the settings once the gear can be clicked (the editor's controls fade in and out), and waits for them. */
 async function openSettings(page: Page) {
@@ -81,4 +81,49 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
   await page.goto(`${server.root}/docs`);
   await until(() => page.evaluate(`!!document.querySelector('button.twist[data-id="${id}"]')`), 5000, "a project's row has its chevron");
   expect(await js(page, `document.querySelector('button.twist[data-id="${id}"]').closest(".name").querySelector(".note.kind").textContent`)).toBe("Project");
+});
+
+test("New, then Project: a project from the start, its caret shown, and its two pages in the tree", async ({ tab }) => {
+  const page = tab.page;
+  const server = await servers.main();
+  const made = (await fetch(`${server.root}/new?template=page`, { redirect: "manual" })).headers.get("location") ?? "";
+  await openTreeEditor(tab, `${server.root}${made.replace(/[?&]edit=?$/, "")}`);
+  const from = await page.evaluate(() => location.pathname);
+  await until(
+    () =>
+      page.evaluate(() => {
+        const b = document.querySelector("#btn-new")!,
+          r = b.getBoundingClientRect();
+        return !!r.width && b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+      }),
+    10_000,
+    "+ can be clicked"
+  );
+  await clickOn(page, "#btn-new");
+  await until(() => js(page, `!document.querySelector(".erga-new-menu").hidden`), 5000, "the New menu opens");
+  expect(await js(page, `!!document.querySelector('.erga-new-menu a[data-template="project"] b svg')`)).toBe(true);
+  await clickOn(page, '.erga-new-menu a[data-template="project"]');
+  await until(
+    () => page.evaluate((f) => location.pathname != f && location.search == "?edit", from),
+    10_000,
+    "the new project opens in the editor"
+  );
+  await until(
+    () => page.evaluate(() => document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title")!.hidden),
+    10_000,
+    "the editor is up"
+  );
+  await until(
+    () => js(page, `getComputedStyle(document.querySelector("#doc-title .nav-caret")).display != "none"`),
+    5000,
+    "a project's caret shows"
+  );
+  await clickOn(page, "#doc-title");
+  await until(() => js(page, `!document.getElementById("pages").hidden`), 5000, "the pages open");
+  await until(
+    async () =>
+      (await paths(page, "#pages")).join() == "index.html,about.html" || (await paths(page, "#pages")).join() == "about.html,index.html",
+    5000,
+    "both pages in the tree"
+  );
 });

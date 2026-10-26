@@ -8,12 +8,15 @@ import { type Listed, type Platform, type Session, whoOf } from "../platform.ts"
 import { landingDocument } from "./landing.ts";
 import { esc, avatarsOf, confirmAction, docsPage, fromElsewhere, link, page, signInFirst, type Template, templateById, TEMPLATES, withEdit } from "../pages/index.ts";
 
-/** A template's starting files (server/templates.ts: a folder under assets/templates/), and its page; null if this server hasn't them. */
-export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
+/** A template's starting files (server/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
+export function templateFiles(
+  platform: Platform,
+  template: Template
+): { files: Record<string, string | Uint8Array>; index: string; kind?: DocKind } | null {
   const files = platform.templates[template.files.slice("assets/templates/".length)];
   if (!files) return null;
   const index = files["index.html"] != null ? "index.html" : null;
-  return index ? { files: { ...files }, index } : null;
+  return index ? { files: { ...files }, index, ...(template.kind ? { kind: template.kind } : {}) } : null;
 }
 
 /**
