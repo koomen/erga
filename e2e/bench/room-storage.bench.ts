@@ -18,6 +18,7 @@ import { MemoryStorage } from "../../document/storage";
 import { joinLocal } from "../../document/room";
 import { files, introduce } from "../../document/content";
 import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
+import { documentAgents } from "../../agents/document/session";
 
 const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -60,7 +61,7 @@ const storage = new Counted();
 const deps = (): DocumentDeps => ({
   storage, directory: dir,
   tabs: { count: () => 0, closeAll: () => {} },
-  agentSettings: async () => ({ missing: "none" }), serverTools: async () => [],
+  agents: documentAgents({ settings: async () => ({ missing: "none" }) }),
   home: { forget: async () => {}, changed: async () => {} },
   timing: { idleMs: 3_600_000, maxMs: 3_600_000 },
   background: () => {}, log: () => {},

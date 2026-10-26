@@ -68,7 +68,6 @@ import {
   type Grant,
   ID,
   LOCKED,
-  nameOf,
   newDocId,
   NotAllowed,
   OWNER,
@@ -81,7 +80,9 @@ import { forwarded, makeDoc, startingFiles } from "../server/documents/index.ts"
 import type { Platform, Session } from "../server/platform.ts";
 import { TEMPLATES, templateById } from "../server/pages/index.ts";
 import { isDocKind, type DocKind } from "../document/pages.ts";
+import { nameOf } from "../document/names.ts";
 import type { FileData } from "../document/document.ts";
+import type { ToolContent } from "../document/agent.ts";
 import { cleanRel } from "../document/host.ts";
 import { CHANGES, documentToolSpecs } from "./document/tools.ts";
 import { byLine } from "../shared/attribution.ts";
@@ -107,11 +108,6 @@ export interface ToolWho {
   /** An outside agent's session: its token's person, and the token (server/api.ts). */
   readonly session?: Session & { agent: AgentToken };
 }
-
-/** What a tool returns: text, and for read on an image or view_page, a picture; for read on a PDF, the PDF (a range of its pages). */
-export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | { type: "document"; data: string; mimeType: "application/pdf" };
-/** A tool as an outside agent sees it: its arguments as JSON Schema. */
-export interface ToolSpec { name: string; description: string; parameters: unknown }
 
 /** A tool, for any agent: the embedded agents take it as pi's AgentTool (`agentTools`), outside agents over HTTP and MCP. */
 export interface Tool {

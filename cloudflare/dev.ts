@@ -7,7 +7,8 @@
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
-import { idShaped, OWNER, slugify } from "../server/directory/index.ts";
+import { idShaped, OWNER } from "../server/directory/index.ts";
+import { slugify } from "../document/names.ts";
 import type { Platform } from "../server/platform";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";

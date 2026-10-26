@@ -8,6 +8,7 @@ import { expect, test } from "bun:test";
 import { Document, type DocumentDeps } from "../document/document";
 import { KEYS, MemoryStorage } from "../document/storage";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
+import { documentAgents } from "../agents/document/session";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -29,8 +30,7 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
     get storage() { return storage; },
     directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
-    agentSettings: async () => ({ missing: "no key in the tests" }),
-    serverTools: async () => [],
+    agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }) }),
     home: { forget: async (id) => { forgotten.push(id); }, changed: async () => {} },
     timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
     background: () => {},

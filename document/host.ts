@@ -20,10 +20,7 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
-import { startSession, type AgentSession } from "../agents/document/session";
-import { CHANGES, type FilesAccess, type OpenResult, type PageTree, type VersionsAccess } from "../agents/document/tools";
-import { documentGuide } from "../agents/guides";
-import { MODELS, isModelChoice, type AgentConfig } from "../agents/models";
+import type { AgentSession, DocumentAgents, FilesAccess, OpenResult, PageTree, VersionsAccess } from "./agent";
 import {
   AgentOff,
   Api,
@@ -42,11 +39,11 @@ import {
   Unauthorized,
   type AgentState,
   type DocInfo,
+  type DocName,
   type Hello,
   type ModelState,
 } from "./api";
-import type { DocName, Naming } from "../server/directory/index.ts";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { Naming } from "./names";
 import { digest, StoreError, type FileStore, type Room } from "./room";
 import { TreeError, checkNewName, cleanTreePath, isPage, pageRefusal, type DocKind, pageAddress, parentsOf, resolvePage, titleOf, treeEntries, type TreeOp } from "./pages";
 import { ignored, isTextPath as isTextFile } from "./content";
@@ -57,7 +54,6 @@ import { blobPointer, byteRange, INLINE_HEADER, type BlobStore } from "./blobs";
 import { sha256Hex } from "../shared/bytes";
 import { pdfText } from "./pdf";
 import * as Y from "yjs";
-import type { ChatStore } from "../agents/checkpoint";
 
 export interface HostOptions {
   readonly room: Room;
@@ -69,12 +65,12 @@ export interface HostOptions {
     /** Where the folder is, as the caller describes it (a directory, a URL). */
     readonly dir: string;
   };
-  /**
-   * The agent's settings, or a function that reads them now: asked at each
-   * turn and each time a panel opens, so a key an admin stores, replaces or
-   * clears reaches every open document's agent.
-   */
-  readonly agent: AgentSettings | (() => Promise<AgentSettings>);
+  /** The document's id. */
+  readonly docId: string;
+  /** Each person's agent here (DocumentDeps.agents): it reads the agent's settings at each turn and each time a panel opens, so a key an admin stores, replaces or clears reaches every open document's agent. */
+  readonly agents: DocumentAgents;
+  /** A test document: its agent is the scripted model. */
+  readonly scripted?: boolean;
   /** Who a request is from. */
   readonly personOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string };
   /**
@@ -98,22 +94,12 @@ export interface HostOptions {
   readonly setKind?: (kind: DocKind) => Promise<void>;
   /** The document's title and address in the directory, read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
-  /** The tools beyond the document a person's agent may use now (agents/tools.ts: sharing; settings and users for an admin). */
-  readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
   /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut; answers the version the document is at then. */
   readonly turnEnded?: () => Promise<string | null> | void;
   /** The document's versions, for the agents' tools. */
   readonly versions?: VersionsAccess;
   /** A new page's text; a plain one if not given. */
   readonly newPage?: string;
-  /**
-   * Where a person's conversation with the agent here is kept, step by step
-   * (their own object, never the document: cloudflare/objects/person-agent.ts),
-   * so a restart neither loses nor repeats work. Without it, only in memory.
-   */
-  readonly chats?: (person: { id: string; name: string }) => ChatStore;
-  /** What a person's store keeps beside their conversation, for whoever wakes a run after a restart (the document's id). */
-  readonly chatMeta?: Record<string, string>;
   /** Where files kept whole are (their bytes, and what's worked out from them once: a PDF's text). */
   readonly blobs?: BlobStore;
   /** Adds or replaces a file from its bytes, as `by`, within the limits an upload has (document.ts); throws why not. */
@@ -196,14 +182,8 @@ const fromStorage = Layer.mergeAll(
   Path.layer,
 );
 
-type AgentSettings = AgentConfig | { readonly missing: string };
-
 export function makeHost(opts: HostOptions) {
-  const { room, files, doc, agent } = opts;
-  /** The agent's settings now, or why it's off. */
-  const settings = (): Promise<AgentSettings> => typeof agent == "function"
-    ? agent().catch((e: unknown) => ({ missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment` }))
-    : Promise.resolve(agent);
+  const { room, files, doc, agents } = opts;
   const tabs = new Set<Tab>();
   /** A person's own tabs (an editor's: not a files view, which only watches the tree). */
   const own = (user: string) => [...tabs].filter((t) => t.user == user && !t.watch);
@@ -333,22 +313,26 @@ export function makeHost(opts: HostOptions) {
   const sessionFor = (user: { id: string; name: string }) => {
     let s = sessions.get(user.id);
     if (!s) {
-      s = settings().then((cfg) => startSession({
-        cfg: "missing" in cfg ? null : cfg, room, owner: user, docName: doc.name, only: opts.only, kind: opts.kind,
+      s = agents.start({
+        docId: opts.docId,
+        room,
+        owner: user,
+        docName: doc.name,
+        scripted: opts.scripted,
+        only: opts.only,
+        kind: opts.kind,
         canEdit: () => opts.canEdit?.(user) ?? true,
         view: view(user.id),
         naming: namingAs(user),
-        serverTools: opts.serverTools && (() => opts.serverTools!(user)),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
         turnEnded: opts.turnEnded,
         versions: opts.versions,
         tree: async (op) => { await tree(op); },
         pages: pagesFor(user),
         open: openFor(user),
-        store: opts.chats?.(user),
-        meta: opts.chatMeta,
         files: filesAccess,
-      }));
+        blobs: opts.blobs,
+      });
       // Its events reach the person's tabs; then a run a restart cut off goes on (from its last checkpoint).
       s.then((session) => {
         session.subscribe((ev) => sendTo(user.id, { type: "agent", ev }));
@@ -361,11 +345,7 @@ export function makeHost(opts: HostOptions) {
   /** The person's agent session, or why it didn't start. */
   const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user));
   /** Gives the session the settings there are now; answers why the embedded agent is off ("" if it's on). */
-  const configured = (s: AgentSession) => Effect.promise(async () => {
-    const cfg = await settings();
-    await s.configure("missing" in cfg ? null : cfg);
-    return "missing" in cfg ? cfg.missing : "";
-  });
+  const configured = (s: AgentSession) => Effect.promise(() => s.refresh());
   /** For the panel's endpoints: their session, with the settings there are now, unless the embedded agent is off. */
   const agentSession = Person.use((user) => Effect.gen(function* () {
     const s = yield* Effect.mapError(session(user), () => new AgentOff({ ok: false, reason: "the agent did not start" }));
@@ -383,7 +363,7 @@ export function makeHost(opts: HostOptions) {
   const modelState = (s: AgentSession): ModelState => ({
     model: s.model,
     choice: s.modelChoice,
-    models: s.modelChoice == null ? [] : Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
+    models: s.modelChoice == null ? [] : [...agents.models],
   });
 
   // ---------------------------------------------------------- the API
@@ -438,7 +418,8 @@ export function makeHost(opts: HostOptions) {
     }))
     .handle("model", ({ payload }) => Effect.gen(function* () {
       const s = yield* agentSession;
-      if (!isModelChoice(payload.model)) return yield* new NoSuchModel({ ok: false, reason: `there's no model "${payload.model}"` });
+      if (!agents.models.some((m) => m.id == payload.model))
+        return yield* new NoSuchModel({ ok: false, reason: `there's no model "${payload.model}"` });
       if (!s.setModel(payload.model)) return yield* new ModelFixed({ ok: false, reason: "this agent's model can't be changed" });
       const state = modelState(s);
       sendTo((yield* Person).id, { type: "model", ...state });
@@ -461,7 +442,7 @@ export function makeHost(opts: HostOptions) {
       const s = yield* extSession;
       const base = opts.baseUrl(yield* HttpServerRequest.HttpServerRequest);
       const name = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
-      return documentGuide({ docName: name?.title ?? doc.path, owner: user.name, base, tools: s.tools() });
+      return agents.guide({ docName: name?.title ?? doc.path, owner: user.name, base, tools: s.tools() });
     }))
     .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
     .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
@@ -469,8 +450,21 @@ export function makeHost(opts: HostOptions) {
       const s = yield* extSession;
       if (!s.tools().some((t) => t.name == name)) {
         // One that changes the document, for someone who may only view it: it's there, but not theirs.
-        if (CHANGES.has(name)) return yield* new ToolFailed({ ok: false, error: `${user.name} can only view this document, so ${name} isn't one of the tools: they are ${s.tools().map((t) => t.name).join(", ")}.` });
-        return yield* new NoSuchTool({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.tools().map((t) => t.name).join(", ")}.` });
+        if (agents.changes.has(name))
+          return yield* new ToolFailed({
+            ok: false,
+            error: `${user.name} can only view this document, so ${name} isn't one of the tools: they are ${s
+              .tools()
+              .map((t) => t.name)
+              .join(", ")}.`,
+          });
+        return yield* new NoSuchTool({
+          ok: false,
+          error: `There's no tool named "${name}". The tools are: ${s
+            .tools()
+            .map((t) => t.name)
+            .join(", ")}.`,
+        });
       }
       const content = yield* Effect.tryPromise({ try: () => s.runTool(name, payload, user.via), catch: (e) => new ToolFailed({ ok: false, error: (e as Error).message }) });
       return { ok: true as const, content };

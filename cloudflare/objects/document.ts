@@ -20,7 +20,10 @@ import { Document, personOf, type DocumentDeps, type FileData, type OnDisk, type
 import type { DocKind } from "../../document/pages";
 import { Tabs, type Tab } from "../../document/tabs";
 import { PING, PONG } from "../../shared/room-socket";
-import type { DocRow, Role, Who } from "../../server/directory/index.ts";
+import type { Who } from "../../server/directory/index.ts";
+import type { Role } from "../../document/access";
+import type { NamedRow } from "../../document/names";
+import { documentAgents } from "../../agents/document/session";
 import { agentToolsFor } from "../../agents/tools";
 import { VIA } from "../../shared/attribution";
 import type { RestoreResult, VersionsState } from "../../document/versions";
@@ -85,9 +88,16 @@ export class DocumentObject extends DurableObject<Env> {
         attach: (opened) => this.tabs.attachAll(opened),
         detach: () => this.tabs.detachAll(),
       },
-      agentSettings: () => platform(env).agentSettings(),
-      // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
-      serverTools: (person, here) => agentToolsFor({ dir: directoryOf(env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here, platform: platform(env) }),
+      agents: documentAgents({
+        settings: () => platform(env).agentSettings(),
+        // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
+        serverTools: (person, here) => agentToolsFor({ dir: directoryOf(env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here, platform: platform(env) }),
+        // Each person's conversation here, kept in their own object (cloudflare/objects/person-agent.ts).
+        chats: (person, docId) => {
+          const agents = env.AGENTS.getByName(person.id), scope = `doc:${docId}`;
+          return { load: () => agents.load(scope), save: (change) => agents.save(scope, change), clear: () => agents.clear(scope) };
+        },
+      }),
       home: {
         forget: (docId) => env.HOME.getByName("home").forget(docId),
         changed: (docId) => homeChanged(env, docId),
@@ -108,11 +118,6 @@ export class DocumentObject extends DurableObject<Env> {
       pageTemplate: TEMPLATE || undefined,
       // Each person's picture, as the front door sent it (their users row: shared/avatars.ts); none: their initial shows.
       avatarOf: (person) => safeAvatar(person.avatar) ?? undefined,
-      // Each person's conversation here, kept in their own object (cloudflare/objects/person-agent.ts).
-      chats: (person, docId) => {
-        const agents = env.AGENTS.getByName(person.id), scope = `doc:${docId}`;
-        return { load: () => agents.load(scope), save: (change) => agents.save(scope, change), clear: () => agents.clear(scope) };
-      },
     };
   }
 
@@ -138,8 +143,18 @@ export class DocumentObject extends DurableObject<Env> {
     return (this[method as Call] as (...a: unknown[]) => unknown)(...args);
   }
 
-  create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }): Promise<boolean> { return this.document.create(owner, id, files, index, opts); }
-  link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> { return this.document.link(owner, id, index, disk); }
+  create(
+    owner: string,
+    id: string,
+    files: Record<string, FileData>,
+    index: string,
+    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }
+  ): Promise<boolean> {
+    return this.document.create(owner, id, files, index, opts);
+  }
+  link(owner: string, id: string, index: string, disk: OnDisk): Promise<NamedRow> {
+    return this.document.link(owner, id, index, disk);
+  }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
   publish(files: Record<string, FileData>, remove: string[], by?: string) { return this.document.publish(files, remove, by); }
   paths(): Promise<string[]> { return this.document.hold(() => this.document.paths()); }

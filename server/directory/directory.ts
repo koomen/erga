@@ -49,6 +49,8 @@ import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users
 import { Credentials } from "./api-keys.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, type DocKind } from "../../document/pages.ts";
+import { NameError, SLUG_MAX, slugify, UNTITLED } from "../../document/names.ts";
+import type { Role } from "../../document/access.ts";
 import { randomString } from "../../shared/bytes.ts";
 
 
@@ -94,19 +96,6 @@ export interface DocFound {
   kind: DocKind;
 }
 
-/** What a document is called, as the editor, its agents and /docs show it. */
-export interface DocName {
-  id: string;
-  owner: string;
-  title: string;
-  slug: string;
-  /** Its canonical address, "/<owner>/<slug>". */
-  address: string;
-  titleSet: boolean;
-  slugSet: boolean;
-}
-
-export type Role = "owner" | "editor" | "viewer";
 /** A role that can be given to someone (a document's owner is who made it, and stays so). */
 export type Grant = "editor" | "viewer";
 export type Action = "open" | "edit" | "rename" | "delete" | "share";
@@ -147,11 +136,7 @@ const ALLOWS: Record<Action, Role> = { open: "viewer", edit: "editor", rename: "
 /** Whether a role (from `Directory.access`) allows an action: what `may` decides, for a caller that already has the role. */
 export const roleMay = (role: Role | null, action: Action): boolean => role != null && RANK[role] >= RANK[ALLOWS[action]];
 
-/** A rename that can't be done; the message says why, for a person or an agent to act on. */
-export class NameError extends Error {}
-
-export const SLUG_MAX = 60, TITLE_MAX = 200;
-export const UNTITLED = "Untitled";
+export const TITLE_MAX = 200;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
@@ -163,20 +148,6 @@ export const RESERVED = new Set([
   "d", "docs", "new", "auth", "tokens", "api", "fonts", "doc", "t", "delete", "rename",
   "page.js", "frame.js", "style.css", "assets", "static", "settings", "admin", "login", "logout", "help", "about", "share", "members",
 ]);
-
-/** A slug from any text: "Field & notes, 2026" → "field-notes-2026" ("" if it has no letters or digits). */
-export function slugify(text: string): string {
-  const s = text.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
-    .replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  if (s.length <= SLUG_MAX) return s;
-  // Cut at a word if one ends late enough, else mid-word.
-  const cut = s.slice(0, SLUG_MAX + 1), dash = cut.lastIndexOf("-");
-  return (dash > SLUG_MAX / 2 ? cut.slice(0, dash) : s.slice(0, SLUG_MAX)).replace(/-+$/, "");
-}
-
-export const nameOf = (d: DocRow): DocName => ({
-  id: d.id, owner: d.owner, title: d.title, slug: d.slug, address: `/${d.owner}/${d.slug}`, titleSet: d.titleSet, slugSet: d.slugSet,
-});
 
 /** A new document's row. Its slug starts from `slug` (else its title), with -2, -3... if that's taken; `slugSet` fixes it there. */
 export interface NewDoc {
@@ -819,51 +790,6 @@ export class Directory {
 }
 
 const clip = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
-
-/**
- * At most one call to `fn` every `ms`: the first at once, later ones
- * gathered into one at the end of the wait (so the last change always lands).
- */
-export function throttle(fn: () => Promise<unknown>, ms: number): () => void {
-  let last = -Infinity, timer: ReturnType<typeof setTimeout> | null = null;
-  const fire = () => { timer = null; last = Date.now(); fn().catch(() => {}); };
-  return () => {
-    if (timer) return;
-    const wait = last + ms - Date.now();
-    if (wait <= 0) fire(); else timer = setTimeout(fire, wait);
-  };
-}
-
-/** How often edits may update a document's row (its time, and the title that follows its heading). */
-export const DIRECTORY_EVERY_MS = 2000;
-
-/** What a document's host needs to show and change its name, as one person. */
-export interface Naming {
-  get(): Promise<DocName>;
-  /** Throws a NameError a person or agent can act on (taken, reserved, not allowed). */
-  set(patch: { title?: string | null; slug?: string | null }): Promise<DocName>;
-}
-
-/**
- * A document's naming for its host: reads and renames go to the directory,
- * as `who` (whom `may` must allow), with the page's own title for going back
- * to following it.
- */
-export function namingFor(dir: Directory, id: string, pageTitle: () => string | null) {
-  return (who: Who): Naming => ({
-    async get() {
-      const doc = await dir.get(id);
-      if (!doc) throw new NameError("This document isn't in the directory.");
-      return nameOf(doc);
-    },
-    async set(patch) {
-      const doc = await dir.get(id);
-      if (!doc) throw new NameError("This document isn't in the directory.");
-      if (!(await dir.may(who, "rename", doc))) throw new NameError("You can't rename this document.");
-      return nameOf((await dir.rename(id, patch, pageTitle())).doc);
-    },
-  });
-}
 
 /** The shape of an owner (a GitHub login) and of a document's id (8 lowercase letters and digits). */
 export const OWNER = /^[A-Za-z0-9-]{1,39}$/, ID = /^[a-z0-9]{8}$/;

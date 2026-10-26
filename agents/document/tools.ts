@@ -18,12 +18,12 @@ import {
   type LiveResult,
 } from "../../shared/live-page";
 import { pageAddress, type TreeEntry, type TreeOp } from "../../document/pages";
-import type { Naming } from "../../server/directory/index.ts";
+import type { Naming } from "../../document/names";
 import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../../document/versions";
 import { WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 import { fromBase64 } from "../../shared/bytes";
-import type { ToolSpec } from "../tools";
+import type { FilesAccess, OpenResult, PageTree, ToolSpec, VersionsAccess } from "../../document/agent";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -46,16 +46,6 @@ export const CHANGES = new Set([
   "set_title",
   "restore_version",
 ]);
-
-/** What the file tools reach beyond the shared text: every file's size, time and kind, a file's bytes, a PDF's text, and a write of bytes. */
-export interface FilesAccess {
-  /** Each file's size (bytes), time (ms, when known) and kind: text, or a file kept whole (a blob), with its type. */
-  stats(): Promise<Map<string, { size: number | null; at: number | null; kind: "text" | "file"; type: string }>>;
-  /** A PDF's text, page by page, extracted once and kept by the PDF's hash; null if it can't be had. */
-  pdfText(path: string): Promise<string[] | null>;
-  /** Writes a file's bytes as `by` (the agent's person, via it): text if it is text, else a file kept whole. Refused past the limits. */
-  writeBytes(path: string, bytes: Uint8Array, by: string): Promise<{ kind: "text" | "file"; replaced: boolean }>;
-}
 
 const readableSize = (n: number | null) => n == null ? "?" : n < 1000 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)} KB` : n < 1e9 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB` : `${(n / 1e9).toFixed(1)} GB`;
 const stamp16 = (at: number | null) => at ? new Date(at).toISOString().slice(0, 16).replace("T", " ") : "";
@@ -414,19 +404,6 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
   ] as AgentTool[];
 }
 
-/** The document's versions, as the agents' tools reach them. */
-export interface VersionsAccess {
-  state(opts: { before?: string | number | null; limit?: number }): Promise<VersionsState>;
-  version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null>;
-  file(ref: string | number, path: string): Promise<Uint8Array | null>;
-  /** Every file of a version (null if there's no such version). */
-  files(ref: string | number): Promise<Map<string, Uint8Array> | null>;
-  /** Every file as it is now, up to the keystroke. */
-  current(): Promise<Map<string, Uint8Array>>;
-  /** Brings a version back (or, with `path`, one file of it) as a new current version, by `by` (a login). */
-  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult>;
-}
-
 /** list_versions, read_version, diff_versions and restore_version: what the person can do with versions, their agent can (and diff them). */
 function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () => string, lastTurn: () => Promise<string | null>, ws: Workspace, caughtUp: () => Promise<void>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
@@ -609,11 +586,6 @@ function treeTools(tree: (op: TreeOp) => Promise<void>, open?: (path: string) =>
     },
   ] as AgentTool[];
 }
-
-/** The document's pages as list_pages answers them: every entry (titles on pages), and the document's address. */
-export interface PageTree { address: string; entries: TreeEntry[] }
-/** What open_page did: the page it opened, and in how many of the person's tabs (none: nothing opened). */
-export interface OpenResult { path: string; tabs: number; message: string }
 
 /** list_pages and open_page: the document as its users see it (pages), and moving the person's editor between them. */
 function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Promise<OpenResult>): AgentTool[] {

@@ -39,14 +39,14 @@
 
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import * as Y from "yjs";
-import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocName, type DocRow, type Naming, type Role, type Who } from "../server/directory/index.ts";
+import { nameOf, namingFor, UNTITLED, type NamedRow, type Naming, type NamesDirectory } from "./names.ts";
+import { accessOf, type Asker, type Role } from "./access.ts";
+import type { DocumentAgents } from "./agent.ts";
 import { cleanRel, docFile, makeHost, typeOf } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
-import type { AgentState, Hello } from "./api.ts";
+import type { AgentState, DocName, Hello } from "./api.ts";
 import { resolvePage, titleOf } from "./pages.ts";
 import { digest, FileStore, Room, StateStore, type Connection } from "./room.ts";
 import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storage } from "./storage.ts";
@@ -55,10 +55,8 @@ import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type A
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
 import { kindOf, pageRefusal, parentsOf, type DocKind } from "./pages.ts";
-import type { AgentConfig } from "../agents/models.ts";
-import { withBlobs, type ChatStore } from "../agents/checkpoint.ts";
 import { json } from "../shared/http.ts";
-import { sleep } from "../shared/time.ts";
+import { sleep, throttle } from "../shared/time.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -86,13 +84,49 @@ export interface Person {
   avatar?: string;
 }
 
-export type AgentSettings = AgentConfig | { readonly missing: string };
+/**
+ * What a document asks the directory (server/directory/, the Directory
+ * itself): its row (made, edited, its kind and expiry, gone), its name, its
+ * permissions and the rule that decides them, which document is the homepage,
+ * and the settings it reads.
+ */
+export interface DocumentDirectory extends NamesDirectory<Asker> {
+  add(row: {
+    id: string;
+    owner: string;
+    title: string;
+    slug?: string;
+    slugSet?: boolean;
+    created: number;
+    modified?: number | null;
+    expires?: number | null;
+    test?: boolean;
+    kind?: DocKind;
+    everyone?: "editor";
+  }): Promise<{ doc: NamedRow }>;
+  edited(id: string, at: { modified: number | null; pageTitle: string | null }): Promise<{ doc: NamedRow; renamed: boolean } | null>;
+  setKind(id: string, kind: DocKind): Promise<void>;
+  setExpires(id: string, expires: number | null): Promise<void>;
+  remove(id: string): Promise<void>;
+  decide(
+    who: Asker | null,
+    doc: { id: string; owner: string; test: boolean },
+    permissions: readonly { login: string; role: Role }[]
+  ): Promise<Role | null>;
+  permissions(id: string): Promise<{ login: string; role: Role }[]>;
+  homeId(): Promise<string | null>;
+  /** The settings it reads: delete_docs_after_hours (null: never), and the limits max_file_mb and max_project_gb (numbers). */
+  config: { get(key: "delete_docs_after_hours" | "max_file_mb" | "max_project_gb"): Promise<number | null> };
+}
+
+/** How often edits may update a document's row (its time, and the title that follows its heading). */
+const DIRECTORY_EVERY_MS = 2000;
 
 
 /** What the server around a document gives it. */
 export interface DocumentDeps {
   storage: Storage;
-  directory: Directory;
+  directory: DocumentDirectory;
   /**
    * Who has the document open (the adapter's sockets): how many, and closing
    * them all. `attach`: the document opened (again) while sockets wait, so
@@ -100,10 +134,8 @@ export interface DocumentDeps {
    * `detach`: it closed, and they wait for the next open.
    */
   tabs: { count(): number; closeAll(code: number, reason: string): void; attach?(opened: Opened): void; detach?(): void };
-  /** The agent's settings as they are now: the key an admin stored, else the Worker's. */
-  agentSettings: () => Promise<AgentSettings>;
-  /** The tools beyond the document a person's agent may use now (sharing, the documents list, an admin's settings and users). */
-  serverTools: (person: Person, here: string) => Promise<AgentTool[]>;
+  /** Each person's agent here (agents/document/session.ts `documentAgents`): its settings, their conversation's store, and the server tools they may use. */
+  agents: DocumentAgents;
   /** The homepage forgets a deleted document; and its next deploy is scheduled when the homepage has a new version. */
   home: { forget: (docId: string) => Promise<void>; changed: (docId: string) => Promise<void> };
   /** Local development: this document's storage with its files on disk (dev/disk-storage.ts), for a document that is one. */
@@ -125,8 +157,6 @@ export interface DocumentDeps {
   avatarOf?: (person: Person) => string | undefined;
   /** The files viewers see changed after a quiet while: whatever the server kept of them goes (where it can reach). */
   viewChanged?: (docId: string) => void;
-  /** Where a person's conversation with this document's agent is kept (their own object, never the document's storage). */
-  chats?: (person: Person, docId: string) => ChatStore;
   /** Where its files that aren't text are kept (R2 on Cloudflare: document/blobs.ts); without it, every file is in its storage, as before blobs. */
   blobs?: BlobStore;
 }
@@ -174,7 +204,6 @@ const VERSION_BLOB = "blobs/";
 const hashText = (text: string) => digest(new TextEncoder().encode(text));
 
 /** What a role lets someone do inside a document (x-erga-access). */
-const accessOf = (role: Role | null): "edit" | "view" | null => (role == "owner" || role == "editor" ? "edit" : role == "viewer" ? "view" : null);
 
 
 const HOUR = 60 * 60 * 1000;
@@ -359,7 +388,7 @@ export class Document {
    * server connects to /api/mirror to reach them); it never expires, and
    * deleting it leaves them as they are.
    */
-  async link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> {
+  async link(owner: string, id: string, index: string, disk: OnDisk): Promise<NamedRow> {
     const info = await this.readInfo();
     await this.saveInfo(info ? { ...info, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
     await this.storage.deleteAlarm();
@@ -482,7 +511,7 @@ export class Document {
    * now: its row. Anyone signed in may edit it (on this machine, that's
    * whoever local development lets in). Null if there's no such document.
    */
-  private async addRow(): Promise<DocRow | null> {
+  private async addRow(): Promise<NamedRow | null> {
     const info = await this.readInfo();
     if (!info) return null;
     const text = await this.pageText(info);
@@ -832,8 +861,12 @@ export class Document {
       if (read && url.pathname.startsWith("/doc/") && !headers.get("upgrade")) return new Request(request, { headers });
       return new Response("Not allowed", { status: 403 });
     }
-    let who: Who | null = null;
-    try { who = JSON.parse(headers.get("x-erga-who") ?? "null") as Who | null; } catch { /* nobody */ }
+    let who: Asker | null = null;
+    try {
+      who = JSON.parse(headers.get("x-erga-who") ?? "null") as Asker | null;
+    } catch {
+      /* nobody */
+    }
     if (!who || typeof who.login != "string") return new Response("Sign in first", { status: 401 });
     const info = await this.readInfo();
     if (!info) return new Response("No such document", { status: 404 });
@@ -844,7 +877,7 @@ export class Document {
   }
 
   /** What `who` may do with the document, as a role (null: nothing), from its copy of its permissions. */
-  async roleOf(who: Who): Promise<Role | null> {
+  async roleOf(who: Asker): Promise<Role | null> {
     const info = await this.readInfo();
     if (!info) return null;
     return this.directory.decide(who, { id: info.id, owner: info.owner, test: !!info.test }, await this.permissions(info.id));
@@ -927,7 +960,7 @@ export class Document {
    * document's; "" its own page) in what viewers see, that version, and the document's name (the page itself comes
    * from the document's pages origin: server/documents/pages-origin.ts). Null if there's no such document.
    */
-  async view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
+  async view(who: Asker | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
     const info = await this.readInfo();
     if (!info) return null;
     const role = who ? await this.roleOf(who) : null;
@@ -1037,8 +1070,7 @@ export class Document {
   private async describe(version: StoredVersion, previous: StoredVersion, info: DocumentInfo): Promise<void> {
     const changes = await this.versions.changes(previous, version);
     // The agent's key, as it is now (an admin may have stored one since the document opened).
-    const cfg = info.test ? null : await this.deps.agentSettings();
-    const key = cfg && !("missing" in cfg) && cfg.model != "script" ? Redacted.value(cfg.apiKey) : "";
+    const key = info.test ? "" : await this.deps.agents.descriptionKey();
     const text = (key ? await describeChange(key, changes) : null) ?? fallbackDescription(changes);
     await this.versions.describe(version.n, text);
     this.opened?.broadcast({ type: "versions" });
@@ -1194,7 +1226,7 @@ export class Document {
    * file, and the project with it); whether it replaces a file there.
    */
   private async mayAdd(opened: Opened, path: string, size: number): Promise<{ ok: true; replaced: boolean } | { ok: false; status: number; error: string }> {
-    const maxMb = await this.directory.config.get("max_file_mb");
+    const maxMb = (await this.directory.config.get("max_file_mb")) as number;
     if (size > maxMb * MB) return { ok: false, status: 413, error: `${path} is ${megabytes(size)}: a file can have at most ${maxMb} MB here (an admin sets it: max_file_mb).` };
     const room = opened.room;
     const at = room.exists(path);
@@ -1203,7 +1235,7 @@ export class Document {
     if (inFile) return { ok: false, status: 409, error: `${inFile} is a file, so nothing can go inside it.` };
     const notPage = at ? null : pageRefusal((await this.readInfo())?.kind ?? "project", path, (await this.readInfo())?.index ?? "index.html");
     if (notPage) return { ok: false, status: 409, error: notPage };
-    const maxGb = await this.directory.config.get("max_project_gb");
+    const maxGb = (await this.directory.config.get("max_project_gb")) as number;
     const used = (await this.bytesUsed(opened)) - (at == "file" ? await this.sizeOf(opened, path) : 0);
     if (used + size > maxGb * GB) return { ok: false, status: 413, error: `The files here have ${megabytes(used)} together: with ${path} (${megabytes(size)}) they'd pass the ${maxGb} GB a project can have (an admin sets it: max_project_gb).` };
     return { ok: true, replaced: at == "file" };
@@ -1324,13 +1356,13 @@ export class Document {
       Effect.provideService(StateStore, state),
       Scope.provide(scope),
     )).catch(async (e) => { await Effect.runPromise(Scope.close(scope, Exit.void)); throw e; });
-    // A test document's agent is the scripted one: free, and the same every run.
-    // Others read the key at each turn (one row of D1), so a key an admin stores, replaces or clears reaches an open document's agent.
-    const agent = info.test
-      ? { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" }
-      : () => this.deps.agentSettings();
     const host = makeHost({
-      room, files, agent,
+      room,
+      files,
+      docId: info.id,
+      agents: this.deps.agents,
+      // A test document's agent is the scripted one: free, and the same every run.
+      scripted: !!info.test,
       doc: { name: info.index, path: info.index, dir: info.disk?.path ?? info.owner },
       only: info.disk?.only ? info.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
@@ -1344,8 +1376,6 @@ export class Document {
       avatarOf: this.deps.avatarOf,
       // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
-      // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
-      serverTools: (person) => this.deps.serverTools(person, info.id),
       // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
       turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await this.versions.latest()))?.id ?? null),
       versions: {
@@ -1362,9 +1392,6 @@ export class Document {
       },
       // A new page in its file tree starts as a new document does.
       newPage: this.deps.pageTemplate,
-      // (Its big pictures and PDFs in the blob store, by hash: agents/checkpoint.ts, withBlobs.)
-      chats: this.deps.chats && ((person) => (blobs ? withBlobs(this.deps.chats!(person, info.id), blobs) : this.deps.chats!(person, info.id))),
-      chatMeta: { doc: info.id },
       blobs,
       // An agent's write of bytes: as an upload is.
       putFile: (path, bytes, by) => this.putFile(path, bytes, by),
@@ -1387,7 +1414,7 @@ export class Document {
     });
     // Its name from its record once the directory has said it; a rename goes to the directory, and what it answers is kept.
     const named = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
-    const naming = (who: Who): Naming => {
+    const naming = (who: Asker): Naming => {
       const n = named(who);
       return {
         get: async () => (await this.readInfo())?.name ?? this.rememberName(await n.get()),

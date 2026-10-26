@@ -27,6 +27,9 @@ export interface AgentConfig {
   effort: string;
 }
 
+/** The agent's settings, or why it's off (no key). */
+export type AgentSettings = AgentConfig | { readonly missing: string };
+
 export const isScript = (cfg: AgentConfig) => cfg.model == "script";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;

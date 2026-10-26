@@ -34,7 +34,8 @@ import { validateToolArguments } from "@mariozechner/pi-ai";
 import { ID, LOCKED, roleMay } from "./directory/index.ts";
 import { fromElsewhere } from "./pages/index.ts";
 import { forwarded } from "./documents/index.ts";
-import { accessOf, type Platform, type Session, whoOf } from "./platform";
+import { type Platform, type Session, whoOf } from "./platform";
+import { accessOf } from "../document/access";
 import { byLine } from "../shared/attribution";
 import {
   addFile,
@@ -44,10 +45,9 @@ import {
   toolsFor,
   toolsOf,
   type Tool,
-  type ToolContent,
-  type ToolSpec,
   type ToolWho,
 } from "../agents/tools";
+import type { ToolContent, ToolSpec } from "../document/agent";
 import { authOps, expiryOf, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { base64 } from "../shared/bytes";
 import { json } from "../shared/http";

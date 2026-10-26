@@ -15,6 +15,8 @@ import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
 import { agentSettingsFrom, UNREADABLE_KEY } from "../cloudflare/agent-settings.ts";
+import { documentAgents } from "../agents/document/session";
+import type { AgentSettings } from "../agents/models";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const KEY1 = "sk-ant-api03-" + "a".repeat(80) + "One1", KEY2 = "sk-ant-api03-" + "b".repeat(80) + "Two2";
@@ -45,7 +47,7 @@ beforeAll(() => {
 });
 afterAll(() => { globalThis.fetch = realFetch; });
 
-async function openDocument(settings: Parameters<typeof makeHost>[0]["agent"]) {
+async function openDocument(settings: () => Promise<AgentSettings>) {
   const data = new Map([["index.html", new TextEncoder().encode("<p>Hello</p>")]]);
   const files = FileStore.of({
     list: Effect.sync(() => [...data.keys()]),
@@ -55,7 +57,10 @@ async function openDocument(settings: Parameters<typeof makeHost>[0]["agent"]) {
   const scope = Effect.runSync(Scope.make());
   const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(StateStore.none.pipe(Layer.provideMerge(Layer.succeed(FileStore, files)))), Scope.provide(scope)));
   const host = makeHost({
-    room, files, agent: settings,
+    room,
+    files,
+    docId: "d1",
+    agents: documentAgents({ settings }),
     doc: { name: "index.html", path: "index.html", dir: "ada" },
     personOf: () => ({ id: "ada", name: "Ada" }),
     agentOf: () => null,

@@ -2,7 +2,7 @@
 // and approve or deny an agent's request for one. And a token's expiry as given, which the API reads too.
 
 
-import { nameOf } from "../directory/index.ts";
+import { nameOf } from "../../document/names.ts";
 import { appPage, crumbs, ICON, page, safeNext, TIMES_SCRIPT } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";

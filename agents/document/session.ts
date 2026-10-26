@@ -1,5 +1,6 @@
-// The agent editor: one session per person per document, running in the
-// host. A session holds that person's transcript and runs (kept step by step
+// The document agent: one session per person per document, running in the
+// document's host (document/host.ts), which starts it through
+// `documentAgents` (the contract: document/agent.ts). A session holds that person's transcript and runs (kept step by step
 // in the person's own object, so a restart neither loses nor repeats work:
 // agents/checkpoint.ts), and joins the
 // document room as an ordinary Yjs peer with its own replica of the shared
@@ -14,7 +15,8 @@
 // caret that follows its edits as they apply, and whether it's busy, on awareness.
 //
 // This module is the Promise edge: pi's SDK is async, and document/host.ts wraps
-// what it exposes in Effect.
+// what it exposes in Effect. Its loop is the one both agents share
+// (agents/run.ts).
 //
 // Configuration comes from the Worker's bindings (in local development,
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
@@ -34,96 +36,30 @@
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { validateToolArguments } from "@mariozechner/pi-ai";
-import type { Attachment } from "../../shared/attach";
+import * as Redacted from "effect/Redacted";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { Log, LogEvent, ViewRequest, ViewResult } from "../../shared/agent-log";
-import type { ChatStore } from "../checkpoint";
+import { withBlobs, type ChatStore } from "../checkpoint";
 import { startLoop } from "../run";
-import type { ToolContent, ToolSpec } from "../tools";
+import { documentGuide } from "../guides";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
-import { pageRefusal, type DocKind, type TreeOp } from "../../document/pages";
-import { joinLocal, type Room } from "../../document/room";
-import type { Naming } from "../../server/directory/index.ts";
+import { pageRefusal } from "../../document/pages";
+import { joinLocal } from "../../document/room";
+import type { AgentSession, DocumentAgents, SessionOptions, ToolContent } from "../../document/agent";
 import { YjsWorkspace, type Pacer } from "./workspace";
 
-import { resultImage, type AgentConfig, type ModelChoice } from "../models";
+import { MODELS, resultImage, type AgentConfig, type AgentSettings } from "../models";
 import { kindLine, systemPrompt } from "./prompt";
-import {
-  CHANGES,
-  makeTools,
-  toolPath,
-  type FilesAccess,
-  type OpenResult,
-  type PageTree,
-  type VersionsAccess,
-} from "./tools";
+import { CHANGES, makeTools, toolPath } from "./tools";
 import { sleep } from "../../shared/time";
-export interface AgentSession {
-  /** The model's name, or null when the embedded agent is off (its tools still work). */
-  readonly model: string | null;
-  /** The model it's on, of MODELS; null when off or scripted (nothing to switch). */
-  readonly modelChoice: ModelChoice | null;
-  /** Switches model from the next turn on (a running turn finishes on the old one). */
-  setModel(choice: ModelChoice): boolean;
-  /**
-   * The agent's settings now (null: off): a key an admin stored, replaced or
-   * cleared since the session started. The next model call uses them.
-   */
-  configure(cfg: AgentConfig | null): Promise<void>;
-  /** The transcript so far (for a tab that just loaded). */
-  log(): Log;
-  /** Sends a message, with any files attached; while a turn is running it steers the current one. */
-  prompt(text: string, context: string | null, files?: Attachment[]): void;
-  abort(): void;
-  reset(): Promise<void>;
-  /** Takes back the agent's most recent change (one tool call), if any. */
-  undo(): boolean;
-  subscribe(listener: (ev: LogEvent) => void): () => void;
-  /**
-   * Goes on with a run that a restart cut off, from its last checkpoint (the
-   * first call only; call it once the session's events reach its tabs).
-   * Answers whether a run goes on.
-   */
-  resume(): Promise<boolean>;
-  /** The tools, for an external agent. */
-  tools(): ToolSpec[];
-  /**
-   * Runs one tool for an external agent, exactly as the embedded agent would:
-   * same replica of the doc, same attribution, presence and undo history. The
-   * call shows in the transcript, marked as external. Throws with a message
-   * the caller can act on (unknown tool, bad arguments, the tool's own error).
-   */
-  /** `via`: how the person acts through the outside agent (shared/attribution.ts: "a shared agent (label)"); its edits are theirs, via it. */
-  runTool(name: string, args: unknown, via?: string): Promise<ToolContent[]>;
-  /** Leaves the room and stops its timers (the document closed: it starts again the next time it's needed). */
-  close(): void;
-}
-
-export interface SessionOptions {
-  /** Null when the embedded agent is off: no model, but the tools still work for an external agent. `configure` changes it later. */
-  cfg: AgentConfig | null;
-  room: Room;
-  /** The person this session works for. */
-  owner: { id: string; name: string };
-  docName: string;
-  /** A document that's a single file opened from disk: its path (the agent can't make other files). */
-  only?: string;
-  /** A document (one page: no other page can be made) or a project (pages), now; a project if not given. */
-  kind?: () => DocKind;
-  /** Whether the owner may edit (an agent acts with its user's permissions). */
-  canEdit: () => boolean;
-  /** Asks one of the owner's open tabs to render and capture the page. */
-  view: (req: ViewRequest) => Promise<ViewResult>;
-  readAsset: (path: string) => Promise<Uint8Array | null>;
-  /** The document's title and address, as the owner (get_title, set_title); without it those tools are left out. */
-  naming?: Naming;
-  /** Does a tree operation in the room: new_page, mkdir, mv and rm; without it those tools are left out. */
-  tree?: (op: TreeOp) => Promise<void>;
-  /** The document's pages with titles, and its address (list_pages); without it list_pages and open_page are left out. */
-  pages?: () => Promise<PageTree>;
-  /** Switches the owner's open editor tabs to a page (open_page, new_page's open). */
-  open?: (path: string) => Promise<OpenResult>;
+/** A session as `documentAgents` starts it: the document's side (SessionOptions), with the agent's settings, the store and the server tools. */
+export interface AgentSessionOptions extends SessionOptions {
+  /** The agent's settings now, or why it's off: read as the session starts and at each refresh. */
+  settings: () => Promise<AgentSettings>;
+  /** Where the person's conversation here is kept, step by step (the person's own object: agents/checkpoint.ts); without it, only in memory. */
+  store?: ChatStore;
+  /** What the store keeps beside it, for whoever wakes a run after a restart (the document's id). */
+  meta?: Record<string, string>;
   /**
    * The tools beyond the document the owner may use now (agents/tools.ts:
    * sharing; the server's settings and users for an admin). Asked for again
@@ -131,16 +67,47 @@ export interface SessionOptions {
    * Each says what the agent is doing while it runs (`activity`).
    */
   serverTools?: () => Promise<ServerAgentTool[]>;
-  /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
-  turnEnded?: () => Promise<string | null> | void;
-  /** The document's versions; without it those tools are left out. */
-  versions?: VersionsAccess;
-  /** Where the person's conversation here is kept, step by step (the person's own object: agents/checkpoint.ts); without it, only in memory. */
-  store?: ChatStore;
-  /** What the store keeps beside it, for whoever wakes a run after a restart (the document's id). */
-  meta?: Record<string, string>;
-  /** Every file's size, time and kind, PDFs' text, and writes of bytes (document/host.ts); without it the file tools see text and names only. */
-  files?: FilesAccess;
+}
+
+/** The settings of a test document's agent: the scripted model, free and the same every run. */
+const SCRIPTED: AgentConfig = { apiKey: Redacted.make(""), model: "script", effort: "medium" };
+
+/**
+ * A document's agents, as the server gives them to it (DocumentDeps.agents):
+ * each session reads the agent's settings (`settings`: the key an admin
+ * stored, else the Worker's), keeps the person's conversation in their own
+ * store (`chats`), and has the server tools they may use (`serverTools`).
+ */
+export function documentAgents(o: {
+  settings: () => Promise<AgentSettings>;
+  chats?: (person: { id: string; name: string }, docId: string) => ChatStore;
+  serverTools?: (person: { id: string; name: string }, docId: string) => Promise<ServerAgentTool[]>;
+}): DocumentAgents {
+  /** The settings now, or why the agent is off. */
+  const settings = () =>
+    o.settings().catch((e: unknown) => ({
+      missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment`,
+      }));
+  return {
+    start: (opts) => {
+      const store = o.chats?.(opts.owner, opts.docId);
+      return startSession({
+        ...opts,
+        settings: opts.scripted ? async () => SCRIPTED : settings,
+        // (Its big pictures and PDFs in the blob store, by hash: agents/checkpoint.ts, withBlobs.)
+        store: store && opts.blobs ? withBlobs(store, opts.blobs) : store,
+        meta: { doc: opts.docId },
+        serverTools: o.serverTools && (() => o.serverTools!(opts.owner, opts.docId)),
+      });
+    },
+    guide: documentGuide,
+    models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
+    changes: CHANGES,
+    async descriptionKey() {
+      const cfg = await o.settings();
+      return !("missing" in cfg) && cfg.model != "script" ? Redacted.value(cfg.apiKey) : "";
+    },
+  };
 }
 
 /** A tool beyond the document (agents/tools.ts), with what the agent is doing while it runs. */
@@ -177,8 +144,9 @@ const TOOL_ACTIVITY: Record<string, string> = {
   restore_version: "restoring a version",
 };
 
-export async function startSession(opts: SessionOptions): Promise<AgentSession> {
+export async function startSession(opts: AgentSessionOptions): Promise<AgentSession> {
   const { owner } = opts;
+  const first = await opts.settings();
   // Its work is its person's, via it: "Ada, via their agent".
   const me: Author = { user: owner.id, name: byLine(owner.name, VIA.agent), color: colorFor(owner.id, true), kind: "agent", via: VIA.agent };
   /** Who the session's edits are by now: the embedded agent, or, while an outside agent's calls run, that agent (runTool). */
@@ -242,7 +210,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   };
   // Each step of a run, kept in the person's store; a restart goes on from the last (agents/checkpoint.ts).
   const loop = startLoop({
-    cfg: opts.cfg,
+    cfg: "missing" in first ? null : first,
     stored,
     store: opts.store ?? null,
     meta: { person: owner.id, name: owner.name, ...opts.meta },
@@ -305,9 +273,17 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     const serverTools = await beyond();
     return loop.agent ?? loop.start(first, prompted(serverTools), [...mine(), ...serverTools]);
   };
-  if (opts.cfg) await makeAgent(opts.cfg);
+  if (loop.cfg) await makeAgent(loop.cfg);
   /** The model's side, being made (a key arrived after the session started). */
   let making: Promise<unknown> | null = null;
+  /** The settings now (a key an admin stored, replaced or cleared since the session started): the next model call uses them. */
+  const configure = async (next: AgentConfig | null) => {
+    loop.configure(next);
+    if (next && !loop.agent)
+      await (making ??= makeAgent(next).finally(() => {
+        making = null;
+      }));
+  };
 
   return {
     close() {
@@ -323,12 +299,10 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       return loop.modelChoice;
     },
     setModel: loop.setModel,
-    async configure(next) {
-      loop.configure(next);
-      if (next && !loop.agent)
-        await (making ??= makeAgent(next).finally(() => {
-          making = null;
-        }));
+    async refresh() {
+      const cfg = await opts.settings();
+      await configure("missing" in cfg ? null : cfg);
+      return "missing" in cfg ? cfg.missing : "";
     },
     log: () => loop.log,
     prompt(text, context, files = []) {

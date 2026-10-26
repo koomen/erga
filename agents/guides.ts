@@ -10,7 +10,8 @@ import { agentName } from "../document/content";
 import type { Session } from "../server/platform.ts";
 import { REQUEST_MINUTES, type AgentToken } from "../server/identity/index.ts";
 import { DOCUMENT_RULES, FILES_PROMPT, PAGES_PROMPT } from "./document/prompt";
-import { documentTools, SERVER_TOOLS, type ToolSpec } from "./tools";
+import type { ToolSpec } from "../document/agent";
+import { documentTools, SERVER_TOOLS } from "./tools";
 
 /** The tools, as a guide lists them: each one's name, what it does, and its arguments as JSON Schema. */
 const toolDocs = (tools: ToolSpec[]) =>

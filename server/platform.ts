@@ -9,7 +9,8 @@ import type { HomeObject } from "./home/index.ts";
 import type { SourceService } from "../control/source/index.ts";
 import type { AdminAgentObject, DashboardDeploys } from "../agents/admin/sessions.ts";
 import type { AgentConfig } from "../agents/models.ts";
-import { type Directory, type Role, type Route, type Who } from "./directory/index.ts";
+import { type Directory, type Route, type Who } from "./directory/index.ts";
+import type { Role } from "../document/access.ts";
 import type { RestoreResult, VersionsState } from "../document/versions.ts";
 import type { FileData, ViewAnswer } from "../document/document.ts";
 import type { DocKind } from "../document/pages.ts";
@@ -199,10 +200,6 @@ export interface Platform {
     view(id: string, who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null>;
   };
 }
-
-/** What a role lets someone do inside a document, as its host is told (x-erga-access). */
-export const accessOf = (role: Role | null): "edit" | "view" | null =>
-  role == "owner" || role == "editor" ? "edit" : role == "viewer" ? "view" : null;
 
 /** Who a session is, to the directory's `may`. */
 export const whoOf = (session: Session): Who => ({
