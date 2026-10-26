@@ -6,6 +6,7 @@
 // bundle reads it too.
 
 import { asset } from "./assets.ts";
+import type { DocKind } from "../../document/pages.ts";
 
 /** A template: what the picker shows, and the files a new document starts with. */
 export interface Template {
@@ -22,6 +23,10 @@ export interface Template {
    * whole (text files only), whose page is its index.html.
    */
   files: `assets/templates/${string}`;
+  /** What it makes: a project (pages) from the start; else a document, or what its files make it. */
+  kind?: DocKind;
+  /** A small picture beside its name (an inline SVG of strokes, which the menu colors), for one that's unlike the rest. */
+  icon?: string;
 }
 
 /** A group of templates in the picker, placed after the template `after` names (or first, without). Empty, it says so. */
@@ -30,10 +35,26 @@ export interface TemplateGroup {
   after?: string;
 }
 
+/** Two pages, one over the other: the Project template's, beside its name. */
+const PAGES_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 2.5h5l3 3v6.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1z"/><path d="M10.5 2.5v3h3"/><path d="M2.5 5.5v8a1 1 0 0 0 1 1h6.5"/></svg>`;
+
 /** The templates, in the picker's order. The first is what /new makes when no template is named. */
 export const TEMPLATES: Template[] = [
   { id: "page", name: "Page", description: "A blank document.", files: "assets/templates/doc" },
-  { id: "design-doc", name: "Design doc", description: "A reading column with flow diagrams, tables and boxed decisions.", files: "assets/templates/design-doc" },
+  {
+    id: "project",
+    name: "Project",
+    description: "Pages, each at its own address. It starts with two that link to each other.",
+    files: "assets/templates/project",
+    kind: "project",
+    icon: PAGES_ICON,
+  },
+  {
+    id: "design-doc",
+    name: "Design doc",
+    description: "A reading column with flow diagrams, tables and boxed decisions.",
+    files: "assets/templates/design-doc",
+  },
   { id: "slides", name: "Slides", group: "Presentation", description: "16:9 slides you step through.", files: "assets/templates/slides" },
   { id: "canvas", name: "Canvas presentation", group: "Presentation", description: "Frames on one big canvas; each step zooms out, then in on the next.", files: "assets/templates/canvas" },
   { id: "solar-system", name: "Solar system tour", group: "Presentation", description: "A 3D model of the planets, one step for each.", files: "assets/templates/solar-system" },
@@ -71,8 +92,10 @@ export const newDocButton = (cls: string) =>
  * comes back to make it.
  */
 export function newDocMenu(href: (path: string) => string, signedIn: boolean): string {
-  const item = (t: Template) => `<a role="menuitem" href="${esc(href(`/new?template=${encodeURIComponent(t.id)}`))}" data-template="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.description)}</span></a>`;
-  const rows = pickerRows().map((r) => "group" in r
+  const item = (t: Template) =>
+    `<a role="menuitem" href="${esc(href(`/new?template=${encodeURIComponent(t.id)}`))}" data-template="${esc(t.id)}"><b>${t.icon ?? ""}${esc(t.name)}</b><span>${esc(t.description)}</span></a>`;
+  const rows = pickerRows().map((r) =>
+    "group" in r
     ? `<div class="erga-new-group" role="group" aria-label="${esc(r.group)}"><p class="erga-new-group-name">${esc(r.group)}</p>${r.templates.length ? r.templates.map(item).join("") : `<p class="erga-new-empty">No templates here yet.</p>`}</div>`
     : item(r.template));
   return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" data-fonts="${esc(asset("inter.css"))}" hidden><p class="erga-new-title">New document</p>${rows.join("")}${signedIn ? "" : `<p class="erga-new-note">You sign in first, then Erga makes the document.</p>`}</div>`;
@@ -92,6 +115,7 @@ export const NEW_DOC_STYLE = `<style>
   .erga-new-title { padding: 6px 10px 6px; color: var(--nm-soft); font-size: 12.5px; }
   .erga-new-menu a { display: grid; gap: 1px; padding: 7px 10px; border-radius: 7px; color: var(--nm-fg); text-decoration: none; }
   .erga-new-menu a b, .erga-new-group-name { font-weight: 600; font-size: 14px; color: var(--nm-fg); }
+  .erga-new-menu a b svg { width: 15px; height: 15px; margin: 0 6px -2px 0; fill: none; stroke: var(--nm-soft); stroke-width: 1.3; stroke-linejoin: round; }
   .erga-new-menu a span, .erga-new-empty, .erga-new-note { color: var(--nm-soft); font-size: 12.5px; }
   .erga-new-menu a:hover, .erga-new-menu a:focus-visible { background: var(--nm-hover); outline: none; }
   .erga-new-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--nm-ring); }

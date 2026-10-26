@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&display=swap">
+<style>
+  :root {
+    --bg: #f7f8fa; --ink: #1b2330; --muted: #5b6676; --accent: #1f5f8b;
+    --display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+    --body: "Literata", Georgia, "Times New Roman", serif;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #12161d; --ink: #e4e8ee; --muted: #9aa5b4; --accent: #7fb6e0; }
+  }
+  :root[data-theme="dark"] { --bg: #12161d; --ink: #e4e8ee; --muted: #9aa5b4; --accent: #7fb6e0; color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; }
+  .page { max-width: 44rem; margin: 0 auto; padding: 56px 16px 96px; display: grid; gap: 28px; }
+  h1, h2, h3 { font-family: var(--display); line-height: 1.15; margin: 0; text-wrap: balance; }
+  h1 { font-size: 2.3rem; font-weight: 700; letter-spacing: -.01em; }
+  h2 { font-size: 1.3rem; font-weight: 600; }
+  h3 { font-size: 1rem; font-weight: 600; }
+  p, ul, ol { margin: 0; }
+  a { color: var(--accent); }
+  section { display: grid; gap: 12px; }
+  nav { display: flex; gap: 18px; font-family: var(--display); font-size: .95rem; font-weight: 600; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--ink); }
+  nav a[aria-current="page"] { color: var(--ink); }
+  @media (max-width: 480px) { body { font-size: 16px; } h1 { font-size: 1.9rem; } }
+</style>
+</head>
+<body>
+<main class="page">
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="about.html" aria-current="page">About</a>
+  </nav>
+  <h1>About</h1>
+  <section>
+    <p>A second page. Say who made this, or delete the page.</p>
+  </section>
+</main>
+</body>
+</html>

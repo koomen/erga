@@ -8,6 +8,7 @@ import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql, type Who } from "../server/directory/index.ts";
 import { agentToolsFor, runServerTool, SERVER_TOOLS, ToolError, toolsFor, type ToolWho } from "../agents/tools";
 import type { Platform } from "../server/platform";
+import { newDocMenu, templateById } from "../server/pages/templates.ts";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 
@@ -151,6 +152,31 @@ test("sharing: the owner sees and changes who has access; nobody else may; the e
   expect((await failure(run(ada, "document_access", { document: "/ada/none" }))).status).toBe(404);
   r = await run(ada, "share_document", { document: "aaaaaaaa", login: "bo", role: "none" });
   expect(r.permissions.map((p: { login: string }) => p.login)).toEqual(["ada", "*"]);
+});
+
+test("the Project template makes a project from the start, with its two pages that link to each other: from /new's menu and from create_document", async () => {
+  const dir = fresh();
+  const { platform } = platformOf(dir);
+  const read = (f: string) => readFileSync(new URL(`../assets/templates/project/${f}`, import.meta.url), "utf8");
+  (platform as { templates: Platform["templates"] }).templates.project = {
+    "index.html": read("index.html"),
+    "about.html": read("about.html"),
+  };
+  const created: { kind?: string; files: string[] }[] = [];
+  platform.docs.create = async (_doc, files, _index, opts) => {
+    created.push({ kind: opts.kind, files: Object.keys(files).sort() });
+    return true;
+  };
+  const t = templateById("project")!;
+  expect([t.name, t.kind, !!t.icon]).toEqual(["Project", "project", true]);
+  expect(newDocMenu((p) => p, true)).toContain('data-template="project"');
+  expect(read("index.html")).toContain('href="about.html"');
+  expect(read("about.html")).toContain('href="index.html"');
+  const ada: ToolWho = { dir, who: { login: "ada" }, platform, origin: "https://erga.test" };
+  const r = await run(ada, "create_document", { template: "project" });
+  expect(r.from).toBe("the project template");
+  expect(created).toEqual([{ kind: "project", files: ["about.html", "index.html"] }]);
+  expect((await dir.get(r.made.id))?.kind).toBe("project");
 });
 
 /** The platform the documents list's tools need, on the in-memory directory: templates, and documents that are only rows. */
