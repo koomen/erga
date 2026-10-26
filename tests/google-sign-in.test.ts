@@ -53,7 +53,8 @@ async function signInWithGoogle(platform: Platform, q = ""): Promise<Response> {
 }
 
 /** A rule for one account, with write, made with it (as an admin's rule, or local development's, would be). */
-const writes = (login: string) => ({ extra: [["INSERT INTO access_rules (kind, value, access, created) VALUES ('account', ?1, 'write', 1)", login] as [string, string]] });
+/** An account that may write: its own role. */
+const writes = (_login: string) => ({ role: "write" as const });
 
 test("the live check tells a working client from an unknown client ID, a wrong secret and none", async () => {
   const f = google.fetch as unknown as typeof fetch;

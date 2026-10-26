@@ -103,7 +103,8 @@ export const SETTINGS = {
     parse: integer(0, 1000),
   }),
   public_sharing: setting<boolean>({
-    description: "People can share content publicly: a document shared with anyone with the link opens for people who aren't signed in too, as viewers (the Access page). Off: nobody may share with anyone with the link, and such shares made before open only for people who sign in. The homepage is public either way.",
+    description:
+      "Users can share content publicly: a document shared with anyone with the link opens for people who aren't signed in too, as viewers (the Access page). Off: nobody may share with anyone with the link, and such shares made before open only for people who sign in. The homepage is public either way.",
     default: false,
     parse: boolean,
   }),

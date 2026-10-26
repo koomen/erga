@@ -91,7 +91,7 @@ Once you've read the guide, await further instructions.`;
       sharingList.append(li);
     }
     sharingAnyone.value = anyone;
-    // Anyone with the link, only while the server lets people share content publicly; a share made before stays, to stop.
+    // Anyone with the link, only while the server lets users share content publicly; a share made before stays, to stop.
     const offered = !!publicSharing || anyone != "none";
     sharingAnyone.hidden = !offered;
     for (const o of sharingAnyone.options) o.disabled = !publicSharing && o.value != "none" && o.value != anyone;

@@ -184,7 +184,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
       people.append(li);
     }
     anyone.value = all;
-    // Anyone with the link, only while the server lets people share content publicly; a share made before stays, to stop.
+    // Anyone with the link, only while the server lets users share content publicly; a share made before stays, to stop.
     anyone.closest(".anyone").hidden = !publicSharing && all == "none";
     for (const o of anyone.options) o.disabled = !publicSharing && o.value != "none" && o.value != all;
     document.getElementById("share-anyone-note").textContent = publicSharing ? "Signed in or not; people who aren't signed in view it" : "Public sharing is off here: only people who sign in can open it";

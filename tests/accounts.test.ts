@@ -12,7 +12,8 @@ export const github = (id: number, login: string, orgs: string[] | null = null):
 export const google = (sub: string, email: string, verified = true): Vouched => ({ provider: "google", subject: sub, handle: email, name: email.split("@")[0], emails: [{ email, verified }] });
 
 /** A rule for one account, with write, made with it (as an admin's rule, or local development's, would be). */
-const writes = (login: string) => ({ extra: [["INSERT INTO access_rules (kind, value, access, created) VALUES ('account', ?1, 'write', 1)", login] as [string, string]] });
+/** An account that may write: its own role. */
+const writes = (_login: string) => ({ role: "write" as const });
 
 test("the migration gives each account with a GitHub id its identity, kept by the id", async () => {
   const sql = memory({ at: "0210", run: (db) => {

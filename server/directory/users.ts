@@ -2,9 +2,12 @@
 // behind the directory's `Sql`, so the tests run it on
 // bun:sqlite as D1 runs it on erga.dev.
 //
-// A GitHub login with a row in users may sign in; nobody else may. Each has
-// a server role: "user", or "admin", who may see and change the server's
-// settings and its users. Apart from that, an admin may grant
+// Each account has a row in users, and one role (the Users page): "Admin",
+// who may see and change the server's settings and its users, and may write;
+// or, besides that, its own access: "Can create and edit content" (write),
+// "Can authenticate" (read), or none of its own, where only the group rules
+// (server/directory/access.ts) let it in. A person an admin added before
+// their first sign-in waits in people.ts. Apart from that, an admin may grant
 // anyone the deploy role: they may then use /deploy when the deploy_page
 // setting keeps it for admins. Admins may anyway: an
 // admin may always deploy (User.mayDeploy, hasDeploy). The server always keeps an
@@ -23,6 +26,25 @@ import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
 
 export type ServerRole = "user" | "admin";
+/** A user's one role, as the Users page and the admin agent name it. */
+export type UserRole = "admin" | "write" | "read";
+export const USER_ROLES: readonly UserRole[] = ["admin", "write", "read"];
+export const ROLE_LABEL: Record<UserRole | "none", string> = {
+  admin: "Admin",
+  write: "Can create and edit content",
+  read: "Can authenticate",
+  none: "No role (only the Access page's groups)",
+};
+/** A role as given (`none` too, for an account), checked; a NotAllowed says what's wrong. */
+export function roleValue(raw: unknown, o: { none?: boolean } = {}): UserRole | "none" {
+  const r = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  if ((USER_ROLES as readonly string[]).includes(r) || (o.none && r == "none")) return r as UserRole | "none";
+  throw new NotAllowed(
+    `A user's role is admin (${ROLE_LABEL.admin}), write (${ROLE_LABEL.write})${o.none ? "," : " or"} read (${ROLE_LABEL.read})${o.none ? ` or none (${ROLE_LABEL.none})` : ""}.`
+  );
+}
 
 export interface User {
   /** Their GitHub login, lowercase. */
@@ -31,6 +53,8 @@ export interface User {
   name: string;
   /** Their role on the server (a bootstrap admin's is always "admin"). */
   role: ServerRole;
+  /** Their own access besides admin (users.access): write, read, or null (only the group rules decide). */
+  access: "write" | "read" | null;
   /** The deploy role as granted (users.deploy): what setDeploy sets. An admin may deploy without it (mayDeploy). */
   deploy: boolean;
   /** Whether they may deploy: an admin, or granted the deploy role. The one answer hasDeploy, /deploy and the Users page use. */
@@ -73,18 +97,29 @@ const REMEMBER_MS = 10_000;
 /** How often someone's last_seen is written, at most. */
 const SEEN_EVERY_MS = 5 * 60_000;
 
-interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; added_via?: string | null; last_seen: number | null; github_id?: number | null }
+interface Row {
+  login: string;
+  name: string;
+  role: ServerRole;
+  access?: string | null;
+  deploy?: number | null;
+  created: number;
+  added_by: string | null;
+  added_via?: string | null;
+  last_seen: number | null;
+  github_id?: number | null;
+}
 
 export class Users {
   private readonly admins: Set<string>;
   private known = new Map<string, { user: User | null; at: number }>();
   /**
-   * Whether an account may sign in now: the access rules give it read or write (server/directory/access.ts, which the
-   * directory sets here). Everyone with a row, until it's set.
+   * Whether an account may sign in now: its role or the group rules give it read or write (server/directory/access.ts,
+   * which the directory sets here). Everyone with a row, until it's set.
    */
   gate: (user: User) => Promise<boolean> = async () => true;
-  /** Called after a write to the access rules here (an added account's rule): the directory forgets the rules it remembered. */
-  rulesChanged: () => void = () => {};
+  /** Called after a user's access changed here: the directory forgets the access it remembered. */
+  accessChanged: () => void = () => {};
   private seenAt = new Map<string, number>();
 
   /** `admins`: the bootstrap admins (the ADMINS binding), always admins and always allowed in. */
@@ -159,13 +194,18 @@ export class Users {
     this.seenAt.set(login, now);
     if (this.seenAt.size > 10_000) this.seenAt.clear();
     await this.sql.batch([
-      [`INSERT INTO users (login, name, role, created, added_by, last_seen) VALUES (?1, COALESCE(?2, ?1), ?3, ?4, NULL, ?4)
-       ON CONFLICT (login) DO UPDATE SET name = COALESCE(?2, name), last_seen = ?4`, login, given, this.isBootstrapAdmin(login) ? "admin" : "user", now],
-      // Local development, where everyone may sign in: their row comes with a rule that lets them write, as an admin's
-      // rule for one account would (server/directory/access.ts).
-      ...(opts.create && !user ? [["INSERT OR IGNORE INTO access_rules (kind, value, access, created) VALUES ('account', ?1, 'write', ?2)", login, now] as Statement] : []),
+      // Local development, where everyone may sign in: a new row may write, as an admin's user would.
+      [
+        `INSERT INTO users (login, name, role, access, created, added_by, last_seen) VALUES (?1, COALESCE(?2, ?1), ?3, ?5, ?4, NULL, ?4)
+       ON CONFLICT (login) DO UPDATE SET name = COALESCE(?2, name), last_seen = ?4`,
+        login,
+        given,
+        this.isBootstrapAdmin(login) ? "admin" : "user",
+        now,
+        opts.create ? "write" : null,
+      ],
     ]);
-    if (opts.create && !user) this.rulesChanged();
+    if (opts.create && !user) this.accessChanged();
     this.known.delete(login);
     return this.get(login);
   }
@@ -194,8 +234,11 @@ export class Users {
     return [...rows, ...pending].sort((a, b) => a.login.localeCompare(b.login));
   }
 
-  /** Lets someone sign in, with a rule for their account that gives write (or changes the role of someone who already may). Admins only. */
-  async add(by: Actor, login: string, opts: { role?: ServerRole; name?: string } = {}): Promise<User> {
+  /**
+   * An account by its username, with a role (write unless given; or changes the role of one that's there). Admins only.
+   * A person who hasn't signed in yet is added by their provider account instead (Directory.addUser, people.ts).
+   */
+  async add(by: Actor, login: string, opts: { role?: ServerRole; name?: string; access?: "write" | "read" | null } = {}): Promise<User> {
     await this.mustAdmin(by);
     login = login.trim().toLowerCase();
     if (!LOGIN.test(login)) throw new NotAllowed(`"${login}" isn't a GitHub login.`);
@@ -203,15 +246,45 @@ export class Users {
     if (role != "admin" && this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
     const had = await this.get(login), at = Date.now();
     await this.sql.batch([
-      [`INSERT INTO users (login, name, role, created, added_by, added_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-       ON CONFLICT (login) DO UPDATE SET role = ?3`,
-      login, opts.name?.trim() || login, this.isBootstrapAdmin(login) ? "admin" : role, at, by.login.toLowerCase(), by.via ?? null],
-      // Adding someone lets them in: a rule for this one account, with write, unless one is there (server/directory/access.ts).
-      ["INSERT INTO access_rules (kind, value, access, created, added_by, added_via) VALUES ('account', ?1, 'write', ?2, ?3, ?4) ON CONFLICT (kind, value) DO NOTHING", login, at, by.login.toLowerCase(), by.via ?? null],
+      [
+        `INSERT INTO users (login, name, role, access, created, added_by, added_via) VALUES (?1, ?2, ?3, ?7, ?4, ?5, ?6)
+       ON CONFLICT (login) DO UPDATE SET role = ?3, access = ?7`,
+        login,
+        opts.name?.trim() || login,
+        this.isBootstrapAdmin(login) ? "admin" : role,
+        at,
+        by.login.toLowerCase(),
+        by.via ?? null,
+        opts.access === undefined ? "write" : opts.access,
+      ],
       this.logged(by, at, had && had.created != 0 ? { login, event: "role", role } : { login, event: "added", role }),
     ]);
     this.known.delete(login);
-    this.rulesChanged();
+    this.accessChanged();
+    return (await this.get(login))!;
+  }
+
+  /**
+   * A user's one role: admin; or a user who may write, or read, or has no access of their own (`none`: only the group
+   * rules let them in). Admins only; the server keeps an admin, and a bootstrap admin stays one.
+   */
+  async setUserRole(by: Actor, login: string, role: UserRole | "none"): Promise<User> {
+    await this.mustAdmin(by);
+    login = login.toLowerCase();
+    const user = await this.get(login);
+    if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
+    if (role == "admin" && user.role == "admin") return user;
+    if (role != "admin" && user.bootstrap) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
+    if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
+    const access = role == "admin" ? user.access : role == "none" ? null : role;
+    await this.sql.batch([
+      // A bootstrap admin with no row yet gets it, as signing in would.
+      ["INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'user', ?2) ON CONFLICT (login) DO NOTHING", login, Date.now()],
+      ["UPDATE users SET role = ?2, access = ?3 WHERE login = ?1", login, role == "admin" ? "admin" : "user", access],
+      this.logged(by, Date.now(), { login, event: "role", role }),
+    ]);
+    this.known.delete(login);
+    this.accessChanged();
     return (await this.get(login))!;
   }
 
@@ -225,6 +298,7 @@ export class Users {
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.batch([["UPDATE users SET role = ?2 WHERE login = ?1", login, role], this.logged(by, Date.now(), { login, event: "role", role })]);
     this.known.delete(login);
+    this.accessChanged();
     return (await this.get(login))!;
   }
 
@@ -247,10 +321,9 @@ export class Users {
     login = login.toLowerCase();
     if (this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): take them out there.`);
     if ((await this.get(login))?.role == "admin") await this.mustKeepAnAdmin(by, login);
-    // Its access rule for one account goes with it (server/directory/access.ts).
-    await this.sql.batch([["DELETE FROM users WHERE login = ?1", login], ["DELETE FROM access_rules WHERE kind = 'account' AND value = ?1", login], this.logged(by, Date.now(), { login, event: "removed" })]);
+    await this.sql.batch([["DELETE FROM users WHERE login = ?1", login], this.logged(by, Date.now(), { login, event: "removed" })]);
     this.known.delete(login);
-    this.rulesChanged();
+    this.accessChanged();
   }
 
   /** Throws NotAllowed if `login` is the server's last admin (bootstrap admins count, signed in or not). */
@@ -277,14 +350,35 @@ export class Users {
   private fromRow(r: Row): User {
     const bootstrap = this.isBootstrapAdmin(r.login), role = bootstrap ? "admin" : r.role;
     return {
-      login: r.login, name: r.name, role, deploy: !!r.deploy, mayDeploy: role == "admin" || !!r.deploy, bootstrap,
-      created: Number(r.created), addedBy: r.added_by, addedVia: r.added_via ?? null, lastSeen: r.last_seen == null ? null : Number(r.last_seen),
+      login: r.login,
+      name: r.name,
+      role,
+      access: r.access == "write" || r.access == "read" ? r.access : null,
+      deploy: !!r.deploy,
+      mayDeploy: role == "admin" || !!r.deploy,
+      bootstrap,
+      created: Number(r.created),
+      addedBy: r.added_by,
+      addedVia: r.added_via ?? null,
+      lastSeen: r.last_seen == null ? null : Number(r.last_seen),
       githubId: r.github_id == null ? null : Number(r.github_id),
     };
   }
 
   /** A bootstrap admin with no row yet (created 0: never signed in). */
   private bootstrapUser(login: string): User {
-    return { login, name: login, role: "admin", deploy: false, mayDeploy: true, bootstrap: true, created: 0, addedBy: null, lastSeen: null, githubId: null };
+    return {
+      login,
+      name: login,
+      role: "admin",
+      access: null,
+      deploy: false,
+      mayDeploy: true,
+      bootstrap: true,
+      created: 0,
+      addedBy: null,
+      lastSeen: null,
+      githubId: null,
+    };
   }
 }

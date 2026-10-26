@@ -69,10 +69,34 @@ test("settings: set, a number given as a string, bad values explained, reset, lo
   expect(e.status).toBe(403);
 });
 
-test("users: add, make admin, demote, remove; bootstrap admins and yourself are kept", async () => {
-  const dir = fresh({ admins: ["root"] });
+test("users: add by provider account with a role, make admin, demote, remove; bootstrap admins and yourself are kept", async () => {
+  const dir = fresh({
+    admins: ["root"],
+    github: async (login) => (login.startsWith("no-such-") ? null : { id: String(login.length), login }),
+  });
   const root = { dir, who: { login: "root", admin: true } };
-  expect(await run(root, "add_user", { login: "Bo", name: "Bo B" })).toMatchObject({ login: "bo", name: "Bo B", role: "user", addedBy: "root" });
+  // Before their first sign-in: their GitHub account (its id found) or Google email, and one role.
+  const { person } = await run(root, "add_user", { provider: "github", handle: "Cy", role: "read" });
+  expect(person).toMatchObject({
+    waiting: true,
+    provider: "github",
+    handle: "cy",
+    role: "read",
+    roleLabel: "Can authenticate",
+    addedBy: "root",
+  });
+  expect((await run(root, "set_user_role", { person: person.person, role: "write" })).roleLabel).toBe("Can create and edit content");
+  expect((await failure(run(root, "add_user", { provider: "github", handle: "no-such-one", role: "read" }))).message).toMatch(
+    /GitHub has no account/
+  );
+  expect((await run(root, "add_user", { provider: "github", handle: "root", role: "admin" })).note).toBe("root is already an admin.");
+  expect(await run(root, "remove_user", { person: person.person })).toEqual({ removed: { person: person.person } });
+  await dir.users.add(root.who, "bo", { name: "Bo B" });
+  expect((await run(root, "list_users")).find((u: { login?: string }) => u.login == "bo")).toMatchObject({
+    name: "Bo B",
+    role: "write",
+    roleLabel: "Can create and edit content",
+  });
   expect((await run(root, "set_user_role", { login: "bo", role: "admin" })).role).toBe("admin");
   // Bo, an admin now, has the tools.
   expect((await toolsFor(dir, { login: "bo", admin: true })).some((t) => t.name == "list_users")).toBe(true);
@@ -80,7 +104,7 @@ test("users: add, make admin, demote, remove; bootstrap admins and yourself are 
   expect((await toolsFor(dir, { login: "bo" })).some((t) => t.name == "list_users")).toBe(false);
   expect((await failure(run({ dir, who: { login: "bo" } }, "list_users"))).message).toMatch(/no admin power/);
   expect((await run({ dir, who: { login: "bo", admin: true } }, "list_users")).map((u: { login: string; bootstrap: boolean }) => `${u.login}${u.bootstrap ? "*" : ""}`)).toEqual(["bo", "root*"]);
-  let e = await failure(run(root, "set_user_role", { login: "root", role: "user" }));
+  let e = await failure(run(root, "set_user_role", { login: "root", role: "write" }));
   expect([e.status, /deploy/.test(e.message)]).toEqual([403, true]);
   e = await failure(run(root, "remove_user", { login: "root" }));
   expect(e.status).toBe(400);
@@ -88,7 +112,7 @@ test("users: add, make admin, demote, remove; bootstrap admins and yourself are 
   expect([e.status, /deploy/.test(e.message)]).toEqual([403, true]);
   e = await failure(run(root, "remove_user", { login: "nobody" }));
   expect(e.status).toBe(404);
-  e = await failure(run(root, "add_user", { login: "not a login" }));
+  e = await failure(run(root, "add_user", { provider: "github", handle: "not a login", role: "read" }));
   expect(e.status).toBe(403);
   expect(await run(root, "remove_user", { login: "bo" })).toEqual({ removed: "bo" });
   expect(await dir.users.allowed("bo")).toBe(false);
@@ -97,9 +121,9 @@ test("users: add, make admin, demote, remove; bootstrap admins and yourself are 
 test("users: the deploy role, granted and revoked by an admin only", async () => {
   const dir = fresh({ admins: ["root"] });
   const root = { dir, who: { login: "root", admin: true } };
-  await run(root, "add_user", { login: "bo" });
+  await dir.users.add(root.who, "bo");
   expect((await run(root, "list_users")).find((u: { login: string }) => u.login == "bo").deploy).toBe(false);
-  expect(await run(root, "set_user_deploy", { login: "bo", deploy: true })).toMatchObject({ login: "bo", role: "user", deploy: true });
+  expect(await run(root, "set_user_deploy", { login: "bo", deploy: true })).toMatchObject({ login: "bo", role: "write", deploy: true });
   expect(await dir.users.hasDeploy("bo")).toBe(true);
   expect((await failure(run({ dir, who: { login: "bo", admin: true } }, "set_user_deploy", { login: "bo", deploy: false }))).status).toBe(403);
   expect((await run(root, "set_user_deploy", { login: "bo", deploy: false })).deploy).toBe(false);
@@ -107,7 +131,7 @@ test("users: the deploy role, granted and revoked by an admin only", async () =>
 });
 
 test("sharing: the owner sees and changes who has access; nobody else may; the editor's agent defaults to its document", async () => {
-  // People can share content publicly here (anyone with the link): the Access page's switch.
+  // Users can share content publicly here (anyone with the link): the Access page's switch.
   const dir = fresh({ defaults: { public_sharing: true }, admins: ["root"] });
   // Bo and Cy may sign in here (a share goes only to someone who may).
   for (const l of ["bo", "cy"]) await dir.users.add({ login: "root", admin: true }, l);

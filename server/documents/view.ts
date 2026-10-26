@@ -136,7 +136,7 @@ export async function viewAddress(platform: Platform, request: Request, session:
 
 /**
  * The viewer for someone who isn't signed in, at /<owner>/<slug>[/<page>]: a document shared with anyone with the link,
- * while the server lets people share content publicly (Directory.isPublic). They view it only. Null for any other: they
+ * while the server lets users share content publicly (Directory.isPublic). They view it only. Null for any other: they
  * sign in first, as before.
  */
 export async function viewPublic(platform: Platform, request: Request, first: string, second: string, wanted: string): Promise<Response | null> {

@@ -119,7 +119,7 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   expect((await share(id, bo, "editor")).error).toBeUndefined();
   const canEdit = async () => ((await (await get(server, `/d/${id}/api/doc?user=${bo}`)).json()) as { canEdit?: boolean }).canEdit;
   expect(await canEdit()).toBe(true);
-  await role("user");
+  await role("write");
   await expect.poll(canEdit, { timeout: 15_000 }).toBe(false);
   expect((await front(server, bo)).html).not.toContain("erga-edit-button");
 });

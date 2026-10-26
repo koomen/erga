@@ -86,6 +86,14 @@ export class Identities {
     return (await this.sql.all<Row>("SELECT * FROM identities WHERE login = ?1 ORDER BY provider", login.toLowerCase())).map(fromRow);
   }
 
+  /** Every account's identities, by login (the Users page). */
+  async byLogin(): Promise<Map<string, Identity[]>> {
+    const map = new Map<string, Identity[]>();
+    for (const r of await this.sql.all<Row>("SELECT * FROM identities ORDER BY provider"))
+      map.set(r.login, [...(map.get(r.login) ?? []), fromRow(r)]);
+    return map;
+  }
+
   /** The statements that make an identity's kept addresses those it vouches for now (vouchedEmails). */
   private emailStatements(login: string, v: Vouched, at: number): Statement[] {
     return [
@@ -176,10 +184,11 @@ export class Identities {
 
   /**
    * A new account, under the username its person chose, with the identity that signed them in: both or neither.
-   * The access rules say what it may do (a rule for this one account is the admin's, or local development's: `extra`).
-   * The username must have no problem (usernameProblem); two people who choose one at once can't both have it.
+   * `role`: the one an admin gave them (people.ts; `extra` ends their wait), or local development's; none: only the
+   * group rules let them in. The username must have no problem (usernameProblem); two people who choose one at once
+   * can't both have it.
    */
-  async createAccount(username: string, v: Vouched, o: { role?: "user" | "admin"; extra?: Statement[] } = {}): Promise<string> {
+  async createAccount(username: string, v: Vouched, o: { role?: "admin" | "write" | "read"; extra?: Statement[] } = {}): Promise<string> {
     const login = username.trim().toLowerCase();
     const problem = await this.usernameProblem(login);
     if (problem) throw new NotAllowed(problem);
@@ -187,7 +196,14 @@ export class Identities {
     const at = Date.now(), name = v.name?.trim().slice(0, 100) || login;
     try {
       await this.sql.batch([
-        ["INSERT INTO users (login, name, role, created, added_by, last_seen) VALUES (?1, ?2, ?4, ?3, NULL, ?3)", login, name, at, o.role ?? "user"],
+        [
+          "INSERT INTO users (login, name, role, access, created, added_by, last_seen) VALUES (?1, ?2, ?4, ?5, ?3, NULL, ?3)",
+          login,
+          name,
+          at,
+          o.role == "admin" ? "admin" : "user",
+          o.role == "write" || o.role == "read" ? o.role : null,
+        ],
         this.linkStatement(login, v, at),
         ...this.emailStatements(login, v, at),
         ...(o.extra ?? []),
@@ -196,7 +212,7 @@ export class Identities {
       throw new NotAllowed(`"${login}" is taken: choose another.`);
     }
     this.users.forget(login);
-    if (o.extra?.length) this.users.rulesChanged();
+    if (o.role) this.users.accessChanged();
     return login;
   }
 }

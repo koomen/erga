@@ -38,11 +38,32 @@ import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import { b64, SESSION_COOKIE, sign, SIGNED_OUT, unb64, unsign } from "./session.ts";
 import { openRelay, randomNonce, relayNonce, relayState } from "../source/index.ts";
-import type { Vouched } from "../directory/index.ts";
+import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
 
-/** GitHub's two origins from the deploy's one (the stand-in serves its API under /api). */
-const originsOf = (platform: Platform) => ({ www: platform.signIn.github, api: platform.signIn.github == "https://github.com" ? "https://api.github.com" : `${platform.signIn.github}/api` });
+/** GitHub's API from its origin (the stand-in serves its API under /api). */
+const apiOf = (github: string) => (github == "https://github.com" ? "https://api.github.com" : `${github}/api`);
+/** GitHub's two origins from the deploy's one. */
+const originsOf = (platform: Platform) => ({ www: platform.signIn.github, api: apiOf(platform.signIn.github) });
+
+/**
+ * A GitHub account by its login, as GitHub's public users API answers (GET /users/<login>): its numeric id and its
+ * login now; null when GitHub has no such account. For a GitHub account added on the Users page (server/directory/people.ts).
+ */
+export function githubAccounts(github: string): GithubLookup {
+  return async (login) => {
+    const r = await fetch(`${apiOf(github)}/users/${encodeURIComponent(login)}`, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "Erga" },
+    }).catch(() => null);
+    if (r?.status == 404) return null;
+    const body = r?.ok ? ((await r.json().catch(() => null)) as { id?: number; login?: string; type?: string } | null) : null;
+    if (!body?.id || !body.login)
+      throw new NotAllowed(`GitHub didn't answer for "${login}" (${r ? `status ${r.status}` : "no answer"}): try again in a minute.`);
+    if (body.type && body.type != "User")
+      throw new NotAllowed(`"${body.login}" is a GitHub ${body.type.toLowerCase()}, not a person's account.`);
+    return { id: String(body.id), login: body.login };
+  };
+}
 
 const STATE = "erga_oauth";
 const DAY = 24 * 60 * 60;
