@@ -23,7 +23,7 @@ type Canvas = {
   w?: number;
   h?: number;
 };
-/** A presentation's steps, as the page says them (editor-agent/PROMPT.md, "Presentations"). */
+/** A presentation's steps, as the page says them (agents/document/PROMPT.md, "Presentations"). */
 type Steps = {
   count(): unknown;
   go(n: number): void;
@@ -308,7 +308,7 @@ export default function reader(C: ReaderConfig): void {
     } catch {}
     requestAnimationFrame(watch);
   })();
-  // A presentation (editor-agent/PROMPT.md, "Presentations"): the page says it has steps (window.ergaSteps).
+  // A presentation (agents/document/PROMPT.md, "Presentations"): the page says it has steps (window.ergaSteps).
   function steps(): Steps | null {
     const p = (window as Window & { ergaSteps?: Steps }).ergaSteps;
     return p && typeof p.count == "function" && typeof p.go == "function" && typeof p.current == "function" ? p : null;

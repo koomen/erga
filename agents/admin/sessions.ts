@@ -21,21 +21,21 @@
 //
 //   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits
 
-import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "../../agents/admin.ts";
-import { panelPrefs, type PanelPrefs } from "../../agents/admin-chats.ts";
-import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../../agents/chat-store.ts";
-import { restoredLog } from "../../agents/checkpoint.ts";
-import type { ToolWho } from "../../agents/tools.ts";
-import { isModelChoice, MODELS } from "../../editor-agent/session.ts";
+import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "./agent.ts";
+import { panelPrefs, type PanelPrefs } from "./panel.ts";
+import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
+import { restoredLog } from "../checkpoint.ts";
+import type { ToolWho } from "../tools.ts";
+import { isModelChoice, MODELS } from "../document/session.ts";
 import { emptyLog, type Log, type Offer } from "../../shared/agent-log.ts";
 import type { CredentialStatus } from "../../deploy/credential.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
-import { forgetHome } from "../home/index.ts";
-import { authOps, SHARE_ADMIN_HOURS } from "../identity/index.ts";
-import { LOCKED } from "../directory/index.ts";
-import { whoOf, type Platform } from "../platform.ts";
-import type { GithubStatus, SourceAnswer, SourceRead } from "../source/index.ts";
+import { forgetHome } from "../../server/home/index.ts";
+import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
+import { LOCKED } from "../../server/directory/index.ts";
+import { whoOf, type Platform } from "../../server/platform.ts";
+import type { GithubStatus, SourceAnswer, SourceRead } from "../../server/source/index.ts";
 
 const enc = new TextEncoder();
 

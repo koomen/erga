@@ -1,4 +1,4 @@
-// The agent's tools on every file (editor-agent/session.ts, through the document's /api/ext, as an external agent calls
+// The agent's tools on every file (agents/document/session.ts, through the document's /api/ext, as an external agent calls
 // them): read gives a PDF (a range of its pages) and an image, write takes bytes, ls says each file's kind, size and
 // time, grep searches PDFs through their text (extracted once, kept by the PDF's hash), edit refuses a file kept whole,
 // and someone who may only view has the tools that change nothing.

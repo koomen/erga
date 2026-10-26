@@ -1,13 +1,13 @@
 // What the admin agents' object keeps of each admin's agent conversation, and
-// the agent going on with it (agents/admin.ts, `stored`): the transcript and the
+// the agent going on with it (agents/admin/agent.ts, `stored`): the transcript and the
 // model's messages, kept step by step (agents/checkpoint.ts); and the panel's prefs.
 // A run cut off in the middle and resumed: tests/agent-resume.test.ts.
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
-import { panelPrefs } from "../agents/admin-chats";
-import { startAdminAgent } from "../agents/admin";
+import { panelPrefs } from "../agents/admin/panel";
+import { startAdminAgent } from "../agents/admin/agent";
 import { ChatTables, tableStore } from "../agents/chat-store";
 import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } from "../agents/checkpoint";
 import { Type } from "typebox";

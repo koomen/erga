@@ -8,7 +8,7 @@ import { Awareness } from "y-protocols/awareness";
 import * as Layer from "effect/Layer";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import * as Effect from "effect/Effect";
-import { PACE, YjsWorkspace, type Pacer, type WorkspaceError } from "../editor-agent/workspace";
+import { PACE, YjsWorkspace, type Pacer, type WorkspaceError } from "../agents/document/workspace";
 import { authorOf, files, introduce, type Author } from "../document/content";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */

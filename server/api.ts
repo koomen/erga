@@ -26,7 +26,7 @@
 // Tools are a registry (`TOOLS`): a name, a description, arguments as JSON
 // Schema and a `run`, given who's asking and the platform. Adding one is
 // adding an entry; REST, MCP and the guide all list it. The document tools
-// (read, edit, write, ... from editor-agent/session.ts) are added with a `document`
+// (read, edit, write, ... from agents/document/session.ts) are added with a `document`
 // argument and run in that document's host, as the person's agent. The
 // tools the editor's own agent has too (agents/tools.ts: sharing, and the
 // server's settings and users for an admin) are added as they are; the admin
@@ -35,7 +35,7 @@
 import type { FileData } from "../document/document.ts";
 import { isDocKind, type DocKind } from "../document/pages.ts";
 import { validateToolArguments } from "@mariozechner/pi-ai";
-import { CHANGES, documentToolSpecs, type ToolContent, type ToolSpec } from "../editor-agent/session";
+import { CHANGES, documentToolSpecs, type ToolContent, type ToolSpec } from "../agents/document/session";
 import { type Action, type DocRow, ID, LOCKED, NO_WRITE, nameOf, newDocId, roleMay, type Route } from "./directory/index.ts";
 import { fromElsewhere } from "./pages/index.ts";
 import { forwarded, makeDoc, startingFiles } from "./documents/index.ts";

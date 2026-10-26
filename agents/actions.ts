@@ -1,10 +1,10 @@
 // The rule: an embedded agent can do everything its person can do in its
 // domain, so they can ask for anything there in words.
 //
-//   the admin agent     (agents/admin.ts: on every /admin page) everything on /admin: the settings, the API keys,
+//   the admin agent     (agents/admin/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
 //                       sign-in (Authentication), the change log, the users, the dashboard of source and deploys (Ops), the
 //                       homepage's deploy, and the admin's own agent tokens (/settings)
-//   the document agent  (editor-agent/session.ts, with agents/tools.ts: in the editor) everything a person does with a document in
+//   the document agent  (agents/document/session.ts, with agents/tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
 //
 // The one exception is a secret: an API key, a GitHub app's secret, a new agent token is pasted
@@ -14,7 +14,7 @@
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
 // is none. tests/agent-actions.test.ts reads the routes from each file's own route table (the comments at the
-// top of server/admin/agent.ts, server/admin/pages.ts, server/api.ts, ...), the document API and the file tree's
+// top of agents/admin/sessions.ts, server/admin/pages.ts, server/api.ts, ...), the document API and the file tree's
 // operations, and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 

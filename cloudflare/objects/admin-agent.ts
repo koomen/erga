@@ -1,10 +1,10 @@
 // The admins' agents, as a Durable Object (one, named "admin"): the Cloudflare
-// side of server/admin/agent.ts. It gives the agents their SQLite and the
+// side of agents/admin/sessions.ts. It gives the agents their SQLite and the
 // Platform, forwards the calls the Worker makes (RPC), and wakes a run a
 // restart cut off (its alarm).
 
 import { DurableObject } from "cloudflare:workers";
-import { AdminAgents, type AdminAgentObject } from "../../server/admin/index.ts";
+import { AdminAgents, type AdminAgentObject } from "../../agents/admin/sessions.ts";
 import type { Env } from "../env";
 import { platform } from "../platform";
 import { STALE_MS } from "../../agents/chat-store";

@@ -1,6 +1,6 @@
 // Helpers for the presentation tests: documents made from a
 // template, opened in the viewer or the editor, and the step controls under
-// them (server/pages/viewer.ts, STEPS_BOOT; editor-agent/PROMPT.md, "Presentations").
+// them (server/pages/viewer.ts, STEPS_BOOT; agents/document/PROMPT.md, "Presentations").
 //
 // The document's page runs in a frame: in the viewer the viewer's frame itself
 // (inline, an opaque origin), in the editor the host page's visible frame on the

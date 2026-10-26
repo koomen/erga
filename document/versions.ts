@@ -289,7 +289,7 @@ export function fallbackDescription(c: Pick<Changes, "added" | "removed" | "chan
   return verbs.length ? verbs.slice(0, 2).join(", ") : "No changes";
 }
 
-/** The model that writes descriptions: the latest Sonnet (editor-agent/session.ts's MODELS.sonnet). */
+/** The model that writes descriptions: the latest Sonnet (agents/document/session.ts's MODELS.sonnet). */
 export const DESCRIBE_MODEL = "claude-sonnet-5-5";
 
 /**

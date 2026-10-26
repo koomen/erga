@@ -26,7 +26,7 @@
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
-//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; server/admin/agent.ts)
+//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; agents/admin/sessions.ts)
 //                              Every /admin page has the same layout, and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own door.
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
@@ -40,7 +40,8 @@
 // the documents' pages origin, is for Erga's admins only: one guard before
 // them all (server/identity/admins-only.ts lists what's exempt, and why).
 
-import { adminAgentApi, adminGate, adminGuideApi, isAdminAgentPath, isAdminPath } from "./admin/index.ts";
+import { adminGate, isAdminPath } from "./admin/index.ts";
+import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
 import { serverApi, tokensDoor } from "./api.ts";
 import { mayDeploy } from "./deploys/access.ts";
 import { frontDoor, isPagesSite } from "./documents/index.ts";

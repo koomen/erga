@@ -7,7 +7,7 @@ export function mountPause(shell: Shell) {
 
   // Pausing the page: a page that reacts to clicks and keys (slides that
   // advance on click, a game) gets in the way of editing its text. If it
-  // defines window.ergaPause (editor-agent/PROMPT.md, rule 10), the pause button
+  // defines window.ergaPause (agents/document/PROMPT.md, rule 10), the pause button
   // tells it to stop, and only the editor answers clicks until it resumes.
   // A page that can't be paused gets the button disabled, with a card that
   // offers to have the agent make it pausable.

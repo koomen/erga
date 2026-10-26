@@ -4,13 +4,24 @@
 import * as Effect from "effect/Effect";
 import { type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
-import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type ViewResult } from "../shared/agent-log";
-import { CONSOLE_LEVELS, describeAct, describeConsole, describeEvents, describeNetwork, describeTab, parseSince, type ConsoleLevel, type LiveRequest, type LiveResult } from "../shared/live-page";
-import { pageAddress, type TreeEntry, type TreeOp } from "../document/pages";
-import type { Naming } from "../server/directory/index.ts";
-import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../document/versions";
+import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import {
+  CONSOLE_LEVELS,
+  describeAct,
+  describeConsole,
+  describeEvents,
+  describeNetwork,
+  describeTab,
+  parseSince,
+  type ConsoleLevel,
+  type LiveRequest,
+  type LiveResult,
+} from "../../shared/live-page";
+import { pageAddress, type TreeEntry, type TreeOp } from "../../document/pages";
+import type { Naming } from "../../server/directory/index.ts";
+import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../../document/versions";
 import { WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
-import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../document/pdf";
+import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;

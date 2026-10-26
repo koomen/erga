@@ -1,6 +1,6 @@
 // The guide an external agent reads first (GET /api/ext on a document): the document's tools, and how to call them.
 
-import { agentName } from "../document/content";
+import { agentName } from "../../document/content";
 import { DOCUMENT_RULES, FILES_PROMPT, PAGES_PROMPT } from "./prompt";
 import type { ToolSpec } from "./tools";
 

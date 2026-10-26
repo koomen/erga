@@ -33,14 +33,14 @@
 import { Agent as PiAgent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import * as Redacted from "effect/Redacted";
 import { Type } from "typebox";
-import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "../editor-agent/session";
-import { fileRefs, messageContent, type Attachment } from "../shared/attach";
-import { emptyLog, offerOf, reduce, type Log, type LogEvent, type Offer } from "../shared/agent-log";
-import { agentName } from "../document/content";
-import { runServerTool, SERVER_TOOLS, toolResult, type ToolWho } from "./tools";
-import { Checkpoints, restoredLog, sendLate, type ChatStore, type StoredChat } from "./checkpoint";
-import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../server/source/index.ts";
-import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../server/directory/index.ts";
+import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "../document/session";
+import { fileRefs, messageContent, type Attachment } from "../../shared/attach";
+import { emptyLog, offerOf, reduce, type Log, type LogEvent, type Offer } from "../../shared/agent-log";
+import { agentName } from "../../document/content";
+import { runServerTool, SERVER_TOOLS, toolResult, type ToolWho } from "../tools";
+import { Checkpoints, restoredLog, sendLate, type ChatStore, type StoredChat } from "../checkpoint";
+import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../../server/source/index.ts";
+import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
 
 /** What the dashboard tools do, as the admin: the source and deploys dashboard on /admin/ops, and agent tokens. */
 export interface DashboardOps {
@@ -205,7 +205,7 @@ export function sourceTools(read: (q: SourceRead) => Promise<SourceAnswer>, guar
       Type.Object({ ref: REF, path: Type.Optional(Type.String({ description: "The folder, from the repository's root, e.g. client (default: the root)" })), recursive: Type.Optional(Type.Boolean({ description: "Every file under the folder, not only its own entries" })) }),
       (a) => ({ op: "list", ref: str(a.ref), path: str(a.path), recursive: a.recursive === true })),
     tool("read_source", "Read a source file", `Reads a file of Erga's own source, with line numbers: all of it, or lines from to to (1-based, both included). At most ${MAX_LINES} lines at a time; the answer says how to read on. README.md maps the repository; AGENTS.md says how work is done. Read-only.`,
-      Type.Object({ ref: REF, path: Type.String({ description: "The file, from the repository's root, e.g. agents/admin.ts" }), from: Type.Optional(Type.Integer({ description: "The first line (default 1)" })), to: Type.Optional(Type.Integer({ description: "The last line (default: the end)" })) }),
+      Type.Object({ ref: REF, path: Type.String({ description: "The file, from the repository's root, e.g. agents/admin/agent.ts" }), from: Type.Optional(Type.Integer({ description: "The first line (default 1)" })), to: Type.Optional(Type.Integer({ description: "The last line (default: the end)" })) }),
       (a) => ({ op: "read", ref: str(a.ref), path: String(a.path ?? ""), from: num(a.from), to: num(a.to) })),
     tool("search_source", "Search the source", `Searches the text files of Erga's own source, as grep does: each line that matches, as path:line: text. query is plain text unless regex is true (a JavaScript regular expression). path keeps to a folder or a file; glob to file names (*.ts) or paths (src/**/*.css). limit: at most this many lines (default 100, at most ${MAX_MATCHES}). Read-only.`,
       Type.Object({
