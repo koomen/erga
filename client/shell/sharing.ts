@@ -1,9 +1,8 @@
 // Share: the document with people (its owner only), and with an external agent.
 
 import { colorFor, type Author } from "../../document/content";
-import { BASE } from "./base";
 import { shareWithAgent } from "../agent/share-agent";
-import { $, type Shell } from "./shell";
+import { BASE, $, type Shell } from "./shell";
 
 export function mountSharing(shell: Shell) {
 

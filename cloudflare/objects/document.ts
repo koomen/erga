@@ -34,7 +34,6 @@ import { forgetDecisions } from "../../server/documents/index.ts";
 import { platform } from "../platform";
 import { CALLS, DeployGate, DEPLOYED_HEADER, deployedOf, STALE, staleResponse, type Call } from "./document-stub";
 import { DiskLink } from "../../document/disk";
-import { homeChanged } from "../current-files";
 import type { Env } from "../env";
 import { blobsOf } from "../blobs";
 import { safeAvatar } from "../../shared/avatars";
@@ -101,7 +100,10 @@ export class DocumentObject extends DurableObject<Env> {
       }),
       home: {
         forget: (docId) => env.HOME.getByName("home").forget(docId),
-        changed: (docId) => homeChanged(env, docId),
+        // A new version: if it is the homepage, its next deploy is scheduled.
+        changed: async (docId) => {
+          await env.HOME.getByName("home").changed(docId);
+        },
       },
       disk: { storage: (only) => this.disk.storage(this.ctx.storage, only) },
       timing: {
