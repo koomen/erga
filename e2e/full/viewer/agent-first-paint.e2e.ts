@@ -6,7 +6,8 @@
 // viewer's copy of the page went before the editor's had painted, so the document went blank and came back.
 import { expect, servers, test, type Page } from "../../helpers/fixtures";
 import { topDoc } from "./band";
-import { openViewer, pause } from "./viewer";
+import { openViewer } from "./viewer";
+import { sleep } from "../../../shared/time";
 
 await servers.main();
 
@@ -64,7 +65,7 @@ async function open(page: Page, url: string, how: "load" | "reload", at: Spot) {
   try {
     if (how == "load") await page.goto(url + "?edit"); else await page.reload();
     await expect.poll(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready") && !!(window as any).ergaPage), { timeout: 15_000 }).toBe(true);
-    await pause(700);
+    await sleep(700);
   } finally { await cdp.send("Page.stopScreencast").catch(() => {}); }
   const { spots, shifted, scales, origin } = await page.evaluate(() => ({
     spots: (window as any).__spots as Spot[], shifted: (window as any).__shifted as string[], scales: (window as any).__scales as Scale[],

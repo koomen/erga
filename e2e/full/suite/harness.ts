@@ -41,18 +41,6 @@ export function expect(cond: unknown, what: string, detail?: unknown): asserts c
   if (!cond) throw new Failure(what + (detail === undefined ? "" : `\n${typeof detail == "string" ? detail : JSON.stringify(detail, null, 1).slice(0, 2000)}`));
 }
 
-/** Waits until `f` holds, polling; fails with `what` after `ms`. */
-export async function until(f: () => unknown | Promise<unknown>, ms: number, what: string, detail?: () => unknown): Promise<void> {
-  const t0 = Date.now();
-  for (;;) {
-    try { if (await f()) return; } catch { /* not yet */ }
-    if (Date.now() - t0 > ms) throw new Failure(`timed out after ${ms}ms: ${what}${detail ? `\n${JSON.stringify(await detail(), null, 1)?.slice(0, 2000)}` : ""}`);
-    await sleep(20);
-  }
-}
-
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 export interface Rng {
   (): number;
   int(n: number): number;

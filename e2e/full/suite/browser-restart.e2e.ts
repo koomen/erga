@@ -1,5 +1,6 @@
 // The multiplayer suite in real tabs: a tab rides out a restart of its own server.
-import { expect, until } from "./harness";
+import { expect } from "./harness";
+import { until } from "../../helpers/fixtures";
 import { browserTest, openAs } from "./suite";
 
 browserTest("e2e/full/suite/browser-restart.e2e.ts", "a tab rides out a server restart, keeping what was typed while it was down", { needs: ["restart"] }, async (ctx, tab) => {

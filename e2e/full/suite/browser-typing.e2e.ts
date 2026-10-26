@@ -1,7 +1,8 @@
 // The multiplayer suite in real tabs: people typing on the page, their carets and
 // coloured marks, interleaved typing, ⌘Z undoing only your own, a join undone for all.
 import { Participant } from "./client";
-import { expect, until } from "./harness";
+import { expect } from "./harness";
+import { until } from "../../helpers/fixtures";
 import { browserTest, caretIn, noErrors, openAs, peerNames } from "./suite";
 
 const FILE = "e2e/full/suite/browser-typing.e2e.ts";

@@ -21,6 +21,7 @@
 
 import { constants as zlib, createGzip } from "node:zlib";
 import { freePort } from "../helpers/server";
+import { sleep } from "../../shared/time";
 
 export interface Hit {
   url: string;
@@ -44,7 +45,6 @@ export interface Proxy {
 }
 
 const now = () => performance.timeOrigin + performance.now();
-const sleep = (ms: number) => (ms > 0 ? Bun.sleep(ms) : Promise.resolve());
 /** A WebSocket through the proxy: the server's end (open before the browser's is), what it sent before the browser's end was up, and that end. */
 type Socket = { hit: Hit; up: WebSocket; early: (string | ArrayBuffer)[]; queue: (string | Buffer)[]; client?: import("bun").ServerWebSocket<Socket> };
 const COMPRESS = /^(text\/|application\/(javascript|json|xml|wasm)|image\/svg)/;

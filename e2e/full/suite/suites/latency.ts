@@ -5,7 +5,9 @@
 // on a deployment, set it to what production should meet.
 
 import { converged, Participant } from "../client";
-import { expect, percentile, sleep, until, type Ctx, type Test } from "../harness";
+import { expect, percentile, type Ctx, type Test } from "../harness";
+import { sleep } from "../../../../shared/time";
+import { until } from "../../../helpers/fixtures";
 
 const budget = (ctx: Ctx) => Number(process.env.ERGA_SUITE_P95_MS) || (ctx.target.name == "local" ? 60 : 400);
 

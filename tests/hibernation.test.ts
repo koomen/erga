@@ -19,6 +19,7 @@ import { files } from "../document/content";
 import { decodeStart } from "../shared/room-socket";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
+import { sleep } from "../shared/time";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -31,7 +32,6 @@ function memory(): Sql {
   };
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const syncMessage = (write: (e: encoding.Encoder) => void) => { const e = encoding.createEncoder(); encoding.writeVarUint(e, 0); write(e); return encoding.toUint8Array(e); };
 
 /** A tab: its own replica of the doc, speaking the room's protocol over a pretend socket. */

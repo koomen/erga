@@ -8,7 +8,8 @@
 // another (and preloads it), a recording it fetches and plays from a Blob, and an <audio> that loads its own.
 import type { Frame } from "playwright-core";
 import { expect, servers, test, type Page } from "../../helpers/fixtures";
-import { openViewer, pause } from "./viewer";
+import { openViewer } from "./viewer";
+import { sleep } from "../../../shared/time";
 
 await servers.main();
 
@@ -56,7 +57,7 @@ for (const [what, kept] of STATES) {
     await page.goto(url + "?edit");
     await expect.poll(() => editing(page), { timeout: 15_000 }).toBe(true);
     expect(await page.evaluate(() => document.body.classList.contains("agent-open")), "the panel as kept").toBe((kept["erga:settings:v1"] as { agent: boolean }).agent);
-    await pause(1500);
+    await sleep(1500);
     expect(count(), `${what}: opened in the editor`).toEqual(times(1));
     // The page that ran is the one the editor is on: its widget drew.
     expect(await docFrame(page).evaluate(() => { const c = document.getElementById("balls") as HTMLCanvasElement; return c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 == 3 && v > 0); }), "the widget drew").toBe(true);
@@ -66,7 +67,7 @@ for (const [what, kept] of STATES) {
     count = counting(page);
     await page.reload();
     await expect.poll(() => editing(page), { timeout: 15_000 }).toBe(true);
-    await pause(1500);
+    await sleep(1500);
     expect(count(), `${what}: reloaded in the editor`).toEqual(times(1));
     page.context().removeAllListeners("request");
 
@@ -76,11 +77,11 @@ for (const [what, kept] of STATES) {
     await page.locator("#btn-edit").click();
     await expect.poll(() => viewing(page), { timeout: 10_000 }).toBe(true);
     expect(new URL(page.url()).search, "the viewer's address").toBe("");
-    await pause(800);
+    await sleep(800);
     await page.locator(".erga-edit-button").click();
     await expect.poll(() => editing(page), { timeout: 10_000 }).toBe(true);
     expect(new URL(page.url()).search, "the editor's address").toBe("?edit");
-    await pause(800);
+    await sleep(800);
     expect(await mark(page), "the same page").toBe(run);
     expect(count(), `${what}: out of the editor and back`).toEqual(times(0));
     page.context().removeAllListeners("request");
@@ -95,12 +96,12 @@ test("a reader's page loads once too, and going into the editor from it loads no
   const count = counting(page);
   await openViewer(page, url, { width: 1300, height: 800 });
   await expect.poll(() => viewing(page), { timeout: 10_000 }).toBe(true);
-  await pause(1500);
+  await sleep(1500);
   expect(count(), "the viewer").toEqual(times(1));
   const run = await mark(page);
   await page.locator(".erga-edit-button").click();
   await expect.poll(() => editing(page), { timeout: 15_000 }).toBe(true);
-  await pause(1000);
+  await sleep(1000);
   expect(await mark(page), "the same page").toBe(run);
   expect(count(), "the viewer, then the editor").toEqual(times(1));
 });

@@ -16,9 +16,9 @@ import { FileStore, Room, StateStore } from "../document/room";
 import { fileStoreOf, Journal, KEYS, MemoryStorage, PART, stateStoreOf, type Storage } from "../document/storage";
 import { files, introduce } from "../document/content";
 import { joinLocal } from "../document/room";
+import { sleep } from "../shared/time";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ada = { user: "ada", name: "Ada", color: "#2f6fec", kind: "person" as const };
 
 /** MemoryStorage that counts reads, and can be made to fail a write (a crash at that point). */

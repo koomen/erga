@@ -3,7 +3,9 @@
 // attributed to whoever made it.
 
 import { Participant } from "../client";
-import { expect, sleep, until, type Test } from "../harness";
+import { expect, type Test } from "../harness";
+import { sleep } from "../../../../shared/time";
+import { until } from "../../../helpers/fixtures";
 
 export const presence: Test[] = [
   {

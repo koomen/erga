@@ -9,6 +9,7 @@ import { Document, type DocumentDeps } from "../document/document";
 import { KEYS, MemoryStorage } from "../document/storage";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
+import { sleep } from "../shared/time";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -41,7 +42,6 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
 }
 
 const get = (doc: Document, path: string, headers: Record<string, string> = {}) => doc.handle(new Request(`http://doc${path}`, { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers } }));
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("a document is made from files, read from storage while closed, edited by a publish, versioned and restored", async () => {
   const { dir, make, storage } = setup();

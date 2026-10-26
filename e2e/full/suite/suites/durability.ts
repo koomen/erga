@@ -5,7 +5,9 @@
 
 import * as Y from "yjs";
 import { converged, Participant } from "../client";
-import { expect, sleep, until, type Test } from "../harness";
+import { expect, type Test } from "../harness";
+import { sleep } from "../../../../shared/time";
+import { until } from "../../../helpers/fixtures";
 
 const STORE_MS = 5000;
 

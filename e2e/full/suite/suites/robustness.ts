@@ -5,7 +5,9 @@
 
 import * as encoding from "lib0/encoding";
 import { converged, Participant } from "../client";
-import { expect, sleep, until, type Ctx, type Test } from "../harness";
+import { expect, type Ctx, type Test } from "../harness";
+import { sleep } from "../../../../shared/time";
+import { until } from "../../../helpers/fixtures";
 import type { Doc } from "../target";
 
 /** Opens a raw socket to the room, sends `messages`, and closes it. */
