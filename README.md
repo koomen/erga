@@ -166,7 +166,10 @@ health checks and rollbacks work.
       admin/          the admin pages' scripts (admin-agent.ts, admin-nav.ts, admin-share.ts)
       pages/          the other pages' scripts: the files view, the settings, the pages tree
       live/           open pages across a redeploy (live.ts, client.ts, restore.ts)
-      inline/         the scripts a page carries inline (build.ts --inline writes server/pages/inline-code.ts)
+      inline/         the scripts and styles a page carries inline, typed (build.ts --inline writes
+                      server/pages/inline-code.ts): the documents list, the Ops, install and admin pages, ...
+      common/         what the inline scripts and the bundles share: fast-click.ts, new-doc.ts, fade.ts, ...
+      styles/         admin.css and ops.css, which the build writes as the admin pages' one stylesheet
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
                   (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the app's Durable Objects (objects/:
                   each gives its logic in server/, agents/ or document/ storage, alarms and sockets, and decides
