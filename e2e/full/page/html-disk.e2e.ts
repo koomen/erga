@@ -2,14 +2,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../../helpers/fixtures";
-import { F, openEditor, TIMESCALE } from "../../helpers/editor";
+import { DISK_MS, F, openEditor, TIMESCALE } from "../../helpers/editor";
 
 await servers.main();
 
 test("a disk edit reaches the page, patched in place, with the change marked exactly, and the marks fade", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("Where the leads go.", "Where the leads went."));
-  await expect.poll(() => ed.textOf("figcaption")).toBe("Where the leads went.");
+  await expect.poll(() => ed.textOf("figcaption"), { timeout: DISK_MS }).toBe("Where the leads went.");
   expect(await ed.count("[data-erga-id]")).toBeGreaterThanOrEqual(9);
   expect(await ed.frame<boolean>(`!!${F}.querySelector("figcaption.erga-flash")`)).toBe(false);
   const m = await ed.marks();
@@ -23,7 +23,7 @@ test("a disk edit reaches the page, patched in place, with the change marked exa
 test("a diagram added on disk shows up without a reload, and the page still edits", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("<h2>What changed</h2>", `<svg id="diagram" width="80" height="20"><rect width="80" height="20" fill="#c00"/></svg>\n    <h2>What changed</h2>`));
-  await expect.poll(() => ed.frame<boolean>(`!!${F}.getElementById("diagram")`)).toBe(true);
+  await expect.poll(() => ed.frame<boolean>(`!!${F}.getElementById("diagram")`), { timeout: DISK_MS }).toBe(true);
   await expect.poll(() => ed.count("[data-erga-id]")).toBeGreaterThanOrEqual(9);
 });
 

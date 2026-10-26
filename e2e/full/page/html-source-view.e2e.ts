@@ -1,13 +1,13 @@
 // The source view, ⌘⇧P ("HTML page").
 import { expect, servers, test } from "../../helpers/fixtures";
-import { F, openEditor } from "../../helpers/editor";
+import { DISK_MS, F, openEditor } from "../../helpers/editor";
 
 await servers.main();
 
 test("⌘⇧P shows the file, and again goes back to a page that edits", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("Where the leads go.", "Where leads go now."));
-  await expect.poll(() => ed.textOf("figcaption")).toBe("Where leads go now.");
+  await expect.poll(() => ed.textOf("figcaption"), { timeout: DISK_MS }).toBe("Where leads go now.");
   await ed.press("ControlOrMeta+Shift+p");
   await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("source")`)).toBe(true);
   expect(await ed.source()).toContain("Where leads go now.");

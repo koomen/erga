@@ -1,6 +1,6 @@
 // Track changes: every change, yours or from disk, marked as a diff from when it was switched on ("HTML page").
 import { expect, servers, test } from "../../helpers/fixtures";
-import { openEditor } from "../../helpers/editor";
+import { DISK_MS, openEditor } from "../../helpers/editor";
 
 await servers.main();
 
@@ -10,7 +10,15 @@ test("tracking marks your edits and the disk's; it's a diff, so typing and delet
   await ed.clickEnd("h1");
   await ed.type(" too");
   ed.write(ed.disk().replace("Where the leads go.", "Where leads go."));
-  await expect.poll(async () => { const m = await ed.marks(); return m.added.some((x) => /too/.test(x)) && m.gone.join("|").trim() == "Edited on diskthe"; }).toBe(true);
+  await expect
+    .poll(
+      async () => {
+        const m = await ed.marks();
+        return m.added.some((x) => /too/.test(x)) && m.gone.join("|").trim() == "Edited on diskthe";
+      },
+      { timeout: DISK_MS }
+    )
+    .toBe(true);
   for (let i = 0; i < 4; i++) await ed.press("Backspace");
   await expect.poll(async () => { const m = await ed.marks(); return !m.added.some((x) => /too/.test(x)) && m.gone.length == 1; }).toBe(true);
   await ed.type("s");

@@ -12,24 +12,19 @@ import { clickOn, js, openTreeEditor, paths } from "./tree";
  * as a person's would, until it shows.
  */
 async function clickWhenShown(page: Page, selector: string, what: string) {
+  const shown = () =>
+    page.evaluate((sel) => {
+      const g = document.querySelector(sel),
+        r = g?.getBoundingClientRect();
+      return (
+        !!r?.width &&
+        document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest(sel) == g &&
+        getComputedStyle(g!.closest(".chrome") ?? g!).opacity == "1"
+      );
+    }, selector);
   let x = 200;
-  await until(
-    async () => {
-      const ok = await page.evaluate((sel) => {
-        const g = document.querySelector(sel),
-          r = g?.getBoundingClientRect();
-        return (
-          !!r?.width &&
-          document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest(sel) == g &&
-          getComputedStyle(g!.closest(".chrome") ?? g!).opacity == "1"
-        );
-      }, selector);
-      if (!ok) await page.mouse.move((x = x == 200 ? 400 : 200), 300, { steps: 4 });
-    return ok;
-    },
-    10_000,
-    `${what} can be clicked`
-  );
+  const woken = async () => (await shown()) || (await page.mouse.move((x = x == 200 ? 400 : 200), 300, { steps: 4 }), false);
+  await until(woken, 10_000, `${what} can be clicked`);
   await clickOn(page, selector);
 }
 
