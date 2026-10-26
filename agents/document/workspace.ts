@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Y from "yjs";
 import { changesBetween, rebase } from "../../document/merge";
 import { applyChanges, assets, files, folders, stamp, type Author } from "../../document/content";
+import { cleanPath } from "../../document/pages";
 import { aligned, pieces, type Piece } from "./typing";
 
 export interface Workspace {
@@ -71,16 +72,12 @@ export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("Worksp
 
 const fail = (reason: WorkspaceError["reason"], message: string) => Effect.fail(new WorkspaceError({ reason, message }));
 
-/** Normalises a path the model gives (leading ./ or /) and refuses ones that leave the folder. */
-export function cleanPath(path: string): Effect.Effect<string, WorkspaceError> {
-  const parts: string[] = [];
-  for (const seg of path.replace(/\\/g, "/").split("/")) {
-    if (!seg || seg == ".") continue;
-    if (seg == "..") return fail("outside", `${path} is outside the document's folder`);
-    parts.push(seg);
-  }
-  if (!parts.length) return fail("noPath", "give a file path");
-  return Effect.succeed(parts.join("/"));
+/** A path the model gives (document/pages.ts cleanPath: a leading ./ or / is fine), refused if it leaves the folder or names nothing. */
+export function modelPath(path: string): Effect.Effect<string, WorkspaceError> {
+  const clean = cleanPath(path);
+  if (clean == null) return fail("outside", `${path} is outside the document's folder`);
+  if (!clean) return fail("noPath", "give a file path");
+  return Effect.succeed(clean);
 }
 
 export class YjsWorkspace implements Workspace {
@@ -132,7 +129,7 @@ export class YjsWorkspace implements Workspace {
   read(path: string): Effect.Effect<string, WorkspaceError> {
     const self = this;
     return Effect.gen(function* () {
-      path = yield* cleanPath(path);
+      path = yield* modelPath(path);
       const text = (yield* self.text(path)).toString();
       self.see(path, text);
       return text;
@@ -142,7 +139,7 @@ export class YjsWorkspace implements Workspace {
   edit(path: string, edits: { oldText: string; newText: string }[]): Effect.Effect<EditResult, WorkspaceError> {
     const self = this;
     return Effect.gen(function* () {
-      path = yield* cleanPath(path);
+      path = yield* modelPath(path);
       yield* self.mayEdit();
       const t = yield* self.text(path);
       const current = t.toString();
@@ -312,7 +309,7 @@ export class YjsWorkspace implements Workspace {
   write(path: string, content: string): Effect.Effect<EditResult, WorkspaceError> {
     const self = this;
     return Effect.gen(function* () {
-      path = yield* cleanPath(path);
+      path = yield* modelPath(path);
       yield* self.mayEdit();
       if (assets(self.doc).has(path)) return yield* fail("binary", `${path} is a file kept whole (not text): replace it with write's content_base64, or rm it first to make it a text file.`);
       if (self.only != null && path != self.only) return yield* fail("single", `This document is the single file ${self.only}: you can't make other files in it.`);

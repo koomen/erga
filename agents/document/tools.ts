@@ -20,7 +20,7 @@ import {
 import { pageAddress, type TreeEntry, type TreeOp } from "../../document/pages";
 import type { Naming } from "../../document/names";
 import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../../document/versions";
-import { WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
+import { WorkspaceError, globToRegExp, modelPath, type Workspace } from "./workspace";
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 import { fromBase64 } from "../../shared/bytes";
 import type { FilesAccess, OpenResult, PageTree, ToolSpec, VersionsAccess } from "../../document/agent";
@@ -112,7 +112,7 @@ export function makeTools(
   };
   /** write's bytes: a file kept whole (or text, if they are text), as the agent's person. */
   const writeBytes = async (raw: string, b64: string) => {
-    const path = run(cleanPath(raw));
+    const path = run(modelPath(raw));
     if (!(opts.canEdit?.() ?? true)) throw new Error("Your user can only view this document, so you can't change it.");
     if (!opts.files) throw new Error("This document takes only text: write the file's text in content.");
     const clean = b64.replace(/\s+/g, "");
@@ -135,7 +135,7 @@ export function makeTools(
         pages: Type.Optional(Type.String({ description: `A PDF's pages to read: one ("3") or a range ("21-40"), at most ${PAGES_PER_READ}. Default: the first ${PAGES_PER_READ}.` })),
       }),
       execute: async (_id, p: { path: string; offset?: number; limit?: number; pages?: string }) => {
-        const path = run(cleanPath(p.path));
+        const path = run(modelPath(p.path));
         if (!ws.isText(path) && ws.paths().includes(path)) return readFile(path, p.pages);
         const lines = run(ws.read(path)).split("\n");
         const start = Math.max(0, (p.offset ?? 1) - 1);
@@ -160,7 +160,8 @@ export function makeTools(
       }),
       execute: async (_id, p: { path: string; edits: { oldText: string; newText: string }[] }) => {
         const r = await Effect.runPromise(Effect.match(ws.edit(p.path, p.edits), { onFailure: (e) => e, onSuccess: (r) => r }));
-        if (r instanceof WorkspaceError) throw new Error(r.reason == "changed" ? await changedSince(r.message, run(cleanPath(p.path))) : r.message);
+        if (r instanceof WorkspaceError)
+          throw new Error(r.reason == "changed" ? await changedSince(r.message, run(modelPath(p.path))) : r.message);
         opts.edited(r.path, r.at);
         return text(r.summary);
       },
@@ -188,7 +189,7 @@ export function makeTools(
       description: "List the files and folders directly inside a folder of the document (default: its root, which holds every page's files and the shared assets): each file's kind (text, or a file kept whole, with its type), size and time (UTC). Folders end in /.",
       parameters: Type.Object({ path: Type.Optional(Type.String({ description: "Folder to list" })) }),
       execute: async (_id, p: { path?: string }) => {
-        const dir = p.path && p.path.replace(/^[./]+$/, "") ? run(cleanPath(p.path!)) + "/" : "";
+        const dir = p.path && p.path.replace(/^[./]+$/, "") ? run(modelPath(p.path!)) + "/" : "";
         const entries = new Set<string>();
         for (const f of [...ws.paths(), ...ws.folders().map((d) => d + "/")]) if (f.startsWith(dir) && f != dir) { const rest = f.slice(dir.length); entries.add(rest.includes("/") ? rest.slice(0, rest.indexOf("/") + 1) : rest); }
         if (!entries.size) {
@@ -495,7 +496,11 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
       }),
       execute: async (_id, p: { version: string; path?: string }) => {
         if (!canEdit()) throw new Error("You may only view this document, so you can't restore a version.");
-        const r = await versions.restore(p.version, by(), p.path ? Effect.runSync(Effect.mapError(cleanPath(p.path), (e) => new Error(e.message))) : null);
+        const r = await versions.restore(
+          p.version,
+          by(),
+          p.path ? Effect.runSync(Effect.mapError(modelPath(p.path), (e) => new Error(e.message))) : null
+        );
         if (!r.ok) throw new Error(r.error);
         // The agent edits its own replica: it has the restored text once it has caught up with the room.
         await caughtUp();

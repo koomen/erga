@@ -66,8 +66,34 @@ const PAGE = /\.html$/i;
 /** Whether a file is a page: .html. */
 export const isPage = (path: string) => PAGE.test(path);
 
-/** Paths a document never holds or serves: dotfiles and node_modules (document/content.ts says the same). */
-const ignoredSeg = (seg: string) => seg.startsWith(".") || seg == "node_modules";
+/** Names a document never holds or serves: dotfiles and node_modules. */
+const ignoredName = (seg: string) => seg.startsWith(".") || seg == "node_modules";
+/** Paths a document never holds or serves: one with a dotfile or node_modules in it. */
+export const ignored = (rel: string) => rel.split(/[\\/]/).some(ignoredName);
+
+/**
+ * A path inside the document as it is given ("/" or "\\" between names; empty
+ * names and "." left out): null if it leaves the document (".."), "" if it
+ * names nothing. Every path a person, an agent or a request gives goes
+ * through it (cleanRel, cleanTreePath, the agent's workspace).
+ */
+export function cleanPath(raw: string): string | null {
+  const parts: string[] = [];
+  for (const seg of raw.split(/[\\/]/)) {
+    if (!seg || seg == ".") continue;
+    if (seg == "..") return null;
+    parts.push(seg);
+  }
+  return parts.join("/");
+}
+
+/** A request's path inside the document (URL-encoded), or null if it would leave it, names nothing, or is ignored. */
+export function cleanRel(raw: string | undefined): string | null {
+  let decoded: string;
+  try { decoded = decodeURIComponent(raw ?? ""); } catch { return null; }
+  const rel = cleanPath(decoded);
+  return rel && !ignored(rel) ? rel : null;
+}
 
 /**
  * Names that would collide with the document's own addresses: under
@@ -85,11 +111,12 @@ const RESERVED_TOP = new Set(["api", "doc"]);
  */
 export function cleanTreePath(raw: unknown, what = "path"): string {
   if (typeof raw != "string") throw new TreeError(`Give ${what} as a string.`);
-  const parts = raw.replace(/\\/g, "/").split("/").filter((s) => s && s != ".");
-  if (!parts.length) throw new TreeError(`Give ${what}: a path inside the document, like "blog/post.html".`);
+  const path = cleanPath(raw);
+  if (path == null) throw new TreeError(`${raw} leaves the document: ".." isn't allowed.`);
+  if (!path) throw new TreeError(`Give ${what}: a path inside the document, like "blog/post.html".`);
+  const parts = path.split("/");
   for (const seg of parts) {
-    if (seg == "..") throw new TreeError(`${raw} leaves the document: ".." isn't allowed.`);
-    if (ignoredSeg(seg)) throw new TreeError(`${raw}: names can't start with "." or be node_modules.`);
+    if (ignoredName(seg)) throw new TreeError(`${raw}: names can't start with "." or be node_modules.`);
     if (seg.length > 120) throw new TreeError(`${raw}: a name can be at most 120 characters.`);
     if (/[\x00-\x1f\x7f<>:"|?*#%]/.test(seg)) throw new TreeError(`${raw}: names can't contain control characters or any of < > : " | ? * # %.`);
     if (/[ .]$/.test(seg) || /^ /.test(seg)) throw new TreeError(`${raw}: a name can't start with a space or end with a space or a dot.`);
@@ -174,7 +201,7 @@ export function resolvePage(has: (path: string) => boolean, address: string, ind
   let rest: string;
   try { rest = decodeURIComponent(address); } catch { return null; }
   const parts = rest.split("/").filter(Boolean);
-  if (parts.some((p) => p == ".." || p == "." || ignoredSeg(p))) return null;
+  if (parts.some((p) => p == ".." || p == "." || ignoredName(p))) return null;
   rest = parts.join("/");
   /** The page an address is by the rule above (no file names). */
   const byRule = (r: string): string | null => {
