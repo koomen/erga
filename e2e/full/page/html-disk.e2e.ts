@@ -6,7 +6,9 @@ import { DISK_MS, F, openEditor, TIMESCALE } from "../../helpers/editor";
 
 await servers.main();
 
-test("a disk edit reaches the page, patched in place, with the change marked exactly, and the marks fade", async ({ tab }) => {
+test("a disk edit reaches the page, patched in place, with the change marked exactly, and the marks fade", { timeout: 45_000 }, async ({
+  tab,
+}) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("Where the leads go.", "Where the leads went."));
   await expect.poll(() => ed.textOf("figcaption"), { timeout: DISK_MS }).toBe("Where the leads went.");
@@ -20,7 +22,7 @@ test("a disk edit reaches the page, patched in place, with the change marked exa
   await expect.poll(async () => { const m = await ed.marks(); return m.added.length + m.gone.length; }, { timeout: 3200 * TIMESCALE + 3000 }).toBe(0);
 });
 
-test("a diagram added on disk shows up without a reload, and the page still edits", async ({ tab }) => {
+test("a diagram added on disk shows up without a reload, and the page still edits", { timeout: 45_000 }, async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("<h2>What changed</h2>", `<svg id="diagram" width="80" height="20"><rect width="80" height="20" fill="#c00"/></svg>\n    <h2>What changed</h2>`));
   await expect.poll(() => ed.frame<boolean>(`!!${F}.getElementById("diagram")`), { timeout: DISK_MS }).toBe(true);

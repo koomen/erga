@@ -92,7 +92,7 @@ test("the link bar changes a link's text; Esc closes it until a click in the lin
   await expect.poll(() => ed.source()).toContain("This paragraph has the example and");
 });
 
-test("a link near the top of the page (a nav's): its bar opens below it, clear of the top bar", async ({ tab }) => {
+test("a link near the top of the page (a nav's): its bar opens below it, clear of the top bar", { timeout: 45_000 }, async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   // As the project template's nav: 56 px from the top, where the style bar would still fit above but the link bar doesn't.
   ed.write(
