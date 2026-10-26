@@ -1,4 +1,4 @@
-// The sync with GitHub (server/source/repo.ts syncGithub), with the real git CLI against Erga's endpoint and the
+// The sync with GitHub (control/source/repo.ts syncGithub), with the real git CLI against Erga's endpoint and the
 // pretend GitHub (dev/github-mock.ts, its Git host and its webhook): Connect pushes everything there; a push on
 // GitHub's staging comes back through the webhook (a fast-forward); both moved: a merge commit here, pushed back;
 // conflicts: the merge waits on github-merge/<commit>, the agent resolves and finishes it; GitHub's main follows only
@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { controlRoutes, type Control } from "../control/routes";
 import type { Platform } from "../server/platform";
-import type { PushEvent } from "../server/source/github";
+import type { PushEvent } from "../control/source/github";
 import { git, must, startFixture, TEST_APP, type Fixture } from "./source-fixture";
 
 setDefaultTimeout(30_000);

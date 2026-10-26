@@ -192,7 +192,7 @@ export interface SettingChange {
     /** main moved past the production gate (its tests hadn't passed), or staging past the staging rule: an admin's emergency override, with their reason and what the gate or rule said. */
     override?: { reason: string; gate: string };
   };
-  /** An admin opened an override of the staging rule (key "staging"; server/source/repo.ts, STAGING_RULE): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. */
+  /** An admin opened an override of the staging rule (key "staging"; control/source/repo.ts, STAGING_RULE): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. */
   stagingOverride?: { reason: string; until: number };
   /** A user (key "user"): added, their role or deploy role changed, or removed. `from` and `to` are null. */
   user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };

@@ -438,7 +438,13 @@ class Mirror {
  */
 function watchEditor(log: (line: string) => void, built: () => void): () => void {
   // With the admin pages' stylesheet, which the build writes as admin.css.
-  const SOURCES = [["client", true], ["shared", true], ["document", true], ["server/admin/style.ts", false], ["server/source/style.ts", false]] as const;
+  const SOURCES = [
+    ["client", true],
+    ["shared", true],
+    ["document", true],
+    ["server/admin/style.ts", false],
+    ["control/source/style.ts", false],
+  ] as const;
   /** The newest modification among the sources. */
   const newest = async () => {
     let t = 0;

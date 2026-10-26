@@ -16,19 +16,55 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { ATTEMPTS, BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, UPSTREAM_CHECK_MS, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
-import { CONTROL_OAUTH_SCOPES, exchangeCode, fixedCredential, OAuthCredential, pkce } from "../deploy/credential";
-import { fromBase64, unpackRelease } from "../deploy/bundle";
+import {
+  ATTEMPTS,
+  BranchDeploys,
+  HISTORY_KEEP,
+  RESUME_MS,
+  targetOf,
+  UPSTREAM_CHECK_MS,
+  type DeployEnv,
+  type DeployRecord,
+  type Deps,
+  type LogLine,
+  type TargetStatus,
+} from "../control/deploys/branches";
+import { CONTROL_OAUTH_SCOPES, exchangeCode, fixedCredential, OAuthCredential, pkce } from "../control/deploys/credential";
+import { fromBase64, unpackRelease } from "../control/deploys/bundle";
 import { artifactsNamespace, packRelease } from "../control/builder/build";
 import { handle as builderServer } from "../control/builder/server";
 import { containerBuilder, ndjsonLines } from "../control/builder/client";
 import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../control/builder/cache";
-import { ALL_STEPS, bucketName, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release, type Target } from "../deploy/pipeline";
-import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock-cloudflare";
-import { memoryBlobs, ReleaseStore, storeBuilder } from "../deploy/releases";
-import { installFleet } from "../deploy/fleet";
-import type { UpdateResult } from "../server/source/index.ts";
-import { runInstall } from "../deploy/install";
+import {
+  ALL_STEPS,
+  bucketName,
+  Cloudflare,
+  copyName,
+  copyReason,
+  guardTarget,
+  loadRelease,
+  runPipeline,
+  targetOfPlan,
+  workerMetadata,
+  type Release,
+  type Target,
+} from "../control/deploys/pipeline";
+import {
+  FLEET_ACCOUNT,
+  MOCK_HOOK_SECRET,
+  MOCK_SNAPSHOT_TOKEN,
+  mockBuilder,
+  mockCloudflare,
+  namespaceId,
+  PROD_DB,
+  PROD_DOCS,
+  scriptTag,
+  type MockState,
+} from "../deploy/mock-cloudflare";
+import { memoryBlobs, ReleaseStore, storeBuilder } from "../control/deploys/releases";
+import { installFleet } from "../control/deploys/fleet";
+import type { UpdateResult } from "../control/source/index.ts";
+import { runInstall } from "../control/install/install";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
 import { ACCOUNT, ADMINS, CONTROL, SOURCE, TARGETS } from "../deploy/targets";
 import { controlConfig, controlWranglerConfig } from "../deploy/release";
@@ -65,7 +101,7 @@ async function deployTo(target: Target, mock: ReturnType<typeof mockCloudflare>,
 }
 
 const bindingsOf = (state: MockState, script: string) => Object.fromEntries((state.scripts[script].metadata.bindings as any[]).map((b) => [b.name, b]));
-/** Staging's database: the copy its Worker is bound to (each copy has a name of its own: deploy/pipeline.ts, copyName). */
+/** Staging's database: the copy its Worker is bound to (each copy has a name of its own: control/deploys/pipeline.ts, copyName). */
 const stagingDbOf = (state: MockState) => state.databases.find((d) => d.uuid == bindingsOf(state, "erga-staging").DB.database_id)!;
 /** Staging's copies of production's data, by name. */
 const stagingCopies = (state: MockState) => state.databases.filter((d) => d.name.startsWith("erga-staging")).map((d) => d.name);

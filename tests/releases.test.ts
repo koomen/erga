@@ -1,11 +1,11 @@
-// The release store (deploy/releases.ts): a release published, its files and
+// The release store (control/deploys/releases.ts): a release published, its files and
 // manifest; the channels (edge after a healthy production deploy, stable when
 // a tag put on it, withdrawn); a release read back and checked; and the control
 // Worker's routes: the store for anyone, the channels for admins.
 import { describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
-import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor, sha256 } from "../deploy/releases";
-import { DeployError, type Release } from "../deploy/pipeline";
+import { CHANNEL_KEEP, memoryBlobs, releaseFiles, ReleaseStore, releasesDoor, sha256 } from "../control/deploys/releases";
+import { DeployError, type Release } from "../control/deploys/pipeline";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
 

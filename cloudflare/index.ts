@@ -18,24 +18,24 @@
 //                              served here in local development
 //   /__erga/...                the dev server's (dev.ts)
 
-import { githubAppOf } from "./github-app";
-import { sealKeyFrom } from "../deploy/credential";
-import { hashSecret } from "../deploy/forks";
+import { githubAppOf } from "../control/cloudflare/github-app";
+import { sealKeyFrom } from "../control/deploys/credential";
+import { hashSecret } from "../control/install/forks";
 import { handle } from "../server/app.ts";
 import { adminResponse } from "../server/admin/index.ts";
 import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
 import { FLEET_ACCOUNT, mockCloudflare } from "../deploy/mock-cloudflare";
-import { releaseStoreOf } from "./releases";
+import { releaseStoreOf } from "../control/cloudflare/release-bucket";
 import { CONTROL } from "../deploy/targets";
-import type { DeploysObject } from "../server/deploys/api";
-import { deploysDoor, isDeploysPath } from "./branch-deploys";
-import { deployDoor } from "./deploy-routes";
+import type { DeploysObject } from "../control/deploys/api";
+import { deploysDoor, isDeploysPath } from "../control/deploys/app-routes";
+import { deployDoor } from "../control/install/routes";
 import { devRoutes } from "./dev";
 import type { Env } from "./env";
 import { platform } from "./platform";
 import { simulateLatency, tallied } from "./timing";
 
-export { Deployer } from "./deploy-session";
+export { Deployer } from "../control/install/session";
 export { DocumentObject } from "./document-object";
 export { AdminAgentHost } from "./objects/admin-agent";
 export { PersonAgent } from "./objects/person-agent";
@@ -95,7 +95,7 @@ export default {
           github: githubAppOf(env), sealKey: sealKeyFrom(env.SESSION_SECRET), background: (work: Promise<unknown>) => ctx.waitUntil(work), net: globalThis.fetch.bind(globalThis),
           // The deploy page (installs), in local development only: on erga.dev it's the control Worker's.
           ...(env.PIPELINE ? { deploy: (request: Request) => deployDoor(request, { env, platform: p, oauthCallback: "/install/callback" }) } : {}),
-          // Under the mock, the mock fleet's account, as the deploys' object has it (cloudflare/pipeline.ts).
+          // Under the mock, the mock fleet's account, as the deploys' object has it (control/deploys/pipeline-object.ts).
           oauth: { clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", accountId: mock ? FLEET_ACCOUNT : env.CLOUDFLARE_ACCOUNT_ID ?? "", worker: CONTROL.worker, net: mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis), mock },
         });
       }

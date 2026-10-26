@@ -14,7 +14,7 @@
 // An install's servers (Platform.signIn.relay) sign in with Erga's GitHub
 // App through erga.dev's callback, the App's only one: the state names this
 // origin, erga.dev trades the code for the token and sends the browser back
-// here with it sealed under the state's nonce (server/source/github.ts).
+// here with it sealed under the state's nonce (control/source/github.ts).
 //
 // A signed-in person can also mint a test token (/tokens): it signs in
 // throwaway test people (Ada, Bo...) who can open only test documents (ids
@@ -37,7 +37,7 @@ import { cookieName, cookies } from "./cookies.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import { b64, SESSION_COOKIE, sign, SIGNED_OUT, unb64, unsign } from "./session.ts";
-import { openRelay, randomNonce, relayNonce, relayState } from "../source/index.ts";
+import { openRelay, randomNonce, relayNonce, relayState } from "../../control/source/index.ts";
 import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
 

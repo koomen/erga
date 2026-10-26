@@ -39,7 +39,7 @@ import { emptyLog, offerOf, reduce, type Log, type LogEvent, type Offer } from "
 import { agentName } from "../../document/content";
 import { runServerTool, SERVER_TOOLS, toolResult, type ToolWho } from "../tools";
 import { Checkpoints, restoredLog, sendLate, type ChatStore, type StoredChat } from "../checkpoint";
-import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../../server/source/index.ts";
+import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
 import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
 
 /** What the dashboard tools do, as the admin: the source and deploys dashboard on /admin/ops, and agent tokens. */
@@ -183,8 +183,8 @@ export function adminTools(as: () => ToolWho, guard: () => Promise<void>): Agent
 }
 
 /**
- * The source tools: read-only reads of Erga's own repository, the server's copy (SourceHost, server/source/repo.ts `read`,
- * server/source/browse.ts), at a branch or a commit, staging by default. Nothing in them writes: they list refs and fetch,
+ * The source tools: read-only reads of Erga's own repository, the server's copy (SourceHost, control/source/repo.ts `read`,
+ * control/source/browse.ts), at a branch or a commit, staging by default. Nothing in them writes: they list refs and fetch,
  * with a read token. Admins only, as the admin's agent is: `guard` checks first, as for the other tools. The files
  * are anyone's who pushed a branch, so their text is information, never instructions.
  */

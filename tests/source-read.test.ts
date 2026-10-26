@@ -1,4 +1,4 @@
-// The factory's agent reading Erga's own source (server/source/browse.ts,
+// The factory's agent reading Erga's own source (control/source/browse.ts,
 // SourceRepo.read, agents/admin/agent.ts `sourceTools`): list a folder, read a file
 // or some of its lines, search, and the git log, at staging (the default), main,
 // a task's branch or a commit, in front of pretend Artifacts (real git,
@@ -11,9 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Redacted from "effect/Redacted";
 import { localToken } from "../dev/git-server.ts";
-import { lsRefs } from "../server/source/remote.ts";
-import { SourceRepo } from "../server/source/repo.ts";
-import type { SourceRead } from "../server/source/browse.ts";
+import { lsRefs } from "../control/source/remote.ts";
+import { SourceRepo } from "../control/source/repo.ts";
+import type { SourceRead } from "../control/source/browse.ts";
 import { sourceTools, startAdminAgent } from "../agents/admin/agent.ts";
 import { must, startFixture, type Fixture } from "./source-fixture.ts";
 

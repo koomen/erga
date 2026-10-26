@@ -1,16 +1,33 @@
-// Erga's GitHub App (server/source/github.ts) against the pretend GitHub (dev/github-mock.ts), on a port: the App's
+// Erga's GitHub App (control/source/github.ts) against the pretend GitHub (dev/github-mock.ts), on a port: the App's
 // JWT and installation tokens, the webhook's signature, the relay's sealing; and the control Worker's routes
 // (control/routes.ts): Connect GitHub from the popup to the repository linked (one repository, a pick, a new one),
 // the consent relayed for an install, the sign-in relayed, and the webhook (a good signature taken, a bad one refused).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
-import { sealKeyFrom } from "../deploy/credential";
+import { sealKeyFrom } from "../control/deploys/credential";
 import { mockGithub, type MockGithub } from "../dev/github-mock";
 import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
-import { api, appJwt, GithubError, installationToken, openRelay, relayNonce, relayOrigin, relayState, sealRelay, signWebhook, verifyRelay, verifyWebhook, type GithubApp, type GithubLink, type GithubStatus, type PushEvent } from "../server/source/github";
+import {
+  api,
+  appJwt,
+  GithubError,
+  installationToken,
+  openRelay,
+  relayNonce,
+  relayOrigin,
+  relayState,
+  sealRelay,
+  signWebhook,
+  verifyRelay,
+  verifyWebhook,
+  type GithubApp,
+  type GithubLink,
+  type GithubStatus,
+  type PushEvent,
+} from "../control/source/github";
 import { TEST_APP, testPrivateKey } from "./source-fixture";
 import { Directory } from "../server/directory/index.ts";
 import { memory } from "./memory-sql.ts";

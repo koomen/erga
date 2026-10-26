@@ -7,5 +7,5 @@
 // so index.ts, the built entry, never exports them.
 export * from "./index.ts";
 export { default } from "./index.ts";
-export { Pipeline } from "./pipeline";
-export { SourceHost } from "./objects/source";
+export { Pipeline } from "../control/deploys/pipeline-object";
+export { SourceHost } from "../control/source/source-host";

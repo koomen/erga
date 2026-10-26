@@ -7,7 +7,7 @@
 // The look of a thing is the same wherever it is: a section's heading, a lede, a row, a setting's row, a switch, a
 // state line, a card's title, and the colours for working, waiting and failed.
 
-import { OPS_STYLE } from "../source/style.ts";
+import { OPS_STYLE } from "../../control/source/style.ts";
 
 const LAYOUT_STYLE = `
   /* The header: the breadcrumbs upper left; Share with agent left of the account corner upper right. */

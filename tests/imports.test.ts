@@ -19,7 +19,7 @@ import { join, relative, resolve } from "node:path";
 import { expect, test } from "bun:test";
 
 const ROOT = resolve(import.meta.dir, "..");
-const AREAS = ["directory", "identity", "documents", "pages", "home", "admin", "source"];
+const AREAS = ["directory", "identity", "documents", "pages", "home", "admin"];
 
 /** Every .ts file under these folders, as repo paths. */
 function files(dirs: string[]): string[] {
