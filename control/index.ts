@@ -11,7 +11,7 @@
 // version; a deploy, bun deploy/run.ts from a machine).
 //
 // The app reaches it over a service binding (CONTROL, the entrypoint App
-// below): its admin agent's dashboard and source tools, and the Ops page
+// below): its admin agent's Ops page and source tools, and the Ops page
 // the app serves at /admin/ops, as the admin.
 
 import { WorkerEntrypoint } from "cloudflare:workers";

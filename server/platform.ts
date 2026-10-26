@@ -134,7 +134,7 @@ export interface Platform {
   };
   /** Erga's own repository (control/source), where this server hosts it; null where it doesn't. */
   source: SourceService | null;
-  /** The deploys, as the admin agent's dashboard asks them: the pipeline's object (the control Worker's, over its binding, on erga.dev). */
+  /** The deploys, as the admin agent's Ops page tools ask them: the pipeline's object (the control Worker's, over its binding, on erga.dev). */
   deploys: DashboardDeploys;
   /**
    * The control Worker (control/), where the repository, the Ops page and the deploys live, when it's apart from
