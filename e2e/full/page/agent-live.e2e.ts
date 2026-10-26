@@ -4,7 +4,7 @@
 // calls the real API, so it costs a little, and it skips itself unless asked for: the gate and `bun run test --all`
 // never run it.
 //
-//   ERGA_LIVE_AGENT=1 ANTHROPIC_API_KEY=sk-ant-... bun run test:e2e e2e/page/agent-live.e2e.ts
+//   ERGA_LIVE_AGENT=1 ANTHROPIC_API_KEY=sk-ant-... bun run test:e2e e2e/full/page/agent-live.e2e.ts
 //
 // (The test environment drops every secret, e2e/env.ts; with ERGA_LIVE_AGENT=1 it keeps this key, for this file's
 // own server only.)
@@ -52,7 +52,7 @@ test("two edits reach the open page without a reload and the disk; the agent's b
   expect(await ed.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Edited/.test(e.textContent))`), "the panel shows the edit").toBe(true);
   expect(await ed.eval<boolean>(`!!document.querySelector(".msg-assistant")?.textContent.trim()`), "and a reply").toBe(true);
   expect(await ed.eval<boolean>(`[...document.querySelectorAll(":is(#people, #me) .agent-badge")].some((e) => /agent/.test(e.dataset.tip))`), "its badge on its owner's avatar").toBe(true);
-  // (No caret of its own on the page: e2e/suite/browser-agent.e2e.ts.)
+  // (No caret of its own on the page: e2e/full/suite/browser-agent.e2e.ts.)
   const before = await ed.eval<string>(`ergaPage.state.doc.toString()`);
   expect(await ed.eval<string>(`document.getElementById("agent-undo").getAttribute("aria-disabled")`)).toBe("false");
   await ed.eval(`document.getElementById("agent-undo").click()`);

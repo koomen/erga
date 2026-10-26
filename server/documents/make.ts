@@ -20,7 +20,7 @@ import {
   withEdit,
 } from "../pages/index.ts";
 
-/** A template's starting files (server/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
+/** A template's starting files (server/pages/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
 export function templateFiles(
   platform: Platform,
   template: Template
@@ -34,7 +34,7 @@ export function templateFiles(
 /**
  * What a new document starts from: a copy of the front page's document
  * (`landing`), of another document by id (one `who` may open), or a
- * template's files (server/templates.ts; the first, a blank page, by default).
+ * template's files (server/pages/templates.ts; the first, a blank page, by default).
  * Null if there's nothing there to copy.
  */
 export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, FileData>; index: string; kind?: DocKind } | null> {
@@ -46,7 +46,7 @@ export async function startingFiles(platform: Platform, from: string | null, who
   return snap && (doc.kind ? { ...snap, kind: doc.kind } : snap);
 }
 
-/** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/templates.ts), or a copy of the front page's (?from=landing). */
+/** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/pages/templates.ts), or a copy of the front page's (?from=landing). */
 export async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
@@ -79,7 +79,7 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}?edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
-  // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/front/lifetime.e2e.ts).
+  // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/full/front/lifetime.e2e.ts).
   const dev = platform.dev(url);
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {

@@ -58,8 +58,8 @@
 //
 // It updates by itself, with no reload: /api/events (a WebSocket) says what changed (a push
 // or a merge, the sync with GitHub, each step of a deploy, a redeploy, its log lines),
-// for this server and for Erga's other server too (deploy/relay.ts passes each
-// server's events to the other). Only rows that changed are drawn again, so
+// for this server and for Erga's other server too (each server passes its
+// events to the other). Only rows that changed are drawn again, so
 // the scroll, an open log or dialog, and the focus stay.
 
 import { SOURCE_SCRIPT } from "./page-script.ts";

@@ -85,7 +85,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   time { margin: 0; text-align: left; }
   /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
   .acts { display: flex; justify-content: flex-end; gap: 2px; }
-  /* Help text on the buttons, as the editor's: plain, under the pointer, following it (server/account-menu.ts moves it). */
+  /* Help text on the buttons, as the editor's: plain, under the pointer, following it (server/pages/account-menu.ts moves it). */
   .acts .act { position: relative; }
   .acts .act[data-tip]::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); z-index: 40;
     white-space: pre; font: 400 12px/1.3 var(--font-text); letter-spacing: 0.01em; color: var(--soft); opacity: 0; pointer-events: none; }

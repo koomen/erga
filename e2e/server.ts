@@ -1,7 +1,7 @@
 // A dev server for the tests (dev/start.ts: the Worker under Vite, as `bun start`
 // runs it), on a free port, with its own state, settings (.dev.vars) and Vite
 // cache in a scratch folder, and a clean environment. Signed in as
-// DEV_LOGIN ("tester") unless a request says otherwise (cloudflare/auth.ts:
+// DEV_LOGIN ("tester") unless a request says otherwise (server/identity/sign-in.ts:
 // ?user=, /auth/github?as=). The editor's files are built once, in
 // global-setup.ts (ERGA_BUILT).
 //

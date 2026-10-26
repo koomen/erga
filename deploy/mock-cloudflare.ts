@@ -101,7 +101,7 @@ export interface MockState {
   failNext: string | null;
   /** Account API tokens made through the API (their values aren't here: only the tests read them, from `tokenValues`). */
   tokens: { id: string; name: string; policies: TokenPolicy[] }[];
-  /** Containers (the factory's VMs, deploy/containers.ts): images prepared, and applications by id (= their namespace's id). */
+  /** Containers (the build containers, control/builder/): images prepared, and applications by id (= their namespace's id). */
   containers: { prepared: string[]; apps: Record<string, { name: string; scheduling_policy: string; durable_objects: { namespace_id: string }; configuration?: { instance_type?: string } }> };
 }
 

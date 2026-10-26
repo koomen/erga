@@ -49,7 +49,7 @@ export const BAND = "calc(max(12px, env(safe-area-inset-top)) + 46px)";
 /**
  * What the page gets in its head: it starts below the controls' band (the root's padding, which only moves it down, unlike a
  * margin on its body; in a rule the page's own can't outweigh), anchors scroll to below the band too, and it stops dead at
- * its top and bottom, as the viewer's frame makes it (server/pages/frame-host.ts, HOST_SCRIPT's still).
+ * its top and bottom, as the viewer's frame makes it (server/pages/viewer.ts, HOST_SCRIPT's still).
  */
 const STILL = `<style>html { overscroll-behavior: none; } html:root:root { padding-top: ${BAND} !important; scroll-padding-top: ${BAND}; }</style>`;
 

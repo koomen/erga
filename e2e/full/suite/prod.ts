@@ -8,7 +8,7 @@
 // remote target makes each test a fresh test document (/new?id=test...), whose agent is the
 // scripted one if the deployment runs it (ERGA_TARGET_CAPS, "browser,scriptedAgent" by default; leave scriptedAgent
 // out for production). The correctness tests run first, then the latency bench (budget 400 ms, or ERGA_SUITE_P95_MS).
-// The cookies go to the tests in a file only this user can read (ERGA_SUITE_TARGET, e2e/suite/suite.ts), removed after.
+// The cookies go to the tests in a file only this user can read (ERGA_SUITE_TARGET, e2e/full/suite/suite.ts), removed after.
 
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

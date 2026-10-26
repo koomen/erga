@@ -4,7 +4,7 @@
 // endpoints, what's served and what's stored. Nothing here peeks inside the
 // server, so the same tests run against a local dev server and a deployment.
 //
-//   local    a worker's suite server (LocalTarget in e2e/suite/suite.ts):
+//   local    a worker's suite server (LocalTarget in e2e/full/suite/suite.ts):
 //            the scripted agent model, each document a scratch copy of a
 //            fixture linked from disk.
 //   remote   a deployed document at ERGA_TARGET_DOC (its URL must

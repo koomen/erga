@@ -48,7 +48,7 @@ export function accountHtml(account: Account | null, here: string): string {
   return `${accountMarkup(account, here)}${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
 }
 
-/** The corner's markup alone (the homepage puts it in a shadow root of its own, with ACCOUNT_STYLE: server/home.ts). */
+/** The corner's markup alone (the homepage puts it in a shadow root of its own, with ACCOUNT_STYLE: server/home/render.ts). */
 export function accountMarkup(account: Account | null, here: string): string {
   const id = "erga-account-menu";
   if (!account) {

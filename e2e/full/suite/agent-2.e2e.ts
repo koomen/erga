@@ -1,4 +1,4 @@
-// The multiplayer suite, agent (e2e/suite/suites/agent.ts, part 2 of 2): the scripted agent's edits, presence, undo, share tokens, privacy, roles.
+// The multiplayer suite, agent (e2e/full/suite/suites/agent.ts, part 2 of 2): the scripted agent's edits, presence, undo, share tokens, privacy, roles.
 import { agent } from "./suites/agent";
 import { part, register } from "./suite";
 

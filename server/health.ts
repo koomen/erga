@@ -9,7 +9,7 @@
 //
 // {ok, version, target, checks: {<name>: {ok, ms, error?}}}: 200 when every
 // check passes, 503 when one fails. It holds no data and needs no sign-in:
-// on staging the admins-only guard lets it through (cloudflare/admins-only.ts).
+// on staging the admins-only guard lets it through (server/identity/admins-only.ts).
 
 import type { Platform } from "./platform.ts";
 

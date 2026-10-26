@@ -31,7 +31,7 @@
 //      nothing changes.
 //   2. If the app in use works, the new values wait ("pending"): sign-in keeps
 //      the values that work until an admin signs in with the new ones (Test
-//      sign-in, cloudflare/auth.ts). Only that real sign-in proves the callback URL,
+//      sign-in, server/identity/sign-in.ts). Only that real sign-in proves the callback URL,
 //      which GitHub checks during a sign-in only.
 //   3. If the app in use doesn't work (or there is none), there is nothing to
 //      lose: the new values are used at once.
