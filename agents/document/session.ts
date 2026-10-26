@@ -39,6 +39,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { Log, LogEvent, ViewRequest, ViewResult } from "../../shared/agent-log";
 import type { ChatStore } from "../checkpoint";
 import { startLoop } from "../run";
+import type { ToolContent, ToolSpec } from "../tools";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
 import { pageRefusal, type DocKind, type TreeOp } from "../../document/pages";
@@ -55,8 +56,6 @@ import {
   type FilesAccess,
   type OpenResult,
   type PageTree,
-  type ToolContent,
-  type ToolSpec,
   type VersionsAccess,
 } from "./tools";
 import { sleep } from "../../shared/time";

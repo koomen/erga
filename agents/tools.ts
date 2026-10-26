@@ -1,14 +1,20 @@
-// Tools both kinds of agent have, defined once: the editor's own agent
-// (agents/document/session.ts, given them by its document's host, cloudflare/objects/document.ts) and an
-// external agent holding one of the person's agent tokens (server/api.ts,
-// over HTTP, /mcp and the guide). They need only the directory (server/directory/:
-// documents' permissions, the server's users and settings) and who's asking,
-// so they run the same in a document's host and in the Worker.
+// Every tool an agent has on the server, in one registry of one type (`Tool`):
+// the document agent's (agents/document/session.ts, given them by its
+// document's host, cloudflare/objects/document.ts), the admin agent's
+// (agents/admin/agent.ts: these admin tools, and its own in agents/admin/tools.ts),
+// and an outside agent's, holding one of the person's agent tokens
+// (server/api.ts: REST, /mcp and the guide). They need only the directory
+// (server/directory/: documents' permissions, the server's users and
+// settings), who's asking, and for some the platform, so they run the same
+// in a document's host and in the Worker.
 //
+//   whoami                              (outside agents) who the token stands for, and the token
 //   document_access, share_document     who a document is shared with, and sharing it (its owner)
 //   list_documents, create_document,    the documents list (/docs): the person's documents, a new one (blank, from a
-//   delete_document                     template, or a copy), deleting one; the editor's agent only (`docs`: the
-//                                       REST API has its own, server/api.ts, which also publish files)
+//   delete_document                     template, or a copy), deleting one. The embedded agent's and an outside
+//                                       agent's each have their own (`only`): the outside agent's publish files too
+//   update_files, rename_document       (outside agents) files published into a document, and its name
+//   list_tokens, revoke_token           (outside agents) the person's agent tokens
 //   list_settings, set_setting,         the server's settings, admins only;
 //   reset_setting                       a setting the deploy locks can be seen, not changed
 //   list_setting_changes                the settings' change log (server/directory/settings.ts history), admins only
@@ -26,19 +32,23 @@
 //   change_access_rule,                 and whether users can share content publicly; admins only
 //   remove_access_rule, set_public_sharing
 //
-// An admin tool is offered only to an admin with admin power (`toolsFor`;
-// Users.actsAsAdmin): an external agent with an admin-scope token,
-// and the admin's agent (agents/admin/agent.ts, `adminTools`),
-// acting as the admin whose session it is. The editor's agent never has them (a document's host never
-// carries admin power, and a document's text could steer its agent). The
-// directory checks again on every call (Users.mustAdmin), so a tool list
-// that's gone stale (an unlock ended, someone stopped being an admin) still
-// can't do anything.
+// An outside agent also has every document tool (read, edit, write, ... of
+// agents/document/tools.ts) for any document it names (`documentTools`): they
+// run in that document's host, as the person's agent.
 //
-// Adding one: an entry in SERVER_TOOLS. Both agents get it.
+// An admin tool is offered only to an admin with admin power (`toolsFor`;
+// Users.actsAsAdmin): an outside agent with an admin-scope token,
+// and the admin agent, acting as the admin whose session it is. The document
+// agent never has them (a document's host never carries admin power, and a
+// document's text could steer its agent). The directory checks again on every
+// call (Users.mustAdmin), so a tool list that's gone stale (an unlock ended,
+// someone stopped being an admin) still can't do anything.
+//
+// Adding one: an entry in SERVER_TOOLS. Every agent it's for gets it, and the
+// REST API, MCP and the guide list it.
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type TObject } from "typebox";
+import { Type, type TSchema } from "typebox";
 import {
   ACCESS_LABEL,
   type AccessRule,
@@ -66,52 +76,258 @@ import {
   type User,
   type Who,
 } from "../server/directory/index.ts";
-import { AuthError, type AuthOps, type AuthStatus } from "../server/identity/index.ts";
-import { makeDoc, startingFiles } from "../server/documents/index.ts";
-import type { Platform } from "../server/platform.ts";
+import { AuthError, type AgentToken, type AuthOps, type AuthStatus } from "../server/identity/index.ts";
+import { forwarded, makeDoc, startingFiles } from "../server/documents/index.ts";
+import type { Platform, Session } from "../server/platform.ts";
 import { TEMPLATES, templateById } from "../server/pages/index.ts";
-import { isDocKind } from "../document/pages.ts";
+import { isDocKind, type DocKind } from "../document/pages.ts";
+import type { FileData } from "../document/document.ts";
+import { cleanRel } from "../document/host.ts";
+import { CHANGES, documentToolSpecs } from "./document/tools.ts";
+import { byLine } from "../shared/attribution.ts";
+import { fromBase64 } from "../shared/bytes.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
 export class ToolError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }
 
-/** What a tool runs with: the directory, who's asking, and (for the editor's agent) the document it's in. */
+/** What a tool runs with: the directory, who's asking, and (for the document agent) the document it's in. */
 export interface ToolWho {
   readonly dir: Directory;
   readonly who: Who;
-  /** The document the editor's agent works in: the default for a `document` argument. */
+  /** The document the document agent works in: the default for a `document` argument. */
   readonly here?: string;
   /** The server's origin, for URLs in answers (else addresses only). */
   readonly origin?: string;
-  /** The platform: for the documents list's tools (`docs`), which only the editor's agent gets. */
+  /** The platform: for the documents list's tools, and every outside agent's tool. */
   readonly platform?: Platform;
   /** Sign-in's settings, where the server has them: for the sign-in tools. */
   readonly auth?: AuthOps;
+  /** An outside agent's session: its token's person, and the token (server/api.ts). */
+  readonly session?: Session & { agent: AgentToken };
 }
 
-export interface ServerToolDef {
+/** What a tool returns: text, and for read on an image or view_page, a picture; for read on a PDF, the PDF (a range of its pages). */
+export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | { type: "document"; data: string; mimeType: "application/pdf" };
+/** A tool as an outside agent sees it: its arguments as JSON Schema. */
+export interface ToolSpec { name: string; description: string; parameters: unknown }
+
+/** A tool, for any agent: the embedded agents take it as pi's AgentTool (`agentTools`), outside agents over HTTP and MCP. */
+export interface Tool {
   readonly name: string;
-  /** For the editor's agent panel. */
-  readonly label: string;
-  /** What the agent is doing while it runs ("sharing the document"). */
-  readonly activity: string;
+  /** For the agent panel (the name, if not given: a tool only outside agents have). */
+  readonly label?: string;
+  /** What the agent is doing while it runs ("sharing the document"): the document agent's presence shows it. */
+  readonly activity?: string;
   readonly description: string;
-  readonly parameters: TObject;
+  /** Its arguments: JSON Schema, in TypeBox. */
+  readonly parameters: TSchema;
   /** Only for server admins. */
   readonly admin?: boolean;
-  /** The documents list's (needs ToolWho.platform): for the editor's agent; the REST API has its own. */
-  readonly docs?: boolean;
-  /** Its answer: text, or JSON (shown as text). Throws a ToolError (or NotAllowed, ConfigError) the agent can act on. */
-  run(args: Record<string, unknown>, ctx: ToolWho): Promise<string | object>;
+  /** Only for the embedded agents ("agent": the documents list's, which needs ToolWho.platform), or only for outside agents ("api"). */
+  readonly only?: "agent" | "api";
+  /** Reaches beyond one document (lists or makes documents, manages tokens): never for a document token. */
+  readonly wide?: boolean;
+  /** Checks its own arguments (an outside agent's files take more than their schema says): the API checks only the required ones first. */
+  readonly loose?: boolean;
+  /** Its answer: text, JSON (shown as text), or content items. Throws a ToolError (or NotAllowed, ConfigError) the agent can act on. */
+  run(args: Record<string, unknown>, ctx: ToolWho): Promise<string | object | ToolContent[]>;
 }
 
 const DOCUMENT = Type.Optional(Type.String({ description: "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours. The editor's agent may leave it out for the document it's in." }));
 const LOGIN = Type.String({ description: "A GitHub login" });
 
-/** Every tool both agents have. Add one here and the editor's agent, the REST API, MCP and the guide all have it. */
-export const SERVER_TOOLS: ServerToolDef[] = [
+/** Files as an outside agent gives them: by path, each text or base64. */
+const FILES = Type.Unsafe<Record<string, unknown>>({
+  type: "object",
+  description: "Files by path relative to the document's folder (\"index.html\", \"css/app.css\"): each a string of text, or {\"base64\": \"...\"} for any other file (images, fonts).",
+  additionalProperties: { anyOf: [{ type: "string" }, { type: "object", properties: { base64: { type: "string" } }, required: ["base64"] }] },
+});
+const str = (description: string) => Type.String({ description });
+const ANY_DOCUMENT = str("The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.");
+
+/** The outside agents' own tools (server/api.ts): their documents, published files, and their tokens. */
+const API_TOOLS: Tool[] = [
+  {
+    name: "whoami",
+    only: "api",
+    description: "Who your token stands for, what it's called, its scope (document, documents or admin), its document (for the document scope) and when it expires.",
+    parameters: Type.Object({}),
+    run: async (_args, ctx) => {
+      const { session, origin } = outside(ctx);
+      return {
+        login: session.login, name: session.name, server: origin,
+        token: { id: session.agent.id, label: session.agent.label, scope: session.agent.scope, ...(session.agent.docId ? { document: session.agent.docId } : {}), expires: session.agent.expires ? new Date(session.agent.expires).toISOString() : null },
+      };
+    },
+  },
+  {
+    name: "list_documents",
+    only: "api",
+    wide: true,
+    description: "The person's documents, most recently edited first: id, title, address, URL, when it was last edited, and when it goes if nobody edits it (only for never-edited ones).",
+    parameters: Type.Object({}),
+    run: async (_args, ctx) => {
+      const { session, platform, origin } = outside(ctx);
+      return (await platform.docs.list(session.login)).map((d) => ({
+        id: d.id, title: d.title, address: `/${d.owner}/${d.slug}`, url: `${origin}/${d.owner}/${d.slug}`,
+        modified: new Date(d.modified).toISOString(), ...(d.kind ? { kind: d.kind } : {}), ...(d.expires != null ? { expires: new Date(d.expires).toISOString() } : {}), ...(d.path != null ? { onDisk: d.path } : {}),
+      }));
+    },
+  },
+  {
+    name: "create_document",
+    only: "api",
+    wide: true,
+    loose: true,
+    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html, plus its styles, scripts and images), and it stays. Without files it's a blank page, a template (template: ${TEMPLATES.map((t) => t.id).join(", ")}, or "landing" for a copy of the server's front page) or a copy of another document you may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
+    parameters: Type.Object({
+      files: Type.Optional(FILES),
+      index: Type.Optional(str("The page, if it isn't index.html: an .html file among the files.")),
+      title: Type.Optional(str("Its title (else the page's first heading).")),
+      slug: Type.Optional(
+        str("Its address after /<owner>/ (letters, digits and dashes; else made from the title). Taken already, it gets -2, -3...")
+      ),
+      template: Type.Optional(
+        Type.String({
+          enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"],
+          description:
+            "Without files: a blank page (blank or page, the default), another template, or a copy of the server's front page (landing).",
+        })
+      ),
+      from: Type.Optional(str("Without files: a document to copy instead (its address, URL or id). It copies the document as it is now.")),
+      kind: Type.Optional(
+        Type.String({
+          enum: ["document", "project"],
+          description:
+            "document: one page and any files beside it; project: a folder of pages, each with its own address. Else the kind of the document copied, or from the files: a project if they have more than one page.",
+        })
+      ),
+    }),
+    run: async (args, ctx) => {
+      const { session, platform } = outside(ctx);
+      // Anyone who may sign in may make documents (withTokens checked they still may); test people only test documents.
+      if (session.test) throw new ToolError("You can't make documents on this server.", 403);
+      let files: Record<string, FileData> = decodeFiles(args.files);
+      const published = Object.keys(files).length > 0;
+      let index: string;
+      let startKind: DocKind | undefined;
+      if (published) index = pageOf(files, args.index);
+      else {
+        const named = typeof args.template == "string" && args.template != "blank" ? args.template : null;
+        const template = named && named != "landing" ? templateById(named) : undefined;
+        if (named && named != "landing" && !template) throw new ToolError(`There's no template "${named}".`);
+        const from = args.from ? (await findDocument(ctx, args.from, "open")).id : named == "landing" ? "landing" : null;
+        const start = await startingFiles(platform, from, ctx.who, template);
+        if (!start) throw new ToolError(from == "landing" ? "This server has no front page (landing document) to copy." : "There's nothing there you can copy.", 404);
+        ({ files, index } = start);
+        startKind = start.kind;
+      }
+      if (!session.test && !(await platform.directory.mayWrite(session.login))) throw new ToolError(NO_WRITE, 403);
+      for (let tries = 0; tries < 5; tries++) {
+        const doc = await makeDoc(platform, session.login.toLowerCase(), newDocId(), files, {
+          index, published, title: optString(args.title, "title"), slug: optString(args.slug, "slug"), kind: isDocKind(args.kind) ? args.kind : startKind,
+        });
+        if (doc)
+          return {
+            ...withApi(doc, ctx),
+            page: index,
+            files: Object.keys(files).sort(),
+            ...(published || doc.expires == null ? {} : { expires: `${new Date(doc.expires).toISOString()}, unless someone edits it` }),
+          };
+      }
+      throw new ToolError("Couldn't pick an address for it: try again.", 500);
+    },
+  },
+  {
+    name: "update_files",
+    only: "api",
+    loose: true,
+    description: "Publishes files into an existing document: each replaces the file as it is now, as an edit (open editors show it at once, and anyone's undo history stays). replace: true also deletes every file not given (the page itself stays), for publishing a site again. delete removes the files named.",
+    parameters: Type.Object({
+      document: ANY_DOCUMENT,
+      files: Type.Optional(FILES),
+      delete: Type.Optional(Type.Array(Type.String(), { description: "Paths of files to delete." })),
+      replace: Type.Optional(Type.Boolean({ description: "Delete every file that isn't in files (except the page)." })),
+    }),
+    run: async (args, ctx) => {
+      const { platform } = outside(ctx);
+      const doc = await findDocument(ctx, args.document, "edit");
+      const files = decodeFiles(args.files);
+      const remove = new Set(stringList(args.delete, "delete").map((p) => cleanFilePath(p)));
+      if (args.replace === true) for (const p of await platform.docs.paths(doc)) if (!(p in files)) remove.add(p);
+      if (!Object.keys(files).length && !remove.size) throw new ToolError("Nothing to do: give files, delete, or replace.");
+      const r = await platform.docs.publish(doc, files, [...remove], byLine(ctx.who.login.toLowerCase(), ctx.who.via));
+      return { ...withApi((await platform.directory.get(doc.id)) ?? doc, ctx), ...r };
+    },
+  },
+  {
+    name: "rename_document",
+    only: "api",
+    loose: true,
+    description:
+      "Sets a document's title and/or address (slug). An empty one goes back to following: the title the page's first heading, the slug the title. Old addresses keep redirecting.",
+    parameters: Type.Object({
+      document: ANY_DOCUMENT,
+      title: Type.Optional(str('The new title ("" to follow the page\'s first heading).')),
+      slug: Type.Optional(str('The new address after /<owner>/ ("" to follow the title).')),
+    }),
+    run: async (args, ctx) => {
+      const doc = await findDocument(ctx, args.document, "rename");
+      const patch = { ...(args.title !== undefined ? { title: optString(args.title, "title") ?? "" } : {}), ...(args.slug !== undefined ? { slug: optString(args.slug, "slug") ?? "" } : {}) };
+      // Through the document's host, as a rename in the editor is, so its open tabs follow.
+      const r = await callDoc(ctx, doc, "/api/name", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      const body = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new ToolError(body.error ?? `The document answered ${r.status}.`, r.status == 409 ? 409 : 400);
+      return withApi((await outside(ctx).platform.directory.get(doc.id)) ?? doc, ctx);
+    },
+  },
+  {
+    name: "delete_document",
+    only: "api",
+    loose: true,
+    description: "Deletes one of the person's documents, for good (only its owner may). A document that's a folder on disk (local development) only comes off the list.",
+    parameters: Type.Object({ document: ANY_DOCUMENT }),
+    run: async (args, ctx) => {
+      const { platform } = outside(ctx);
+      const doc = await findDocument(ctx, args.document, "delete");
+      if (!(await platform.docs.delete(doc))) await platform.directory.remove(doc.id);
+      return { deleted: true, id: doc.id, title: doc.title };
+    },
+  },
+  {
+    name: "list_tokens",
+    only: "api",
+    wide: true,
+    description: "The person's agent tokens (never the tokens themselves): id, label, when made and last used.",
+    parameters: Type.Object({}),
+    run: async (_args, ctx) => {
+      const { session, platform } = outside(ctx);
+      return (await platform.tokens.list(session.login)).map((t) => ({
+        id: t.id, label: t.label, kind: t.kind, scope: t.scope, ...(t.docId ? { document: t.docId } : {}), expires: t.expires ? new Date(t.expires).toISOString() : null, created: new Date(t.created).toISOString(), lastUsed: t.lastUsed ? new Date(t.lastUsed).toISOString() : null, ...(t.id == session.agent.id ? { yours: true } : {}),
+      }));
+    },
+  },
+  {
+    name: "revoke_token",
+    only: "api",
+    wide: true,
+    loose: true,
+    description: "Turns one of the person's agent tokens off, by id (list_tokens). Revoking your own ends your access.",
+    parameters: Type.Object({ id: str("The token's id.") }),
+    run: async (args, ctx) => {
+      const { session, platform } = outside(ctx);
+      if (!(await platform.tokens.revoke(session.login, String(args.id ?? ""), ctx.who.via)))
+        throw new ToolError(`You have no token "${args.id}".`, 404);
+      return { revoked: args.id };
+    },
+  },
+];
+
+/** Every server tool. Add one here and the agents it's for, the REST API, MCP and the guide all have it. */
+export const SERVER_TOOLS: Tool[] = [
+  ...API_TOOLS,
   // ------------------------------------------------------------ sharing
   {
     name: "document_access",
@@ -151,7 +367,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     name: "list_documents",
     label: "List documents",
     activity: "listing the documents",
-    docs: true,
+    only: "agent",
     description: "The person's documents, as the documents list (/docs) shows them, most recently edited first: their own and the ones shared with them. Each one's id, title, address, whose it is, their role in it, when it was last edited, and when it goes if nobody edits it (only for never-edited ones).",
     parameters: Type.Object({}),
     run: async (_args, ctx) => (await docsOf(ctx).docs.list(ctx.who.login.toLowerCase())).map((d) => ({
@@ -163,7 +379,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     name: "create_document",
     label: "Make a document",
     activity: "making a document",
-    docs: true,
+    only: "agent",
     description: `Makes a new document for the person, as New on the documents list does: from a template (${TEMPLATES.map((t) => `"${t.id}": ${t.description}`).join(" ")} "landing": a copy of the server's front page), or a copy of a document they may open (from; someone who may not edit it copies its published version). A blank page by default. It goes if nobody edits it in time (the delete_docs_after_hours setting; the answer says when). The title follows the page's first heading unless you give one; the address follows the title unless you give a slug. Answers its address: open it, or say where it is.`,
     parameters: Type.Object({
       template: Type.Optional(Type.String({ description: `A template: ${TEMPLATES.map((t) => t.id).join(", ")} (the default), or landing` })),
@@ -196,7 +412,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     name: "delete_document",
     label: "Delete a document",
     activity: "deleting a document",
-    docs: true,
+    only: "agent",
     description: "Deletes one of the person's documents for good, as Delete on the documents list does (only its owner may). A document that's a folder on disk (local development) only comes off the list. Not the document you're in: the person deletes that one on the documents list (/docs). Only delete when the person asks, naming the document.",
     parameters: Type.Object({ document: Type.String({ description: "The document: its address (/<owner>/<slug>), its URL or its id" }) }),
     run: async (args, ctx) => {
@@ -526,20 +742,67 @@ export const SERVER_TOOLS: ServerToolDef[] = [
   },
 ];
 
-/** The tools someone may use: the admin ones only for an admin with admin power (Users.actsAsAdmin). */
-export async function toolsFor(dir: Directory, who: Who): Promise<ServerToolDef[]> {
-  const admin = await dir.users.actsAsAdmin(who);
-  return SERVER_TOOLS.filter((t) => admin || !t.admin);
+/** The document tools, for any document: a `document` argument, and they run in its host, as the person's agent. */
+let docTools: Tool[] | null = null;
+export function documentTools(): Tool[] {
+  return (docTools ??= documentToolSpecs().map((spec): Tool => {
+    const p = spec.parameters as { properties: Record<string, unknown>; required?: string[] };
+    return {
+      name: spec.name,
+      only: "api",
+      loose: true,
+      description: `${spec.description} (In any document you may ${CHANGES.has(spec.name) ? "edit" : "open"}: name it with "document"; paths are relative to its folder.)`,
+      parameters: Type.Unsafe({
+        ...p,
+        type: "object",
+        properties: { document: ANY_DOCUMENT, ...p.properties },
+        required: ["document", ...(p.required ?? [])],
+      }),
+      run: async (args, ctx) => {
+        // A tool that changes nothing works in any document the person may open; the document's host refuses the rest to a viewer.
+        const doc = await findDocument(ctx, args.document, CHANGES.has(spec.name) ? "edit" : "open");
+        const { document: _, ...rest } = args;
+        const r = await callDoc(ctx, doc, `/api/ext/tools/${encodeURIComponent(spec.name)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rest) });
+        const body = (await r.json().catch(() => ({ ok: false, error: `The document answered ${r.status}.` }))) as { ok: boolean; content?: ToolContent[]; error?: string };
+        if (!body.ok) throw new ToolError(body.error ?? "The tool failed.", r.status >= 400 && r.status < 500 ? r.status : 500);
+        return body.content ?? [];
+      },
+    };
+  }));
 }
+
+/** Every tool of `who` ("agent": an embedded agent; "api": an outside agent, with the document tools too). */
+export const toolsOf = (who: "agent" | "api"): Tool[] => [
+  ...SERVER_TOOLS.filter((t) => t.only != (who == "agent" ? "api" : "agent")),
+  ...(who == "api" ? documentTools() : []),
+];
+
+/**
+ * The tools someone may use: the admin ones only for an admin with admin
+ * power (Users.actsAsAdmin); the documents list's only where there's a
+ * platform; no wide ones for a document token.
+ */
+export async function toolsFor(ctx: ToolWho, who: "agent" | "api"): Promise<Tool[]> {
+  const admin = await ctx.dir.users.actsAsAdmin(ctx.who);
+  return toolsOf(who).filter((t) => (admin || !t.admin) && !(t.only == "agent" && !ctx.platform) && !(t.wide && ctx.who.onlyDoc != null));
+}
+
+/** What a tool that needs no one runs with (the admin agent's own: agents/admin/tools.ts): nothing of the directory. */
+const NOBODY = new Proxy({} as ToolWho, {
+  get: () => {
+    throw new ToolError("This tool needs to know who's asking.", 500);
+  },
+});
 
 /**
  * Runs one, with what the directory throws turned into ToolErrors (not
  * allowed: 403; a bad value: 400).
  */
-export async function runServerTool(tool: ServerToolDef, args: Record<string, unknown>, ctx: ToolWho): Promise<string | object> {
-  if (tool.admin && !(await ctx.dir.users.actsAsAdmin(ctx.who))) throw new ToolError((await ctx.dir.users.isAdmin(ctx.who)) ? LOCKED : "Only an admin can do that.", 403);
+export async function runTool(tool: Tool, args: Record<string, unknown>, ctx: ToolWho | null): Promise<string | object | ToolContent[]> {
+  if (tool.admin && !(ctx && (await ctx.dir.users.actsAsAdmin(ctx.who))))
+    throw new ToolError(ctx && (await ctx.dir.users.isAdmin(ctx.who)) ? LOCKED : "Only an admin can do that.", 403);
   try {
-    return await tool.run(args, ctx);
+    return await tool.run(args, ctx ?? NOBODY);
   } catch (e) {
     if (e instanceof ToolError) throw e;
     if (e instanceof NotAllowed) throw new ToolError(e.message, /no such|isn't a user/i.test(e.message) ? 404 : 403);
@@ -548,22 +811,35 @@ export async function runServerTool(tool: ServerToolDef, args: Record<string, un
   }
 }
 
-/** The tools as the editor's agent takes them (pi's AgentTool), for someone in a document. */
-export async function agentToolsFor(ctx: ToolWho): Promise<(AgentTool & { activity: string })[]> {
-  return (await toolsFor(ctx.dir, ctx.who))
-    .filter((t) => !t.docs || ctx.platform)
-    .map((t) => ({
-      name: t.name,
-      label: t.label,
-      activity: t.activity,
-      description: t.description,
-      parameters: t.parameters,
-      execute: async (_id, params) => {
-        const out = await runServerTool(t, params as Record<string, unknown>, ctx).catch((e: unknown) => { throw new Error(e instanceof Error ? e.message : String(e)); });
-        return toolResult(out);
-      },
-    }));
+/**
+ * Tools as an embedded agent takes them (pi's AgentTool), run as `ctx` (a
+ * function: the admin agent's admin, with the unlock their page sent last;
+ * null: tools that need no one). `guard` checks first (the person still an
+ * admin, say).
+ */
+export function agentTools(
+  tools: Tool[],
+  ctx: ToolWho | (() => ToolWho) | null,
+  guard?: () => Promise<void>
+): (AgentTool & { activity?: string })[] {
+  return tools.map((t) => ({
+    name: t.name,
+    label: t.label ?? t.name,
+    activity: t.activity,
+    description: t.description,
+    parameters: t.parameters,
+    execute: async (_id, params) => {
+      await guard?.();
+      const out = await runTool(t, params as Record<string, unknown>, typeof ctx == "function" ? ctx() : ctx).catch((e: unknown) => {
+        throw new Error(e instanceof Error ? e.message : String(e));
+      });
+      return toolResult(out);
+    },
+  }));
 }
+
+/** The server tools the document agent has, for someone in a document. */
+export const agentToolsFor = async (ctx: ToolWho) => agentTools(await toolsFor(ctx, "agent"), ctx);
 
 /** A tool's answer as pi takes it: the text for the model; an `offer` in it (a button for the person) goes to the panel too. */
 export function toolResult(out: unknown) {
@@ -711,3 +987,87 @@ function signInOf(s: AuthStatus) {
     setupSteps: s.setup,
   };
 }
+
+/** An outside agent's session, platform and origin: every API tool has them (server/api.ts). */
+function outside(ctx: ToolWho): { session: Session & { agent: AgentToken }; platform: Platform; origin: string } {
+  if (!ctx.session || !ctx.platform || !ctx.origin) throw new ToolError("This tool is for outside agents, over the API.", 501);
+  return { session: ctx.session, platform: ctx.platform, origin: ctx.origin };
+}
+
+/** A document's row, its URL and its API, as the API's tools answer them. */
+function withApi(doc: DocRow, ctx: ToolWho) {
+  const name = nameOf(doc),
+    origin = ctx.origin ?? "";
+  return { id: doc.id, title: name.title, address: name.address, url: origin + name.address, api: `${origin}/d/${doc.id}/api/ext` };
+}
+
+/** A request to a document's own host, as the agent's person, with what they may do there. */
+async function callDoc(ctx: ToolWho, doc: Route, path: string, init: RequestInit): Promise<Response> {
+  const { session, platform, origin } = outside(ctx);
+  const inner = new Request(new URL(path, origin), init);
+  return platform.docs.fetch(doc, forwarded(inner, new URL(path, origin), path, `${origin}/d/${doc.id}`, session));
+}
+
+const MAX_FILE = 2_000_000, MAX_TOTAL = 50_000_000, MAX_FILES = 2000;
+
+/** A file's path as an outside agent gives it, inside the document. */
+export function cleanFilePath(p: string): string {
+  const rel = cleanRel(p.replace(/^\.?\//, ""));
+  if (!rel) throw new ToolError(`"${p}" isn't a path inside the document (no "..", no hidden files or node_modules).`);
+  return rel;
+}
+
+/** Files as tools take them: text, or {base64} for anything else. */
+function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
+  if (raw == null) return {};
+  if (typeof raw != "object" || Array.isArray(raw)) throw new ToolError("files must be an object of paths to contents.");
+  const out: Record<string, string | Uint8Array> = {};
+  let total = 0;
+  for (const [path, v] of Object.entries(raw as Record<string, unknown>)) {
+    const rel = cleanFilePath(path);
+    let data: string | Uint8Array;
+    if (typeof v == "string") data = v;
+    else if (v && typeof v == "object" && typeof (v as { base64?: unknown }).base64 == "string") {
+      try {
+        data = fromBase64((v as { base64: string }).base64.replace(/\s+/g, ""));
+      } catch {
+        throw new ToolError(`${path}: that isn't base64.`);
+      }
+    } else if (v && typeof v == "object" && typeof (v as { text?: unknown }).text == "string") data = (v as { text: string }).text;
+    else throw new ToolError(`${path}: give its text as a string, or {"base64": "..."}.`);
+    total = addFile(out, rel, data, total);
+  }
+  return out;
+}
+
+/** Adds a file to `out`, within the limits; answers the total size so far. */
+export function addFile(out: Record<string, string | Uint8Array>, rel: string, data: string | Uint8Array, total: number): number {
+  const size = typeof data == "string" ? new TextEncoder().encode(data).length : data.length;
+  if (size > MAX_FILE) throw new ToolError(`${rel} is ${(size / 1e6).toFixed(1)}MB: files can be at most ${MAX_FILE / 1e6}MB.`, 413);
+  total += size;
+  if (total > MAX_TOTAL) throw new ToolError(`That's more than ${MAX_TOTAL / 1e6}MB of files.`, 413);
+  out[rel] = data;
+  if (Object.keys(out).length > MAX_FILES) throw new ToolError(`That's more than ${MAX_FILES} files.`, 413);
+  return total;
+}
+
+/** The document's page among the files: the one named, else index.html. */
+function pageOf(files: Record<string, unknown>, named: unknown): string {
+  if (named != null && typeof named != "string") throw new ToolError("index must be a path.");
+  const index = named ? cleanFilePath(named) : "index.html" in files ? "index.html" : null;
+  if (!index) throw new ToolError(`There's no page: include index.html, or name the page with "index". The files: ${Object.keys(files).slice(0, 20).join(", ")}.`);
+  if (!/\.html?$/i.test(index)) throw new ToolError(`The page must be an .html file, not ${index}.`);
+  if (!(index in files)) throw new ToolError(`${index} isn't among the files.`);
+  return index;
+}
+
+const optString = (v: unknown, what: string): string | undefined => {
+  if (v == null) return undefined;
+  if (typeof v != "string") throw new ToolError(`${what} must be a string.`);
+  return v;
+};
+const stringList = (v: unknown, what: string): string[] => {
+  if (v == null) return [];
+  if (!Array.isArray(v) || v.some((x) => typeof x != "string")) throw new ToolError(`${what} must be a list of paths.`);
+  return v as string[];
+};

@@ -22,7 +22,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { startSession, type AgentSession } from "../agents/document/session";
 import { CHANGES, type FilesAccess, type OpenResult, type PageTree, type VersionsAccess } from "../agents/document/tools";
-import { externalGuide } from "../agents/document/guide";
+import { documentGuide } from "../agents/guides";
 import { MODELS, isModelChoice, type AgentConfig } from "../agents/models";
 import {
   AgentOff,
@@ -461,7 +461,7 @@ export function makeHost(opts: HostOptions) {
       const s = yield* extSession;
       const base = opts.baseUrl(yield* HttpServerRequest.HttpServerRequest);
       const name = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
-      return externalGuide({ docName: name?.title ?? doc.path, owner: user.name, base, tools: s.tools() });
+      return documentGuide({ docName: name?.title ?? doc.path, owner: user.name, base, tools: s.tools() });
     }))
     .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
     .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {

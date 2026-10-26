@@ -21,11 +21,13 @@
 //
 //   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits
 
-import { adminGuide, adminTools, dashboardTools, sourceTools, startAdminAgent, type AdminAgent, type DashboardOps } from "./agent.ts";
+import { startAdminAgent, type AdminAgent } from "./agent.ts";
+import { adminGuide } from "../guides.ts";
+import { dashboardTools, sourceTools, type DashboardOps } from "./tools.ts";
 import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
-import type { ToolWho } from "../tools.ts";
+import { agentTools, SERVER_TOOLS, type ToolWho } from "../tools.ts";
 import { isModelChoice, MODELS } from "../models.ts";
 import { emptyLog, type Log, type Offer } from "../../shared/agent-log.ts";
 import type { CredentialStatus } from "../../control/deploys/credential.ts";
@@ -126,8 +128,21 @@ export class AdminAgents {
       return r;
     };
     const scope = `admin:${login}`;
-    const store = tableStore(this.chats, scope, (running) => { if (running) this.deps.watch?.(); });
-    const agent = startAdminAgent({ cfg, owner: login, tools: [...adminTools(as, guard), ...sourceTools(readSource, guard), ...dashboardTools(this.dashboard(login, state), guard)], store, stored: this.chats.load(scope), meta: { origin } });
+    const store = tableStore(this.chats, scope, (running) => {
+      if (running) this.deps.watch?.();
+    });
+    const agent = startAdminAgent({
+      cfg,
+      owner: login,
+      tools: agentTools(
+        [...SERVER_TOOLS.filter((t) => t.admin), ...sourceTools(readSource), ...dashboardTools(this.dashboard(login, state))],
+        as,
+        guard
+      ),
+      store,
+      stored: this.chats.load(scope),
+      meta: { origin },
+    });
     agent.subscribe((ev) => this.event({ type: "agent", ev }, login));
     s = Object.assign(state, { agent });
     this.agents.set(login, s);

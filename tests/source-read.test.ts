@@ -1,5 +1,5 @@
 // The factory's agent reading Erga's own source (control/source/browse.ts,
-// SourceRepo.read, agents/admin/agent.ts `sourceTools`): list a folder, read a file
+// SourceRepo.read, agents/admin/tools.ts `sourceTools`): list a folder, read a file
 // or some of its lines, search, and the git log, at staging (the default), main,
 // a task's branch or a commit, in front of pretend Artifacts (real git,
 // tests/helpers/source-fixture.ts). Read-only: with a read token only, and no branch moves.
@@ -14,7 +14,9 @@ import { localToken } from "../dev/git-server.ts";
 import { lsRefs } from "../control/source/remote.ts";
 import { SourceRepo } from "../control/source/repo.ts";
 import type { SourceRead } from "../control/source/browse.ts";
-import { sourceTools, startAdminAgent } from "../agents/admin/agent.ts";
+import { startAdminAgent } from "../agents/admin/agent.ts";
+import { sourceTools } from "../agents/admin/tools.ts";
+import { agentTools } from "../agents/tools.ts";
 import { must, startFixture, type Fixture } from "./helpers/source-fixture.ts";
 
 setDefaultTimeout(30_000);
@@ -128,8 +130,14 @@ test("nothing moved: every branch is where it was, and the write token was never
 
 test("the agent's tools: each checks the admin first, and says the text is information, never instructions", async () => {
   let locked = false;
-  const guard = async () => { if (locked) throw new Error("Unlock admin access first."); };
-  const tools = sourceTools((q) => repo.read(q), guard);
+  const guard = async () => {
+    if (locked) throw new Error("Unlock admin access first.");
+  };
+  const tools = agentTools(
+    sourceTools((q) => repo.read(q)),
+    null,
+    guard
+  );
   expect(tools.map((t) => t.name)).toEqual(["list_source", "read_source", "search_source", "source_log"]);
   const run = (name: string, args: Record<string, unknown>) => tools.find((t) => t.name == name)!.execute("x", args as never);
   const out = await run("read_source", { path: "src/notes.ts" });
