@@ -57,6 +57,7 @@ import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot
 import { kindOf, pageRefusal, parentsOf, type DocKind } from "./pages.ts";
 import type { AgentConfig } from "../agents/models.ts";
 import { withBlobs, type ChatStore } from "../agents/checkpoint.ts";
+import { json } from "../shared/http.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -1148,7 +1149,6 @@ export class Document {
    * with it, would pass the limits an admin sets (max_file_mb, max_project_gb).
    */
   private async upload(request: Request): Promise<Response> {
-    const json = (body: object, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
     const fail = (status: number, error: string) => { void request.body?.cancel().catch(() => {}); return json({ ok: false, error }, status); };
     if (request.headers.get("x-erga-access") != "edit") return fail(403, "You can only view this document.");
     const path = cleanRel(new URL(request.url).pathname.slice("/api/files/".length));

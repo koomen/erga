@@ -34,6 +34,7 @@ import { devRoutes } from "./dev";
 import type { Env } from "./env";
 import { platform } from "./platform";
 import { simulateLatency, tallied } from "./timing";
+import { json } from "../shared/http.ts";
 
 export { Deployer } from "../control/install/session";
 export { DocumentObject } from "./objects/document";
@@ -63,14 +64,14 @@ export default {
         const read = request.method == "GET" || request.method == "HEAD";
         if (path.startsWith("/git/")) return new Response(null, { status: 301, headers: { Location: there, "Cache-Control": "no-store" } });
         if (read && !path.startsWith("/api/")) return new Response(null, { status: 302, headers: { Location: there, "Cache-Control": "no-store" } });
-        return Response.json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, { status: 404, headers: { "Cache-Control": "no-store" } });
+        return json({ error: `This is the control Worker's: ${there}`, control: env.CONTROL_URL }, 404);
       }
       // No control Worker: the Ops page (the sidebar always links it) says so; the rest of its routes answer 404.
       if (where == "none" && isOpsPagePath(path) && (request.method == "GET" || request.method == "HEAD")) {
         const session = await p.sessionOf(request);
         if (session) return adminResponse({ session, title: "Ops", here: "ops", body: NO_OPS });
       }
-      if (where == "none") return Response.json({ error: "This server has no control Worker: no repository, no deploys." }, { status: 404, headers: { "Cache-Control": "no-store" } });
+      if (where == "none") return json({ error: "This server has no control Worker: no repository, no deploys." }, 404);
       if (where == "here") {
         // The Ops page in place, on the control Worker's objects (p.deploys and p.source go over CONTROL); or, in local
         // development, every control route, on this Worker's own objects.

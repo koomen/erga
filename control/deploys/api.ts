@@ -33,6 +33,7 @@ import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../../server/platform.ts";
 import { whoOf } from "../../server/platform.ts";
 import type { DashboardDeploys } from "../../agents/admin/sessions.ts";
+import { json } from "../../shared/http";
 
 /** The pipeline's object, as these routes need it: the dashboard's calls, a target's history, and the event stream. */
 export interface DeploysObject extends DashboardDeploys {
@@ -60,8 +61,6 @@ export async function deploysApi(request: Request, session: Session, deploys: De
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method;
-  const noStore = { headers: { "Cache-Control": "no-store" } };
-  const json = (body: unknown, status = 200) => Response.json(body, { status, ...noStore });
   const by = byLine(session.login.toLowerCase(), whoOf(session).via);
 
   if (path == "/admin/deploys") return new Response(null, { status: 302, headers: { Location: "/admin/ops" } });

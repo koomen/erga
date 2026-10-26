@@ -47,6 +47,7 @@ import { isAssetPath, page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { tokenPath } from "./token-paths.ts";
+import { json } from "../../shared/http.ts";
 
 /** The request needs no admin: one of the exemptions above. */
 function exempt(request: Request, base: Platform, url: URL): boolean {
@@ -102,7 +103,7 @@ export async function adminsOnlyGate(request: Request, base: Platform, url: URL)
   if (git) {
     return new Response(`${why}\n`, { status: session ? 403 : 401, headers: { "Content-Type": "text/plain; charset=utf-8", ...(session ? {} : { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"' }) } });
   }
-  if (!wantsPage(request, url)) return Response.json({ error: why, adminsOnly: true }, { status: 403, headers: { "Cache-Control": "no-store" } });
+  if (!wantsPage(request, url)) return json({ error: why, adminsOnly: true }, 403);
   const production = `https://${TARGETS.production.host}`;
   const refusal = signedIn
     ? page("Staging is for Erga's admins only", `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one. Erga itself is at <a href="${production}">${TARGETS.production.host}</a>. <a href="/auth/logout">Sign out</a>`, 403)

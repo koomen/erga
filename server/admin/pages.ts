@@ -89,6 +89,7 @@ import {
   type Provider,
   type ProvidersOn,
 } from "../identity/index.ts";
+import { json } from "../../shared/http.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -113,12 +114,12 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     if (url.pathname == "/admin/api-keys") return apiKeysPage(platform, session!);
     if (url.pathname == "/admin/auth" || url.pathname == "/admin/auth/status") {
       const status = await authOps(platform, url.origin).status(who!);
-      return url.pathname == "/admin/auth" ? authPage(session!, status) : Response.json(status, { headers: { "Cache-Control": "no-store" } });
+      return url.pathname == "/admin/auth" ? authPage(session!, status) : json(status);
     }
     if (url.pathname == "/admin/access") return accessPage(platform, session!);
     if (url.pathname == "/admin/documents") {
       const found = await platform.directory.search(who!, url.searchParams.get("q") ?? "", Number(url.searchParams.get("limit")) || 20);
-      return Response.json({ found }, { headers: { "Cache-Control": "no-store" } });
+      return json({ found });
     }
     return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
   }
@@ -133,7 +134,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     if (url.pathname == "/admin/share") {
       if (session!.agent || session!.test) return Response.json({ error: "An agent can't make tokens." }, { status: 403 });
       const { token, info } = await platform.tokens.shareAdmin({ login: session!.login, name: session!.name }, field("rotate") == "1");
-      return Response.json({ token, id: info.id, label: info.label, expires: info.expires }, { headers: { "Cache-Control": "no-store" } });
+      return json({ token, id: info.id, label: info.label, expires: info.expires });
     }
     if (url.pathname == "/admin/credentials") {
       const credentials = platform.directory.credentials, name = field("name");
