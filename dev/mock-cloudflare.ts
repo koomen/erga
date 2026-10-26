@@ -40,7 +40,7 @@
 // it (the SQL as text), secrets are kept per Worker (keep_bindings, the
 // secrets API), and each Worker answers as the real one would where the
 // pipeline needs it: /logo.png, /api/deploys/version (its ERGA_VERSION) and
-// the snapshot endpoints (deploy/snapshot.ts, the real handler, over an
+// the snapshot endpoints (document/snapshot.ts, the real handler, over an
 // in-memory store of its documents). `failNext` makes the next call of a
 // step fail once (state.failNext = "worker"); `onUpload` hears of each
 // Worker uploaded (the tests restart the server that deployed itself).
@@ -48,7 +48,7 @@
 import { createHash } from "node:crypto";
 import type { Fetch, Release } from "../control/deploys/pipeline";
 import type { Builder } from "../control/deploys/branches";
-import { memoryStore, snapshotDoor, type DocStore } from "./snapshot";
+import { memoryStore, snapshotDoor, type DocStore } from "../document/snapshot";
 
 export interface MockState {
   account: { id: string; name: string };

@@ -9,7 +9,7 @@
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
 //   GET  /api/snapshot/blob/<sha-256>   SNAPSHOT_TOKEN: one of the documents' blobs (any server), read-only
 
-import { snapshotDoor } from "../../deploy/snapshot";
+import { snapshotDoor } from "../../document/snapshot";
 import { PRODUCTION } from "../../deploy/targets";
 import { health } from "../../server/health";
 import type { Platform } from "../../server/platform";

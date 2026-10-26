@@ -11,7 +11,7 @@ import { directoryOf, factoryKey, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
 import { isAdminsOnly, isTargetName, TARGETS, type TargetName } from "../deploy/targets";
-import { MOCK_HOOK_SECRET } from "../deploy/mock-cloudflare";
+import { MOCK_HOOK_SECRET } from "../dev/mock-cloudflare";
 import { sourceService } from "../control/source/service";
 import type { App } from "../control/index";
 import type { SourceService } from "../control/source/index.ts";

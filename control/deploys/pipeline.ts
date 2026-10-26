@@ -32,7 +32,7 @@
 // it, owned by its first admin.
 
 import { runControlPipeline } from "./control-worker";
-import { copyDocuments } from "../../deploy/snapshot";
+import { copyDocuments } from "./copy-documents";
 import { Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
 import type { Release } from "./release-format";
 import { DB_NAME, type DeployPlan } from "./plan";

@@ -25,7 +25,7 @@ import { builderEndpoint, forkBuildBody, forkBuilder, forkRepo, hashSecret, isFo
 import { installFleet } from "./fleet";
 import { SOURCE } from "../../deploy/targets";
 import { releaseStoreOf } from "../cloudflare/release-bucket";
-import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../../deploy/mock-cloudflare";
+import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../../dev/mock-cloudflare";
 import { containerBuilder } from "../builder/client";
 import { builderFetch } from "../builder/worker";
 import type { Env } from "../../cloudflare/env";

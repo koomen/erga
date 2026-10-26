@@ -24,7 +24,7 @@ import type { DocRow, Role, Who } from "../server/directory/index.ts";
 import { agentToolsFor } from "../agents/tools";
 import { VIA } from "../shared/attribution";
 import type { RestoreResult, VersionsState } from "../document/versions";
-import type { DocSnapshot, Page } from "../deploy/snapshot";
+import type { DocSnapshot, Page } from "../document/snapshot";
 import { directoryOf } from "./d1";
 import { forgetDecisions } from "../server/documents/index.ts";
 import { platform } from "./platform";

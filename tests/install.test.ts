@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { controlRoutes, type Control } from "../control/routes";
 import { CONTROL_OAUTH_SCOPES, OAuthCredential, sealKeyFrom, type CredentialStatus } from "../control/deploys/credential";
 import { OAUTH } from "../control/deploys/pipeline";
-import { ACCOUNT_ID, mockCloudflare, MOCK_OAUTH_SCOPES } from "../deploy/mock-cloudflare";
+import { ACCOUNT_ID, mockCloudflare, MOCK_OAUTH_SCOPES } from "../dev/mock-cloudflare";
 import type { Platform } from "../server/platform";
 import type { Session } from "../server/identity/index";
 

@@ -26,7 +26,7 @@
 
 import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploys/pipeline";
 import { controlHostOf, DEPLOY_OAUTH_COOKIE, INSTALL_CONTROL_WORKER } from "./install";
-import { mockCloudflare } from "../../deploy/mock-cloudflare";
+import { mockCloudflare } from "../../dev/mock-cloudflare";
 import { deployPage, mockConsentPage } from "./page";
 import { mayDeploy } from "../deploys/access";
 import { esc, page } from "../../server/pages/index.ts";
