@@ -13,7 +13,6 @@
 // coming from the page). It sends nothing secret, and to the viewer's origin only. The page's origin holds nothing but
 // this one document: that's the boundary (PAGE_SANDBOX).
 
-import { EVENT_TYPES, liveWatch } from "../../shared/live-page.ts";
 import { insertHead, type ReaderConfig } from "../../shared/page-html.ts";
 import { asset, frameScripts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
@@ -51,14 +50,8 @@ export const EDITOR_ALLOW = "autoplay; fullscreen 'none'";
 /** The script, as text (client/inline/reader.ts). */
 export const readerScript = (config: ReaderConfig) => inlineCall("reader", config);
 
-/**
- * The live log's watch (shared/live-page.ts), from its function's own text, with a stand-in for the helper a bundler that
- * keeps names puts in it (esbuild's __name), which the page hasn't got.
- */
-const LIVE_WATCH = () => `(function(){var __name=function(f){return f};(${liveWatch.toString()})(${JSON.stringify({ events: true, net: true, types: EVENT_TYPES })})})();`;
-
-/** A script element's text, as nothing in it can close the element. */
-const inline = (js: string) => js.replace(/<\/script/gi, "<\\/script");
+/** The live log's watch, from the page's first moment (client/inline/page-live-watch.ts). */
+const LIVE_WATCH = inlineCall("page-live-watch");
 
 /**
  * A page of the document as its pages origin serves it: its marked HTML (shared/page-html.ts, markPage) with, first in its
@@ -70,15 +63,15 @@ export function readerPage(marked: string, o: { shell: string; prefix: string; s
   const editor = o.editor ? frameScripts(o.shell) : undefined;
   const head =
     (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
-    `<script data-erga>${inline(readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) }))}</script>` +
+    `<script data-erga>${readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) })}</script>` +
     (editor
-      ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${inline(LIVE_WATCH())}</script><script data-erga>${inline(TEXT_GUARD)}</script><script data-erga>${EDITING_API}</script>`
+      ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${LIVE_WATCH}</script><script data-erga>${TEXT_GUARD}</script><script data-erga>${EDITING_API}</script>`
       : "");
   return insertHead(marked, head);
 }
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
-export const readerVersion = () => versionOf(readerScript({ shell: "", prefix: "", src: "" }) + PROBLEM_WATCH + TEXT_GUARD + EDITING_API + LIVE_WATCH() + asset("frame.js"));
+export const readerVersion = () => versionOf(readerScript({ shell: "", prefix: "", src: "" }) + PROBLEM_WATCH + TEXT_GUARD + EDITING_API + LIVE_WATCH + asset("frame.js"));
 
 /** A digest of text (FNV-1a), which changes whenever it does. */
 const versionOf = (text: string) => {
