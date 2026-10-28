@@ -34,7 +34,7 @@ export const TEMPLATES: Template[] = [
   {
     id: "canvas",
     name: "Canvas",
-    description: "Frames on one big canvas; each step zooms out, then in on the next.",
+    description: "Frames on one big canvas; each step glides to the next.",
     files: "assets/templates/canvas",
   },
   {

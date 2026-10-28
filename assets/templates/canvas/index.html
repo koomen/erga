@@ -8,11 +8,11 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
 <style>
-  /* One large canvas with frames on it. Each frame is a step: the camera zooms out to the whole canvas, then in on the next frame.
+  /* One large white canvas with frames on it. Each frame is a step: the camera glides to the next frame in one smooth move.
      Drag to move around the canvas; scroll to move it, pinch (or ctrl and scroll) to zoom.
      To move a frame, change its left and top; to add one, copy a section with class "frame" (its h2 is the step's name). */
   :root {
-    --bg: #eef1f5; --ink: #18202c; --muted: #566273; --frame: #ffffff; --rule: #d6dce5;
+    --bg: #ffffff; --ink: #18202c; --muted: #566273;
     --a: #2f6fd6; --b: #d4623a; --c: #2c9a6a; --d: #8a55c9;
     --display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
     --body: "Literata", Georgia, "Times New Roman", serif;
@@ -20,13 +20,11 @@
   html, body { margin: 0; height: 100%; overflow: clip; background: var(--bg); color: var(--ink); }
   .stage { position: fixed; inset: 0; overflow: clip; cursor: grab; touch-action: none; }
   .stage.dragging, .stage.dragging * { cursor: grabbing; user-select: none; }
-  .canvas { position: absolute; left: 0; top: 0; width: 3600px; height: 2200px; transform-origin: 0 0;
-    background: radial-gradient(circle, #cfd6e0 1.5px, transparent 1.6px) 0 0 / 48px 48px; }
+  .canvas { position: absolute; left: 0; top: 0; width: 3600px; height: 2200px; transform-origin: 0 0; }
   .path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  .path path { fill: none; stroke: #b9c2cf; stroke-width: 6; stroke-dasharray: 2 22; stroke-linecap: round; }
+  .path path { fill: none; stroke: #dde2e9; stroke-width: 6; stroke-dasharray: 2 22; stroke-linecap: round; }
   .frame { position: absolute; box-sizing: border-box; width: 960px; height: 540px; padding: 72px 84px; display: flex; flex-direction: column; justify-content: center; gap: 24px;
-    background: var(--frame); border: 1px solid var(--rule); border-top: 14px solid var(--accent, var(--a)); border-radius: 22px;
-    box-shadow: 0 30px 80px rgba(24, 32, 44, .12); cursor: pointer; }
+    cursor: pointer; }
   .frame.current { cursor: auto; }
   .frame h2 { margin: 0; font: 700 64px/1.1 var(--display); letter-spacing: -.015em; color: var(--accent, var(--a)); }
   .frame p { margin: 0; font: 400 32px/1.45 var(--body); color: var(--muted); }
@@ -41,11 +39,11 @@
     <svg class="path" viewBox="0 0 3600 2200" aria-hidden="true"><path d="M720 590 C 1200 1000, 1700 300, 2280 760 S 2800 1500, 2240 1640 S 1200 1500, 900 1640"/></svg>
     <section class="frame" style="left: 240px; top: 320px;">
       <h2>One big canvas</h2>
-      <p>Every idea in this talk sits on one large canvas. Each step zooms in on one frame.</p>
+      <p>Every idea in this talk sits on one large canvas. Each step brings one frame into view.</p>
     </section>
     <section class="frame" style="left: 1800px; top: 220px;">
-      <h2>Zoom out, zoom in</h2>
-      <p>To go to the next frame, the camera pulls back to show the whole canvas, then flies in.</p>
+      <h2>Glide to the next</h2>
+      <p>To go to the next frame, the camera glides across the canvas in one smooth move.</p>
     </section>
     <section class="frame" style="left: 2340px; top: 1180px;">
       <h2>Make it yours</h2>
@@ -60,7 +58,7 @@
 <script>
   const stage = document.querySelector(".stage"), canvas = document.querySelector(".canvas");
   const frames = () => [...canvas.querySelectorAll(".frame")];
-  const OUT = 650, IN = 850; // ms: zoom out to the whole canvas, then in on the frame
+  const RHO = 1.1; // how far the camera pulls back on a long move: 0 not at all
   const LEAST = 0.02, MOST = 20; // the camera's zoom: the whole canvas a few centimetres wide, a word filling the window
   let at = 0, paused = false, cam = null, run = 0, free = false;
 
@@ -71,25 +69,35 @@
     return { x: b.x + b.w / 2, y: b.y + b.h / 2, s };
   }
   const onFrame = (i) => fit(box(frames()[i]), 0.9);
-  function whole() {
-    const fs = frames().map(box);
-    const x0 = Math.min(...fs.map((b) => b.x)), y0 = Math.min(...fs.map((b) => b.y));
-    const x1 = Math.max(...fs.map((b) => b.x + b.w)), y1 = Math.max(...fs.map((b) => b.y + b.h));
-    return fit({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, 0.86);
-  }
   function place(c) {
     cam = c;
     canvas.style.transform = `translate(${innerWidth / 2 - c.x * c.s}px, ${innerHeight / 2 - c.y * c.s}px) scale(${c.s})`;
   }
-  // From a to b: the zoom moves evenly on a log scale, the centre with it, eased at both ends.
-  function fly(a, b, ms, id) {
+  // The path from camera a to camera b: van Wijk and Nuij's smooth zoom and pan, which pulls back a little on a
+  // long move so that the pan stays slow on the screen. w is the window's width on the canvas. S is the path's length.
+  function glide(a, b) {
+    const w0 = innerWidth / a.s, w1 = innerWidth / b.s, dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), r2 = RHO * RHO;
+    if (d < 1) {
+      const S = Math.abs(Math.log(w1 / w0)) / RHO;
+      return { S, at: (t) => ({ x: a.x + dx * t, y: a.y + dy * t, s: a.s * (b.s / a.s) ** t }) };
+    }
+    const b0 = (w1 * w1 - w0 * w0 + r2 * r2 * d * d) / (2 * w0 * r2 * d), b1 = (w1 * w1 - w0 * w0 - r2 * r2 * d * d) / (2 * w1 * r2 * d);
+    const r0 = Math.log(Math.hypot(b0, 1) - b0), r1 = Math.log(Math.hypot(b1, 1) - b1), S = (r1 - r0) / RHO;
+    return { S, at: (t) => {
+      const r = RHO * t * S + r0, u = (w0 / (r2 * d)) * (Math.cosh(r0) * Math.tanh(r) - Math.sinh(r0));
+      return { x: a.x + u * dx, y: a.y + u * dy, s: (innerWidth * Math.cosh(r)) / (w0 * Math.cosh(r0)) };
+    } };
+  }
+  // From a to b along the glide, eased at both ends; a longer path takes a little longer.
+  function fly(a, b, id) {
+    const { S, at: point } = glide(a, b), ms = Math.min(1600, 700 + 320 * S);
     return new Promise((done) => {
       const t0 = performance.now();
-      const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
+      const ease = (t) => (1 - Math.cos(Math.PI * t)) / 2;
       const tick = (now) => {
         if (id != run) return done(false);
-        const t = Math.min(1, (now - t0) / ms), e = ease(t);
-        place({ x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e, s: a.s * (b.s / a.s) ** e });
+        const t = Math.min(1, (now - t0) / ms);
+        place(t < 1 ? point(ease(t)) : b);
         t < 1 ? requestAnimationFrame(tick) : done(true);
       };
       requestAnimationFrame(tick);
@@ -98,7 +106,6 @@
   async function show(i, animate = true) {
     const n = frames().length;
     i = Math.max(0, Math.min(n - 1, i | 0));
-    const from = at;
     at = i;
     frames().forEach((f, k) => f.classList.toggle("current", k == at));
     dispatchEvent(new Event("ergastep"));
@@ -106,8 +113,7 @@
     free = false;
     if (!animate || !cam || matchMedia("(prefers-reduced-motion: reduce)").matches) return place(onFrame(at));
     canvas.style.willChange = "transform";
-    if (from != at && (await fly(cam, whole(), OUT, id)) === false) return;
-    if ((await fly(cam, onFrame(at), from == at ? IN / 2 : IN, id)) === false) return;
+    if ((await fly(cam, onFrame(at), id)) === false) return;
     canvas.style.willChange = ""; // sharp text again once the camera stops
   }
 
@@ -175,16 +181,14 @@
   // The editor may scroll the stage to show the caret; the camera alone moves the canvas.
   stage.addEventListener("scroll", () => { stage.scrollTop = stage.scrollLeft = 0; });
 
-  // A small picture of frame i, drawn from the page: its colours, and each heading and paragraph at its place and size.
+  // A small picture of frame i, drawn from the page: the canvas's colour, and each heading and paragraph at its place and size.
   function image(i, { width, height }) {
-    const f = frames()[i], fb = box(f), cs = getComputedStyle(f);
+    const f = frames()[i], fb = box(f);
     const c = document.createElement("canvas");
     c.width = width; c.height = height;
     const g = c.getContext("2d");
     const k = Math.min(width / fb.w, height / fb.h), ox = (width - fb.w * k) / 2, oy = (height - fb.h * k) / 2;
     g.fillStyle = getComputedStyle(document.body).backgroundColor; g.fillRect(0, 0, width, height);
-    g.fillStyle = cs.backgroundColor; g.fillRect(ox, oy, fb.w * k, fb.h * k);
-    g.fillStyle = cs.borderTopColor; g.fillRect(ox, oy, fb.w * k, parseFloat(cs.borderTopWidth) * k);
     const fr = f.getBoundingClientRect(), z = fr.width / fb.w; // the camera's zoom, to take it out of the text's place
     for (const el of f.querySelectorAll("h1, h2, h3, p, li")) {
       const r = el.getBoundingClientRect(), es = getComputedStyle(el), size = parseFloat(es.fontSize);
