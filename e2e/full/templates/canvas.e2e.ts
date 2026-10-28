@@ -1,5 +1,5 @@
 // The Canvas presentation template: frames on one large canvas, each a step; going to the
-// next step zooms out to the whole canvas, then in on the next frame, which ends in the middle; viewing and editing.
+// next step glides to the next frame in one smooth move, which ends with it in the middle; viewing and editing.
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../../helpers/fixtures";
 import { editor, F } from "../../helpers/editor";
@@ -8,7 +8,7 @@ import { bar, clickOn, editorReady, inPage, newDoc, openTab } from "./templates"
 
 await servers.main();
 
-const LABELS = ["One big canvas", "Zoom out, zoom in", "Make it yours", "Add a frame"];
+const LABELS = ["One big canvas", "Glide to the next", "Make it yours", "Add a frame"];
 
 /** The camera's zoom, and where the current frame's middle is against the window's (0, 0 when centred). */
 const CAMERA = `(() => {
@@ -19,7 +19,7 @@ const camera = (page: Page) => inPage<{ s: number; dx: number; dy: number; at: n
 
 /**
  * Goes forward one step from `from`, the page sampling the zoom on every frame on the way (not the test, every
- * 40 ms, which a loaded machine stretches): it must drop below both ends, and end on the next frame, centred.
+ * 40 ms, which a loaded machine stretches): it may pull back a little, never to the whole canvas, and must end on the next frame, centred.
  */
 async function flies(page: Page, from: number) {
   const start = (await camera(page))!;
@@ -36,8 +36,8 @@ async function flies(page: Page, from: number) {
   await clickOn(page, ".erga-steps-next");
   const { least, end } = await sampled;
   expect((await bar(page)).at).toBe(`${from + 2} / 4`);
-  expect(least).toBeLessThan(start.s * 0.6);
-  expect(least).toBeLessThan(end.s * 0.6);
+  expect(least).toBeGreaterThan(start.s * 0.5);
+  expect(least).toBeGreaterThan(end.s * 0.5);
 }
 
 test("/new?template=canvas makes a document, which the New menu calls Canvas", async () => {
@@ -45,7 +45,9 @@ test("/new?template=canvas makes a document, which the New menu calls Canvas", a
   expect((await newDoc(await servers.main(), "canvas")).status).toBe(302);
 });
 
-test("viewing: 1 / 4 on frame 1, centred; the list has four labelled steps, each with a picture; forward zooms out, then in on the next frame, centred, twice", async ({ tab }) => {
+test("viewing: 1 / 4 on frame 1, centred; the list has four labelled steps, each with a picture; forward glides to the next frame, centred, twice", async ({
+  tab,
+}) => {
   const made = await newDoc(await servers.main(), "canvas");
   const page = tab.page;
   await openTab(tab, made.address, { width: 1100, height: 720 });

@@ -160,6 +160,6 @@ test("a canvas: a frame's text joins its heading, and the next frame's heading j
   const ed = editor(tab.page, { address: made.address, dir: "", file: "" });
   await ed.loaded();
   await joins(ed, "One big canvas", "Every idea in this talk", "Backspace");
-  await joins(ed, "Every idea in this talk", "Zoom out, zoom in", "Backspace");
-  await joins(ed, "Every idea in this talk", "Zoom out, zoom in", "Delete");
+  await joins(ed, "Every idea in this talk", "Glide to the next", "Backspace");
+  await joins(ed, "Every idea in this talk", "Glide to the next", "Delete");
 });

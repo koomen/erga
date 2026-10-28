@@ -7,12 +7,12 @@
 <style>
   /* A deck of 16:9 slides (Google Slides' shape), one at a time, as large as the window allows.
      Sizes inside a slide are in cqw (hundredths of the slide's width), so everything scales with it. */
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #202124; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f1f3f4; }
   body { display: grid; place-items: center; }
   .slide { grid-area: 1 / 1; container-type: inline-size; box-sizing: border-box; overflow: hidden;
     width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16));
     padding: 5.5cqw 6.5cqw; display: flex; flex-direction: column; gap: 2.5cqw; background: #fff;
-    font-family: Arial, Helvetica, sans-serif; color: #202124; }
+    font-family: Arial, Helvetica, sans-serif; color: #202124; box-shadow: 0 1px 3px rgba(60, 64, 67, .3); }
   .slide[hidden] { display: none; }
   .slide h1, .slide h2, .slide p { margin: 0; }
   .slide h1 { font-size: 7.2cqw; font-weight: 400; line-height: 1.15; }
