@@ -423,7 +423,7 @@ export class Directory {
    */
   async rename(id: string, patch: { title?: string | null; slug?: string | null }, pageTitle: string | null): Promise<{ doc: DocRow; renamed: boolean }> {
     const doc = await this.get(id);
-    if (!doc) throw new NameError("There's no such document.");
+    if (!doc) throw new NameError({ message: "There's no such document." });
     let { title, titleSet, slugSet } = doc;
     if (patch.title !== undefined) {
       const given = clip(patch.title ?? "");
@@ -432,8 +432,8 @@ export class Directory {
     let slug: string | null = null, explicit = false;
     if (patch.slug !== undefined && patch.slug !== null && patch.slug.trim()) {
       slug = slugify(patch.slug);
-      if (!slug) throw new NameError(`"${patch.slug}" can't be an address: use letters, digits and dashes.`);
-      if (RESERVED.has(slug)) throw new NameError(`"${slug}" is reserved: pick another address.`);
+      if (!slug) throw new NameError({ message: `"${patch.slug}" can't be an address: use letters, digits and dashes.` });
+      if (RESERVED.has(slug)) throw new NameError({ message: `"${slug}" is reserved: pick another address.` });
       [slugSet, explicit] = [true, true];
     } else if (patch.slug !== undefined || !slugSet) {
       // Back to following the title (or still following it).
@@ -474,7 +474,7 @@ export class Directory {
         return { doc: now, renamed: now.title != doc.title || now.slug != doc.slug };
       } catch (e) {
         if (!unique(e) || tries >= 4) throw e;
-        if (next.explicit) throw new NameError(`/${doc.owner}/${next.slug} was just taken: pick another address.`);
+        if (next.explicit) throw new NameError({ message: `/${doc.owner}/${next.slug} was just taken: pick another address.` });
       }
     }
   }
@@ -491,10 +491,17 @@ export class Directory {
       `SELECT slug AS s, title FROM documents WHERE owner = ?1 AND id != ?2 AND (slug = ?3 OR slug LIKE ?4)
        UNION ALL SELECT id AS s, title FROM documents WHERE owner = ?1 AND id != ?2 AND id = ?3`, owner, id, base, `${stem}-%`)).map((r) => r.s));
     if (explicit) {
-      if (RESERVED.has(base)) throw new NameError(`"${base}" is reserved: pick another address.`);
+      if (RESERVED.has(base)) throw new NameError({ message: `"${base}" is reserved: pick another address.` });
       if (taken.has(base)) {
-        const [other] = await this.sql.all<{ title: string }>("SELECT title FROM documents WHERE owner = ?1 AND (slug = ?2 OR id = ?2) AND id != ?3", owner, base, id);
-        throw new NameError(`/${owner}/${base} is already ${other ? `the address of "${other.title}"` : "taken"}: pick another.`);
+        const [other] = await this.sql.all<{ title: string }>(
+          "SELECT title FROM documents WHERE owner = ?1 AND (slug = ?2 OR id = ?2) AND id != ?3",
+          owner,
+          base,
+          id
+        );
+        throw new NameError({
+          message: `/${owner}/${base} is already ${other ? `the address of "${other.title}"` : "taken"}: pick another.`,
+        });
       }
       return base;
     }

@@ -1565,9 +1565,14 @@ export class Document {
     const named = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
     const naming = (who: Asker): Naming => {
       const n = named(who);
+      const remember = (name: DocName) => Effect.promise(() => this.rememberName(name));
       return {
-        get: async () => (await this.readInfo())?.name ?? this.rememberName(await n.get()),
-        set: async (patch) => this.rememberName(await n.set(patch)),
+        get: () =>
+          Effect.flatMap(
+            Effect.promise(() => this.readInfo()),
+            (i) => (i?.name ? Effect.succeed(i.name) : Effect.flatMap(n.get(), remember))
+          ),
+        set: (patch) => Effect.flatMap(n.set(patch), remember),
       };
     };
 

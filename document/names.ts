@@ -3,11 +3,13 @@
 // title (server/directory/ keeps them, and decides a rename). The document's
 // host reads and changes its name through `Naming`, as one person.
 
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { DocName } from "./api.ts";
 import { slugify } from "./pages.ts";
 
 /** A rename that can't be done; the message says why, for a person or an agent to act on. */
-export class NameError extends Error {}
+export class NameError extends Schema.TaggedError<NameError>()("NameError", { message: Schema.String }) {}
 
 export const UNTITLED = "Untitled";
 
@@ -33,9 +35,9 @@ export const nameOf = (d: NamedRow): DocName => ({
 
 /** What a document's host needs to show and change its name, as one person. */
 export interface Naming {
-  get(): Promise<DocName>;
-  /** Throws a NameError a person or agent can act on (taken, reserved, not allowed). */
-  set(patch: { title?: string | null; slug?: string | null }): Promise<DocName>;
+  get(): Effect.Effect<DocName, NameError>;
+  /** Fails with a NameError a person or agent can act on (taken, reserved, not allowed). */
+  set(patch: { title?: string | null; slug?: string | null }): Effect.Effect<DocName, NameError>;
 }
 
 /** What naming asks the directory: a document's row, whether someone may rename it, and the rename. */
@@ -51,17 +53,23 @@ export interface NamesDirectory<Who> {
  * to following it.
  */
 export function namingFor<Who>(dir: NamesDirectory<Who>, id: string, pageTitle: () => string | null) {
+  // The directory's failures (its own NameError, or a database's) as a NameError: what the person reads.
+  const ask = <A>(f: () => Promise<A>) =>
+    Effect.tryPromise({
+      try: f,
+      catch: (e) => (e instanceof NameError ? e : new NameError({ message: e instanceof Error ? e.message : String(e) })),
+    });
+  const row = Effect.flatMap(
+    ask(() => dir.get(id)),
+    (doc) => (doc ? Effect.succeed(doc) : Effect.fail(new NameError({ message: "This document isn't in the directory." })))
+  );
   return (who: Who): Naming => ({
-    async get() {
-      const doc = await dir.get(id);
-      if (!doc) throw new NameError("This document isn't in the directory.");
-      return nameOf(doc);
-    },
-    async set(patch) {
-      const doc = await dir.get(id);
-      if (!doc) throw new NameError("This document isn't in the directory.");
-      if (!(await dir.may(who, "rename", doc))) throw new NameError("You can't rename this document.");
-      return nameOf((await dir.rename(id, patch, pageTitle())).doc);
-    },
+    get: () => Effect.map(row, nameOf),
+    set: (patch) =>
+      Effect.gen(function* () {
+        const doc = yield* row;
+        if (!(yield* ask(() => dir.may(who, "rename", doc)))) return yield* new NameError({ message: "You can't rename this document." });
+        return nameOf((yield* ask(() => dir.rename(id, patch, pageTitle()))).doc);
+      }),
   });
 }
