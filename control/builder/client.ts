@@ -3,15 +3,16 @@
 // follows the build's output line by line; the release it hands back is
 // the one the pipeline deploys.
 
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import { DeployError } from "../deploys/cloudflare-api";
 import type { Release } from "../deploys/release-format";
 import { unpackRelease } from "../deploys/bundle";
 import type { Builder } from "../deploys/branches";
-import { sleep } from "../../shared/time";
+import { runWith } from "../clock";
 
 /** A builder behind `fetcher`: the control Worker's own builderFetch (worker.ts), or a service binding to one. */
 export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: (ms: number) => Promise<void> } = {}): Builder {
-  const wait = o.sleep ?? sleep;
   return {
     async build({ commit, branch, source }, log, signal): Promise<Release> {
       let r: Response | null = null;
@@ -23,22 +24,41 @@ export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: 
       try {
       // Another build in the container (409), or no container free to start (503, "didn't start"):
       // wait and try again, up to ~10 minutes for 409s and ~5 minutes for 503s.
-      let busy = 0, waited = 0;
-      for (let i = 0; i < 200; i++) {
-        signal?.throwIfAborted();
-        r = await fetcher.fetch(`http://builder/build?id=${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, commit, branch }), signal });
-        if (r.status == 409 && busy < 120) {
-          if (busy++ == 0) log("the builder is busy with another build: waiting");
-          await wait(5000);
-        } else if (r.status == 503 && waited < 5 * 60_000) {
-          const why = (await r.text().catch(() => "")).slice(0, 200);
-          const ms = Math.min(30_000, 5000 * 2 ** Math.min(3, i));
-          log(`waiting for the builder (it answered 503${why ? `: ${why}` : ""}); trying again in ${ms / 1000} s`);
-          waited += ms;
-          await wait(ms);
-          r = null;
-        } else break;
-      }
+      let busy = 0,
+        waited = 0,
+        tries = 0;
+      type Asked = { r: Response | null; wait: number | null };
+      const ask = Effect.tryPromise({
+        try: async (): Promise<Asked> => {
+          signal?.throwIfAborted();
+          const i = tries++;
+          const r = await fetcher.fetch(`http://builder/build?id=${id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source, commit, branch }),
+            signal,
+          });
+          if (r.status == 409 && busy < 120) {
+            if (busy++ == 0) log("the builder is busy with another build: waiting");
+            return { r, wait: 5000 };
+          }
+          if (r.status == 503 && waited < 5 * 60_000) {
+            const why = (await r.text().catch(() => "")).slice(0, 200);
+            const ms = Math.min(30_000, 5000 * 2 ** Math.min(3, i));
+            log(`waiting for the builder (it answered 503${why ? `: ${why}` : ""}); trying again in ${ms / 1000} s`);
+            waited += ms;
+            return { r: null, wait: ms };
+          }
+          return { r, wait: null };
+        },
+        catch: (e) => e,
+      });
+      // Asked again after the wait each answer says, at most 200 times in all.
+      const again = Schedule.spaced(0).pipe(
+        Schedule.setInputType<Asked>(),
+        Schedule.modifyDelay(({ input }) => Effect.succeed(input.wait ?? 0))
+      );
+      r = (await runWith(o.sleep, ask.pipe(Effect.repeat({ schedule: again, times: 199, until: (a) => a.wait == null })))).r;
       if (!r || !r.ok || !r.body)
         throw new DeployError({
           message: `The builder didn't take the build (it answered ${r?.status ?? "nothing"}${r ? `: ${(await r.text().catch(() => "")).slice(0, 300)}` : ""}).`,

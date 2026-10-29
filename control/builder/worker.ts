@@ -25,7 +25,8 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { cachedBuild, storageStore, toolchainKey } from "./cache";
-import { sleep } from "../../shared/time";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 /** What the build container needs of the Worker's bindings. */
 export interface BuilderEnv { BUILDS: DurableObjectNamespace<Builder>; CF_VERSION_METADATA?: { id?: string } }
@@ -58,12 +59,15 @@ export class Builder extends DurableObject<BuilderEnv> {
     }
     if (!container.running) container.start({ enableInternet: true, env: { PORT: "8080" } });
     const port = container.getTcpPort(8080);
-    // Up when its server answers (it's a few seconds from a cold start).
-    for (let i = 0; ; i++) {
-      try { const r = await port.fetch("http://container/health"); if (r.ok) break; } catch { /* not yet */ }
-      if (i > 120) return Response.json({ error: "The build container didn't start." }, { status: 503 });
-      await sleep(500);
-    }
+    // Up when its server answers (it's a few seconds from a cold start): asked every half second, at most 122 times.
+    const answers = Effect.promise(() =>
+      port.fetch("http://container/health").then(
+        (r) => r.ok,
+        () => false
+      )
+    );
+    if (!(await Effect.runPromise(answers.pipe(Effect.repeat({ schedule: Schedule.spaced("500 millis"), times: 121, until: (up) => up })))))
+      return Response.json({ error: "The build container didn't start." }, { status: 503 });
     const r = await port.fetch(new Request(`http://container${path}`, request));
     if (!r.body) { this.ctx.waitUntil(container.destroy().catch(() => {})); return r; }
     // The build's stream, passed on; when it ends (or the pipeline drops it), the container goes.

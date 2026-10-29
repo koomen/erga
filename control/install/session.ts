@@ -14,6 +14,8 @@
 // store) and records each step as it goes; the page polls `info` to show them.
 
 import { DurableObject } from "cloudflare:workers";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import { checkPlan, pagesShown, appHost, type DeployPlan } from "../deploys/plan";
 import { Cloudflare, DeployError, OAUTH, type Fetch } from "../deploys/cloudflare-api";
 import { loadRelease, type Release } from "../deploys/release-format";
@@ -127,13 +129,25 @@ export class Deployer extends DurableObject<HostEnv> {
     if ("error" in t) return { ok: false, error: t.error };
     try {
       const cf = new Cloudflare(t.token, this.net(mock));
-      let r = await registerDomain(cf, accountId, name, confirmed);
-      for (let i = 0; i < 10 && !r.completed && (r.state == "in_progress" || r.state == "pending"); i++) {
-        await new Promise((ok) => setTimeout(ok, 2000));
-        r = await registrationStatus(cf, accountId, name);
-      }
-      if (r.state == "failed" || r.state == "blocked") return { ok: false, error: `Cloudflare couldn't register ${name} (${r.state})${r.error ? `: ${r.error}` : ""}. Check the Registrar page in your dashboard.` };
-      if (r.state == "action_required") return { ok: false, error: `Cloudflare needs something from you to finish registering ${name}${r.error ? ` (${r.error})` : ""}: open the Registrar page in your dashboard.` };
+      const settled = (r: { completed: boolean; state: string }) => r.completed || !(r.state == "in_progress" || r.state == "pending");
+      const first = await registerDomain(cf, accountId, name, confirmed);
+      // Asked again every two seconds while it's under way, at most ten times.
+      const status = Effect.tryPromise({ try: () => registrationStatus(cf, accountId, name), catch: (e) => e });
+      const r = settled(first)
+        ? first
+        : await Effect.runPromise(
+            status.pipe(Effect.delay("2 seconds"), Effect.repeat({ schedule: Schedule.spaced("2 seconds"), times: 9, until: settled }))
+          );
+      if (r.state == "failed" || r.state == "blocked")
+        return {
+          ok: false,
+          error: `Cloudflare couldn't register ${name} (${r.state})${r.error ? `: ${r.error}` : ""}. Check the Registrar page in your dashboard.`,
+        };
+      if (r.state == "action_required")
+        return {
+          ok: false,
+          error: `Cloudflare needs something from you to finish registering ${name}${r.error ? ` (${r.error})` : ""}: open the Registrar page in your dashboard.`,
+        };
       return { ok: true, ...r };
     } catch (e) { return { ok: false, error: message(e) }; }
   }

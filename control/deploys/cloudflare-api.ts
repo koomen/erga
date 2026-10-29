@@ -3,6 +3,7 @@
 
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 export const API = "https://api.cloudflare.com/client/v4";
 export type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -24,7 +25,16 @@ export class Unhealthy extends DeployError {
   }
 }
 
-interface Envelope<T> { success: boolean; result: T; errors?: { code: number; message: string }[]; result_info?: unknown }
+/** One of Cloudflare's refusals in its answer's `errors`. */
+const Refusal = Schema.Struct({ code: Schema.optionalKey(Schema.Number), message: Schema.optionalKey(Schema.String) });
+
+/** Every answer of Cloudflare's API: whether it worked, its result, and why not. */
+const Envelope = Schema.Struct({
+  success: Schema.optionalKey(Schema.Boolean),
+  result: Schema.optionalKey(Schema.Unknown),
+  errors: Schema.optionalKey(Schema.Array(Refusal)),
+});
+const envelopeOf = Schema.decodeUnknownOption(Schema.fromJsonString(Envelope));
 
 /**
  * The Cloudflare API with one token. Every call says what it's for (`what`,
@@ -35,20 +45,56 @@ export class Cloudflare {
   /** `words`: how a refusal is said (explain, by default: an API token's words). */
   constructor(private token: string, private fetch: Fetch = globalThis.fetch, private words: typeof explain = explain) {}
 
-  async call<T>(method: string, path: string, what: string, body?: unknown, opts: { bearer?: string; allow404?: boolean } = {}): Promise<T | null> {
+  /**
+   * One call: its result (null for none, or a 404 that `allow404` allows), as `schema` reads it when there is one. A
+   * result that doesn't match the schema is a refusal: Erga can't act on an answer it doesn't understand.
+   */
+  request<A = unknown>(
+    method: string,
+    path: string,
+    what: string,
+    body?: unknown,
+    opts: { bearer?: string; allow404?: boolean; schema?: Schema.Codec<A> } = {}
+  ): Effect.Effect<A | null, DeployError> {
     const headers: Record<string, string> = { Authorization: `Bearer ${opts.bearer ?? this.token}` };
     let payload: BodyInit | undefined;
     if (body instanceof FormData) payload = body;
     else if (body instanceof Blob) { payload = body; headers["Content-Type"] = body.type || "application/null"; }
     else if (body !== undefined) { payload = JSON.stringify(body); headers["Content-Type"] = "application/json"; }
-    let r: Response;
-    try { r = await this.fetch(`${API}${path}`, { method, headers, body: payload }); } catch (e) {
-      throw new DeployError({ message: `Couldn't reach Cloudflare to ${what}: ${(e as Error).message}. Try again in a moment.` });
-    }
-    const answer = (await r.json().catch(() => null)) as Envelope<T> | null;
-    if (r.status == 404 && opts.allow404) return null;
-    if (r.ok && answer?.success !== false) return (answer?.result ?? null) as T | null;
-    throw new DeployError({ message: this.words(what, r.status, answer?.errors ?? []), status: r.status });
+    return Effect.gen({ self: this }, function* () {
+      const r = yield* Effect.tryPromise({
+        try: () => this.fetch(`${API}${path}`, { method, headers, body: payload }),
+        catch: (e) => new DeployError({ message: `Couldn't reach Cloudflare to ${what}: ${(e as Error).message}. Try again in a moment.` }),
+      });
+      const answer = Option.getOrNull(envelopeOf(yield* Effect.promise(() => r.text().catch(() => ""))));
+      if (r.status == 404 && opts.allow404) return null;
+      if (!r.ok || answer?.success === false) {
+        const errors = (answer?.errors ?? []).map((e) => ({ code: e.code ?? 0, message: e.message ?? "" }));
+        return yield* new DeployError({ message: this.words(what, r.status, errors), status: r.status });
+      }
+      if (answer?.result == null) return null;
+      if (!opts.schema) return answer.result as A;
+      return yield* Schema.decodeUnknownEffect(opts.schema)(answer.result).pipe(
+        Effect.mapError(
+          (e) =>
+            new DeployError({
+              message: `Cloudflare answered in a way Erga doesn't understand when it tried to ${what}: ${e.message}`,
+              status: r.status,
+            })
+        )
+      );
+    });
+  }
+
+  /** `request`, as a promise. */
+  call<T>(
+    method: string,
+    path: string,
+    what: string,
+    body?: unknown,
+    opts: { bearer?: string; allow404?: boolean } = {}
+  ): Promise<T | null> {
+    return Effect.runPromise(this.request<T>(method, path, what, body, opts));
   }
 }
 
