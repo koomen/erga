@@ -15,6 +15,9 @@
 // the app serves at /admin/ops, as the admin.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
 import type { Actor, GithubLink, PushEvent, SourceRead } from "./source/index.ts";
 import { CONTROL } from "../deploy/targets";
 import { githubAppOf, releaseStoreOf } from "./cloudflare";
@@ -77,12 +80,35 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   fetch(request: Request) { return this.deploys.fetch(request); }
 }
 
+/** A text setting, trimmed: null when it's unset or blank. */
+const setting = (name: string) =>
+  Config.String(name).pipe(
+    Config.map((s) => s.trim() || null),
+    Config.withDefault(null)
+  );
+/** A secret, as it was set: "" when it isn't. */
+const secret = (name: string) => Config.String(name).pipe(Config.withDefault(""));
+
+/** The control Worker's settings, from its bindings (control/env.ts says what each is). */
+const Settings = Config.all({
+  app: Config.String("APP_URL"),
+  accountId: Config.String("CLOUDFLARE_ACCOUNT_ID"),
+  upstream: setting("UPSTREAM").pipe(Config.map((s) => s?.replace(/\/+$/, "") || null)),
+  forkSecret: secret("FORK_SECRET"),
+  googleId: setting("GOOGLE_APP_CLIENT_ID"),
+  googleSecret: setting("GOOGLE_APP_CLIENT_SECRET"),
+  version: setting("ERGA_VERSION"),
+  oauthClientId: setting("CLOUDFLARE_OAUTH_CLIENT_ID"),
+  oauthSecret: secret("CLOUDFLARE_OAUTH_CLIENT_SECRET"),
+});
+
 export default {
   async fetch(request: Request, env: ControlEnv, ctx: ExecutionContext): Promise<Response> {
+    const set = Effect.runSync(Settings.parse(ConfigProvider.fromUnknown(env)));
     // The app's files' addresses, which the pages here name (server/pages/assets.ts): the app's stylesheet and typeface.
-    await remoteAssets(env.APP_URL);
+    await remoteAssets(set.app);
     const platform = controlPlatform(env, ctx);
-    const upstream = env.UPSTREAM?.trim().replace(/\/+$/, "") || null;
+    const upstream = set.upstream;
     const fleet = installFleet(env);
     const hosts = fleet ? { production: fleet.specOf("production").host, staging: fleet.specOf("staging").host, control: fleet.specOf("control").host } : null;
     // With the app's security headers (server/security.ts): HTTPS only, and no other site's frame.
@@ -93,7 +119,7 @@ export default {
       // /deploy: installs, from the store; and the installs' forks (their repositories and builds). Not on a downstream's
       // control Worker, which names its upstream and its own hosts instead.
       ...(upstream
-        ? { upstream, ...(hosts ? { hosts } : {}), ...(env.FORK_SECRET ? { forkSecretHash: await hashSecret(env.FORK_SECRET) } : {}) }
+        ? { upstream, ...(hosts ? { hosts } : {}), ...(set.forkSecret ? { forkSecretHash: await hashSecret(set.forkSecret) } : {}) }
         : {
             deploy: (request: Request) => deployRoutes(request, { env, platform, oauthCallback: "/install/callback" }),
         forks: {
@@ -110,18 +136,18 @@ export default {
         },
       }),
       github: githubAppOf(env),
-      google: env.GOOGLE_APP_CLIENT_ID?.trim() && env.GOOGLE_APP_CLIENT_SECRET?.trim() ? { clientId: env.GOOGLE_APP_CLIENT_ID.trim(), secret: env.GOOGLE_APP_CLIENT_SECRET.trim() } : null,
+      google: set.googleId && set.googleSecret ? { clientId: set.googleId, secret: set.googleSecret } : null,
       sealKey: sealKeyFrom(env.SESSION_SECRET),
       background: (work: Promise<unknown>) => ctx.waitUntil(work),
       net: globalThis.fetch.bind(globalThis),
-      app: env.APP_URL.replace(/\/+$/, ""),
-      layout: controlLayout(env.APP_URL.replace(/\/+$/, "")),
-      version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,
+      app: set.app.replace(/\/+$/, ""),
+      layout: controlLayout(set.app.replace(/\/+$/, "")),
+      version: set.version || env.CF_VERSION_METADATA?.id || null,
       build: env.CF_VERSION_METADATA?.id ?? null,
       oauth: {
-        clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "",
-        ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}),
-        accountId: env.CLOUDFLARE_ACCOUNT_ID,
+        clientId: set.oauthClientId ?? "",
+        ...(set.oauthSecret ? { secret: set.oauthSecret } : {}),
+        accountId: set.accountId,
         worker: upstream ? "erga-control" : CONTROL.worker,
         net: globalThis.fetch.bind(globalThis),
         // The mock Cloudflare is local development's, where the app serves these routes: never here.
