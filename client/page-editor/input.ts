@@ -4,7 +4,8 @@
 import * as M from "../../shared/manuscript";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
+import { escapeAttr, findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
+import { hasFiles, hasImages, imageFiles, showDropCaret, showDropNote } from "./drop";
 import { isMac } from "./core";
 import { EditorClipboard } from "./clipboard";
 
@@ -55,8 +56,23 @@ export abstract class EditorInput extends EditorClipboard {
     on("dragstart", (e) => {
       if (this.ours(e)) e.preventDefault();
     });
+    // Files dragged from the computer: images go in where they're dropped (dropImages); never does the browser open a file.
+    on("dragover", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      const at = hasImages(e) ? this.dropAt(e) : null;
+      e.dataTransfer!.dropEffect = at ? "copy" : "none";
+      showDropCaret(doc, at?.range ?? null);
+    });
+    on("dragleave", (e) => {
+      if (hasFiles(e) && !e.relatedTarget) showDropCaret(doc, null);
+    });
     on("drop", (e) => {
-      if (this.ours(e)) e.preventDefault();
+      if (hasFiles(e)) {
+        e.preventDefault();
+        showDropCaret(doc, null);
+        this.dropImages(e);
+      } else if (this.ours(e)) e.preventDefault();
     });
     on("mousedown", (e) => this.mousedown(e));
     on("click", (e) => this.tick(e));
@@ -95,6 +111,48 @@ export abstract class EditorInput extends EditorClipboard {
   destroy(): void {
     this.renderToken++;
     this.unbind();
+  }
+
+  /** Where files dragged over the page would go in: a source position in editable text, and the DOM's caret there. */
+  protected dropAt(e: DragEvent): { pos: number; range: Range } | null {
+    const range = this.doc?.caretRangeFromPoint?.(e.clientX, e.clientY);
+    if (!range) return null;
+    const node = range.startContainer,
+      el = node.nodeType == 1 ? (node as Element) : node.parentElement;
+    if (!el || el.closest('[contenteditable="false"], input, textarea, select')) return null;
+    const u = this.unitOf(node);
+    const pos = u && this.verify(u) ? this.posFromDOM(node, range.startOffset) : null;
+    return pos != null && this.editableAt(u!, pos) ? { pos, range } : null;
+  }
+
+  /** Image files dropped on the text: to the caller, which adds them to the document's files (onDropImages). Others are left out. */
+  protected dropImages(e: DragEvent): void {
+    const files = imageFiles(e);
+    if (!files.length) return;
+    const point = { x: e.clientX, y: e.clientY };
+    const at = this.dropAt(e);
+    if (!at) return showDropNote(this.doc!, point, "An image can go only into the text you can edit. Drop it on a paragraph.");
+    this.config.onDropImages?.(files, at.pos, point);
+  }
+
+  /**
+   * Puts images at `at` (dropped there: dropImages), as `<img>` elements in the text, in order. The caret stays where it
+   * is. False if the text there can't take them (it changed meanwhile).
+   */
+  insertImages(at: number, images: { src: string; alt: string }[]): boolean {
+    const u = M.unitAt(this.units, at);
+    if (!images.length || !u || !this.verify(u) || !this.editableAt(u, at)) return false;
+    const insert = images.map((i) => `<img src="${escapeAttr(i.src)}" alt="${escapeAttr(i.alt)}">`).join("");
+    this.dispatch({
+      changes: [{ from: at, to: at, insert }, ...this.placeholderDrops(this.src, [u], at, at, true)],
+      userEvent: "input.drop",
+    });
+    return true;
+  }
+
+  /** Says why images dropped at `point` (the window's coordinates) didn't go in, there on the page. */
+  dropError(point: { x: number; y: number }, message: string): void {
+    if (this.doc) showDropNote(this.doc, point, message);
   }
 
   /** Whether an event comes from manuscript rather than from a widget, input or plain page. */

@@ -19,6 +19,7 @@ import { catchZoomGestures, clampZoom } from "./zoom";
 import { evaluateIn } from "./evaluate";
 import { LivePage } from "./live-page-tab";
 import { changesBetween } from "../../document/merge";
+import { encodePath } from "../../document/pages";
 import { sourceDigest } from "../../shared/page-html";
 import { evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../../shared/agent-log";
 import { sleep } from "../../shared/time";
@@ -61,6 +62,9 @@ const SELF = new URL(".", import.meta.url).href;
 const live = new LivePage(BASE, SELF);
 
 let page: PageEditor | null = null;
+/** Images dropped on the page that the shell is adding to the document's files: where they go in (mapped through the edits meanwhile). */
+const drops = new Map<number, { at: number; point: { x: number; y: number } }>();
+let dropSeq = 0;
 let relay: Relay | null = null;
 /** In the source view the shell holds the text; edits here would go nowhere. */
 let detached = false;
@@ -153,6 +157,20 @@ window.addEventListener("message", (e: MessageEvent) => {
       queueSnapshot();
       return;
     }
+    case "imaged": {
+      const d = drops.get(m.id);
+      if (!d) return;
+      drops.delete(m.id);
+      const names = Array.isArray(m.names) ? m.names.filter((n): n is string => typeof n == "string") : [];
+      const images = names.map((name) => ({ src: encodePath(`images/${name}`), alt: name }));
+      if (images.length && !page.insertImages(d.at, images))
+        page.dropError(
+          d.point,
+          "The text where the image was dropped changed meanwhile. It's in the document's files, in images/: drop it again."
+        );
+      else if (m.error) page.dropError(d.point, m.error);
+      return;
+    }
     case "capture":
       captureView(m.req, m.text).catch((err: Error): ViewResult => ({ width: 0, height: 0, errors: [], error: `Couldn't capture the page: ${err.message}` }))
         .then((result) => post({ type: "captured", id: m.id, result }));
@@ -212,6 +230,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     onReload: reload,
     onUpdate(u) {
       if (u.changes && !u.remote && !detached) relay!.local(u.changes);
+      if (u.changes) for (const d of drops.values()) d.at = u.changes.mapPos(d.at, 1);
       if (u.docChanged || u.selectionSet) sendSelection();
       // A presentation's pictures of its steps are out of date once its text changes.
       if (u.docChanged) { window.__ergaReader?.changed?.(); queueBackdrop(); }
@@ -240,6 +259,17 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     onNotice: (message, fix) => post({ type: "notice", message, fix }),
     onProblem: (p) => post({ type: "problem", key: p.key, message: p.message, fix: p.fix }),
     onPointer: (e) => post({ type: "pointer", kind: "move", x: z(e.clientX), y: z(e.clientY) }),
+    onDropImages(files, at, point) {
+      const id = ++dropSeq;
+      drops.set(id, { at, point });
+      let folder = HERE.startsWith(BASE) ? HERE.slice(BASE.length) : "";
+      try {
+        folder = decodeURIComponent(folder);
+      } catch {
+        folder = "";
+      }
+      post({ type: "images", id, folder, files });
+    },
   });
   if (m.tracking) page.setTracking(true);
   window.ergaFrame = { page, get relay() { return relay; }, get zoom() { return zoom; } };
