@@ -73,9 +73,26 @@ export type ToFrame =
   /**
    * `scroll`: where to scroll the page once it first renders (the page reloaded for a new release kept it: live.ts).
    * `carry`: the state the page's editor had, undo history and all (before the page loaded again, or the editor stopped),
-   * which the frame brings to `state`'s text and carries on from.
+   * which the frame brings to `state`'s text and carries on from; `drops`, with it: the files dropped on the page before
+   * it loaded again that are still on their way into the document (frame.ts), which go in on this one.
    */
-  | { type: "init"; state: unknown; version: number; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number; zoom?: number; carry?: unknown; view?: { pos: number; top: number }; held?: HeldInput[]; focus?: boolean; frame?: { sandbox: string | null; allow: string | null }; paused?: boolean }
+  | {
+      type: "init";
+      state: unknown;
+      version: number;
+      self: MarkAuthor;
+      tracking: boolean;
+      timescale?: number;
+      scroll?: number;
+      zoom?: number;
+      carry?: unknown;
+      drops?: unknown;
+      view?: { pos: number; top: number };
+      held?: HeldInput[];
+      focus?: boolean;
+      frame?: { sandbox: string | null; allow: string | null };
+      paused?: boolean;
+    }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }
@@ -130,7 +147,14 @@ export type FromFrame =
   /** The editor stopped (stop): its state for the way back in, or null if it hadn't started. */
   | { type: "stopped"; id: number; state: unknown; version: number }
   /** The page loads again, made from the text (a change the editor can't patch in): its editor's state, for the editor in the page that comes. */
-  | { type: "reloading"; state: unknown; version: number; view: { pos: number; top: number } | null; focus: boolean }
+  | {
+      type: "reloading";
+      state: unknown;
+      version: number;
+      view: { pos: number; top: number } | null;
+      focus: boolean;
+      drops?: { id: number; at: number; point: { x: number; y: number } }[];
+    }
   | { type: "styled"; id: number; why: string | null }
   | { type: "captured"; id: number; result: ViewResult }
   | { type: "lived"; id: number; result: LiveResult }

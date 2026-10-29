@@ -5,7 +5,7 @@ import * as M from "../../shared/manuscript";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
 import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
-import { hasFiles, showDropCaret, showDropNote } from "./drop";
+import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
 import { isMac } from "./core";
 import { EditorClipboard } from "./clipboard";
 
@@ -130,6 +130,7 @@ export abstract class EditorInput extends EditorClipboard {
     const files = [...(e.dataTransfer?.files ?? [])];
     if (!files.length) return;
     const point = { x: e.clientX, y: e.clientY };
+    if (this.rendering) return showDropNote(this.doc!, point, LOADING_AGAIN);
     const at = this.dropAt(e);
     if (!at) return showDropNote(this.doc!, point, "A file can go only into the text you can edit. Drop it on a paragraph.");
     this.config.onDropFiles?.(files, at.pos, point);
