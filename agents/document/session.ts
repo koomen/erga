@@ -38,9 +38,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { Tool } from "effect/ai";
 import { withBlobs, type ChatStore } from "../checkpoint";
-import { resultImage, startLoop, type AgentTool } from "../run";
+import { argumentsSchema, resultImage, startLoop, type AgentTool } from "../run";
 import { documentGuide } from "../guides";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
@@ -335,7 +334,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
     },
     subscribe: loop.subscribe,
     resume: loop.resume,
-    tools: () => mine().map((t) => ({ name: t.name, description: t.description, parameters: Tool.getJsonSchemaFromSchema(t.parameters) })),
+    tools: () => mine().map((t) => ({ name: t.name, description: t.description, parameters: argumentsSchema(t.parameters) })),
     async runTool(name, args, via) {
       if (CHANGES.has(name) && !opts.canEdit()) throw new Error(`${owner.name} can only view this document, so ${name} isn't one of the tools: they are ${mine().map((t) => t.name).join(", ")}.`);
       const tool = tools.find((t) => t.name == name);

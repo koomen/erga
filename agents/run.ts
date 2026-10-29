@@ -140,15 +140,20 @@ export const resultText = (out: ToolOutput) =>
     .join("\n")
     .trim();
 
+/**
+ * A tool's arguments as JSON Schema, as every list of tools gives them (the model's, REST's /api/ext/tools, MCP's
+ * tools/list): always an object's schema, as Anthropic and MCP require. Effect writes an empty Struct (a tool with
+ * no arguments) as {"not": {"type": "null"}}: that one is an object with none.
+ */
+export function argumentsSchema(parameters: Schema.Top): { type: "object"; properties?: Record<string, unknown>; required?: string[] } {
+  const schema = Tool.getJsonSchemaFromSchema(parameters) as { type?: string; properties?: Record<string, unknown>; required?: string[] };
+  return schema.type == "object" ? (schema as { type: "object" }) : { type: "object", properties: {} };
+}
+
 /** The tools as the model gets them: each one's JSON Schema; the loop runs them, never the model's toolkit. */
 function toolkitOf(tools: AgentTool[]): Toolkit.WithHandler<Record<string, Tool.Any>> {
   const byName = Object.fromEntries(
-    tools.map((t) => {
-      const schema = Tool.getJsonSchemaFromSchema(t.parameters) as { type?: string };
-      // A tool with no arguments: an object with none (Anthropic wants an object's schema).
-      const parameters = schema.type == "object" ? schema : { type: "object", properties: {} };
-      return [t.name, Tool.dynamic(t.name, { description: t.description, parameters: parameters as never })];
-    })
+    tools.map((t) => [t.name, Tool.dynamic(t.name, { description: t.description, parameters: argumentsSchema(t.parameters) as never })])
   );
   return { tools: byName as never, handle: () => Effect.die("the loop runs the tools") };
 }
