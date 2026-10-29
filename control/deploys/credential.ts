@@ -27,7 +27,8 @@
 
 import { DeployError, OAUTH, type Fetch } from "./cloudflare-api";
 import { open, seal, type Sealed } from "./seal";
-import { base64url, randomToken, sha256 } from "../../shared/bytes";
+import { Base64Url } from "effect/encoding";
+import { randomToken, sha256 } from "../../shared/bytes";
 
 /**
  * What the control Worker asks for: Workers (upload, settings, secrets,
@@ -268,7 +269,7 @@ export class OAuthCredential implements Credential {
 /** PKCE: a verifier and its S256 challenge. */
 export async function pkce(): Promise<{ verifier: string; challenge: string }> {
   const verifier = randomToken(32);
-  const challenge = base64url(await sha256(verifier));
+  const challenge = Base64Url.encode(await sha256(verifier));
   return { verifier, challenge };
 }
 
@@ -302,5 +303,5 @@ export async function exchangeCode(net: Fetch, o: { code: string; redirect: stri
 
 /** The Worker's sealing key from its session secret: 32 bytes, base64url (control/deploys/seal.ts's shape). */
 export async function sealKeyFrom(secret: string): Promise<string> {
-  return base64url(await sha256(`erga-credential:${secret}`));
+  return Base64Url.encode(await sha256(`erga-credential:${secret}`));
 }

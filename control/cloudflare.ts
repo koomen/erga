@@ -7,7 +7,7 @@ import type { InstallSpec } from "./install/install";
 import { githubOrigins, installationToken, uninstall, type GithubApp, type Remote } from "./source/index.ts";
 import { memoryBlobs, r2Blobs, ReleaseStore } from "./deploys/releases";
 import type { HostEnv } from "./env";
-import { hex } from "../shared/bytes";
+import { Hex } from "effect/encoding";
 
 // ---- Erga's repository
 
@@ -115,7 +115,7 @@ const access = (url: string, token: string, expires: number): RepoAccess => ({ u
 async function localToken(secret: string, repo: string, scope: string, exp: number): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${scope}:${exp}:${repo}`)));
-  return `art_local_${scope}_${exp}_${hex(mac).slice(0, 40)}?expires=${exp}`;
+  return `art_local_${scope}_${exp}_${Hex.encode(mac).slice(0, 40)}?expires=${exp}`;
 }
 
 // ---- the GitHub App
