@@ -35,6 +35,7 @@
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
@@ -193,7 +194,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   // Busy while the embedded agent runs, or while an external agent is
   // calling tools: during a call, and for a while after the last one, since
   // it's thinking between calls and nothing says when it's done.
-  const busy = { agent: false, ext: 0, extTimer: null as ReturnType<typeof setTimeout> | null };
+  const busy = { agent: false, ext: 0, extTimer: null as Fiber.Fiber<void> | null };
   let wasBusy = false;
   /** The version the document was at when this agent's last turn ended. */
   let lastTurn: Promise<string | null> = Promise.resolve(null);
@@ -287,7 +288,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   return {
     close() {
       loop.abort();
-      if (busy.extTimer) clearTimeout(busy.extTimer);
+      if (busy.extTimer) Effect.runFork(Fiber.interrupt(busy.extTimer));
       leave();
       awareness.destroy();
     },
@@ -350,7 +351,10 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
       busy.ext++;
       // Its edits are its person's, via it, under the token's label ("Ada, via a shared agent (CI)"); the cursor says so too.
       if (via) actAs({ ...me, name: byLine(owner.name, via), via });
-      if (busy.extTimer) { clearTimeout(busy.extTimer); busy.extTimer = null; }
+      if (busy.extTimer) {
+        Effect.runFork(Fiber.interrupt(busy.extTimer));
+        busy.extTimer = null;
+      }
       syncBusy(`${TOOL_ACTIVITY[name] ?? name}${path ? ` ${path}` : ""}`);
       emit({ t: "tool", id, name, path, status: "running", via: "external" });
       try {
@@ -365,8 +369,17 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
       } finally {
         busy.ext--;
         if (!busy.ext) actAs(me);
-        if (busy.extTimer) clearTimeout(busy.extTimer);
-        busy.extTimer = setTimeout(() => { busy.extTimer = null; syncBusy(); }, EXTERNAL_IDLE_MS);
+        if (busy.extTimer) Effect.runFork(Fiber.interrupt(busy.extTimer));
+        busy.extTimer = Effect.runFork(
+          Effect.sleep(EXTERNAL_IDLE_MS).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                busy.extTimer = null;
+                syncBusy();
+              })
+            )
+          )
+        );
         syncBusy("working");
       }
     },
