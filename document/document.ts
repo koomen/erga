@@ -776,6 +776,8 @@ export class Document {
     const json = (msg: unknown) => o.send(JSON.stringify(msg));
     let tab: (() => void) | null = null;
     if (person) {
+      // A tab that joins as the document wakes brings no request: what its person may do is what its socket says.
+      if (!this.editors.has(person.id)) this.editors.set(person.id, !o.readOnly);
       void opened.hello(person, !o.readOnly).then(json, (e: unknown) => this.deps.log(`couldn't greet ${person.id}'s tab: ${e}`));
       tab = opened.addTab(person.id, json);
       void opened.agentState(person).then((state) => json({ type: "agent-state", state }), () => {});

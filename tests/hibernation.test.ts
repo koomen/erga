@@ -6,6 +6,7 @@
 // joined to it.
 
 import { Database } from "bun:sqlite";
+import * as Redacted from "effect/Redacted";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
@@ -20,6 +21,7 @@ import { decodeStart } from "../shared/room-socket";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
 import { sleep } from "../shared/time";
+import type { AgentSettings } from "../agents/models";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -66,7 +68,12 @@ class World {
   document!: Document;
   tabs!: Tabs<FakeTab>;
   private inflight: Promise<unknown>[] = [];
-  constructor(readonly dir: Directory) { this.boot(); }
+  constructor(
+    readonly dir: Directory,
+    private settings: () => Promise<AgentSettings> = async () => ({ missing: "no key in the tests" })
+  ) {
+    this.boot();
+  }
 
   boot(): void {
     const deps: DocumentDeps = {
@@ -77,7 +84,7 @@ class World {
         attach: (opened) => this.tabs.attachAll(opened),
         detach: () => this.tabs.detachAll(),
       },
-      agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }) }),
+      agents: documentAgents({ settings: this.settings }),
       home: { forget: async () => {}, changed: async () => {} },
       timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
       background: () => {}, log: () => {},
@@ -112,10 +119,10 @@ class World {
   }
 }
 
-async function made() {
+async function made(settings?: () => Promise<AgentSettings>) {
   const dir = new Directory(memory(), { admins: ["ada"] });
   await dir.add({ id: "sleep123", owner: "ada", title: "Sleepy", created: Date.now(), expires: null });
-  const w = new World(dir);
+  const w = new World(dir, settings);
   await w.document.create("ada", "sleep123", { "index.html": "<p>Hi</p>" }, "index.html", { expires: null });
   return w;
 }
@@ -194,4 +201,21 @@ test("a tab holding another history (the document's was lost) is closed as the d
   expect(b.closed).toBe(4409);
   expect(a.closed).toBeNull();
   expect(a.text()).toBe("<p>xHi</p>");
+});
+
+test("an editor's tab that joins as the document wakes keeps its agent: the new object asks no request who may edit", async () => {
+  const w = await made(async () => ({ apiKey: Redacted.make("sk-test"), model: "script", effort: "medium" }));
+  const events = await w.connect(true);
+  const state = () =>
+    events.events.filter((e) => (e as { type: string }).type == "agent-state").at(-1) as { state: { enabled: boolean; reason?: string } };
+  await w.settle();
+  expect(state().state.enabled).toBe(true);
+  await sleep(250);
+  expect(w.document.isOpen()).toBe(false);
+  w.boot();
+  events.events.length = 0;
+  events.type(3, "x");
+  await w.settle();
+  await sleep(20);
+  expect(state().state).toMatchObject({ enabled: true });
 });

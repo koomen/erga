@@ -4,7 +4,7 @@
 import * as M from "../../shared/manuscript";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { findDiff, norm, placeholderBr, STOPS } from "./source";
+import { findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
 import { isMac } from "./core";
 import { EditorClipboard } from "./clipboard";
 
@@ -17,6 +17,12 @@ const MOVES: Record<string, [string, string]> = {
   Home: ["backward", "lineboundary"],
   End: ["forward", "lineboundary"],
 };
+
+/** A checkbox's tag in the source. */
+const CHECKBOX = /<input\b[^>]*\btype\s*=\s*["']?checkbox\b[^>]*>/gi;
+
+/** The Mac's Control keys that move the caret as the arrows do (Control-N a line down, ...): at a unit's edge, into the next. */
+const EMACS: Record<string, string> = { n: "ArrowDown", p: "ArrowUp", f: "ArrowRight", b: "ArrowLeft" };
 
 export abstract class EditorInput extends EditorClipboard {
   protected bind(): void {
@@ -53,6 +59,7 @@ export abstract class EditorInput extends EditorClipboard {
       if (this.ours(e)) e.preventDefault();
     });
     on("mousedown", (e) => this.mousedown(e));
+    on("click", (e) => this.tick(e));
     // What lets the page make custom edits (applyCustomEdits): the person's own clicks and keys, not a script's.
     on(
       "pointerdown",
@@ -144,6 +151,30 @@ export abstract class EditorInput extends EditorClipboard {
     }
   }
 
+  /**
+   * A click on a checkbox in the text (a to-do item's) ticks it in the file: its `checked` attribute, an edit like any
+   * other, which undo takes back.
+   */
+  protected tick(e: MouseEvent): void {
+    const box = e.target as HTMLInputElement;
+    if (!box.matches?.('input[type="checkbox" i]')) return;
+    const u = this.unitOf(box),
+      el = u && this.els[u.id];
+    if (!u || !el || !this.verify(u)) return;
+    const src = this.src;
+    const k = [...el.querySelectorAll('input[type="checkbox" i]')].indexOf(box);
+    const tag = [...src.slice(u.contentFrom, u.contentTo).matchAll(CHECKBOX)][k];
+    if (!tag) return;
+    const from = u.contentFrom + tag.index!;
+    // The file decides: the click is cancelled, and the checkbox shows the file once the browser has put it back.
+    e.preventDefault();
+    this.dispatch({
+      changes: { from, to: from + tag[0].length, insert: setChecked(tag[0], !/\schecked\b/i.test(tag[0])) },
+      userEvent: "input.check",
+    });
+    setTimeout(() => this.showChecks());
+  }
+
   /** A drag that leaves the unit it started in selects across units. */
   protected drag(e: MouseEvent): void {
     const from = this.dragFrom;
@@ -193,6 +224,8 @@ export abstract class EditorInput extends EditorClipboard {
     let handled = false;
     if (key == "enter" && !mod && !e.altKey) handled = this.enter(e.shiftKey);
     else if (key.startsWith("arrow")) handled = this.arrow(e);
+    else if (isMac && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && EMACS[key])
+      handled = this.arrow({ key: EMACS[key] } as KeyboardEvent);
     else if (key == "tab" && !mod && !e.altKey) handled = this.indentItem(e.shiftKey);
     else if (mod && !e.altKey && key == "z") handled = e.shiftKey ? this.redo() : this.undo();
     else if (mod && !e.altKey && !e.shiftKey && key == "y" && !isMac) handled = this.redo();

@@ -4,7 +4,22 @@
 import * as M from "../../shared/manuscript";
 import { EditorSelection, Transaction, findClusterBreak, type TransactionSpec } from "@codemirror/state";
 import { undo, redo } from "@codemirror/commands";
-import { BLOCK_SPLIT, contentIn, dropped, emptyIn, HEADING, placeholderBr, textIn, WHOLE_BLOCKS } from "./source";
+import {
+  attrOf,
+  BLOCK_SPLIT,
+  CONTENT_TAG,
+  contentIn,
+  dropped,
+  emptyIn,
+  HEADING,
+  placeholderBr,
+  setAttr,
+  textIn,
+  TODO_BOX,
+  TODO_ITEM,
+  todoBox,
+  WHOLE_BLOCKS,
+} from "./source";
 import { noHistory } from "./core";
 import { EditorRender } from "./render";
 
@@ -183,6 +198,22 @@ export abstract class EditorEdit extends EditorRender {
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u)) return false;
     const src = this.src;
+    // At the start of a to-do item's text: the checkbox goes, and the item is a list item again.
+    const box = forward ? null : todoBox(src, u);
+    if (box && pos <= box.to) {
+      const open = src.slice(u.openFrom, u.openTo);
+      const li = open.replace(TODO_ITEM, "");
+      this.dispatch({
+        changes: [
+          { from: u.openFrom, to: u.openTo, insert: li },
+          { from: box.from, to: box.to },
+        ],
+        selection: { anchor: box.from - (open.length - li.length) },
+        userEvent: "delete.backward",
+        scrollIntoView: true,
+      });
+      return true;
+    }
     // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
     const blank = !!placeholderBr(src, u);
     if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id, pos, false);
@@ -327,28 +358,51 @@ export abstract class EditorEdit extends EditorRender {
       insertAt("<br>", pos + 4);
       return true;
     }
-    // Enter in an empty last list item leaves the list: the item becomes a paragraph after it.
+    // Enter in an empty list item leaves the list: a nested item moves one level out; else the item becomes a paragraph
+    // after the list, or between its two halves.
     const list = u.node.parent;
     if (
       u.tag == "li" &&
       list &&
       (list.tag == "ul" || list.tag == "ol") &&
       !/\S/.test(textIn([u], u.contentFrom, u.contentTo)) &&
-      !list.children.some((c) => c.kind == "element" && c.from > u.from)
+      !CONTENT_TAG.test(src.slice(todoBox(src, u)?.to ?? u.contentFrom, u.contentTo).replace(/<br\s*\/?>/gi, ""))
     ) {
+      if (list.parent?.tag == "li") return this.indentItem(true);
+      const items = list.children.filter((c): c is M.ElementNode => c.kind == "element");
+      const i = items.indexOf(u.node);
       const indent = M.lineIndent(src, list.from);
+      // The item goes, with the line break and spaces before it; the caret goes into the paragraph, before its <br>.
       const before = src.slice(0, u.from).replace(/\s*$/, "").length;
-      const para = `\n${indent}<p><br></p>`;
-      this.dispatch({
-        changes: [
-          { from: before, to: u.to },
-          { from: list.to, insert: para },
-        ],
-        selection: { anchor: before + (list.to - u.to) + para.length - "<br></p>".length },
-        userEvent: "input",
-        scrollIntoView: true,
-      });
-      return true;
+      const leave = (changes: { from: number; to?: number; insert?: string }[], anchor: number) => {
+        this.dispatch({ changes, selection: { anchor }, userEvent: "input", scrollIntoView: true });
+        return true;
+      };
+      const para = "<p><br></p>";
+      // The last item: a paragraph after the list.
+      if (i == items.length - 1)
+        return leave(
+          [
+            { from: before, to: u.to },
+            { from: list.to, insert: `\n${indent}${para}` },
+          ],
+          list.to - (u.to - before) + indent.length + 4
+        );
+      // The first: before it.
+      if (i == 0)
+        return leave(
+          [
+            { from: list.from, insert: `${para}\n${indent}` },
+            { from: before, to: u.to },
+          ],
+          list.from + 3
+        );
+      // One between: the list closes before it and opens again after it (a numbered list goes on from the next number).
+      const open = src.slice(list.from, list.openTo);
+      const start = list.tag == "ol" && attrOf(open, "reversed") == null ? (parseInt(attrOf(open, "start") ?? "1", 10) || 1) + i : null;
+      const head = `\n${indent}${src.slice(list.closeFrom, list.to)}\n${indent}`;
+      const insert = head + para + `\n${indent}` + (start == null ? open : setAttr(open, "start", String(start)));
+      return leave([{ from: before, to: u.to, insert }], before + head.length + 3);
     }
     const stack = M.inlineStackAt(src, u, pos);
     const atEnd = pos >= M.textEnd(u);
@@ -356,8 +410,11 @@ export abstract class EditorEdit extends EditorRender {
     const newTag = HEADING.test(u.tag) && atEnd ? "p" : u.tag;
     const indent = M.lineIndent(src, u.openFrom);
     // An empty half keeps a <br>, so it has a line's height on the page too; typing into it takes the <br> out (replaceRange).
+    // A to-do item's next item is one too, not done yet; its checkbox holds it open, with no <br>.
+    const todo = todoBox(src, u);
+    const box = todo && pos >= todo.to ? TODO_BOX : "";
     const brBefore = emptyIn(src, u, u.contentFrom, pos) ? "<br>" : "";
-    const brAfter = newTag != u.tag || emptyIn(src, u, pos, u.contentTo) ? "<br>" : "";
+    const brAfter = !box && (newTag != u.tag || emptyIn(src, u, pos, u.contentTo)) ? "<br>" : "";
     if (newTag != u.tag) {
       // The end of a heading: close it as it was written and start a new, empty paragraph.
       const head = brBefore + src.slice(pos, u.contentTo) + src.slice(u.contentTo, u.to) + `\n${indent}<${newTag}>`;
@@ -380,17 +437,18 @@ export abstract class EditorEdit extends EditorRender {
       });
       return true;
     }
-    const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
+    const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + box + M.openTags(stack);
     insertAt(insert + brAfter, pos + insert.length);
     return true;
   }
 
   /**
-   * Tab at the start of a list item: the item (and the items nested in it)
-   * moves one level in, under the item before it; Shift+Tab moves it one
-   * level out, after the item it was under. Elsewhere, Tab is the browser's,
-   * as before. An item that can't move (the first in its list, or one at the
-   * top level) still takes the key, so the caret stays put. An item with a
+   * Tab in a list item: the item (and the items nested in it) moves one
+   * level in, under the item before it; Shift+Tab moves it one level out,
+   * after the item it was under. The caret stays where it was in the text.
+   * Outside a list item, Tab is the browser's. An item that can't move (the
+   * first in its list, or one at the top level) still takes the key, so the
+   * caret stays put. An item with a
    * list nested in it keeps its own text in a <p>
    * (`<li><p>text</p><ul>…</ul></li>`): text beside a list isn't a unit, and
    * couldn't be edited. Taking the last item out of a nested list takes the
@@ -401,7 +459,7 @@ export abstract class EditorEdit extends EditorRender {
     if (!sel.empty) return false;
     const pos = sel.head,
       u = M.unitAt(this.units, pos);
-    if (!u || !this.verify(u) || pos < u.contentFrom || pos > M.textStart(u)) return false;
+    if (!u || !this.verify(u) || pos < u.contentFrom || pos > u.contentTo) return false;
     const n = u.node;
     const elements = (e: M.ElementNode) => e.children.filter((c): c is M.ElementNode => c.kind == "element");
     const isList = (e: M.ElementNode | null | undefined): e is M.ElementNode => e?.tag == "ul" || e?.tag == "ol";

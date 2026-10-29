@@ -104,6 +104,26 @@ export const dropped = (drops: { from: number; to: number }[], pos: number) => d
 /** Elements that are content of their own, so a block holding one isn't empty. */
 export const CONTENT_TAG = /<(br|img|svg|video|audio|canvas|input|iframe|object|embed|picture|hr|math)\b/i;
 
+/** A to-do item's checkbox, as the editor writes it: `<li style="list-style: none"><input type="checkbox"> text</li>`. */
+export const TODO_BOX = `<input type="checkbox"> `;
+export const TODO_ITEM = ` style="list-style: none"`;
+const BOX = /^\s*(<input\b[^>]*\btype\s*=\s*["']?checkbox\b[^>]*>) ?/i;
+
+/** The checkbox a list item starts with (a to-do item), with the space after it; null for any other unit. */
+export function todoBox(src: string, u: M.Unit): { from: number; to: number; tag: string; checked: boolean } | null {
+  if (u.tag != "li") return null;
+  const m = BOX.exec(src.slice(u.contentFrom, u.contentTo));
+  if (!m) return null;
+  const from = u.contentFrom + m[0].indexOf(m[1]);
+  return { from, to: u.contentFrom + m[0].length, tag: m[1], checked: /\schecked\b/i.test(m[1]) };
+}
+
+/** A checkbox's tag, checked or not. */
+export const setChecked = (tag: string, on: boolean) =>
+  on
+    ? tag.replace(/\s*\/?>$/, (end) => ` checked${end.trim() == "/>" ? " />" : ">"}`)
+    : tag.replace(/\s+checked(\s*=\s*("[^"]*"|'[^']*'|[^\s>]*))?/gi, "");
+
 /** Whether [from, to) of a unit holds nothing the reader sees: no text (a no-break space counts), no <br>, no image. */
 export function emptyIn(src: string, u: M.Unit, from: number, to: number): boolean {
   return !/\S|\u00a0/.test(textIn([u], from, to)) && !CONTENT_TAG.test(src.slice(from, to));
