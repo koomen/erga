@@ -19,7 +19,6 @@ The direct dependencies (`package.json`), and their licenses:
 
 | Package | License | Shipped |
 | --- | --- | --- |
-| `@anthropic-ai/sdk` | MIT | yes |
 | `@codemirror/commands`, `@codemirror/lang-html`, `@codemirror/language`, `@codemirror/state`, `@codemirror/view`, `@lezer/highlight` | MIT | yes |
 | `@mariozechner/pi-agent-core`, `@mariozechner/pi-ai` | MIT | yes |
 | `effect`, `@effect/ai-anthropic` | MIT | yes |

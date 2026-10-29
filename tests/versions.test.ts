@@ -2,8 +2,25 @@
 // unchanged files between versions, listing, reading back, what changed, and
 // the descriptions written when no model does.
 
-import { expect, test } from "bun:test";
-import { cleanDescription, fallbackDescription, unifiedDiff, versionNumber, Versions, type KV } from "../document/versions";
+import { afterEach, expect, test } from "bun:test";
+import * as Effect from "effect/Effect";
+import { cleanDescription, describeChange, fallbackDescription, unifiedDiff, versionNumber, Versions, type KV } from "../document/versions";
+
+/** Versions on `kv`, each call run to its answer. */
+function versionsOn(kv: KV, now?: () => number) {
+  const v = new Versions(kv, now);
+  const run = Effect.runPromise;
+  return {
+    cut: (...a: Parameters<Versions["cut"]>) => run(v.cut(...a)),
+    head: () => run(v.head),
+    get: (n: number) => run(v.get(n)),
+    list: (...a: Parameters<Versions["list"]>) => run(v.list(...a)),
+    file: (...a: Parameters<Versions["file"]>) => run(v.file(...a)),
+    files: (...a: Parameters<Versions["files"]>) => run(v.files(...a)),
+    changes: (...a: Parameters<Versions["changes"]>) => run(v.changes(...a)),
+    describe: (...a: Parameters<Versions["describe"]>) => run(v.describe(...a)),
+  };
+}
 
 /** Durable Object storage's shape, in a Map, counting what's written. */
 function memory() {
@@ -20,7 +37,7 @@ const files = (o: Record<string, string | Uint8Array>) => new Map(Object.entries
 
 test("a version holds every file; one that changes nothing isn't cut", async () => {
   const m = memory();
-  const v = new Versions(m.kv, () => Date.UTC(2026, 9, 4));
+  const v = versionsOn(m.kv, () => Date.UTC(2026, 9, 4));
   const first = await v.cut(files({ "index.html": "<h1>Hi</h1>", "style.css": "h1{}" }), "index.html", ["ada"], "First version");
   expect(first?.version).toMatchObject({ id: "v1", n: 1, authors: ["ada"], description: "First version", at: "2026-10-04T00:00:00.000Z" });
   expect(first?.previous).toBeNull();
@@ -34,7 +51,7 @@ test("a version holds every file; one that changes nothing isn't cut", async () 
 
 test("unchanged files are stored once, shared by every version", async () => {
   const m = memory();
-  const v = new Versions(m.kv);
+  const v = versionsOn(m.kv);
   const logo = new Uint8Array(5000).map((_, i) => i % 251);
   await v.cut(files({ "index.html": "one", "style.css": "css", "logo.png": logo }), "index.html", []);
   expect(m.blobs()).toBe(3);
@@ -56,7 +73,7 @@ test("unchanged files are stored once, shared by every version", async () => {
 });
 
 test("versions list newest first, in pages", async () => {
-  const v = new Versions(memory().kv);
+  const v = versionsOn(memory().kv);
   for (let i = 1; i <= 25; i++) await v.cut(files({ "index.html": `v${i}` }), "index.html", []);
   const first = await v.list();
   expect(first.total).toBe(25);
@@ -65,11 +82,11 @@ test("versions list newest first, in pages", async () => {
   expect(next.versions[0].n).toBe(15);
   expect((await v.list({ before: 3 })).versions.map((x) => x.n)).toEqual([2, 1]);
   // A fresh reader (another instance of the object) sees the same.
-  expect((await new Versions(memory().kv).list()).total).toBe(0);
+  expect((await versionsOn(memory().kv).list()).total).toBe(0);
 });
 
 test("what changed: a compact diff, and the fallback description", async () => {
-  const v = new Versions(memory().kv);
+  const v = versionsOn(memory().kv);
   const a = (await v.cut(files({ "index.html": "<h1>Pricing</h1>\n<p>Old intro</p>\n", "old.css": "x" }), "index.html", []))!.version;
   const b = (await v.cut(files({ "index.html": "<h1>Pricing</h1>\n<p>New intro</p>\n", "logo.png": new Uint8Array([137, 80, 78, 71, 255]) }), "index.html", []))!.version;
   const c = await v.changes(a, b);
@@ -117,4 +134,43 @@ test("unified diffs between two file sets: changed, added, deleted, binary, one 
   const big = unifiedDiff(files({ "a.txt": "a\n", "b.txt": "b\n" }), files({ "a.txt": "x".repeat(300) + "\n", "b.txt": "y\n" }), { maxChars: 200 });
   expect(big.diff).toContain("a.txt's diff is cut here");
   expect(big.diff).toContain("Not shown: b.txt");
+});
+
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = realFetch;
+});
+
+test("a description from the model: one request to Sonnet with the diff, its answer cleaned; null when the request fails", async () => {
+  const sent: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
+  let down = false;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = new Request(input, init);
+    sent.push({ url: req.url, headers: req.headers, body: await req.json() });
+    if (down) return Response.json({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, { status: 529 });
+    return Response.json({
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-5-5",
+      content: [{ type: "text", text: '"Rewrote the pricing intro."' }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+  }) as typeof fetch;
+  const changes = { added: [], removed: [], changed: ["index.html"], diff: "-<p>Old</p>\n+<p>New</p>" };
+  expect(await Effect.runPromise(describeChange("sk-test", changes))).toBe("Rewrote the pricing intro");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].url).toStartWith("https://api.anthropic.com/v1/messages");
+  expect(sent[0].headers.get("x-api-key")).toBe("sk-test");
+  expect(sent[0].body).toMatchObject({ model: "claude-sonnet-5-5", max_tokens: 2000, output_config: { effort: "low" } });
+  expect(JSON.stringify(sent[0].body.messages)).toContain("Changed: index.html");
+  expect(JSON.stringify(sent[0].body.system)).toContain("five words");
+
+  // A failure (here, twice: one retry) is no description: the caller uses the fallback.
+  sent.length = 0;
+  down = true;
+  expect(await Effect.runPromise(describeChange("sk-test", changes))).toBeNull();
+  expect(sent).toHaveLength(2);
 });
