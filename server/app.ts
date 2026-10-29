@@ -62,21 +62,13 @@ import {
 } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
-import { whoOf, type Platform } from "./platform.ts";
+import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
 import { HttpServerResponse } from "effect/http";
 import { call, fromWeb, platform, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
-
-/** A route written over web Requests and Responses (the agents' own, the server's API for agents). */
-const web = (f: (request: Request, p: Platform) => Promise<Response> | Response): Route =>
-  Effect.gen(function* () {
-    const request = yield* webRequest,
-      p = yield* platform;
-    return fromWeb(yield* call(async () => f(request, p)));
-  });
 
 /** The app's answer to a request: the route table, then what every page of the site's own gets (the account corner, live.js, its security headers). */
 export const app = (outside: Outside): Route =>
@@ -172,13 +164,13 @@ const route = (url: URL, outside: Outside): Route =>
       if (file) return file;
     }
     // Each admin's agent, its conversation and panel: before the server's API, which has the rest of /api/.
-    if (isAdminAgentPath(path)) return yield* web((r, p) => adminAgentApi(r, p, url));
+    if (isAdminAgentPath(path)) return yield* adminAgentApi;
     // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
     if (path == "/api/release" && read) return yield* releaseApi;
     // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
-    if (path == "/api/admin/guide") return yield* web((r, p) => adminGuideApi(r, p, url));
+    if (path == "/api/admin/guide") return yield* adminGuideApi;
     // The server's API for agents, and people's agent tokens.
-    if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* web(serverApi);
+    if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* serverApi;
     if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/"))
       return yield* tokensRoutes;
     return yield* documentRoutes;

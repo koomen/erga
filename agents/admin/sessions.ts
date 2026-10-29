@@ -38,7 +38,10 @@ import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
 import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
 import { NOT_SET_UP, type GithubStatus, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
-import { json } from "../../shared/http";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { HttpServerResponse } from "effect/http";
+import { call, ctx, fromWeb, json, NO_STORE, type Route } from "../../server/http.ts";
 
 const enc = new TextEncoder();
 
@@ -373,76 +376,110 @@ declare module "../../server/platform.ts" {
 
 
 /** An admin, signed in (the person, in a browser: for their own agent panel, which no token reaches). */
-async function adminOf(platform: Platform, request: Request): Promise<{ login: string; name: string } | null> {
-  const session = await platform.sessionOf(request);
-  if (!session || session.test || session.agent) return null;
-  if (!(await platform.directory.users.actsAsAdmin(whoOf(session)))) return null;
-  return { login: session.login.toLowerCase(), name: session.name };
-}
+const adminOf = (platform: Platform, request: Request) =>
+  call(async (): Promise<{ login: string; name: string } | null> => {
+    const session = await platform.sessionOf(request);
+    if (!session || session.test || session.agent) return null;
+    if (!(await platform.directory.users.actsAsAdmin(whoOf(session)))) return null;
+    return { login: session.login.toLowerCase(), name: session.name };
+  });
 
 /** An admin, or an outside agent acting as one: with `token`, it came with an admin token. */
 type GuideReader = { login: string; name: string; token?: { id: string; label: string; expires: number | null } };
 
+/** Why someone may not read the admin guide: the answer they get. */
+class NotAReader extends Schema.TaggedError<NotAReader>()("NotAReader", {
+  body: Schema.Record(Schema.String, Schema.Unknown),
+  status: Schema.Number,
+}) {}
+
 /** Who asks for the admin guide: an admin signed in in a browser, or an outside agent with an admin token. */
-async function guideReaderOf(platform: Platform, request: Request, url: URL): Promise<GuideReader | Response> {
+const guideReaderOf = Effect.fnUntraced(function* (platform: Platform, request: Request, url: URL) {
+  const no = (body: Record<string, unknown>, status: number) => Effect.fail(new NotAReader({ body, status }));
   const raw = /^Bearer\s+(erga_\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
   if (raw) {
     const again = `Ask an admin for a new one (Share with agent, on any page under ${url.origin}/admin), or make an admin token at ${url.origin}/tokens.`;
-    const t = await platform.tokens.verify(raw).catch(() => null);
-    if (!t) return json({ error: `That token doesn't work: it expired, or was revoked. ${again}` }, 401);
-    if (t.testBy || !(await platform.directory.users.isAdmin(t.login))) return json({ error: `Only admins can do that, and ${t.login} isn't one.` }, 403);
-    if (t.scope != "admin") return json({ error: LOCKED, locked: true }, 403);
-    return { login: t.login, name: t.name, token: { id: t.id, label: t.label, expires: t.expires } };
+    const t = yield* call(() => platform.tokens.verify(raw).catch(() => null));
+    if (!t) return yield* no({ error: `That token doesn't work: it expired, or was revoked. ${again}` }, 401);
+    if (t.testBy || !(yield* call(() => platform.directory.users.isAdmin(t.login))))
+      return yield* no({ error: `Only admins can do that, and ${t.login} isn't one.` }, 403);
+    if (t.scope != "admin") return yield* no({ error: LOCKED, locked: true }, 403);
+    return { login: t.login, name: t.name, token: { id: t.id, label: t.label, expires: t.expires } } satisfies GuideReader as GuideReader;
   }
-  const admin = await adminOf(platform, request);
-  if (admin) return admin;
-  return json({ error: `Only admins can do that: sign in, or send an admin token as "Authorization: Bearer <token>".` }, (await platform.sessionOf(request)) ? 403 : 401);
-}
+  const admin = yield* adminOf(platform, request);
+  if (admin) return admin as GuideReader;
+  const signedIn = yield* call(() => platform.sessionOf(request));
+  return yield* no(
+    { error: `Only admins can do that: sign in, or send an admin token as "Authorization: Bearer <token>".` },
+    signedIn ? 403 : 401
+  );
+});
 
 /** GET /api/admin/guide: the admin guide, for an admin or their agent with an admin token. */
-export async function adminGuideApi(request: Request, platform: Platform, url: URL): Promise<Response> {
-  const reader = await guideReaderOf(platform, request, url);
-  if (reader instanceof Response) return reader;
+export const adminGuideApi: Route = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const reader = yield* guideReaderOf(platform, request, url);
   if (request.method != "GET") return json({ error: "Not found" }, 404);
   const body = adminGuide({ origin: url.origin, owner: reader.login, label: reader.token?.label ?? "(your token's label)", expires: reader.token ? reader.token.expires : Date.now() + SHARE_ADMIN_HOURS * 3600_000 });
-  return new Response(body, { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
-}
+  return HttpServerResponse.text(body, { contentType: "text/markdown; charset=utf-8", headers: NO_STORE });
+}).pipe(Effect.catchTag("NotAReader", (e) => Effect.succeed(json(e.body, e.status))));
 
 export const isAdminAgentPath = (path: string) => path == "/api/admin/agent" || path.startsWith("/api/admin/agent/");
 
+/** The bodies the panel sends: a message, a model, its preferences (panel.ts checks those). */
+const Prompt = Schema.Struct({
+  text: Schema.optionalKey(Schema.Unknown),
+  context: Schema.optionalKey(Schema.Unknown),
+  files: Schema.optionalKey(Schema.Unknown),
+});
+const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
+
+/** The body as JSON, as `schema` has it; else `fallback` (a body that isn't JSON counts as none, as before). */
+const body = <S extends Schema.Top>(request: Request, schema: S, fallback: S["Type"]) =>
+  call(() => request.text()).pipe(
+    Effect.flatMap((t) => Schema.decodeUnknownEffect(Schema.fromJsonString(schema as unknown as Schema.Codec<S["Type"]>))(t)),
+    Effect.orElseSucceed(() => fallback)
+  );
+
 /** /api/admin/agent...: the admin's own agent panel. */
-export async function adminAgentApi(request: Request, platform: Platform, url: URL): Promise<Response> {
+export const adminAgentApi: Route = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
   if (/^Bearer\s/i.test(request.headers.get("authorization") ?? "")) return json({ error: `The admin's agent panel is theirs, in a browser: an outside agent calls the same APIs itself (GET ${url.origin}/api/admin/guide).` }, 403);
-  const admin = await adminOf(platform, request);
-  if (!admin) return json({ error: "Only admins have an admin agent." }, (await platform.sessionOf(request)) ? 403 : 401);
+  const admin = yield* adminOf(platform, request);
+  if (!admin) return json({ error: "Only admins have an admin agent." }, (yield* call(() => platform.sessionOf(request))) ? 403 : 401);
   if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   const h = platform.adminAgent, path = url.pathname.replace(/\/$/, ""), m = request.method;
   if (path == "/api/admin/agent") {
-    if (m == "GET") return json(await h.agentState(admin.login, url.origin));
+    if (m == "GET") return json(yield* call(() => h.agentState(admin.login, url.origin)));
     if (m == "POST") {
-      const body = await request.json().catch(() => ({})) as { text?: unknown; context?: unknown; files?: unknown };
-      const r = await h.agentPrompt(admin.login, url.origin, String(body.text ?? ""), typeof body.context == "string" ? body.context : null, body.files);
+      const b = yield* body(request, Prompt, {});
+      const r = yield* call(() =>
+        h.agentPrompt(admin.login, url.origin, String(b.text ?? ""), typeof b.context == "string" ? b.context : null, b.files)
+      );
       return json(r, r.ok ? 200 : 409);
     }
   }
   const control = /^\/api\/admin\/agent\/(abort|reset|model)$/.exec(path)?.[1] as "abort" | "reset" | "model" | undefined;
   if (control && m == "POST") {
-    const body = control == "model" ? await request.json().catch(() => ({})) as { model?: string } : {};
-    const r = await h.agentControl(admin.login, control, body.model);
+    const b = control == "model" ? yield* body(request, ModelBody, {}) : {};
+    const r = yield* call(() => h.agentControl(admin.login, control, b.model));
     return json(r, r.ok ? 200 : 409);
   }
   if (path == "/api/admin/agent/events" && m == "GET") {
     const headers = new Headers(request.headers);
     headers.set("x-erga-login", admin.login);
-    return h.fetch(new Request(request.url, { headers }));
+    return fromWeb(yield* call(() => h.fetch(new Request(request.url, { headers }))));
   }
   if (path == "/api/admin/agent/conversation") {
-    if (m == "GET") return json({ log: await h.conversation(admin.login) });
-    if (m == "DELETE") return json({ ok: true, log: await h.clearConversation(admin.login) });
+    if (m == "GET") return json({ log: yield* call(() => h.conversation(admin.login)) });
+    if (m == "DELETE") return json({ ok: true, log: yield* call(() => h.clearConversation(admin.login)) });
   }
   if (path == "/api/admin/agent/prefs") {
-    if (m == "GET") return json(await h.agentPrefs(admin.login));
-    if (m == "PUT") return json(await h.setAgentPrefs(admin.login, await request.json().catch(() => ({}))));
+    if (m == "GET") return json(yield* call(() => h.agentPrefs(admin.login)));
+    if (m == "PUT") {
+      const prefs = yield* body(request, Schema.Unknown, {});
+      return json(yield* call(() => h.setAgentPrefs(admin.login, prefs)));
+    }
   }
   return json({ error: "Not found" }, 404);
-}
+});

@@ -10,6 +10,7 @@ import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
 import { serverApi } from "../server/api";
+import { respond } from "../server/http";
 import { ScopeError, Tokens } from "../server/identity/tokens";
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
@@ -46,8 +47,16 @@ async function server() {
   /** Calls one of the server API's tools with a token: its status and body. */
   const call = async (token: string, tool: string, args: Record<string, unknown> = {}) => {
     const url = `${ORIGIN}/api/ext/tools/${tool}`;
-    const r = await serverApi(new Request(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(args) }), platform);
-    return { status: r.status, body: await r.json() as { ok: boolean; error?: string; content?: { text: string }[] } };
+    const r = await respond(
+      serverApi,
+      new Request(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(args),
+      }),
+      platform
+    );
+    return { status: r.status, body: (await r.json()) as { ok: boolean; error?: string; content?: { text: string }[] } };
   };
   return { sql, dir, tokens, platform, call, root };
 }
@@ -123,8 +132,16 @@ test("an expired token stops working", async () => {
 test("the device flow carries the scope, the document and the expiry; the person approves or denies", async () => {
   const { tokens, platform } = await server();
   const ask = async (body: object) => {
-    const r = await serverApi(new Request(`${ORIGIN}/api/auth/request`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }), platform);
-    return { status: r.status, body: await r.json() as { code: string; user_code: string; scope: string; error?: string } };
+    const r = await respond(
+      serverApi,
+      new Request(`${ORIGIN}/api/auth/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      platform
+    );
+    return { status: r.status, body: (await r.json()) as { code: string; user_code: string; scope: string; error?: string } };
   };
   expect((await ask({ label: "x", scope: "everything" })).status).toBe(400);
   expect((await ask({ label: "x", scope: "document" })).body.error).toMatch(/needs a document/);
