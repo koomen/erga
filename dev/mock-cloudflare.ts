@@ -204,6 +204,8 @@ export function mockCloudflare(opts: {
   const importing = new Map<string, string>();
   let subFor: string | null = null, flaked = false;
   const ok = (result: unknown, status = 200) => Response.json({ success: true, errors: [], messages: [], result }, { status });
+  // The assets' upload answers as Cloudflare does: "errors" and "messages" null when there are none (not [] as elsewhere).
+  const okAssets = (result: unknown, status = 200) => Response.json({ result, success: true, errors: null, messages: null }, { status });
   const fail = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
   const randomHex = (n: number) => hex(randomBytes(n));
   const tokenOf = (value: string) => state.tokens.find((t) => tokenValues.get(t.id) == value);
@@ -386,7 +388,7 @@ export function mockCloudflare(opts: {
         const missing = Object.values(manifest as Record<string, { hash: string }>).map((f) => f.hash).filter((h) => !state.assets.uploaded.includes(h));
         const buckets: string[][] = [];
         for (let i = 0; i < missing.length; i += 10) buckets.push(missing.slice(i, i + 10));
-        return ok({ jwt: buckets.length ? UPLOAD(!!opts.singleAssetUploads) : COMPLETE, buckets });
+        return okAssets({ jwt: buckets.length ? UPLOAD(!!opts.singleAssetUploads) : COMPLETE, buckets });
       }
       if (m == "POST" && rest.startsWith("/workers/assets/upload")) {
         if (req.headers.get("authorization") != `Bearer ${UPLOAD(!!opts.singleAssetUploads)}`) return fail(401, 10001, "Invalid assets upload token");
@@ -410,7 +412,7 @@ export function mockCloudflare(opts: {
           }
         } else return fail(400, 10002, "base64=true is required");
         const all = Object.values(state.assets.manifest).every((f) => state.assets.uploaded.includes(f.hash));
-        return ok(all ? { jwt: COMPLETE } : {}, all ? 201 : 202);
+        return okAssets(all ? { jwt: COMPLETE } : {}, all ? 201 : 202);
       }
       if (m == "PUT" && (r = /^\/workers\/scripts\/([^/]+)$/.exec(rest))) {
         const form = await req.formData();

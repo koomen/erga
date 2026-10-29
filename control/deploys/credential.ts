@@ -126,12 +126,12 @@ export interface CredentialWords {
 const CONTROL_WORDS: CredentialWords = { subject: "The control Worker's Cloudflare credential", fix: "an admin connects Cloudflare again", none: NONE };
 
 export const TokenAnswer = Schema.Struct({
-  access_token: Schema.optionalKey(Schema.String),
-  refresh_token: Schema.optionalKey(Schema.String),
-  expires_in: Schema.optionalKey(Schema.Number),
-  scope: Schema.optionalKey(Schema.String),
-  error: Schema.optionalKey(Schema.String),
-  error_description: Schema.optionalKey(Schema.String),
+  access_token: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  refresh_token: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  expires_in: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  scope: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  error: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  error_description: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type TokenAnswer = typeof TokenAnswer.Type;
 /** Cloudflare's token endpoint's answer, or null when it isn't one. */
