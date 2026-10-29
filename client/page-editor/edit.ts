@@ -12,6 +12,7 @@ import {
   dropped,
   emptyIn,
   HEADING,
+  lineHolder,
   placeholderBr,
   setAttr,
   textIn,
@@ -135,7 +136,17 @@ export abstract class EditorEdit extends EditorRender {
     const insert = text ? M.escapeHtmlText(text) : "";
     if (a == b) {
       // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
+      // The same for the <br> that holds an empty last line open, typed on.
+      const holder = lineHolder(src, a);
       const drops = insert ? this.placeholderDrops(src, [a], from, to, true) : [];
+      if (
+        insert &&
+        holder &&
+        to <= holder.from &&
+        !src.slice(to, holder.from).trim() &&
+        /<br\s*\/?>\s*$/i.test(src.slice(a.contentFrom, from))
+      )
+        drops.push(holder);
       return {
         changes: [{ from, to, insert }, ...drops],
         selection: { anchor: from + insert.length - dropped(drops, from) },
@@ -218,6 +229,32 @@ export abstract class EditorEdit extends EditorRender {
     const blank = !!placeholderBr(src, u);
     if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id, pos, false);
     if (forward && (blank || pos >= M.textEnd(u))) return this.join(u.id, u.id + 1, pos, true);
+    // A line break (<br>) between the caret and the text that way: the break goes, and the two lines join. With it
+    // goes the <br> that held an empty last line open (lineHolder).
+    const texts = u.runs.filter((r) => r.text.length);
+    const gap = forward
+      ? [pos, texts.find((r) => r.from >= pos)?.from ?? u.contentTo]
+      : [[...texts].reverse().find((r) => r.to <= pos)?.to ?? u.contentFrom, pos];
+    const brs = [...src.slice(gap[0], gap[1]).matchAll(/<br\s*\/?>/gi)].map((m) => ({
+      from: gap[0] + m.index,
+      to: gap[0] + m.index + m[0].length,
+    }));
+    const br = forward ? brs[0] : brs.at(-1);
+    const inText = texts.some((r) => (forward ? r.from <= pos && pos < r.to : r.from < pos && pos <= r.to));
+    if (br && !blank && !inText) {
+      const holder = lineHolder(src, u);
+      const end = holder && /<br\s*\/?>(\s*)$/i.exec(src.slice(0, holder.from));
+      const partner = end && { from: end.index, to: end.index + end[0].length - end[1].length };
+      const changes = holder && partner && (br.from == holder.from || br.from == partner.from) ? [partner, holder] : [br];
+      const caret = changes[0].from;
+      this.dispatch({
+        changes,
+        selection: { anchor: forward ? pos : caret },
+        userEvent: forward ? "delete.forward" : "delete.backward",
+        scrollIntoView: true,
+      });
+      return true;
+    }
     // One grapheme within the unit's text, skipping inline tag boundaries.
     let i = M.runAt(u, pos, !forward);
     if (i < 0) return false;
@@ -355,7 +392,9 @@ export abstract class EditorEdit extends EditorRender {
       return true;
     }
     if (shift || !BLOCK_SPLIT.has(u.tag)) {
-      insertAt("<br>", pos + 4);
+      // At the end of a block's text, a second <br> holds the new, empty line open (see lineHolder).
+      const last = !emptyIn(src, u, u.contentFrom, pos) && emptyIn(src, u, pos, u.contentTo) && !/<br\b/i.test(src.slice(pos, u.contentTo));
+      insertAt(last ? "<br><br>" : "<br>", pos + 4);
       return true;
     }
     // Enter in an empty list item leaves the list: a nested item moves one level out; else the item becomes a paragraph
