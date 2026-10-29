@@ -39,6 +39,7 @@ import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
 import { NOT_SET_UP, type GithubStatus, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import { HttpServerResponse } from "effect/http";
 import { call, ctx, fromWeb, json, NO_STORE, type Route } from "../../server/http.ts";
@@ -62,7 +63,7 @@ export class AdminAgents {
   private sockets = new Map<(text: string) => void, string>();
   /** Each admin's agent, with where the server is, as their page said last. */
   private agents = new Map<string, { agent: AdminAgent; origin: string }>();
-  private beat: ReturnType<typeof setInterval> | null = null;
+  private beat: Fiber.Fiber<void> | null = null;
   /** Each admin's conversation, kept step by step (agents/checkpoint.ts), scope "admin:<login>". */
   private chats: ChatTables;
 
@@ -329,11 +330,23 @@ export class AdminAgents {
 
   /** A beat now and then keeps proxies from closing a quiet stream, and finds the ones that went away. */
   private keepBeating() {
-    this.beat ??= setInterval(() => {
-      for (const c of this.clients.keys()) this.send(c, ": beat\n\n");
-      for (const to of this.sockets.keys()) this.sendTo(to, '{"type":"beat"}');
-      if (!this.clients.size && !this.sockets.size && this.beat) { clearInterval(this.beat); this.beat = null; }
-    }, 20_000);
+    // Every 20 s while a stream or a socket is open; then it ends.
+    this.beat ??= Effect.runFork(
+      Effect.sync(() => {
+        for (const c of this.clients.keys()) this.send(c, ": beat\n\n");
+        for (const to of this.sockets.keys()) this.sendTo(to, '{"type":"beat"}');
+        return this.clients.size > 0 || this.sockets.size > 0;
+      }).pipe(
+        Effect.delay("20 seconds"),
+        Effect.repeat({ while: (open) => open }),
+        Effect.asVoid,
+        Effect.ensuring(
+          Effect.sync(() => {
+            this.beat = null;
+          })
+        )
+      )
+    );
   }
 
   /** An event for that admin's pages only. */
