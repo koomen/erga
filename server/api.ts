@@ -55,25 +55,33 @@ const specOf = (t: Tool): ToolSpec => ({ name: t.name, description: t.descriptio
 async function callTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolContent[]> {
   const tool = toolsOf("api").find((t) => t.name == name);
   if (!tool)
-    throw new ToolError(`There's no tool named "${name}". The tools are: ${(await listed(ctx)).map((t) => t.name).join(", ")}.`, 404);
+    throw new ToolError({
+      message: `There's no tool named "${name}". The tools are: ${(await listed(ctx)).map((t) => t.name).join(", ")}.`,
+      status: 404,
+    });
   if (tool.admin && !(await ctx.dir.users.actsAsAdmin(ctx.who))) {
-    throw new ToolError(
-      (await ctx.dir.users.isAdmin(ctx.who))
+    throw new ToolError({
+      message: (await ctx.dir.users.isAdmin(ctx.who))
         ? `${name} needs an admin token: ${LOCKED}`
         : `${name} is for the server's admins only, and ${ctx.session.login} isn't one.`,
-      403
-    );
+      status: 403,
+    });
   }
-  if (tool.wide && ctx.session.onlyDoc != null) throw new ToolError(`${name} isn't for a document token: this token reaches one document only. Make a token with the documents scope at ${ctx.origin}/tokens.`, 403);
+  if (tool.wide && ctx.session.onlyDoc != null)
+    throw new ToolError({
+      message: `${name} isn't for a document token: this token reaches one document only. Make a token with the documents scope at ${ctx.origin}/tokens.`,
+      status: 403,
+    });
   if (args == null) args = {};
-  if (typeof args != "object" || Array.isArray(args)) throw new ToolError("The arguments must be a JSON object.");
+  if (typeof args != "object" || Array.isArray(args)) throw new ToolError({ message: "The arguments must be a JSON object.", status: 400 });
   let a = args as Record<string, unknown>;
-  for (const key of jsonSchemaOf(tool).required ?? []) if (a[key] === undefined) throw new ToolError(`${name} needs "${key}".`);
+  for (const key of jsonSchemaOf(tool).required ?? [])
+    if (a[key] === undefined) throw new ToolError({ message: `${name} needs "${key}".`, status: 400 });
   if (!tool.loose) {
     try {
       a = Schema.decodeUnknownSync(tool.parameters as Schema.Codec<Record<string, unknown>>)(a, { errors: "all" });
     } catch (e) {
-      throw new ToolError(`Validation failed for tool "${name}":\n${(e as Error).message}`);
+      throw new ToolError({ message: `Validation failed for tool "${name}":\n${(e as Error).message}`, status: 400 });
     }
   }
   const out = await runTool(tool, a, ctx);
@@ -211,7 +219,9 @@ async function publish(request: Request, ctx: ToolContext): Promise<object> {
   const type = request.headers.get("content-type") ?? "";
   let args: Record<string, unknown>;
   if (type.startsWith("multipart/form-data")) {
-    const form = await request.formData().catch(() => { throw new ToolError("That multipart body didn't parse."); });
+    const form = await request.formData().catch(() => {
+      throw new ToolError({ message: "That multipart body didn't parse.", status: 400 });
+    });
     const files: Record<string, string | Uint8Array> = {};
     let total = 0;
     args = {};
@@ -220,7 +230,11 @@ async function publish(request: Request, ctx: ToolContext): Promise<object> {
         if (["title", "slug", "index", "document", "template"].includes(key)) args[key] = value;
         else if (key == "replace") args.replace = value == "true" || value == "1";
         else if (key == "delete") args.delete = [...((args.delete as string[] | undefined) ?? []), value];
-        else throw new ToolError(`What's "${key}"? Send files as file parts (-F "path/in/site=@local/file"), and title, slug, index, document, replace or delete as fields.`);
+        else
+          throw new ToolError({
+            message: `What's "${key}"? Send files as file parts (-F "path/in/site=@local/file"), and title, slug, index, document, replace or delete as fields.`,
+            status: 400,
+          });
         continue;
       }
       const file = value as File;
@@ -239,14 +253,19 @@ async function publish(request: Request, ctx: ToolContext): Promise<object> {
     args.files = Object.fromEntries(Object.entries(files).map(([p, d]) => [p, typeof d == "string" ? d : { base64: base64(d) }]));
   } else {
     const body = await request.json().catch(() => null);
-    if (!body || typeof body != "object" || Array.isArray(body)) throw new ToolError("Send the files as multipart/form-data, or JSON: {\"files\": {\"index.html\": \"...\"}, \"title\": \"...\"}.");
+    if (!body || typeof body != "object" || Array.isArray(body))
+      throw new ToolError({
+        message: 'Send the files as multipart/form-data, or JSON: {"files": {"index.html": "..."}, "title": "..."}.',
+        status: 400,
+      });
     args = body as Record<string, unknown>;
   }
   if (args.document) {
     const content = await callTool("update_files", { replace: true, ...args }, ctx);
     return { updated: true, ...JSON.parse((content[0] as { text: string }).text) };
   }
-  if (!args.files || !Object.keys(args.files as object).length) throw new ToolError("No files: send at least the page (index.html).");
+  if (!args.files || !Object.keys(args.files as object).length)
+    throw new ToolError({ message: "No files: send at least the page (index.html).", status: 400 });
   const content = await callTool("create_document", args, ctx);
   return { created: true, ...JSON.parse((content[0] as { text: string }).text) };
 }
