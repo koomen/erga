@@ -144,6 +144,18 @@ export function placeholderBr(src: string, u: M.Unit): { from: number; to: numbe
   return { from, to: from + brs[0][0].length };
 }
 
+/**
+ * The <br> that holds an empty last line open in a block with text (`text<br><br>`: a line break at the end of a block
+ * shows no new line alone): the block's last <br>, right after another, with nothing after it. Typing on that line
+ * takes it out.
+ */
+export function lineHolder(src: string, u: M.Unit): { from: number; to: number } | null {
+  const m = /<br\s*\/?>\s*(<br\s*\/?>)((?:\s|<\/[a-z][^>]*>)*)$/i.exec(src.slice(u.contentFrom, u.contentTo));
+  if (!m || placeholderBr(src, u)) return null;
+  const from = u.contentFrom + m.index + m[0].length - m[2].length - m[1].length;
+  return { from, to: from + m[1].length };
+}
+
 /** Whether [from, to) of a unit holds content other than a placeholder <br> (a block with one has nothing else). */
 export function contentIn(src: string, u: M.Unit, from: number, to: number): boolean {
   return !placeholderBr(src, u) && !emptyIn(src, u, from, to);

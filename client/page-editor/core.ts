@@ -302,6 +302,14 @@ export abstract class EditorCore {
       if (i < 0) return null;
       return M.runPos(u.runs[i], offset);
     }
+    // Right after a line break: right after that <br> in the source (the start of the line, which may have no text).
+    const prev = offset > 0 ? node.childNodes[offset - 1] : null;
+    if (prev?.nodeName == "BR") {
+      const brs = this.brs(u, el);
+      const j = brs?.indexOf(prev as Element) ?? -1;
+      const m = j >= 0 ? [...this.state.doc.sliceString(u.contentFrom, u.contentTo).matchAll(/<br\s*\/?>/gi)][j] : null;
+      if (m) return u.contentFrom + m.index + m[0].length;
+    }
     const range = this.doc!.createRange();
     range.setStart(el, 0);
     try {
@@ -334,6 +342,12 @@ export abstract class EditorCore {
     return !/\n|<br|<img/i.test(between) && textIn([u], from, to) == "";
   }
 
+  /** A unit's <br> elements, in order, if they are the ones its source has (else null). */
+  protected brs(u: M.Unit, el: Element): Element[] | null {
+    const dom = [...el.querySelectorAll("br")];
+    return dom.length == (this.state.doc.sliceString(u.contentFrom, u.contentTo).match(/<br\b/gi) ?? []).length ? dom : null;
+  }
+
   /** A DOM point for a source position (side < 0 prefers the text before a boundary). */
   domAtPos(pos: number, side = 1): { node: Node; offset: number } | null {
     const u = M.unitAt(this.units, pos);
@@ -342,6 +356,16 @@ export abstract class EditorCore {
     if (!el) return null;
     const nodes = this.textNodes(el);
     if (!u.runs.length || nodes.length != u.runs.length) return { node: el, offset: 0 };
+    // On a line with no text, after a line break (an empty last line, `text<br>|<br>`): the point after the <br>.
+    const texts = u.runs.filter((r) => r.text.length);
+    if (!texts.some((r) => r.from <= pos && pos <= r.to)) {
+      const prevEnd = [...texts].reverse().find((r) => r.to <= pos)?.to ?? u.contentFrom;
+      const src = this.state.doc.sliceString(u.contentFrom, pos);
+      const br = /<br\s*\/?>/i.test(src.slice(prevEnd - u.contentFrom)) ? this.brs(u, el) : null;
+      const n = (src.match(/<br\b/gi) ?? []).length;
+      const at = br?.[n - 1];
+      if (at?.parentNode) return { node: at.parentNode, offset: [...at.parentNode.childNodes].indexOf(at) + 1 };
+    }
     let i = M.runAt(u, pos, side < 0);
     if (i < 0) {
       i = u.runs.findIndex((r) => r.from >= pos);
