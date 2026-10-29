@@ -1,8 +1,9 @@
 // The Workers (the app's and the control Worker's): Cloudflare's runtime types (.cloudflare/types, which
-// `bun run typecheck` makes from cloudflare.config.ts first), no DOM and no Bun. See tsconfig.json.
+// `bun run typecheck` makes from cloudflare.config.ts first), Node's (the Workers run with nodejs_compat: node:crypto,
+// node:async_hooks), no DOM and no Bun. See tsconfig.json.
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "lib": ["ES2022"], "types": [] },
+  "compilerOptions": { "lib": ["ES2022"], "types": ["node"] },
   "include": [
     "shared/text-imports.d.ts",
     ".cloudflare/types",

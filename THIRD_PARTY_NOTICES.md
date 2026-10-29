@@ -21,11 +21,10 @@ The direct dependencies (`package.json`), and their licenses:
 | --- | --- | --- |
 | `@codemirror/commands`, `@codemirror/lang-html`, `@codemirror/language`, `@codemirror/state`, `@codemirror/view`, `@lezer/highlight` | MIT | yes |
 | `effect`, `@effect/ai-anthropic` | MIT | yes |
-| `@opentelemetry/api` | Apache 2.0 | yes |
 | `diff` | BSD-3-Clause | yes |
 | `lib0`, `yjs`, `y-protocols`, `y-websocket` | MIT | yes |
 | `modern-screenshot`, `pdf-lib`, `unpdf` | MIT | yes |
-| `@cloudflare/vite-plugin`, `vite`, `@types/bun` | MIT | no (development) |
+| `@cloudflare/vite-plugin`, `vite`, `@types/bun`, `@types/node` | MIT | no (development) |
 | `cf` | MIT or Apache 2.0 | no (development) |
 | `@e2e-dev/web`, `e2e`, `playwright-core`, `typescript` | Apache 2.0 | no (development) |
 
