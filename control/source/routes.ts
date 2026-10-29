@@ -35,6 +35,13 @@
 // (staging's secret is its own, so they don't work there), and a bad staging
 // deploy can't break the way pushes reach staging. Both proxy one repository.
 
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { Base64 } from "effect/encoding";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
@@ -107,7 +114,7 @@ export async function sourceGit(request: Request, platform: Platform, url: URL):
   const auth = request.headers.get("authorization") ?? "";
   const basic = /^Basic\s+(\S+)$/i.exec(auth)?.[1];
   let secret = /^Bearer\s+(\S+)$/i.exec(auth)?.[1] ?? null;
-  if (basic) { try { const d = atob(basic); secret = d.slice(d.indexOf(":") + 1); } catch { secret = null; } }
+  if (basic) secret = Result.match(Base64.decodeString(basic), { onFailure: () => null, onSuccess: (d) => d.slice(d.indexOf(":") + 1) });
   const challenge = (why: string) => new Response(`${why}\n`, { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"', "Content-Type": "text/plain" } });
   const howTo = `Pushing to Erga's Git endpoint needs an admin token: make one at ${url.origin}/tokens (scope: admin), then give any username and the token as the password.`;
   const read = isGitRead(request, rest, url);
@@ -155,6 +162,151 @@ async function adminOf(request: Request, platform: Platform, url: URL): Promise<
   return { actor: { login: session.login.toLowerCase(), name: session.name, ...(session.agent ? { via: VIA.token(session.agent.label) } : {}) }, bearer: !!session.agent };
 }
 
+/** Who asks the API (an admin), what they act on and where: given with each request (the routes are made once). */
+class Asking extends Context.Service<
+  Asking,
+  { readonly request: Request; readonly url: URL; readonly source: SourceService; readonly actor: Actor }
+>()("erga/control/source/Asking") {}
+
+/** A JSON answer: no cache keeps it. */
+const answer = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } });
+/** The repository's object, asked from `url`'s origin, by `actor`. */
+const ask = <A>(f: (object: SourceObject, origin: string, actor: Actor) => Promise<A>) =>
+  Asking.use(({ source, url, actor }) => Effect.promise(() => f(source.object, url.origin, actor)));
+/** The object's answer: its result, or its { error, status }. */
+const either = (r: object | { error: string; status: number }) => ("error" in r ? answer({ error: r.error }, r.status) : answer(r));
+/** A body as `schema` reads it (JSON); one that isn't JSON, or doesn't match, is an empty one. */
+const bodyOf = <A extends object>(schema: Schema.Codec<A>) =>
+  Asking.use(({ request }) => Effect.promise(() => request.text().catch(() => ""))).pipe(
+    Effect.map((text) => Option.getOrElse(Schema.decodeUnknownOption(Schema.fromJsonString(schema))(text), () => ({}) as Partial<A>))
+  );
+
+const Merge = Schema.Struct({
+  from: Schema.optionalKey(Schema.Unknown),
+  to: Schema.optionalKey(Schema.Unknown),
+  commit: Schema.optionalKey(Schema.Unknown),
+});
+const Release = Schema.Struct({
+  version: Schema.optionalKey(Schema.Unknown),
+  notes: Schema.optionalKey(Schema.Unknown),
+  commit: Schema.optionalKey(Schema.Unknown),
+});
+const Resolve = Schema.Struct({ path: Schema.optionalKey(Schema.Unknown), content: Schema.optionalKey(Schema.Unknown) });
+const str = (v: unknown) => (typeof v == "string" ? v : undefined);
+
+const apiRoutes = HttpRouter.addAll(
+  [
+    HttpRouter.route(
+      "GET",
+      "/api/source/branches",
+      Effect.gen(function* () {
+        const { url } = yield* Asking;
+        return answer({ ...(yield* ask((o, origin) => o.branches(origin))), remote: `${url.origin}/git/erga.git` });
+      })
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/merge",
+      Effect.gen(function* () {
+        const body = yield* bodyOf(Merge);
+        if ((body.from ?? "staging") != "staging" || (body.to ?? "main") != "main")
+          return answer({ error: "main only follows staging: merge from staging to main." }, 400);
+        return either(yield* ask((o, origin, actor) => o.merge(origin, actor, body.commit as string | undefined)));
+      })
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/release",
+      Effect.gen(function* () {
+        const body = yield* bodyOf(Release);
+        const version = str(body.version),
+          notes = str(body.notes),
+          commit = str(body.commit);
+        const o = {
+          ...(version != null ? { version } : {}),
+          ...(notes != null ? { notes: notes.slice(0, 4000) } : {}),
+          ...(commit != null ? { commit } : {}),
+        };
+        return either(yield* ask((s, origin, actor) => s.release(origin, actor, o)));
+      })
+    ),
+    HttpRouter.route(
+      "GET",
+      "/api/source/github",
+      Effect.map(
+        ask((o, origin) => o.githubStatus(origin)),
+        (github) => answer({ github })
+      )
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/github/sync",
+      Effect.map(
+        ask((o, origin, actor) => o.syncGithub(origin, byLine(actor.login, actor.via))),
+        (github) => answer({ github })
+      )
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/github/disconnect",
+      Effect.gen(function* () {
+        const r = yield* ask((o, origin) => o.disconnectGithub(origin));
+        return "error" in r
+          ? answer({ error: r.error }, r.status)
+          : answer({ ok: true, github: yield* ask((o, origin) => o.githubStatus(origin)) });
+      })
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/update",
+      Effect.map(
+        ask((o, origin, actor) => o.update(origin, actor)),
+        either
+      )
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/update/resolve",
+      Effect.gen(function* () {
+        const body = yield* bodyOf(Resolve);
+        const path = body.path,
+          content = body.content;
+        if (typeof path != "string" || !(typeof content == "string" || content === null))
+          return answer({ error: "Give the file's path, and its content (a string), or null to delete it." }, 400);
+        return either(yield* ask((o, origin, actor) => o.resolveUpdate(origin, actor, path, content)));
+      })
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/update/finish",
+      Effect.map(
+        ask((o, origin, actor) => o.finishUpdate(origin, actor)),
+        either
+      )
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/source/update/abandon",
+      Effect.map(
+        ask((o, origin) => o.abandonUpdate(origin)),
+        either
+      )
+    ),
+    HttpRouter.route("*", "*", answer({ error: "Not found" }, 404)),
+  ].map((r) =>
+    // The object didn't answer: the repository's object threw.
+    HttpRouter.route(
+      r.method,
+      r.path,
+      Effect.catchDefect(r.handler, (e) =>
+        Effect.succeed(answer({ error: `Erga couldn't reach its repository: ${(e as Error).message}` }, 502))
+      )
+    )
+  )
+);
+
+const api = HttpRouter.toWebHandler(apiRoutes, { disableLogger: true });
+
 /** /api/source/... (the events, /api/events, are the deploy pipeline's hub: control/deploys). */
 export async function sourceApi(request: Request, platform: Platform, url: URL): Promise<Response> {
   const who = await adminOf(request, platform, url);
@@ -162,50 +314,5 @@ export async function sourceApi(request: Request, platform: Platform, url: URL):
   if (request.method == "POST" && !who.bearer && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   const source = platform.source;
   if (!source) return json({ error: NOT_SET_UP }, 503);
-  try {
-    if (url.pathname == "/api/source/branches" && request.method == "GET") {
-      const view = await source.object.branches(url.origin);
-      return json({ ...view, remote: `${url.origin}/git/erga.git` });
-    }
-    if (url.pathname == "/api/source/merge" && request.method == "POST") {
-      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string };
-      if ((body.from ?? "staging") != "staging" || (body.to ?? "main") != "main") return json({ error: "main only follows staging: merge from staging to main." }, 400);
-      const r = await source.object.merge(url.origin, who.actor, body.commit);
-      return "error" in r ? json({ error: r.error }, r.status) : json(r);
-    }
-    if (url.pathname == "/api/source/release" && request.method == "POST") {
-      const body = (await request.json().catch(() => ({}))) as { version?: unknown; notes?: unknown; commit?: unknown };
-      const o = { ...(typeof body.version == "string" ? { version: body.version } : {}), ...(typeof body.notes == "string" ? { notes: body.notes.slice(0, 4000) } : {}), ...(typeof body.commit == "string" ? { commit: body.commit } : {}) };
-      const r = await source.object.release(url.origin, who.actor, o);
-      return "error" in r ? json({ error: r.error }, r.status) : json(r);
-    }
-    if (url.pathname == "/api/source/github" && request.method == "GET") return json({ github: await source.object.githubStatus(url.origin) });
-    if (url.pathname == "/api/source/github/sync" && request.method == "POST") return json({ github: await source.object.syncGithub(url.origin, byLine(who.actor.login, who.actor.via)) });
-    if (url.pathname == "/api/source/github/disconnect" && request.method == "POST") {
-      const r = await source.object.disconnectGithub(url.origin);
-      return "error" in r ? json({ error: r.error }, r.status) : json({ ok: true, github: await source.object.githubStatus(url.origin) });
-    }
-    if (url.pathname == "/api/source/update" && request.method == "POST") {
-      const r = await source.object.update(url.origin, who.actor);
-      return "error" in r ? json({ error: r.error }, r.status) : json(r);
-    }
-    if (url.pathname == "/api/source/update/resolve" && request.method == "POST") {
-      const body = (await request.json().catch(() => ({}))) as { path?: unknown; content?: unknown };
-      if (typeof body.path != "string" || !(typeof body.content == "string" || body.content === null)) return json({ error: "Give the file's path, and its content (a string), or null to delete it." }, 400);
-      const r = await source.object.resolveUpdate(url.origin, who.actor, body.path, body.content);
-      return "error" in r ? json({ error: r.error }, r.status) : json(r);
-    }
-    if (url.pathname == "/api/source/update/finish" && request.method == "POST") {
-      const r = await source.object.finishUpdate(url.origin, who.actor);
-      return "error" in r ? json({ error: r.error }, r.status) : json(r);
-    }
-    if (url.pathname == "/api/source/update/abandon" && request.method == "POST") {
-      const r = await source.object.abandonUpdate(url.origin);
-      return "error" in r ? json({ error: r.error }, r.status) : json(r);
-    }
-  } catch (e) {
-    return json({ error: `Erga couldn't reach its repository: ${(e as Error).message}` }, 502);
-  }
-  return json({ error: "Not found" }, 404);
+  return api.handler(request, Context.make(Asking, { request, url, source, actor: who.actor }));
 }
-
