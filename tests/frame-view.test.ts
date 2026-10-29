@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FRAME_VIEW } from "../client/build.ts";
+import * as standIn from "../client/page-editor/frame-view.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 
@@ -39,7 +40,8 @@ test("the frame's bundle has nothing of @codemirror/view but the stand-in", asyn
 });
 
 test("the frame's CodeMirror work, over the stand-in: edits, undo and redo, its state as JSON", async () => {
-  mock.module("@codemirror/view", () => import("../client/page-editor/frame-view.ts"));
+  // (A factory that returns the module as it is: one that imports it hangs when another test loaded the view first.)
+  mock.module("@codemirror/view", () => standIn);
   const { EditorState, Transaction } = await import("@codemirror/state");
   const { history, historyField, undo, redo, isolateHistory } = await import("@codemirror/commands");
 

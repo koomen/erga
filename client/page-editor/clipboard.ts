@@ -5,6 +5,7 @@ import type { ChangeSet } from "@codemirror/state";
 import * as C from "./clipboard-html";
 import { contentIn, HEADING, SPLITS } from "./source";
 import { EditorMarkdown } from "./markdown";
+import { itemSplit } from "./lists";
 import { LOADING_AGAIN, showDropNote } from "./drop";
 import { pageUrl } from "../../document/pages";
 
@@ -95,7 +96,9 @@ export abstract class EditorClipboard extends EditorMarkdown {
     if (!u) return;
     const stack = M.inlineStackAt(src, u, pos);
     const indent = M.lineIndent(src, u.openFrom);
-    const inList = u.tag == "li" && (u.node.parent?.tag == "ul" || u.node.parent?.tag == "ol");
+    // In a list item, the pieces are items; an item with its text in a <p> splits as an item (lists.ts, itemSplit).
+    const split = itemSplit(src, u);
+    const inList = !!split || (u.tag == "li" && (u.node.parent?.tag == "ul" || u.node.parent?.tag == "ol"));
     const pieces: { src: string; html: string | null }[] = inList
       ? C.items(blocks).map((i) => ({ src: C.itemSource(i, indent), html: i.lists.length ? null : i.html }))
       : blocks.map((b) => ({ src: C.toSource([b], indent), html: b.tag == "p" ? b.html : null }));
@@ -106,8 +109,8 @@ export abstract class EditorClipboard extends EditorMarkdown {
       if (stack.some((t) => t.tag == "a")) inner = inner.replace(/<\/?a\b[^>]*>/g, "");
       ({ insert, from, to, caret } = { insert: inner, from: pos, to: pos, caret: inner.length });
     } else {
-      const open = src.slice(u.openFrom, u.openTo),
-        close = src.slice(u.contentTo, u.to),
+      const open = split?.open ?? src.slice(u.openFrom, u.openTo),
+        close = split?.close ?? src.slice(u.contentTo, u.to),
         sep = "\n" + indent;
       const hasHead = contentIn(src, u, u.contentFrom, pos),
         hasTail = contentIn(src, u, pos, u.contentTo);
@@ -116,22 +119,23 @@ export abstract class EditorClipboard extends EditorMarkdown {
       const middle = pieces.slice(first != null ? 1 : 0, last != null ? -1 : undefined);
       // The block's first half, ended with the first paragraph; it goes if it would be empty.
       const head = hasHead || first != null ? (hasHead ? M.closeTags(stack) : "") + (first ?? "") + close : "";
-      from = hasHead ? pos : first != null ? u.contentFrom : u.from;
+      from = hasHead ? pos : first != null ? u.contentFrom : (split?.from ?? u.from);
       insert = head;
       caret = 0;
       for (const p of middle) {
         insert += (insert ? sep : "") + p.src;
         caret = insert.length - (/(\s*<\/[a-z0-9]+>)+\s*$/i.exec(p.src)?.[0].length ?? 0);
       }
-      // The second half, started with the last paragraph.
-      if (hasTail || last != null) {
+      // The second half, started with the last paragraph (an item with lists in it keeps one, for them).
+      if (hasTail || last != null || (split && split.to == null)) {
         insert += (insert ? sep : "") + open + (last ?? "");
-        caret = insert.length;
-        insert += hasTail ? M.openTags(stack) : "";
+        if (hasTail || last != null) caret = insert.length;
+        insert += hasTail ? M.openTags(stack) : last == null ? "<br>" : "";
         to = hasTail ? pos : u.contentTo;
-      } else to = u.to;
+      } else to = split?.to ?? u.to;
     }
     const drops = from == pos && to == pos ? this.placeholderDrops(src, [u], pos, pos, true) : [];
+    if (split?.drop && from > u.openFrom) drops.push({ from: split.drop.from, to: split.drop.to ?? split.drop.from });
     const after = state.changes([{ from, to, insert }, ...drops]);
     this.dispatch({
       changes: before ? before.compose(after) : after,
