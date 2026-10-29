@@ -31,7 +31,8 @@ import { mockCloudflare } from "../../dev/mock-cloudflare";
 import { deployPage, mockConsentPage } from "./page";
 import { webPage as page } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { base64url, randomToken, sha256 } from "../../shared/bytes.ts";
+import { Base64Url } from "effect/encoding";
+import { randomToken, sha256 } from "../../shared/bytes.ts";
 import { whoOf, type Platform } from "../../server/platform";
 import { cookies, mayDeploy, setCookie } from "../../server/identity/index.ts";
 import type { HostEnv } from "../env";
@@ -88,7 +89,7 @@ export async function deployRoutes(request: Request, host: DeployHost): Promise<
     if (!oauth) return back("This server has no Cloudflare OAuth client: use an API token instead.");
     const state = randomToken(16),
       verifier = randomToken(32);
-    const challenge = base64url(await sha256(verifier));
+    const challenge = Base64Url.encode(await sha256(verifier));
     const to = new URL(mock ? `${url.origin}/deploy/mock/consent` : OAUTH.authorize);
     for (const [k, v] of Object.entries({
       response_type: "code",
@@ -193,6 +194,6 @@ async function sessionOf(request: Request, env: DeployHost["env"]): Promise<{ id
 /** The AES key: an HMAC of the browser's half with the server's secret, so neither alone opens the token. */
 async function sealKey(env: DeployHost["env"], half: string): Promise<string> {
   const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-deploy:${env.SESSION_SECRET}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return base64url(new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(half))));
+  return Base64Url.encode(new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(half))));
 }
 

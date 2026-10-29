@@ -22,7 +22,9 @@
 // dev/github-mock.ts, answers the same routes).
 
 import * as Schema from "effect/Schema";
-import { base64url, fromBase64url, hex, sha256 } from "../../shared/bytes";
+import * as Result from "effect/Result";
+import { Base64, Base64Url, Hex } from "effect/encoding";
+import { sha256 } from "../../shared/bytes";
 
 export interface GithubApp {
   /** The App's id (the JWT's issuer), slug (its install page: github.com/apps/<slug>) and client id (sign-in). */
@@ -70,19 +72,13 @@ export async function appJwt(appId: string, privateKey: string, now = Date.now()
         "The App's private key must be PKCS#8 (-----BEGIN PRIVATE KEY-----): convert GitHub's .pem with openssl pkcs8 -topk8 -nocrypt.",
       status: 500,
     });
-  const der = fromBase64url(
-    pem
-      .replace(/-----[^-]+-----/g, "")
-      .replace(/\s+/g, "")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-  );
+  const der = Result.getOrThrow(Base64.decode(pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""))) as Uint8Array<ArrayBuffer>;
   const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   const at = Math.floor(now / 1000);
-  const head = base64url(enc.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
-  const body = base64url(enc.encode(JSON.stringify({ iat: at - 60, exp: at + 9 * 60, iss: appId })));
+  const head = Base64Url.encode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const body = Base64Url.encode(JSON.stringify({ iat: at - 60, exp: at + 9 * 60, iss: appId }));
   const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, enc.encode(`${head}.${body}`)));
-  return `${head}.${body}.${base64url(sig)}`;
+  return `${head}.${body}.${Base64Url.encode(sig)}`;
 }
 
 /** An installation token: an hour's access to the installation's repositories (Contents read and write). */
@@ -122,7 +118,7 @@ export async function uninstall(app: GithubApp, installationId: number, net: Net
 export async function signWebhook(secret: string, body: Uint8Array | string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const bytes = typeof body == "string" ? enc.encode(body) : body;
-  return `sha256=${hex(new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes as BufferSource)))}`;
+  return `sha256=${Hex.encode(new Uint8Array(await crypto.subtle.sign("HMAC", key, bytes as BufferSource)))}`;
 }
 
 /** Whether `signature` (X-Hub-Signature-256) is the webhook secret's over `body`: a constant-time compare. */

@@ -9,7 +9,8 @@
 // platform's DecompressionStream can't say where a zlib stream ends, which a
 // pack needs to find its next object.
 
-import { hex } from "../../shared/bytes";
+import * as Result from "effect/Result";
+import { Hex } from "effect/encoding";
 
 export type ObjectType = "commit" | "tree" | "blob" | "tag";
 export interface GitObject { type: ObjectType; data: Uint8Array }
@@ -26,11 +27,8 @@ export function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function unhex(s: string): Uint8Array {
-  const out = new Uint8Array(s.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-  return out;
-}
+export const unhex = (s: string): Uint8Array => Result.getOrThrow(Hex.decode(s));
+const hex = Hex.encode;
 export const isSha = (s: unknown): s is string => typeof s == "string" && /^[0-9a-f]{40}$/.test(s);
 
 export async function sha1(data: Uint8Array): Promise<string> {
