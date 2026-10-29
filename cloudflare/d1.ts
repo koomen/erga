@@ -1,7 +1,7 @@
 // The directory, with the server's users and
 // settings, on D1, through D1's API. A batch is one transaction.
 
-import { Directory, type Param, parseDeployed, type Permission, type Sql, withCredentials } from "../server/directory/index.ts";
+import { Directory, type Param, parseDeployed, type Permission, type Sql } from "../server/directory/index.ts";
 import { githubAccounts, Tokens } from "../server/identity/index.ts";
 import { forgetDecisions } from "../server/documents/index.ts";
 

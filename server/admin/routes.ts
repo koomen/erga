@@ -21,7 +21,7 @@
 //   POST /admin/users          do=deploy (login, deploy: 1 or 0)
 //   POST /admin/access         do=add_rule (kind, value, access), do=change_rule (id, access), do=remove_rule (id): the group rules
 //   POST /admin/access         do=public_sharing (on: 1 or 0): whether users can share content publicly
-//   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
+//   POST /admin/credentials    name (anthropic), and value to set or replace its key, or clear=1 to remove it
 //   POST /admin/share          rotate=1 (optional): Share with agent's admin token, for an outside
 //                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
 //

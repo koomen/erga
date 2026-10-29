@@ -229,14 +229,18 @@ test("the documents list: the document agent lists, makes (blank, a template, a 
 test("API keys: an admin clears one (the change log says who), and is never offered a tool to set one", async () => {
   const dir = fresh({ admins: ["root"], credentialSecret: "a-secret-for-the-tests-0123456789" });
   const root = { dir, who: { login: "root", admin: true } };
-  await dir.credentials.set(root.who, "openai", "sk-test-1234567890abcd");
-  expect((await run(root, "list_api_keys")).find((k: { name: string }) => k.name == "openai").stored).toBe(true);
-  const r = await run(root, "clear_api_key", { name: "openai" });
-  expect([r.cleared, r.stored]).toEqual(["openai", false]);
+  await dir.credentials.set(root.who, "anthropic", "sk-ant-api03-test-1234567890abcd");
+  expect((await run(root, "list_api_keys")).find((k: { name: string }) => k.name == "anthropic").stored).toBe(true);
+  const r = await run(root, "clear_api_key", { name: "anthropic" });
+  expect([r.cleared, r.stored]).toEqual(["anthropic", false]);
   const log = await run(root, "list_setting_changes");
-  expect([log.changes[0].by, log.changes[0].changes[0].key, log.changes[0].changes[0].credential]).toEqual(["root", "OPENAI_API_KEY", "cleared"]);
+  expect([log.changes[0].by, log.changes[0].changes[0].key, log.changes[0].changes[0].credential]).toEqual([
+    "root",
+    "ANTHROPIC_API_KEY",
+    "cleared",
+  ]);
   expect((await failure(run(root, "clear_api_key", { name: "nope" }))).status).toBe(400);
-  expect((await failure(run({ dir, who: { login: "bo" } }, "clear_api_key", { name: "openai" }))).status).toBe(403);
+  expect((await failure(run({ dir, who: { login: "bo" } }, "clear_api_key", { name: "anthropic" }))).status).toBe(403);
   expect(
     toolsOf("agent")
       .map((t) => t.name)

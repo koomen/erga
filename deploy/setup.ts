@@ -11,7 +11,6 @@
 //   bun deploy/setup.ts --control          (deploy the control Worker again: after control/ or its image changed)
 //   bun deploy/setup.ts --oauth            (only step 7: the OAuth client's secret, if it has one, from CLOUDFLARE_OAUTH_CLIENT_SECRET)
 //   --no-deploy                            (skip staging's first deploy from this machine, if erga-staging is missing)
-//   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on the two app Workers, for their sign-in settings)
 //   bun deploy/setup.ts --cleanup          (delete what the control Worker replaced: the erga-builder Worker, and the app
 //                                           Workers' own deploy tokens)
 //
@@ -38,7 +37,7 @@ import { CONTROL_OAUTH_SCOPES } from "../control/deploys/credential";
 import { Cloudflare, DeployError, type Fetch } from "../control/deploys/cloudflare-api";
 import { findDatabase, zoneIdOf } from "../control/deploys/account";
 import { machineCredential } from "./local-credential";
-import { MOCK_HOOK_SECRET, mockCloudflare } from "../dev/mock-cloudflare";
+import { mockCloudflare } from "../dev/mock-cloudflare";
 import { ask, deployFromMachine } from "./run";
 import { controlWranglerConfig } from "./release";
 import { ACCOUNT, CONTROL, SOURCE, TARGETS } from "./targets";
@@ -69,26 +68,12 @@ const PLAN = [
   `Erga's source: the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (made if it isn't there). The control Worker reaches it through its Artifacts binding, not a token. And the release store's R2 bucket, ${RELEASES_BUCKET} (made if it isn't there), which the control Worker binds.`,
   `The control Worker's GitHub App: its id, slug and client id in deploy/targets.json (control.vars; homepage https://${CONTROL.host}, callback https://${CONTROL.host}/auth/github/callback).`,
   `The control Worker (${CONTROL.worker}, control/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its container image) if it isn't there, or with --control. It gets ${CONTROL.host}.`,
-  `The control Worker's secrets: a SESSION_SECRET (kept if it has one), its GitHub app's client secret, a GitHub mirror token if you want the mirror, and SNAPSHOT_TOKEN, which it shares with ${APP_WORKERS.join(" and ")} (set on all three: staging's data copy goes through it).`,
+  `The control Worker's secrets: a SESSION_SECRET (kept if it has one), its GitHub App's secrets (client secret, webhook secret, private key), and SNAPSHOT_TOKEN, which it shares with ${APP_WORKERS.join(" and ")} (set on all three: staging's data copy goes through it).`,
   `Staging's first deploy, from this machine, only if ${STAGING.worker} isn't there: build HEAD, make it and its database with a copy of production's data.`,
   `The Cloudflare credential: an OAuth grant, by an admin's consent at https://${CONTROL.host}/install once the Worker runs (nothing is made here). Erga's OAuth client's id is in deploy/targets.json (control.vars); its secret, if the client has one, from CLOUDFLARE_OAUTH_CLIENT_SECRET.`,
   `Check it: https://${CONTROL.host}/api/health answers, and each target answers its version.`,
 ];
 const OAUTH_STEPS = [1, 7];
-
-// --hook-secret: a new DEPLOY_HOOK_SECRET, set on both app Workers, for the sign-in settings they share server to server.
-if (flag("--hook-secret")) {
-  const accountId = ACCOUNT_ID, cred = mock ? null : machineCredential();
-  if (mock || !/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("--hook-secret: set the account (deploy/targets.json, or CLOUDFLARE_ACCOUNT_ID) and log in with `bunx cf auth login` (not under the mock)."); process.exit(1); }
-  console.log(`A new DEPLOY_HOOK_SECRET for ${APP_WORKERS.join(" and ")} (not printed, not kept here).`);
-  if (!ask("Go on?", yes)) process.exit(1);
-  const value = secret(), cf = new Cloudflare(cred.token);
-  for (const worker of APP_WORKERS) {
-    await cf.call("PUT", `/accounts/${accountId}/workers/scripts/${worker}/secrets`, `set DEPLOY_HOOK_SECRET on ${worker}`, { name: "DEPLOY_HOOK_SECRET", text: value, type: "secret_text" });
-    console.log(`Set on ${worker}.`);
-  }
-  process.exit(0);
-}
 
 console.log(`Setting up ${CONTROL.worker} at ${CONTROL.host}${mock ? " (the mock Cloudflare: nothing real)" : ""}${oauthOnly ? ", the OAuth client's secret only" : ""}. The steps:\n`);
 PLAN.forEach((p, i) => { if (!oauthOnly || OAUTH_STEPS.includes(i + 1)) console.log(`  ${i + 1}. ${p}`); });
@@ -230,7 +215,7 @@ try {
     else {
       // The copy goes through production's snapshot endpoint: production must have the same token first.
       if (!snapshot) { snapshot = secret(); await putSecret(PROD.worker, "SNAPSHOT_TOKEN", snapshot); if (scripts.includes(CONTROL.worker)) await putSecret(CONTROL.worker, "SNAPSHOT_TOKEN", snapshot); }
-      const stagingSecrets = { SESSION_SECRET: secret(), FACTORY_KEY: randomBytes(32).toString("base64"), SNAPSHOT_TOKEN: snapshot, DEPLOY_HOOK_SECRET: mock ? MOCK_HOOK_SECRET : secret() };
+      const stagingSecrets = { SESSION_SECRET: secret(), FACTORY_KEY: randomBytes(32).toString("base64"), SNAPSHOT_TOKEN: snapshot };
       const github = read("STAGING_GITHUB_CLIENT_SECRET", "mock-staging-github-client-secret");
       const deployed = await deployFromMachine({ name: "staging", secrets: { ...stagingSecrets, ...(github ? { GITHUB_CLIENT_SECRET: github } : {}) }, yes, net, token, accountId, snapshotToken: snapshot, log: (l) => console.log(`   ${l}`) });
       if (!deployed) process.exit(1);

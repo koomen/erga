@@ -161,7 +161,6 @@ export const MOCK_OAUTH_SCOPES = "workers-scripts.edit containers.write cloudcha
 export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
 /** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
 export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef0123456789";
-export const MOCK_HOOK_SECRET = "mock-hook-secret-0123456789abcdef";
 /** Production's documents in the fleet mock: their ids, and what each holds. */
 export const PROD_DOCS = ["abcd2345", "efgh6789", "jkmn2345"];
 
@@ -191,7 +190,13 @@ export function mockCloudflare(opts: {
   // Secrets' values never go out with the state (/deploy/api/mock shows it): only the tests read them, in this process.
   Object.defineProperty(state, "secrets", { value: {}, enumerable: false, writable: true });
   if (opts.fleet) seedFleet(state);
-  if (opts.fleet && opts.stagingSecrets) state.secrets["erga-staging"] = { SESSION_SECRET: "mock-staging-session-secret", GITHUB_CLIENT_SECRET: "mock-staging-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET, CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" };
+  if (opts.fleet && opts.stagingSecrets)
+    state.secrets["erga-staging"] = {
+      SESSION_SECRET: "mock-staging-session-secret",
+      GITHUB_CLIENT_SECRET: "mock-staging-github-secret",
+      SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
+      CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token",
+    };
   /** D1 exports ready to download, and imports uploaded, by URL. */
   const exportsAt = new Map<string, string>(), uploads = new Map<string, string>();
   const importing = new Map<string, string>();
@@ -834,8 +839,18 @@ function seedFleet(state: MockState) {
     { type: "plain_text", name: "DEPLOY_TARGET", text: "production" },
     { type: "plain_text", name: "ERGA_VERSION", text: "prod00000000" },
   ];
-  state.scripts.erga = { metadata: { main_module: "index.js", bindings: prodBindings }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["DocumentObject", "DocHost", "Deployer", "DocList"] };
-  state.secrets.erga = { SESSION_SECRET: "production-session-secret", GITHUB_CLIENT_SECRET: "production-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET };
+  state.scripts.erga = {
+    metadata: { main_module: "index.js", bindings: prodBindings },
+    modules: ["index.js"],
+    workersDev: false,
+    tags: [],
+    namespaces: ["DocumentObject", "DocHost", "Deployer", "DocList"],
+  };
+  state.secrets.erga = {
+    SESSION_SECRET: "production-session-secret",
+    GITHUB_CLIENT_SECRET: "production-github-secret",
+    SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
+  };
   // The control Worker (control/): the repository, the pipeline, the build container; deployed by deploy/setup.ts.
   // As wrangler deployed it (control/wrangler.jsonc): no ERGA_VERSION until it deploys itself.
   state.scripts["erga-control"] = { metadata: { main_module: "index.js", compatibility_date: "2026-09-30", bindings: [

@@ -51,10 +51,8 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   /** Signs session cookies. */
   SESSION_SECRET: string;
-  /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (server/directory/api-keys.ts; read through withKeys). */
+  /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (server/directory/api-keys.ts; read by agents/models.ts). */
   ANTHROPIC_API_KEY: string;
-  /** The OpenAI key, a Worker secret: the same fallback, for OpenAI's models. */
-  OPENAI_API_KEY?: string;
   /** The deploy page's sessions (/deploy, control/install/routes.ts): one Durable Object each, holding the Cloudflare token for the deploy only. */
   DEPLOYS: DurableObjectNamespace<Deployer>;
   /**
@@ -88,13 +86,10 @@ export interface Env {
   ERGA_DEPLOYED?: string;
   /** The Cloudflare account the server is in (the pipeline sets it): where it deploys itself. */
   CLOUDFLARE_ACCOUNT_ID?: string;
-  /** A secret: the API token the server deploys itself with. Branch deploys run only when it's set. */
   /** A secret, the same on production and staging: production's read-only snapshot endpoint takes it, and staging's import. */
   SNAPSHOT_TOKEN?: string;
   /** "1" on staging: the server takes snapshots in (never on production). */
   SNAPSHOT_IMPORT?: string;
-  /** A secret, the same on the servers that tell each other of branch moves (production tells staging). */
-  DEPLOY_HOOK_SECRET?: string;
   /** The control Worker (control/index.ts), bound on the app Workers the pipeline deploys: the app's way to the Ops page's API, for its admin agent. */
   CONTROL?: Fetcher;
   /** Where the control Worker is (https://ops.erga.dev), on an app Worker the pipeline deployed; the app sends its admins there. */
