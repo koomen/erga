@@ -16,16 +16,21 @@
 // `call(deployed, method, args)` is the one method each version of the object
 // shares with the next: keep its signature.
 
+import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import type { DocumentObject } from "./document";
 import type { Env } from "../env";
-import { sleep } from "../../shared/time";
 
 /** The header a fetch to a document carries the caller's deploy in. */
 export const DEPLOYED_HEADER = "x-erga-deployed";
 /** An object from an older deploy answers this, and stops: the caller asks again. */
 export const STALE = "erga:stale-deploy";
 /** How many times a call goes again to an object that answered STALE, and the wait before each (ms, times the try). */
-const TRIES = 6, WAIT_MS = 50;
+const TRIES = 6;
+/** Between tries: 50 ms, then 100, 150... (the object takes a moment to stop and start on the new code). */
+const AGAIN = Schedule.recurs(TRIES - 1).pipe(Schedule.addDelay((m) => Effect.succeed(Duration.millis(50 * (m.output + 1)))));
 
 /** When this code's deploy was uploaded (ms), or 0: the pipeline sets ERGA_DEPLOYED. */
 export const deployedOf = (env: { ERGA_DEPLOYED?: string }) => Number(env.ERGA_DEPLOYED) || 0;
@@ -77,27 +82,33 @@ export const documentOf = (env: Pick<Env, "DOCUMENTS" | "ERGA_DEPLOYED">, id: st
 export function documentHost(stub: () => DocumentStub, deployed: number): DocumentHost {
   const host = {} as Record<string, unknown>;
   for (const method of CALLS) {
-    host[method] = async (...args: unknown[]) => {
-      for (let i = 1; ; i++) {
-        const answer = await stub().call(deployed, method, args);
-        if (answer !== STALE) return answer;
-        if (i == TRIES) throw new Error(`The document still runs the code before this deploy (${method})`);
-        await sleep(WAIT_MS * i);
-      }
-    };
+    host[method] = (...args: unknown[]) =>
+      Effect.runPromise(
+        Effect.promise(() => stub().call(deployed, method, args)).pipe(
+          Effect.flatMap((answer) => (answer === STALE ? Effect.fail(new StaleDocument({ method })) : Effect.succeed(answer))),
+          Effect.retry(AGAIN),
+          Effect.catchTag("StaleDocument", (e) =>
+            Effect.die(new Error(`The document still runs the code before this deploy (${e.method})`))
+          )
+        )
+      );
   }
-  host.fetch = async (request: Request) => {
-    for (let i = 1; ; i++) {
+  host.fetch = (request: Request) => {
+    let tries = 0;
+    const once = Effect.promise(() => {
       // A copy for each try but the last: a body is read once.
-      const sent = new Request(i < TRIES ? request.clone() : request);
+      const sent = new Request(++tries < TRIES ? request.clone() : request);
       sent.headers.set(DEPLOYED_HEADER, String(deployed));
-      const response = await stub().fetch(sent);
-      if (response.headers.get(DEPLOYED_HEADER) != STALE || i == TRIES) return response;
-      await sleep(WAIT_MS * i);
-    }
+      return stub().fetch(sent);
+    });
+    // The last try's answer goes back as it is, stale or not.
+    return Effect.runPromise(once.pipe(Effect.repeat({ schedule: AGAIN, while: (r) => r.headers.get(DEPLOYED_HEADER) == STALE })));
   };
   return host as DocumentHost;
 }
+
+/** A call answered by an object still on an older deploy's code. */
+class StaleDocument extends Data.TaggedError("StaleDocument")<{ method: string }> {}
 
 /** The answer of a fetch to an object from an older deploy: the caller asks again. */
 export const staleResponse = () => new Response("This document is restarting for a new deploy.", { status: 503, headers: { [DEPLOYED_HEADER]: STALE, "Retry-After": "1" } });

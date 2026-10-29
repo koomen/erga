@@ -14,10 +14,15 @@
 // to set. To add a setting, add it to SETTINGS; nothing in the database
 // changes.
 
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { Sql, Statement } from "./directory.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
+
+/** A write another write came in on the middle of: it tries again. */
+class Interleaved extends Data.TaggedError("Interleaved") {}
 
 /** A value a setting won't take; the message says why. */
 export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", { message: Schema.String }) {}
@@ -448,7 +453,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * twice. If another write came in between, it reads again and tries again.
    */
   private async write(key: string, json: string | null, by: string, via: string | null): Promise<void> {
-    for (let tries = 0; tries < 5; tries++) {
+    const once = async () => {
       const before = await this.stored(key), at = Date.now();
       const change = this.change(key, before, json);
       const still = "(SELECT value FROM server_config WHERE key = ?1) IS ?2";
@@ -459,9 +464,17 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
           : [`INSERT INTO server_config (key, value, updated, updated_by, updated_via) SELECT ?1, ?3, ?4, ?5, ?6 WHERE ${still}
               ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated = excluded.updated, updated_by = excluded.updated_by, updated_via = excluded.updated_via`, key, before, json, at, by, via],
       ]);
-      if ((await this.stored(key)) === json) return;
-    }
-    throw new ConfigError({ message: `${key} is changing too often at once to save: try again.` });
+      if ((await this.stored(key)) !== json) throw new Interleaved();
+    };
+    // Another write came in between: read again and try again, five times in all.
+    await Effect.runPromise(
+      Effect.tryPromise({ try: once, catch: (e) => e }).pipe(
+        Effect.retry({ times: 4, while: (e) => e instanceof Interleaved }),
+        Effect.mapError((e) =>
+          e instanceof Interleaved ? new ConfigError({ message: `${key} is changing too often at once to save: try again.` }) : e
+        )
+      )
+    );
   }
 
   private setting(key: string): Setting {

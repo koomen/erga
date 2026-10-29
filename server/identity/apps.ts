@@ -48,6 +48,9 @@
 //
 // GitHub and Google, each with its own app and the same rules.
 
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -127,24 +130,30 @@ export function checkValues(input: { clientId?: unknown; secret?: unknown }, pro
  * callback URL is checked only during a real sign-in. `origin`: GitHub's
  * (a stand-in's, in the tests).
  */
+/** A check's answer, or null when none came in time (8 s unless said: the request is cancelled then), or the error. */
+const answerIn = (ms: number | undefined, f: (signal: AbortSignal) => Promise<Response>) =>
+  Effect.runPromise(
+    Effect.tryPromise({ try: f, catch: (e) => (e instanceof Error ? e : new Error(String(e))) }).pipe(
+      Effect.timeoutOption(Duration.millis(ms ?? 8000)),
+      Effect.map(Option.getOrNull),
+      Effect.catch((e) => Effect.succeed(e))
+    )
+  );
+
 export async function checkGithubApp(v: AppValues, o: { fetch?: typeof fetch; origin?: string; timeoutMs?: number } = {}): Promise<AppCheck> {
   const at = Date.now();
   const out = (state: CheckState, summary: string, reasons: string[] = []): AppCheck => ({ state, summary, reasons, at });
   if (!v.clientId) return out("not_set_up", "No GitHub OAuth app: nobody can sign in with GitHub here.", ["No client ID."]);
   const f = o.fetch ?? fetch;
-  let r: Response | null;
-  try {
-    r = await Promise.race([
-      f(`${o.origin ?? "https://github.com"}/login/oauth/access_token`, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Erga" },
-        body: JSON.stringify({ client_id: v.clientId, client_secret: v.secret, code: `erga-check-${crypto.randomUUID()}` }),
-      }),
-      new Promise<null>((ok) => setTimeout(() => ok(null), o.timeoutMs ?? 8000)),
-    ]);
-  } catch (e) {
-    return out("unknown", `Couldn't reach GitHub to check the app (${(e as Error).message}).`);
-  }
+  const r = await answerIn(o.timeoutMs, (signal) =>
+    f(`${o.origin ?? "https://github.com"}/login/oauth/access_token`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Erga" },
+      body: JSON.stringify({ client_id: v.clientId, client_secret: v.secret, code: `erga-check-${crypto.randomUUID()}` }),
+      signal,
+    })
+  );
+  if (r instanceof Error) return out("unknown", `Couldn't reach GitHub to check the app (${r.message}).`);
   if (!r) return out("unknown", "GitHub didn't answer the check in time.");
   const body = (await r.json().catch(() => ({}))) as { error?: string; error_description?: string };
   if (r.status == 404 || body.error == "Not Found") return out("misconfigured", "GitHub has no OAuth app with this client ID.", [`GitHub doesn't know the client ID ${v.clientId}: it is wrong, or its app was deleted.`]);
@@ -169,19 +178,15 @@ export async function checkGoogleApp(v: AppValues, o: { fetch?: typeof fetch; or
   const out = (state: CheckState, summary: string, reasons: string[] = []): AppCheck => ({ state, summary, reasons, at });
   if (!v.clientId) return out("not_set_up", "No Google OAuth client: nobody can sign in with Google here.", ["No client ID."]);
   const f = o.fetch ?? fetch;
-  let r: Response | null;
-  try {
-    r = await Promise.race([
-      f(googleEndpoints(o.origin ?? null).token, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-        body: new URLSearchParams({ client_id: v.clientId, client_secret: v.secret, code: `erga-check-${crypto.randomUUID()}`, grant_type: "authorization_code", redirect_uri: "https://erga.dev/auth/google/callback" }).toString(),
-      }),
-      new Promise<null>((ok) => setTimeout(() => ok(null), o.timeoutMs ?? 8000)),
-    ]);
-  } catch (e) {
-    return out("unknown", `Couldn't reach Google to check the client (${(e as Error).message}).`);
-  }
+  const r = await answerIn(o.timeoutMs, (signal) =>
+    f(googleEndpoints(o.origin ?? null).token, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({ client_id: v.clientId, client_secret: v.secret, code: `erga-check-${crypto.randomUUID()}`, grant_type: "authorization_code", redirect_uri: "https://erga.dev/auth/google/callback" }).toString(),
+      signal,
+    })
+  );
+  if (r instanceof Error) return out("unknown", `Couldn't reach Google to check the client (${r.message}).`);
   if (!r) return out("unknown", "Google didn't answer the check in time.");
   const body = (await r.json().catch(() => ({}))) as { error?: string; error_description?: string };
   if (body.error == "invalid_client") {

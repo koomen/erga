@@ -4,8 +4,9 @@
 // erga.dev each is a round trip from wherever the Worker runs, so the count is
 // what makes a page slow or fast; e2e/bench/run.ts --waterfall prints the requests.
 
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { sleep } from "../shared/time";
 
 interface Tally { db: number; dbMs: number; doc: number; docMs: number }
 const current = new AsyncLocalStorage<Tally>();
@@ -35,7 +36,7 @@ export async function counted<T>(kind: "db" | "doc", call: () => Promise<T>): Pr
   const started = Date.now();
   if (t) t[kind]++;
   try {
-    if (latency) await sleep(latency);
+    if (latency) await Effect.runPromise(Effect.sleep(Duration.millis(latency)));
     return await call();
   } finally { if (t) t[kind == "db" ? "dbMs" : "docMs"] += Date.now() - started; }
 }
