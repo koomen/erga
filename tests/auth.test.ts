@@ -29,6 +29,7 @@ import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 import { TARGETS } from "../deploy/targets";
+import { respond } from "../server/http.ts";
 
 quietConsole();
 
@@ -216,10 +217,11 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
   const { storage } = store();
   const env = serverOn(storage);
   const apps = new AuthApps(storage, "factory-key", "production");
-  const go = async (q = "") => new URL((await startSignIn(env, new Request(`https://erga.dev/auth/github${q}`))).headers.get("location") ?? "about:blank");
+  const go = async (q = "") =>
+    new URL((await respond(startSignIn, new Request(`https://erga.dev/auth/github${q}`), env)).headers.get("location") ?? "about:blank");
   expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
   // Nothing waits: a test sign-in says so.
-  expect((await startSignIn(env, new Request("https://erga.dev/auth/github?app=pending"))).status).toBe(404);
+  expect((await respond(startSignIn, new Request("https://erga.dev/auth/github?app=pending"), env)).status).toBe(404);
   await apps.keep("github", "pending", OTHER, { login: "koomen" });
   expect((await go()).searchParams.get("client_id")).toBe(GOOD.clientId);
   const test = await go("?app=pending&next=/admin/auth");
@@ -232,6 +234,16 @@ test("sign-in uses the page's values over the deploy's, and ?app=pending tests t
   expect(await testedSignIn(env, OTHER.clientId, { ok: true, login: "koomen", admin: true })).toBe(true);
   expect((await go()).searchParams.get("client_id")).toBe(OTHER.clientId);
   // A server whose own storage can't be read signs in with the deploy's values.
-  const broken = serverOn({ get: async () => { throw new Error("down"); }, put: async () => {}, delete: async () => {} });
-  expect(new URL((await startSignIn(broken, new Request("https://erga.dev/auth/github"))).headers.get("location")!).searchParams.get("client_id")).toBe(GOOD.clientId);
+  const broken = serverOn({
+    get: async () => {
+      throw new Error("down");
+    },
+    put: async () => {},
+    delete: async () => {},
+  });
+  expect(
+    new URL((await respond(startSignIn, new Request("https://erga.dev/auth/github"), broken)).headers.get("location")!).searchParams.get(
+      "client_id"
+    )
+  ).toBe(GOOD.clientId);
 });

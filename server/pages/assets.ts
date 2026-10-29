@@ -10,6 +10,9 @@
 // Worker, which has no files of its own, reads the app's (control/index.ts:
 // remoteAssets) and names them at the app's origin.
 
+import * as Effect from "effect/Effect";
+import { HttpServerResponse } from "effect/http";
+import { call, ctx, fromWeb } from "../http.ts";
 import { ASSET_PREFIX, type AssetManifest } from "../../shared/assets.ts";
 import type { Platform } from "../platform.ts";
 
@@ -98,14 +101,18 @@ export function frameScripts(shell: string): { src: string; integrity: string; p
  * A hashed file, as the Worker serves it when it runs first (local development; on Cloudflare the files are served
  * without it, with _headers'): kept for a year, loadable from a document's own origin; a missing one never kept.
  */
-export async function serveAsset(request: Request, platform: Platform): Promise<Response> {
-  const r = await platform.assets(request);
-  const headers = new Headers(r.headers);
-  if (r.ok || r.status == 304) {
-    headers.set("Cache-Control", "public, max-age=31536000, immutable");
-    headers.set("Access-Control-Allow-Origin", "*");
-    headers.set("Cross-Origin-Resource-Policy", "cross-origin");
-    headers.set("X-Content-Type-Options", "nosniff");
-  } else headers.set("Cache-Control", "no-store");
-  return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
-}
+export const serveAsset = Effect.gen(function* () {
+  const { request, platform } = yield* ctx;
+  const r = yield* call(() => platform.assets(request));
+  return HttpServerResponse.setHeaders(
+    fromWeb(r),
+    r.ok || r.status == 304
+      ? {
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Access-Control-Allow-Origin": "*",
+          "Cross-Origin-Resource-Policy": "cross-origin",
+          "X-Content-Type-Options": "nosniff",
+        }
+      : { "Cache-Control": "no-store" }
+  );
+});

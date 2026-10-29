@@ -6,6 +6,7 @@ import { FAVICON_LINK, WORDMARK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { fontTags, styleTag } from "./assets.ts";
 import { esc } from "../../shared/html.ts";
+import { html, NO_STORE, redirect } from "../http.ts";
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
 export const link = (path: string, session: Session | null) =>
@@ -97,16 +98,20 @@ export const fromElsewhere = (request: Request) => {
 export const confirmAction = (title: string, button: string, action: string) =>
   page(title, `<form method="post" action="${esc(action)}"><button class="new">${esc(button)}</button></form>`, 200);
 
-export const signInFirst = (next: string) => new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(safeNext(next))}` } });
+export const signInFirst = (next: string) => redirect(`/auth/sign-in?next=${encodeURIComponent(safeNext(next))}`);
+
+/** The plain page's HTML: the app's look, a title and a few lines. */
+const plainPage = (title: string, body: string) =>
+  appPage(title, inlineStyle("plain"), `<main class="plain"><h1>${title}</h1><p>${body}</p></main>`);
 
 /**
  * A small page for when there's nothing to show, or something about signing in goes wrong: the app's look (its type and
  * colours, light or dark with the system), a title and a few lines, in a column. It needs no session: the stylesheet and
  * the typeface are the app's own files (pages/assets.ts), which the control Worker names at the app's origin.
  */
-export function page(title: string, html: string, status: number): Response {
-  return new Response(appPage(title, inlineStyle("plain"), `<main class="plain"><h1>${title}</h1><p>${html}</p></main>`), {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-  });
+export const page = (title: string, body: string, status: number) => html(plainPage(title, body), status, NO_STORE);
+
+/** The same page as a web Response, for the control Worker's routes (control/), which make web Responses. */
+export function webPage(title: string, body: string, status: number): Response {
+  return new Response(plainPage(title, body), { status, headers: { "Content-Type": "text/html; charset=utf-8", ...NO_STORE } });
 }

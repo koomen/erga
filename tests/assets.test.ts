@@ -7,10 +7,12 @@
 import { afterAll, expect, test } from "bun:test";
 import { HEADERS } from "../client/build.ts";
 import { adminsOnlyGate } from "../server/identity/admins-only.ts";
+import { runOn } from "../server/http.ts";
 import { asset, assetScripts, fontTags, scriptTag, serveAsset, useAssets } from "../server/pages/index.ts";
 import { readerPage, readerVersion } from "../server/pages/reader.ts";
 import type { Platform } from "../server/platform.ts";
 import { ASSET_PREFIX, stemOf, type AssetManifest } from "../shared/assets.ts";
+import { respond } from "../server/http.ts";
 
 const MANIFEST: AssetManifest = {
   files: { "page.js": "/_erga/main-aaaa1111.js", "frame.js": "/_erga/frame-bbbb2222.js", "style.css": "/_erga/style-cccc3333.css", "editor.html": "/_erga/editor-dddd4444.html", "inter.css": "/_erga/inter-eeee5555.css" },
@@ -62,12 +64,12 @@ test("an editor's page names the editor's half at the app's origin, with the int
 
 test("served by the Worker (local development), a hashed file is kept a year and any origin may load it; a missing one is never kept", async () => {
   const platform = { assets: async (r: Request) => new URL(r.url).pathname == "/_erga/main-aaaa1111.js" ? new Response("export {}", { headers: { "Content-Type": "text/javascript" } }) : new Response("Not found", { status: 404 }) } as unknown as Platform;
-  const ok = await serveAsset(new Request("https://erga.test/_erga/main-aaaa1111.js"), platform);
+  const ok = await respond(serveAsset, new Request("https://erga.test/_erga/main-aaaa1111.js"), platform);
   expect(ok.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
   expect(ok.headers.get("access-control-allow-origin")).toBe("*");
   expect(ok.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
   expect(await ok.text()).toBe("export {}");
-  const missing = await serveAsset(new Request("https://erga.test/_erga/main-zzzz0000.js"), platform);
+  const missing = await respond(serveAsset, new Request("https://erga.test/_erga/main-zzzz0000.js"), platform);
   expect(missing.status).toBe(404);
   expect(missing.headers.get("cache-control")).toBe("no-store");
   // Cloudflare's own serving gives the same headers (the build's _headers).
@@ -77,7 +79,10 @@ test("served by the Worker (local development), a hashed file is kept a year and
 
 test("staging (admins only) lets anyone read the hashed files and the logo, and nothing else under the same names", async () => {
   const staging = { adminsOnly: true, sessionOf: async () => null, pagesDomain: () => "", directory: { users: {} } } as unknown as Platform;
-  const gate = (path: string, method = "GET") => { const url = new URL(`https://staging.erga.test${path}`); return adminsOnlyGate(new Request(url, { method }), staging, url); };
+  const gate = (path: string, method = "GET") => {
+    const url = new URL(`https://staging.erga.test${path}`);
+    return runOn(adminsOnlyGate, new Request(url, { method }), staging);
+  };
   expect(await gate("/_erga/main-aaaa1111.js")).toBeNull();
   expect(await gate("/_erga/fonts/inter-latin-normal-iiii9999.woff2", "HEAD")).toBeNull();
   expect(await gate("/logo.png")).toBeNull();

@@ -28,6 +28,7 @@ import { TEST_APP, testPrivateKey } from "./helpers/source-fixture";
 import { Directory } from "../server/directory/index.ts";
 import { memory } from "./helpers/memory-sql.ts";
 import { quietConsole } from "./helpers/quiet.ts";
+import { respond } from "../server/http.ts";
 
 quietConsole();
 
@@ -147,7 +148,7 @@ describe("Connect GitHub (control/routes.ts)", () => {
     expect(linked).toHaveLength(1);
     expect(linked[0]).toMatchObject({ installationId: Number(back.searchParams.get("installation_id")), account: { login: "ada" }, repo: { fullName: "ada/erga", cloneUrl: `${www}/ada/erga.git` }, by: "ada" });
     // The cookie is cleared with the answer.
-    expect(done.headers.get("set-cookie")).toContain("erga_github=; Path=/; Max-Age=0");
+    expect(done.headers.get("set-cookie")).toContain("erga_github=; Max-Age=0; Path=/");
   });
 
   test("no cookie, or another state: refused in place; no admin: refused", async () => {
@@ -236,7 +237,7 @@ describe("Connect GitHub (control/routes.ts)", () => {
       own: { get: async () => undefined, put: async () => {}, delete: async () => {} },
       deploy: { target: null },
     } as unknown as Platform;
-    const start = await startSignIn(platform, new Request(`${INSTALL}/auth/github?next=/admin/ops`));
+    const start = await respond(startSignIn, new Request(`${INSTALL}/auth/github?next=/admin/ops`), platform);
     expect(start.status).toBe(302);
     const to = new URL(start.headers.get("location")!);
     expect(to.searchParams.get("redirect_uri")).toBe(`${OPS}/auth/github/callback`);
@@ -250,13 +251,20 @@ describe("Connect GitHub (control/routes.ts)", () => {
     expect(relayed.status).toBe(302);
     const on = new URL(relayed.headers.get("location")!);
     expect(on.origin).toBe(INSTALL);
-    const signedIn = await finishSignIn(platform, new Request(on, { headers: { cookie: cookieOf(start) } }));
+    const signedIn = await respond(finishSignIn, new Request(on, { headers: { cookie: cookieOf(start) } }), platform);
     expect(signedIn.status).toBe(302);
     expect(signedIn.headers.get("location")).toBe("/admin/ops");
     expect(signedIn.headers.get("set-cookie")).toContain("erga_session=");
     // A relayed answer for another sign-in doesn't open.
-    const other = await startSignIn(platform, new Request(`${INSTALL}/auth/github`));
-    const stale = await finishSignIn(platform, new Request(`${INSTALL}/auth/github/callback?state=${encodeURIComponent(new URL(other.headers.get("location")!).searchParams.get("state")!)}&relay=${on.searchParams.get("relay")}`, { headers: { cookie: cookieOf(other) } }));
+    const other = await respond(startSignIn, new Request(`${INSTALL}/auth/github`), platform);
+    const stale = await respond(
+      finishSignIn,
+      new Request(
+        `${INSTALL}/auth/github/callback?state=${encodeURIComponent(new URL(other.headers.get("location")!).searchParams.get("state")!)}&relay=${on.searchParams.get("relay")}`,
+        { headers: { cookie: cookieOf(other) } }
+      ),
+      platform
+    );
     expect(stale.status).toBe(400);
     expect(await stale.text()).toContain("didn&#39;t open");
   });

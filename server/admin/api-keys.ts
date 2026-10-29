@@ -5,7 +5,7 @@ import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { adminResponse } from "./layout.ts";
+import { adminPage } from "./layout.ts";
 import { setAt } from "./parts.ts";
 
 /**
@@ -61,14 +61,14 @@ function deploySecretRow(d: DeploySecretEntry): string {
  * characters, and who set it when; then the secrets only the deploy sets,
  * read-only. The page never has a key.
  */
-export async function apiKeysPage(platform: Platform, session: Session): Promise<Response> {
+export async function apiKeysPage(platform: Platform, session: Session) {
   const who = whoOf(session);
   const [credentials, deployed] = await Promise.all([
     platform.directory.credentials.list(who),
     platform.directory.credentials.deployed(who),
   ]);
   const rows = credentials.map((c) => credentialRow(c, session));
-  return adminResponse({
+  return adminPage({
     session,
     title: "API keys",
     here: "keys",

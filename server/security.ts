@@ -23,7 +23,8 @@
 // A document's pages origin is apart: its pages say themselves which viewer
 // may frame them (pages-origin.ts), and their scripts are their authors'.
 
-import { base64, randomBytes } from "../shared/bytes.ts";
+import * as Base64 from "effect/encoding/Base64";
+import { randomBytes } from "../shared/bytes.ts";
 
 /** HTTPS only, for a year, here and on every subdomain. */
 export const HSTS = "max-age=31536000; includeSubDomains";
@@ -57,7 +58,7 @@ export function withSecurity(response: Response, url: URL, kind: Kind, scripts =
     } else if (!/^text\/html\b/i.test(headers.get("content-type") ?? "")) headers.set("Content-Security-Policy", FRAME_POLICY);
     else if (!scripts || !response.body) headers.set("Content-Security-Policy", PAGE_POLICY);
     else {
-      const nonce = base64(randomBytes(16));
+      const nonce = Base64.encode(randomBytes(16));
       headers.set("Content-Security-Policy", `${PAGE_POLICY}; ${scriptPolicy(nonce)}`);
       const page = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
       return new HTMLRewriter()

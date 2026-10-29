@@ -60,16 +60,19 @@ const NAME = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
 export function ruleValue(kind: RuleKind, raw: unknown): string {
   const v = String(raw ?? "").trim().toLowerCase().replace(/^@/, "");
   if (kind == "everybody") return "";
-  if (!v) throw new NotAllowed(`Give the ${KIND_LABEL[kind]}'s ${kind == "workspace" ? "domain" : "login"}.`);
-  if (kind == "workspace" && !DOMAIN.test(v)) throw new NotAllowed(`"${v}" isn't a domain: a Google Workspace organization is named by its domain, like example.com.`);
-  if (kind == "github_org" && !NAME.test(v)) throw new NotAllowed(`"${v}" isn't a GitHub organization's login.`);
+  if (!v) throw new NotAllowed({ message: `Give the ${KIND_LABEL[kind]}'s ${kind == "workspace" ? "domain" : "login"}.` });
+  if (kind == "workspace" && !DOMAIN.test(v))
+    throw new NotAllowed({ message: `"${v}" isn't a domain: a Google Workspace organization is named by its domain, like example.com.` });
+  if (kind == "github_org" && !NAME.test(v)) throw new NotAllowed({ message: `"${v}" isn't a GitHub organization's login.` });
   return v;
 }
 
 export function accessValue(raw: unknown): Access {
   const a = String(raw ?? "").trim().toLowerCase();
   if (a == "none" || a == "read" || a == "write") return a;
-  throw new NotAllowed(`A rule's access is none (${ACCESS_LABEL.none}), read (${ACCESS_LABEL.read}) or write (${ACCESS_LABEL.write}).`);
+  throw new NotAllowed({
+    message: `A rule's access is none (${ACCESS_LABEL.none}), read (${ACCESS_LABEL.read}) or write (${ACCESS_LABEL.write}).`,
+  });
 }
 
 /** Whether a rule matches a person. */
@@ -131,7 +134,7 @@ export class AccessRules {
   async add(by: Actor, input: { kind: unknown; value?: unknown; access: unknown }): Promise<AccessRule> {
     await this.users.mustAdmin(by);
     const kind = String(input.kind ?? "") as RuleKind;
-    if (!RULE_KINDS.includes(kind)) throw new NotAllowed(`"${input.kind}" isn't a kind of rule: ${RULE_KINDS.join(", ")}.`);
+    if (!RULE_KINDS.includes(kind)) throw new NotAllowed({ message: `"${input.kind}" isn't a kind of rule: ${RULE_KINDS.join(", ")}.` });
     const value = ruleValue(kind, input.value),
       access = accessValue(input.access);
     const at = Date.now();
@@ -149,7 +152,7 @@ export class AccessRules {
   async change(by: Actor, id: number, accessIn: unknown): Promise<AccessRule> {
     await this.users.mustAdmin(by);
     const rule = (await this.all()).find((r) => r.id == id);
-    if (!rule) throw new NotAllowed(`There's no rule ${id}: list_access_rules lists them.`);
+    if (!rule) throw new NotAllowed({ message: `There's no rule ${id}: list_access_rules lists them.` });
     const access = accessValue(accessIn);
     const at = Date.now();
     await this.sql.batch([
@@ -167,8 +170,8 @@ export class AccessRules {
   async remove(by: Actor, id: number): Promise<void> {
     await this.users.mustAdmin(by);
     const rule = (await this.all()).find((r) => r.id == id);
-    if (!rule) throw new NotAllowed(`There's no rule ${id}: list_access_rules lists them.`);
-    if (rule.kind == "everybody") throw new NotAllowed("Everybody's rule is always there: set it to none instead.");
+    if (!rule) throw new NotAllowed({ message: `There's no rule ${id}: list_access_rules lists them.` });
+    if (rule.kind == "everybody") throw new NotAllowed({ message: "Everybody's rule is always there: set it to none instead." });
     await this.sql.batch([["DELETE FROM access_rules WHERE id = ?1", id], logged(by, Date.now(), { event: "removed", kind: rule.kind, value: rule.value, access: rule.access })]);
     this.remembered = null;
     this.version++;

@@ -22,6 +22,7 @@
 // requests don't each ask the database; a change made through this object
 // is seen at once.
 
+import * as Schema from "effect/Schema";
 import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
 import { safeAvatar } from "../../shared/avatars.ts";
@@ -42,9 +43,9 @@ export function roleValue(raw: unknown, o: { none?: boolean } = {}): UserRole | 
     .trim()
     .toLowerCase();
   if ((USER_ROLES as readonly string[]).includes(r) || (o.none && r == "none")) return r as UserRole | "none";
-  throw new NotAllowed(
-    `A user's role is admin (${ROLE_LABEL.admin}), write (${ROLE_LABEL.write})${o.none ? "," : " or"} read (${ROLE_LABEL.read})${o.none ? ` or none (${ROLE_LABEL.none})` : ""}.`
-  );
+  throw new NotAllowed({
+    message: `A user's role is admin (${ROLE_LABEL.admin}), write (${ROLE_LABEL.write})${o.none ? "," : " or"} read (${ROLE_LABEL.read})${o.none ? ` or none (${ROLE_LABEL.none})` : ""}.`,
+   });
 }
 
 export interface User {
@@ -89,7 +90,7 @@ export interface Actor {
 }
 
 /** What an admin-only call says to someone who isn't one, or a change it can't make (the message says why). */
-export class NotAllowed extends Error {}
+export class NotAllowed extends Schema.TaggedError<NotAllowed>()("NotAllowed", { message: Schema.String }) {}
 
 /** What an admin acting through a token without the admin scope is told, wherever they try. */
 export const LOCKED = "This token has no admin power: make a token with the admin scope at /tokens.";
@@ -262,10 +263,12 @@ export class Users {
   async add(by: Actor, login: string, opts: { role?: ServerRole; name?: string; access?: "write" | "read" | null } = {}): Promise<User> {
     await this.mustAdmin(by);
     login = login.trim().toLowerCase();
-    if (!LOGIN.test(login)) throw new NotAllowed(`"${login}" isn't a GitHub login.`);
+    if (!LOGIN.test(login)) throw new NotAllowed({ message: `"${login}" isn't a GitHub login.` });
     const role = opts.role ?? "user";
-    if (role != "admin" && this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
-    const had = await this.get(login), at = Date.now();
+    if (role != "admin" && this.isBootstrapAdmin(login))
+      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): change it there.` });
+    const had = await this.get(login),
+      at = Date.now();
     await this.sql.batch([
       [
         `INSERT INTO users (login, name, role, access, created, added_by, added_via) VALUES (?1, ?2, ?3, ?7, ?4, ?5, ?6)
@@ -293,9 +296,10 @@ export class Users {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     const user = await this.get(login);
-    if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
+    if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
     if (role == "admin" && user.role == "admin") return user;
-    if (role != "admin" && user.bootstrap) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
+    if (role != "admin" && user.bootstrap)
+      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): change it there.` });
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
     const access = role == "admin" ? user.access : role == "none" ? null : role;
     await this.sql.batch([
@@ -313,9 +317,10 @@ export class Users {
   async setRole(by: Actor, login: string, role: ServerRole): Promise<User> {
     await this.mustAdmin(by);
     login = login.toLowerCase();
-    if (role != "admin" && this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
+    if (role != "admin" && this.isBootstrapAdmin(login))
+      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): change it there.` });
     const user = await this.get(login);
-    if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
+    if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.batch([["UPDATE users SET role = ?2 WHERE login = ?1", login, role], this.logged(by, Date.now(), { login, event: "role", role })]);
     this.known.delete(login);
@@ -328,7 +333,7 @@ export class Users {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     const user = await this.get(login);
-    if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
+    if (!user) throw new NotAllowed({ message: `${login} isn't a user: add them first.` });
     // A bootstrap admin who hasn't signed in yet has no row: make it, as signing in would.
     if (user.created == 0) await this.sql.run("INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'admin', ?2) ON CONFLICT (login) DO NOTHING", login, Date.now());
     await this.sql.batch([["UPDATE users SET deploy = ?2 WHERE login = ?1", login, deploy ? 1 : 0], this.logged(by, Date.now(), { login, event: "deploy", deploy })]);
@@ -340,7 +345,8 @@ export class Users {
   async remove(by: Actor, login: string): Promise<void> {
     await this.mustAdmin(by);
     login = login.toLowerCase();
-    if (this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): take them out there.`);
+    if (this.isBootstrapAdmin(login))
+      throw new NotAllowed({ message: `${login} is an admin by the deploy (ADMINS): take them out there.` });
     if ((await this.get(login))?.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.batch([["DELETE FROM users WHERE login = ?1", login], this.logged(by, Date.now(), { login, event: "removed" })]);
     this.known.delete(login);
@@ -353,7 +359,9 @@ export class Users {
     const others = new Set([...rows.map((r) => r.login), ...this.admins]);
     others.delete(login);
     if (others.size > 0) return;
-    throw new NotAllowed(`${login == by.login.toLowerCase() ? "You're" : `${login} is`} the last admin: make someone else an admin first, so the server keeps one.`);
+    throw new NotAllowed({
+      message: `${login == by.login.toLowerCase() ? "You're" : `${login} is`} the last admin: make someone else an admin first, so the server keeps one.`,
+    });
   }
 
   /** The change log's entry for a change to a user, under the admin who made it and how. */
@@ -364,8 +372,8 @@ export class Users {
   /** Throws NotAllowed unless `by` is an admin with admin power (actsAsAdmin). */
   async mustAdmin(by: Actor): Promise<void> {
     if (await this.actsAsAdmin(by)) return;
-    if (await this.isAdmin(by)) throw new NotAllowed(LOCKED);
-    throw new NotAllowed("Only an admin can do that.");
+    if (await this.isAdmin(by)) throw new NotAllowed({ message: LOCKED });
+    throw new NotAllowed({ message: "Only an admin can do that." });
   }
 
   private fromRow(r: Row): User {

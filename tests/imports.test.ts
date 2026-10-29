@@ -4,7 +4,7 @@
 //   1. shared/        nothing of ours (assets/ is data: any layer may import it)
 //   2. document/      shared/. It gets the directory and the agents through DocumentDeps.
 //   3. server/'s areas (directory, identity, documents, pages, home, admin) and its other files but app.ts and
-//                     api.ts: platform.ts, security.ts, live.ts, health.ts. directory/ never imports identity/.
+//                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts. directory/ never imports identity/.
 //   4. control/       the control plane: Erga's repository, its deploys, installs, the Ops page. Also deploy/targets.ts.
 //   5. agents/        both embedded agents (the admin agent's tools work the control plane)
 //   6. server/app.ts and server/api.ts: the route table, and the HTTP API for outside agents

@@ -14,22 +14,22 @@
 //     carried along in its links), else whoever this browser signed in as,
 //     else the dev login, unless the browser signed out.
 
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Result from "effect/Result";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import type { Directory, Users } from "../directory/index.ts";
 import { cookies } from "./cookies.ts";
-import { base64url, fromBase64url } from "../../shared/bytes.ts";
 
 export const SESSION_COOKIE = "erga_session";
 /** Local development: this browser signed out, so it's nobody (not the dev login) until it signs in again. */
 export const SIGNED_OUT = "erga_signed_out";
-
 
 const key = (secret: string) => crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 
 /** `value` with its signature, so it can go to a browser and come back unchanged. */
 export async function sign(secret: string, value: string): Promise<string> {
   const mac = await crypto.subtle.sign("HMAC", await key(secret), new TextEncoder().encode(value));
-  return `${value}.${base64url(mac)}`;
+  return `${value}.${Base64Url.encode(new Uint8Array(mac))}`;
 }
 
 /** The value a signature vouches for, or null. */
@@ -38,7 +38,12 @@ export async function unsign(secret: string, signed: string): Promise<string | n
   if (i < 0) return null;
   const value = signed.slice(0, i);
   try {
-    return (await crypto.subtle.verify("HMAC", await key(secret), fromBase64url(signed.slice(i + 1)), new TextEncoder().encode(value)))
+    return (await crypto.subtle.verify(
+      "HMAC",
+      await key(secret),
+      Result.getOrThrow(Base64Url.decode(signed.slice(i + 1))) as Uint8Array<ArrayBuffer>,
+      new TextEncoder().encode(value)
+    ))
       ? value
       : null;
   } catch {
@@ -82,7 +87,7 @@ async function cookieSession(platform: Platform, request: Request, dev: boolean)
   const value = raw && await unsign(platform.secret, raw);
   if (!value) return null;
   try {
-    const s = JSON.parse(new TextDecoder().decode(fromBase64url(value))) as Session & { exp: number };
+    const s = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value))) as Session & { exp: number };
     if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return null;
     // A test person's token was minted by a user, who must still be one.
     if (s.test) return (await users.allowed(s.test.by)) ? { login: s.login, name: s.name, test: { by: s.test.by } } : null;

@@ -133,21 +133,35 @@ export async function providersOn(platform: Pick<Platform, "own">): Promise<Prov
  * works; one goes off only while the other is on and works, and only by an admin whose account signs in with the other.
  */
 async function setProvider(platform: SignInPlatform, by: Act, provider: Provider, on: boolean): Promise<ProvidersOn> {
-  if (!(provider in PROVIDERS)) throw new AuthError(`"${provider}" isn't a sign-in provider: github or google.`);
+  if (!(provider in PROVIDERS)) throw new AuthError({ message: `"${provider}" isn't a sign-in provider: github or google.` });
   const now = await providersOn(platform);
   if (now[provider] == on) return now;
   const label = PROVIDERS[provider].label;
   // Local development signs in without a provider: anything works there.
-  const works = async (p: Provider) => platform.signIn.devLogin != null
-    || (await contextOf(platform, p).check((await signInApp(platform, "active", p)) ?? { clientId: "", secret: "" })).state == "working";
-  if (on && !(await works(provider))) throw new AuthError(`${label}'s app doesn't work on this server yet: set its values below, and turn it on when the check says it works. Nothing changed.`);
+  const works = async (p: Provider) =>
+    platform.signIn.devLogin != null ||
+    (await contextOf(platform, p).check((await signInApp(platform, "active", p)) ?? { clientId: "", secret: "" })).state == "working";
+  if (on && !(await works(provider)))
+    throw new AuthError({
+      message: `${label}'s app doesn't work on this server yet: set its values below, and turn it on when the check says it works. Nothing changed.`,
+    });
   if (!on) {
-    const other: Provider = provider == "github" ? "google" : "github", otherLabel = PROVIDERS[other].label;
-    if (!now[other]) throw new AuthError(`Sign-in with ${label} is the only one on: turn on ${otherLabel} first, so people can still sign in. Nothing changed.`);
-    if (!(await works(other))) throw new AuthError(`${otherLabel}'s app doesn't work now, so turning ${label} off would stop sign-in. Nothing changed.`);
+    const other: Provider = provider == "github" ? "google" : "github",
+      otherLabel = PROVIDERS[other].label;
+    if (!now[other])
+      throw new AuthError({
+        message: `Sign-in with ${label} is the only one on: turn on ${otherLabel} first, so people can still sign in. Nothing changed.`,
+      });
+    if (!(await works(other)))
+      throw new AuthError({
+        message: `${otherLabel}'s app doesn't work now, so turning ${label} off would stop sign-in. Nothing changed.`,
+      });
     // Each account signs in with one provider (an account with no identity yet: GitHub, by its login).
     const mine = (await platform.directory.identities.of(by.login))[0]?.provider ?? "github";
-    if (mine == provider) throw new AuthError(`Your account signs in with ${label}: turning it off would lock you out. An admin whose account signs in with ${otherLabel} can turn it off. Nothing changed.`);
+    if (mine == provider)
+      throw new AuthError({
+        message: `Your account signs in with ${label}: turning it off would lock you out. An admin whose account signs in with ${otherLabel} can turn it off. Nothing changed.`,
+      });
   }
   const next = { ...now, [provider]: on };
   await platform.own.put(ON_KEY, next);

@@ -1,7 +1,7 @@
 // The app: one route table, read top to bottom, over web Requests and the
 // Platform (what the app needs from where it runs, server/platform.ts).
-// cloudflare/index.ts calls `handle` for every request, and the unit tests
-// may call it on a Platform in memory.
+// The app is an Effect (server/http.ts): cloudflare/index.ts turns it into the
+// Worker's fetch handler, and the unit tests may run it on a Platform in memory.
 //
 //   /                          the homepage: the homepage served from its last deploy, else the viewer on the
 //                              landing document (a setting), with an Edit button for those who may
@@ -40,6 +40,7 @@
 // the documents' pages origin, is for Erga's admins only: one guard before
 // them all (server/identity/admins-only.ts lists what's exempt, and why).
 
+import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
 import { serverApi } from "./api.ts";
@@ -63,97 +64,125 @@ import { releaseApi, withLive } from "./live.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf, type Platform } from "./platform.ts";
 import { withSecurity } from "./security.ts";
+import { HttpServerResponse } from "effect/http";
+import { call, fromWeb, platform, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
-export type Outside = (request: Request, url: URL) => Promise<Response | null>;
+export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
+
+/** A route written over web Requests and Responses (the agents' own, the server's API for agents). */
+const web = (f: (request: Request, p: Platform) => Promise<Response> | Response): Route =>
+  Effect.gen(function* () {
+    const request = yield* webRequest,
+      p = yield* platform;
+    return fromWeb(yield* call(async () => f(request, p)));
+  });
 
 /** The app's answer to a request: the route table, then what every page of the site's own gets (the account corner, live.js, its security headers). */
-export async function handle(request: Request, platform: Platform, outside: Outside): Promise<Response> {
-  const url = new URL(request.url);
-  // The editor's files' addresses, for the pages below to name (pages/assets.ts).
-  if (!isAsset(url.pathname)) await loadAssets(platform, url);
-  const response = await route(request, platform, url, outside);
-  // Every page of the site's own has who you are in its upper right; a document's pages origin, and its files, never do.
-  if (response.status == 101) return response;
-  if (isPagesSite(url, platform)) return withSecurity(response, url, "pages");
-  // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
-  const own = response.headers.has(OWN_ACCOUNT);
-  const page = await withAccount(response, async () => {
-    const session = await platform.sessionOf(request);
-    const dir = platform.directory;
-    return accountOf(session, !!session && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
-  }, url.pathname + url.search);
-  // And every page of the site's own follows a redeploy; not the editor's own files (editor.html is a part of a page).
-  // Then what every answer says about how a browser may use it: HTTPS only, no other site's frame (security.ts).
-  // (The script rule, a nonce in each <script>, on its pages: not the editor's files, which are as they were built.)
-  return withSecurity(own || isAsset(url.pathname) ? page : await withLive(page, request), url, "site", !isAsset(url.pathname));
-}
+export const app = (outside: Outside): Route =>
+  Effect.gen(function* () {
+    const request = yield* webRequest,
+      p = yield* platform;
+    const url = new URL(request.url);
+    // The editor's files' addresses, for the pages below to name (pages/assets.ts).
+    if (!isAsset(url.pathname)) yield* call(() => loadAssets(p, url));
+    const answer = yield* route(url, outside);
+    // Every page of the site's own has who you are in its upper right; a document's pages origin, and its files, never do.
+    if (answer.status == 101) return answer;
+    // The corner, live.js and the security headers rewrite the page: they take it as a web Response.
+    const response = toWeb(answer);
+    if (isPagesSite(url, p)) return fromWeb(withSecurity(response, url, "pages"));
+    // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
+    const own = response.headers.has(OWN_ACCOUNT);
+    const page = yield* call(() =>
+      withAccount(
+        response,
+        async () => {
+        const session = await p.sessionOf(request);
+        const dir = p.directory;
+        return accountOf(session, !!session && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
+        },
+        url.pathname + url.search
+      )
+    );
+    // And every page of the site's own follows a redeploy; not the editor's own files (editor.html is a part of a page).
+    // Then what every answer says about how a browser may use it: HTTPS only, no other site's frame (security.ts).
+    // (The script rule, a nonce in each <script>, on its pages: not the editor's files, which are as they were built.)
+    const live = own || isAsset(url.pathname) ? page : yield* call(() => withLive(page, request));
+    return fromWeb(withSecurity(live, url, "site", !isAsset(url.pathname)));
+  });
 
-async function route(request: Request, p: Platform, url: URL, outside: Outside): Promise<Response> {
-  const path = url.pathname;
-  const assets = isAsset(path);
-  // Staging is for Erga's admins only: every route after this, and the pages origin, needs an admin's session or
-  // admin-scope token, but for the exemptions server/identity/admins-only.ts lists and explains.
-  const refused = await adminsOnlyGate(request, p, url);
-  if (refused) return refused;
-  // A document's pages origin serves its page and files, and nothing of this site's.
-  // No service workers there: one would outlive the page that registered it, in the browser of whoever viewed it, and
-  // answer for the document's files after its authors had changed them.
-  if (isPagesSite(url, p) && request.headers.get("service-worker") == "script") return new Response("A document's page can't register a service worker.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)
-  if (isPagesSite(url, p)) return documentRoutes(request, p);
-  if (path == "/auth/sign-in") return chooseSignIn(p, request);
-  if (path == "/auth/github") return startSignIn(p, request);
-  if (path == "/auth/google") return startGoogleSignIn(p, request);
-  if (path == "/auth/google/callback") return finishGoogleSignIn(p, request);
-  // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; local development serves it here (`outside`).
-  if (path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action"))) return (await outside(request, url)) ?? finishSignIn(p, request);
-  if (path == "/auth/github/callback") return finishSignIn(p, request);
-  if (path == "/auth/logout") return signOut(p, request);
-  if (path == "/auth/test") return testSignIn(p, request);
-  if (path == "/auth/username") return usernameStep(p, request);
-  if (path == "/auth/dev") return devSignIn(p, request);
-  // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
-  if (assets) return isAssetPath(path) ? serveAsset(request, p) : p.assets(request);
-  // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
-  // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
-  if (path == "/git" || path.startsWith("/git/")) return (await outside(request, url)) ?? documentRoutes(request, p);
-  // Every /admin route: the server's admins only, checked on the server before any of them answers.
-  if (isAdminPath(path)) {
-    const refused = await adminGate(p, request);
+const route = (url: URL, outside: Outside): Route =>
+  Effect.gen(function* () {
+    const request = yield* webRequest,
+      p = yield* platform;
+    const path = url.pathname;
+    const assets = isAsset(path);
+    const elsewhere = outside(url);
+    // Staging is for Erga's admins only: every route after this, and the pages origin, needs an admin's session or
+    // admin-scope token, but for the exemptions server/identity/admins-only.ts lists and explains.
+    const refused = yield* adminsOnlyGate;
     if (refused) return refused;
-  }
-  // Branch deploys and their status, /deploy, the dev server's routes: outside the app.
-  const elsewhere = await outside(request, url);
-  if (elsewhere) return elsewhere;
-  const read = request.method == "GET" || request.method == "HEAD";
-  // The homepage, served directly from its last deploy; the viewer on it until there's one.
-  if (path == "/" && read) {
-    const home = await serveHome(request, p);
-    if (home) return home;
-  }
-  if (path.startsWith("/_home/")) return serveHomeFile(request, p);
-  // Whether a document is the homepage, and its deploys.
-  const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
-  if (homeId) return homeApi(request, p, homeId, (homeAction ?? "") as "" | "deploy");
-  // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
-  // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
-  if (read && isHomeFilePath(path)) {
-    const file = await serveHomeRoot(request, p);
-    if (file) return file;
-  }
-  // Each admin's agent, its conversation and panel: before the server's API, which has the rest of /api/.
-  if (isAdminAgentPath(path)) return adminAgentApi(request, p, url);
-  // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
-  if (path == "/api/release" && read) return releaseApi(p);
-  // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
-  if (path == "/api/admin/guide") return adminGuideApi(request, p, url);
-  // The server's API for agents, and people's agent tokens.
-  if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, p);
-  if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/"))
-    return tokensRoutes(request, p);
-  return documentRoutes(request, p);
-}
+    // A document's pages origin serves its page and files, and nothing of this site's.
+    // No service workers there: one would outlive the page that registered it, in the browser of whoever viewed it, and
+    // answer for the document's files after its authors had changed them.
+    if (isPagesSite(url, p) && request.headers.get("service-worker") == "script")
+      return text("A document's page can't register a service worker.", 403);
+    // (Not the editor's files: the page loads them from the app's origin, one address for every document: pages/reader.ts.)
+    if (isPagesSite(url, p)) return yield* documentRoutes;
+    if (path == "/auth/sign-in") return yield* chooseSignIn;
+    if (path == "/auth/github") return yield* startSignIn;
+    if (path == "/auth/google") return yield* startGoogleSignIn;
+    if (path == "/auth/google/callback") return yield* finishGoogleSignIn;
+    // GitHub's App callback (Connect GitHub coming back: installation_id) is the control Worker's; local development serves it here (`outside`).
+    if (path == "/auth/github/callback" && (url.searchParams.has("installation_id") || url.searchParams.has("setup_action")))
+      return (yield* elsewhere) ?? (yield* finishSignIn);
+    if (path == "/auth/github/callback") return yield* finishSignIn;
+    if (path == "/auth/logout") return yield* signOut;
+    if (path == "/auth/test") return yield* testSignIn;
+    if (path == "/auth/username") return yield* usernameStep;
+    if (path == "/auth/dev") return yield* devSignIn;
+    // The editor's own files: its code, styles and typeface, and its page, which a document's page adds to itself to go into the editor.
+    if (assets) return isAssetPath(path) ? yield* serveAsset : fromWeb(yield* call(() => p.assets(request)));
+    // Erga's own source and deploys (the Git endpoint, the Ops page, their APIs) are the control Worker's: `outside`
+    // answers them, with a redirect there when it is apart (Platform.control), or itself in local development.
+    if (path == "/git" || path.startsWith("/git/")) return (yield* elsewhere) ?? (yield* documentRoutes);
+    // Every /admin route: the server's admins only, checked on the server before any of them answers.
+    if (isAdminPath(path)) {
+      const refused = yield* adminGate;
+      if (refused) return refused;
+    }
+    // Branch deploys and their status, /deploy, the dev server's routes: outside the app.
+    const there = yield* elsewhere;
+    if (there) return there;
+    const read = request.method == "GET" || request.method == "HEAD";
+    // The homepage, served directly from its last deploy; the viewer on it until there's one.
+    if (path == "/" && read) {
+      const home = yield* serveHome;
+      if (home) return home;
+    }
+    if (path.startsWith("/_home/")) return yield* serveHomeFile;
+    // Whether a document is the homepage, and its deploys.
+    const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
+    if (homeId) return yield* homeApi(homeId, (homeAction ?? "") as "" | "deploy");
+    // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
+    // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
+    if (read && isHomeFilePath(path)) {
+      const file = yield* serveHomeRoot;
+      if (file) return file;
+    }
+    // Each admin's agent, its conversation and panel: before the server's API, which has the rest of /api/.
+    if (isAdminAgentPath(path)) return yield* web((r, p) => adminAgentApi(r, p, url));
+    // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
+    if (path == "/api/release" && read) return yield* releaseApi;
+    // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
+    if (path == "/api/admin/guide") return yield* web((r, p) => adminGuideApi(r, p, url));
+    // The server's API for agents, and people's agent tokens.
+    if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* web(serverApi);
+    if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/"))
+      return yield* tokensRoutes;
+    return yield* documentRoutes;
+  });
 
 /** The editor's own files (hashed, under /_erga/), and Erga's logo (static assets, client/build.ts). */
 const isAsset = (path: string) => isAssetPath(path) || path == "/logo.png";

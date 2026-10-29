@@ -28,10 +28,11 @@
 // It also means a token works only on the server that made it: staging's
 // database copies the rows, but staging's secret is its own.
 
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Schema from "effect/Schema";
 import type { Directory, Sql } from "../directory/index.ts";
 import { changeLogEntry } from "../../shared/attribution";
-import { base64url, randomString, randomToken, sha256Hex } from "../../shared/bytes.ts";
-
+import { randomString, randomToken, sha256Hex } from "../../shared/bytes.ts";
 
 /** A token as its person's list shows it (never the token itself). */
 export interface AgentToken {
@@ -65,8 +66,7 @@ export const SCOPES: readonly Scope[] = ["document", "documents", "admin"];
 export interface Grant { scope: Scope; docId?: string | null; expires?: number | null }
 
 /** Why a token can't be made (a wrong scope, a document that isn't the person's to open): the message says so. */
-export class ScopeError extends Error {}
-
+export class ScopeError extends Schema.TaggedError<ScopeError>()("ScopeError", { message: Schema.String }) {}
 
 /** Whom a token is for: a login and name, and for a test person, who minted their test token. */
 export interface Who { login: string; name: string; testBy?: string | null }
@@ -104,11 +104,10 @@ export class Tokens {
    */
   constructor(private sql: Sql, private secret: string, private dir: Directory, private byHash = false) {}
 
-
   /** The token with this id: an HMAC of it with the server's secret. */
   private async tokenFor(id: string): Promise<string> {
     const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-agent-token:${this.secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    return TOKEN_PREFIX + base64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id))));
+    return TOKEN_PREFIX + Base64Url.encode(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id))));
   }
 
   /**
@@ -127,14 +126,15 @@ export class Tokens {
    * a document they may open, and an expiry in the future. Returns it tidied.
    */
   async check(who: Who, grant: Grant): Promise<Required<Grant>> {
-    if (!SCOPES.includes(grant.scope)) throw new ScopeError(`"${grant.scope}" isn't a scope: document, documents or admin.`);
+    if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: `"${grant.scope}" isn't a scope: document, documents or admin.` });
     const expires = grant.expires == null ? null : Number(grant.expires);
-    if (expires != null && !(expires > Date.now())) throw new ScopeError("The expiry must be in the future.");
-    if (grant.scope == "admin" && (who.testBy || !(await this.dir.users.isAdmin(who.login)))) throw new ScopeError("Only an admin can make an admin token.");
+    if (expires != null && !(expires > Date.now())) throw new ScopeError({ message: "The expiry must be in the future." });
+    if (grant.scope == "admin" && (who.testBy || !(await this.dir.users.isAdmin(who.login))))
+      throw new ScopeError({ message: "Only an admin can make an admin token." });
     if (grant.scope != "document") return { scope: grant.scope, docId: null, expires };
     const doc = grant.docId ? await this.dir.find(grant.docId) : null;
     const as = { login: who.login.toLowerCase(), test: !!who.testBy, by: who.testBy?.toLowerCase() };
-    if (!doc || !(await this.dir.access(as, doc))) throw new ScopeError("A document token needs a document you may open.");
+    if (!doc || !(await this.dir.access(as, doc))) throw new ScopeError({ message: "A document token needs a document you may open." });
     return { scope: "document", docId: doc.id, expires };
   }
 
@@ -171,7 +171,6 @@ export class Tokens {
     );
     return { token, info };
   }
-
 
   /**
    * The share button's token for someone: the one they have, or a new one
@@ -256,9 +255,11 @@ export class Tokens {
    * `userCode` goes in the link the person opens to approve it.
    */
   async request(label: string | null | undefined, grant: Grant): Promise<{ code: string; userCode: string; label: string; expires: number }> {
-    if (!SCOPES.includes(grant.scope)) throw new ScopeError(`"${grant.scope}" isn't a scope: document, documents or admin.`);
-    if (grant.scope == "document" && !grant.docId) throw new ScopeError("A document token needs a document: give doc (its address, URL or id).");
-    if (grant.expires != null && !(Number(grant.expires) > Date.now())) throw new ScopeError("The expiry must be in the future.");
+    if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: `"${grant.scope}" isn't a scope: document, documents or admin.` });
+    if (grant.scope == "document" && !grant.docId)
+      throw new ScopeError({ message: "A document token needs a document: give doc (its address, URL or id)." });
+    if (grant.expires != null && !(Number(grant.expires) > Date.now()))
+      throw new ScopeError({ message: "The expiry must be in the future." });
     const now = Date.now();
 
     await this.sql.run("DELETE FROM token_requests WHERE expires < ?1", now);
@@ -307,7 +308,6 @@ export class Tokens {
     await this.sql.run("DELETE FROM token_requests WHERE user_code = ?1 AND login IS NULL", normalCode(userCode));
     return true;
   }
-
 
   /** The agent polls: its token once approved (handed over once), "pending" until then, "gone" if it expired or was collected. */
   async collect(code: string): Promise<{ status: "pending" } | { status: "gone" } | { status: "ready"; token: string; login: string }> {

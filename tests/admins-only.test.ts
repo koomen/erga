@@ -5,6 +5,7 @@ import { pagesToken, readPagesClaims } from "../server/documents/index.ts";
 import { finishSignIn, startSignIn } from "../server/identity/sign-in";
 import type { Platform } from "../server/platform";
 import type { Directory } from "../server/directory/index.ts";
+import { respond } from "../server/http.ts";
 
 /** A server with this GitHub client ID, and nothing else sign-in needs for these requests. */
 const serverWith = (clientId: string): Platform => ({
@@ -36,14 +37,17 @@ test("a pages token names its admin only when asked to (staging), and it can't b
 
 test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than sending people to GitHub's 404", async () => {
   const env = serverWith("");
-  for (const answer of [await startSignIn(env, new Request("https://staging.erga.dev/auth/github?next=/docs")), await finishSignIn(env, new Request("https://staging.erga.dev/auth/github/callback?code=1&state=2"))]) {
+  for (const answer of [
+    await respond(startSignIn, new Request("https://staging.erga.dev/auth/github?next=/docs"), env),
+    await respond(finishSignIn, new Request("https://staging.erga.dev/auth/github/callback?code=1&state=2"), env),
+  ]) {
     expect(answer.status).toBe(503);
     expect(answer.headers.get("location")).toBeNull();
     const html = await answer.text();
     expect(html).toContain("Sign-in isn't set up on this server: it has no GitHub OAuth app.");
     expect(html).toContain("GITHUB_CLIENT_ID");
   }
-  const set = await startSignIn(serverWith("Ov23abc"), new Request("https://erga.dev/auth/github"));
+  const set = await respond(startSignIn, new Request("https://erga.dev/auth/github"), serverWith("Ov23abc"));
   expect(set.status).toBe(302);
   expect(set.headers.get("location")).toStartWith("https://github.com/login/oauth/authorize?client_id=Ov23abc&");
 });

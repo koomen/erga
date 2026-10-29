@@ -11,6 +11,7 @@ import { Directory } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { memory } from "./helpers/memory-sql.ts";
 import { TARGETS } from "../deploy/targets";
+import { respond } from "../server/http.ts";
 
 const GOOGLE = "https://google.test", GITHUB = "https://github.test";
 const APP = { clientId: "123456789012-abcdefghijklmnop.apps.googleusercontent.com", secret: "GOCSPX-abcdefghijklmnopqrstuv" };
@@ -47,11 +48,11 @@ const cookieOf = (r: Response) => (r.headers.get("set-cookie") ?? "").split(/,(?
 
 /** A whole sign-in: /auth/google, Google's page, the callback. The callback's answer. */
 async function signInWithGoogle(platform: Platform, q = ""): Promise<Response> {
-  const start = await startGoogleSignIn(platform, new Request(`${ORIGIN}/auth/google?next=/docs${q}`));
+  const start = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs${q}`), platform);
   expect(start.status).toBe(302);
   const atGoogle = await google.fetch(new Request(start.headers.get("location")!));
   expect(atGoogle.status).toBe(302);
-  return finishGoogleSignIn(platform, new Request(atGoogle.headers.get("location")!, { headers: { cookie: cookieOf(start) } }));
+  return respond(finishGoogleSignIn, new Request(atGoogle.headers.get("location")!, { headers: { cookie: cookieOf(start) } }), platform);
 }
 
 /** A rule for one account, with write, made with it (as an admin's rule, or local development's, would be). */
@@ -69,18 +70,22 @@ test("the live check tells a working client from an unknown client ID, a wrong s
 test("Google is off until an admin turns it on: its sign-in says so in place and offers Sign in; the choice page offers both once on", async () => {
   const { platform } = server();
   expect(await providersOn(platform)).toEqual({ github: true, google: false });
-  const off = await startGoogleSignIn(platform, new Request(`${ORIGIN}/auth/google?next=/docs`));
+  const off = await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs`), platform);
   expect(off.status).toBe(403);
   expect(await off.text()).toContain('href="/auth/sign-in?next=%2Fdocs"');
-  expect((await chooseSignIn(platform, new Request(`${ORIGIN}/auth/sign-in?next=/docs`))).headers.get("location")).toBe("/auth/github?next=%2Fdocs");
+  expect((await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/docs`), platform)).headers.get("location")).toBe(
+    "/auth/github?next=%2Fdocs"
+  );
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", true);
-  const choose = await (await chooseSignIn(platform, new Request(`${ORIGIN}/auth/sign-in?next=/docs`))).text();
+  const choose = await (await respond(chooseSignIn, new Request(`${ORIGIN}/auth/sign-in?next=/docs`), platform)).text();
   expect(choose).toContain('href="/auth/github?next=%2Fdocs"');
   expect(choose).toContain('href="/auth/google?next=%2Fdocs"');
   expect(choose).toContain("Continue with GitHub");
   expect(choose).toContain("Continue with Google");
   expect(choose).not.toContain("same account");
-  const start = new URL((await startGoogleSignIn(platform, new Request(`${ORIGIN}/auth/google?next=/docs`))).headers.get("location")!);
+  const start = new URL(
+    (await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google?next=/docs`), platform)).headers.get("location")!
+  );
   expect(start.origin + start.pathname).toBe(`${GOOGLE}/o/oauth2/v2/auth`);
   expect(Object.fromEntries(start.searchParams)).toMatchObject({ client_id: APP.clientId, redirect_uri: `${ORIGIN}/auth/google/callback`, response_type: "code", scope: "openid email profile" });
 });
@@ -127,7 +132,7 @@ test("a sign-in from start to session, by the sub; someone unknown is refused; G
   expect((await directory.identities.find("google", "1001"))?.handle).toBe("ada@new.example.com");
   // Google turned off: only an admin's test sign-in goes through (?app=test).
   await authOps(platform, ORIGIN).setProvider({ login: "koomen", admin: true }, "google", false);
-  expect((await startGoogleSignIn(platform, new Request(`${ORIGIN}/auth/google`))).status).toBe(403);
+  expect((await respond(startGoogleSignIn, new Request(`${ORIGIN}/auth/google`), platform)).status).toBe(403);
   const test = await signInWithGoogle(platform, "&app=test");
   expect(test.status).toBe(403);
   expect(await test.text()).toContain("sign-in is off");
@@ -146,7 +151,9 @@ test("new values for the client wait for an admin's test sign-in with them, as G
   expect(tested.status).toBe(302);
   expect(await apps.values("google", "active")).toEqual(NEW);
   // GitHub's sign-in is unchanged by Google's switch.
-  expect(new URL((await startSignIn(platform, new Request(`${ORIGIN}/auth/github`))).headers.get("location")!).origin).toBe(GITHUB);
+  expect(new URL((await respond(startSignIn, new Request(`${ORIGIN}/auth/github`), platform)).headers.get("location")!).origin).toBe(
+    GITHUB
+  );
 });
 
 test("an install signs in with Erga's Google client through erga.dev's callback, which trades the code and relays the token sealed", async () => {
@@ -158,7 +165,7 @@ test("an install signs in with Erga's Google client through erga.dev's callback,
   (platform.signIn as { googleApp: unknown }).googleApp = { clientId: APP.clientId, secret: "" };
   await platform.own.put("auth:providers", { github: true, google: true });
   await directory.identities.createAccount("ada", { provider: "google", subject: "1001", handle: "ada@example.com", name: "Ada", emails: [] }, writes("ada"));
-  const start = await startGoogleSignIn(platform, new Request(`${INSTALL}/auth/google?next=/docs`));
+  const start = await respond(startGoogleSignIn, new Request(`${INSTALL}/auth/google?next=/docs`), platform);
   const to = new URL(start.headers.get("location")!);
   expect(to.searchParams.get("redirect_uri")).toBe(`${OPS}/auth/google/callback`);
   const atGoogle = await google.fetch(new Request(to));
@@ -169,7 +176,7 @@ test("an install signs in with Erga's Google client through erga.dev's callback,
   const back = new URL(relayed.headers.get("location")!);
   expect(back.origin).toBe(INSTALL);
   expect(back.searchParams.get("code")).toBeNull();
-  const done = await finishGoogleSignIn(platform, new Request(back, { headers: { cookie: cookieOf(start) } }));
+  const done = await respond(finishGoogleSignIn, new Request(back, { headers: { cookie: cookieOf(start) } }), platform);
   expect(done.status).toBe(302);
   expect(done.headers.get("location")).toBe("/docs");
   // A state that names a server that isn't an install relays nothing.

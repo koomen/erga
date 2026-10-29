@@ -244,11 +244,11 @@ export class Directory {
         landing_document: async (_by, value) => {
           const doc = await this.find(String(value));
           if (!doc || doc.test)
-            throw new ConfigError(
-              `landing_document: there's no document or project at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`
-            );
+            throw new ConfigError({
+              message: `landing_document: there's no document or project at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`,
+             });
           const blocked = await this.homeBlocked(doc.id);
-          if (blocked) throw new NotAllowed(blocked);
+          if (blocked) throw new NotAllowed({ message: blocked });
           return doc.id;
         },
       },
@@ -652,9 +652,9 @@ export class Directory {
     const { provider, handle } = personHandle(input.provider, input.handle);
     if (provider == "github") {
       if (this.users.isBootstrapAdmin(handle)) return { user: (await this.users.get(handle))!, note: `${handle} is already an admin.` };
-      if (!this.github) throw new NotAllowed("This server can't ask GitHub for an account's id.");
+      if (!this.github) throw new NotAllowed({ message: "This server can't ask GitHub for an account's id." });
       const found = await this.github(handle);
-      if (!found) throw new NotAllowed(`GitHub has no account "${handle}": check the login.`);
+      if (!found) throw new NotAllowed({ message: `GitHub has no account "${handle}": check the login.` });
       const known = await this.identities.find("github", found.id);
       // One from before identities, with this login as its username, which this GitHub account claims at its first sign-in.
       const login =
@@ -751,25 +751,27 @@ export class Directory {
    */
   async share(who: Who, id: string, login: string, role: Grant | null): Promise<Permission[]> {
     const doc = await this.get(id);
-    if (!doc) throw new NotAllowed("There's no such document.");
-    if (!(await this.may(who, "share", doc))) throw new NotAllowed("Only its owner can share a document.");
+    if (!doc) throw new NotAllowed({ message: "There's no such document." });
+    if (!(await this.may(who, "share", doc))) throw new NotAllowed({ message: "Only its owner can share a document." });
     login = login.trim().toLowerCase();
-    if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login)) throw new NotAllowed(`"${login}" isn't a login (or "*" for anyone with the link).`);
-    if (login == doc.owner) throw new NotAllowed("The owner's own permission can't be changed.");
-    if (role != null && role != "editor" && role != "viewer") throw new NotAllowed(`"${role}" isn't a role: editor or viewer.`);
+    if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login))
+      throw new NotAllowed({ message: `"${login}" isn't a login (or "*" for anyone with the link).` });
+    if (login == doc.owner) throw new NotAllowed({ message: "The owner's own permission can't be changed." });
+    if (role != null && role != "editor" && role != "viewer")
+      throw new NotAllowed({ message: `"${role}" isn't a role: editor or viewer.` });
     // Anyone with the link: only while the server lets users share content publicly (the Access page). Stopping one
     // made before is always allowed.
-    if (login == ANYONE && role != null && !(await this.config.get("public_sharing"))) throw new NotAllowed(NO_PUBLIC);
+    if (login == ANYONE && role != null && !(await this.config.get("public_sharing"))) throw new NotAllowed({ message: NO_PUBLIC });
     // A person: only one who may sign in (the access rules). A share made before stays: sign-in checks them anyway.
     if (login != ANYONE && role != null) {
       const why = await this.whyNoShare(login);
-      if (why) throw new NotAllowed(why);
+      if (why) throw new NotAllowed({ message: why });
     }
     // The homepage's editors are admins only (homeBlocked).
     if (role == "editor" && (await this.homeId()) == id && (login == ANYONE || !(await this.users.isAdmin(login)))) {
-      throw new NotAllowed(
-        `This document is the homepage, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`
-      );
+      throw new NotAllowed({
+        message: `This document is the homepage, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`,
+       });
     }
     if (role == null) await this.sql.run("DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, login);
     else await this.sql.run(

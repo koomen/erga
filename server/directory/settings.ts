@@ -14,12 +14,13 @@
 // to set. To add a setting, add it to SETTINGS; nothing in the database
 // changes.
 
+import * as Schema from "effect/Schema";
 import type { Sql, Statement } from "./directory.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
 
 /** A value a setting won't take; the message says why. */
-export class ConfigError extends Error {}
+export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", { message: Schema.String }) {}
 
 export interface Setting<T = unknown> {
   /** Its name on the admin page, where it isn't the key. */
@@ -37,27 +38,32 @@ export interface Setting<T = unknown> {
 }
 
 /** A whole number from `min` to `max`. */
-export const integer = (min: number, max: number) => (v: unknown): number => {
-  if (typeof v != "number" || !Number.isInteger(v) || v < min || v > max) throw new ConfigError(`must be a whole number from ${min} to ${max}`);
-  return v;
-};
+export const integer =
+  (min: number, max: number) =>
+  (v: unknown): number => {
+    if (typeof v != "number" || !Number.isInteger(v) || v < min || v > max)
+      throw new ConfigError({ message: `must be a whole number from ${min} to ${max}` });
+    return v;
+  };
 /** A string of at most `max` characters (trimmed). */
-export const text = (max: number) => (v: unknown): string => {
-  if (typeof v != "string") throw new ConfigError("must be a string");
-  if (v.trim().length > max) throw new ConfigError(`must be at most ${max} characters`);
+export const text =
+  (max: number) =>
+  (v: unknown): string => {
+    if (typeof v != "string") throw new ConfigError({ message: "must be a string" });
+    if (v.trim().length > max) throw new ConfigError({ message: `must be at most ${max} characters` });
   return v.trim();
 };
 /** A list of GitHub logins (lowercased, no "@", each once); a string of them, split by commas or spaces, too. */
 export const logins = (v: unknown): string[] => {
   const list = typeof v == "string" ? v.split(/[\s,]+/) : v;
-  if (!Array.isArray(list) || list.some((l) => typeof l != "string")) throw new ConfigError("must be a list of GitHub logins");
+  if (!Array.isArray(list) || list.some((l) => typeof l != "string")) throw new ConfigError({ message: "must be a list of GitHub logins" });
   const out = [...new Set((list as string[]).map((l) => l.trim().replace(/^@/, "").toLowerCase()).filter(Boolean))];
   const bad = out.find((l) => !/^[a-z0-9][a-z0-9-]{0,38}$/.test(l));
-  if (bad) throw new ConfigError(`has "${bad}", which isn't a GitHub login`);
+  if (bad) throw new ConfigError({ message: `has "${bad}", which isn't a GitHub login` });
   return out;
 };
 export const boolean = (v: unknown): boolean => {
-  if (typeof v != "boolean") throw new ConfigError("must be true or false");
+  if (typeof v != "boolean") throw new ConfigError({ message: "must be true or false" });
   return v;
 };
 
@@ -74,7 +80,8 @@ export const SETTINGS = {
     // null, or "never" (as an agent or a deploy might say it), is never.
     parse: (v) => {
       if (v === null || (typeof v == "string" && v.trim().toLowerCase() == "never")) return null;
-      if (typeof v != "number" || !Number.isInteger(v) || v < 1 || v > 24 * 365) throw new ConfigError(`must be a whole number from 1 to ${24 * 365} (hours), or null for never`);
+      if (typeof v != "number" || !Number.isInteger(v) || v < 1 || v > 24 * 365)
+        throw new ConfigError({ message: `must be a whole number from 1 to ${24 * 365} (hours), or null for never` });
       return v;
     },
   }),
@@ -107,7 +114,7 @@ export const SETTINGS = {
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
       if (s === "off" || s === "admins" || s === "users") return s;
-      throw new ConfigError('must be "off", "admins" or "users"');
+      throw new ConfigError({ message: 'must be "off", "admins" or "users"' });
     },
     choices: ["off", "admins", "users"],
   }),
@@ -149,13 +156,21 @@ export interface ConfigEntry {
  * bad one fails the deploy or `bun start`, not the server.
  */
 export function deployedSettings(values: Record<string, unknown>, settings: Settings = SETTINGS): Record<string, unknown> {
-  if (!values || typeof values != "object" || Array.isArray(values)) throw new ConfigError("the deploy's server config must be an object of settings by key");
+  if (!values || typeof values != "object" || Array.isArray(values))
+    throw new ConfigError({ message: "the deploy's server config must be an object of settings by key" });
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(values)) {
     if (value === undefined) continue;
     const s = Object.hasOwn(settings, key) ? settings[key] : undefined;
-    if (!s) throw new ConfigError(`the deploy fixes "${key}", which isn't a setting (the settings are: ${Object.keys(settings).sort().join(", ")})`);
-    try { out[key] = s.parse(value); } catch (e) { throw new ConfigError(`the deploy fixes ${key} to ${JSON.stringify(value)}, but it ${(e as Error).message}`); }
+    if (!s)
+      throw new ConfigError({
+        message: `the deploy fixes "${key}", which isn't a setting (the settings are: ${Object.keys(settings).sort().join(", ")})`,
+      });
+    try {
+      out[key] = s.parse(value);
+    } catch (e) {
+      throw new ConfigError({ message: `the deploy fixes ${key} to ${JSON.stringify(value)}, but it ${(e as Error).message}` });
+    }
   }
   return out;
 }
@@ -169,7 +184,11 @@ export function deployedSettings(values: Record<string, unknown>, settings: Sett
 export function parseDeployed(json: string | undefined, settings: Settings = SETTINGS): Record<string, unknown> {
   if (!json?.trim()) return {};
   let values: unknown;
-  try { values = JSON.parse(json); } catch { throw new ConfigError(`the deploy's server config isn't JSON: ${json.slice(0, 200)}`); }
+  try {
+    values = JSON.parse(json);
+  } catch {
+    throw new ConfigError({ message: `the deploy's server config isn't JSON: ${json.slice(0, 200)}` });
+  }
   return deployedSettings(values as Record<string, unknown>, settings);
 }
 
@@ -306,9 +325,16 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async set(by: Actor, key: string, value: unknown): Promise<ConfigEntry> {
     await this.users.mustAdmin(by);
     const s = this.setting(key);
-    if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (deploy/locked-settings.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
+    if (this.isLocked(key))
+      throw new NotAllowed({
+        message: `${key} is fixed by the deploy (deploy/locked-settings.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`,
+      });
     let parsed: unknown;
-    try { parsed = s.parse(value); } catch (e) { throw new ConfigError(`${key} ${(e as Error).message}.`); }
+    try {
+      parsed = s.parse(value);
+    } catch (e) {
+      throw new ConfigError({ message: `${key} ${(e as Error).message}.` });
+    }
     const check = Object.hasOwn(this.checks, key) ? this.checks[key] : undefined;
     if (check && parsed != null) parsed = await check(by, parsed);
     await this.write(key, JSON.stringify(parsed), by.login.toLowerCase(), by.via ?? null);
@@ -352,7 +378,10 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async reset(by: Actor, key: string): Promise<ConfigEntry> {
     await this.users.mustAdmin(by);
     this.setting(key);
-    if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (deploy/locked-settings.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
+    if (this.isLocked(key))
+      throw new NotAllowed({
+        message: `${key} is fixed by the deploy (deploy/locked-settings.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`,
+      });
     await this.write(key, null, by.login.toLowerCase(), by.via ?? null);
     this.rows = null;
     await this.tell(key);
@@ -432,12 +461,13 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
       ]);
       if ((await this.stored(key)) === json) return;
     }
-    throw new ConfigError(`${key} is changing too often at once to save: try again.`);
+    throw new ConfigError({ message: `${key} is changing too often at once to save: try again.` });
   }
 
   private setting(key: string): Setting {
     const s = Object.hasOwn(this.settings, key) ? this.settings[key] : undefined;
-    if (!s) throw new ConfigError(`There's no setting "${key}". The settings are: ${Object.keys(this.settings).sort().join(", ")}.`);
+    if (!s)
+      throw new ConfigError({ message: `There's no setting "${key}". The settings are: ${Object.keys(this.settings).sort().join(", ")}.` });
     return s;
   }
 

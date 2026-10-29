@@ -7,37 +7,58 @@
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { HttpServerRequest } from "effect/http";
 import { idShaped, OWNER } from "../server/directory/index.ts";
 import { slugify } from "../document/pages.ts";
-import type { Platform } from "../server/platform";
+import { call, ctx, fromWeb, plainJson, text } from "../server/http.ts";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
 import { isDev } from "./platform";
 import { documentOf } from "./objects/document-stub";
 
 /** The dev server's routes: null for a path that isn't one of them; refused unless it's local development and the request carries the secret (?link=). */
-export async function devRoutes(request: Request, env: Env, platform: Platform, url: URL): Promise<Response | null> {
+export const devRoutes = (env: Env) =>
+  Effect.gen(function* () {
+    const { request, url, platform } = yield* ctx;
   if (!url.pathname.startsWith("/__erga/")) return null;
-  if (!isDev(env, url) || !env.ERGA_LINK_SECRET || url.searchParams.get("link") != env.ERGA_LINK_SECRET) return new Response("Not found", { status: 404 });
+  if (!isDev(env, url) || !env.ERGA_LINK_SECRET || url.searchParams.get("link") != env.ERGA_LINK_SECRET) return text("Not found", 404);
   const directory = directoryOf(env);
   if (url.pathname == "/__erga/migrate" && request.method == "POST") {
-    const applied = await migrate(env.DB);
-    return Response.json({ applied });
+    const applied = yield* call(() => migrate(env.DB));
+    return plainJson({ applied });
   }
   if (url.pathname == "/__erga/link" && request.method == "POST") {
-    const session = await platform.sessionOf(request);
-    const body = await request.json() as { id?: string; index?: string; path?: string; slug?: string; only?: boolean; owner?: string };
+    const session = yield* call(() => platform.sessionOf(request));
+    const body = yield* HttpServerRequest.schemaBodyJson(LinkBody).pipe(Effect.orDie);
     // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
     const owner = (body.owner ?? session?.login)?.toLowerCase();
-    if (!owner || !OWNER.test(owner) || session?.test || !body.id || !idShaped(body.id) || !body.index || !body.path) return new Response("Bad link", { status: 400 });
-    const doc = await documentOf(env, body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
-    return Response.json({ owner: doc.owner, id: doc.id, slug: doc.slug });
+    if (!owner || !OWNER.test(owner) || session?.test || !body.id || !idShaped(body.id) || !body.index || !body.path)
+      return text("Bad link", 400);
+    const { id, index, path } = body;
+    const doc = yield* call(() =>
+      documentOf(env, id).link(owner, id, index, { path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only })
+    );
+    return plainJson({ owner: doc.owner, id: doc.id, slug: doc.slug });
   }
   const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
-  const route = id && idShaped(id) ? await directory.route(id) : null;
-  if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
-  return documentOf(env, route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
-}
+  const route = id && idShaped(id) ? yield* call(() => directory.route(id)) : null;
+  if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return text("Not found", 404);
+  return fromWeb(
+    yield* call(() => documentOf(env, route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request)))
+  );
+});
+
+/** What the dev server sends to link a file or folder on disk. */
+const LinkBody = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  index: Schema.optional(Schema.String),
+  path: Schema.optional(Schema.String),
+  slug: Schema.optional(Schema.String),
+  only: Schema.optional(Schema.Boolean),
+  owner: Schema.optional(Schema.String),
+});
 
 /** The directory's migrations, as `cf d1 migrations apply` would apply them. */
 const MIGRATIONS = import.meta.glob("../server/migrations/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;

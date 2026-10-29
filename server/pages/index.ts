@@ -16,6 +16,7 @@ export {
   signInFirst,
   TIMES_SCRIPT,
   viewCrumbs,
+  webPage,
   withEdit,
 } from "./chrome.ts";
 export { docsPage } from "./docs.ts";

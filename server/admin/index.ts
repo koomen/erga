@@ -4,6 +4,7 @@
 
 export {
   adminGate,
+  adminPage,
   adminResponse,
   adminSidebar,
   adminStyleTag,

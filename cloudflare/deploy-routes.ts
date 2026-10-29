@@ -9,34 +9,37 @@
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
 //   GET  /api/snapshot/blob/<sha-256>   SNAPSHOT_TOKEN: one of the documents' blobs (any server), read-only
 
+import * as Effect from "effect/Effect";
 import { snapshotRoutes } from "../document/snapshot";
 import { PRODUCTION } from "../deploy/targets";
 import { health } from "../server/health";
-import type { Platform } from "../server/platform";
 import type { Env } from "./env";
 import { documentOf } from "./objects/document-stub";
 import { snapshotBlob } from "./blobs";
-import { json } from "../shared/http";
+import { call, ctx, fromWeb, json, plainJson } from "../server/http.ts";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) => path == "/api/deploys/version" || path == "/api/health" || path.startsWith("/api/snapshot/");
 
-export async function deploysRoutes(request: Request, env: Env, platform: Platform): Promise<Response> {
-  const url = new URL(request.url);
+export const deploysRoutes = (env: Env) =>
+  Effect.gen(function* () {
+    const { request, url, platform } = yield* ctx;
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method;
-  if (path == "/api/deploys/version" && (method == "GET" || method == "HEAD")) return Response.json({ version: env.ERGA_VERSION ?? null, target: env.DEPLOY_TARGET || null }, { headers: { "Cache-Control": "no-store" } });
+  if (path == "/api/deploys/version" && (method == "GET" || method == "HEAD"))
+    return json({ version: env.ERGA_VERSION ?? null, target: env.DEPLOY_TARGET || null });
   if (path == "/api/health" && (method == "GET" || method == "HEAD")) {
-    const h = await health(platform);
+    const h = yield* call(() => health(platform));
     return json(h, h.ok ? 200 : 503);
   }
   // One blob, for staging's copy of production's documents (cloudflare/blobs.ts).
-  const blob = await snapshotBlob(request, env);
-  if (blob) return blob;
+  const blob = yield* call(() => snapshotBlob(request, env));
+  if (blob) return fromWeb(blob);
   if (path.startsWith("/api/snapshot/")) {
     // Never into production, whatever its settings say.
     const production = env.DEPLOY_TARGET == "production" || url.hostname == PRODUCTION.host;
-    const answer = await snapshotRoutes(request, {
+    const answer = yield* call(() =>
+      snapshotRoutes(request, {
       token: env.SNAPSHOT_TOKEN,
       importAllowed: env.SNAPSHOT_IMPORT == "1" && !production,
       store: {
@@ -44,8 +47,8 @@ export async function deploysRoutes(request: Request, env: Env, platform: Platfo
         import: (snap) => documentOf(env, snap.id).importStorage(snap),
         wipe: (id) => documentOf(env, id).wipeStorage(),
       },
-    });
-    return answer ?? Response.json({ error: "Not found" }, { status: 404 });
+    }));
+    return answer ? fromWeb(answer) : plainJson({ error: "Not found" }, 404);
   }
-  return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
-}
+  return plainJson({ error: `There's nothing at ${method} ${path}.` }, 404);
+});

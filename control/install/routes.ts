@@ -29,7 +29,7 @@ import type { DeployPlan } from "../deploys/plan";
 import { DEPLOY_OAUTH_COOKIE, INSTALL_CONTROL_WORKER } from "./install";
 import { mockCloudflare } from "../../dev/mock-cloudflare";
 import { deployPage, mockConsentPage } from "./page";
-import { page } from "../../server/pages/index.ts";
+import { webPage as page } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { base64url, randomToken, sha256 } from "../../shared/bytes.ts";
 import { whoOf, type Platform } from "../../server/platform";

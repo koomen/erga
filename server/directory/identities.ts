@@ -130,10 +130,10 @@ export class Identities {
     const had = await this.find(v.provider, v.subject);
     if (had) {
       if (had.login == login) return;
-      throw new NotAllowed(`This ${label(v.provider)} account already signs in to another Erga account (${had.login}).`);
+      throw new NotAllowed({ message: `This ${label(v.provider)} account already signs in to another Erga account (${had.login}).` });
     }
     if ((await this.of(login)).some((i) => i.provider == v.provider))
-      throw new NotAllowed(`${login} already signs in with another ${label(v.provider)} account.`);
+      throw new NotAllowed({ message: `${login} already signs in with another ${label(v.provider)} account.` });
     try {
       await this.sql.batch([
         this.linkStatement(login, v, Date.now()),
@@ -141,9 +141,9 @@ export class Identities {
         avatarStatement(login, v),
       ]);
     } catch {
-      throw new NotAllowed(
-        `${login} already signs in with ${label(v.provider)}, or this ${label(v.provider)} account signs in to another Erga account.`
-      );
+      throw new NotAllowed({
+        message: `${login} already signs in with ${label(v.provider)}, or this ${label(v.provider)} account signs in to another Erga account.`,
+       });
     }
   }
 
@@ -210,9 +210,11 @@ export class Identities {
   async createAccount(username: string, v: Vouched, o: { role?: "admin" | "write" | "read"; extra?: Statement[] } = {}): Promise<string> {
     const login = username.trim().toLowerCase();
     const problem = await this.usernameProblem(login);
-    if (problem) throw new NotAllowed(problem);
-    if (await this.find(v.provider, v.subject)) throw new NotAllowed(`This ${label(v.provider)} account already signs in to an Erga account.`);
-    const at = Date.now(), name = v.name?.trim().slice(0, 100) || login;
+    if (problem) throw new NotAllowed({ message: problem });
+    if (await this.find(v.provider, v.subject))
+      throw new NotAllowed({ message: `This ${label(v.provider)} account already signs in to an Erga account.` });
+    const at = Date.now(),
+      name = v.name?.trim().slice(0, 100) || login;
     try {
       await this.sql.batch([
         [
@@ -229,7 +231,7 @@ export class Identities {
         ...(o.extra ?? []),
       ]);
     } catch {
-      throw new NotAllowed(`"${login}" is taken: choose another.`);
+      throw new NotAllowed({ message: `"${login}" is taken: choose another.` });
     }
     this.users.forget(login);
     if (o.role) this.users.accessChanged();

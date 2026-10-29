@@ -48,8 +48,11 @@
 //
 // GitHub and Google, each with its own app and the same rules.
 
+import * as Base64 from "effect/encoding/Base64";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import type { Act } from "../../shared/attribution.ts";
-import { base64, fromBase64, randomBytes, sha256 } from "../../shared/bytes.ts";
+import { randomBytes, sha256 } from "../../shared/bytes.ts";
 import type { SignInChange } from "../directory/index.ts";
 
 /** The sign-in providers. */
@@ -95,17 +98,24 @@ export interface AppCheck {
 }
 
 /** A value an admin pasted that can't be used; the message says why, for a person or an agent to act on. */
-export class AuthError extends Error {}
+export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", { message: Schema.String }) {}
 
 const SECRET = /^[\x21-\x7e]{16,200}$/;
 
 /** Checks and tidies the values as pasted. */
 export function checkValues(input: { clientId?: unknown; secret?: unknown }, provider: Provider = "github"): AppValues {
   const clientId = String(input.clientId ?? "").trim(), secret = String(input.secret ?? "").trim();
-  if (!clientId) throw new AuthError("Paste the app's Client ID.");
-  if (!PROVIDERS[provider].clientId.test(clientId)) throw new AuthError(`That isn't ${PROVIDERS[provider].clientIdShape}`);
-  if (!secret) throw new AuthError(provider == "github" ? "Paste the app's client secret too (Generate a new client secret, on the app's page on GitHub)." : "Paste the client's secret too (on the client's page in Google Cloud Console).");
-  if (!SECRET.test(secret)) throw new AuthError("That isn't a client secret: it is one line of 16 to 200 characters, with no spaces.");
+  if (!clientId) throw new AuthError({ message: "Paste the app's Client ID." });
+  if (!PROVIDERS[provider].clientId.test(clientId)) throw new AuthError({ message: `That isn't ${PROVIDERS[provider].clientIdShape}` });
+  if (!secret)
+    throw new AuthError({
+      message:
+        provider == "github"
+          ? "Paste the app's client secret too (Generate a new client secret, on the app's page on GitHub)."
+          : "Paste the client's secret too (on the client's page in Google Cloud Console).",
+    });
+  if (!SECRET.test(secret))
+    throw new AuthError({ message: "That isn't a client secret: it is one line of 16 to 200 characters, with no spaces." });
   return { clientId, secret };
 }
 
@@ -257,9 +267,13 @@ export class AuthApps {
     try {
       const secret = new TextDecoder().decode(
         await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: fromBase64(k.iv), additionalData: this.aad(p, k.clientId) },
+          {
+            name: "AES-GCM",
+            iv: Result.getOrThrow(Base64.decode(k.iv)) as Uint8Array<ArrayBuffer>,
+            additionalData: this.aad(p, k.clientId),
+          },
           await this.aesKey,
-          fromBase64(k.data)
+          Result.getOrThrow(Base64.decode(k.data)) as Uint8Array<ArrayBuffer>
         )
       );
       return { clientId: k.clientId, secret };
@@ -270,14 +284,18 @@ export class AuthApps {
 
   /** Keeps values, as the ones in use (active) or waiting for a test sign-in (pending). */
   async keep(p: Provider, which: "active" | "pending", v: AppValues, by: Act): Promise<void> {
-    if (!this.aesKey) throw new AuthError("This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.");
+    if (!this.aesKey)
+      throw new AuthError({
+        message:
+          "This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.",
+      });
     const iv = randomBytes(12);
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: this.aad(p, v.clientId) }, await this.aesKey, enc.encode(v.secret)));
     const r = await this.record(p);
     r[which] = {
       clientId: v.clientId,
-      iv: base64(iv),
-      data: base64(data),
+      iv: Base64.encode(iv),
+      data: Base64.encode(data),
       updated: Date.now(),
       updatedBy: by.login.toLowerCase(),
       updatedVia: by.via ?? null,
@@ -323,7 +341,6 @@ export interface AppContext {
   log(by: Act, change: SignInChange): Promise<void>;
 }
 
-
 /** The values the server signs in with now: the page's while they open, else the deploy's. */
 export async function inUse(c: Pick<AppContext, "apps" | "provider" | "deploy">): Promise<AppValues & { source: "page" | "deploy" }> {
   const page = await c.apps.values(c.provider, "active");
@@ -336,9 +353,13 @@ export interface SaveResult { kept: "active" | "pending"; message: string }
 export async function saveApp(c: AppContext, target: string, input: { clientId?: unknown; secret?: unknown }, by: Act): Promise<SaveResult> {
   const v = checkValues(input, c.provider);
   const name = PROVIDERS[c.provider].label;
-  if (!c.apps.canStore) throw new AuthError("This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.");
+  if (!c.apps.canStore)
+    throw new AuthError({
+      message: "This server has no FACTORY_KEY to encrypt the secret with, so it can't keep values from this page: set them in the deploy.",
+    });
   const fresh = await c.check(v);
-  if (fresh.state != "working") throw new AuthError(`${fresh.summary}${fresh.reasons.length ? ` ${fresh.reasons.join(" ")}` : ""} Nothing changed.`);
+  if (fresh.state != "working")
+    throw new AuthError({ message: `${fresh.summary}${fresh.reasons.length ? ` ${fresh.reasons.join(" ")}` : ""} Nothing changed.` });
   const now = await inUse(c);
   const working = now.clientId ? (await c.check(now)).state == "working" : false;
   if (working && !(now.clientId == v.clientId && now.secret == v.secret)) {
@@ -371,7 +392,9 @@ export async function clearApp(c: AppContext, target: string, by: Act, force = f
     const page = await c.apps.values(c.provider, "active");
     const [mine, theirs] = await Promise.all([page ? c.check(page) : null, c.check(c.deploy)]);
     if (mine?.state == "working" && theirs.state != "working") {
-      throw new AuthError(`Clearing would stop sign-in for everyone, admins too: the page's values work, and the deploy's don't (${theirs.summary}). Fix the deploy's values first, or clear anyway (force).`);
+      throw new AuthError({
+        message: `Clearing would stop sign-in for everyone, admins too: the page's values work, and the deploy's don't (${theirs.summary}). Fix the deploy's values first, or clear anyway (force).`,
+      });
     }
   }
   await c.apps.drop(c.provider, "both");
@@ -480,7 +503,7 @@ export interface ProvidersOn { github: boolean; google: boolean }
 export function cachedCheck(check: (v: AppValues) => Promise<AppCheck>, ttlMs = 60_000): (v: AppValues) => Promise<AppCheck> {
   const seen = new Map<string, { at: number; check: Promise<AppCheck> }>();
   return async (v) => {
-    const key = base64(await sha256(`${v.clientId}\n${v.secret}`));
+    const key = Base64.encode(await sha256(`${v.clientId}\n${v.secret}`));
     const hit = seen.get(key);
     if (hit && Date.now() - hit.at < ttlMs) return hit.check;
     const p = check(v);

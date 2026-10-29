@@ -6,7 +6,7 @@ import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { adminResponse } from "./layout.ts";
+import { adminPage } from "./layout.ts";
 import { setAt, shown } from "./parts.ts";
 
 /** A setting that names a document (Setting.kind), with the document it names now, if there is one. */
@@ -118,7 +118,7 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
 }
 
 /** /admin: the server's settings. */
-export async function settingsPage(platform: Platform, session: Session): Promise<Response> {
+export async function settingsPage(platform: Platform, session: Session) {
   const who = whoOf(session);
   const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
   // A setting naming a document shows it by its address now, linked.
@@ -140,7 +140,7 @@ export async function settingsPage(platform: Platform, session: Session): Promis
       return false;
     }
   };
-  return adminResponse({
+  return adminPage({
     session,
     title: "Settings",
     here: "settings",

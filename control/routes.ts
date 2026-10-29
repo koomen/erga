@@ -104,10 +104,11 @@ import {
 import { openRelay, relayNonce, relayOrigin, relayState, sealRelay } from "../shared/relay.ts";
 import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/index.ts";
-import { accountHtml, accountOf, appPage, crumbs, page } from "../server/pages/index.ts";
+import { accountHtml, accountOf, appPage, crumbs, webPage as page } from "../server/pages/index.ts";
 import { esc, jsonInScript } from "../shared/html.ts";
 import { base64url, fromBase64url, randomToken } from "../shared/bytes.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
+import { respond } from "../server/http.ts";
 import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
 import { json } from "../shared/http.ts";
 
@@ -201,10 +202,10 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   const read = method == "GET" || method == "HEAD";
   const p = c.platform;
 
-  if (path == "/auth/github") return startSignIn(p, request);
+  if (path == "/auth/github") return respond(startSignIn, request, p);
   if (path == "/auth/github/callback") return githubCallback(request, url, c);
   if (path == "/auth/google/callback") return googleRelay(request, url, c);
-  if (path == "/auth/logout") return signOut(p, request);
+  if (path == "/auth/logout") return respond(signOut, request, p);
   if (path == "/github/webhook" && method == "POST") return githubWebhook(request, url, c);
   if (path == "/api/health" && read) {
     // ?self=1: the pipeline's own check of this Worker after its self-deploy (control/deploys/control-worker.ts): the version only, no call
@@ -370,7 +371,7 @@ async function githubCallback(request: Request, url: URL, c: Control): Promise<R
     }
   }
   if (q.get("installation_id") || q.get("setup_action")) return githubConnectFinish(request, url, c, consent);
-  return finishSignIn(c.platform, request);
+  return respond(finishSignIn, request, c.platform);
 }
 
 /**

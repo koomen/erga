@@ -41,12 +41,13 @@
 // (made before this guard, or by another server) is refused.
 
 
+import * as Effect from "effect/Effect";
 import { isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
 import { isAssetPath, page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { tokenPath } from "./token-paths.ts";
-import { json } from "../../shared/http.ts";
+import { call, ctx, json, text } from "../http.ts";
 
 /** The request needs no admin: one of the exemptions above. */
 function exempt(request: Request, base: Platform, url: URL): boolean {
@@ -71,7 +72,9 @@ function gitSecret(auth: string): string | null {
  * The guard: null lets the request through (this server isn't for admins only, it's an exemption, or an admin with
  * admin power asks); otherwise the refusal.
  */
-export async function adminsOnlyGate(request: Request, base: Platform, url: URL): Promise<Response | null> {
+export const adminsOnlyGate = Effect.flatMap(ctx, ({ request, platform, url }) => call(() => refusal(request, platform, url)));
+
+async function refusal(request: Request, base: Platform, url: URL) {
   if (!base.adminsOnly) return null;
   if (exempt(request, base, url)) return null;
   const users = base.directory.users;
@@ -82,7 +85,7 @@ export async function adminsOnlyGate(request: Request, base: Platform, url: URL)
     const token = /^\/t\/([^/]+)\//.exec(url.pathname)?.[1];
     const claims = doc && token ? await readPagesClaims(base.secret, token, doc.owner, doc.id) : null;
     if (claims?.by && (await users.isAdmin({ login: claims.by }))) return null;
-    return new Response("Staging is for Erga's admins only.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+    return text("Staging is for Erga's admins only.", 403, { "Cache-Control": "no-store" });
   }
 
   // The Git endpoint takes only a token (no cookie, and so not local development's DEV_LOGIN either), as HTTP Basic's
@@ -100,12 +103,12 @@ export async function adminsOnlyGate(request: Request, base: Platform, url: URL)
     : adminsToken ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope at /tokens."
     : "Staging is for Erga's admins only.";
   if (git) {
-    return new Response(`${why}\n`, { status: session ? 403 : 401, headers: { "Content-Type": "text/plain; charset=utf-8", ...(session ? {} : { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"' }) } });
+    return text(`${why}\n`, session ? 403 : 401, session ? {} : { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"' });
   }
   if (!wantsPage(request, url)) return json({ error: why, adminsOnly: true }, 403);
   const productionHost = base.deploy.targets.production.host,
     production = `https://${productionHost}`;
-  const refusal = signedIn
+  return signedIn
     ? page(
         "Staging is for Erga's admins only",
         `This is staging, a test copy of Erga for its admins, and <b>${esc(session!.login)}</b> isn't one. Erga itself is at <a href="${production}">${productionHost}</a>. <a href="/auth/logout">Sign out</a>`,
@@ -116,8 +119,6 @@ export async function adminsOnlyGate(request: Request, base: Platform, url: URL)
         `This is staging, a test copy of Erga for its admins. Admins sign in with staging's own GitHub app, or Google's where it is on. Erga itself is at <a href="${production}">${productionHost}</a>.</p><p><a class="new sign-in" href="/auth/sign-in?next=${esc(encodeURIComponent(safeNext(url.pathname + url.search)))}">Sign in</a>`,
         403
       );
-  refusal.headers.set("Cache-Control", "no-store");
-  return refusal;
 }
 
 /** A person's browser asking for a page (a GET that takes HTML, not the API), rather than a program. */
