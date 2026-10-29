@@ -59,6 +59,14 @@ export abstract class EditorEdit extends EditorRender {
         ? M.duplicateIds(tr.newDoc.toString(), added)
         : [];
       if (drops.length) tr = this.state.update(spec, { changes: drops, sequential: true });
+      // An edit that takes the last item out of a list takes the list too: a <ul> or <ol> with no items shows nothing,
+      // and nothing can go in it. Only lists the edit emptied: a page's own empty list (its script may fill it) stays.
+      const emptied = emptiedLists(tr);
+      if (emptied.length)
+        tr = this.state.update(spec, ...(drops.length ? [{ changes: drops, sequential: true }] : []), {
+          changes: emptied,
+          sequential: true,
+        });
     }
     const oldUnits = this.units,
       oldSrc = this.src;
@@ -665,4 +673,23 @@ export abstract class EditorEdit extends EditorRender {
   protected target() {
     return { state: this.state, dispatch: (tr: Transaction) => this.dispatch(tr) };
   }
+}
+
+/** The lists `tr` left with no items (each with the line it was on), when it took out an <li>: changes that remove them. */
+function emptiedLists(tr: Transaction): { from: number; to: number }[] {
+  const touched: [number, number][] = [];
+  tr.changes.iterChanges((fromA, toA, fromB, toB) => {
+    if (/<\/?li\b/i.test(tr.startState.doc.sliceString(fromA, toA))) touched.push([fromB, toB]);
+  });
+  if (!touched.length) return [];
+  const src = tr.newDoc.toString(),
+    out: { from: number; to: number }[] = [];
+  for (const m of src.matchAll(/<(ul|ol)\b[^>]*>(\s*)<\/\1\s*>/gi)) {
+    const inner = m.index + m[0].indexOf(">") + 1,
+      end = inner + m[2].length;
+    if (!touched.some(([from, to]) => inner <= from && to <= end)) continue;
+    const gap = /[ \t]*\n?[ \t]*$/.exec(src.slice(0, m.index))![0];
+    out.push({ from: m.index - gap.length, to: m.index + m[0].length });
+  }
+  return out;
 }
