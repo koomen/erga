@@ -24,6 +24,7 @@
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { Base64, Base64Url, Hex } from "effect/encoding";
+import * as Option from "effect/Option";
 import { sha256 } from "../../shared/bytes";
 
 export interface GithubApp {
@@ -46,7 +47,17 @@ export interface GithubLink {
 }
 
 /** A repository as GitHub lists it, the fields Erga keeps. */
-export interface GithubRepo { id: number; full_name: string; clone_url: string; html_url: string; private: boolean; default_branch: string; owner?: { login: string; type: string } }
+const Account = Schema.Struct({ login: Schema.String, type: Schema.String });
+export const GithubRepo = Schema.Struct({
+  id: Schema.Number,
+  full_name: Schema.String,
+  clone_url: Schema.String,
+  html_url: Schema.String,
+  private: Schema.Boolean,
+  default_branch: Schema.String,
+  owner: Schema.optionalKey(Account),
+});
+export type GithubRepo = typeof GithubRepo.Type;
 
 /** What GitHub answers for an error: its message. */
 export class GithubError extends Schema.TaggedError<GithubError>()("GithubError", { message: Schema.String, status: Schema.Number }) {}
@@ -91,7 +102,7 @@ export async function installationToken(
     throw new GithubError({ message: "This Worker has no private key for the GitHub App (GITHUB_APP_PRIVATE_KEY).", status: 500 });
   const jwt = await appJwt(app.appId, app.privateKey);
   const r = await net(`${app.api}/app/installations/${installationId}/access_tokens`, { method: "POST", headers: { Authorization: `Bearer ${jwt}`, Accept: "application/vnd.github+json", "User-Agent": UA } });
-  const body = (await r.json().catch(() => ({}))) as { token?: string; expires_at?: string; message?: string };
+  const body = Option.getOrElse(tokenAnswer(await r.text().catch(() => "")), () => ({}) as typeof InstallationToken.Type);
   if (!r.ok || !body.token)
     throw new GithubError({
       message:
@@ -103,8 +114,19 @@ export async function installationToken(
   return { token: body.token, expiresAt: Date.parse(body.expires_at ?? "") || Date.now() + 3600_000 };
 }
 
+/** GitHub's answer for an installation token. */
+const InstallationToken = Schema.Struct({
+  token: Schema.optionalKey(Schema.String),
+  expires_at: Schema.optionalKey(Schema.String),
+  message: Schema.optionalKey(Schema.String),
+});
+const tokenAnswer = Schema.decodeUnknownOption(Schema.fromJsonString(InstallationToken));
+
 /** The installation's repositories as a Git remote (push and fetch), with its token as the password. */
-export const githubRemote = (cloneUrl: string, token: string) => ({ url: cloneUrl, headers: { Authorization: `Basic ${btoa(`x-access-token:${token}`)}` } });
+export const githubRemote = (cloneUrl: string, token: string) => ({
+  url: cloneUrl,
+  headers: { Authorization: `Basic ${Base64.encode(`x-access-token:${token}`)}` },
+});
 
 /** The App uninstalled from the account (Disconnect): GitHub removes its access there. */
 export async function uninstall(app: GithubApp, installationId: number, net: Net = fetch): Promise<void> {
@@ -132,7 +154,16 @@ export async function verifyWebhook(secret: string, body: Uint8Array | string, s
 }
 
 /** A push event's payload, the fields Erga reads. */
-export interface PushEvent { ref?: string; before?: string; after?: string; repository?: { id?: number; full_name?: string }; installation?: { id?: number }; sender?: { login?: string }; pusher?: { name?: string } }
+export const PushEvent = Schema.Struct({
+  ref: Schema.optionalKey(Schema.String),
+  before: Schema.optionalKey(Schema.String),
+  after: Schema.optionalKey(Schema.String),
+  repository: Schema.optionalKey(Schema.Struct({ id: Schema.optionalKey(Schema.Number), full_name: Schema.optionalKey(Schema.String) })),
+  installation: Schema.optionalKey(Schema.Struct({ id: Schema.optionalKey(Schema.Number) })),
+  sender: Schema.optionalKey(Schema.Struct({ login: Schema.optionalKey(Schema.String) })),
+  pusher: Schema.optionalKey(Schema.Struct({ name: Schema.optionalKey(Schema.String) })),
+});
+export type PushEvent = typeof PushEvent.Type;
 
 // ---------------------------------------------------------------- the consent: sign-in, and Connect GitHub
 
@@ -143,7 +174,14 @@ export function installUrl(app: GithubApp, state: string): string {
   return u.toString();
 }
 
-export interface UserToken { access_token?: string; expires_in?: number; refresh_token?: string; error?: string; error_description?: string }
+export const UserToken = Schema.Struct({
+  access_token: Schema.optionalKey(Schema.String),
+  expires_in: Schema.optionalKey(Schema.Number),
+  refresh_token: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+  error_description: Schema.optionalKey(Schema.String),
+});
+export type UserToken = typeof UserToken.Type;
 
 /** The code GitHub sent back, traded for the person's token (the App's client secret: erga.dev's control Worker only). */
 export async function exchangeUserCode(app: GithubApp, o: { code: string; redirect: string }, net: Net = fetch): Promise<UserToken> {
@@ -155,15 +193,32 @@ export async function exchangeUserCode(app: GithubApp, o: { code: string; redire
     throw new GithubError({ message: `Couldn't reach GitHub to finish the sign-in (${e.message}).`, status: 502 });
   });
   return (
-    ((await r.json().catch(() => null)) as UserToken | null) ?? {
+    Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(UserToken))(await r.text().catch(() => ""))) ?? {
       error: `http_${r.status}`,
       error_description: "GitHub's token endpoint answered no JSON.",
     }
   );
 }
 
-/** GitHub's REST API with a token (a user's, an installation's): the JSON answer, or a GithubError with GitHub's message. */
-export async function api<T>(app: Pick<GithubApp, "api">, token: string, method: string, path: string, body?: unknown, net: Net = fetch): Promise<T> {
+/** What GitHub answers for an error. */
+const Refusal = Schema.Struct({
+  message: Schema.optionalKey(Schema.String),
+  errors: Schema.optionalKey(Schema.Array(Schema.Struct({ message: Schema.optionalKey(Schema.String) }))),
+});
+
+/**
+ * GitHub's REST API with a token (a user's, an installation's): the JSON answer (as `schema` reads it, when given), or
+ * a GithubError with GitHub's message.
+ */
+export async function api<T>(
+  app: Pick<GithubApp, "api">,
+  token: string,
+  method: string,
+  path: string,
+  body?: unknown,
+  net: Net = fetch,
+  schema?: Schema.Codec<T>
+): Promise<T> {
   const r = await net(`${app.api}${path}`, {
     method, headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": UA, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -171,7 +226,9 @@ export async function api<T>(app: Pick<GithubApp, "api">, token: string, method:
     throw new GithubError({ message: `Couldn't reach GitHub (${e.message}).`, status: 502 });
   });
   if (r.status == 204) return undefined as T;
-  const answer = (await r.json().catch(() => null)) as (T & { message?: string; errors?: { message?: string }[] }) | null;
+  const text = await r.text().catch(() => "");
+  const json = Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))(text));
+  const answer = r.ok ? null : Option.getOrNull(Schema.decodeUnknownOption(Refusal)(json));
   if (!r.ok)
     throw new GithubError({
       message: `GitHub answered ${r.status}${answer?.message ? `: ${answer.message}` : ""}${
@@ -184,20 +241,45 @@ export async function api<T>(app: Pick<GithubApp, "api">, token: string, method:
       }`,
       status: r.status,
     });
-  return answer as T;
+  if (!schema) return json as T;
+  return Schema.decodeUnknownPromise(schema)(json).catch((e: Error) => {
+    throw new GithubError({ message: `GitHub answered in a way Erga doesn't understand: ${e.message}`, status: 502 });
+  });
 }
 
 /** Who the token's person is. */
-export const userOf = (app: GithubApp, token: string, net?: Net) => api<{ login?: string; name?: string | null; id?: number }>(app, token, "GET", "/user", undefined, net);
+export const userOf = (app: GithubApp, token: string, net?: Net) => api(app, token, "GET", "/user", undefined, net, User);
+const User = Schema.Struct({
+  login: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  id: Schema.optionalKey(Schema.Number),
+});
+
+const Installations = Schema.Struct({
+  installations: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ id: Schema.Number, account: Schema.optionalKey(Account), repository_selection: Schema.optionalKey(Schema.String) })
+    )
+  ),
+});
 
 /** The installation, as its person sees it: whose account, and whether it covers all repositories or a selection. */
 export const installationOf = (app: GithubApp, token: string, id: number, net?: Net) =>
-  api<{ installations?: { id: number; account?: { login: string; type: string }; repository_selection?: string }[] }>(app, token, "GET", "/user/installations?per_page=100", undefined, net)
-    .then((r) => r.installations?.find((i) => i.id == id) ?? null);
+  api(app, token, "GET", "/user/installations?per_page=100", undefined, net, Installations).then(
+    (r) => r.installations?.find((i) => i.id == id) ?? null
+  );
 
 /** The repositories the installation reaches that the person reaches too (what they picked on GitHub's page). */
 export const installationRepos = (app: GithubApp, token: string, id: number, net?: Net) =>
-  api<{ repositories?: GithubRepo[] }>(app, token, "GET", `/user/installations/${id}/repositories?per_page=100`, undefined, net).then((r) => r.repositories ?? []);
+  api(
+    app,
+    token,
+    "GET",
+    `/user/installations/${id}/repositories?per_page=100`,
+    undefined,
+    net,
+    Schema.Struct({ repositories: Schema.optionalKey(Schema.Array(GithubRepo)) })
+  ).then((r) => r.repositories ?? []);
 
 /**
  * A new repository, made with the person's token (the App needs the Administration permission for it), and added to
@@ -212,7 +294,7 @@ export async function createRepo(app: GithubApp, token: string, o: { owner: { lo
   const path = o.owner.type == "Organization" || o.owner.login.toLowerCase() != o.me.toLowerCase() ? `/orgs/${o.owner.login}/repos` : "/user/repos";
   let repo: GithubRepo;
   try {
-    repo = await api<GithubRepo>(app, token, "POST", path, body, net);
+    repo = await api(app, token, "POST", path, body, net, GithubRepo);
   } catch (e) {
     if (e instanceof GithubError && (e.status == 403 || e.status == 404))
       throw new GithubError({
