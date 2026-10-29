@@ -4,6 +4,8 @@
 // asks that rule itself, so a request asks the database nothing
 // (`DocumentAccess`, which Document runs).
 
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type { Storage } from "./storage.ts";
 
 /** A person's role in a document: whoever made it owns it; others are given editor or viewer. */
@@ -15,6 +17,12 @@ export interface Asker {
   test?: boolean;
   by?: string;
 }
+
+/** x-erga-who, as JSON: an Asker, its other fields kept as they are (they're the directory's, passed on). */
+const AskerHeader = Schema.fromJsonString(
+  Schema.StructWithRest(Schema.Struct({ login: Schema.String }), [Schema.Record(Schema.String, Schema.Unknown)])
+);
+const askerOf = Schema.decodeUnknownOption(AskerHeader);
 
 /** One person's role, as the document keeps it. */
 export interface PersonRole {
@@ -75,13 +83,8 @@ export class DocumentAccess {
       if (read && url.pathname.startsWith("/doc/") && !headers.get("upgrade")) return new Request(request, { headers });
       return new Response("Not allowed", { status: 403 });
     }
-    let who: Asker | null = null;
-    try {
-      who = JSON.parse(headers.get("x-erga-who") ?? "null") as Asker | null;
-    } catch {
-      /* nobody */
-    }
-    if (!who || typeof who.login != "string") return new Response("Sign in first", { status: 401 });
+    const who = Option.getOrNull(askerOf(headers.get("x-erga-who") ?? "null")) as Asker | null;
+    if (!who) return new Response("Sign in first", { status: 401 });
     const info = await this.o.info();
     if (!info) return new Response("No such document", { status: 404 });
     const access = accessOf(await this.roleOf(who));

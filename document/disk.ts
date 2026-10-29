@@ -10,8 +10,13 @@
 // Until the dev server connects, a call waits for it (a while); while it's
 // away, calls fail and the room tries them again.
 
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { Base64 } from "effect/encoding";
 import { KEYS, type Storage } from "./storage.ts";
-import { base64, fromBase64 } from "../shared/bytes.ts";
 
 // What goes over the WebSocket, between the document and the dev server, which has
 // the files. The document asks for them as its room would ask a folder:
@@ -38,6 +43,23 @@ export type FromDisk =
   | { t: "changed"; path: string }
   | { t: "flush" };
 
+/** What the dev server says, as the link reads it: anything else on the socket is left alone. */
+const Reply = Schema.Struct({
+  t: Schema.Literal("reply"),
+  id: Schema.Number,
+  paths: Schema.optional(Schema.Array(Schema.String)),
+  dirs: Schema.optional(Schema.Array(Schema.String)),
+  b64: Schema.optional(Schema.NullOr(Schema.String)),
+  error: Schema.optional(Schema.String),
+});
+const Changed = Schema.Struct({ t: Schema.Literal("changed"), path: Schema.String });
+const Flush = Schema.Struct({ t: Schema.Literal("flush") });
+const FromDiskJson = Schema.fromJsonString(Schema.Union([Reply, Changed, Flush]));
+const readFromDisk = Schema.decodeUnknownOption(FromDiskJson);
+
+/** The files on disk can't be reached (the dev server isn't connected, or went away), or the dev server failed the ask. */
+export class DiskError extends Schema.TaggedError<DiskError>()("DiskError", { message: Schema.String }) {}
+
 type Ask = { t: "list" } | { t: "read"; path: string } | { t: "write"; path: string; text?: string; b64?: string }
   | { t: "remove"; path: string } | { t: "folders" } | { t: "mkdir"; path: string } | { t: "rmdir"; path: string };
 type Reply = Extract<FromDisk, { t: "reply" }>;
@@ -46,7 +68,7 @@ type Reply = Extract<FromDisk, { t: "reply" }>;
 export class DiskLink {
   private socket: WebSocket | null = null;
   private waiting: ((socket: WebSocket) => void)[] = [];
-  private calls = new Map<number, { resolve: (reply: Reply) => void; reject: (e: Error) => void }>();
+  private calls = new Map<number, Deferred.Deferred<Reply, DiskError>>();
   private ids = 0;
 
   constructor(private on: {
@@ -63,16 +85,19 @@ export class DiskLink {
     if (this.socket) { try { this.socket.close(4000, "replaced"); } catch { /* already closed */ } }
     this.socket = socket;
     socket.addEventListener("message", (e) => {
-      let m: FromDisk;
-      try { m = JSON.parse(String(e.data)) as FromDisk; } catch { return; }
-      if (m.t == "reply") { this.calls.get(m.id)?.resolve(m); this.calls.delete(m.id); }
-      else if (m.t == "changed" && typeof m.path == "string") this.on.changed(m.path);
-      else if (m.t == "flush") this.on.flush().finally(() => this.send({ t: "flushed" }));
+      const m = Option.getOrNull(readFromDisk(String(e.data))) as FromDisk | null;
+      if (m?.t == "reply") {
+        const call = this.calls.get(m.id);
+        this.calls.delete(m.id);
+        if (call) Deferred.doneUnsafe(call, Effect.succeed(m));
+      } else if (m?.t == "changed") this.on.changed(m.path);
+      else if (m?.t == "flush") this.on.flush().finally(() => this.send({ t: "flushed" }));
     });
     const gone = () => {
       if (this.socket !== socket) return;
       this.socket = null;
-      for (const call of this.calls.values()) call.reject(new Error("the dev server went away"));
+      for (const call of this.calls.values())
+        Deferred.doneUnsafe(call, Effect.fail(new DiskError({ message: "the dev server went away" })));
       this.calls.clear();
     };
     socket.addEventListener("close", gone);
@@ -87,27 +112,39 @@ export class DiskLink {
   }
 
   /** @internal An ask to the dev server, and its reply. */
-  async ask(ask: Ask): Promise<Reply> {
-    const socket = this.socket ?? await this.connection();
-    const id = ++this.ids;
-    const reply = await new Promise<Reply>((resolve, reject) => {
-      this.calls.set(id, { resolve, reject });
-      try { socket.send(JSON.stringify({ ...ask, id } as ToDisk)); } catch (e) { this.calls.delete(id); reject(e as Error); }
+  ask(ask: Ask): Effect.Effect<Reply, DiskError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const socket = self.socket ?? (yield* self.connection);
+      const id = ++self.ids;
+      const reply = yield* Deferred.make<Reply, DiskError>();
+      self.calls.set(id, reply);
+      const sent = Result.try(() => socket.send(JSON.stringify({ ...ask, id } as ToDisk)));
+      if (Result.isFailure(sent)) {
+        self.calls.delete(id);
+        return yield* new DiskError({ message: sent.failure instanceof Error ? sent.failure.message : String(sent.failure) });
+      }
+      const got = yield* Deferred.await(reply);
+      if (got.error) return yield* new DiskError({ message: got.error });
+      return got;
     });
-    if (reply.error) throw new Error(reply.error);
-    return reply;
   }
 
   /** The socket, once the dev server connects (it does so as it starts); an error if it doesn't soon. */
-  private connection(): Promise<WebSocket> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.waiting = this.waiting.filter((w) => w !== resume);
-        reject(new Error("the files on disk aren't connected: is the dev server running?"));
-      }, 15_000);
-      const resume = (socket: WebSocket) => { clearTimeout(timer); resolve(socket); };
+  private get connection(): Effect.Effect<WebSocket, DiskError> {
+    let resume: ((socket: WebSocket) => void) | null = null;
+    return Effect.callback<WebSocket>((done) => {
+      resume = (socket) => done(Effect.succeed(socket));
       this.waiting.push(resume);
-    });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "15 seconds",
+        orElse: () => {
+          this.waiting = this.waiting.filter((w) => w !== resume);
+          return Effect.fail(new DiskError({ message: "the files on disk aren't connected: is the dev server running?" }));
+        },
+      })
+    );
   }
 
   private send(m: ToDisk): void {
@@ -185,33 +222,42 @@ class DiskStorage implements Storage {
 
   // ------------------------------------------------------------ the folder, through the link
 
+  private ask(ask: Ask): Promise<Reply> {
+    return Effect.runPromise(this.link.ask(ask));
+  }
   private async paths(): Promise<string[]> {
-    return ((await this.link.ask({ t: "list" })).paths ?? []).filter((p) => this.only == null || p == this.only);
+    return ((await this.ask({ t: "list" })).paths ?? []).filter((p) => this.only == null || p == this.only);
   }
   private async folders(): Promise<string[]> {
-    return this.only != null ? [] : (await this.link.ask({ t: "folders" })).dirs ?? [];
+    return this.only != null ? [] : [...((await this.ask({ t: "folders" })).dirs ?? [])];
   }
   private async read<T>(key: string): Promise<T | undefined> {
     if (key.startsWith(DIR)) return ((await this.folders()).includes(key.slice(DIR.length)) ? true : undefined) as T | undefined;
     const path = key.slice(FILE.length);
     if (this.only != null && path != this.only) return undefined;
-    const { b64 } = await this.link.ask({ t: "read", path });
-    return b64 == null ? undefined : (fromBase64(b64) as T);
+    const { b64 } = await this.ask({ t: "read", path });
+    return b64 == null ? undefined : (Result.getOrThrow(Base64.decode(b64)) as T);
   }
   private async write(key: string, value: unknown): Promise<void> {
-    if (key.startsWith(DIR)) { await this.link.ask({ t: "mkdir", path: key.slice(DIR.length) }); return; }
+    if (key.startsWith(DIR)) {
+      await this.ask({ t: "mkdir", path: key.slice(DIR.length) });
+      return;
+    }
     const path = key.slice(FILE.length);
     if (this.only != null && path != this.only) return;
     const bytes = value instanceof Uint8Array ? value : typeof value == "string" ? new TextEncoder().encode(value) : null;
-    if (!bytes) throw new Error(`${path}: a file on disk holds bytes, not ${typeof value}`);
-    await this.link.ask({ t: "write", path, b64: base64(bytes) });
+    if (!bytes) throw new DiskError({ message: `${path}: a file on disk holds bytes, not ${typeof value}` });
+    await this.ask({ t: "write", path, b64: Base64.encode(bytes) });
   }
   private async remove(key: string): Promise<boolean> {
-    if (key.startsWith(DIR)) { await this.link.ask({ t: "rmdir", path: key.slice(DIR.length) }); return true; }
+    if (key.startsWith(DIR)) {
+      await this.ask({ t: "rmdir", path: key.slice(DIR.length) });
+      return true;
+    }
     const path = key.slice(FILE.length);
     if (this.only != null && path != this.only) return false;
-    const was = (await this.link.ask({ t: "read", path })).b64 != null;
-    if (was) await this.link.ask({ t: "remove", path });
+    const was = (await this.ask({ t: "read", path })).b64 != null;
+    if (was) await this.ask({ t: "remove", path });
     return was;
   }
 }

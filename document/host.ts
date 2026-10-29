@@ -288,17 +288,19 @@ export function makeHost(opts: HostOptions) {
     }
     return out;
   };
+  /** A PDF's text, kept by its hash: its blob's, or (a file the object keeps, from before blobs) its bytes'. */
+  const pdfTextOf = (path: string) =>
+    Effect.gen(function* () {
+      const ref = files.ref ? yield* Effect.orElseSucceed(files.ref(path), () => null) : null;
+      const read = Effect.orElseSucceed(files.read(path), () => null);
+      const bytes = ref ? null : yield* read;
+      const hash = ref?.hash ?? (bytes ? yield* Effect.promise(() => sha256Hex(bytes)) : null);
+      return hash ? yield* pdfText(hash, bytes ? Effect.succeed(bytes) : read, opts.blobs) : null;
+    });
   /** What the agent's file tools reach beyond the shared text. */
   const filesAccess: FilesAccess = {
     stats: fileStats,
-    pdfText: async (path) => {
-      const ref = files.ref ? await Effect.runPromise(Effect.orElseSucceed(files.ref(path), () => null)) : null;
-      const read = () => Effect.runPromise(Effect.orElseSucceed(files.read(path), () => null));
-      // Kept by the PDF's hash: its blob's, or (a file the object keeps, from before blobs) its bytes'.
-      const bytes = ref ? null : await read();
-      const hash = ref?.hash ?? (bytes ? await sha256Hex(bytes) : null);
-      return hash ? pdfText(hash, async () => bytes ?? (await read()), opts.blobs) : null;
-    },
+    pdfText: (path) => Effect.runPromise(pdfTextOf(path)),
     writeBytes: async (path, bytes, by) => {
       if (!opts.putFile) throw new Error("This document takes only text: write the file's text in content.");
       return opts.putFile(path, bytes, by);

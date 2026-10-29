@@ -31,10 +31,26 @@
 // The same handler runs in the Worker and in the mock
 // Cloudflare's pretend servers, so the tests exercise it.
 
-import { base64, fromBase64 } from "../shared/bytes.ts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { Base64 } from "effect/encoding";
 
+/** One value of a document's storage, as JSON: its bytes as base64 (`b`), or the value itself (`j`). */
+const Encoded = Schema.Union([Schema.Struct({ b: Schema.String }), Schema.Struct({ j: Schema.Unknown })]);
 export type Encoded = { b: string } | { j: unknown };
+
+const DocId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/));
+
 /** A document's storage, or a part of it: `more` on export (another part follows), `append` on import (a part after the first). */
+const DocSnapshot = Schema.Struct({
+  id: DocId,
+  entries: Schema.Array(Schema.Tuple([Schema.String, Encoded])),
+  alarm: Schema.optional(Schema.NullOr(Schema.Number)),
+  more: Schema.optional(Schema.String),
+  append: Schema.optional(Schema.Boolean),
+});
 export interface DocSnapshot { id: string; entries: [string, Encoded][]; alarm: number | null; more?: string; append?: boolean }
 /** Which part of a document's storage: the entries after the key `after` (null: from the first), as many as fit in `budget` characters. */
 export interface Page { after: string | null; budget: number }
@@ -58,10 +74,16 @@ export const VALUE_LIMIT = 2 * 1024 * 1024;
  */
 export const SNAPSHOT_BUDGET = 8 * 1024 * 1024;
 
-export const encodeValue = (v: unknown): Encoded => (v instanceof Uint8Array || v instanceof ArrayBuffer ? { b: base64(v) } : { j: v });
-export const decodeValue = (e: Encoded): unknown => ("b" in e ? fromBase64(e.b) : e.j);
+export const encodeValue = (v: unknown): Encoded =>
+  v instanceof Uint8Array ? { b: Base64.encode(v) } : v instanceof ArrayBuffer ? { b: Base64.encode(new Uint8Array(v)) } : { j: v };
+/** A value as storage keeps it; throws on bytes that aren't base64 (the import refuses the snapshot). */
+export const decodeValue = (e: Encoded): unknown => ("b" in e ? Result.getOrThrow(Base64.decode(e.b)) : e.j);
 
-const ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** POST /api/snapshot/docs: which documents, from which key of the first. Ids that aren't one are left out. */
+const ExportBody = Schema.Struct({ ids: Schema.optional(Schema.Array(Schema.Unknown)), after: Schema.optional(Schema.Unknown) });
+/** POST /api/snapshot/docs/import: the documents' storage to write, and the documents to empty. */
+const ImportBody = Schema.Struct({ docs: Schema.optional(Schema.Array(DocSnapshot)), wipe: Schema.optional(Schema.Array(Schema.Unknown)) });
+const isDocId = Schema.is(DocId);
 
 /** About how many characters an entry takes in an answer. */
 const sizeOf = ([key, e]: [string, Encoded]) => key.length + 16 + ("b" in e ? e.b.length : (JSON.stringify(e.j) ?? "").length);
@@ -111,37 +133,58 @@ export async function snapshotRoutes(
   const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
   if (!same(bearer, token)) return Response.json({ error: "Not allowed" }, { status: 403 });
   if (request.method != "POST") return Response.json({ error: "POST only" }, { status: 405 });
-  const body = (await request.json().catch(() => null)) as { ids?: unknown; after?: unknown; docs?: unknown; wipe?: unknown } | null;
-  if (path == "/api/snapshot/docs") {
-    const ids = Array.isArray(body?.ids) ? body.ids.filter((id): id is string => typeof id == "string" && ID.test(id)) : [];
+  const body: unknown = await request.json().catch(() => null);
+  if (path == "/api/snapshot/docs") return Effect.runPromise(exportDocs(body, o.store, o.budget ?? SNAPSHOT_BUDGET));
+  if (!o.importAllowed) return notFound();
+  return Effect.runPromise(importDocs(body, o.store));
+}
+
+/** The export: one document at a time, each in what's left of the budget; the first continues after `after`. A document that fails is listed, not the end. */
+const exportDocs = (raw: unknown, store: DocStore, budget: number) =>
+  Effect.gen(function* () {
+    const body = Option.getOrElse(Schema.decodeUnknownOption(ExportBody)(raw), () => ({}) as typeof ExportBody.Type);
+    const ids = (body.ids ?? []).filter(isDocId);
     if (ids.length > 50) return Response.json({ error: "At most 50 documents at a time" }, { status: 400 });
-    // One at a time, each in what's left of the budget; the first continues after `after`.
-    const docs: DocSnapshot[] = [], failed: { id: string; error: string }[] = [];
-    let left = o.budget ?? SNAPSHOT_BUDGET, done = 0;
+    const docs: DocSnapshot[] = [],
+      failed: { id: string; error: string }[] = [];
+    let left = budget,
+      done = 0;
     for (const id of ids) {
       if (left <= 0) break;
-      try {
-        const doc = await o.store.export(id, { after: done == 0 && typeof body?.after == "string" ? body.after : null, budget: left });
-        if (doc) {
-          docs.push(doc);
-          left -= doc.entries.reduce((n, e) => n + sizeOf(e), 0);
-          if (doc.more !== undefined) break;
-        }
-      } catch (e) {
-        failed.push({ id, error: (e as Error).message || String(e) });
+      const after = done == 0 && typeof body.after == "string" ? body.after : null;
+      const got = yield* Effect.result(Effect.tryPromise(() => store.export(id, { after, budget: left })));
+      if (Result.isFailure(got)) failed.push({ id, error: errorText(got.failure.cause) });
+      else if (got.success) {
+        docs.push(got.success);
+        left -= got.success.entries.reduce((n, e) => n + sizeOf(e), 0);
+        if (got.success.more !== undefined) break;
       }
       done++;
     }
     return Response.json({ docs, done, failed });
-  }
-  if (!o.importAllowed) return notFound();
-  const docs = Array.isArray(body?.docs) ? (body.docs as DocSnapshot[]) : [];
-  const wipe = Array.isArray(body?.wipe) ? body.wipe.filter((id): id is string => typeof id == "string" && ID.test(id)) : [];
-  for (const d of docs) if (!d || typeof d.id != "string" || !ID.test(d.id) || !Array.isArray(d.entries)) return Response.json({ error: "Bad snapshot" }, { status: 400 });
-  for (const d of docs) await o.store.import({ id: d.id, entries: d.entries, alarm: d.alarm ?? null, ...(d.append === true ? { append: true } : {}) });
-  for (const id of wipe) await o.store.wipe(id);
-  return Response.json({ imported: docs.length, wiped: wipe.length });
-}
+  });
+
+/** The import: every document's storage, then the documents to empty. A snapshot that doesn't decode is refused whole. */
+const importDocs = (raw: unknown, store: DocStore) =>
+  Effect.gen(function* () {
+    const body = yield* Effect.result(Schema.decodeUnknownEffect(ImportBody)(raw ?? {}));
+    if (Result.isFailure(body)) return Response.json({ error: "Bad snapshot" }, { status: 400 });
+    const docs = body.success.docs ?? [];
+    const wipe = (body.success.wipe ?? []).filter(isDocId);
+    for (const d of docs)
+      yield* Effect.promise(() =>
+        store.import({
+          id: d.id,
+          entries: d.entries as [string, Encoded][],
+          alarm: d.alarm ?? null,
+          ...(d.append === true ? { append: true } : {}),
+        })
+      );
+    for (const id of wipe) yield* Effect.promise(() => store.wipe(id));
+    return Response.json({ imported: docs.length, wiped: wipe.length });
+  });
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : "") || String(e);
 
 /**
  * An in-memory DocStore: the mock's servers, and the tests'. Like a Durable

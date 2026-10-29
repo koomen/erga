@@ -4,6 +4,8 @@
 // extracted once and kept by the PDF's hash (the blob store's `kept`), so
 // the second search through it costs nothing.
 
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { BlobStore } from "./blobs.ts";
 
 /** pdf-lib, loaded the first time a PDF is read (it isn't in the Worker's main module). */
@@ -48,39 +50,52 @@ export async function pdfPages(bytes: Uint8Array, from: number, to: number): Pro
   return { bytes: await out.save(), total };
 }
 
-/** A PDF's text, page by page (a scan's pages have none). */
-export async function extractPages(bytes: Uint8Array): Promise<string[]> {
-  const { extractText, getDocumentProxy } = await import("unpdf");
-  // PDF.js takes its input over: a copy, so the caller's bytes stay whole.
-  const pdf = await getDocumentProxy(bytes.slice());
-  try {
-    return (await extractText(pdf, { mergePages: false })).text as string[];
-  } finally {
-    await pdf.destroy().catch(() => {});
-  }
-}
+/** A PDF that PDF.js couldn't read. */
+export class PdfUnreadable extends Schema.TaggedError<PdfUnreadable>()("PdfUnreadable", { message: Schema.String }) {}
+
+/** A PDF's text, page by page (a scan's pages have none). PDF.js's copy of it is freed after, whatever happens. */
+export const extractPages = (bytes: Uint8Array): Effect.Effect<string[], PdfUnreadable> =>
+  Effect.gen(function* () {
+    const { extractText, getDocumentProxy } = yield* Effect.tryPromise({ try: () => import("unpdf"), catch: unreadable });
+    // PDF.js takes its input over: a copy, so the caller's bytes stay whole.
+    const pdf = yield* Effect.acquireRelease(Effect.tryPromise({ try: () => getDocumentProxy(bytes.slice()), catch: unreadable }), (pdf) =>
+      Effect.promise(() => pdf.destroy().catch(() => {}))
+    );
+    return (yield* Effect.tryPromise({ try: () => extractText(pdf, { mergePages: false }), catch: unreadable })).text as string[];
+  }).pipe(Effect.scoped);
+
+const unreadable = (e: unknown) => new PdfUnreadable({ message: e instanceof Error ? e.message : String(e) });
 
 /** Texts extracted in this isolate, by the PDF's hash (a few, the latest). */
 const recent = new Map<string, string[]>();
+
+/** A PDF's text as the blob store keeps it. */
+const KeptText = Schema.fromJsonString(Schema.Array(Schema.String));
 
 /**
  * A PDF's text, page by page: kept by its hash (in memory, then the blob
  * store's `kept`), else extracted from its bytes (`bytes`, asked only then)
  * and kept. Null when the PDF is too big to extract here, or isn't one.
  */
-export async function pdfText(hash: string, bytes: () => Promise<Uint8Array | null>, blobs?: BlobStore | null): Promise<string[] | null> {
-  const mine = recent.get(hash);
-  if (mine) return mine;
-  const kept = await blobs?.kept?.get(`pdf-text/${hash}`).catch(() => null);
-  if (kept) { const pages = JSON.parse(kept) as string[]; remember(hash, pages); return pages; }
-  const b = await bytes();
-  if (!b || b.length > PDF_TEXT_MAX) return null;
-  let pages: string[];
-  try { pages = await extractPages(b); } catch { return null; }
-  remember(hash, pages);
-  await blobs?.kept?.put(`pdf-text/${hash}`, JSON.stringify(pages)).catch(() => {});
-  return pages;
-}
+export const pdfText = (hash: string, bytes: Effect.Effect<Uint8Array | null>, blobs?: BlobStore | null): Effect.Effect<string[] | null> =>
+  Effect.gen(function* () {
+    const mine = recent.get(hash);
+    if (mine) return mine;
+    const keep = blobs?.kept;
+    const kept = keep ? yield* Effect.promise(() => keep.get(`pdf-text/${hash}`).catch(() => null)) : null;
+    const pages = kept ? yield* Schema.decodeUnknownEffect(KeptText)(kept).pipe(Effect.orElseSucceed(() => null)) : null;
+    if (pages) {
+      remember(hash, [...pages]);
+      return [...pages];
+    }
+    const b = yield* bytes;
+    if (!b || b.length > PDF_TEXT_MAX) return null;
+    const text = yield* extractPages(b).pipe(Effect.orElseSucceed(() => null));
+    if (!text) return null;
+    remember(hash, text);
+    if (keep) yield* Effect.promise(() => keep.put(`pdf-text/${hash}`, JSON.stringify(text)).catch(() => {}));
+    return text;
+  });
 
 function remember(hash: string, pages: string[]): void {
   if (recent.size >= 32) recent.delete(recent.keys().next().value!);

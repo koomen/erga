@@ -9,14 +9,22 @@
 // No blob is ever deleted yet. A sweep that deletes the blobs nothing
 // refers to (no file, no version, no copy of a document) comes later.
 
+import * as Schema from "effect/Schema";
 import { sha256Hex } from "../shared/bytes.ts";
 
-
 /** A file's bytes as a blob: its hash (the sha256 of the bytes, hex), how many bytes, and when it was written (ms). */
-export interface BlobRef { hash: string; size: number; at: number }
+export const BlobRef = Schema.Struct({
+  hash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  size: Schema.Number,
+  at: Schema.Number,
+});
+export type BlobRef = typeof BlobRef.Type;
 
-export const isBlobRef = (v: unknown): v is BlobRef =>
-  !!v && typeof v == "object" && typeof (v as BlobRef).hash == "string" && /^[0-9a-f]{64}$/.test((v as BlobRef).hash) && typeof (v as BlobRef).size == "number";
+/** A stored value that is a blob's ref (one from before refs kept `at` counts too: its time reads as 0). */
+export const isBlobRef = Schema.is(Schema.Struct({ hash: BlobRef.fields.hash, size: Schema.Number })) as (v: unknown) => v is BlobRef;
+
+/** Bytes that a store refused for a blob: their size or their hash isn't the one named. */
+export class BlobMismatch extends Schema.TaggedError<BlobMismatch>()("BlobMismatch", { message: Schema.String }) {}
 
 /** Bytes of a blob, or a range of them. */
 export interface BlobBody { body: ReadableStream<Uint8Array> | Uint8Array; size: number; range?: { start: number; end: number }; cached?: boolean }
@@ -80,8 +88,8 @@ export class MemoryBlobs implements BlobStore {
   }
   async put(hash: string, data: Uint8Array | ReadableStream<Uint8Array>, size: number) {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(await new Response(data).arrayBuffer());
-    if (bytes.length != size) throw new Error(`the blob is ${bytes.length} bytes, not ${size}`);
-    if ((await sha256Hex(bytes)) != hash) throw new Error("the bytes aren't the blob's: their sha256 differs");
+    if (bytes.length != size) throw new BlobMismatch({ message: `the blob is ${bytes.length} bytes, not ${size}` });
+    if ((await sha256Hex(bytes)) != hash) throw new BlobMismatch({ message: "the bytes aren't the blob's: their sha256 differs" });
     this.data.set(hash, bytes.slice());
   }
 }
