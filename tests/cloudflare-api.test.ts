@@ -66,3 +66,22 @@ test("a refusal still says Cloudflare's words; a refusal of another shape is lef
   expect(e?.status).toBe(403);
   expect(e?.message).toContain("Authentication error [code 10000]");
 });
+
+test("an answer with no upload token, or not Cloudflare's JSON, says what Cloudflare answered (AGENTS.md rule 5)", async () => {
+  const bytes = new TextEncoder().encode("hello");
+  const page = cloudflare(new Response("<html>Please wait</html>", { status: 200 }));
+  const a = await run(uploadAssets(page.cf, "/accounts/a", "w", { "/probe.txt": bytes }));
+  expect(a._tag == "Failure" && (a.failure as DeployError).message).toContain("answered 200 but not with its JSON");
+  expect(a._tag == "Failure" && (a.failure as DeployError).message).toContain("“<html>Please wait</html>”");
+  const none = cloudflare(
+    Response.json({ result: null, success: true, errors: null, messages: [{ code: 10200, message: "upload sessions are paused" }] })
+  );
+  const b = await run(uploadAssets(none.cf, "/accounts/a", "w", { "/probe.txt": bytes }));
+  const said = b._tag == "Failure" ? (b.failure as DeployError).message : "";
+  expect(said).toContain("Cloudflare gave no upload token");
+  expect(said).toContain("upload sessions are paused");
+  // A token in an answer is never quoted.
+  const q = cloudflare(new Response(`{"jwt": "secret-session", "oops`, { status: 200 }));
+  const c = await run(q.cf.request("POST", "/x", "start uploading"));
+  expect(c._tag == "Failure" && (c.failure as DeployError).message).not.toContain("secret-session");
+});

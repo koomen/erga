@@ -446,12 +446,12 @@ export const uploadAssets = (
       `${acc}/workers/scripts/${worker}/assets-upload-session`,
       `start uploading ${label}`,
       { manifest },
-      { schema: UploadSession }
+      { schema: UploadSession, need: "upload token" }
     );
     const bearer = session?.jwt;
     if (!bearer)
       return yield* new DeployError({
-        message: `Cloudflare didn't start the upload of ${label} (no upload token came back). Deploy again.`,
+        message: `Cloudflare didn't start the upload of ${label}: its answer had no upload token (${JSON.stringify(session).slice(0, 300)}). Deploy again.`,
       });
     const buckets = (session.buckets ?? []).filter((b) => b.length);
     if (!buckets.length) return bearer;
