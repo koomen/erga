@@ -41,6 +41,7 @@
 // change here (`share`) is pushed to the host at once (`permissionsChanged`),
 // and the host reads them afresh when it has none, or an old copy.
 
+import * as Effect from "effect/Effect";
 import { ConfigError, ServerConfig } from "./settings.ts";
 import { type Access, AccessRules, type Facts, higher } from "./access.ts";
 import { type GithubLookup, People, type Person, personHandle } from "./people.ts";
@@ -378,27 +379,24 @@ export class Directory {
   async add(doc: NewDoc): Promise<{ doc: DocRow; added: boolean }> {
     const owner = doc.owner.toLowerCase();
     const title = clip(doc.title) || UNTITLED;
-    for (let tries = 0; ; tries++) {
+    const once = async (): Promise<{ doc: DocRow; added: boolean }> => {
       const existing = await this.get(doc.id);
       if (existing) return { doc: existing, added: false };
       const base = slugify(doc.slug ?? title) || slugify(title) || "untitled";
       // Taken, it gets -2, -3..., even when it's fixed (slugSet: a folder's name, a test document's id).
       const slug = await this.free(owner, doc.id, base, false);
-      try {
-        await this.sql.batch([
-          ["DELETE FROM slug_history WHERE owner = ?1 AND slug = ?2", owner, slug],
-          [`INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test, kind)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
-            doc.id, owner, slug, title, doc.titleSet ? 1 : 0, doc.slugSet ? 1 : 0, doc.created, doc.modified ?? null, doc.expires ?? null, doc.test ? 1 : 0, doc.kind ?? null],
-          ["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, 'owner', ?3, NULL)", doc.id, owner, Date.now()],
-          ...(doc.everyone ? [["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)", doc.id, ANYONE, doc.everyone, Date.now(), owner] as Statement] : []),
-        ]);
-        return { doc: (await this.get(doc.id))!, added: true };
-      } catch (e) {
-        // Someone took the slug (or the id) at the same moment: look again.
-        if (!unique(e) || tries >= 4) throw e;
-      }
-    }
+      await this.sql.batch([
+        ["DELETE FROM slug_history WHERE owner = ?1 AND slug = ?2", owner, slug],
+        [`INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test, kind)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+          doc.id, owner, slug, title, doc.titleSet ? 1 : 0, doc.slugSet ? 1 : 0, doc.created, doc.modified ?? null, doc.expires ?? null, doc.test ? 1 : 0, doc.kind ?? null],
+        ["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, 'owner', ?3, NULL)", doc.id, owner, Date.now()],
+        ...(doc.everyone ? [["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)", doc.id, ANYONE, doc.everyone, Date.now(), owner] as Statement] : []),
+      ]);
+      return { doc: (await this.get(doc.id))!, added: true };
+    };
+    // Someone took the slug (or the id) at the same moment: look again, four times at most.
+    return Effect.runPromise(Effect.tryPromise({ try: once, catch: (e) => e }).pipe(Effect.retry({ times: 4, while: unique })));
   }
 
   /**
@@ -458,7 +456,7 @@ export class Directory {
 
   /** Writes a new title and slug (null: keep the slug), keeping the old slug as history. */
   private async write(doc: DocRow, next: { title: string; titleSet: boolean; slug: string | null; slugSet: boolean; explicit: boolean }): Promise<{ doc: DocRow; renamed: boolean }> {
-    for (let tries = 0; ; tries++) {
+    const once = async (): Promise<{ doc: DocRow; renamed: boolean }> => {
       const slug = next.slug == null || next.slug == doc.slug ? doc.slug : await this.free(doc.owner, doc.id, next.slug, next.explicit);
       const statements: Statement[] = [];
       if (slug != doc.slug) {
@@ -468,15 +466,19 @@ export class Directory {
         );
       }
       statements.push(["UPDATE documents SET title = ?2, title_set = ?3, slug = ?4, slug_set = ?5 WHERE id = ?1", doc.id, next.title, next.titleSet ? 1 : 0, slug, next.slugSet ? 1 : 0]);
-      try {
-        await this.sql.batch(statements);
-        const now = (await this.get(doc.id))!;
-        return { doc: now, renamed: now.title != doc.title || now.slug != doc.slug };
-      } catch (e) {
-        if (!unique(e) || tries >= 4) throw e;
-        if (next.explicit) throw new NameError({ message: `/${doc.owner}/${next.slug} was just taken: pick another address.` });
-      }
-    }
+      await this.sql.batch(statements);
+      const now = (await this.get(doc.id))!;
+      return { doc: now, renamed: now.title != doc.title || now.slug != doc.slug };
+    };
+    // Someone took the slug at the same moment: look again (four times at most), unless they asked for that one.
+    return Effect.runPromise(
+      Effect.tryPromise({ try: once, catch: (e) => e }).pipe(
+        Effect.retry({ times: 4, while: (e) => unique(e) && !next.explicit }),
+        Effect.mapError((e) =>
+          unique(e) && next.explicit ? new NameError({ message: `/${doc.owner}/${next.slug} was just taken: pick another address.` }) : e
+        )
+      )
+    );
   }
 
   /**
@@ -792,11 +794,14 @@ export class Directory {
 
   /** The document's host hears its permissions now (it keeps a copy, and decides with it); a failure is logged, and its copy is read afresh in a while. */
   private async tell(id: string, permissions: Permission[]): Promise<void> {
-    for (let tries = 0; tries < 2; tries++) {
-      try { await this.permissionsChanged(id, permissions); return; } catch (e) {
-        if (tries) console.log(`couldn't tell ${id}'s host its permissions: ${e instanceof Error ? e.message : e}`);
-      }
-    }
+    await Effect.runPromise(
+      Effect.tryPromise(() => this.permissionsChanged(id, permissions)).pipe(
+        Effect.retry({ times: 1 }),
+        Effect.catch((e) =>
+          Effect.log(`couldn't tell ${id}'s host its permissions: ${e.cause instanceof Error ? e.cause.message : e.cause}`)
+        )
+      )
+    );
   }
 }
 

@@ -10,6 +10,7 @@
 // Worker, which has no files of its own, reads the app's (control/index.ts:
 // remoteAssets) and names them at the app's origin.
 
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { HttpServerResponse } from "effect/http";
 import { call, ctx, fromWeb } from "../http.ts";
@@ -44,7 +45,14 @@ export async function loadAssets(platform: Platform, url: URL): Promise<void> {
 export async function remoteAssets(app: string, fetcher: typeof fetch = fetch): Promise<void> {
   if (Date.now() - remoteAt < 60_000) return;
   remoteAt = Date.now();
-  const r = await fetcher(`${app.replace(/\/+$/, "")}/api/release`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3000) }).catch(() => null);
+  const r = await Effect.runPromise(
+    Effect.tryPromise((signal) =>
+      fetcher(`${app.replace(/\/+$/, "")}/api/release`, { headers: { Accept: "application/json" }, signal })
+    ).pipe(
+      Effect.timeout(Duration.seconds(3)),
+      Effect.orElseSucceed(() => null)
+    )
+  );
   const m = r?.ok ? ((await r.json().catch(() => null)) as { assets?: AssetManifest } | null)?.assets : null;
   if (m?.files) useAssets(m, app);
 }

@@ -4,6 +4,9 @@
 // use it, and so does a document's host, for its agent's tools on the person's documents (agents/tools.ts: list,
 // make and delete them).
 
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { OWNER, type Route } from "../server/directory/index.ts";
@@ -45,10 +48,46 @@ for (const [path, url] of Object.entries(import.meta.glob("../assets/landing/**/
   landingFile(path, Result.getOrThrow(Base64.decode(url.slice(url.indexOf(",") + 1))));
 }
 
+/** A setting from the Worker's vars, trimmed: "" when it isn't set. */
+const text = (name: string) =>
+  Config.String(name).pipe(
+    Config.map((v) => v.trim()),
+    Config.withDefault("")
+  );
+/** An origin from the vars, without a trailing slash: "" when it isn't set. */
+const origin = (name: string) => text(name).pipe(Config.map((v) => v.replace(/\/+$/, "")));
+
+/** The Worker's settings that are plain text (its vars and secrets), as the Platform takes them. */
+const SETTINGS = Config.all({
+  /** The bootstrap admins: a comma-separated list of logins. */
+  admins: text("ADMINS").pipe(
+    Config.map((v) =>
+      v
+        .split(",")
+        .map((l) => l.trim().toLowerCase())
+        .filter((l) => OWNER.test(l))
+    )
+  ),
+  devLogin: text("DEV_LOGIN"),
+  target: text("DEPLOY_TARGET"),
+  version: text("ERGA_VERSION"),
+  pagesHost: text("PAGES_HOST"),
+  githubApp: Config.all({ clientId: text("GITHUB_CLIENT_ID"), secret: text("GITHUB_CLIENT_SECRET") }),
+  googleApp: Config.all({ clientId: text("GOOGLE_CLIENT_ID"), secret: text("GOOGLE_CLIENT_SECRET") }),
+  githubOrigin: origin("ERGA_GITHUB_ORIGIN"),
+  googleOrigin: origin("ERGA_GOOGLE_ORIGIN"),
+  relay: origin("SIGN_IN_RELAY"),
+  controlUrl: origin("CONTROL_URL"),
+  /** How often the served homepage looks for a newer deploy (ms); not a number: 0, every request. */
+  homeRecheckMs: text("ERGA_HOME_RECHECK_MS").pipe(Config.map((v) => (v ? Number(v) || 0 : 5000))),
+});
+
+/** The Worker's settings, read from its bindings. */
+const settingsOf = (env: Env) => Effect.runSync(SETTINGS.parse(ConfigProvider.fromUnknown(env)));
+
 /** Whose the homepage is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
-const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
-  const admins = (env.ADMINS ?? "").split(",").map((l) => l.trim().toLowerCase()).filter((l) => OWNER.test(l));
-  const dev = env.DEV_LOGIN?.trim().toLowerCase();
+const landingOf = ({ admins, devLogin }: { admins: string[]; devLogin: string }): NonNullable<Platform["landing"]> => {
+  const dev = devLogin.toLowerCase();
   const owner = dev && OWNER.test(dev) ? dev : admins[0] ?? null;
   return { files: LANDING, owner, editors: admins.filter((l) => l != owner) };
 };
@@ -104,9 +143,10 @@ const edgeCache = (): Platform["edge"]["cache"] => {
 export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
   const directory = directoryOf(env);
   const host = (doc: Route) => documentOf(env, doc.id);
-  const target = env.DEPLOY_TARGET?.trim() ?? "";
+  const settings = settingsOf(env);
+  const target = settings.target;
   // Local development only (the tests): stand-ins for GitHub and for the other target's server.
-  const standIn = (value: string | undefined) => (env.DEV_LOGIN && value?.trim() ? value.trim().replace(/\/+$/, "") : null);
+  const standIn = (value: string) => (env.DEV_LOGIN && value ? value : null);
   // The server's own storage: its object.
   const own = () => env.OWN.getByName("own");
   // The control Worker, over its binding (erga.dev, staging.erga.dev): the repository and the deploys are there. In local
@@ -116,27 +156,27 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     directory,
     sessionOf: (request) => sessionOf(p, request),
     templates: TEMPLATES,
-    landing: landingOf(env),
+    landing: landingOf(settings),
     assets: (request) => env.ASSETS.fetch(request),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
     pagesDomain: (url) => (local(url) ? "localhost" : pagesDomainOf(env)),
-    pagesShared: (url) => (local(url) ? null : env.PAGES_HOST?.trim() || null),
+    pagesShared: (url) => (local(url) ? null : settings.pagesHost || null),
     secret: env.SESSION_SECRET,
     adminsOnly: isAdminsOnly(env.DEPLOY_TARGET),
     tokens: tokensOf(env),
     deploy: {
       target: isTargetName(target) ? target : null,
-      version: env.ERGA_VERSION || null,
+      version: settings.version || null,
       targets: TARGETS,
     },
     signIn: {
-      app: { clientId: env.GITHUB_CLIENT_ID?.trim() ?? "", secret: env.GITHUB_CLIENT_SECRET?.trim() ?? "" },
-      github: standIn(env.ERGA_GITHUB_ORIGIN) ?? "https://github.com",
-      googleApp: { clientId: env.GOOGLE_CLIENT_ID?.trim() ?? "", secret: env.GOOGLE_CLIENT_SECRET?.trim() ?? "" },
-      google: standIn(env.ERGA_GOOGLE_ORIGIN),
-      relay: env.SIGN_IN_RELAY?.trim().replace(/\/+$/, "") || null,
-      devLogin: env.DEV_LOGIN?.trim() || null,
+      app: settings.githubApp,
+      github: standIn(settings.githubOrigin) ?? "https://github.com",
+      googleApp: settings.googleApp,
+      google: standIn(settings.googleOrigin),
+      relay: settings.relay || null,
+      devLogin: settings.devLogin || null,
       encryptionKey: factoryKey(env),
     },
     own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
@@ -144,12 +184,12 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     home: env.HOME.getByName("home"),
     adminAgent: env.ADMIN_AGENT.getByName("admin"),
     deploys: control ?? env.PIPELINE?.getByName("deploys") ?? noDeploys,
-    ...(env.CONTROL_URL?.trim() ? { control: { url: env.CONTROL_URL.trim().replace(/\/+$/, "") } } : {}),
+    ...(settings.controlUrl ? { control: { url: settings.controlUrl } } : {}),
     agentSettings: () => agentSettingsFrom(env, env.DB ? directoryOf(env).credentials : null),
     edge: {
       cache: edgeCache(),
       background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },
-      homeRecheckMs: env.ERGA_HOME_RECHECK_MS ? Number(env.ERGA_HOME_RECHECK_MS) || 0 : 5000,
+      homeRecheckMs: settings.homeRecheckMs,
     },
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),

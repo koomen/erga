@@ -38,7 +38,7 @@ import { DiskLink } from "../../document/disk";
 import type { Env } from "../env";
 import { blobsOf } from "../blobs";
 import { safeAvatar } from "../../shared/avatars";
-import { sleep } from "../../shared/time";
+import * as Duration from "effect/Duration";
 
 /** The new-document template's page, which a new page starts from. */
 const TEMPLATE =
@@ -61,10 +61,7 @@ export class DocumentObject extends DurableObject<Env> {
       run(this.document.diskConnected()).catch(() => {});
     },
     // Edits already on their way (another socket, a busy machine) land first: a tenth of a second is nothing to wait when stopping.
-    flush: async () => {
-      await sleep(100);
-      await run(this.document.flush());
-    },
+    flush: () => run(Effect.sleep(Duration.millis(100)).pipe(Effect.andThen(this.document.flush()))),
   });
   private document = new Document(this.deps());
   /** The tabs' sockets, joined to the document whenever it's open. */
