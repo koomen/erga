@@ -12,6 +12,7 @@
 //   PUT  /api/files/<path>   editors: one file, its bytes the body (any kind, any size up to the limits: a text file is
 //                            text, anything else a blob in R2), replacing one at that path (document.ts, upload)
 
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
@@ -237,22 +238,30 @@ export function makeHost(opts: HostOptions) {
     const mine = own(user).length;
     if (!mine) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
     const id = crypto.randomUUID();
-    return new Promise((resolve) => {
-      const answers: ViewResult[] = [];
-      const best = () => [...answers].sort((a, b) => Number(!!a.declined) - Number(!!b.declined) || (b.rank ?? 0) - (a.rank ?? 0))[0];
-      const done = (r: ViewResult) => { clearTimeout(timer); views.delete(id); const { declined: _d, rank: _r, ...rest } = r; resolve(rest); };
-      const timer = setTimeout(() => {
-        views.delete(id);
-        if (answers.length) return done(best());
-        resolve({ width: 0, height: 0, errors: [], error: `The editor didn't send ${req.live ? "an answer" : req.evaluate != null ? "the result" : "a picture"} back in time.` });
-      }, viewWait(req) + 2_000);
+    const answers: ViewResult[] = [];
+    const best = () => [...answers].sort((a, b) => Number(!!a.declined) - Number(!!b.declined) || (b.rank ?? 0) - (a.rank ?? 0))[0];
+    const late: ViewResult = {
+      width: 0,
+      height: 0,
+      errors: [],
+      error: `The editor didn't send ${req.live ? "an answer" : req.evaluate != null ? "the result" : "a picture"} back in time.`,
+    };
+    const waited = Effect.gen(function* () {
+      const answered = yield* Deferred.make<ViewResult>();
       views.set(id, (r) => {
-        if (!req.live) return done(r);
+        if (!req.live) return void Deferred.doneUnsafe(answered, Effect.succeed(r));
         answers.push(r);
-        if ((!r.declined && r.rank == 2) || answers.length >= mine) done(best());
+        if ((!r.declined && r.rank == 2) || answers.length >= mine) Deferred.doneUnsafe(answered, Effect.succeed(best()));
       });
       sendTo(user, { type: "view", id, req });
+      const r = yield* Deferred.await(answered).pipe(
+        Effect.timeoutOrElse({ duration: viewWait(req) + 2_000, orElse: () => Effect.succeed(answers.length ? best() : late) }),
+        Effect.ensuring(Effect.sync(() => views.delete(id)))
+      );
+      const { declined: _d, rank: _r, ...rest } = r;
+      return rest;
     });
+    return Effect.runPromise(waited);
   };
 
   /** The document's pages with their titles, and its address as the person sees it (list_pages). */
