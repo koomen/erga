@@ -6,12 +6,18 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 const own = () => servers.of("source-first", { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging" } });
 await own();
-test("the Ops page shows the log and statuses in a second, with five connections held, no events and slow requests", { timeout: 60_000 }, async ({ tab }) => {
-  const server = await own(), { page } = tab;
-  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(await (await fetch(`${server.root}/tokens/new`, { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ label: "First render", scope: "admin" }) })).text())?.[1];
+test("the Ops page shows the log and statuses in a second, with five connections held, no events and slow requests", {
+  timeout: 60_000,
+}, async ({ tab }) => {
+  const server = await own(),
+    { page } = tab;
+  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(
+    (await postForm(server.root, "/tokens/new", { label: "First render", scope: "admin" })).page
+  )?.[1];
   expect(token).toBeTruthy();
   const repo = join(server.scratch, `source-first-${Date.now()}`);
   mkdirSync(repo);

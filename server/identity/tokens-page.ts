@@ -10,6 +10,7 @@ import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
 import { mintTestToken } from "./sign-in.ts";
+import { type Note, noteOf, readOnce, seeOther } from "./flash.ts";
 import { call, ctx, Field, form, html, NO_STORE, redirect, text, type Route } from "../http.ts";
 
 /** A token's expiry as given: an ISO 8601 time, a date (the end of that day, UTC), milliseconds since the epoch, or nothing (never). */
@@ -43,7 +44,20 @@ export const tokensRoutes: Route = Effect.gen(function* () {
   const f = post ? yield* form(TokensForm).pipe(Effect.orDie) : Schema.decodeUnknownSync(TokensForm)({});
   const who = { login: session.login, name: session.name };
   const error = (message: string) => `<p class="notice error">${esc(message)}</p>`;
-  const show = (o: Parameters<typeof tokensPage>[3]) => call(() => tokensPage(platform, session, url, o));
+  // A POST answers 303 to a page, never with one (flash.ts): Back and Reload don't send the form again. Its note
+  // is for this person only.
+  const back = (location: string, note: Note) => seeOther(platform, request, location, { ...note, for: session.login });
+  const formPage = (() => {
+    const from = URL.canParse(request.headers.get("referer") ?? "") ? new URL(request.headers.get("referer")!) : null;
+    return from?.origin == url.origin && /^\/(tokens|settings)\/?$/.test(from.pathname) ? from.pathname + from.search : "/tokens";
+  })();
+  const got = post ? null : yield* call(() => noteOf(platform, request));
+  const note = got?.for == session.login ? got : {};
+  const show = (o: Parameters<typeof tokensPage>[3]) =>
+    Effect.map(
+      call(() => tokensPage(platform, session, url, o)),
+      (r) => readOnce(r, request)
+    );
   /** A token call that may refuse the scope (ScopeError): its result, or the refusal. */
   const scoped = <A>(f: () => Promise<A>) =>
     Effect.tryPromise({ try: f, catch: (e) => e }).pipe(
@@ -58,37 +72,47 @@ export const tokensRoutes: Route = Effect.gen(function* () {
   if (path == "/tokens/approve") {
     const code = normalCode(post ? f.code : (url.searchParams.get("code") ?? ""));
     const waiting = yield* call(() => platform.tokens.pending(code));
+    if (post) {
+      if (!waiting) return yield* back(`/tokens/approve?code=${encodeURIComponent(code)}`, {});
+      if (f.answer == "deny") {
+        yield* call(() => platform.tokens.deny(code));
+        return yield* back("/tokens", { denied: waiting.label });
+      }
+      const r = yield* scoped(() => platform.tokens.approve(code, who));
+      if ("refused" in r) return yield* back(`/tokens/approve?code=${encodeURIComponent(code)}`, { refused: r.refused });
+      return yield* back("/tokens", r.value ? { approved: r.value.label } : { error: "That request has expired." });
+    }
     if (!waiting)
       return yield* show({
         notice: error(`That request (${code}) has expired, or was already approved or denied. Ask the agent to start again.`),
       });
-    if (post && f.answer == "deny") {
-      yield* call(() => platform.tokens.deny(code));
-      return yield* show({ notice: `<p class="notice">Denied: <b>${esc(waiting.label)}</b> gets no token.</p>` });
-    }
-    if (!post) return yield* show({ notice: yield* call(() => approvalCard(platform, session, code, waiting)) });
-    const r = yield* scoped(() => platform.tokens.approve(code, who));
-    if ("refused" in r)
-      return yield* show({ notice: error(`${r.refused} The request is still waiting: deny it, or ask the agent for another scope.`) });
-    return yield* show({
-      notice: r.value
-        ? `<p class="notice">Approved: <b>${esc(r.value.label)}</b> has its token now. Go back to it. You can revoke it below at any time.</p>`
-        : error("That request has expired."),
-    });
+    const refused = note.refused ? error(`${note.refused} The request is still waiting: deny it, or ask the agent for another scope.`) : "";
+    return yield* show({ notice: refused + (yield* call(() => approvalCard(platform, session, code, waiting))) });
   }
   if (path == "/tokens/new" && post) {
     const scope = (f.scope || "documents") as Scope;
     const expires = expiryOf(f.expires);
-    if (expires == "bad") return yield* show({ notice: error("That expiry isn't a date.") });
+    if (expires == "bad") return yield* back(formPage, { error: "That expiry isn't a date." });
     const r = yield* scoped(() => platform.tokens.mint(who, f.label || "Agent", { scope, docId: f.doc || null, expires }));
-    return yield* show("refused" in r ? { notice: error(r.refused) } : { made: r.value });
+    return yield* back(formPage, "refused" in r ? { error: r.refused } : { made: r.value.info.id });
   }
   if (path == "/tokens/revoke" && post) {
     yield* call(() => platform.tokens.revoke(session.login, f.id));
-    return redirect("/tokens", 303);
+    return yield* back(formPage, {});
   }
   if (path != "/tokens" && path != "/settings") return page("Not found", "There's nothing here. <a href=\"/tokens\">Your tokens</a>.", 404);
-  return yield* show({});
+  if (post) return yield* back(formPage, {});
+  const made = note.made ? yield* call(() => platform.tokens.justMade(session.login, note.made)) : null;
+  return yield* show({
+    made: made ?? undefined,
+    notice: note.error
+      ? error(note.error)
+      : note.denied
+        ? `<p class="notice">Denied: <b>${esc(note.denied)}</b> gets no token.</p>`
+        : note.approved
+          ? `<p class="notice">Approved: <b>${esc(note.approved)}</b> has its token now. Go back to it. You can revoke it below at any time.</p>`
+          : undefined,
+  });
 });
 
 /** The form of each POST here (a field that's missing is ""). */

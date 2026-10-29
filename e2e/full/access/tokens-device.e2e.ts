@@ -2,6 +2,7 @@
 // document and the expiry; Deny tells the agent, and Approve in the browser hands it a token of that scope.
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { getter, mint, publish, signIn, tool } from "./access";
+import { postForm } from "../../helpers/form-post";
 
 await servers.main();
 
@@ -11,7 +12,7 @@ const poll = (root: string, code: string) => fetch(`${root}/api/auth/poll`, { me
 test("denied: the agent's poll hears it's gone", async () => {
   const root = (await servers.main()).root;
   const denied = await ask(root, { label: "Denied agent", scope: "admin" });
-  await getter(root)("/tokens/approve", { method: "POST", headers: { Cookie: await signIn(root, null), Origin: root }, body: new URLSearchParams({ code: denied.user_code, answer: "deny" }) });
+  await postForm(root, "/tokens/approve", { code: denied.user_code, answer: "deny" }, await signIn(root, null));
   expect((await poll(root, denied.code)).status).toBe(410);
 });
 

@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 const own = () => servers.of("source-live", { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging" } });
 await own();
@@ -12,7 +13,9 @@ test("a push, its deploy and a merge show on the open Ops page without a reload"
   const server = await own(), { page } = tab;
   const text = (sel: string) => page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
   const classOf = (sel: string) => page.evaluate((s) => document.querySelector(s)?.className ?? "", sel);
-  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(await (await fetch(`${server.root}/tokens/new`, { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ label: "Source live", scope: "admin" }) })).text())?.[1];
+  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(
+    (await postForm(server.root, "/tokens/new", { label: "Source live", scope: "admin" })).page
+  )?.[1];
   expect(token).toBeTruthy();
   const repo = join(server.scratch, `source-live-${Date.now()}`);
   mkdirSync(repo);

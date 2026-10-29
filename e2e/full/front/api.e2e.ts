@@ -3,6 +3,7 @@
 // and MCP with the person's own permissions, and revoking.
 import { expect, test } from "../../helpers/fixtures";
 import { freshLogin, person, servers, tools, type Person } from "./front";
+import { postForm } from "../../helpers/form-post";
 
 await servers.script();
 
@@ -38,7 +39,7 @@ test("an agent asks for a token; its person approves it on this site's own page;
   const page = await (await p.get(approve.pathname + approve.search)).text();
   for (const want of [asked.user_code, label, "Approve"]) expect(page).toContain(want);
   expect((await p.get("/tokens/approve", { method: "POST", body: new URLSearchParams({ code: asked.user_code }) })).status).toBe(403);
-  expect(await (await p.get("/tokens/approve", { method: "POST", body: new URLSearchParams({ code: asked.user_code }), headers: { Origin: p.origin } })).text()).toContain("Approved");
+  expect((await postForm(p.base, "/tokens/approve", { code: asked.user_code }, p.cookie)).page).toContain("Approved");
   const got = (await (await poll()).json()) as { token?: string; login?: string };
   expect(got.token?.startsWith("erga_")).toBe(true);
   expect(got.login).toBe(p.login);
@@ -152,7 +153,7 @@ test("a token made at /tokens is shown once, with how to use it; list_tokens lis
   const p = await person(await servers.script());
   const mine = await p.token("The agent's own"), t = tools(p.base, mine);
   await (await p.get(`/d/${await p.make()}/api/share`, { method: "POST", headers: { "Content-Type": "application/json", Origin: p.origin }, body: "{}" })).json();
-  const page = await (await p.get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Made by hand" }), headers: { Origin: p.origin } })).text();
+  const { page } = await postForm(p.base, "/tokens/new", { label: "Made by hand" }, p.cookie);
   const handMade = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(handMade).toBeTruthy();
   expect(page).toContain("claude mcp add --transport http erga");

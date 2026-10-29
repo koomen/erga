@@ -10,6 +10,7 @@
 
 import { until, type Server } from "../../helpers/fixtures";
 import type { HomeState } from "../versions/versions";
+import { postForm } from "../../helpers/form-post";
 
 export type { HomeState };
 
@@ -62,7 +63,7 @@ export const home = async (server: Server, id: string, user?: string) => (await 
  */
 export async function adminToken(server: Server) {
   return until<string | undefined>(async () => {
-    const page = await (await get(server, "/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Home test", scope: "admin" }), headers: { Origin: server.root } })).text();
+      const page = (await postForm(server.root, "/tokens/new", { label: "Home test", scope: "admin" })).page;
     return /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1];
   }, 10_000, "an admin token") as Promise<string>;
 }
