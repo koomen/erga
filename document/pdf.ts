@@ -32,23 +32,37 @@ export function pageRange(spec: string | undefined, total: number): { from: numb
   return { from, to: Math.min(to, total) };
 }
 
+/** A PDF as pdf-lib reads it. */
+const loaded = (bytes: Uint8Array) =>
+  Effect.tryPromise({
+    try: async () => (await pdfLib()).PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false }),
+    catch: unreadable,
+  });
+
 /** How many pages a PDF has. */
-export async function pageCount(bytes: Uint8Array): Promise<number> {
-  const { PDFDocument } = await pdfLib();
-  return (await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false })).getPageCount();
-}
+export const pageCount = (bytes: Uint8Array): Effect.Effect<number, PdfUnreadable> =>
+  Effect.map(loaded(bytes), (pdf) => pdf.getPageCount());
 
 /** Pages `from` to `to` (1-based) as a PDF of their own; the PDF itself when that's all of it. */
-export async function pdfPages(bytes: Uint8Array, from: number, to: number): Promise<{ bytes: Uint8Array; total: number }> {
-  const { PDFDocument } = await pdfLib();
-  const src = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
-  const total = src.getPageCount();
-  if (from == 1 && to >= total) return { bytes, total };
-  const out = await PDFDocument.create();
-  const pages = await out.copyPages(src, Array.from({ length: to - from + 1 }, (_, i) => from - 1 + i));
-  for (const p of pages) out.addPage(p);
-  return { bytes: await out.save(), total };
-}
+export const pdfPages = (bytes: Uint8Array, from: number, to: number): Effect.Effect<{ bytes: Uint8Array; total: number }, PdfUnreadable> =>
+  Effect.gen(function* () {
+    const src = yield* loaded(bytes);
+    const total = src.getPageCount();
+    if (from == 1 && to >= total) return { bytes, total };
+    const made = Effect.tryPromise({
+      try: async () => {
+        const out = await (await pdfLib()).PDFDocument.create();
+        for (const p of await out.copyPages(
+          src,
+          Array.from({ length: to - from + 1 }, (_, i) => from - 1 + i)
+        ))
+          out.addPage(p);
+        return out.save();
+      },
+      catch: unreadable,
+    });
+    return { bytes: yield* made, total };
+  });
 
 /** A PDF that PDF.js couldn't read. */
 export class PdfUnreadable extends Schema.TaggedError<PdfUnreadable>()("PdfUnreadable", { message: Schema.String }) {}

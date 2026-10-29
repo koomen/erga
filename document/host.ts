@@ -222,7 +222,12 @@ export function makeHost(opts: HostOptions) {
   /** The document's naming as a person; a rename (by them or their agent) reaches every tab. */
   const namingAs = (user: { id: string; name: string }): Naming | undefined => {
     const n = opts.naming?.(user);
-    return n && { get: n.get, set: async (patch) => { const name = await n.set(patch); renamed(name); return name; } };
+    return n && { get: n.get, set: (patch) => Effect.tap(n.set(patch), (name) => Effect.sync(() => renamed(name))) };
+  };
+  /** Their view of the name, or undefined when there's none to read. */
+  const nameFor = (user: { id: string; name: string }) => {
+    const n = namingAs(user);
+    return n ? Effect.orElseSucceed(n.get(), () => undefined) : Effect.succeed(undefined);
   };
   const nameError = (e: unknown) => new NameRefused({ ok: false, error: e instanceof Error ? e.message : String(e) });
 
@@ -266,7 +271,7 @@ export function makeHost(opts: HostOptions) {
 
   /** The document's pages with their titles, and its address as the person sees it (list_pages). */
   const pagesFor = (user: { id: string; name: string }) => async (): Promise<PageTree> => {
-    const name = await namingAs(user)?.get().catch(() => undefined);
+    const name = await Effect.runPromise(nameFor(user));
     return { address: name?.address ?? "/<owner>/<slug>", entries: entries() };
   };
   // open_page: the person's open tabs on this document go to another of its
@@ -277,7 +282,7 @@ export function makeHost(opts: HostOptions) {
     const asked = String(raw ?? "").trim().replace(/^\.?\/+/, "").replace(/(\?edit|#edit)$/, "");
     const file = isPage(asked) && all.has(asked) ? asked : resolvePage((p) => all.has(p), asked, doc.path)?.file;
     if (!file) throw new TreeError(`There's no page "${raw}" in this document. list_pages lists them.`, 404);
-    const name = await namingAs(user)?.get().catch(() => undefined);
+    const name = await Effect.runPromise(nameFor(user));
     const rest = pageAddress(file);
     const at = `${name?.address ?? "/<owner>/<slug>"}${rest ? `/${rest}` : ""}`;
     const n = own(user.id).length;
@@ -393,7 +398,7 @@ export function makeHost(opts: HostOptions) {
 
   /** The document's details as a person sees them (GET /api/doc, and a tab's hello). */
   const infoFor = async (user: { id: string; name: string }): Promise<DocInfo> => {
-    const docName = await (namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
+    const docName = await Effect.runPromise(nameFor(user));
     return { name: doc.name, path: doc.path, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
   };
   /** The person's agent: on or off, its model, its conversation (GET /api/agent, and a tab's socket once its session is up). */
@@ -406,11 +411,11 @@ export function makeHost(opts: HostOptions) {
     .handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user))))
     .handle("name", () => Person.use((user) => {
       const n = namingAs(user);
-      return n ? Effect.tryPromise({ try: () => n.get(), catch: nameError }) : Effect.fail(nameError("This document has no name to read."));
+      return n ? Effect.mapError(n.get(), nameError) : Effect.fail(nameError("This document has no name to read."));
     }))
     .handle("rename", ({ payload }) => Person.use((user) => {
       const n = namingAs(user);
-      return n ? Effect.tryPromise({ try: () => n.set(payload), catch: nameError }) : Effect.fail(nameError("This document can't be renamed."));
+      return n ? Effect.mapError(n.set(payload), nameError) : Effect.fail(nameError("This document can't be renamed."));
     })));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
@@ -452,7 +457,7 @@ export function makeHost(opts: HostOptions) {
       const user = yield* Person;
       const s = yield* extSession;
       const base = opts.baseUrl(yield* HttpServerRequest.HttpServerRequest);
-      const name = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
+      const name = yield* nameFor(user);
       return agents.guide({ docName: name?.title ?? doc.path, owner: user.name, base, tools: s.tools() });
     }))
     .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))

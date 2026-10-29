@@ -21,6 +21,7 @@ import {
 } from "../../shared/live-page";
 import { pageAddress, type TreeEntry, type TreeOp } from "../../document/pages";
 import { readableSize } from "../../shared/bytes";
+import type { DocName } from "../../document/api";
 import type { Naming } from "../../document/names";
 import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../../document/versions";
 import { WorkspaceError, globToRegExp, modelPath, type Workspace } from "./workspace";
@@ -104,11 +105,13 @@ export function makeTools(
       };
     }
     if (isPdf(path)) {
-      let total: number;
-      try { total = await pageCount(bytes); } catch (e) { throw new Error(`${path} isn't a PDF that can be read (${(e as Error).message}). Its size: ${readableSize(bytes.length)}.`); }
+      const counted = await Effect.runPromise(Effect.result(pageCount(bytes)));
+      if (Result.isFailure(counted))
+        throw new Error(`${path} isn't a PDF that can be read (${counted.failure.message}). Its size: ${readableSize(bytes.length)}.`);
+      const total = counted.success;
       const range = pageRange(pages, total);
       if (typeof range == "string") throw new Error(range);
-      const part = await pdfPages(bytes, range.from, range.to);
+      const part = await Effect.runPromise(pdfPages(bytes, range.from, range.to));
       if (part.bytes.length > PDF_READ_MAX) throw new Error(`Pages ${range.from}-${range.to} of ${path} are ${readableSize(part.bytes.length)}: too big to see at once. Read fewer pages (pages: "${range.from}-${Math.max(range.from, range.from + Math.floor((range.to - range.from) / 2))}").`);
       const shown = range.from == 1 && range.to == total ? `${path}: ${total} page${total == 1 ? "" : "s"} (PDF, ${readableSize(bytes.length)}), all of them below.` : `${path}: pages ${range.from}-${range.to} of ${total} (PDF, ${readableSize(bytes.length)}) below.${range.to < total ? ` Read pages "${range.to + 1}-${Math.min(total, range.to + PAGES_PER_READ)}" for more.` : ""}`;
       // As an image's block with the PDF's type: the model's request makes it a document (agents/models.ts, patchPayload).
@@ -735,7 +738,8 @@ function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Prom
 
 /** get_title and set_title: the document's title and its address, kept in the directory, not in a file. */
 function namingTools(naming: Naming): AgentTool[] {
-  const describe = (n: Awaited<ReturnType<Naming["get"]>>) => [
+  const describe = (n: DocName) =>
+    [
     `Title: ${n.title}${n.titleSet ? " (set by someone)" : " (follows the page's first heading)"}`,
     `Address: ${n.address} (slug "${n.slug}"${n.slugSet ? ", set by someone" : ", follows the title"})`,
     `Always reachable at /d/${n.id}.`,
@@ -747,7 +751,7 @@ function namingTools(naming: Naming): AgentTool[] {
       label: "Read the title",
       description: "Read the document's title (shown in the document list and the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title follows the page's first heading and the slug follows the title.",
       parameters: Schema.Struct({}),
-      execute: async () => text(describe(await naming.get())),
+      execute: async () => text(describe(await Effect.runPromise(naming.get()))),
     },
     {
       name: "set_title",
@@ -763,7 +767,7 @@ function namingTools(naming: Naming): AgentTool[] {
       }),
       execute: async (_id, p: { title?: string; slug?: string }) => {
         if (p.title === undefined && p.slug === undefined) throw new Error("Give a title, a slug, or both.");
-        return text(`Renamed.\n${describe(await naming.set(p))}`);
+        return text(`Renamed.\n${describe(await Effect.runPromise(naming.set(p)))}`);
       },
     },
   ] as AgentTool[];
