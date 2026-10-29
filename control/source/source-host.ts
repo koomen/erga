@@ -54,13 +54,13 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
       db: { exec: <T>(q: string, ...params: (string | number | null)[]) => sql.exec(q, ...params).toArray() as T[] },
       artifacts: async () => {
         const r = await artifactsRemote(env, "write", this.origin);
-        if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
+        if (!r) throw new SourceError({ message: "Erga's repository isn't set up on this server (no Artifacts binding).", status: 503 });
         return r;
       },
       // Reads use a read token: they can't write, whatever they ask.
       reader: async () => {
         const r = await artifactsRemote(env, "read", this.origin);
-        if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
+        if (!r) throw new SourceError({ message: "Erga's repository isn't set up on this server (no Artifacts binding).", status: 503 });
         return r;
       },
       // GitHub's tokens: minted here with the App's key (erga.dev), or at upstream over the fork's secret (an install).

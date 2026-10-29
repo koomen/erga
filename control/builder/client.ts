@@ -39,8 +39,12 @@ export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: 
           r = null;
         } else break;
       }
-      if (!r || !r.ok || !r.body) throw new DeployError(`The builder didn't take the build (it answered ${r?.status ?? "nothing"}${r ? `: ${(await r.text().catch(() => "")).slice(0, 300)}` : ""}).`);
-      let bundle: string | null = null, error: string | null = null;
+      if (!r || !r.ok || !r.body)
+        throw new DeployError({
+          message: `The builder didn't take the build (it answered ${r?.status ?? "nothing"}${r ? `: ${(await r.text().catch(() => "")).slice(0, 300)}` : ""}).`,
+        });
+      let bundle: string | null = null,
+        error: string | null = null;
       for await (const text of ndjsonLines(r.body as unknown as AsyncIterable<Uint8Array>, signal)) {
         if (!text.trim()) continue;
         let m: { log?: string; bundle?: string; error?: string };
@@ -50,8 +54,11 @@ export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: 
         if (m.error != null) error = m.error;
       }
       signal?.throwIfAborted();
-      if (error) throw new DeployError(`The build failed: ${error}`);
-      if (!bundle) throw new DeployError("The build stopped without a release (the builder's container may have restarted). Deploy again.");
+      if (error) throw new DeployError({ message: `The build failed: ${error}` });
+      if (!bundle)
+        throw new DeployError({
+          message: "The build stopped without a release (the builder's container may have restarted). Deploy again.",
+        });
       return unpackRelease(bundle, commit.slice(0, 12));
       } finally {
         signal?.removeEventListener("abort", stop);

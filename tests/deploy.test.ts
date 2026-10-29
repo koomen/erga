@@ -268,6 +268,6 @@ describe("around it", () => {
   });
 
   test("DeployError carries Cloudflare's status", () => {
-    expect(new DeployError("x", 403).status).toBe(403);
+    expect(new DeployError({ message: "x", status: 403 }).status).toBe(403);
   });
 });

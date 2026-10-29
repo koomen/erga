@@ -337,16 +337,17 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   const host = targetHost(target);
   const pagesHost = target.pages.kind == "shared" ? targetSharedPagesHost(target) : null;
   const wrong = guardTarget(target);
-  if (wrong) throw new DeployError(wrong);
+  if (wrong) throw new DeployError({ message: wrong });
   const steps = stepsFor(target).map((s) => s.id);
   const start = opts.from ? steps.indexOf(opts.from) : 0;
-  if (start < 0) throw new DeployError(`This deploy has no step "${opts.from}".`);
+  if (start < 0) throw new DeployError({ message: `This deploy has no step "${opts.from}".` });
   const needRelease = () => {
-    if (!release) throw new DeployError("This step needs the build, which is gone (the server restarted part way): deploy again.");
+    if (!release)
+      throw new DeployError({ message: "This step needs the build, which is gone (the server restarted part way): deploy again." });
     return release;
   };
   const end = opts.until ? steps.indexOf(opts.until) + 1 : steps.length;
-  if (end < 1) throw new DeployError(`This deploy has no step "${opts.until}".`);
+  if (end < 1) throw new DeployError({ message: `This deploy has no step "${opts.until}".` });
   if (release) carry.version = release.version;
 
   /** The Worker's upload: its modules, and its metadata. */
@@ -371,16 +372,30 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       if (target.subdomain) {
         let sub = (await cf.call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true }).catch(() => null))?.subdomain ?? null;
         if (!sub) {
-          if (!target.createSubdomain) throw new DeployError("Your account has no workers.dev subdomain yet. Go back, choose one, and deploy again.");
-          sub = (await cf.call<{ subdomain: string }>("PUT", `${acc}/workers/subdomain`, `make your workers.dev subdomain (${target.subdomain})`, { subdomain: target.subdomain }))?.subdomain ?? target.subdomain;
-        } else if (sub != target.subdomain) throw new DeployError(`Your workers.dev subdomain is ${sub}, not ${target.subdomain}: reload the page and deploy again.`);
+          if (!target.createSubdomain)
+            throw new DeployError({ message: "Your account has no workers.dev subdomain yet. Go back, choose one, and deploy again." });
+          sub =
+            (
+              await cf.call<{ subdomain: string }>(
+                "PUT",
+                `${acc}/workers/subdomain`,
+                `make your workers.dev subdomain (${target.subdomain})`,
+                { subdomain: target.subdomain }
+              )
+            )?.subdomain ?? target.subdomain;
+        } else if (sub != target.subdomain)
+          throw new DeployError({
+            message: `Your workers.dev subdomain is ${sub}, not ${target.subdomain}: reload the page and deploy again.`,
+          });
       }
       const scripts = await listScripts(cf, acc, target);
       const found = scripts.find((s) => s.id == target.workerName);
       // Ours: tagged by an earlier run (or, failing that, Erga's own Durable Object among its exports).
       const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocumentObject");
       if (found && !ours(found)) {
-        throw new DeployError(`Your account already has a Worker called ${target.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`);
+        throw new DeployError({
+          message: `Your account already has a Worker called ${target.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`,
+        });
       }
       carry.existing = !!found;
       return `${account?.name ?? target.accountId}${found ? `; ${target.workerName} is already there and will be replaced${target.keepSecrets ? "" : " (everyone signs in again)"}` : ""}`;
@@ -414,9 +429,11 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         const names = new Set(copies.map((c) => c.name));
         while (names.has(copyName(target.databaseName, at))) at++;
         const name = copyName(target.databaseName, at);
-        if (target.guard && name == target.guard.database) throw new DeployError(`A copy can't be called ${name}: that's production's database.`);
+        if (target.guard && name == target.guard.database)
+          throw new DeployError({ message: `A copy can't be called ${name}: that's production's database.` });
         const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name });
-        if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next one deletes it.");
+        if (!made?.uuid)
+          throw new DeployError({ message: "Cloudflare made the database but didn't say its id. Deploy again: the next one deletes it." });
         carry.dbId = made.uuid;
         carry.copied = true;
         carry.ownDb = live?.uuid ?? null;
@@ -431,12 +448,16 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         const applied = tables.includes("d1_migrations") ? await d1(cf, acc, found, "SELECT name FROM d1_migrations", [], "read the database's migrations") : [];
         const first = release ? Object.keys(release.migrations).sort()[0] : "0001_erga.sql";
         const ours = !!applied?.some((r) => r.name == first) || tables.every((t) => t == "d1_migrations");
-        if (!ours) throw new DeployError(`Your account already has a D1 database called "${target.databaseName}" that isn't Erga's. So nothing of yours is lost, the deploy stops here: rename or delete that database, then deploy again.`);
+        if (!ours)
+          throw new DeployError({
+            message: `Your account already has a D1 database called "${target.databaseName}" that isn't Erga's. So nothing of yours is lost, the deploy stops here: rename or delete that database, then deploy again.`,
+          });
         carry.dbId = found;
         return `using Erga's database from before (${found})`;
       }
       const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name: target.databaseName });
-      if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next run will find it.");
+      if (!made?.uuid)
+        throw new DeployError({ message: "Cloudflare made the database but didn't say its id. Deploy again: the next run will find it." });
       carry.dbId = made.uuid;
       return `"${target.databaseName}" (${carry.dbId})`;
     },
@@ -446,8 +467,8 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       const snap = target.snapshot!;
       if (carry.copied === false) return "skipped: the target keeps its copy (the database step says why)";
       const source = await findDatabase(cf, acc, snap.databaseName);
-      if (!source) throw new DeployError(`There's no database called ${snap.databaseName} to copy.`);
-      if (source == carry.dbId) throw new DeployError("The snapshot's source and target are the same database: stopped.");
+      if (!source) throw new DeployError({ message: `There's no database called ${snap.databaseName} to copy.` });
+      if (source == carry.dbId) throw new DeployError({ message: "The snapshot's source and target are the same database: stopped." });
       const sql = await exportD1(cf, acc, source, snap.databaseName, site, wait);
       await importD1(cf, acc, carry.dbId!, target.databaseName, sql, site, wait);
       return `${snap.databaseName} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
@@ -486,7 +507,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     async worker() {
       const rel = needRelease();
       const assetsJwt = (carry as Carry & { assetsJwt?: string }).assetsJwt;
-      if (!assetsJwt) throw new DeployError("The editor's files weren't uploaded first: deploy again.");
+      if (!assetsJwt) throw new DeployError({ message: "The editor's files weren't uploaded first: deploy again." });
       await uploadWorker(rel, assetsJwt);
       delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
       return `${target.workerName}, release ${rel.version}`;
@@ -509,7 +530,10 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         }
         const there = await cf.call<{ hostname: string; service: string }[]>("GET", `${acc}/workers/domains?hostname=${encodeURIComponent(app.hostname)}`, `read ${app.hostname}'s custom domain`).catch(() => null);
         const mine = there?.find((d) => d.hostname == app.hostname);
-        if (mine && mine.service != target.workerName) throw new DeployError(`${app.hostname} is already the address of another Worker (${mine.service}). Remove it there, or pick another address.`);
+        if (mine && mine.service != target.workerName)
+          throw new DeployError({
+            message: `${app.hostname} is already the address of another Worker (${mine.service}). Remove it there, or pick another address.`,
+          });
         if (mine) return `https://${host} (already its address)`;
         await cf.call("PUT", `${acc}/workers/domains`, `put it on ${target.app.hostname} (a custom domain)`, { hostname: target.app.hostname, service: target.workerName, zone_id: zoneId });
       }
@@ -525,8 +549,12 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         if (!records.length) await cf.call("POST", `${zone}/dns_records`, `add the wildcard DNS record *.${name}`, { type: "AAAA", name: `*.${name}`, content: "100::", proxied: true, comment: "Erga: documents' pages" });
         const routes = (await cf.call<{ pattern: string; script?: string }[]>("GET", `${zone}/workers/routes`, `read ${target.pages.zoneName}'s Worker routes`)) ?? [];
         const route = routes.find((r) => r.pattern == pattern);
-        if (route && route.script != target.workerName) throw new DeployError(`${pattern} already sends requests to another Worker (${route.script ?? "none"}). Remove that route, or pick another domain for pages.`);
-        if (!route) await cf.call("POST", `${zone}/workers/routes`, `route ${pattern} to the Worker`, { pattern, script: target.workerName });
+        if (route && route.script != target.workerName)
+          throw new DeployError({
+            message: `${pattern} already sends requests to another Worker (${route.script ?? "none"}). Remove that route, or pick another domain for pages.`,
+          });
+        if (!route)
+          await cf.call("POST", `${zone}/workers/routes`, `route ${pattern} to the Worker`, { pattern, script: target.workerName });
         return `https://<document>.${name}`;
       }
       const rel = needRelease();
@@ -567,7 +595,10 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
           const r = await site(`https://${host}/logo.png`).catch(() => null);
           if (r?.ok) break;
         }
-        if (Date.now() > until) throw new DeployError(`The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`);
+        if (Date.now() > until)
+          throw new DeployError({
+            message: `The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`,
+          });
         await wait(Math.min(5000, 1000 + tries * 500));
       }
       return `https://${host}${target.checkVersion && want ? `, release ${want}` : ""}`;

@@ -45,6 +45,7 @@
 // id, commit, times, state, what started it) and its whole log, the last
 // HISTORY_KEEP of each target, in the same storage (control/deploys/history.ts).
 
+import * as Schema from "effect/Schema";
 import {
   ALL_STEPS,
   BEFORE_BUILD,
@@ -168,8 +169,10 @@ export interface Stored {
 interface Queue { head: string | null; pending: string | null; trigger?: string | null; attempt?: number | null; fresh?: boolean | null }
 
 /** Why a deploy was cancelled: a newer one for its target came. */
-export class Superseded extends Error {
-  constructor(readonly commit: string, readonly trigger: string) { super(`superseded by ${commit.slice(0, 12)}`); }
+export class Superseded extends Schema.TaggedError<Superseded>()("Superseded", { commit: Schema.String, trigger: Schema.String }) {
+  override get message() {
+    return `superseded by ${this.commit.slice(0, 12)}`;
+  }
 }
 
 const LOG_LINES = 200;
@@ -349,7 +352,7 @@ export class BranchDeploys {
       // The channel moved since the last look (or this is the first): the repository brings it in.
       if (last?.latest == file.latest && !last.error) return status;
       const r = await read.update();
-      if ("error" in r) throw new DeployError(r.error);
+      if ("error" in r) throw new DeployError({ message: r.error });
       status.update =
         r.result == "up-to-date"
           ? `${file.latest}: staging has it`
@@ -392,7 +395,7 @@ export class BranchDeploys {
    * branch deploys it. `trigger` says what moved it ("merge by ada"), for the history.
    */
   async hook(branch: string, commit: string, trigger?: string): Promise<void> {
-    if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new DeployError(`Not a commit: ${commit}`);
+    if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new DeployError({ message: `Not a commit: ${commit}` });
     for (const name of this.fleet.names.filter((n) => this.specOf(n).branch == branch)) {
       await this.enqueue(name, commit, `${branch} moved to ${commit.slice(0, 12)}${trigger ? ` (${trigger})` : ""}`, trigger ?? `${branch} moved`);
     }
@@ -502,7 +505,7 @@ export class BranchDeploys {
     // A newer deploy for this target: the running one stops before its next step.
     if (cur && !cur.abort.signal.aborted) {
       this.line(s, `${commit.slice(0, 12)} is newer: cancelling this deploy of ${cur.commit.slice(0, 12)}`);
-      cur.abort.abort(new Superseded(commit, trigger));
+      cur.abort.abort(new Superseded({ commit, trigger }));
     }
     await this.save(s);
     await this.deps.schedule(0);
@@ -640,7 +643,7 @@ export class BranchDeploys {
     const q = await this.queue(name);
     if (q.pending) {
       this.line(s, `interrupted by the server's restart, and ${q.pending.slice(0, 12)} came since: not carried on`);
-      await this.cancelled(s, new Superseded(q.pending, q.trigger ?? "a newer deploy"));
+      await this.cancelled(s, new Superseded({ commit: q.pending, trigger: q.trigger ?? "a newer deploy" }));
       return;
     }
     const order = ALL_STEPS.map((x) => x.id) as StepId[];
@@ -655,8 +658,16 @@ export class BranchDeploys {
       // Nothing went up: run it again from the top, by itself, unless it has had all its attempts.
       const attempt = run.attempt ?? 1;
       const again = attempt < ATTEMPTS;
-      this.line(s, `interrupted before the new version was uploaded (the server restarted): nothing changed. ${again ? `Trying again (attempt ${attempt + 1} of ${ATTEMPTS}).` : `That was attempt ${attempt} of ${ATTEMPTS}: Redeploy to try again.`}`);
-      await this.failed(s, new DeployError(`The deploy was interrupted before the new version went up (the server restarted). ${again ? "It runs again by itself." : `It was tried ${ATTEMPTS} times: Redeploy to try again.`}`));
+      this.line(
+        s,
+        `interrupted before the new version was uploaded (the server restarted): nothing changed. ${again ? `Trying again (attempt ${attempt + 1} of ${ATTEMPTS}).` : `That was attempt ${attempt} of ${ATTEMPTS}: Redeploy to try again.`}`
+      );
+      await this.failed(
+        s,
+        new DeployError({
+          message: `The deploy was interrupted before the new version went up (the server restarted). ${again ? "It runs again by itself." : `It was tried ${ATTEMPTS} times: Redeploy to try again.`}`,
+        })
+      );
       if (again) {
         const trigger = (await this.history.records(name)).find((r) => r.id == run.deployId)?.trigger ?? "deploy";
         await this.setQueue(name, { pending: run.commit, trigger: trigger.endsWith(", again after a restart") ? trigger : `${trigger}, again after a restart`, attempt: attempt + 1, fresh: run.fresh?.force || null });
@@ -818,7 +829,8 @@ export class BranchDeploys {
   private async cancelled(s: Stored, why: unknown): Promise<void> {
     // By what's waiting now: the newest of the deploys that came while it ran.
     const q = await this.queue(s.status.name);
-    const by = why instanceof Superseded ? (q.pending ? new Superseded(q.pending, q.trigger ?? why.trigger) : why) : null;
+    const by =
+      why instanceof Superseded ? (q.pending ? new Superseded({ commit: q.pending, trigger: q.trigger ?? why.trigger }) : why) : null;
     const run = s.run;
     const order = ALL_STEPS.map((x) => x.id) as StepId[];
     const uploaded = !!run?.cursor && order.indexOf(run.cursor) > order.indexOf("worker");
@@ -878,7 +890,7 @@ function step(s: Stored, id: StepStatus["id"], status: StepStatus["status"], det
  */
 export function targetFor(name: DeployName, env: DeployEnv, fresh?: Fresh): Target {
   if (name == "control") return controlTarget(env);
-  if (!(name in TARGETS)) throw new DeployError(`Not one of Erga's own targets: ${name}.`);
+  if (!(name in TARGETS)) throw new DeployError({ message: `Not one of Erga's own targets: ${name}.` });
   return targetOf(TARGETS[name as keyof typeof TARGETS], env, fresh);
 }
 

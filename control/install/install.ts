@@ -141,8 +141,17 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
 
   // The control Worker: must be Erga's if it's there; its settings; its address.
   o.report("control", "running");
-  const settings = await cf.call<{ tags?: string[] }>("GET", `${acc}/workers/scripts/${INSTALL_CONTROL_WORKER}/settings`, `read ${INSTALL_CONTROL_WORKER}'s settings`, undefined, { allow404: true });
-  if (settings && !settings.tags?.includes(WORKER_TAG)) throw new DeployError(`Your account already has a Worker called ${INSTALL_CONTROL_WORKER} that isn't Erga's. So it isn't overwritten, the install stops here: delete or rename that Worker, then try again.`);
+  const settings = await cf.call<{ tags?: string[] }>(
+    "GET",
+    `${acc}/workers/scripts/${INSTALL_CONTROL_WORKER}/settings`,
+    `read ${INSTALL_CONTROL_WORKER}'s settings`,
+    undefined,
+    { allow404: true }
+  );
+  if (settings && !settings.tags?.includes(WORKER_TAG))
+    throw new DeployError({
+      message: `Your account already has a Worker called ${INSTALL_CONTROL_WORKER} that isn't Erga's. So it isn't overwritten, the install stops here: delete or rename that Worker, then try again.`,
+    });
   const spec = installSpecOf(plan, o.fork.id);
   const vars = {
     ADMINS: plan.admin.toLowerCase(), CLOUDFLARE_ACCOUNT_ID: plan.accountId, APP_URL: `https://${appHost}`,
@@ -159,8 +168,16 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   } else {
     const there = await cf.call<{ hostname: string; service: string }[]>("GET", `${acc}/workers/domains?hostname=${encodeURIComponent(controlHost)}`, `read ${controlHost}'s custom domain`).catch(() => null);
     const mine = there?.find((d) => d.hostname == controlHost);
-    if (mine && mine.service != INSTALL_CONTROL_WORKER) throw new DeployError(`${controlHost} is already the address of another Worker (${mine.service}). Remove it there, or pick another address for the app.`);
-    if (!mine) await cf.call("PUT", `${acc}/workers/domains`, `put the control Worker on ${controlHost}`, { hostname: controlHost, service: INSTALL_CONTROL_WORKER, zone_id: plan.app.zoneId });
+    if (mine && mine.service != INSTALL_CONTROL_WORKER)
+      throw new DeployError({
+        message: `${controlHost} is already the address of another Worker (${mine.service}). Remove it there, or pick another address for the app.`,
+      });
+    if (!mine)
+      await cf.call("PUT", `${acc}/workers/domains`, `put the control Worker on ${controlHost}`, {
+        hostname: controlHost,
+        service: INSTALL_CONTROL_WORKER,
+        zone_id: plan.app.zoneId,
+      });
   }
   o.report("control", "done", `${INSTALL_CONTROL_WORKER}, release ${release.version}, at https://${controlHost}`);
 
@@ -172,8 +189,14 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   const until = Date.now() + (o.waitMs ?? 180_000);
   for (let tries = 0; ; tries++) {
     const h = await checkHealth(site, controlHost, release.version).catch(() => null);
-    if (h?.ok) { o.report("control-live", "done", `https://${controlHost}, release ${release.version} (${h.summary})`); break; }
-    if (Date.now() > until) throw new DeployError(`The control Worker is uploaded, but https://${controlHost} hasn't answered yet${h?.why ? ` (${h.why})` : ""}. Open it in a little while; if it still doesn't answer, try again.`);
+    if (h?.ok) {
+      o.report("control-live", "done", `https://${controlHost}, release ${release.version} (${h.summary})`);
+      break;
+    }
+    if (Date.now() > until)
+      throw new DeployError({
+        message: `The control Worker is uploaded, but https://${controlHost} hasn't answered yet${h?.why ? ` (${h.why})` : ""}. Open it in a little while; if it still doesn't answer, try again.`,
+      });
     await wait(Math.min(5000, 1000 + tries * 500));
   }
   return { ...made, control: `https://${controlHost}`, staging: `https://${stagingHostOf(plan)}` };

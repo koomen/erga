@@ -188,7 +188,7 @@ export class SourceRepo {
     const objects = await readPack(await fetchPack(remote, { wants: missing, haves, filter: "blob:none" }), (t) => t == "commit");
     for (const [sha, o] of objects) this.index(sha, parseCommit(o.data));
     const still = missing.filter((t) => !this.known(t));
-    if (still.length) throw new SourceError(`Artifacts didn't send commit ${still[0].slice(0, 7)}`, 502);
+    if (still.length) throw new SourceError({ message: `Artifacts didn't send commit ${still[0].slice(0, 7)}`, status: 502 });
   }
 
   /** The branches' last known heads (as the index last saw them). */
@@ -310,7 +310,10 @@ export class SourceRepo {
     const r = await receivePack(remote, [{ ref: REF(branch), old: old ?? ZERO, new: to }], pack ?? (await emptyPack()));
     const said = r.unpack != "ok" ? r.unpack : (r.refs.get(REF(branch)) ?? "no answer");
     if (said != "ok")
-      throw new SourceError(/stale|lock|old/i.test(said) ? `${branch} moved meanwhile: try again.` : `Artifacts refused it: ${said}`, 409);
+      throw new SourceError({
+        message: /stale|lock|old/i.test(said) ? `${branch} moved meanwhile: try again.` : `Artifacts refused it: ${said}`,
+        status: 409,
+      });
     await this.sync(remote, [to]);
     this.recordMove({ branch, old: old ?? ZERO, new: to, how, by: who.login, via: who.via ?? null, at: this.now() });
   }
@@ -372,21 +375,38 @@ export class SourceRepo {
    * only follows staging. Returns where main is now.
    */
   async merge(who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean }> {
-    if (commit != null && !isSha(commit)) throw new SourceError("Name the commit by its full id (40 hex digits).");
+    if (commit != null && !isSha(commit)) throw new SourceError({ message: "Name the commit by its full id (40 hex digits)." });
     return this.locked(async () => {
       const remote = await this.deps.artifacts();
       const { refs } = await lsRefs(remote);
       const staging = refs.get(REF("staging")), main = refs.get(REF("main"));
-      if (!staging) throw new SourceError("staging has no commits yet.", 409);
+      if (!staging) throw new SourceError({ message: "staging has no commits yet.", status: 409 });
       await this.sync(remote, [staging, ...(main ? [main] : [])]);
       const target = commit ?? staging;
-      if (!this.isAncestor(target, staging)) throw new SourceError(`${target.slice(0, 7)} isn't one of staging's commits.`, 409);
+      if (!this.isAncestor(target, staging))
+        throw new SourceError({ message: `${target.slice(0, 7)} isn't one of staging's commits.`, status: 409 });
       if (main && this.isAncestor(target, main)) return { commit: main, fastForward: false, upToDate: true };
-      if (main && !this.isAncestor(main, target)) throw new SourceError("main has commits staging doesn't: that shouldn't happen. Push main's commits to staging first.", 409);
+      if (main && !this.isAncestor(main, target))
+        throw new SourceError({
+          message: "main has commits staging doesn't: that shouldn't happen. Push main's commits to staging first.",
+          status: 409,
+        });
       const r = await receivePack(remote, [{ ref: REF("main"), old: main ?? ZERO, new: target }], await emptyPack());
-      const said = r.unpack != "ok" ? r.unpack : r.refs.get(REF("main")) ?? "no answer";
-      if (said != "ok") throw new SourceError(/stale|lock|old/i.test(said) ? "main moved while merging: try again." : `Artifacts refused it: ${said}`, 409);
-      this.recordMove({ branch: "main", old: main ?? ZERO, new: target, how: "merge", by: who.login, via: who.via ?? null, at: this.now() });
+      const said = r.unpack != "ok" ? r.unpack : (r.refs.get(REF("main")) ?? "no answer");
+      if (said != "ok")
+        throw new SourceError({
+          message: /stale|lock|old/i.test(said) ? "main moved while merging: try again." : `Artifacts refused it: ${said}`,
+          status: 409,
+        });
+      this.recordMove({
+        branch: "main",
+        old: main ?? ZERO,
+        new: target,
+        how: "merge",
+        by: who.login,
+        via: who.via ?? null,
+        at: this.now(),
+      });
       return { commit: target, fastForward: true, upToDate: false };
     });
   }
@@ -397,11 +417,11 @@ export class SourceRepo {
     const remote = await this.deps.artifacts();
     const objects = await readPack(await fetchPack(remote, { wants: [commit], deepen: 1 }));
     const c = objects.get(commit);
-    if (!c || c.type != "commit") throw new SourceError(`Artifacts didn't send commit ${commit.slice(0, 7)}`, 502);
+    if (!c || c.type != "commit") throw new SourceError({ message: `Artifacts didn't send commit ${commit.slice(0, 7)}`, status: 502 });
     const out: { path: string; mode: string; data: Uint8Array }[] = [];
     const walk = (tree: string, at: string) => {
       const t = objects.get(tree);
-      if (!t) throw new SourceError(`Artifacts didn't send tree ${tree.slice(0, 7)}`, 502);
+      if (!t) throw new SourceError({ message: `Artifacts didn't send tree ${tree.slice(0, 7)}`, status: 502 });
       for (const e of parseTree(t.data)) {
         const path = at ? `${at}/${e.name}` : e.name;
         if (isTreeMode(e.mode)) walk(e.sha, path);
@@ -424,7 +444,8 @@ export class SourceRepo {
     const { ref, commit, head } = await this.resolve(remote, q.ref);
     try {
       if (q.op == "log") {
-        if (!head) throw new SourceError("The log starts at a branch: name one (staging, main or a task's branch), not a commit.");
+        if (!head)
+          throw new SourceError({ message: "The log starts at a branch: name one (staging, main or a task's branch), not a commit." });
         await this.locked(() => this.sync(remote, [commit]));
         const skip = Math.max(0, Math.floor(Number(q.skip) || 0)), limit = Math.max(1, Math.min(LOG, Math.floor(Number(q.limit) || 20)));
         const rows = this.log(commit, skip + limit).slice(skip);
@@ -440,7 +461,7 @@ export class SourceRepo {
           : search(snap, q);
       return { ref, commit, text };
     } catch (e) {
-      throw e instanceof BrowseError ? new SourceError(e.message) : e;
+      throw e instanceof BrowseError ? new SourceError({ message: e.message }) : e;
     }
   }
 
@@ -474,11 +495,14 @@ export class SourceRepo {
       if (isSha(sha)) return { ref: sha.slice(0, 10), commit: sha, head: false };
       const known = this.deps.db.exec<{ sha: string }>("SELECT sha FROM commits WHERE sha LIKE ? LIMIT 2", `${sha}%`);
       if (known.length == 1) return { ref: sha, commit: known[0].sha, head: false };
-      if (known.length > 1) throw new SourceError(`More than one commit starts with ${sha}: give more of it.`);
+      if (known.length > 1) throw new SourceError({ message: `More than one commit starts with ${sha}: give more of it.` });
     }
     const rank = (b: string) => (b == "staging" ? 0 : b == "main" ? 1 : 2);
     const names = branches.map(([r]) => r.slice("refs/heads/".length)).sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
-    throw new SourceError(`There's no branch or known commit "${name}". The branches: ${names.slice(0, 30).join(", ")}${names.length > 30 ? `, and ${names.length - 30} more` : ""}.`, 404);
+    throw new SourceError({
+      message: `There's no branch or known commit "${name}". The branches: ${names.slice(0, 30).join(", ")}${names.length > 30 ? `, and ${names.length - 30} more` : ""}.`,
+      status: 404,
+    });
   }
 
   /** A commit's files: fetched once, then kept (the last 3 commits read). */
@@ -487,9 +511,18 @@ export class SourceRepo {
     if (s) { this.snapshots.delete(commit); this.snapshots.set(commit, s); return s; }
     s = (async () => {
       const objects = await readPack(await fetchPack(remote, { wants: [commit], deepen: 1 })).catch((e: unknown) => {
-        throw new SourceError(head ? `Artifacts didn't send ${commit.slice(0, 10)}: ${(e as Error).message}` : `Artifacts didn't send commit ${commit.slice(0, 10)} (it may send only a branch's head): name a branch instead.`, 502);
+        throw new SourceError({
+          message: head
+            ? `Artifacts didn't send ${commit.slice(0, 10)}: ${(e as Error).message}`
+            : `Artifacts didn't send commit ${commit.slice(0, 10)} (it may send only a branch's head): name a branch instead.`,
+          status: 502,
+        });
       });
-      try { return snapshotOf(commit, objects); } catch (e) { throw new SourceError(`Artifacts didn't send all of ${commit.slice(0, 10)}: ${(e as Error).message}`, 502); }
+      try {
+        return snapshotOf(commit, objects);
+      } catch (e) {
+        throw new SourceError({ message: `Artifacts didn't send all of ${commit.slice(0, 10)}: ${(e as Error).message}`, status: 502 });
+      }
     })();
     s.catch(() => this.snapshots.delete(commit));
     this.snapshots.set(commit, s);

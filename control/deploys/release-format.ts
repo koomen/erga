@@ -82,7 +82,7 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     const out: Record<string, Uint8Array> = {};
     await Promise.all(names.map(async (n) => {
       const bytes = await get(`${dir}/${n}`);
-      if (!bytes) throw new DeployError(`The release is missing ${dir}/${n}: build it again (bun deploy/release.ts).`);
+      if (!bytes) throw new DeployError({ message: `The release is missing ${dir}/${n}: build it again (bun deploy/release.ts).` });
       out[n] = bytes;
     }));
     return out;

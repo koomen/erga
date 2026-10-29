@@ -115,7 +115,10 @@ if (flag("--cleanup")) {
 /** `bunx wrangler deploy` in control/, on the filled-in config: the image (Docker), the Worker, its address. The image caches the checkout's dependencies (deps/, for the build only). */
 async function deployControl() {
   const databaseId = await findDatabase(cf, acc, PROD.database);
-  if (!databaseId) throw new DeployError(`The account has no D1 database called ${PROD.database} (production's: the control Worker binds it). Deploy production first: bun deploy/run.ts production.`);
+  if (!databaseId)
+    throw new DeployError({
+      message: `The account has no D1 database called ${PROD.database} (production's: the control Worker binds it). Deploy production first: bun deploy/run.ts production.`,
+    });
   writeFileSync(DEPLOY_CONFIG, JSON.stringify(controlWranglerConfig(databaseId), null, 2));
   const deps = join(CONTROL_DIR, "builder/deps");
   mkdirSync(deps, { recursive: true });
@@ -125,7 +128,7 @@ async function deployControl() {
   let p;
   try { p = Bun.spawnSync(["bunx", WRANGLER, "deploy", "--config", DEPLOY_CONFIG], { cwd: CONTROL_DIR, stdout: "inherit", stderr: "inherit", env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId, XDG_CONFIG_HOME: xdg, WRANGLER_SEND_METRICS: "false" } }); }
   finally { rmSync(deps, { recursive: true, force: true }); rmSync(xdg, { recursive: true, force: true }); rmSync(DEPLOY_CONFIG, { force: true }); }
-  if (p.exitCode != 0) throw new DeployError(`${CONTROL.worker} didn't deploy (see above). Is OrbStack (Docker) running?`);
+  if (p.exitCode != 0) throw new DeployError({ message: `${CONTROL.worker} didn't deploy (see above). Is OrbStack (Docker) running?` });
 }
 
 try {
@@ -134,8 +137,13 @@ try {
   const account = await cf.call<{ name: string }>("GET", acc, "read the account");
   for (const z of new Set([CONTROL.zone, PROD.pages.zone, STAGING.pages.zone])) await zoneIdOf(cf, accountId, z);
   let scripts = await scriptsNow();
-  if (!scripts.includes(PROD.worker)) throw new DeployError(`There's no Worker called ${PROD.worker} in this account: is it ${PROD.host}'s? Deploy production first (bun deploy/run.ts production), or check deploy/targets.json's account.`);
-  console.log(`   ${account?.name}: the zones are there; so is production's Worker${scripts.includes(STAGING.worker) ? `, and ${STAGING.worker}` : ""}${scripts.includes(CONTROL.worker) ? `, and ${CONTROL.worker}` : ""}.`);
+  if (!scripts.includes(PROD.worker))
+    throw new DeployError({
+      message: `There's no Worker called ${PROD.worker} in this account: is it ${PROD.host}'s? Deploy production first (bun deploy/run.ts production), or check deploy/targets.json's account.`,
+    });
+  console.log(
+    `   ${account?.name}: the zones are there; so is production's Worker${scripts.includes(STAGING.worker) ? `, and ${STAGING.worker}` : ""}${scripts.includes(CONTROL.worker) ? `, and ${CONTROL.worker}` : ""}.`
+  );
 
   if (!oauthOnly) {
     step(2);
@@ -189,7 +197,15 @@ try {
       const hook = fileSecret("GITHUB_WEBHOOK_SECRET", "");
       if (hook) secrets.GITHUB_WEBHOOK_SECRET = hook;
       const key = fileSecret("GITHUB_APP_PRIVATE_KEY", "");
-      if (key) secrets.GITHUB_APP_PRIVATE_KEY = key.includes("BEGIN PRIVATE KEY") ? `${key}\n` : (() => { throw new DeployError("GITHUB_APP_PRIVATE_KEY_FILE must hold a PKCS#8 key (-----BEGIN PRIVATE KEY-----): openssl pkcs8 -topk8 -nocrypt -in <GitHub's .pem> -out key.pem"); })();
+      if (key)
+        secrets.GITHUB_APP_PRIVATE_KEY = key.includes("BEGIN PRIVATE KEY")
+          ? `${key}\n`
+          : (() => {
+              throw new DeployError({
+                message:
+                  "GITHUB_APP_PRIVATE_KEY_FILE must hold a PKCS#8 key (-----BEGIN PRIVATE KEY-----): openssl pkcs8 -topk8 -nocrypt -in <GitHub's .pem> -out key.pem",
+              });
+            })();
       // One SNAPSHOT_TOKEN on the control Worker and every app Worker that's there: kept when all of them have one (a run
       // of this after the setup, for a new client secret or --control, rotates nothing), new otherwise.
       const apps = APP_WORKERS.filter((w) => scripts.includes(w));

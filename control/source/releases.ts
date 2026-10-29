@@ -89,28 +89,28 @@ export class Releases {
    * is newer than the last. Returns the tag.
    */
   async release(who: Actor, o: { version?: string; notes?: string; commit?: string } = {}): Promise<Released> {
-    if (o.commit != null && !isSha(o.commit)) throw new SourceError("Name the commit by its full id (40 hex digits).");
+    if (o.commit != null && !isSha(o.commit)) throw new SourceError({ message: "Name the commit by its full id (40 hex digits)." });
     return this.repo.locked(async () => {
       const remote = await this.repo.deps.artifacts();
       const [{ refs }, { refs: tagRefs }] = await Promise.all([lsRefs(remote), lsRefs(remote, TAGS)]);
       const main = refs.get(REF("main"));
-      if (!main) throw new SourceError("main has no commits yet: nothing to release.", 409);
+      if (!main) throw new SourceError({ message: "main has no commits yet: nothing to release.", status: 409 });
       await this.repo.sync(remote, [main]);
       await this.syncTags(remote, tagRefs);
       const tags = this.tags();
       const version = (o.version ?? "").trim() || nextVersion(tags[0]?.name ?? null);
       const wrong = this.checkVersion(version, tags[0]?.name ?? null, tagRefs);
-      if (wrong) throw new SourceError(wrong, 409);
+      if (wrong) throw new SourceError({ message: wrong, status: 409 });
       const commit = o.commit ?? main;
       if (!this.repo.known(commit) || !this.repo.isAncestor(commit, main))
-        throw new SourceError(`${commit.slice(0, 7)} isn't one of main's commits: a release is cut from main.`, 409);
+        throw new SourceError({ message: `${commit.slice(0, 7)} isn't one of main's commits: a release is cut from main.`, status: 409 });
       const message = (o.notes ?? "").trim() || `Release ${version}`;
       const time = Math.floor(this.repo.now() / 1000);
       const object: GitObject = { type: "tag", data: tagBytes({ object: commit, type: "commit", tag: version, tagger: { name: who.name || who.login, email: `${who.login}@users.noreply.github.com`, time, tz: "+0000" }, message }) };
       const sha = await hashObject(object);
       const r = await receivePack(remote, [{ ref: `${TAGS}${version}`, old: ZERO, new: sha }], await writePack([object]));
       const said = r.unpack != "ok" ? r.unpack : r.refs.get(`${TAGS}${version}`) ?? "no answer";
-      if (said != "ok") throw new SourceError(`Artifacts refused the tag: ${said}`, 409);
+      if (said != "ok") throw new SourceError({ message: `Artifacts refused the tag: ${said}`, status: 409 });
       const released: Released = { tag: version, commit, sha, by: who.login, via: who.via ?? null, at: this.repo.now(), message };
       this.recordRelease(released, who.name || who.login);
       return released;

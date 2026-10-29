@@ -80,7 +80,7 @@ export class GithubSync {
   /** The linked repository as a Git remote, with an installation token (minted through the App; kept while it has ten minutes left). */
   private async githubRemote(link: GithubLink): Promise<Remote> {
     if (!this.repo.deps.githubToken)
-      throw new SourceError("This server can't reach GitHub as the App (no key to mint installation tokens).", 503);
+      throw new SourceError({ message: "This server can't reach GitHub as the App (no key to mint installation tokens).", status: 503 });
     if (
       !this.githubToken ||
       this.githubToken.installationId != link.installationId ||

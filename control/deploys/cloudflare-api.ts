@@ -1,16 +1,27 @@
 // Cloudflare's API, as the deploy calls it: one client (an account's token or OAuth grant), its errors in
 // Cloudflare's words, and the OAuth grant's scopes.
 
+import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 export const API = "https://api.cloudflare.com/client/v4";
 export type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
 
 /** Something Cloudflare refused or that went wrong, said for a person to act on. */
-export class DeployError extends Error {
-  constructor(message: string, readonly status = 0) { super(message); }
-}
-/** The release went up and answers its version, but its health check fails (the live step): what a rollback undoes by itself. */
+export class DeployError extends Schema.TaggedError<DeployError>()("DeployError", {
+  message: Schema.String,
+  /** Cloudflare's HTTP status, or 0 when the refusal isn't one of its answers. */
+  status: Schema.Number.pipe(Schema.withConstructorDefault(Effect.succeed(0))),
+}) {}
+/**
+ * The release went up and answers its version, but its health check fails (the live step): what a rollback undoes by
+ * itself. A DeployError still, so whatever shows a refusal shows this one too.
+ */
 export class Unhealthy extends DeployError {
-  constructor(message: string, readonly why: string) { super(message); }
+  readonly why: string;
+  constructor(message: string, why: string) {
+    super({ message });
+    this.why = why;
+  }
 }
 
 interface Envelope<T> { success: boolean; result: T; errors?: { code: number; message: string }[]; result_info?: unknown }
@@ -32,12 +43,12 @@ export class Cloudflare {
     else if (body !== undefined) { payload = JSON.stringify(body); headers["Content-Type"] = "application/json"; }
     let r: Response;
     try { r = await this.fetch(`${API}${path}`, { method, headers, body: payload }); } catch (e) {
-      throw new DeployError(`Couldn't reach Cloudflare to ${what}: ${(e as Error).message}. Try again in a moment.`);
+      throw new DeployError({ message: `Couldn't reach Cloudflare to ${what}: ${(e as Error).message}. Try again in a moment.` });
     }
     const answer = (await r.json().catch(() => null)) as Envelope<T> | null;
     if (r.status == 404 && opts.allow404) return null;
     if (r.ok && answer?.success !== false) return (answer?.result ?? null) as T | null;
-    throw new DeployError(this.words(what, r.status, answer?.errors ?? []), r.status);
+    throw new DeployError({ message: this.words(what, r.status, answer?.errors ?? []), status: r.status });
   }
 }
 

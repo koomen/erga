@@ -3,6 +3,9 @@
 // that wait on conflicts, a merge's scratch refs); and the error every part
 // of the repository throws.
 
+import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
+
 export const BRANCHES = ["staging", "main"] as const;
 export type Branch = (typeof BRANCHES)[number];
 export const REF = (b: Branch) => `refs/heads/${b}`;
@@ -22,6 +25,7 @@ export const SCRATCH = "refs/heads/erga-merge/";
 /** How many commits each branch shows. */
 export const LOG = 100;
 
-export class SourceError extends Error {
-  constructor(message: string, readonly status = 400) { super(message); }
-}
+export class SourceError extends Schema.TaggedError<SourceError>()("SourceError", {
+  message: Schema.String,
+  status: Schema.Number.pipe(Schema.withConstructorDefault(Effect.succeed(400))),
+}) {}
