@@ -188,7 +188,13 @@ export abstract class EditorCore {
   protected collectEls(): void {
     const doc = this.doc!;
     this.els = [];
-    for (const u of this.units) this.els[u.id] = doc.querySelector(`[data-erga-id="${u.id}"]`) ?? undefined;
+    // One pass over the page: the first element with each number, as querySelector would find it.
+    const first = new Map<string, Element>();
+    for (const el of doc.querySelectorAll("[data-erga-id]")) {
+      const id = el.getAttribute("data-erga-id")!;
+      if (!first.has(id)) first.set(id, el);
+    }
+    for (const u of this.units) this.els[u.id] = first.get(String(u.id));
   }
 
   /** A unit element is its own editing host; anything atomic inside it stays a normal widget. */
