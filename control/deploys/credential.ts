@@ -27,6 +27,8 @@
 
 import { DeployError, OAUTH, type Fetch } from "./cloudflare-api";
 import { open, seal, type Sealed } from "./seal";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Base64Url } from "effect/encoding";
 import { randomToken, sha256 } from "../../shared/bytes";
 
@@ -123,7 +125,18 @@ export interface CredentialWords {
 }
 const CONTROL_WORDS: CredentialWords = { subject: "The control Worker's Cloudflare credential", fix: "an admin connects Cloudflare again", none: NONE };
 
-export interface TokenAnswer { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; error?: string; error_description?: string }
+export const TokenAnswer = Schema.Struct({
+  access_token: Schema.optionalKey(Schema.String),
+  refresh_token: Schema.optionalKey(Schema.String),
+  expires_in: Schema.optionalKey(Schema.Number),
+  scope: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+  error_description: Schema.optionalKey(Schema.String),
+});
+export type TokenAnswer = typeof TokenAnswer.Type;
+/** Cloudflare's token endpoint's answer, or null when it isn't one. */
+const tokenAnswerOf = async (r: Response): Promise<TokenAnswer | null> =>
+  Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(TokenAnswer))(await r.text().catch(() => "")));
 
 /**
  * The grant in a Durable Object's storage. `client` is the OAuth client
@@ -230,7 +243,7 @@ export class OAuthCredential implements Credential {
           message: `Couldn't reach Cloudflare to refresh ${w.subject.replace(/^The /, "the ")} (${e.message}): try again in a moment.`,
         });
       });
-    const answer = (await r.json().catch(() => null)) as TokenAnswer | null;
+    const answer = await tokenAnswerOf(r);
     if (!r.ok || !answer?.access_token) {
       const why = `${r.status}${answer?.error ? ` ${answer.error}` : ""}${answer?.error_description ? `: ${answer.error_description}` : ""}`;
       // Another worker refreshed first (Cloudflare rotates the refresh token, so this one's is spent): use its grant.
@@ -296,7 +309,7 @@ export async function exchangeCode(net: Fetch, o: { code: string; redirect: stri
   }).catch((e: Error) => {
     throw new DeployError({ message: `Couldn't reach Cloudflare to finish the consent (${e.message}).` });
   });
-  const answer = (await r.json().catch(() => null)) as TokenAnswer | null;
+  const answer = await tokenAnswerOf(r);
   if (!answer) throw new DeployError({ message: `Cloudflare's token endpoint answered ${r.status} and no JSON.` });
   return answer;
 }

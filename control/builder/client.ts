@@ -4,12 +4,25 @@
 // the one the pipeline deploys.
 
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { DeployError } from "../deploys/cloudflare-api";
 import type { Release } from "../deploys/release-format";
 import { unpackRelease } from "../deploys/bundle";
 import type { Builder } from "../deploys/branches";
 import { runWith } from "../clock";
+
+/** One line of the build's output: a line of its log, the release (a bundle), or why it failed. */
+const lineOf = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      log: Schema.optionalKey(Schema.String),
+      bundle: Schema.optionalKey(Schema.String),
+      error: Schema.optionalKey(Schema.String),
+    })
+  )
+);
 
 /** A builder behind `fetcher`: the control Worker's own builderFetch (worker.ts), or a service binding to one. */
 export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: (ms: number) => Promise<void> } = {}): Builder {
@@ -67,8 +80,12 @@ export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: 
         error: string | null = null;
       for await (const text of ndjsonLines(r.body as unknown as AsyncIterable<Uint8Array>, signal)) {
         if (!text.trim()) continue;
-        let m: { log?: string; bundle?: string; error?: string };
-        try { m = JSON.parse(text); } catch { log(text); continue; }
+        const read = lineOf(text);
+        if (Option.isNone(read)) {
+          log(text);
+          continue;
+        }
+        const m = read.value;
         if (m.log != null) log(m.log);
         if (m.bundle != null) bundle = m.bundle;
         if (m.error != null) error = m.error;
