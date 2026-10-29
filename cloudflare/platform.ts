@@ -217,7 +217,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
         const answer = await counted("doc", () => host(doc).fetch(request));
         if (!answer.headers.has(BLOB_HEADER)) return answer;
         const inline = () => { const h = new Headers(request.headers); h.set(INLINE_HEADER, "1"); return counted("doc", () => host(doc).fetch(new Request(request, { headers: h }))); };
-        return (await serveBlob(answer, request, blobsOf(env, (w) => p.edge.background(w)) ?? null, inline)) ?? answer;
+        return (await Effect.runPromise(serveBlob(answer, request, blobsOf(env, (w) => p.edge.background(w)) ?? null, inline))) ?? answer;
       },
       view: (id, who, opts) => counted("doc", () => documentOf(env, id).view(who, opts)),
     },

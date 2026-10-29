@@ -5,11 +5,12 @@
 // answer is kept in the document's storage while no file changes, so a
 // viewer's request needn't open the room.
 
+import * as Effect from "effect/Effect";
 import type * as Y from "yjs";
 import type { DocName } from "./api.ts";
 import { assets, files as texts } from "./content.ts";
 import { resolvePage } from "./pages.ts";
-import { digest } from "./room.ts";
+import { digest, NoSuchDocument, StoreError } from "./room.ts";
 import type { Storage } from "./storage.ts";
 import type { Role } from "./access.ts";
 
@@ -50,7 +51,7 @@ export interface ViewOptions {
   /** The room closing: its last writes land first. */
   closing: () => Promise<void>;
   /** The room's shared doc, opened if it isn't (null: there's no such document). */
-  doc: () => Promise<Y.Doc | null>;
+  doc: () => Effect.Effect<Y.Doc | null, StoreError>;
   /** The first change after a quiet while: a viewer's answer kept meanwhile is out of date. */
   changedAfterQuiet?: () => void;
   log: (line: string) => void;
@@ -90,42 +91,50 @@ export class DocumentView {
    * whatever happened between: the files as they are now (from the room, or
    * kept in storage while no file has changed: a request needn't open the room).
    */
-  private async now(info: { index: string; disk?: unknown }): Promise<ViewState> {
-    if (this.latest && this.latest.index == info.index) return this.latest;
-    if (!this.o.isOpen() && !info.disk) {
-      await this.o.closing();
-      const kept = await this.o.storage.get<ViewState>(VIEW);
-      if (kept && kept.index == info.index) {
-        this.kept = true;
-        return (this.latest = kept);
+  private now(info: { index: string; disk?: unknown }): Effect.Effect<ViewState, StoreError | NoSuchDocument> {
+    const self = this;
+    const io = <A>(f: () => Promise<A>) =>
+      Effect.tryPromise({ try: f, catch: (e) => new StoreError({ message: e instanceof Error ? e.message : String(e) }) });
+    return Effect.gen(function* () {
+      if (self.latest && self.latest.index == info.index) return self.latest;
+      if (!self.o.isOpen() && !info.disk) {
+        yield* Effect.promise(() => self.o.closing());
+        const kept = yield* io(() => self.o.storage.get<ViewState>(VIEW));
+        if (kept && kept.index == info.index) {
+          self.kept = true;
+          return (self.latest = kept);
+        }
       }
-    }
-    const doc = await this.o.doc();
-    if (!doc) throw new Error("There's no such document.");
-    const encoder = new TextEncoder();
-    const entries: [string, string][] = [];
-    for (const [path, text] of texts(doc).entries()) entries.push([path, digest(encoder.encode(text.toString()))]);
-    for (const [path, d] of assets(doc).entries()) if (!texts(doc).has(path)) entries.push([path, d]);
-    entries.sort(([a], [b]) => (a < b ? -1 : 1));
-    const state: ViewState = {
-      ver: "l" + hashText(JSON.stringify([info.index, entries])),
-      index: info.index,
-      paths: entries.map(([p]) => p),
-    };
-    this.latest = state;
-    this.kept = true;
-    if (!info.disk) await this.o.storage.put(VIEW, state);
-    return state;
+      const doc = yield* self.o.doc();
+      if (!doc) return yield* new NoSuchDocument({ message: "There's no such document." });
+      const encoder = new TextEncoder();
+      const entries: [string, string][] = [];
+      for (const [path, text] of texts(doc).entries()) entries.push([path, digest(encoder.encode(text.toString()))]);
+      for (const [path, d] of assets(doc).entries()) if (!texts(doc).has(path)) entries.push([path, d]);
+      entries.sort(([a], [b]) => (a < b ? -1 : 1));
+      const state: ViewState = {
+        ver: "l" + hashText(JSON.stringify([info.index, entries])),
+        index: info.index,
+        paths: entries.map(([p]) => p),
+      };
+      self.latest = state;
+      self.kept = true;
+      if (!info.disk) yield* io(() => self.o.storage.put(VIEW, state));
+      return state;
+    });
   }
 
   /** The answer for someone who may view (`role`, or anyone: the homepage): which file the address `page` is, in what viewers see now, and that version. */
-  async answer(
+  answer(
     info: { index: string; test?: boolean; disk?: unknown },
     role: Role | null,
     name: DocName | null,
     page: string
-  ): Promise<ViewAnswer> {
-    const state = await this.now(info);
+  ): Effect.Effect<ViewAnswer, StoreError | NoSuchDocument> {
+    return Effect.map(this.now(info), (state) => this.answerFrom(state, info, role, name, page));
+  }
+
+  private answerFrom(state: ViewState, info: { test?: boolean }, role: Role | null, name: DocName | null, page: string): ViewAnswer {
     const paths = new Set(state.paths);
     const found = page
       ? resolvePage((p) => paths.has(p), page, state.index)

@@ -14,6 +14,7 @@
 // disk, and the tests keep it in memory.
 
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import type { KV } from "./versions.ts";
 import { FileStore, StateStore, StoreError } from "./room.ts";
 import { isBlobRef, OBJECT_MAX, storeBlob, type BlobRef, type BlobStore } from "./blobs.ts";
@@ -98,7 +99,7 @@ export const TIME_STEP = 60_000;
 export class MemoryStorage implements Storage {
   readonly data = new Map<string, unknown>();
   private alarm: number | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timer: Fiber.Fiber<void> | null = null;
   constructor(private wake: () => void | Promise<void> = () => {}) {}
 
   get<T = unknown>(key: string): Promise<T | undefined>;
@@ -134,10 +135,19 @@ export class MemoryStorage implements Storage {
   async setAlarm(at: number): Promise<void> {
     await this.deleteAlarm();
     this.alarm = at;
-    this.timer = setTimeout(() => { this.alarm = null; this.timer = null; void this.wake(); }, Math.max(0, at - Date.now()));
+    const due = Effect.sleep(Math.max(0, at - Date.now())).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          this.alarm = null;
+          this.timer = null;
+        })
+      ),
+      Effect.andThen(Effect.promise(async () => this.wake()))
+    );
+    this.timer = Effect.runFork(due);
   }
   async deleteAlarm(): Promise<void> {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) Effect.runFork(Fiber.interrupt(this.timer));
     this.timer = null;
     this.alarm = null;
   }
@@ -187,7 +197,7 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
     writeBytes: (path, bytes) => Effect.tryPromise({
       try: async () => {
         if (!blobs) { await Promise.all([storage.put(FILE + path, bytes), hooks.touch()]); return; }
-        await putBlob(path, await storeBlob(blobs, bytes), bytes);
+        await putBlob(path, await Effect.runPromise(storeBlob(blobs, bytes)), bytes);
       },
       catch: storeError,
     }),
@@ -460,7 +470,7 @@ export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edit
           const bytes = encoder.encode(text);
           if (opts.blobs && bytes.length > OBJECT_MAX) {
             // Stored first: the ref goes in with the history, in one transaction.
-            files[KEYS.ref + path] = await storeBlob(opts.blobs, bytes);
+            files[KEYS.ref + path] = await Effect.runPromise(storeBlob(opts.blobs, bytes));
             drop.push(KEYS.file + path);
             await refs.add(path);
           } else {

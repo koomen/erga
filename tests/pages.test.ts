@@ -126,7 +126,7 @@ const withRoom = (m: ReturnType<typeof memoryStore>, f: (room: Room) => Promise<
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const opts = { index: "index.html", newPage: "<h1>New</h1>" };
-const op = (room: Room, o: unknown) => runTreeOp(room, o, opts);
+const op = (room: Room, o: unknown) => Effect.runPromise(runTreeOp(room, o, opts));
 const tree = (room: Room) => treeEntries(room.paths(), room.folderPaths()).map((e) => `${e.path}${e.type == "folder" ? "/" : e.type == "page" ? "" : "*"}`);
 
 test("tree operations change storage and the room together, and everyone hears", async () => {
@@ -218,7 +218,9 @@ test("a file a participant deletes from the room is deleted from storage too", a
 test("a single file opened on its own has no tree to change", async () => {
   const m = memoryStore({ "notes.html": "<h1>Notes</h1>" });
   await withRoom(m, async (room) => {
-    const e = await runTreeOp(room, { op: "new_page", path: "x.html" }, { index: "notes.html", only: "notes.html" }).catch((err) => err);
+    const e = await Effect.runPromise(
+      runTreeOp(room, { op: "new_page", path: "x.html" }, { index: "notes.html", only: "notes.html" })
+    ).catch((err) => err);
     expect(e).toBeInstanceOf(TreeError);
     expect(e.status).toBe(403);
   });

@@ -106,7 +106,7 @@ export interface HostOptions {
   /** A document (one page) or a project (pages): now. A project if not given. */
   readonly kind?: () => DocKind;
   /** Changes the document's kind (make_project, make_document): kept and told to the directory. */
-  readonly setKind?: (kind: DocKind) => Promise<void>;
+  readonly setKind?: (kind: DocKind) => Effect.Effect<void, StoreError>;
   /** The document's title and address in the directory, read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut; answers the version the document is at then. */
@@ -206,7 +206,9 @@ export function makeHost(opts: HostOptions) {
   const moves: { from: string; to: string }[] = [];
   /** Does a tree operation, as a person or their agent; open tabs hear what moved or went, to follow a page that did. */
   const tree = async (op: unknown) => {
-    const done = await runTreeOp(room, op, { index: doc.path, only: opts.only, newPage: opts.newPage, kind: kindNow(), setKind: opts.setKind });
+    const done = await Effect.runPromise(
+      runTreeOp(room, op, { index: doc.path, only: opts.only, newPage: opts.newPage, kind: kindNow(), setKind: opts.setKind })
+    );
     if (done.op == "move") {
       moves.push({ from: done.from, to: done.to });
       if (moves.length > 50) moves.shift();
@@ -666,83 +668,108 @@ export type TreeDone = TreeOp;
  * holds). The document's own page can't be moved or deleted. Throws a
  * TreeError saying what's wrong.
  */
-export async function runTreeOp(room: Room, raw: unknown, o: { index: string; only?: string; newPage?: string; kind?: DocKind; setKind?: (kind: DocKind) => Promise<void> }): Promise<TreeDone> {
-  if (!raw || typeof raw != "object" || Array.isArray(raw)) throw new TreeError('Send the operation as JSON: {"op": "new_page" | "new_folder" | "move" | "delete" | "make_project" | "make_document", ...}.');
-  const op = raw as Record<string, unknown>;
-  if (o.only != null) throw new TreeError(`This document is the single file ${o.only}, opened from disk on its own: it can't hold other files or folders.`, 403);
-  const kind = o.kind ?? "project";
-  /** A new page (or a file that becomes one) only in a project. */
-  const mayBePage = (path: string) => { const why = pageRefusal(kind, path, o.index); if (why) throw new TreeError(why, 409); };
-  const exists = (p: string) => room.exists(p);
-  const free = (p: string) => {
-    if (exists(p)) throw new TreeError(`There's already ${exists(p) == "folder" ? "a folder" : "a file"} at ${p}.`, 409);
-    const file = parentsOf(p).find((d) => exists(d) == "file");
-    if (file) throw new TreeError(`${file} is a file, so nothing can go inside it.`, 409);
-  };
-  const run = (e: Effect.Effect<void, StoreError>) => Effect.runPromise(Effect.mapError(e, (err) => new TreeError(`Couldn't do it: ${err.message}`, 500)));
-  switch (op.op) {
-    case "new_page": {
-      let path = cleanTreePath(op.path);
-      if (!isPage(path)) {
-        if (/\.[^./]+$/.test(path)) throw new TreeError(`A page is an .html file, not ${path}.`);
-        path += ".html";
+export function runTreeOp(
+  room: Room,
+  raw: unknown,
+  o: { index: string; only?: string; newPage?: string; kind?: DocKind; setKind?: (kind: DocKind) => Effect.Effect<void, StoreError> }
+): Effect.Effect<TreeDone, TreeError> {
+  const fail = (message: string, status?: number) => Effect.fail(new TreeError(message, status));
+  /** One of pages.ts's checks, which throw a TreeError. */
+  const check = <A>(f: () => A) => Effect.try({ try: f, catch: (e) => (e instanceof TreeError ? e : new TreeError(String(e), 500)) });
+  const done = (e: Effect.Effect<void, StoreError>) => Effect.mapError(e, (err) => new TreeError(`Couldn't do it: ${err.message}`, 500));
+  return Effect.gen(function* () {
+    if (!raw || typeof raw != "object" || Array.isArray(raw))
+      return yield* fail(
+        'Send the operation as JSON: {"op": "new_page" | "new_folder" | "move" | "delete" | "make_project" | "make_document", ...}.'
+      );
+    const op = raw as Record<string, unknown>;
+    if (o.only != null)
+      return yield* fail(
+        `This document is the single file ${o.only}, opened from disk on its own: it can't hold other files or folders.`,
+        403
+      );
+    const kind = o.kind ?? "project";
+    const exists = (p: string) => room.exists(p);
+    /** A new page (or a file that becomes one) only in a project. */
+    const mayBePage = (path: string) => {
+      const why = pageRefusal(kind, path, o.index);
+      return why ? fail(why, 409) : Effect.void;
+    };
+    const free = (p: string) => {
+      if (exists(p)) return fail(`There's already ${exists(p) == "folder" ? "a folder" : "a file"} at ${p}.`, 409);
+      const file = parentsOf(p).find((d) => exists(d) == "file");
+      return file ? fail(`${file} is a file, so nothing can go inside it.`, 409) : Effect.void;
+    };
+    switch (op.op) {
+      case "new_page": {
+        let path = yield* check(() => cleanTreePath(op.path));
+        if (!isPage(path)) {
+          if (/\.[^./]+$/.test(path)) return yield* fail(`A page is an .html file, not ${path}.`);
+          path += ".html";
+        }
+        yield* check(() => checkNewName(path, "page"));
+        yield* mayBePage(path);
+        yield* free(path);
+        yield* done(room.create(path, o.newPage ?? PLAIN_PAGE));
+        return { op: "new_page", path } as const;
       }
-      checkNewName(path, "page");
-      mayBePage(path);
-      free(path);
-      await run(room.create(path, o.newPage ?? PLAIN_PAGE));
-      return { op: "new_page", path };
+      case "new_folder": {
+        const path = yield* check(() => cleanTreePath(op.path));
+        yield* check(() => checkNewName(path, "folder"));
+        yield* free(path);
+        yield* done(room.mkdir(path));
+        return { op: "new_folder", path } as const;
+      }
+      case "move": {
+        const from = yield* check(() => cleanTreePath(op.from, "from"));
+        let to = yield* check(() => cleanTreePath(op.to, "to"));
+        const type = exists(from);
+        if (!type) return yield* fail(`There's nothing at ${from}.`, 404);
+        if (from == o.index) return yield* fail(`${from} is the document's own page: it can't be moved or renamed.`);
+        // A page renamed without an extension keeps its own.
+        if (type == "file" && isPage(from) && !/\.[^./]+$/.test(to)) to += from.slice(from.lastIndexOf("."));
+        if (to == from) return { op: "move", from, to } as const;
+        if (type == "folder" && to.startsWith(`${from}/`)) return yield* fail(`A folder can't go inside itself.`);
+        const target = to;
+        yield* check(() => checkNewName(target, type == "folder" ? "folder" : isPage(target) ? "page" : "file"));
+        // In a document, a file may not become a page by its new name (a page stays one: there's only index.html).
+        if (type == "file" && !isPage(from)) yield* mayBePage(to);
+        yield* free(to);
+        yield* done(room.move(from, to));
+        return { op: "move", from, to } as const;
+      }
+      case "delete": {
+        const path = yield* check(() => cleanTreePath(op.path));
+        if (path == o.index) return yield* fail(`${path} is the document's own page: it can't be deleted.`);
+        if (!exists(path)) return yield* fail(`There's nothing at ${path}.`, 404);
+        yield* done(room.remove(path));
+        return { op: "delete", path } as const;
+      }
+      case "make_project": {
+        if (kind == "project") return { op: "make_project" } as const;
+        if (!o.setKind) return yield* fail("This document can't become a project here.", 403);
+        yield* done(o.setKind("project"));
+        return { op: "make_project" } as const;
+      }
+      case "make_document": {
+        if (kind == "document") return { op: "make_document" } as const;
+        if (!o.setKind) return yield* fail("This project can't become a document here.", 403);
+        // A document has one page, its own: every other page goes first, by the person's hand (nothing is deleted for them).
+        const pages = room.paths().filter(isPage);
+        const others = pages.filter((p) => p != o.index);
+        if (others.length) {
+          const listed = `${others.slice(0, 5).join(", ")}${others.length > 5 ? ` and ${others.length - 5} more` : ""}`;
+          return yield* fail(`It has ${pages.length} pages, and a document has one. Delete the others first: ${listed}.`, 409);
+        }
+        yield* done(o.setKind("document"));
+        return { op: "make_document" } as const;
+      }
+      default:
+        return yield* fail(
+          `There's no operation "${String(op.op)}": it's one of new_page, new_folder, move, delete, make_project and make_document.`
+        );
     }
-    case "new_folder": {
-      const path = cleanTreePath(op.path);
-      checkNewName(path, "folder");
-      free(path);
-      await run(room.mkdir(path));
-      return { op: "new_folder", path };
-    }
-    case "move": {
-      const from = cleanTreePath(op.from, "from");
-      let to = cleanTreePath(op.to, "to");
-      const type = exists(from);
-      if (!type) throw new TreeError(`There's nothing at ${from}.`, 404);
-      if (from == o.index) throw new TreeError(`${from} is the document's own page: it can't be moved or renamed.`);
-      // A page renamed without an extension keeps its own.
-      if (type == "file" && isPage(from) && !/\.[^./]+$/.test(to)) to += from.slice(from.lastIndexOf("."));
-      if (to == from) return { op: "move", from, to };
-      if (type == "folder" && to.startsWith(`${from}/`)) throw new TreeError(`A folder can't go inside itself.`);
-      checkNewName(to, type == "folder" ? "folder" : isPage(to) ? "page" : "file");
-      // In a document, a file may not become a page by its new name (a page stays one: there's only index.html).
-      if (type == "file" && !isPage(from)) mayBePage(to);
-      free(to);
-      await run(room.move(from, to));
-      return { op: "move", from, to };
-    }
-    case "delete": {
-      const path = cleanTreePath(op.path);
-      if (path == o.index) throw new TreeError(`${path} is the document's own page: it can't be deleted.`);
-      if (!exists(path)) throw new TreeError(`There's nothing at ${path}.`, 404);
-      await run(room.remove(path));
-      return { op: "delete", path };
-    }
-    case "make_project": {
-      if (kind == "project") return { op: "make_project" };
-      if (!o.setKind) throw new TreeError("This document can't become a project here.", 403);
-      await o.setKind("project");
-      return { op: "make_project" };
-    }
-    case "make_document": {
-      if (kind == "document") return { op: "make_document" };
-      if (!o.setKind) throw new TreeError("This project can't become a document here.", 403);
-      // A document has one page, its own: every other page goes first, by the person's hand (nothing is deleted for them).
-      const pages = room.paths().filter(isPage);
-      const others = pages.filter((p) => p != o.index);
-      if (others.length) throw new TreeError(`It has ${pages.length} pages, and a document has one. Delete the others first: ${others.slice(0, 5).join(", ")}${others.length > 5 ? ` and ${others.length - 5} more` : ""}.`, 409);
-      await o.setKind("document");
-      return { op: "make_document" };
-    }
-    default:
-      throw new TreeError(`There's no operation "${String(op.op)}": it's one of new_page, new_folder, move, delete, make_project and make_document.`);
-  }
+  });
 }
 
 /** A new page when there's no template: a heading to start from. */
