@@ -100,7 +100,13 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
     tag: "editor",
     hooks: { about: (_n, a) => (a as { path?: string }).path ?? null },
   });
-  loop.start(loop.cfg!, "You edit documents.", [read]);
+  const whoami: AgentTool = {
+    name: "whoami",
+    description: "Who you are.",
+    parameters: Schema.Struct({}),
+    execute: async () => ({ content: [{ type: "text", text: "Ada" }] }),
+  };
+  loop.start(loop.cfg!, "You edit documents.", [read, whoami]);
   const done = new Promise<void>((resolve) =>
     loop.subscribe((ev) => {
       events.push(ev);
@@ -123,18 +129,14 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
     output_config: { effort: "high" },
   });
   expect(first.body.system).toEqual([{ type: "text", text: "You edit documents.", cache_control: { type: "ephemeral" } }]);
-  expect(first.body.tools).toEqual([
-    {
-      name: "read",
-      description: "Reads a file.",
-      input_schema: {
-        type: "object",
-        properties: { path: { type: "string", description: "The file" } },
-        required: ["path"],
-        additionalProperties: true,
-      },
-    },
-  ]);
+  const tools = first.body.tools as { name: string; input_schema: unknown }[];
+  expect(tools[0]).toMatchObject({
+    name: "read",
+    description: "Reads a file.",
+    input_schema: { type: "object", properties: { path: { type: "string", description: "The file" } }, required: ["path"] },
+  });
+  // A tool with no arguments: an object with none (the API refuses any other schema).
+  expect(tools[1]).toMatchObject({ name: "whoami", input_schema: { type: "object", properties: {} } });
   // The second turn: the thinking with its signature, the call, and its result with the PDF as a document.
   const msgs = second.body.messages as { role: string; content: Record<string, unknown>[] }[];
   expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "user"]);

@@ -47,11 +47,10 @@
 // Adding one: an entry in SERVER_TOOLS. Every agent it's for gets it, and the
 // REST API, MCP and the guide list it.
 
-import type { AgentTool, ToolOutput } from "./run.ts";
+import { argumentsSchema, type AgentTool, type ToolOutput } from "./run.ts";
 import { Base64 } from "effect/encoding";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { Tool as AiTool } from "effect/ai";
 import {
   ACCESS_LABEL,
   type AccessRule,
@@ -817,10 +816,10 @@ export function documentTools(): Tool[] {
 
 /** A tool's arguments as JSON Schema, as outside agents read them (REST, MCP, the guides). */
 const schemas = new WeakMap<Tool, { required?: string[] }>();
-export const jsonSchemaOf = (t: Tool): { required?: string[] } => {
+export const jsonSchemaOf = (t: Tool): { type: "object"; required?: string[] } => {
   let s = schemas.get(t);
-  if (!s) schemas.set(t, (s = AiTool.getJsonSchemaFromSchema(t.parameters) as { required?: string[] }));
-  return s;
+  if (!s) schemas.set(t, (s = argumentsSchema(t.parameters)));
+  return s as { type: "object"; required?: string[] };
 };
 
 /** Every tool of `who` ("agent": an embedded agent; "api": an outside agent, with the document tools too). */
