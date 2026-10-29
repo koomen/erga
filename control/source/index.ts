@@ -28,9 +28,9 @@ export {
   verifyWebhook,
   type GithubApp,
   type GithubLink,
-  type GithubRepo,
-  type PushEvent,
-  type UserToken,
+  GithubRepo,
+  PushEvent,
+  UserToken,
 } from "./github.ts";
 export { NOT_SET_UP, sourceApi, sourceGit, type SourceObject, type SourceService } from "./routes.ts";
 export { adminSourcePage } from "./page.ts";

@@ -105,7 +105,7 @@ import {
   verifyWebhook,
   type GithubApp,
   type GithubRepo,
-  type PushEvent,
+  PushEvent,
   type UserToken,
 } from "./source/index.ts";
 import { openRelay, relayNonce, relayOrigin, relayState, sealRelay } from "../shared/relay.ts";
@@ -606,7 +606,11 @@ async function githubPick(request: Request, url: URL, c: Control, o: { token: st
 }
 
 /** The pick page, in the popup: one of the installation's repositories, or a new one. */
-function githubPickPage(c: Control, o: { account: { login: string; type: string }; repos: GithubRepo[]; problem: string | null; state: string }, setCookie: string): Response {
+function githubPickPage(
+  c: Control,
+  o: { account: { login: string; type: string }; repos: readonly GithubRepo[]; problem: string | null; state: string },
+  setCookie: string
+): Response {
   const list = o.repos.length
     ? `<p>The App reaches these repositories of <b>${esc(o.account.login)}</b>. Which one is Erga's?</p>
     <form method="post" action="/github/connect/pick" class="pick"><input type="hidden" name="state" value="${esc(o.state)}">
@@ -678,7 +682,9 @@ async function githubWebhook(request: Request, url: URL, c: Control): Promise<Re
   if (event == "ping") return json({ ok: true, pong: true });
   if (event != "push") return json({ ok: true, ignored: event || "no event" });
   let payload: PushEvent;
-  try { payload = JSON.parse(new TextDecoder().decode(body)) as PushEvent; } catch { return json({ error: "The body isn't JSON." }, 400); }
+  const read = Schema.decodeUnknownOption(Schema.fromJsonString(PushEvent))(new TextDecoder().decode(body));
+  if (Option.isNone(read)) return json({ error: "The body isn't JSON." }, 400);
+  payload = read.value;
   const source = c.platform.source;
   if (!source) return json({ ok: true, ignored: "this server has no repository" });
   const origin = sourceOrigin(c, url);
