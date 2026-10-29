@@ -446,9 +446,11 @@ export abstract class EditorEdit extends EditorRender {
    * Tab in a list item: the item (and the items nested in it) moves one
    * level in, under the item before it; Shift+Tab moves it one level out,
    * after the item it was under. The caret stays where it was in the text.
-   * Outside a list item, Tab is the browser's. An item that can't move (the
-   * first in its list, or one at the top level) still takes the key, so the
-   * caret stays put. An item with a
+   * A selection moves every item it touches (in the list where its two ends
+   * meet), and stays as it was. Outside a list item, Tab is the browser's.
+   * In one, the editor always takes the key, so the focus never leaves the
+   * page: an item that can't move (the first in its list, one at the top
+   * level, one whose HTML isn't closed) stays put. An item with a
    * list nested in it keeps its own text in a <p>
    * (`<li><p>text</p><ul>…</ul></li>`): text beside a list isn't a unit, and
    * couldn't be edited. Taking the last item out of a nested list takes the
@@ -456,22 +458,63 @@ export abstract class EditorEdit extends EditorRender {
    */
   protected indentItem(out: boolean): boolean {
     const sel = this.currentSelection();
-    if (!sel.empty) return false;
-    const pos = sel.head,
-      u = M.unitAt(this.units, pos);
-    if (!u || !this.verify(u) || pos < u.contentFrom || pos > u.contentTo) return false;
-    const n = u.node;
     const elements = (e: M.ElementNode) => e.children.filter((c): c is M.ElementNode => c.kind == "element");
     const isList = (e: M.ElementNode | null | undefined): e is M.ElementNode => e?.tag == "ul" || e?.tag == "ol";
-    const item = n.tag == "li" ? n : n.parent?.tag == "li" && elements(n.parent)[0] == n ? n.parent : null;
-    const list = item?.parent;
-    if (!item || !isList(list)) return false;
+    // The list item a unit is the text of: the <li>, or the <p> first in it.
+    const itemOf = (u: M.Unit | null) => {
+      const n = u?.node;
+      const li = n?.tag == "li" ? n : n?.parent?.tag == "li" && elements(n.parent)[0] == n ? n.parent : null;
+      return li && isList(li.parent) ? li : null;
+    };
+    const ua = M.unitAt(this.units, sel.from),
+      ub = sel.empty ? ua : M.unitAt(this.units, sel.to);
+    const ia = itemOf(ua),
+      ib = itemOf(ub);
+    if (!ia && !ib) return false;
+    // From here the key is the editor's, whether or not the items can move.
+    if (!ia || !ib || !this.verify(ua!) || !this.verify(ub!)) return true;
+    // The list both ends are in, and its items from the one with the selection's start to the one with its end.
+    const inside = (e: M.ElementNode, n: M.ElementNode) => e.from <= n.from && n.to <= e.to;
+    let list: M.ElementNode | null = null,
+      first: M.ElementNode | undefined,
+      last: M.ElementNode | undefined;
+    for (let l = ia.parent; l; l = l.parent?.parent ?? null) {
+      if (!isList(l)) break;
+      first = elements(l).find((e) => inside(e, ia));
+      last = elements(l).find((e) => inside(e, ib));
+      if (first && last) {
+        list = l;
+        break;
+      }
+      if (l.parent?.tag != "li") break;
+    }
+    if (!list || !first || !last) return true;
     const src = this.src;
     const closed = (e: M.ElementNode) => !e.selfClosing && src.startsWith("</", e.closeFrom);
-    if (![item, list].every(closed)) return false;
-    // Source slices, with a mark where the caret is, to find it again in the new source.
-    const CARET = "\u0000";
-    const cut = (a: number, b: number) => (a <= pos && pos < b ? src.slice(a, pos) + CARET + src.slice(pos, b) : src.slice(a, b));
+    const siblings = elements(list),
+      i = siblings.indexOf(first),
+      k = siblings.indexOf(last);
+    const items = siblings.slice(i, k + 1);
+    if (![...items, list].every(closed) || items.some((e) => e.tag != "li")) return true;
+    if (items.some((e, j) => j && src.slice(items[j - 1].to, e.from).trim())) return true;
+    // Source slices, with a mark where each end of the selection is, to find them again in the new source.
+    const ANCHOR = "\u0000",
+      HEAD = "\u0001";
+    const { anchor, head } = sel;
+    const cut = (a: number, b: number) => {
+      let out = "",
+        at = a;
+      const marks = [
+        [anchor, ANCHOR],
+        [head, HEAD],
+      ] as const;
+      for (const [p, m] of [...marks].sort((x, y) => x[0] - y[0]))
+        if (a <= p && p < b) {
+          out += src.slice(at, p) + m;
+          at = p;
+        }
+      return out + src.slice(at, b);
+    };
     const indent = (e: M.ElementNode) => M.lineIndent(src, e.from);
     const reindent = (text: string, from: string, to: string) =>
       text.replace(
@@ -508,21 +551,24 @@ export abstract class EditorEdit extends EditorRender {
         close
       );
     };
-    const siblings = elements(list),
-      i = siblings.indexOf(item);
     let from: number, to: number, insert: string;
     if (!out) {
       const prev = siblings[i - 1];
-      if (!prev || prev.tag != "li" || !closed(prev) || src.slice(prev.to, item.from).trim()) return true;
-      ({ from, to, insert } = { from: prev.from, to: item.to, insert: nest(prev, [item], list.tag) });
+      if (!prev || prev.tag != "li" || !closed(prev) || src.slice(prev.to, first.from).trim()) return true;
+      ({ from, to, insert } = { from: prev.from, to: last.to, insert: nest(prev, items, list.tag) });
     } else {
       const parent = list.parent;
       if (parent?.tag != "li" || !closed(parent)) return true;
-      // The items after it go with it, nested in it, so the order stays.
-      const after = siblings.slice(i + 1);
-      const moved = reindent(after.length ? nest(item, after, list.tag) : cut(item.from, item.to), indent(item), indent(parent));
-      const gone = (k: number) => k - src.slice(0, k).replace(/\s+$/, "").length;
-      const [a, b] = i == 0 ? [list.from - gone(list.from), list.to] : [item.from - gone(item.from), siblings.at(-1)!.to];
+      // The items after them go with the last, nested in it, so the order stays.
+      const after = siblings.slice(k + 1);
+      const own = items.slice(0, -1).map((e) => cut(e.from, e.to) + "\n" + indent(e));
+      const moved = reindent(
+        own.join("") + (after.length ? nest(last, after, list.tag) : cut(last.from, last.to)),
+        indent(first),
+        indent(parent)
+      );
+      const gone = (p: number) => p - src.slice(0, p).replace(/\s+$/, "").length;
+      const [a, b] = i == 0 ? [list.from - gone(list.from), list.to] : [first.from - gone(first.from), siblings.at(-1)!.to];
       let content = cut(parent.openTo, a) + cut(b, parent.closeFrom);
       const lone = i == 0 && /^\s*<p>((?:(?!<\/?p[\s>])[\s\S])*)<\/p>\s*$/.exec(content);
       content = lone ? lone[1] : content.trimEnd() + "\n" + indent(parent);
@@ -532,11 +578,17 @@ export abstract class EditorEdit extends EditorRender {
         insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + "\n" + indent(parent) + moved,
       });
     }
-    const caret = insert.indexOf(CARET);
-    insert = insert.replace(CARET, "");
+    // Where the marks are in the new text, once both are out of it.
+    const place = (m: string, other: string) => {
+      const at = insert.indexOf(m);
+      return at < 0 ? -1 : at - (insert.slice(0, at).includes(other) ? 1 : 0);
+    };
+    const na = place(ANCHOR, HEAD),
+      nh = place(HEAD, ANCHOR);
+    insert = insert.replace(ANCHOR, "").replace(HEAD, "");
     this.dispatch({
       changes: { from, to, insert },
-      selection: { anchor: from + Math.max(0, caret) },
+      selection: EditorSelection.single(from + Math.max(0, na), from + Math.max(0, nh)),
       userEvent: out ? "delete.dedent" : "input.indent",
       scrollIntoView: true,
     });

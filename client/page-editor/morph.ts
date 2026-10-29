@@ -39,20 +39,31 @@ export function planMorph(live: Document, from: string, to: string): Op[] | null
   return ok ? ops : null;
 }
 
-/** Carries out a plan from `planMorph`. */
-export function applyMorph(live: Document, ops: Op[]): void {
+/**
+ * Carries out a plan from `planMorph`. Returns what it changed: `at`, nodes whose content changed (text, a parent that
+ * lost a child), and `whole`, elements that are new or have new attributes, with everything in them.
+ */
+export function applyMorph(live: Document, ops: Op[]): { at: Node[]; whole: Node[] } {
+  const at: Node[] = [],
+    whole: Node[] = [];
   for (const op of ops) {
     if (op.kind == "attrs") {
       for (const name of op.remove) op.live.removeAttribute(name);
       for (const [name, value] of op.set) op.live.setAttribute(name, value);
-    } else if (op.kind == "text") op.live.nodeValue = op.value;
-    else if (op.kind == "remove") (op.live as ChildNode).remove();
-    else if (op.kind == "insert") op.parent.insertBefore(live.importNode(op.node, true), op.before);
+      whole.push(op.live);
+    } else if (op.kind == "text") {
+      op.live.nodeValue = op.value;
+      at.push(op.live);
+    } else if (op.kind == "remove") {
+      if (op.live.parentNode) at.push(op.live.parentNode);
+      (op.live as ChildNode).remove();
+    } else if (op.kind == "insert") whole.push(op.parent.insertBefore(live.importNode(op.node, true), op.before));
     else {
       const els = [...(op.live.hasAttribute("data-erga-id") ? [op.live] : []), ...op.live.querySelectorAll("[data-erga-id]")];
       els.forEach((el, i) => el.setAttribute("data-erga-id", op.ids[i]));
     }
   }
+  return { at, whole };
 }
 
 /**
@@ -72,7 +83,7 @@ function pair(live: Node | null, a: Node | null, b: Node | null, ops: Op[]): boo
     if (a.nodeValue != b.nodeValue) ops.push({ kind: "text", live, value: b.nodeValue ?? "" });
     return true;
   }
-  if ((a as Element).outerHTML == (b as Element).outerHTML) return true;
+  if (a.isEqualNode(b)) return true;
   return attrs(live as Element, a as Element, b as Element, ops) && children(live, a, b, ops);
 }
 
@@ -89,8 +100,7 @@ function children(live: Node, a: Node, b: Node, ops: Op[]): boolean {
   const lc = [...live.childNodes].filter((n) => !editors(n)), ac = [...a.childNodes], bc = [...b.childNodes];
   // The page must still be what it was rendered from here, node for node.
   if (lc.length != ac.length || lc.some((n, i) => n.nodeName != ac[i].nodeName)) return false;
-  const ak = ac.map(key), bk = bc.map(key);
-  const matches = lineUp(ak, bk);
+  const matches = lineUpNodes(ac, bc);
   matches.push([ac.length, bc.length]);
   let i = 0, j = 0;
   for (const [mi, mj] of matches) {
@@ -107,7 +117,7 @@ function children(live: Node, a: Node, b: Node, ops: Op[]): boolean {
     }
     if (mi == ac.length) break;
     // Equal but for their unit numbers.
-    if (ac[mi].nodeType == 1 && (ac[mi] as Element).outerHTML != (bc[mj] as Element).outerHTML) {
+    if (ac[mi].nodeType == 1 && !ac[mi].isEqualNode(bc[mj])) {
       const want = ids(bc[mj] as Element), have = lc[mi] as Element;
       if (ids(have).length != want.length) return false;
       ops.push({ kind: "ids", live: have, ids: want });
@@ -123,6 +133,43 @@ function children(live: Node, a: Node, b: Node, ops: Op[]): boolean {
  */
 let unique = 0;
 const shape = (n: Node) => n.nodeType != 1 ? String(n.nodeType) : /^(script|template)$/.test((n as Element).localName) ? `#${unique++}` : `<${(n as Element).localName}`;
+
+/**
+ * lineUp for nodes, equal but for their unit numbers. The common ends are compared node to node first (natively, with
+ * no HTML made), so a change in a long page costs about the nodes around it, not the page.
+ */
+function lineUpNodes(a: Node[], b: Node[]): [number, number][] {
+  const same = (x: Node, y: Node) => x.isEqualNode(y) || sameButIds(x, y);
+  let s = 0;
+  while (s < a.length && s < b.length && same(a[s], b[s])) s++;
+  let ea = a.length,
+    eb = b.length;
+  while (ea > s && eb > s && same(a[ea - 1], b[eb - 1])) {
+    ea--;
+    eb--;
+  }
+  const out: [number, number][] = [];
+  for (let i = 0; i < s; i++) out.push([i, i]);
+  for (const [x, y] of lineUp(a.slice(s, ea).map(key), b.slice(s, eb).map(key))) out.push([x + s, y + s]);
+  for (let i = 0; i < a.length - ea; i++) out.push([ea + i, eb + i]);
+  return out;
+}
+
+/** Whether two nodes are equal but for their unit numbers (key(x) == key(y), with no HTML made: it stops at the first difference). */
+function sameButIds(x: Node, y: Node): boolean {
+  if (x.nodeType != y.nodeType || x.nodeName != y.nodeName) return false;
+  if (x.nodeType != 1) return x.nodeValue == y.nodeValue;
+  const ex = x as Element,
+    ey = y as Element;
+  const at = (e: Element) => [...e.attributes].filter((a) => a.name != "data-erga-id");
+  const ax = at(ex),
+    ay = at(ey);
+  if (ax.length != ay.length || ax.some((a, i) => a.name != ay[i].name || a.value != ay[i].value)) return false;
+  let cx = x.firstChild,
+    cy = y.firstChild;
+  for (; cx && cy; cx = cx.nextSibling, cy = cy.nextSibling) if (!cx.isEqualNode(cy) && !sameButIds(cx, cy)) return false;
+  return !cx && !cy;
+}
 
 /** The longest run of equal items the two lists share, as index pairs in order (common ends first; past LCS_MAX, greedily). */
 function lineUp(a: string[], b: string[]): [number, number][] {

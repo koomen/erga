@@ -561,7 +561,7 @@ export abstract class EditorRender extends EditorMarks {
     }
     if (!ops) return false;
     const was = this.els;
-    applyMorph(doc, ops);
+    const changed = applyMorph(doc, ops);
     this.collectEls();
     // An element that is no longer a text block (a list item whose text went into a <p>) stops being an editing host.
     const now = new Set(this.els);
@@ -572,9 +572,21 @@ export abstract class EditorRender extends EditorMarks {
       el.classList.remove("erga-empty", "erga-locked", "erga-flash");
       if (!el.classList.length) el.removeAttribute("class");
     }
+    // Only the text blocks the morph touched, or that are new on the page, are made ready again: the rest are as they
+    // were (a list item indented in a long document touches its list alone).
+    const before = new Set(was);
+    const touched = new Set<Element>();
+    for (const n of [...changed.at, ...changed.whole]) {
+      const unit = (n.nodeType == 1 ? (n as Element) : n.parentElement)?.closest("[data-erga-id]");
+      if (unit) touched.add(unit);
+    }
+    for (const n of changed.whole)
+      if (n.nodeType == 1) for (const inner of (n as Element).querySelectorAll("[data-erga-id]")) touched.add(inner);
+    const ids = new Set<number>();
     for (const u of this.units) {
       const el = this.els[u.id];
-      if (!el) continue;
+      if (!el || (before.has(el) && !touched.has(el))) continue;
+      ids.add(u.id);
       if (el.classList.contains("erga-locked")) {
         el.classList.remove("erga-locked");
         this.lockReasons.delete(el);
@@ -582,7 +594,7 @@ export abstract class EditorRender extends EditorMarks {
       this.prepareUnit(el);
       if (this.verify(u)) this.showSpaces(u, src);
     }
-    this.updateEmpty();
+    this.updateEmpty(ids);
     return true;
   }
 
