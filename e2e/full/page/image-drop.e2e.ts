@@ -99,11 +99,18 @@ const images = (ed: Editor) =>
     `[...${F}.querySelectorAll("body img")].map((i) => ({ src: i.getAttribute("src"), alt: i.alt, loaded: i.complete && i.naturalWidth > 0 }))`
   );
 
+/**
+ * How long a drop or paste may take to go in: an upload, and, if the page loads again meanwhile (an edit the editor
+ * can't patch in), the wait for the room to have its edits and the page that comes. Seconds when every test runs at once.
+ */
+const UPLOAD = { timeout: 15_000 };
+
 const IMG = (path: string) => `<img src="${path}" alt="${path.slice(path.lastIndexOf("/") + 1)}">`;
 
 test("images dropped in the middle of the text go in there, in order, into images/, after a reload too", async ({ tab }) => {
   // A file of that name is there already: the new one gets the next name.
   const { ed, files } = await open(tab, await servers.main(), { "images/dot.png": "old" });
+  const loaded = await ed.frame<number>(`performance.timeOrigin`);
   expect(
     await drop(ed, "p.lede", 6, [
       { name: "dot.png", type: "image/png", png: true },
@@ -114,14 +121,17 @@ test("images dropped in the middle of the text go in there, in order, into image
     { src: "images/dot-2.png", alt: "dot-2.png", loaded: true },
     { src: "images/two.png", alt: "two.png", loaded: true },
   ];
-  await expect.poll(() => images(ed)).toEqual(want);
+  await expect.poll(() => images(ed), UPLOAD).toEqual(want);
   expect(await ed.frame<boolean>(`!${F}.querySelector("erga-drop-caret, erga-drop-note")`)).toBe(true);
   expect(await ed.source()).toContain(`<p class="lede">Build ${IMG("images/dot-2.png")}${IMG("images/two.png")}<em>cool</em>`);
   expect(await files()).toEqual(expect.arrayContaining(["images/dot.png", "images/dot-2.png", "images/two.png"]));
+  // The page didn't load again for the new files (the shell makes it afresh for a stylesheet or a script that changes).
+  await new Promise((r) => setTimeout(r, 500));
+  expect(await ed.frame<number>(`performance.timeOrigin`)).toBe(loaded);
 
   await ed.page.reload();
   await ed.loaded();
-  await expect.poll(() => images(ed)).toEqual(want);
+  await expect.poll(() => images(ed), UPLOAD).toEqual(want);
 });
 
 test("an image dropped at the start or the end of a paragraph is a paragraph of its own; on an empty line, it fills it", async ({
@@ -130,18 +140,18 @@ test("an image dropped at the start or the end of a paragraph is a paragraph of 
   const { ed } = await open(tab, await servers.main());
   const png = (name: string) => [{ name, type: "image/png", png: true }];
   await drop(ed, "p.lede", 0, png("start.png"));
-  await expect.poll(() => ed.source()).toContain(`<p>${IMG("images/start.png")}</p>\n  <p class="lede">Build`);
+  await expect.poll(() => ed.source(), UPLOAD).toContain(`<p>${IMG("images/start.png")}</p>\n  <p class="lede">Build`);
   await drop(ed, "p.tail", "We came down before the rain.".length, png("end.png"));
-  await expect.poll(() => ed.source()).toContain(`before the rain.</p>\n  <p>${IMG("images/end.png")}</p>\n</body>`);
+  await expect.poll(() => ed.source(), UPLOAD).toContain(`before the rain.</p>\n  <p>${IMG("images/end.png")}</p>\n</body>`);
   await drop(ed, "p.empty", 0, png("empty.png"));
-  await expect.poll(() => ed.source()).toContain(`<p class="empty">${IMG("images/empty.png")}</p>`);
-  await expect.poll(async () => (await images(ed)).map((i) => i.loaded)).toEqual([true, true, true]);
+  await expect.poll(() => ed.source(), UPLOAD).toContain(`<p class="empty">${IMG("images/empty.png")}</p>`);
+  await expect.poll(async () => (await images(ed)).map((i) => i.loaded), UPLOAD).toEqual([true, true, true]);
 });
 
 test("a dropped file that isn't an image goes into files/, as a link to it with its name", async ({ tab }) => {
   const { ed, files } = await open(tab, await servers.main());
   expect(await drop(ed, "p.lede", 6, [{ name: "notes.txt", type: "text/plain" }])).toEqual({ stopped: true, shown: true });
-  await expect.poll(() => ed.source()).toContain(`<p class="lede">Build <a href="files/notes.txt">notes.txt</a><em>cool</em>`);
+  await expect.poll(() => ed.source(), UPLOAD).toContain(`<p class="lede">Build <a href="files/notes.txt">notes.txt</a><em>cool</em>`);
   expect(await files()).toEqual(expect.arrayContaining(["files/notes.txt"]));
   // The link opens the file.
   expect(await ed.frame<string>(`fetch(${F}.querySelector('a[href="files/notes.txt"]').href).then((r) => r.text())`)).toBe("some notes");
@@ -152,7 +162,7 @@ test("a pasted screenshot goes in at the caret", async ({ tab }) => {
   const at = await ed.charAt("p.lede", 3);
   await ed.click(at.x, at.y);
   await paste(ed, [{ name: "image.png", type: "image/png", png: true }]);
-  await expect.poll(() => images(ed)).toEqual([{ src: "images/image.png", alt: "image.png", loaded: true }]);
+  await expect.poll(() => images(ed), UPLOAD).toEqual([{ src: "images/image.png", alt: "image.png", loaded: true }]);
   expect(await ed.source()).toMatch(/<p class="lede">Bu[a-z]*<img src="images\/image.png" alt="image.png">[a-z]* <em>/);
   expect(await files()).toEqual(expect.arrayContaining(["images/image.png"]));
 });
@@ -160,7 +170,7 @@ test("a pasted screenshot goes in at the caret", async ({ tab }) => {
 test("from a page in a folder, the image is in the document's images/, and its src reaches it", async ({ tab }) => {
   const { ed, files } = await open(tab, await servers.main(), { "blog/post.html": PAGE }, "blog/post");
   await drop(ed, "p.lede", 6, [{ name: "dot.png", type: "image/png", png: true }]);
-  await expect.poll(() => images(ed)).toEqual([{ src: "../images/dot.png", alt: "dot.png", loaded: true }]);
+  await expect.poll(() => images(ed), UPLOAD).toEqual([{ src: "../images/dot.png", alt: "dot.png", loaded: true }]);
   expect(await files()).toEqual(expect.arrayContaining(["images/dot.png"]));
 });
 

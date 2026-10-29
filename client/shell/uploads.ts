@@ -16,10 +16,14 @@ export const folderFor = (file: File) => (file.type.startsWith("image/") ? "imag
 const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "file";
 
 /**
- * Adds `files` to the document's files (`api`: a path of the document's API to its address). Returns the paths they
- * got, in order, up to the first that couldn't be added, and why it couldn't.
+ * Adds `files` to the document's files (`api`: a path of the document's API to its address); `sending` hears each path
+ * before its file goes. Returns the paths they got, in order, up to the first that couldn't be added, and why it couldn't.
  */
-export async function addFiles(api: (path: string) => string, files: File[]): Promise<{ paths: string[]; error: string | null }> {
+export async function addFiles(
+  api: (path: string) => string,
+  files: File[],
+  sending: (path: string) => void = () => {}
+): Promise<{ paths: string[]; error: string | null }> {
   const listed = await fetch(api("/api/files"), { cache: "no-store" }).catch(() => null);
   if (!listed?.ok) return { paths: [], error: await why(listed, files.length == 1 ? files[0].name : "the files") };
   const taken = new Set(((await listed.json()) as { files: { path: string }[] }).files.map((f) => f.path.toLowerCase()));
@@ -29,6 +33,7 @@ export async function addFiles(api: (path: string) => string, files: File[]): Pr
     const path = `${dir}/${unique(cleanName(file.name), (n) => taken.has(`${dir}/${n}`.toLowerCase()))}`;
     const headers: Record<string, string> = {};
     if (file.size > HASH_FROM) headers["x-erga-sha256"] = await sha256Hex(await file.arrayBuffer());
+    sending(path);
     const r = await fetch(api(`/api/files/${encodePath(path)}`), { method: "PUT", body: file, headers }).catch(() => null);
     if (!r?.ok) return { paths, error: await why(r, file.name) };
     taken.add(path.toLowerCase());

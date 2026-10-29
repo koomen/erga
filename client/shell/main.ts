@@ -131,13 +131,21 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   // whole text. Presence, connection news and events before the shell is set up are picked up once it is (`started`).
   let started = false;
   const pending: SocketEvent[] = [];
+  const dropped = new Set<string>();
   const collab: Collab = new Collab({
     onEvent: (msg) => { if (started) shell.room.socketEvent(msg); else pending.push(msg); },
     onRemote: (changes, author) => shell.room.applyRemote(changes, author),
     // Another page of the document is no part of this one (a page frames another only rarely): its edits leave this one be.
-    onFiles: (paths) => { if (paths.some((p) => !/\.(html?|md)$/i.test(p))) shell.room.needRefresh(); },
-    onPresence: () => { if (started) shell.people.presenceChanged(); },
-    onStatus: (connected) => { if (started) shell.room.connectionChanged(connected); },
+    // Nor do the files this tab adds for a drop or paste (`dropped`): the page doesn't use them until its editor puts them in.
+    onFiles: (paths) => {
+      if (paths.filter((p) => !/\.(html?|md)$/i.test(p) && !dropped.delete(p)).length) shell.room.needRefresh();
+    },
+    onPresence: () => {
+      if (started) shell.people.presenceChanged();
+    },
+    onStatus: (connected) => {
+      if (started) shell.room.connectionChanged(connected);
+    },
     onStale: () => {
       const w = $("welcome");
       w.hidden = false;
@@ -314,7 +322,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => shell.room.needRefresh(),
     onOpen: (path) => openPage(path),
-    onFiles: (files) => addFiles(api, files),
+    onFiles: (files) => addFiles(api, files, (path) => dropped.add(path)),
     flushed: () => collab.flushed(),
     onZoom: (by) => zoomPage(by),
   });
