@@ -40,7 +40,9 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import { HttpServerResponse } from "effect/http";
 import * as Y from "yjs";
 import { nameOf, namingFor, UNTITLED, type NamedRow, type Naming, type NamesDirectory } from "./names.ts";
 import { DocumentAccess, type Asker, type Role } from "./access.ts";
@@ -56,7 +58,6 @@ import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type A
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
 import { cleanRel, kindOf, pageRefusal, parentsOf, titleOf, type DocKind } from "./pages.ts";
-import { json } from "../shared/http.ts";
 import { sleep, throttle } from "../shared/time.ts";
 
 /**
@@ -123,6 +124,13 @@ export interface DocumentDirectory extends NamesDirectory<Asker> {
 /** How often edits may update a document's row (its time, and the title that follows its heading). */
 const DIRECTORY_EVERY_MS = 2000;
 
+
+/** A file that PUT /api/files refused: the status, and what to do about it. */
+class UploadRefused extends Schema.TaggedError<UploadRefused>()("UploadRefused", { status: Schema.Number, error: Schema.String }) {}
+
+/** A JSON answer that no cache keeps. */
+const answer = (body: unknown, status: number) =>
+  HttpServerResponse.toWeb(HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } }));
 
 /** What the server around a document gives it. */
 export interface DocumentDeps {
@@ -1090,43 +1098,82 @@ export class Document {
    * versions): the answer says so. Refused when the file, or the project
    * with it, would pass the limits an admin sets (max_file_mb, max_project_gb).
    */
-  private async upload(request: Request): Promise<Response> {
-    const fail = (status: number, error: string) => { void request.body?.cancel().catch(() => {}); return json({ ok: false, error }, status); };
-    if (request.headers.get("x-erga-access") != "edit") return fail(403, "You can only view this document.");
-    const path = cleanRel(new URL(request.url).pathname.slice("/api/files/".length));
-    if (!path) return fail(400, "Name the file in the address, PUT /api/files/<path>: a path inside the document, with no \"..\" and no part that starts with a dot.");
-    const opened = await this.room();
-    if (!opened) { this.open = null; return fail(404, "There's no such document."); }
-    const length = request.headers.get("content-length");
-    const size = Number(length);
-    if (length == null || !Number.isInteger(size) || size < 0) return fail(411, "Send the file's size in bytes as Content-Length.");
-    const check = await this.mayAdd(opened, path, size);
-    if (!check.ok) return fail(check.status, check.error);
-    const info = (await this.readInfo())!;
-    const blobs = info.disk ? null : this.deps.blobs ?? null;
-    const person = personOf(request.headers);
-    const by = byLine(person.id, request.headers.get("x-erga-agent") ? viaOf(request.headers.get("x-erga-via") ?? undefined) : null);
-    // Small files (and every file, without a blob store) come whole: a text may be one, and a small blob stays in the object too.
-    const given = request.headers.get("x-erga-sha256")?.trim().toLowerCase() ?? "";
-    if (!blobs || size <= Math.max(TEXT_MAX, OBJECT_MAX) || !/^[0-9a-f]{64}$/.test(given)) {
-      if (blobs && size > BUFFER_MAX) return fail(400, `${path} is ${megabytes(size)}: send its sha-256 (hex) as x-erga-sha256, so a file over ${BUFFER_MAX / MB} MB can stream.`);
-      const bytes = new Uint8Array(await request.arrayBuffer());
-      if (bytes.length != size) return fail(400, `The body had ${bytes.length} bytes, not the ${size} of its Content-Length.`);
-      const r = await this.addBytes(opened, path, bytes, by);
-      return r.ok ? json({ ok: true, path, kind: r.kind, size, ...(r.hash ? { hash: r.hash } : {}), replaced: check.replaced }) : fail(r.status, r.error);
-    }
-    if (path == info.index) return fail(409, `${path} is the document's page, which is text: it can't be replaced by a file that isn't.`);
-    // A big blob streams to the store, which checks the bytes against the hash: a wrong one stores nothing.
-    if (await blobs.head(given)) void request.body?.cancel().catch(() => {});
-    else {
-      try { await blobs.put(given, request.body ?? new Uint8Array(), size); } catch (e) {
-        return fail(400, `${path} wasn't stored: ${e instanceof Error ? e.message : String(e)}. Check its x-erga-sha256 and Content-Length.`);
+  private upload(request: Request): Promise<Response> {
+    const refused = (e: UploadRefused) => {
+      void request.body?.cancel().catch(() => {});
+      return Effect.succeed(answer({ ok: false, error: e.error }, e.status));
+    };
+    return Effect.runPromise(
+      this.uploaded(request).pipe(
+        Effect.map((done) => answer(done, 200)),
+        Effect.catchTag("UploadRefused", refused)
+      )
+    );
+  }
+
+  private uploaded(request: Request): Effect.Effect<Record<string, unknown>, UploadRefused | StoreError> {
+    const self = this;
+    const fail = (status: number, error: string) => Effect.fail(new UploadRefused({ status, error }));
+    return Effect.gen(function* () {
+      if (request.headers.get("x-erga-access") != "edit") return yield* fail(403, "You can only view this document.");
+      const path = cleanRel(new URL(request.url).pathname.slice("/api/files/".length));
+      if (!path)
+        return yield* fail(
+          400,
+          'Name the file in the address, PUT /api/files/<path>: a path inside the document, with no ".." and no part that starts with a dot.'
+        );
+      const opened = yield* Effect.promise(() => self.room());
+      if (!opened) {
+        self.open = null;
+        return yield* fail(404, "There's no such document.");
       }
-    }
-    const ref: BlobRef = { hash: given, size, at: Date.now() };
-    this.publisher = by;
-    try { await Effect.runPromise(opened.room.putBlob(path, ref)); } finally { this.publisher = null; }
-    return json({ ok: true, path, kind: "file", size, hash: ref.hash, replaced: check.replaced });
+      const length = request.headers.get("content-length");
+      const size = Number(length);
+      if (length == null || !Number.isInteger(size) || size < 0)
+        return yield* fail(411, "Send the file's size in bytes as Content-Length.");
+      const check = yield* Effect.promise(() => self.mayAdd(opened, path, size));
+      if (!check.ok) return yield* fail(check.status, check.error);
+      const info = (yield* Effect.promise(() => self.readInfo()))!;
+      const blobs = info.disk ? null : (self.deps.blobs ?? null);
+      const person = personOf(request.headers);
+      const by = byLine(person.id, request.headers.get("x-erga-agent") ? viaOf(request.headers.get("x-erga-via") ?? undefined) : null);
+      // Small files (and every file, without a blob store) come whole: a text may be one, and a small blob stays in the object too.
+      const given = request.headers.get("x-erga-sha256")?.trim().toLowerCase() ?? "";
+      if (!blobs || size <= Math.max(TEXT_MAX, OBJECT_MAX) || !/^[0-9a-f]{64}$/.test(given)) {
+        if (blobs && size > BUFFER_MAX)
+          return yield* fail(
+            400,
+            `${path} is ${megabytes(size)}: send its sha-256 (hex) as x-erga-sha256, so a file over ${BUFFER_MAX / MB} MB can stream.`
+          );
+        const bytes = new Uint8Array(yield* Effect.promise(() => request.arrayBuffer()));
+        if (bytes.length != size) return yield* fail(400, `The body had ${bytes.length} bytes, not the ${size} of its Content-Length.`);
+        const r = yield* Effect.promise(() => self.addBytes(opened, path, bytes, by));
+        if (!r.ok) return yield* fail(r.status, r.error);
+        return { ok: true, path, kind: r.kind, size, ...(r.hash ? { hash: r.hash } : {}), replaced: check.replaced };
+      }
+      if (path == info.index)
+        return yield* fail(409, `${path} is the document's page, which is text: it can't be replaced by a file that isn't.`);
+      // A big blob streams to the store, which checks the bytes against the hash: a wrong one stores nothing.
+      if (yield* Effect.promise(() => blobs.head(given))) void request.body?.cancel().catch(() => {});
+      else {
+        const why = (e: unknown) =>
+          new UploadRefused({
+            status: 400,
+            error: `${path} wasn't stored: ${e instanceof Error ? e.message : String(e)}. Check its x-erga-sha256 and Content-Length.`,
+          });
+        yield* Effect.tryPromise({ try: () => blobs.put(given, request.body ?? new Uint8Array(), size), catch: why });
+      }
+      const ref: BlobRef = { hash: given, size, at: Date.now() };
+      self.publisher = by;
+      yield* opened.room.putBlob(path, ref).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            self.publisher = null;
+          })
+        )
+      );
+      return { ok: true, path, kind: "file", size, hash: ref.hash, replaced: check.replaced };
+    });
   }
 
   /**
