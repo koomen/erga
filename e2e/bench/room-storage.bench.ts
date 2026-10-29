@@ -19,6 +19,7 @@ import { joinLocal } from "../../document/room";
 import { files, introduce } from "../../document/content";
 import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
 import { documentAgents } from "../../agents/document/session";
+import { promised } from "../../tests/helpers/promised";
 
 const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -76,7 +77,7 @@ const init: Record<string, string | Uint8Array> = { "index.html": page };
 for (let i = 0; i < 40; i++) init[`notes/n${i}.md`] = `# Note ${i}\n\n` + "Some words in a note. ".repeat(900);
 for (let i = 0; i < 5; i++) init[`img/i${i}.png`] = new Uint8Array(200_000).fill(i + 7);
 await dir.add({ id: "bench123", owner: "ada", title: "Bench", created: Date.now(), expires: null });
-const first = new Document(deps());
+const first = promised(new Document(deps()));
 await first.create("ada", "bench123", init, "index.html", { expires: null });
 
 // A history: 3,000 keystrokes, written after every 20 (as the room's writer would during steady typing).
@@ -114,7 +115,7 @@ let coldReads = 0, coldBytes = 0;
 for (let i = 0; i < 5; i++) {
   storage.reset();
   const t = performance.now();
-  const cold = new Document(deps());
+  const cold = promised(new Document(deps()));
   const o = await cold.admit(req());
   times.push(performance.now() - t);
   coldReads = storage.reads; coldBytes = storage.readBytes;
