@@ -90,9 +90,7 @@ import { CHANGES, documentToolSpecs } from "./document/tools.ts";
 import { byLine } from "../shared/attribution.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
-export class ToolError extends Error {
-  constructor(message: string, readonly status = 400) { super(message); }
-}
+export class ToolError extends Schema.TaggedError<ToolError>()("ToolError", { message: Schema.String, status: Schema.Number }) {}
 
 /** What a tool runs with: the directory, who's asking, and (for the document agent) the document it's in. */
 export interface ToolWho {
@@ -209,7 +207,7 @@ const API_TOOLS: Tool[] = [
     run: async (args, ctx) => {
       const { session, platform } = outside(ctx);
       // Anyone who may sign in may make documents (withTokens checked they still may); test people only test documents.
-      if (session.test) throw new ToolError("You can't make documents on this server.", 403);
+      if (session.test) throw new ToolError({ message: "You can't make documents on this server.", status: 403 });
       let files: Record<string, FileData> = decodeFiles(args.files);
       const published = Object.keys(files).length > 0;
       let index: string;
@@ -218,18 +216,18 @@ const API_TOOLS: Tool[] = [
       else {
         const named = typeof args.template == "string" && args.template != "blank" ? args.template : null;
         const template = named && named != "landing" ? templateById(named) : undefined;
-        if (named && named != "landing" && !template) throw new ToolError(`There's no template "${named}".`);
+        if (named && named != "landing" && !template) throw new ToolError({ message: `There's no template "${named}".`, status: 400 });
         const from = args.from ? (await findDocument(ctx, args.from, "open")).id : named == "landing" ? "landing" : null;
         const start = await startingFiles(platform, from, ctx.who, template);
         if (!start)
-          throw new ToolError(
-            from == "landing" ? "This server has no homepage (landing document) to copy." : "There's nothing there you can copy.",
-            404
-          );
+          throw new ToolError({
+            message: from == "landing" ? "This server has no homepage (landing document) to copy." : "There's nothing there you can copy.",
+            status: 404,
+          });
         ({ files, index } = start);
         startKind = start.kind;
       }
-      if (!session.test && !(await platform.directory.mayWrite(session.login))) throw new ToolError(NO_WRITE, 403);
+      if (!session.test && !(await platform.directory.mayWrite(session.login))) throw new ToolError({ message: NO_WRITE, status: 403 });
       for (let tries = 0; tries < 5; tries++) {
         const doc = await makeDoc(platform, session.login.toLowerCase(), newDocId(), files, {
           index, published, title: optString(args.title, "title"), slug: optString(args.slug, "slug"), kind: isDocKind(args.kind) ? args.kind : startKind,
@@ -242,7 +240,7 @@ const API_TOOLS: Tool[] = [
             ...(published || doc.expires == null ? {} : { expires: `${new Date(doc.expires).toISOString()}, unless someone edits it` }),
           };
       }
-      throw new ToolError("Couldn't pick an address for it: try again.", 500);
+      throw new ToolError({ message: "Couldn't pick an address for it: try again.", status: 500 });
     },
   },
   {
@@ -262,7 +260,8 @@ const API_TOOLS: Tool[] = [
       const files = decodeFiles(args.files);
       const remove = new Set(stringList(args.delete, "delete").map((p) => cleanFilePath(p)));
       if (args.replace === true) for (const p of await platform.docs.paths(doc)) if (!(p in files)) remove.add(p);
-      if (!Object.keys(files).length && !remove.size) throw new ToolError("Nothing to do: give files, delete, or replace.");
+      if (!Object.keys(files).length && !remove.size)
+        throw new ToolError({ message: "Nothing to do: give files, delete, or replace.", status: 400 });
       const r = await platform.docs.publish(doc, files, [...remove], byLine(ctx.who.login.toLowerCase(), ctx.who.via));
       return { ...withApi((await platform.directory.get(doc.id)) ?? doc, ctx), ...r };
     },
@@ -284,7 +283,7 @@ const API_TOOLS: Tool[] = [
       // Through the document's host, as a rename in the editor is, so its open tabs follow.
       const r = await callDoc(ctx, doc, "/api/name", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
       const body = (await r.json().catch(() => ({}))) as { error?: string };
-      if (!r.ok) throw new ToolError(body.error ?? `The document answered ${r.status}.`, r.status == 409 ? 409 : 400);
+      if (!r.ok) throw new ToolError({ message: body.error ?? `The document answered ${r.status}.`, status: r.status == 409 ? 409 : 400 });
       return withApi((await outside(ctx).platform.directory.get(doc.id)) ?? doc, ctx);
     },
   },
@@ -324,7 +323,7 @@ const API_TOOLS: Tool[] = [
     run: async (args, ctx) => {
       const { session, platform } = outside(ctx);
       if (!(await platform.tokens.revoke(session.login, String(args.id ?? ""), ctx.who.via)))
-        throw new ToolError(`You have no token "${args.id}".`, 404);
+        throw new ToolError({ message: `You have no token "${args.id}".`, status: 404 });
       return { revoked: args.id };
     },
   },
@@ -402,19 +401,23 @@ export const SERVER_TOOLS: Tool[] = [
     }),
     run: async (args, ctx) => {
       const { who } = ctx, platform = docsOf(ctx);
-      if (who.test) throw new ToolError("You can't make documents on this server.", 403);
-      if (!(await ctx.dir.mayWrite(who.login))) throw new ToolError(NO_WRITE, 403);
+      if (who.test) throw new ToolError({ message: "You can't make documents on this server.", status: 403 });
+      if (!(await ctx.dir.mayWrite(who.login))) throw new ToolError({ message: NO_WRITE, status: 403 });
       const named = typeof args.template == "string" && args.template.trim() ? args.template.trim() : null;
-      if (named && args.from) throw new ToolError("Give a template or a document to copy (from), not both.");
+      if (named && args.from) throw new ToolError({ message: "Give a template or a document to copy (from), not both.", status: 400 });
       const template = named && named != "landing" ? templateById(named) : undefined;
-      if (named && named != "landing" && !template) throw new ToolError(`There's no template "${named}": ${TEMPLATES.map((t) => t.id).join(", ")}, or landing.`);
+      if (named && named != "landing" && !template)
+        throw new ToolError({
+          message: `There's no template "${named}": ${TEMPLATES.map((t) => t.id).join(", ")}, or landing.`,
+          status: 400,
+        });
       const from = args.from ? (await findDocument(ctx, args.from, "open")).id : named == "landing" ? "landing" : null;
       const start = await startingFiles(platform, from, who, template);
       if (!start)
-        throw new ToolError(
-          from == "landing" ? "This server has no homepage (landing document) to copy." : "There's nothing there you can copy.",
-          404
-        );
+        throw new ToolError({
+          message: from == "landing" ? "This server has no homepage (landing document) to copy." : "There's nothing there you can copy.",
+          status: 404,
+        });
       const title = typeof args.title == "string" ? args.title : undefined,
         slug = typeof args.slug == "string" ? args.slug : undefined;
       for (let tries = 0; tries < 5; tries++) {
@@ -422,7 +425,7 @@ export const SERVER_TOOLS: Tool[] = [
         const doc = await makeDoc(platform, who.login.toLowerCase(), newDocId(), start.files, { index: start.index, title, slug, kind });
         if (doc) return { made: described(doc, ctx), from: from ?? `the ${template?.id ?? TEMPLATES[0].id} template`, ...(doc.expires != null ? { expires: `${iso(doc.expires)}, unless someone edits it` } : {}) };
       }
-      throw new ToolError("Couldn't pick an address for it: try again.", 500);
+      throw new ToolError({ message: "Couldn't pick an address for it: try again.", status: 500 });
     },
   },
   {
@@ -437,7 +440,11 @@ export const SERVER_TOOLS: Tool[] = [
     }),
     run: async (args, ctx) => {
       const doc = await findDocument({ ...ctx, here: undefined }, args.document, "delete");
-      if (doc.id == ctx.here) throw new ToolError("That's the document you're in: the person deletes it on the documents list (/docs).", 409);
+      if (doc.id == ctx.here)
+        throw new ToolError({
+          message: "That's the document you're in: the person deletes it on the documents list (/docs).",
+          status: 409,
+        });
       const platform = docsOf(ctx);
       if (!(await platform.docs.delete(doc))) await platform.directory.remove(doc.id);
       return { deleted: described(doc, ctx) };
@@ -466,7 +473,8 @@ export const SERVER_TOOLS: Tool[] = [
     }),
     run: async (args, { dir, who }) => {
       const key = String(args.key ?? "");
-      if (args.value === undefined) throw new ToolError("Give the value to set it to (reset_setting puts it back to its default).");
+      if (args.value === undefined)
+        throw new ToolError({ message: "Give the value to set it to (reset_setting puts it back to its default).", status: 400 });
       try {
         return entryOf(await dir.config.set(who, key, args.value));
       } catch (e) {
@@ -569,8 +577,8 @@ export const SERVER_TOOLS: Tool[] = [
     }),
     run: async (args, ctx) => {
       const provider = args.provider == "google" ? "google" : args.provider == "github" ? "github" : null;
-      if (!provider) throw new ToolError('provider: "github" or "google".');
-      if (typeof args.on != "boolean") throw new ToolError("on: true or false.");
+      if (!provider) throw new ToolError({ message: 'provider: "github" or "google".', status: 400 });
+      if (typeof args.on != "boolean") throw new ToolError({ message: "on: true or false.", status: 400 });
       return { providersOn: await authOf(ctx).setProvider(ctx.who, provider, args.on) };
     },
   },
@@ -663,7 +671,7 @@ export const SERVER_TOOLS: Tool[] = [
       on: Schema.Boolean.annotate({ description: "true: users can share content publicly; false: they can't" }),
     }),
     run: async (args, { dir, who }) => {
-      if (typeof args.on != "boolean") throw new ToolError("on: true or false.");
+      if (typeof args.on != "boolean") throw new ToolError({ message: "on: true or false.", status: 400 });
       const before = await dir.config.get("public_sharing");
       return { publicSharing: (await dir.config.set(who, "public_sharing", args.on)).value, before };
     },
@@ -767,8 +775,8 @@ export const SERVER_TOOLS: Tool[] = [
       const login = String(args.login ?? "")
         .trim()
         .toLowerCase();
-      if (login == who.login.toLowerCase()) throw new ToolError("That's you: another admin has to remove you.");
-      if (!(await dir.users.get(login))) throw new ToolError(`${login} isn't a user.`, 404);
+      if (login == who.login.toLowerCase()) throw new ToolError({ message: "That's you: another admin has to remove you.", status: 400 });
+      if (!(await dir.users.get(login))) throw new ToolError({ message: `${login} isn't a user.`, status: 404 });
       await dir.users.remove(who, login);
       return { removed: login };
     },
@@ -789,9 +797,18 @@ export function documentTools(): Tool[] {
         // A tool that changes nothing works in any document the person may open; the document's host refuses the rest to a viewer.
         const doc = await findDocument(ctx, args.document, CHANGES.has(spec.name) ? "edit" : "open");
         const { document: _, ...rest } = args;
-        const r = await callDoc(ctx, doc, `/api/ext/tools/${encodeURIComponent(spec.name)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rest) });
-        const body = (await r.json().catch(() => ({ ok: false, error: `The document answered ${r.status}.` }))) as { ok: boolean; content?: ToolContent[]; error?: string };
-        if (!body.ok) throw new ToolError(body.error ?? "The tool failed.", r.status >= 400 && r.status < 500 ? r.status : 500);
+        const r = await callDoc(ctx, doc, `/api/ext/tools/${encodeURIComponent(spec.name)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rest),
+        });
+        const body = (await r.json().catch(() => ({ ok: false, error: `The document answered ${r.status}.` }))) as {
+          ok: boolean;
+          content?: ToolContent[];
+          error?: string;
+        };
+        if (!body.ok)
+          throw new ToolError({ message: body.error ?? "The tool failed.", status: r.status >= 400 && r.status < 500 ? r.status : 500 });
         return body.content ?? [];
       },
     })
@@ -825,7 +842,7 @@ export async function toolsFor(ctx: ToolWho, who: "agent" | "api"): Promise<Tool
 /** What a tool that needs no one runs with (the admin agent's own: agents/admin/tools.ts): nothing of the directory. */
 const NOBODY = new Proxy({} as ToolWho, {
   get: () => {
-    throw new ToolError("This tool needs to know who's asking.", 500);
+    throw new ToolError({ message: "This tool needs to know who's asking.", status: 500 });
   },
 });
 
@@ -835,19 +852,20 @@ const NOBODY = new Proxy({} as ToolWho, {
  */
 export async function runTool(tool: Tool, args: Record<string, unknown>, ctx: ToolWho | null): Promise<string | object | ToolContent[]> {
   if (tool.admin && !(ctx && (await ctx.dir.users.actsAsAdmin(ctx.who))))
-    throw new ToolError(ctx && (await ctx.dir.users.isAdmin(ctx.who)) ? LOCKED : "Only an admin can do that.", 403);
+    throw new ToolError({ message: ctx && (await ctx.dir.users.isAdmin(ctx.who)) ? LOCKED : "Only an admin can do that.", status: 403 });
   try {
     return await tool.run(args, ctx ?? NOBODY);
   } catch (e) {
     if (e instanceof ToolError) throw e;
-    if (e instanceof NotAllowed) throw new ToolError(e.message, /no such|isn't a user/i.test(e.message) ? 404 : 403);
-    if (e instanceof ConfigError || e instanceof CredentialError || e instanceof AuthError) throw new ToolError(e.message, 400);
+    if (e instanceof NotAllowed) throw new ToolError({ message: e.message, status: /no such|isn't a user/i.test(e.message) ? 404 : 403 });
+    if (e instanceof ConfigError || e instanceof CredentialError || e instanceof AuthError)
+      throw new ToolError({ message: e.message, status: 400 });
     throw e;
   }
 }
 
 /**
- * Tools as an embedded agent takes them (agents/run.ts's AgentTool), run as `ctx` (a
+ * Tools as an embedded agent takes them (agents/run.ts's AgentTool }), run as `ctx` (a
  * function: the admin agent's admin, with the unlock their page sent last;
  * null: tools that need no one). `guard` checks first (the person still an
  * admin, say).
@@ -888,7 +906,8 @@ export function toolResult(out: unknown): ToolOutput {
 export async function findDocument(ctx: ToolWho, ref: unknown, action: Action): Promise<DocRow> {
   const { dir, who } = ctx;
   if ((ref == null || ref === "") && ctx.here) ref = ctx.here;
-  if (typeof ref != "string" || !ref.trim()) throw new ToolError("Name the document: its address (/<owner>/<slug>), URL or id.");
+  if (typeof ref != "string" || !ref.trim())
+    throw new ToolError({ message: "Name the document: its address (/<owner>/<slug>), URL or id.", status: 400 });
   let path = ref.trim();
   try { path = new URL(path).pathname; } catch { /* not a URL */ }
   const parts = path.split("/").filter(Boolean);
@@ -899,9 +918,17 @@ export async function findDocument(ctx: ToolWho, ref: unknown, action: Action): 
     route ??= await routeAt(dir, who.login, parts[0]);
   }
   const doc = route && await dir.get(route.id);
-  if (!doc) throw new ToolError(`There's no document "${ref}". list_documents lists yours.`, 404);
+  if (!doc) throw new ToolError({ message: `There's no document "${ref}". list_documents lists yours.`, status: 404 });
   if (!(await dir.may(who, action, doc))) {
-    throw new ToolError(action == "delete" ? "Only its owner can delete a document." : action == "share" ? "Only its owner can share a document, or see who it's shared with." : `You can't ${action} that document.`, 403);
+    throw new ToolError({
+      message:
+        action == "delete"
+          ? "Only its owner can delete a document."
+          : action == "share"
+            ? "Only its owner can share a document, or see who it's shared with."
+            : `You can't ${action} that document.`,
+      status: 403,
+    });
   }
   return doc;
 }
@@ -941,7 +968,7 @@ async function permissionsOf(dir: Directory, id: string) {
 
 /** The platform, for the documents list's tools. */
 function docsOf(ctx: ToolWho): Platform {
-  if (!ctx.platform) throw new ToolError("The documents list isn't reachable from here.", 501);
+  if (!ctx.platform) throw new ToolError({ message: "The documents list isn't reachable from here.", status: 501 });
   return ctx.platform;
 }
 
@@ -1001,7 +1028,7 @@ function personOf(p: Person) {
 
 /** Sign-in's settings, where this agent has them. */
 function authOf(ctx: ToolWho): AuthOps {
-  if (!ctx.auth) throw new ToolError("This server's sign-in settings aren't reachable from here.", 404);
+  if (!ctx.auth) throw new ToolError({ message: "This server's sign-in settings aren't reachable from here.", status: 404 });
   return ctx.auth;
 }
 
@@ -1021,7 +1048,8 @@ function signInOf(s: AuthStatus) {
 
 /** An outside agent's session, platform and origin: every API tool has them (server/api.ts). */
 function outside(ctx: ToolWho): { session: Session & { agent: AgentToken }; platform: Platform; origin: string } {
-  if (!ctx.session || !ctx.platform || !ctx.origin) throw new ToolError("This tool is for outside agents, over the API.", 501);
+  if (!ctx.session || !ctx.platform || !ctx.origin)
+    throw new ToolError({ message: "This tool is for outside agents, over the API.", status: 501 });
   return { session: ctx.session, platform: ctx.platform, origin: ctx.origin };
 }
 
@@ -1044,14 +1072,16 @@ const MAX_FILE = 2_000_000, MAX_TOTAL = 50_000_000, MAX_FILES = 2000;
 /** A file's path as an outside agent gives it, inside the document. */
 export function cleanFilePath(p: string): string {
   const rel = cleanRel(p);
-  if (!rel) throw new ToolError(`"${p}" isn't a path inside the document (no "..", no hidden files or node_modules).`);
+  if (!rel)
+    throw new ToolError({ message: `"${p}" isn't a path inside the document (no "..", no hidden files or node_modules).`, status: 400 });
   return rel;
 }
 
 /** Files as tools take them: text, or {base64} for anything else. */
 function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
   if (raw == null) return {};
-  if (typeof raw != "object" || Array.isArray(raw)) throw new ToolError("files must be an object of paths to contents.");
+  if (typeof raw != "object" || Array.isArray(raw))
+    throw new ToolError({ message: "files must be an object of paths to contents.", status: 400 });
   const out: Record<string, string | Uint8Array> = {};
   let total = 0;
   for (const [path, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -1060,10 +1090,10 @@ function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
     if (typeof v == "string") data = v;
     else if (v && typeof v == "object" && typeof (v as { base64?: unknown }).base64 == "string") {
       const bytes = Base64.decode((v as { base64: string }).base64.replace(/\s+/g, ""));
-      if (Result.isFailure(bytes)) throw new ToolError(`${path}: that isn't base64.`);
+      if (Result.isFailure(bytes)) throw new ToolError({ message: `${path}: that isn't base64.`, status: 400 });
       data = bytes.success;
     } else if (v && typeof v == "object" && typeof (v as { text?: unknown }).text == "string") data = (v as { text: string }).text;
-    else throw new ToolError(`${path}: give its text as a string, or {"base64": "..."}.`);
+    else throw new ToolError({ message: `${path}: give its text as a string, or {"base64": "..."}.`, status: 400 });
     total = addFile(out, rel, data, total);
   }
   return out;
@@ -1072,31 +1102,37 @@ function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
 /** Adds a file to `out`, within the limits; answers the total size so far. */
 export function addFile(out: Record<string, string | Uint8Array>, rel: string, data: string | Uint8Array, total: number): number {
   const size = typeof data == "string" ? new TextEncoder().encode(data).length : data.length;
-  if (size > MAX_FILE) throw new ToolError(`${rel} is ${(size / 1e6).toFixed(1)}MB: files can be at most ${MAX_FILE / 1e6}MB.`, 413);
+  if (size > MAX_FILE)
+    throw new ToolError({ message: `${rel} is ${(size / 1e6).toFixed(1)}MB: files can be at most ${MAX_FILE / 1e6}MB.`, status: 413 });
   total += size;
-  if (total > MAX_TOTAL) throw new ToolError(`That's more than ${MAX_TOTAL / 1e6}MB of files.`, 413);
+  if (total > MAX_TOTAL) throw new ToolError({ message: `That's more than ${MAX_TOTAL / 1e6}MB of files.`, status: 413 });
   out[rel] = data;
-  if (Object.keys(out).length > MAX_FILES) throw new ToolError(`That's more than ${MAX_FILES} files.`, 413);
+  if (Object.keys(out).length > MAX_FILES) throw new ToolError({ message: `That's more than ${MAX_FILES} files.`, status: 413 });
   return total;
 }
 
 /** The document's page among the files: the one named, else index.html. */
 function pageOf(files: Record<string, unknown>, named: unknown): string {
-  if (named != null && typeof named != "string") throw new ToolError("index must be a path.");
+  if (named != null && typeof named != "string") throw new ToolError({ message: "index must be a path.", status: 400 });
   const index = named ? cleanFilePath(named) : "index.html" in files ? "index.html" : null;
-  if (!index) throw new ToolError(`There's no page: include index.html, or name the page with "index". The files: ${Object.keys(files).slice(0, 20).join(", ")}.`);
-  if (!/\.html?$/i.test(index)) throw new ToolError(`The page must be an .html file, not ${index}.`);
-  if (!(index in files)) throw new ToolError(`${index} isn't among the files.`);
+  if (!index)
+    throw new ToolError({
+      message: `There's no page: include index.html, or name the page with "index". The files: ${Object.keys(files).slice(0, 20).join(", ")}.`,
+      status: 400,
+    });
+  if (!/\.html?$/i.test(index)) throw new ToolError({ message: `The page must be an .html file, not ${index}.`, status: 400 });
+  if (!(index in files)) throw new ToolError({ message: `${index} isn't among the files.`, status: 400 });
   return index;
 }
 
 const optString = (v: unknown, what: string): string | undefined => {
   if (v == null) return undefined;
-  if (typeof v != "string") throw new ToolError(`${what} must be a string.`);
+  if (typeof v != "string") throw new ToolError({ message: `${what} must be a string.`, status: 400 });
   return v;
 };
 const stringList = (v: unknown, what: string): string[] => {
   if (v == null) return [];
-  if (!Array.isArray(v) || v.some((x) => typeof x != "string")) throw new ToolError(`${what} must be a list of paths.`);
+  if (!Array.isArray(v) || v.some((x) => typeof x != "string"))
+    throw new ToolError({ message: `${what} must be a list of paths.`, status: 400 });
   return v as string[];
 };

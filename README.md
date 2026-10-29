@@ -153,11 +153,11 @@ health checks and rollbacks work.
                       users.ts), their routes (routes.ts) and the layout they share
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     agents/       both embedded agents, their tools, and the guides for outside agents
-      run.ts          the agent loop both agents run: the model, the transcript, the checkpoints
+      run.ts          the agent loop both agents run, on Effect AI: the model, the transcript, the checkpoints
       tools.ts        the one tool registry: every server tool, for the embedded agents and the outside API;
                       actions.ts, the audit of every action and its tool
       guides.ts       what an outside agent reads first: the server's guide, a document's and the admin pages'
-      models.ts       the models, their prices, the agent's configuration and the scripted test model
+      models.ts       the models (Effect AI's Anthropic provider), the agent's configuration and the scripted test model
       checkpoint.ts   an agent's conversation, kept step by step (chat-store.ts, in a Durable Object's SQLite)
       document/       the document agent: session.ts (one session per person per document), workspace.ts, tools.ts,
                       prompt.ts, PROMPT.md
