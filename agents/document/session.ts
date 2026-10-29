@@ -7,16 +7,15 @@
 // doc. The room never holds a conversation, a long run doesn't load the
 // room, and closing the tab doesn't stop the agent.
 //
-// It runs on pi's agent core (https://github.com/badlogic/pi-mono:
-// @mariozechner/pi-agent-core + pi-ai) with our own tools, written against
-// the small Workspace interface in agents/document/workspace.ts, so the same agent could
-// run elsewhere (a browser) if it ever needs to. Others see only its edits,
+// It runs on the loop both agents share (agents/run.ts: Effect AI) with our
+// own tools, written against the small Workspace interface in
+// agents/document/workspace.ts, so the same agent could run elsewhere (a
+// browser) if it ever needs to. Others see only its edits,
 // attributed ("Pete's agent"), and its presence while it works: a labelled
 // caret that follows its edits as they apply, and whether it's busy, on awareness.
 //
-// This module is the Promise edge: pi's SDK is async, and document/host.ts wraps
-// what it exposes in Effect. Its loop is the one both agents share
-// (agents/run.ts).
+// This module is the Promise edge: document/host.ts wraps what it exposes in
+// Effect.
 //
 // Configuration comes from the Worker's bindings (in local development,
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
@@ -35,11 +34,12 @@
 
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
-import { validateToolArguments } from "@mariozechner/pi-ai";
+import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import * as Schema from "effect/Schema";
+import { Tool } from "effect/ai";
 import { withBlobs, type ChatStore } from "../checkpoint";
-import { startLoop } from "../run";
+import { resultImage, startLoop, type AgentTool } from "../run";
 import { documentGuide } from "../guides";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
@@ -48,10 +48,9 @@ import { joinLocal } from "../../document/room";
 import type { AgentSession, DocumentAgents, SessionOptions, ToolContent } from "../../document/agent";
 import { YjsWorkspace, type Pacer } from "./workspace";
 
-import { MODELS, resultImage, type AgentConfig, type AgentSettings } from "../models";
+import { MODELS, type AgentConfig, type AgentSettings } from "../models";
 import { kindLine, systemPrompt } from "./prompt";
 import { CHANGES, makeTools, toolPath } from "./tools";
-import { sleep } from "../../shared/time";
 /** A session as `documentAgents` starts it: the document's side (SessionOptions), with the agent's settings, the store and the server tools. */
 export interface AgentSessionOptions extends SessionOptions {
   /** The agent's settings now, or why it's off: read as the session starts and at each refresh. */
@@ -111,7 +110,7 @@ export function documentAgents(o: {
 }
 
 /** A tool beyond the document (agents/tools.ts), with what the agent is doing while it runs. */
-export type ServerAgentTool = AgentTool & { activity?: string };
+export type ServerAgentTool = AgentTool;
 
 const TOOL_ACTIVITY: Record<string, string> = {
   new_page: "making a page",
@@ -159,7 +158,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   const awareness = new Awareness(doc);
   awareness.setLocalState({ user: me, busy: false, activity: null, cursor: null });
   const leave = joinLocal(opts.room, doc, awareness);
-  await sleep(0); // the in-process sync is microtasks: done by now
+  await Effect.runPromise(Effect.sleep(0)); // the in-process sync is microtasks: done by now
   introduce(doc, me);
 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
@@ -169,7 +168,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   const pacer: Pacer = {
     cursor: (path, anchor, head) =>
       presence({ cursor: { path, anchor: Y.relativePositionToJSON(anchor), head: head && Y.relativePositionToJSON(head) } }),
-    wait: sleep,
+    wait: (ms) => Effect.runPromise(Effect.sleep(ms)),
     revert: () => {
       doc.transact(() => {
         undo.undo();
@@ -218,7 +217,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
     hooks: {
       about: (_name, args) => toolPath(args),
       toolStarted: (name, path) => {
-        const server = loop.agent?.state.tools.find((t) => t.name == name) as ServerAgentTool | undefined;
+        const server = loop.side?.tools.find((t) => t.name == name);
         presence({ activity: `${TOOL_ACTIVITY[name] ?? server?.activity ?? name}${path ? ` ${path}` : ""}` });
       },
       toolEnded: () => presence({ activity: "thinking" }),
@@ -234,7 +233,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   /** Done in the room: the replica has it once it has seen everything the room has (a few microtasks). */
   const caughtUp = async () => {
     const want = stateVector(opts.room.doc);
-    for (let i = 0; i < 200 && !hasSeen(doc, want); i++) await sleep(0);
+    for (let i = 0; i < 200 && !hasSeen(doc, want); i++) await Effect.runPromise(Effect.sleep(0));
   };
   const tools = makeTools(ws, {
     view: (req) => opts.view({ ...req, after: stateVector(doc) }),
@@ -271,7 +270,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
   const makeAgent = async (first: AgentConfig) => {
     const serverTools = await beyond();
-    return loop.agent ?? loop.start(first, prompted(serverTools), [...mine(), ...serverTools]);
+    return loop.side ?? loop.start(first, prompted(serverTools), [...mine(), ...serverTools]);
   };
   if (loop.cfg) await makeAgent(loop.cfg);
   /** The model's side, being made (a key arrived after the session started). */
@@ -279,7 +278,7 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   /** The settings now (a key an admin stored, replaced or cleared since the session started): the next model call uses them. */
   const configure = async (next: AgentConfig | null) => {
     loop.configure(next);
-    if (next && !loop.agent)
+    if (next && !loop.side)
       await (making ??= makeAgent(next).finally(() => {
         making = null;
       }));
@@ -307,10 +306,10 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
     log: () => loop.log,
     prompt(text, context, files = []) {
       // The tools beyond the document as the owner may use them now (an admin's, say).
-      loop.prompt(text, context, files, (agent) =>
+      loop.prompt(text, context, files, (side) =>
         beyond().then((more) => {
-          agent.state.tools = [...mine(), ...more];
-          agent.state.systemPrompt = prompted(more);
+          side.tools = [...mine(), ...more];
+          side.systemPrompt = prompted(more);
         })
       );
     },
@@ -335,13 +334,18 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
     },
     subscribe: loop.subscribe,
     resume: loop.resume,
-    tools: () => mine().map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) })),
+    tools: () => mine().map((t) => ({ name: t.name, description: t.description, parameters: Tool.getJsonSchemaFromSchema(t.parameters) })),
     async runTool(name, args, via) {
       if (CHANGES.has(name) && !opts.canEdit()) throw new Error(`${owner.name} can only view this document, so ${name} isn't one of the tools: they are ${mine().map((t) => t.name).join(", ")}.`);
       const tool = tools.find((t) => t.name == name);
       if (!tool) throw new Error(`There's no tool named "${name}". The tools are: ${mine().map((t) => t.name).join(", ")}.`);
       const id = `ext-${crypto.randomUUID()}`;
-      const params = validateToolArguments(tool, { type: "toolCall", id, name, arguments: (args ?? {}) as Record<string, unknown> });
+      let params: Record<string, unknown>;
+      try {
+        params = Schema.decodeUnknownSync(tool.parameters as Schema.Codec<Record<string, unknown>>)(args ?? {}, { errors: "all" });
+      } catch (e) {
+        throw new Error(`Validation failed for tool "${name}":\n${(e as Error).message}`);
+      }
       const path = toolPath(params);
       busy.ext++;
       // Its edits are its person's, via it, under the token's label ("Ada, via a shared agent (CI)"); the cursor says so too.

@@ -1,21 +1,26 @@
 // What both agents share of the model runtime: the models a person can
-// switch between and their prices, the agent's configuration (the key and
-// the model, from the Worker's bindings), pi's model descriptions, and the
-// free scripted model the test suites run on (ERGA_AGENT_MODEL=script).
+// switch between, the agent's configuration (the key and the model, from
+// the Worker's bindings), the model for a turn (Effect AI's Anthropic
+// provider), and the free scripted model the test suites run on
+// (ERGA_AGENT_MODEL=script).
 
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, type Context, type Model } from "@mariozechner/pi-ai";
-import { sleep } from "../shared/time";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { AiError, LanguageModel, type Prompt, type Response } from "effect/ai";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic";
 import { CREDENTIALS, type Credentials } from "../server/directory/index.ts";
 
-/** The models a person can switch between, by key; prices per million tokens. */
+/** The models a person can switch between, by key. */
 export const MODELS = {
-  sonnet: { id: "claude-sonnet-5-5", label: "Sonnet 5.5", fast: false, cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 } },
-  "opus-fast": { id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true, cost: { input: 8, output: 40, cacheRead: 0.8, cacheWrite: 10 } },
+  sonnet: { id: "claude-sonnet-5-5", label: "Sonnet 5.5", fast: false },
+  "opus-fast": { id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true },
 } as const;
 export type ModelChoice = keyof typeof MODELS;
 export const DEFAULT_MODEL: ModelChoice = "opus-fast";
@@ -86,62 +91,42 @@ export async function agentSettingsFrom(env: object, credentials: Pick<Credentia
 }
 
 /**
- * pi's built-in catalogue predates the 5.5 models, so they're described here.
- * Fast mode (Opus only) is the `fast-mode-2026-02-01` beta plus `speed: "fast"`
- * in the request body (added in `patchPayload`).
+ * The model behind a conversation, for one turn: Claude on Effect AI's
+ * Anthropic provider, with the key and effort as they are now; or the
+ * scripted model. Adaptive thinking with summaries (so the panel can show
+ * them), the effort, and fast mode (Opus only: the `fast-mode-2026-02-01`
+ * beta and `speed: "fast"`). Tools go as plain JSON Schema, not strict.
  */
-export function describeModel(choice: ModelChoice): Model<"anthropic-messages"> {
+export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Layer.Layer<LanguageModel.LanguageModel> {
+  if (isScript(cfg) || choice == null) return scriptModel;
   const m = MODELS[choice];
-  return {
-    id: m.id,
-    name: m.label,
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: { ...m.cost },
-    contextWindow: 1_000_000,
-    maxTokens: 128_000,
-    headers: m.fast ? { "anthropic-beta": "fast-mode-2026-02-01" } : undefined,
-  };
+  const config = {
+    max_tokens: 64_000,
+    thinking: { type: "adaptive", display: "summarized" },
+    output_config: { effort: cfg.effort },
+    structuredOutputs: false,
+    ...(m.fast ? { speed: "fast" } : {}),
+  } as unknown as AnthropicConfig;
+  return AnthropicLanguageModel.layer({ model: m.id, config }).pipe(
+    Layer.provide(AnthropicClient.layer({ apiKey: cfg.apiKey, transformClient: m.fast ? withBeta(FAST_BETA) : undefined })),
+    Layer.provide(FetchHttpClient.layer),
+    // The fetch of the moment: Effect's default is the first one it saw (a test's stub, say).
+    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))
+  );
 }
 
-/**
- * pi only knows adaptive thinking for the 4.6/4.7 models and would send a
- * budget (or `disabled`), both of which the 5.5 models reject. Rewrite the
- * request: adaptive thinking with summaries (so the panel can show them),
- * explicit effort, and fast mode when the current model has it.
- */
-export function patchPayload(settings: () => AgentConfig, current: () => ModelChoice) {
-  return (payload: unknown) => {
-    const cfg = settings();
-    const p = payload as Record<string, unknown>;
-    return {
-      ...p,
-      messages: withDocuments(p.messages),
-      max_tokens: 64_000,
-      thinking: { type: "adaptive", display: "summarized" },
-      output_config: { ...(p.output_config as object | undefined), effort: cfg.effort },
-      ...(MODELS[current()].fast ? { speed: "fast" } : {}),
-    };
-  };
-}
+type AnthropicConfig = NonNullable<Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]>;
+const FAST_BETA = "fast-mode-2026-02-01";
 
-/**
- * A PDF in a tool's result (read: an image's block with the PDF's type, as pi
- * carries it) as the API takes it: a document.
- */
-export function withDocuments(messages: unknown): unknown {
-  if (!Array.isArray(messages)) return messages;
-  const fix = (block: unknown): unknown => {
-    const b = block as { type?: string; source?: { type?: string; media_type?: string; data?: string }; content?: unknown };
-    if (b?.type == "image" && b.source?.media_type == "application/pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data: b.source.data } };
-    if (b?.type == "tool_result" && Array.isArray(b.content)) return { ...b, content: b.content.map(fix) };
-    return block;
-  };
-  return messages.map((m: { content?: unknown }) => (Array.isArray(m?.content) ? { ...m, content: m.content.map(fix) } : m));
-}
+/** Requests with `beta` added to the betas the provider asks for (a PDF's, say). */
+const withBeta = (beta: string) =>
+  HttpClient.mapRequest((req) => {
+    const had = req.headers["anthropic-beta"];
+    return HttpClientRequest.setHeader(req, "anthropic-beta", had ? `${had},${beta}` : beta);
+});
+
+/** An error of the model's, as the panel says it: the provider's own words. */
+export const modelError = (e: unknown): string => (AiError.isAiError(e) ? e.reason.message : e instanceof Error ? e.message : String(e));
 
 /**
  * The scripted model, for tests. A message containing `@script` followed by
@@ -155,44 +140,67 @@ export function withDocuments(messages: unknown): unknown {
  * Any step may add "delay": ms, to wait before answering (so a test can act
  * between two tool calls). Once the steps run out it says "(script done)".
  */
-let script: ReturnType<typeof registerFauxProvider> | null = null;
-export function scriptModel(): Model<string> {
-  script ??= registerFauxProvider({ provider: "script", models: [{ id: "script", name: "script (test model)", input: ["text", "image"] }] });
-  if (script.getPendingResponseCount() < 100) script.appendResponses(Array.from({ length: 1000 }, () => scriptStep));
-  return script.getModel();
-}
+const Step = Schema.Struct({
+  tool: Schema.optionalKey(Schema.String),
+  args: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  text: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+  delay: Schema.optionalKey(Schema.Finite),
+  inputs: Schema.optionalKey(Schema.Boolean),
+});
+const Steps = Schema.fromJsonString(Schema.Array(Step));
+type Part = Response.StreamPartEncoded;
 
-async function scriptStep(context: Context) {
-  const msgs = context.messages;
-  let at = -1, steps: { tool?: string; args?: Record<string, unknown>; text?: string; error?: string; delay?: number; inputs?: boolean }[] = [];
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    if (m.role != "user") continue;
-    const text = typeof m.content == "string" ? m.content : m.content.map((c) => (c.type == "text" ? c.text : "")).join("");
-    const k = text.indexOf("@script");
-    if (k < 0) continue;
-    // Attached files come after the message: the script ends at the first blank line, then.
-    const src = text.slice(k + 7).trim();
-    try { steps = JSON.parse(src); } catch (e) {
-      try { steps = JSON.parse(src.split("\n\n")[0]); } catch { return fauxAssistantMessage(`bad script: ${(e as Error).message}`); }
-    }
-    at = i;
-    break;
-  }
-  if (at < 0) return fauxAssistantMessage("(no script)");
+const said = (text: string): Part[] => [
+  { type: "text-start", id: "t" },
+  { type: "text-delta", id: "t", delta: text },
+  { type: "text-end", id: "t" },
+  { type: "finish", reason: "stop", usage: { inputTokens: {}, outputTokens: {} } },
+];
+
+const scriptStep = Effect.fnUntraced(function* (prompt: Prompt.Prompt) {
+  const msgs = prompt.content;
+  const textOf = (m: Prompt.Message) =>
+    typeof m.content == "string" ? m.content : m.content.map((c) => (c.type == "text" ? c.text : "")).join("");
+  let at = msgs.length - 1;
+  while (at >= 0 && !(msgs[at].role == "user" && textOf(msgs[at]).includes("@script"))) at--;
+  if (at < 0) return said("(no script)");
+  const text = textOf(msgs[at]);
+  // Attached files come after the message: the script ends at the first blank line, then.
+  const src = text.slice(text.indexOf("@script") + 7).trim();
+  const steps = yield* Schema.decodeEffect(Steps)(src).pipe(
+    Effect.catch(() => Schema.decodeEffect(Steps)(src.split("\n\n")[0])),
+    Effect.catch((e) => Effect.succeed(`bad script: ${e.message}`))
+  );
+  if (typeof steps == "string") return said(steps);
   const step = steps[msgs.slice(at + 1).filter((m) => m.role == "assistant").length];
-  if (step?.delay) await sleep(step.delay);
-  if (!step) return fauxAssistantMessage("(script done)");
-  if (step.error) return fauxAssistantMessage([], { stopReason: "error", errorMessage: step.error });
-  if (step.tool) return fauxAssistantMessage([fauxToolCall(step.tool, step.args ?? {})], { stopReason: "toolUse" });
+  if (step?.delay) yield* Effect.sleep(step.delay);
+  if (!step) return said("(script done)");
+  if (step.error)
+    return yield* AiError.make({ module: "script", method: "streamText", reason: new AiError.UnknownError({ description: step.error }) });
+  if (step.tool)
+    return [
+      { type: "tool-call", id: `call-${crypto.randomUUID()}`, name: step.tool, params: step.args ?? {} },
+      { type: "finish", reason: "tool-calls", usage: { inputTokens: {}, outputTokens: {} } },
+    ] satisfies Part[];
   if (step.inputs) {
-    const m = msgs[at] as { content: string | { type: string; text?: string; mimeType?: string }[] };
-    const parts = typeof m.content == "string" ? [{ type: "text", text: m.content }] : m.content;
-    const text = parts.map((c) => c.text ?? "").join("");
-    return fauxAssistantMessage([fauxText(JSON.stringify({ images: parts.filter((c) => c.type == "image").map((c) => c.mimeType), files: [...text.matchAll(/<file name="([^"]*)">/g)].map((x) => x[1]) }))]);
+    const m = msgs[at];
+    const parts = typeof m.content == "string" ? [] : m.content;
+    return said(
+      JSON.stringify({
+        images: parts.flatMap((c) => (c.type == "file" && c.mediaType.startsWith("image/") ? [c.mediaType] : [])),
+        files: [...text.matchAll(/<file name="([^"]*)">/g)].map((x) => x[1]),
+    }));
   }
-  return fauxAssistantMessage([fauxText(step.text ?? "")]);
-}
+  return said(step.text ?? "");
+});
+
+const scriptModel = Layer.effect(
+  LanguageModel.LanguageModel,
+  LanguageModel.make({
+    generateText: (options) => Effect.map(scriptStep(options.prompt), (parts) => parts as Response.PartEncoded[]),
+    streamText: (options) => Stream.unwrap(Effect.map(scriptStep(options.prompt), (parts) => Stream.fromIterable(parts))),
+}));
 
 /** A tool result's image (view_page's screenshot), as a data URL for the panel. */
 export function resultImage(result: unknown): string | undefined {

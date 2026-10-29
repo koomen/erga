@@ -30,23 +30,14 @@
 // `document` argument, run in that document's host as the person's agent.
 // REST, MCP and the guide all list them.
 
-import { validateToolArguments } from "@mariozechner/pi-ai";
+import * as Schema from "effect/Schema";
 import { ID, LOCKED, roleMay } from "./directory/index.ts";
 import { fromElsewhere } from "./pages/index.ts";
 import { forwarded } from "./documents/index.ts";
 import { type Platform, type Session, whoOf } from "./platform";
 import { accessOf } from "../document/access";
 import { byLine } from "../shared/attribution";
-import {
-  addFile,
-  cleanFilePath,
-  runTool,
-  ToolError,
-  toolsFor,
-  toolsOf,
-  type Tool,
-  type ToolWho,
-} from "../agents/tools";
+import { addFile, jsonSchemaOf, cleanFilePath, runTool, ToolError, toolsFor, toolsOf, type Tool, type ToolWho } from "../agents/tools";
 import type { ToolContent, ToolSpec } from "../document/agent";
 import { authOps, expiryOf, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { base64 } from "../shared/bytes";
@@ -58,7 +49,7 @@ type ToolContext = ToolWho & { readonly session: Session & { agent: AgentToken }
 
 /** The tools a token's person may use; without a token, all of them (the admin ones say so). */
 const listed = (ctx: ToolContext | null) => (ctx ? toolsFor(ctx, "api") : Promise.resolve(toolsOf("api")));
-const specOf = (t: Tool): ToolSpec => ({ name: t.name, description: t.description, parameters: t.parameters });
+const specOf = (t: Tool): ToolSpec => ({ name: t.name, description: t.description, parameters: jsonSchemaOf(t) });
 
 /** Runs a tool by name, for an outside agent; its answer as content items. */
 async function callTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolContent[]> {
@@ -77,16 +68,15 @@ async function callTool(name: string, args: unknown, ctx: ToolContext): Promise<
   if (args == null) args = {};
   if (typeof args != "object" || Array.isArray(args)) throw new ToolError("The arguments must be a JSON object.");
   let a = args as Record<string, unknown>;
-  for (const key of (tool.parameters as { required?: string[] }).required ?? [])
-    if (a[key] === undefined) throw new ToolError(`${name} needs "${key}".`);
+  for (const key of jsonSchemaOf(tool).required ?? []) if (a[key] === undefined) throw new ToolError(`${name} needs "${key}".`);
   if (!tool.loose) {
     try {
-      a = validateToolArguments(tool as never, { type: "toolCall", id: "api", name, arguments: a }) as Record<string, unknown>;
+      a = Schema.decodeUnknownSync(tool.parameters as Schema.Codec<Record<string, unknown>>)(a, { errors: "all" });
     } catch (e) {
-      throw new ToolError((e as Error).message);
+      throw new ToolError(`Validation failed for tool "${name}":\n${(e as Error).message}`);
+    }
   }
-}
-const out = await runTool(tool, a, ctx);
+  const out = await runTool(tool, a, ctx);
   if (Array.isArray(out) && out.every((c) => c && typeof c == "object" && "type" in c)) return out as ToolContent[];
   return [{ type: "text", text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }];
 }
@@ -300,7 +290,7 @@ async function rpc(m: RpcMessage, ctx: ToolContext): Promise<object | null> {
     case "ping":
       return ok({});
     case "tools/list":
-      return ok({ tools: (await listed(ctx)).map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters })) });
+      return ok({ tools: (await listed(ctx)).map((t) => ({ name: t.name, description: t.description, inputSchema: jsonSchemaOf(t) })) });
     case "tools/call": {
       const name = String(m.params?.name ?? "");
       if (!toolsOf("api").some((t) => t.name == name))

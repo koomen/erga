@@ -14,8 +14,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
-import { Type } from "typebox";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import * as Schema from "effect/Schema";
+import type { AgentTool } from "../agents/run";
 import { ChatTables } from "../agents/chat-store.ts";
 import { STOPPED, STOPPED_SHOWN, type ChatSave, type ChatStore } from "../agents/checkpoint.ts";
 import { makeHost } from "../document/host.ts";
@@ -58,8 +58,14 @@ async function openDocument(data: Map<string, Uint8Array>, store: ChatStore, run
   const scope = Effect.runSync(Scope.make());
   const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(StateStore.none.pipe(Layer.provideMerge(Layer.succeed(FileStore, files)))), Scope.provide(scope)));
   const count: AgentTool = {
-    name: "count", label: "Count", description: "Counts its runs.", parameters: Type.Object({}),
-    execute: async () => { runs.n++; return { content: [{ type: "text", text: `run ${runs.n}` }], details: {} }; },
+    name: "count",
+    label: "Count",
+    description: "Counts its runs.",
+    parameters: Schema.Struct({}),
+    execute: async () => {
+      runs.n++;
+      return { content: [{ type: "text", text: `run ${runs.n}` }], details: {} };
+    },
   };
   const host = makeHost({
     room,
@@ -97,8 +103,11 @@ async function until(f: () => boolean | Promise<boolean>, what: string) {
 }
 
 const roles = (t: ChatTables) => t.load("doc:d1")!.messages.map((m) => (m as { role: string }).role);
-const results = (t: ChatTables) => t.load("doc:d1")!.messages.filter((m) => (m as { role: string }).role == "toolResult")
-  .map((m) => (m as { content: { text: string }[] }).content[0].text);
+const results = (t: ChatTables) =>
+  t
+    .load("doc:d1")!
+    .messages.filter((m) => m.role == "tool")
+    .map((m) => (m as unknown as { content: { result: string }[] }).content[0].result);
 
 /** Runs the script, kills the object where `dies` says, opens the document again, and waits for the reply to end. */
 async function killAndResume(dies: (c: ChatSave, n: number) => boolean) {
@@ -122,7 +131,7 @@ test("killed after the model's turn, before its tool call began: the tool runs o
   const { t, runs, before, log } = await killAndResume((c) => c.messages.items.some((m) => (m as { role: string }).role == "assistant") && !Object.keys(c.state.calls).length);
   expect(before).toBe(0);
   expect(runs.n).toBe(1);
-  expect(roles(t)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+  expect(roles(t)).toEqual(["user", "assistant", "tool", "assistant"]);
   expect(results(t)).toEqual(["run 1"]);
   expect(log.items.map((i) => i.kind)).toEqual(["user", "tool", "assistant"]);
   expect(log.items[1]).toMatchObject({ name: "count", status: "done" });
@@ -133,7 +142,7 @@ test("killed while the tool call ran: it isn't run again, and the model hears th
   const { t, runs, before, log } = await killAndResume((c) => Object.values(c.state.calls).some((x) => !x.result));
   expect(before).toBe(1);
   expect(runs.n).toBe(1);
-  expect(roles(t)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+  expect(roles(t)).toEqual(["user", "assistant", "tool", "assistant"]);
   expect(results(t)).toEqual([STOPPED]);
   expect(log.items[1]).toMatchObject({ name: "count", status: "error", detail: STOPPED_SHOWN });
   expect(log.items.filter((i) => i.kind == "assistant")).toEqual([{ kind: "assistant", text: "Done." }]);
@@ -143,7 +152,7 @@ test("killed after the tool's result, before the model's next turn: the result i
   const { t, runs, before, log } = await killAndResume((c) => Object.values(c.state.calls).some((x) => x.result));
   expect(before).toBe(1);
   expect(runs.n).toBe(1);
-  expect(roles(t)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+  expect(roles(t)).toEqual(["user", "assistant", "tool", "assistant"]);
   expect(results(t)).toEqual(["run 1"]);
   expect(log.items.map((i) => i.kind)).toEqual(["user", "tool", "assistant"]);
   expect(log.items[1]).toMatchObject({ status: "done" });
@@ -152,7 +161,7 @@ test("killed after the tool's result, before the model's next turn: the result i
 test("killed right after the message was sent: the model gets it after the restart", async () => {
   const { t, runs, log } = await killAndResume((_c, n) => n == 0);
   expect(runs.n).toBe(1);
-  expect(roles(t)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+  expect(roles(t)).toEqual(["user", "assistant", "tool", "assistant"]);
   expect(log.items.map((i) => i.kind)).toEqual(["user", "tool", "assistant"]);
 });
 
@@ -160,7 +169,17 @@ test("a long value goes in parts, and a later checkpoint replaces what changed",
   const t = tables();
   const big = "x".repeat(1_300_000);
   const state = { running: false, queued: [], calls: {}, model: null, stable: 0, meta: {}, at: 1 };
-  t.save("s", { messages: { from: 0, items: [{ role: "user", content: big, timestamp: 1 }] }, log: { from: 0, items: [{ kind: "user", text: "a" }, { kind: "assistant", text: "b" }] }, state });
+  t.save("s", {
+    messages: { from: 0, items: [{ role: "user", content: big }] },
+    log: {
+      from: 0,
+      items: [
+        { kind: "user", text: "a" },
+        { kind: "assistant", text: "b" },
+      ],
+    },
+    state,
+  });
   expect((t.load("s")!.messages[0] as { content: string }).content.length).toBe(big.length);
   t.save("s", { messages: { from: 1, items: [] }, log: { from: 1, items: [{ kind: "assistant", text: "c" }] }, state });
   expect(t.load("s")!.log).toEqual([{ kind: "user", text: "a" }, { kind: "assistant", text: "c" }]);

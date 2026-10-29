@@ -1,6 +1,6 @@
 // The agent conversation as the editor shows it, shared by the host (which
 // keeps the transcript, so a reload picks it back up) and the shell (which
-// renders it). The host folds pi's agent events into these small events,
+// renders it). The agent loop (agents/run.ts) folds its run into these small events,
 // sends each one to its user's tabs over their event WebSocket, and both
 // apply them with `reduce`. Tool calls an external agent makes through the
 // API (`via: "external"`) land in the same transcript. A transcript is private to one person and one document: their

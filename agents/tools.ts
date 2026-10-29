@@ -47,8 +47,11 @@
 // Adding one: an entry in SERVER_TOOLS. Every agent it's for gets it, and the
 // REST API, MCP and the guide list it.
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type TSchema } from "typebox";
+import type { AgentTool, ToolOutput } from "./run.ts";
+import { Base64 } from "effect/encoding";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { Tool as AiTool } from "effect/ai";
 import {
   ACCESS_LABEL,
   type AccessRule,
@@ -85,7 +88,6 @@ import type { FileData } from "../document/document.ts";
 import type { ToolContent } from "../document/agent.ts";
 import { CHANGES, documentToolSpecs } from "./document/tools.ts";
 import { byLine } from "../shared/attribution.ts";
-import { fromBase64 } from "../shared/bytes.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
 export class ToolError extends Error {
@@ -108,7 +110,7 @@ export interface ToolWho {
   readonly session?: Session & { agent: AgentToken };
 }
 
-/** A tool, for any agent: the embedded agents take it as pi's AgentTool (`agentTools`), outside agents over HTTP and MCP. */
+/** A tool, for any agent: the embedded agents take it as an AgentTool (`agentTools`, agents/run.ts), outside agents over HTTP and MCP. */
 export interface Tool {
   readonly name: string;
   /** For the agent panel (the name, if not given: a tool only outside agents have). */
@@ -116,8 +118,8 @@ export interface Tool {
   /** What the agent is doing while it runs ("sharing the document"): the document agent's presence shows it. */
   readonly activity?: string;
   readonly description: string;
-  /** Its arguments: JSON Schema, in TypeBox. */
-  readonly parameters: TSchema;
+  /** Its arguments (outside agents get their JSON Schema). */
+  readonly parameters: Schema.Top;
   /** Only for server admins. */
   readonly admin?: boolean;
   /** Only for the embedded agents ("agent": the documents list's, which needs ToolWho.platform), or only for outside agents ("api"). */
@@ -130,21 +132,18 @@ export interface Tool {
   run(args: Record<string, unknown>, ctx: ToolWho): Promise<string | object | ToolContent[]>;
 }
 
-const DOCUMENT = Type.Optional(
-  Type.String({
+const DOCUMENT = Schema.optionalKey(
+  Schema.String.annotate({
     description:
       "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours. The document agent may leave it out for the document it's in.",
-  })
-);
-const LOGIN = Type.String({ description: "A GitHub login" });
+  }));
+const LOGIN = Schema.String.annotate({ description: "A GitHub login" });
 
 /** Files as an outside agent gives them: by path, each text or base64. */
-const FILES = Type.Unsafe<Record<string, unknown>>({
-  type: "object",
+const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
   description: "Files by path relative to the document's folder (\"index.html\", \"css/app.css\"): each a string of text, or {\"base64\": \"...\"} for any other file (images, fonts).",
-  additionalProperties: { anyOf: [{ type: "string" }, { type: "object", properties: { base64: { type: "string" } }, required: ["base64"] }] },
 });
-const str = (description: string) => Type.String({ description });
+const str = (description: string) => Schema.String.annotate({ description });
 const ANY_DOCUMENT = str("The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.");
 
 /** The outside agents' own tools (server/api.ts): their documents, published files, and their tokens. */
@@ -153,7 +152,7 @@ const API_TOOLS: Tool[] = [
     name: "whoami",
     only: "api",
     description: "Who your token stands for, what it's called, its scope (document, documents or admin), its document (for the document scope) and when it expires.",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, ctx) => {
       const { session, origin } = outside(ctx);
       return {
@@ -167,7 +166,7 @@ const API_TOOLS: Tool[] = [
     only: "api",
     wide: true,
     description: "The person's documents, most recently edited first: id, title, address, URL, when it was last edited, and when it goes if nobody edits it (only for never-edited ones).",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, ctx) => {
       const { session, platform, origin } = outside(ctx);
       return (await platform.docs.list(session.login)).map((d) => ({
@@ -182,23 +181,25 @@ const API_TOOLS: Tool[] = [
     wide: true,
     loose: true,
     description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html, plus its styles, scripts and images), and it stays. Without files it's a blank page, a template (template: ${TEMPLATES.map((t) => t.id).join(", ")}, or "landing" for a copy of the server's homepage) or a copy of another document you may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
-    parameters: Type.Object({
-      files: Type.Optional(FILES),
-      index: Type.Optional(str("The page, if it isn't index.html: an .html file among the files.")),
-      title: Type.Optional(str("Its title (else the page's first heading).")),
-      slug: Type.Optional(
+    parameters: Schema.Struct({
+      files: Schema.optionalKey(FILES),
+      index: Schema.optionalKey(str("The page, if it isn't index.html: an .html file among the files.")),
+      title: Schema.optionalKey(str("Its title (else the page's first heading).")),
+      slug: Schema.optionalKey(
         str("Its address after /<owner>/ (letters, digits and dashes; else made from the title). Taken already, it gets -2, -3...")
       ),
-      template: Type.Optional(
-        Type.String({
+      template: Schema.optionalKey(
+        Schema.String.annotate({
           enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"],
           description:
             "Without files: a blank page (blank or page, the default), another template, or a copy of the server's homepage (landing).",
         })
       ),
-      from: Type.Optional(str("Without files: a document to copy instead (its address, URL or id). It copies the document as it is now.")),
-      kind: Type.Optional(
-        Type.String({
+      from: Schema.optionalKey(
+        str("Without files: a document to copy instead (its address, URL or id). It copies the document as it is now.")
+      ),
+      kind: Schema.optionalKey(
+        Schema.String.annotate({
           enum: ["document", "project"],
           description:
             "document: one page and any files beside it; project: a folder of pages, each with its own address. Else the kind of the document copied, or from the files: a project if they have more than one page.",
@@ -249,11 +250,11 @@ const API_TOOLS: Tool[] = [
     only: "api",
     loose: true,
     description: "Publishes files into an existing document: each replaces the file as it is now, as an edit (open editors show it at once, and anyone's undo history stays). replace: true also deletes every file not given (the page itself stays), for publishing a site again. delete removes the files named.",
-    parameters: Type.Object({
+    parameters: Schema.Struct({
       document: ANY_DOCUMENT,
-      files: Type.Optional(FILES),
-      delete: Type.Optional(Type.Array(Type.String(), { description: "Paths of files to delete." })),
-      replace: Type.Optional(Type.Boolean({ description: "Delete every file that isn't in files (except the page)." })),
+      files: Schema.optionalKey(FILES),
+      delete: Schema.optionalKey(Schema.Array(Schema.String).annotate({ description: "Paths of files to delete." })),
+      replace: Schema.optionalKey(Schema.Boolean.annotate({ description: "Delete every file that isn't in files (except the page)." })),
     }),
     run: async (args, ctx) => {
       const { platform } = outside(ctx);
@@ -272,10 +273,10 @@ const API_TOOLS: Tool[] = [
     loose: true,
     description:
       "Sets a document's title and/or address (slug). An empty one goes back to following: the title the page's first heading, the slug the title. Old addresses keep redirecting.",
-    parameters: Type.Object({
+    parameters: Schema.Struct({
       document: ANY_DOCUMENT,
-      title: Type.Optional(str('The new title ("" to follow the page\'s first heading).')),
-      slug: Type.Optional(str('The new address after /<owner>/ ("" to follow the title).')),
+      title: Schema.optionalKey(str('The new title ("" to follow the page\'s first heading).')),
+      slug: Schema.optionalKey(str('The new address after /<owner>/ ("" to follow the title).')),
     }),
     run: async (args, ctx) => {
       const doc = await findDocument(ctx, args.document, "rename");
@@ -292,7 +293,7 @@ const API_TOOLS: Tool[] = [
     only: "api",
     loose: true,
     description: "Deletes one of the person's documents, for good (only its owner may). A document that's a folder on disk (local development) only comes off the list.",
-    parameters: Type.Object({ document: ANY_DOCUMENT }),
+    parameters: Schema.Struct({ document: ANY_DOCUMENT }),
     run: async (args, ctx) => {
       const { platform } = outside(ctx);
       const doc = await findDocument(ctx, args.document, "delete");
@@ -305,7 +306,7 @@ const API_TOOLS: Tool[] = [
     only: "api",
     wide: true,
     description: "The person's agent tokens (never the tokens themselves): id, label, when made and last used.",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, ctx) => {
       const { session, platform } = outside(ctx);
       return (await platform.tokens.list(session.login)).map((t) => ({
@@ -319,7 +320,7 @@ const API_TOOLS: Tool[] = [
     wide: true,
     loose: true,
     description: "Turns one of the person's agent tokens off, by id (list_tokens). Revoking your own ends your access.",
-    parameters: Type.Object({ id: str("The token's id.") }),
+    parameters: Schema.Struct({ id: str("The token's id.") }),
     run: async (args, ctx) => {
       const { session, platform } = outside(ctx);
       if (!(await platform.tokens.revoke(session.login, String(args.id ?? ""), ctx.who.via)))
@@ -338,7 +339,7 @@ export const SERVER_TOOLS: Tool[] = [
     label: "Who has access",
     activity: "checking who has access",
     description: "Who a document is shared with: its owner, and everyone given a role (editor or viewer; \"*\" is anyone signed in who has the link). Only its owner may see this.",
-    parameters: Type.Object({ document: DOCUMENT }),
+    parameters: Schema.Struct({ document: DOCUMENT }),
     run: async (args, ctx) => {
       const doc = await findDocument(ctx, args.document, "share");
       return { document: described(doc, ctx), permissions: await permissionsOf(ctx.dir, doc.id) };
@@ -350,13 +351,13 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "sharing the document",
     description:
       'Shares a document (only its owner may): gives someone the role of editor (may edit and rename it) or viewer (may only look), or takes theirs away with role "none". login "*" means anyone with the link: anyone signed in, and people who aren\'t signed in too (as viewers); the server refuses it, saying why, unless it lets users share content publicly (the Access page). Answers who has access now.',
-    parameters: Type.Object({
+    parameters: Schema.Struct({
       document: DOCUMENT,
-      login: Type.String({
+      login: Schema.String.annotate({
         description:
           'Whose role to set: a GitHub login, or "*" for anyone with the link (only while the server lets users share content publicly)',
       }),
-      role: Type.Union([Type.Literal("editor"), Type.Literal("viewer"), Type.Literal("none")], { description: "editor, viewer, or none to stop sharing it with them" }),
+      role: Schema.Literals(["editor", "viewer", "none"]).annotate({ description: "editor, viewer, or none to stop sharing it with them" }),
     }),
     run: async (args, ctx) => {
       const doc = await findDocument(ctx, args.document, "share");
@@ -373,7 +374,7 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "listing the documents",
     only: "agent",
     description: "The person's documents, as the documents list (/docs) shows them, most recently edited first: their own and the ones shared with them. Each one's id, title, address, whose it is, their role in it, when it was last edited, and when it goes if nobody edits it (only for never-edited ones).",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, ctx) => (await docsOf(ctx).docs.list(ctx.who.login.toLowerCase())).map((d) => ({
       id: d.id, title: d.title, address: `/${d.owner}/${d.slug}`, ...(ctx.origin ? { url: `${ctx.origin}/${d.owner}/${d.slug}` } : {}), owner: d.owner, role: d.role,
       modified: iso(d.modified), ...(d.kind ? { kind: d.kind } : {}), ...(d.expires != null ? { expires: iso(d.expires) } : {}), ...(d.id == ctx.here ? { here: true } : {}),
@@ -385,12 +386,19 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "making a document",
     only: "agent",
     description: `Makes a new document for the person, as New on the documents list does: from a template (${TEMPLATES.map((t) => `"${t.id}": ${t.description}`).join(" ")} "landing": a copy of the server's homepage), or a copy of a document they may open (from; someone who may not edit it copies its published version). A blank page by default. It goes if nobody edits it in time (the delete_docs_after_hours setting; the answer says when). The title follows the page's first heading unless you give one; the address follows the title unless you give a slug. Answers its address: open it, or say where it is.`,
-    parameters: Type.Object({
-      template: Type.Optional(Type.String({ description: `A template: ${TEMPLATES.map((t) => t.id).join(", ")} (the default), or landing` })),
-      from: Type.Optional(Type.String({ description: "A document to copy instead: its address, URL or id" })),
-      title: Type.Optional(Type.String({ description: "Its title (else the page's first heading)" })),
-      slug: Type.Optional(Type.String({ description: "Its address after /<owner>/ (else made from the title)" })),
-      kind: Type.Optional(Type.Union([Type.Literal("document"), Type.Literal("project")], { description: "document: one page and any files beside it (the default, or the kind of the document copied); project: a folder of pages, each with its own address" })),
+    parameters: Schema.Struct({
+      template: Schema.optionalKey(
+        Schema.String.annotate({ description: `A template: ${TEMPLATES.map((t) => t.id).join(", ")} (the default), or landing` })
+      ),
+      from: Schema.optionalKey(Schema.String.annotate({ description: "A document to copy instead: its address, URL or id" })),
+      title: Schema.optionalKey(Schema.String.annotate({ description: "Its title (else the page's first heading)" })),
+      slug: Schema.optionalKey(Schema.String.annotate({ description: "Its address after /<owner>/ (else made from the title)" })),
+      kind: Schema.optionalKey(
+        Schema.Literals(["document", "project"]).annotate({
+          description:
+            "document: one page and any files beside it (the default, or the kind of the document copied); project: a folder of pages, each with its own address",
+        })
+      ),
     }),
     run: async (args, ctx) => {
       const { who } = ctx, platform = docsOf(ctx);
@@ -422,8 +430,11 @@ export const SERVER_TOOLS: Tool[] = [
     label: "Delete a document",
     activity: "deleting a document",
     only: "agent",
-    description: "Deletes one of the person's documents for good, as Delete on the documents list does (only its owner may). A document that's a folder on disk (local development) only comes off the list. Not the document you're in: the person deletes that one on the documents list (/docs). Only delete when the person asks, naming the document.",
-    parameters: Type.Object({ document: Type.String({ description: "The document: its address (/<owner>/<slug>), its URL or its id" }) }),
+    description:
+      "Deletes one of the person's documents for good, as Delete on the documents list does (only its owner may). A document that's a folder on disk (local development) only comes off the list. Not the document you're in: the person deletes that one on the documents list (/docs). Only delete when the person asks, naming the document.",
+    parameters: Schema.Struct({
+      document: Schema.String.annotate({ description: "The document: its address (/<owner>/<slug>), its URL or its id" }),
+    }),
     run: async (args, ctx) => {
       const doc = await findDocument({ ...ctx, here: undefined }, args.document, "delete");
       if (doc.id == ctx.here) throw new ToolError("That's the document you're in: the person deletes it on the documents list (/docs).", 409);
@@ -440,7 +451,7 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "reading the server's settings",
     admin: true,
     description: "Admins only. The server's settings: each one's key, what it does, its value now, its default, where the value comes from (default, set by an admin, or locked by the deploy), and who last set it. A locked one can't be changed here.",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, { dir, who }) => (await dir.config.list(who)).map(entryOf),
   },
   {
@@ -449,9 +460,9 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "changing a server setting",
     admin: true,
     description: "Admins only. Sets one of the server's settings (list_settings lists them, with what each takes). The value is JSON: a number, a string, true, false or null (e.g. delete_docs_after_hours: a number of hours, or null to never delete unedited documents). A setting the deploy locks can't be changed. Answers the setting as it is now.",
-    parameters: Type.Object({
-      key: Type.String({ description: "The setting's key, e.g. delete_docs_after_hours" }),
-      value: Type.Unknown({ description: "Its new value (a number, string, boolean or null, as the setting takes)" }),
+    parameters: Schema.Struct({
+      key: Schema.String.annotate({ description: "The setting's key, e.g. delete_docs_after_hours" }),
+      value: Schema.Unknown.annotate({ description: "Its new value (a number, string, boolean or null, as the setting takes)" }),
     }),
     run: async (args, { dir, who }) => {
       const key = String(args.key ?? "");
@@ -474,7 +485,7 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "resetting a server setting",
     admin: true,
     description: "Admins only. Puts one of the server's settings back to its default. A setting the deploy locks can't be changed.",
-    parameters: Type.Object({ key: Type.String({ description: "The setting's key" }) }),
+    parameters: Schema.Struct({ key: Schema.String.annotate({ description: "The setting's key" }) }),
     run: async (args, { dir, who }) => entryOf(await dir.config.reset(who, String(args.key ?? ""))),
   },
   {
@@ -484,9 +495,9 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. Finds any of the server's documents and projects, everyone's, by a part of its title, its owner, its address (/<owner>/<slug>) or its id, as the Homepage Project setting's picker on /admin does; most recently edited first. Each: its id, title, owner, address and kind (document or project). To make one the homepage, give its address or id to set_setting with the key landing_document.",
-    parameters: Type.Object({
-      query: Type.String({ description: "A part of the title, owner or address; empty: the most recently edited" }),
-      limit: Type.Optional(Type.Integer({ description: "At most this many (default 20, at most 100)" })),
+    parameters: Schema.Struct({
+      query: Schema.String.annotate({ description: "A part of the title, owner or address; empty: the most recently edited" }),
+      limit: Schema.optionalKey(Schema.Int.annotate({ description: "At most this many (default 20, at most 100)" })),
     }),
     run: async (args, { dir, who }) => ({ found: await dir.search(who, String(args.query ?? ""), Number(args.limit) || 20) }),
   },
@@ -497,9 +508,9 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "reading the settings' change log",
     admin: true,
     description: "Admins only. The settings' change log (/admin/changes), newest first: each change's number, when, who made it, and each setting's value before and after (reset: put back to its default; credential: an API key set, replaced or cleared, never the key). 20 at a time unless you ask for more (up to 100); before: only changes older than that number. total: how many there are.",
-    parameters: Type.Object({
-      limit: Type.Optional(Type.Integer({ description: "How many, the latest first (default 20, at most 100)" })),
-      before: Type.Optional(Type.Integer({ description: "Only changes numbered lower than this" })),
+    parameters: Schema.Struct({
+      limit: Schema.optionalKey(Schema.Int.annotate({ description: "How many, the latest first (default 20, at most 100)" })),
+      before: Schema.optionalKey(Schema.Int.annotate({ description: "Only changes numbered lower than this" })),
     }),
     run: async (args, { dir, who }) => {
       const { versions, total } = await dir.config.history(who, { limit: Math.min(100, Number(args.limit) || 20), ...(args.before != null ? { before: Number(args.before) } : {}) });
@@ -513,7 +524,7 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. The server's API keys (Anthropic's), as /admin/api-keys shows them: whether each is stored, its last four characters, who set it and when, whether a Worker secret stands in, and whether a stored key doesn't open on this server. Never the key itself. An admin sets, replaces or clears a key only on /admin/api-keys, so a key never goes through a conversation.",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, { dir, who }) => (await dir.credentials.list(who)).map((c) => ({
       name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, ...(c.updatedVia ? { updatedVia: c.updatedVia } : {}), workerSecret: c.fallback, ...(c.unreadable ? { unreadable: "stored, but this server can't open it (encrypted with another server's FACTORY_KEY): an admin must paste it again on /admin/api-keys" } : {}),
     })),
@@ -525,7 +536,7 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "clearing an API key",
     admin: true,
     description: "Admins only. Clears one of the server's API keys (list_api_keys lists them), as Clear on /admin/api-keys does: the server goes back to its Worker secret, if one stands in, else does without (the Anthropic key: the agents stop). The change log says who cleared it. Setting or replacing a key is done only on /admin/api-keys, so a key never goes through a conversation.",
-    parameters: Type.Object({ name: Type.String({ description: "The key's name: anthropic" }) }),
+    parameters: Schema.Struct({ name: Schema.String.annotate({ description: "The key's name: anthropic" }) }),
     run: async (args, { dir, who }) => {
       const c = await dir.credentials.clear(who, String(args.name ?? ""));
       return { cleared: c.name, label: c.label, stored: c.set, workerSecret: c.fallback };
@@ -540,7 +551,7 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. How people sign in, as /admin/auth shows it: which providers are on (GitHub, Google); and for each of this server's GitHub OAuth app and Google OAuth client: its client ID (public) and where it comes from (the deploy, or set on /admin/auth), whether its client secret is set (never the secret), the homepage and callback URLs the app must have, a live check with GitHub or Google (working, misconfigured and why, not set up, unknown), values that wait for a test sign-in, and, where the app doesn't work, the steps to make one. An app's values are pasted only on /admin/auth, never in a conversation.",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, ctx) => {
       const { here, google, providers } = await authOf(ctx).status(ctx.who);
       return { providersOn: providers, github: signInOf(here), google: signInOf(google) };
@@ -552,9 +563,9 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "turning a sign-in provider on or off",
     admin: true,
     description: "Admins only. Turns sign-in with GitHub or Google on or off on this server, as the switches on /admin/auth do. Anyone allowed on the server may then sign in with each provider that's on. The rules, so nobody is locked out: a provider goes on only while its app works (get_sign_in_status says); one goes off only while the other is on and works, and only by an admin whose own account signs in with the other provider (each account signs in with one). Answers which providers are on now.",
-    parameters: Type.Object({
-      provider: Type.Union([Type.Literal("github"), Type.Literal("google")], { description: "github or google" }),
-      on: Type.Boolean({ description: "true: people may sign in with it; false: they may not" }),
+    parameters: Schema.Struct({
+      provider: Schema.Literals(["github", "google"]).annotate({ description: "github or google" }),
+      on: Schema.Boolean.annotate({ description: "true: people may sign in with it; false: they may not" }),
     }),
     run: async (args, ctx) => {
       const provider = args.provider == "google" ? "google" : args.provider == "github" ? "github" : null;
@@ -570,10 +581,16 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. Clears a provider's app values set on /admin/auth (provider: github, the default, or google), as Clear there does: sign-in goes back to the deploy's values. With what: \"pending\", it only discards new values that wait for a test sign-in (Discard), and sign-in keeps the values in use. It refuses when the values set on the page work and the deploy's don't, since everyone would stop being able to sign in; force: true clears anyway, and only when the person says so after you told them that. Setting an app's values is done only on /admin/auth.",
-    parameters: Type.Object({
-      provider: Type.Optional(Type.Union([Type.Literal("github"), Type.Literal("google")], { description: "github (default) or google" })),
-      what: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("pending")], { description: "all (default): the values set on the page; pending: only those that wait for a test sign-in" })),
-      force: Type.Optional(Type.Boolean({ description: "Clear even if sign-in would stop working: only when the person says so" })),
+    parameters: Schema.Struct({
+      provider: Schema.optionalKey(Schema.Literals(["github", "google"]).annotate({ description: "github (default) or google" })),
+      what: Schema.optionalKey(
+        Schema.Literals(["all", "pending"]).annotate({
+          description: "all (default): the values set on the page; pending: only those that wait for a test sign-in",
+        })
+      ),
+      force: Schema.optionalKey(
+        Schema.Boolean.annotate({ description: "Clear even if sign-in would stop working: only when the person says so" })
+      ),
     }),
     run: async (args, ctx) => {
       const provider = args.provider == "google" ? "google" : "github";
@@ -590,7 +607,7 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. The users on /admin/users: each account (login: its username; accounts: the GitHub and Google accounts it signs in with), its one role, as roleLabel says it: admin ('Admin'), write ('Can create and edit content': may sign in, open what is shared with them or public, and make and edit documents) or read ('Can authenticate': may sign in, and open what is shared with them or public), or none ('No role': only the group rules on /admin/access let them in); a person's access is the highest of their role and every group rule that matches them. Also whether they were granted the deploy role (deploy), whether they may deploy (mayDeploy), whether they're an admin by the deploy (bootstrap: can't be changed or removed here), when they were added and by whom, and when they were last seen. People an admin added who haven't signed in yet come too, with waiting: true and a person id instead of a login (provider, handle: their GitHub login or Google email). Use the role words when you tell the person.",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, { dir, who }) => {
       const [users, people, ids] = await Promise.all([dir.users.list(who), dir.people.list(who), dir.identities.byLogin()]);
       return [
@@ -609,10 +626,10 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. Adds a user, as Add user on /admin/users does, before they ever signed in too: a GitHub account by its login (GitHub's id for it is found now and matched at sign-in; refused if GitHub has no such login) or a Google account by its email (matched as a verified email at its first sign-in, then by Google's id), with one role: admin ('Admin'), write ('Can create and edit content': may sign in, open what is shared with them or public, and make and edit documents) or read ('Can authenticate': may sign in, and open what is shared with them or public). An account that signs in with it already gets the role. An admin by the deploy is one already (note says so). Only when the person asks in this conversation; say what you did, with the role's words.",
-    parameters: Type.Object({
-      provider: Type.Union([Type.Literal("github"), Type.Literal("google")], { description: "github or google" }),
-      handle: Type.String({ description: "The GitHub login, or the Google account's email" }),
-      role: Type.Union([Type.Literal("admin"), Type.Literal("write"), Type.Literal("read")], {
+    parameters: Schema.Struct({
+      provider: Schema.Literals(["github", "google"]).annotate({ description: "github or google" }),
+      handle: Schema.String.annotate({ description: "The GitHub login, or the Google account's email" }),
+      role: Schema.Literals(["admin", "write", "read"]).annotate({
         description: "admin ('Admin'), write ('Can create and edit content') or read ('Can authenticate')",
       }),
     }),
@@ -632,7 +649,7 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. The access rules on /admin/access, one list: each rule's id, who (a group: everybody; a Google Workspace organization, by its domain, matched on the hd claim Google gives Workspace accounts; a GitHub organization, its members checked at each GitHub sign-in) and access: none ('No access'), read ('Can authenticate': may sign in, and open what is shared with them or public) or write ('Can create and edit content': also make and edit them). Specific people are users with a role (list_users), not rules. A person gets the highest of their user role and every rule that matches them; if that's none, they can't sign in. Admins always have 'Can create and edit content'. Only a specific set of people: everybody 'No access', and those people as users. Each rule's accessLabel is the words the Access page shows: use them when you tell the person. Also the Workspace domains and GitHub organizations of people who signed in here (suggestions), and whether users can share content publicly (publicSharing).",
-    parameters: Type.Object({}),
+    parameters: Schema.Struct({}),
     run: async (_args, { dir, who }) => ({ rules: (await dir.rules.list(who)).map(ruleOf), suggestions: await dir.rules.suggestions(who), publicSharing: await dir.config.get("public_sharing") }),
   },
   {
@@ -642,7 +659,9 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. 'Users can share content publicly', the switch on /admin/access. On: a document shared with anyone with the link opens for people who aren't signed in too, as viewers, and owners may share that way. Off: nobody may share with anyone with the link (it's refused, saying why), and such shares made before stay but open only for people who sign in; turning it on again restores them. The homepage is public either way. Only when the person asks in this conversation; say what changed.",
-    parameters: Type.Object({ on: Type.Boolean({ description: "true: users can share content publicly; false: they can't" }) }),
+    parameters: Schema.Struct({
+      on: Schema.Boolean.annotate({ description: "true: users can share content publicly; false: they can't" }),
+    }),
     run: async (args, { dir, who }) => {
       if (typeof args.on != "boolean") throw new ToolError("on: true or false.");
       const before = await dir.config.get("public_sharing");
@@ -656,10 +675,10 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. Adds an access rule, as Add on /admin/access does (a rule for the same who changes its access). kind: workspace (value: the Google Workspace organization's domain) or github_org (value: the organization's login); a specific person is added with add_user instead. access: none ('No access'), read ('Can authenticate') or write ('Can create and edit content'). Only when the person asks in this conversation; say what you added, in those words.",
-    parameters: Type.Object({
-      kind: Type.Union([Type.Literal("workspace"), Type.Literal("github_org")], { description: "workspace or github_org" }),
-      value: Type.String({ description: "The domain or the organization" }),
-      access: Type.Union([Type.Literal("none"), Type.Literal("read"), Type.Literal("write")], {
+    parameters: Schema.Struct({
+      kind: Schema.Literals(["workspace", "github_org"]).annotate({ description: "workspace or github_org" }),
+      value: Schema.String.annotate({ description: "The domain or the organization" }),
+      access: Schema.Literals(["none", "read", "write"]).annotate({
         description: "none ('No access'), read ('Can authenticate') or write ('Can create and edit content')",
       }),
     }),
@@ -672,9 +691,9 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. Changes a rule's access (list_access_rules gives each id), as its select on /admin/access does: none ('No access'), read ('Can authenticate') or write ('Can create and edit content'). Only when the person asks; say what changed, from what to what, in those words.",
-    parameters: Type.Object({
-      id: Type.Integer({ description: "The rule's id" }),
-      access: Type.Union([Type.Literal("none"), Type.Literal("read"), Type.Literal("write")], {
+    parameters: Schema.Struct({
+      id: Schema.Int.annotate({ description: "The rule's id" }),
+      access: Schema.Literals(["none", "read", "write"]).annotate({
         description: "none ('No access'), read ('Can authenticate') or write ('Can create and edit content')",
       }),
     }),
@@ -690,7 +709,7 @@ export const SERVER_TOOLS: Tool[] = [
     activity: "removing an access rule",
     admin: true,
     description: "Admins only. Removes a rule (list_access_rules gives each id), as its remove button on /admin/access does. Everybody's rule stays: set it to none with change_access_rule. Someone no rule matches any more is signed out within seconds. Only when the person asks.",
-    parameters: Type.Object({ id: Type.Integer({ description: "The rule's id" }) }),
+    parameters: Schema.Struct({ id: Schema.Int.annotate({ description: "The rule's id" }) }),
     run: async (args, { dir, who }) => {
       const before = (await dir.rules.list(who)).find((r) => r.id == Number(args.id));
       await dir.rules.remove(who, Number(args.id));
@@ -704,10 +723,10 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. Changes a user's one role, as its select on /admin/users does: admin ('Admin'), write ('Can create and edit content': may sign in, open what is shared with them or public, and make and edit documents) or read ('Can authenticate': may sign in, and open what is shared with them or public), or for an account none ('No role': only the group rules let them in). Give login for an account, or person (list_users's id) for someone who hasn't signed in yet. An admin by the deploy (bootstrap) stays one, and the server keeps an admin. Only when the person asks; say what changed, with the role's words.",
-    parameters: Type.Object({
-      login: Type.Optional(LOGIN),
-      person: Type.Optional(Type.Integer({ description: "The id of someone who hasn't signed in yet (list_users)" })),
-      role: Type.Union([Type.Literal("admin"), Type.Literal("write"), Type.Literal("read"), Type.Literal("none")], {
+    parameters: Schema.Struct({
+      login: Schema.optionalKey(LOGIN),
+      person: Schema.optionalKey(Schema.Int.annotate({ description: "The id of someone who hasn't signed in yet (list_users)" })),
+      role: Schema.Literals(["admin", "write", "read", "none"]).annotate({
         description: "admin, write, read, or none (an account only)",
       }),
     }),
@@ -721,8 +740,12 @@ export const SERVER_TOOLS: Tool[] = [
     label: "Grant or revoke the deploy role",
     activity: "changing a user's deploy role",
     admin: true,
-    description: "Admins only. Grants a user the deploy role, or revokes it: with it they may use /deploy (deploy Erga to their own Cloudflare account) when the deploy_page setting is admins, as admins may.",
-    parameters: Type.Object({ login: LOGIN, deploy: Type.Boolean({ description: "true to grant the deploy role, false to revoke it" }) }),
+    description:
+      "Admins only. Grants a user the deploy role, or revokes it: with it they may use /deploy (deploy Erga to their own Cloudflare account) when the deploy_page setting is admins, as admins may.",
+    parameters: Schema.Struct({
+      login: LOGIN,
+      deploy: Schema.Boolean.annotate({ description: "true to grant the deploy role, false to revoke it" }),
+    }),
     run: async (args, { dir, who }) => userOf(await dir.users.setDeploy(who, String(args.login ?? ""), args.deploy === true)),
   },
   {
@@ -732,9 +755,9 @@ export const SERVER_TOOLS: Tool[] = [
     admin: true,
     description:
       "Admins only. Removes a user, as the remove button on /admin/users does: their sessions and tokens stop working within seconds, unless a group rule on /admin/access lets them in; their documents stay. Give login for an account, or person (list_users's id) for someone who hasn't signed in yet. An admin by the deploy (bootstrap) can't be removed here.",
-    parameters: Type.Object({
-      login: Type.Optional(LOGIN),
-      person: Type.Optional(Type.Integer({ description: "The id of someone who hasn't signed in yet (list_users)" })),
+    parameters: Schema.Struct({
+      login: Schema.optionalKey(LOGIN),
+      person: Schema.optionalKey(Schema.Int.annotate({ description: "The id of someone who hasn't signed in yet (list_users)" })),
     }),
     run: async (args, { dir, who }) => {
       if (args.person != null) {
@@ -755,19 +778,13 @@ export const SERVER_TOOLS: Tool[] = [
 /** The document tools, for any document: a `document` argument, and they run in its host, as the person's agent. */
 let docTools: Tool[] | null = null;
 export function documentTools(): Tool[] {
-  return (docTools ??= documentToolSpecs().map((spec): Tool => {
-    const p = spec.parameters as { properties: Record<string, unknown>; required?: string[] };
-    return {
+  return (docTools ??= documentToolSpecs().map(
+    (spec): Tool => ({
       name: spec.name,
       only: "api",
       loose: true,
       description: `${spec.description} (In any document you may ${CHANGES.has(spec.name) ? "edit" : "open"}: name it with "document"; paths are relative to its folder.)`,
-      parameters: Type.Unsafe({
-        ...p,
-        type: "object",
-        properties: { document: ANY_DOCUMENT, ...p.properties },
-        required: ["document", ...(p.required ?? [])],
-      }),
+      parameters: Schema.Struct({ document: ANY_DOCUMENT, ...spec.parameters.fields }),
       run: async (args, ctx) => {
         // A tool that changes nothing works in any document the person may open; the document's host refuses the rest to a viewer.
         const doc = await findDocument(ctx, args.document, CHANGES.has(spec.name) ? "edit" : "open");
@@ -777,9 +794,17 @@ export function documentTools(): Tool[] {
         if (!body.ok) throw new ToolError(body.error ?? "The tool failed.", r.status >= 400 && r.status < 500 ? r.status : 500);
         return body.content ?? [];
       },
-    };
-  }));
+    })
+  ));
 }
+
+/** A tool's arguments as JSON Schema, as outside agents read them (REST, MCP, the guides). */
+const schemas = new WeakMap<Tool, { required?: string[] }>();
+export const jsonSchemaOf = (t: Tool): { required?: string[] } => {
+  let s = schemas.get(t);
+  if (!s) schemas.set(t, (s = AiTool.getJsonSchemaFromSchema(t.parameters) as { required?: string[] }));
+  return s;
+};
 
 /** Every tool of `who` ("agent": an embedded agent; "api": an outside agent, with the document tools too). */
 export const toolsOf = (who: "agent" | "api"): Tool[] => [
@@ -822,16 +847,12 @@ export async function runTool(tool: Tool, args: Record<string, unknown>, ctx: To
 }
 
 /**
- * Tools as an embedded agent takes them (pi's AgentTool), run as `ctx` (a
+ * Tools as an embedded agent takes them (agents/run.ts's AgentTool), run as `ctx` (a
  * function: the admin agent's admin, with the unlock their page sent last;
  * null: tools that need no one). `guard` checks first (the person still an
  * admin, say).
  */
-export function agentTools(
-  tools: Tool[],
-  ctx: ToolWho | (() => ToolWho) | null,
-  guard?: () => Promise<void>
-): (AgentTool & { activity?: string })[] {
+export function agentTools(tools: Tool[], ctx: ToolWho | (() => ToolWho) | null, guard?: () => Promise<void>): AgentTool[] {
   return tools.map((t) => ({
     name: t.name,
     label: t.label ?? t.name,
@@ -851,8 +872,8 @@ export function agentTools(
 /** The server tools the document agent has, for someone in a document. */
 export const agentToolsFor = async (ctx: ToolWho) => agentTools(await toolsFor(ctx, "agent"), ctx);
 
-/** A tool's answer as pi takes it: the text for the model; an `offer` in it (a button for the person) goes to the panel too. */
-export function toolResult(out: unknown) {
+/** A tool's answer as the agent loop takes it: the text for the model; an `offer` in it (a button for the person) goes to the panel too. */
+export function toolResult(out: unknown): ToolOutput {
   const offer = out && typeof out == "object" && "offer" in out ? (out as { offer: unknown }).offer : undefined;
   return { content: [{ type: "text" as const, text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }], details: offer ? { offer } : {} };
 }
@@ -1038,11 +1059,9 @@ function decodeFiles(raw: unknown): Record<string, string | Uint8Array> {
     let data: string | Uint8Array;
     if (typeof v == "string") data = v;
     else if (v && typeof v == "object" && typeof (v as { base64?: unknown }).base64 == "string") {
-      try {
-        data = fromBase64((v as { base64: string }).base64.replace(/\s+/g, ""));
-      } catch {
-        throw new ToolError(`${path}: that isn't base64.`);
-      }
+      const bytes = Base64.decode((v as { base64: string }).base64.replace(/\s+/g, ""));
+      if (Result.isFailure(bytes)) throw new ToolError(`${path}: that isn't base64.`);
+      data = bytes.success;
     } else if (v && typeof v == "object" && typeof (v as { text?: unknown }).text == "string") data = (v as { text: string }).text;
     else throw new ToolError(`${path}: give its text as a string, or {"base64": "..."}.`);
     total = addFile(out, rel, data, total);

@@ -83,7 +83,8 @@ export function checkAttachments(v: unknown): Attachment[] | string {
 
 export const fileRefs = (files: Attachment[]): FileRef[] => files.map((f) => ({ name: f.name, kind: f.kind, size: f.size, ...(f.thumb ? { thumb: f.thumb } : {}) }));
 
-type Part = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+/** A part of a message, as Effect AI's prompt has it (agents/run.ts): text, or a file (an image, base64). */
+type Part = { type: "text"; text: string } | { type: "file"; mediaType: string; data: string };
 
 /** A message for the model: the text, each text file after it, and each image; a plain string when nothing's attached. */
 export function messageContent(text: string, files: Attachment[] = []): string | Part[] {
@@ -93,5 +94,5 @@ export function messageContent(text: string, files: Attachment[] = []): string |
   const images = files.filter((f) => f.kind == "image");
   const names = images.map((f) => f.name).join(", ");
   const body = [text, ...texts, ...(images.length ? [`(Attached image${images.length > 1 ? "s" : ""}: ${names})`] : [])].filter(Boolean).join("\n\n");
-  return [{ type: "text", text: body }, ...images.map((f): Part => ({ type: "image", data: f.data, mimeType: f.mimeType }))];
+  return [{ type: "text", text: body }, ...images.map((f): Part => ({ type: "file", mediaType: f.mimeType, data: f.data }))];
 }

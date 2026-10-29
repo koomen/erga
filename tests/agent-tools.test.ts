@@ -40,7 +40,7 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   const e = await failure(run({ dir, who: { login: "bo" } }, "list_settings"));
   expect(e).toBeInstanceOf(ToolError);
   expect(e.status).toBe(403);
-  // The document agent gets the same, as pi tools.
+  // The document agent gets the same, as its loop runs them.
   expect((await agentToolsFor({ dir, who: { login: "bo" } })).map((t) => t.name)).toEqual(["document_access", "share_document"]);
   const forRoot = await agentToolsFor({ dir, who: { login: "root", admin: true } });
   const out = await forRoot.find((t) => t.name == "list_settings")!.execute("x", {});
