@@ -186,7 +186,7 @@ health checks and rollbacks work.
                   (dev.ts, dev-entry.ts)
     control/      the control Worker: Erga's repository and Git endpoint, the deploy pipeline, the Ops page and its
                   sign-in, and the build container (builder/), apart from the app, so a broken app never takes the
-                  way to fix it down (index.ts the entry, routes.ts, platform.ts, wrangler.jsonc: its bindings, env.ts types them; d1.ts). The app reaches it
+                  way to fix it down (index.ts the entry, settings.ts its settings, routes.ts, platform.ts, wrangler.jsonc: its bindings, env.ts types them; d1.ts). The app reaches it
                   over a service binding; locally the app hosts its routes.
       source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts) and its Durable
                       Object (source-host.ts), Git itself (git.ts, http.ts, merge.ts), the GitHub App (github.ts),
