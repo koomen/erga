@@ -14,6 +14,8 @@
 // has its release in erga.dev's store already: the builder fetches that and
 // builds nothing. Platform-neutral: the Worker and the tests run it.
 
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type { Builder } from "../deploys/branches";
 import { containerBuilder } from "../builder/client";
 import { bundleOf } from "../deploys/bundle";
@@ -38,21 +40,70 @@ export async function hashSecret(secret: string): Promise<string> {
   return sha256Hex(secret);
 }
 
+/** A JSON body (an answer, a request) as `schema` reads it; one that doesn't read is an empty one. */
+async function answerOf<A extends object>(r: Request | Response, schema: Schema.Codec<A>): Promise<Partial<A>> {
+  return Option.getOrElse(Schema.decodeUnknownOption(Schema.fromJsonString(schema))(await r.text().catch(() => "")), () => ({}));
+}
+
+/** A build of a fork's commit, as the builder takes it. */
+const BuildRequest = Schema.Struct({
+  commit: Schema.optionalKey(Schema.String),
+  branch: Schema.optionalKey(Schema.String),
+  source: Schema.optionalKey(Schema.NullOr(Schema.Struct({ cloneUrl: Schema.String, token: Schema.optionalKey(Schema.String) }))),
+});
+
 /** What a downstream's control Worker knows of its fork: upstream's origin, the fork's id, its secret. */
 export interface ForkAccess { upstream: string; id: string; secret: string }
 
 /** A short-lived token for the fork's repository, from upstream: the remote and the token, as the repository's Remote wants them. */
-export async function forkRemote(fork: ForkAccess, scope: "read" | "write", net: Fetch = globalThis.fetch.bind(globalThis)): Promise<{ url: string; token: string; expiresAt: string; headers: Record<string, string> }> {
-  const r = await net(`${fork.upstream}/forks/${fork.id}/token`, { method: "POST", headers: { Authorization: `Bearer ${fork.secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ scope }) });
-  const body = (await r.json().catch(() => ({}))) as { remote?: string; token?: string; expiresAt?: string; error?: string };
-  if (!r.ok || !body.remote || !body.token) throw new Error(`${fork.upstream} gave no token for the fork's repository: ${body.error ?? `HTTP ${r.status}`}`);
-  return { url: body.remote, token: body.token, expiresAt: body.expiresAt ?? new Date(Date.now() + 3600_000).toISOString(), headers: { Authorization: `Bearer ${body.token}` } };
+export async function forkRemote(
+  fork: ForkAccess,
+  scope: "read" | "write",
+  net: Fetch = globalThis.fetch.bind(globalThis)
+): Promise<{ url: string; token: string; expiresAt: string; headers: Record<string, string> }> {
+  const r = await net(`${fork.upstream}/forks/${fork.id}/token`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${fork.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ scope }),
+  });
+  const body = await answerOf(
+    r,
+    Schema.Struct({
+      remote: Schema.optionalKey(Schema.String),
+      token: Schema.optionalKey(Schema.String),
+      expiresAt: Schema.optionalKey(Schema.String),
+      error: Schema.optionalKey(Schema.String),
+    })
+  );
+  if (!r.ok || !body.remote || !body.token)
+    throw new Error(`${fork.upstream} gave no token for the fork's repository: ${body.error ?? `HTTP ${r.status}`}`);
+  return {
+    url: body.remote,
+    token: body.token,
+    expiresAt: body.expiresAt ?? new Date(Date.now() + 3600_000).toISOString(),
+    headers: { Authorization: `Bearer ${body.token}` },
+  };
 }
 
 /** A GitHub installation token for the downstream's connected repository, minted at upstream (the App's key is there): POST /forks/<id>/github/token. */
-export async function forkGithubToken(fork: ForkAccess, installationId: number, net: Fetch = globalThis.fetch.bind(globalThis)): Promise<{ token: string; expiresAt: number }> {
-  const r = await net(`${fork.upstream}/forks/${fork.id}/github/token`, { method: "POST", headers: { Authorization: `Bearer ${fork.secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ installation: installationId }) });
-  const body = (await r.json().catch(() => ({}))) as { token?: string; expiresAt?: number; error?: string };
+export async function forkGithubToken(
+  fork: ForkAccess,
+  installationId: number,
+  net: Fetch = globalThis.fetch.bind(globalThis)
+): Promise<{ token: string; expiresAt: number }> {
+  const r = await net(`${fork.upstream}/forks/${fork.id}/github/token`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${fork.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ installation: installationId }),
+  });
+  const body = await answerOf(
+    r,
+    Schema.Struct({
+      token: Schema.optionalKey(Schema.String),
+      expiresAt: Schema.optionalKey(Schema.Number),
+      error: Schema.optionalKey(Schema.String),
+    })
+  );
   if (!r.ok || !body.token) throw new Error(body.error ?? `${fork.upstream} gave no GitHub token (HTTP ${r.status}).`);
   return { token: body.token, expiresAt: body.expiresAt ?? Date.now() + 3600_000 };
 }
@@ -100,7 +151,7 @@ export function builderEndpoint(builder: Builder, source: (commit: string) => Pr
     const id = url.searchParams.get("id") ?? "";
     if (url.pathname.endsWith("/cancel")) { running.get(id)?.abort(); return Response.json({ stopped: running.delete(id) }); }
     if (!url.pathname.endsWith("/build") || request.method != "POST") return new Response("Not found", { status: 404 });
-    const body = (await request.json().catch(() => ({}))) as { commit?: string; branch?: string; source?: { cloneUrl: string; token?: string } | null };
+    const body = await answerOf(request, BuildRequest);
     if (!body.commit) return new Response("commit?", { status: 400 });
     const abort = new AbortController();
     running.set(id, abort);
@@ -122,8 +173,8 @@ export function builderEndpoint(builder: Builder, source: (commit: string) => Pr
 
 /** A fork's build request as erga.dev's builder takes it: the client's commit and branch, the source made the fork's own. */
 export function forkBuildBody(body: string, source: { cloneUrl: string; token?: string }): string {
-  let b: { commit?: string; branch?: string } = {};
-  try { b = JSON.parse(body) as typeof b; } catch { /* the builder refuses it */ }
+  // A body that doesn't read has no commit: the builder refuses it.
+  const b = Option.getOrElse(Schema.decodeUnknownOption(Schema.fromJsonString(BuildRequest))(body), () => ({}) as typeof BuildRequest.Type);
   return JSON.stringify({ commit: b.commit, branch: b.branch, source });
 }
 
