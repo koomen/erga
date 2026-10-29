@@ -34,7 +34,7 @@ import type { HostEnv } from "../env";
 import { GithubError, installationToken, uninstall } from "../source/index.ts";
 import { SYSTEM } from "../../shared/attribution";
 import { sourceForBuild } from "../source/service";
-import { sleep } from "../../shared/time";
+import * as Effect from "effect/Effect";
 
 export type RelayEvent = { type: string } & Record<string, unknown>;
 
@@ -146,7 +146,7 @@ export class Pipeline extends DurableObject<HostEnv> {
         const s = await sourceForBuild(env, commit);
         return { cloneUrl: s.remote, token: s.token.split("?")[0] };
       },
-      ...(mock ? { waitMs: 5000, sleep: (ms: number) => sleep(Math.min(ms, 50)) } : {}),
+      ...(mock ? { waitMs: 5000, sleep: (ms: number) => Effect.runPromise(Effect.sleep(Math.min(ms, 50))) } : {}),
     });
     // An install looks at upstream's channel now and then (control/deploys/branches.ts alarm): the first look soon after this object wakes.
     if (installed) ctx.blockConcurrencyWhile(async () => { if ((await ctx.storage.getAlarm()) == null) await ctx.storage.setAlarm(Date.now() + 5000); });

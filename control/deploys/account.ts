@@ -2,11 +2,16 @@
 // (export and import), its health and its version, and a rollback.
 
 import { createHash } from "node:crypto";
+import * as Effect from "effect/Effect";
+import { Base64, Base64Url } from "effect/encoding";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { Cloudflare, DeployError, type Fetch } from "./cloudflare-api";
 import type { Release } from "./release-format";
 import type { RestorePoint, Target } from "./pipeline";
-import { base64, fromBase64url, sha256Hex } from "../../shared/bytes";
-import { sleep } from "../../shared/time";
+import { sha256Hex } from "../../shared/bytes";
 
 /** The tag the deploy puts on the Workers it makes, so a second run knows them as its own. */
 export const WORKER_TAG = "erga-deploy";
@@ -171,21 +176,69 @@ export async function liveVersion(cf: Cloudflare, accountId: string, worker: str
 }
 
 /** What the health check answers (GET /api/health: the app's own checks), as the pipeline reads it. */
-export interface Health { ok: boolean; version?: string | null; checks?: Record<string, { ok: boolean; ms?: number; error?: string }> }
+export const Health = Schema.Struct({
+  ok: Schema.Boolean,
+  version: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  checks: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ ok: Schema.Boolean, ms: Schema.optionalKey(Schema.Number), error: Schema.optionalKey(Schema.String) })
+    )
+  ),
+});
+export type Health = typeof Health.Type;
+const healthOf = Schema.decodeUnknownOption(Schema.fromJsonString(Health));
+
+/** A health check's result: `why` says what failed, in words; `summary` what passed. */
+export interface Checked {
+  ok: boolean;
+  why: string;
+  summary: string;
+}
 
 /**
  * The app's health, at `host`: GET /api/health must answer 200 with ok true
- * and the release `want` (when given). `why` says what failed, in words.
+ * and the release `want` (when given). It never fails: a check that can't be
+ * made is a check that didn't pass.
  */
-export async function checkHealth(site: Fetch, host: string, want: string | null, o: { query?: string } = {}): Promise<{ ok: boolean; why: string; summary: string }> {
-  const r = await site(`https://${host}/api/health${o.query ? `?${o.query}` : ""}`).catch((e) => ({ ok: false, status: 0, json: async () => null, text: async () => (e as Error).message }) as unknown as Response);
-  const body = (await r.json().catch(() => null)) as Health | null;
-  if (!body) return { ok: false, why: `GET /api/health answered ${r.status || "nothing"} and no JSON`, summary: "" };
-  const failed = Object.entries(body.checks ?? {}).filter(([, c]) => !c.ok).map(([n, c]) => `${n}: ${c.error ?? "failed"}`);
-  if (!r.ok || !body.ok) return { ok: false, why: failed.length ? failed.join("; ") : `GET /api/health answered ${r.status}`, summary: "" };
-  if (want && body.version && body.version != want) return { ok: false, why: `GET /api/health says release ${body.version}, not ${want}`, summary: "" };
-  return { ok: true, why: "", summary: Object.entries(body.checks ?? {}).map(([n, c]) => `${n} ok${c.ms != null ? ` ${c.ms} ms` : ""}`).join(", ") || "no checks" };
-}
+export const checkHealth = (site: Fetch, host: string, want: string | null, o: { query?: string } = {}): Effect.Effect<Checked> =>
+  Effect.promise(async (): Promise<Checked> => {
+    const r = await site(`https://${host}/api/health${o.query ? `?${o.query}` : ""}`).catch(() => null);
+    const body = Option.getOrNull(healthOf(r ? await r.text().catch(() => "") : ""));
+    if (!r || !body) return { ok: false, why: `GET /api/health answered ${r?.status || "nothing"} and no JSON`, summary: "" };
+    const failed = Object.entries(body.checks ?? {}).filter(([, c]) => !c.ok).map(([n, c]) => `${n}: ${c.error ?? "failed"}`);
+    if (!r.ok || !body.ok) return { ok: false, why: failed.length ? failed.join("; ") : `GET /api/health answered ${r.status}`, summary: "" };
+    if (want && body.version && body.version != want) return { ok: false, why: `GET /api/health says release ${body.version}, not ${want}`, summary: "" };
+    return { ok: true, why: "", summary: Object.entries(body.checks ?? {}).map(([n, c]) => `${n} ok${c.ms != null ? ` ${c.ms} ms` : ""}`).join(", ") || "no checks" };
+  });
+
+/** A release that answers its version: healthy, or unhealthy three times over ten seconds (one slow cold start isn't a broken release). */
+export const settledHealth = (site: Fetch, host: string, want: string, o: { query?: string } = {}): Effect.Effect<Checked> =>
+  checkHealth(site, host, want, o).pipe(Effect.repeat({ schedule: Schedule.spaced("5 seconds"), times: 2, until: (h) => h.ok }));
+
+/**
+ * The wait for a new release to answer, for at most `ms`: a second, then half
+ * a second longer each time, at most five seconds apart (a new workers.dev
+ * address or certificate can take a minute or two).
+ */
+export const untilUp = (ms: number) =>
+  Schedule.spaced("1 second").pipe(
+    Schedule.modifyDelay(({ attempt }) => Effect.succeed(Math.min(5000, 500 + attempt * 500))),
+    Schedule.upTo({ duration: ms })
+  );
+
+/**
+ * The version a release says it is (GET /api/deploys/version, or the health check's), or "" when it doesn't answer.
+ * `anyStatus`: an answer that isn't 200 counts too (an unhealthy release still says its version).
+ */
+export const answeredVersion = (site: Fetch, url: string, o: { anyStatus?: boolean } = {}): Effect.Effect<string> =>
+  Effect.promise(async () => {
+    const r = await site(url).catch(() => null);
+    return r && (r.ok || o.anyStatus) ? (Option.getOrNull(versionOf(await r.text().catch(() => "")))?.version ?? "") : "";
+  });
+const versionOf = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.optionalKey(Schema.NullOr(Schema.String)) }))
+);
 
 /**
  * Rolls a Worker back: a deployment of `versionId` at 100% (seconds; no
@@ -224,71 +277,145 @@ export async function zoneIdOf(cf: Cloudflare, accountId: string, name: string):
  * --remote` does. Read-only on the database (it's never written to); D1
  * holds the database's writes for the moment the export takes.
  */
-export async function exportD1(cf: Cloudflare, acc: string, dbId: string, name: string, site: Fetch, sleep: (ms: number) => Promise<void>): Promise<string> {
+export const exportD1 = (cf: Cloudflare, acc: string, dbId: string, name: string, site: Fetch): Effect.Effect<string, DeployError> => {
   let bookmark: string | undefined;
-  for (let tries = 0; ; tries++) {
-    const r = await cf.call<{ status?: string; at_bookmark?: string; error?: string; result?: { signed_url?: string; filename?: string } }>(
+  const ask = Effect.suspend(() =>
+    cf.request(
       "POST",
       `${acc}/d1/database/${dbId}/export`,
       `export ${name} (read-only)`,
-      { output_format: "polling", ...(bookmark ? { current_bookmark: bookmark } : {}) }
-    );
-    if (r?.error || r?.status == "error")
-      throw new DeployError({ message: `D1 couldn't export ${name}: ${r?.error ?? "it said it failed"}.` });
-    if (r?.status == "complete" && r.result?.signed_url) {
-      const file = await site(r.result.signed_url).catch(() => null);
-      if (!file?.ok)
-        throw new DeployError({
-          message: `D1 exported ${name}, but its file couldn't be downloaded (${file?.status ?? "no answer"}). Deploy again.`,
-        });
-      return await file.text();
-    }
-    bookmark = r?.at_bookmark ?? bookmark;
-    if (tries >= 300) throw new DeployError({ message: `D1's export of ${name} took too long. Deploy again.` });
-    await sleep(1000);
-  }
-}
+      { output_format: "polling", ...(bookmark ? { current_bookmark: bookmark } : {}) },
+      { schema: D1Export }
+    )
+  ).pipe(
+    Effect.tap((r) => {
+      if (r?.error || r?.status == "error")
+        return new DeployError({ message: `D1 couldn't export ${name}: ${r?.error ?? "it said it failed"}.` });
+      bookmark = r?.at_bookmark ?? bookmark;
+      return Effect.void;
+    })
+  );
+  const ready = (r: D1Export | null) => r?.status == "complete" && !!r.result?.signed_url;
+  return Effect.gen(function* () {
+    // Asked again each second until the file is ready: at most 300 times more.
+    const r = yield* ask.pipe(Effect.repeat({ schedule: POLL, times: 300, until: ready }));
+    const url = ready(r) ? r!.result!.signed_url! : null;
+    if (!url) return yield* new DeployError({ message: `D1's export of ${name} took too long. Deploy again.` });
+    const file = yield* Effect.promise(() => site(url).catch(() => null));
+    if (!file?.ok)
+      return yield* new DeployError({
+        message: `D1 exported ${name}, but its file couldn't be downloaded (${file?.status ?? "no answer"}). Deploy again.`,
+      });
+    return yield* Effect.promise(() => file.text());
+  });
+};
+
+/** D1's answer to an export, polled. */
+const D1Export = Schema.Struct({
+  status: Schema.optionalKey(Schema.String),
+  at_bookmark: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+  result: Schema.optionalKey(Schema.Struct({ signed_url: Schema.optionalKey(Schema.String), filename: Schema.optionalKey(Schema.String) })),
+});
+type D1Export = typeof D1Export.Type;
+
+/** D1's answer at each step of an import. */
+const D1Import = Schema.Struct({
+  status: Schema.optionalKey(Schema.String),
+  success: Schema.optionalKey(Schema.Boolean),
+  error: Schema.optionalKey(Schema.String),
+  filename: Schema.optionalKey(Schema.String),
+  upload_url: Schema.optionalKey(Schema.String),
+  at_bookmark: Schema.optionalKey(Schema.String),
+});
+type D1Import = typeof D1Import.Type;
+
+/** How often D1's export and import are asked whether they're done. */
+const POLL = Schedule.spaced("1 second");
 
 /**
  * SQL into a D1 database, through D1's import (init with the file's MD5,
  * upload to the URL it gives, ingest, poll), as `wrangler d1 execute
  * --remote --file` does.
  */
-export async function importD1(cf: Cloudflare, acc: string, dbId: string, name: string, sql: string, site: Fetch, sleep: (ms: number) => Promise<void>): Promise<void> {
-  const etag = md5hex(sql);
-  const path = `${acc}/d1/database/${dbId}/import`;
-  type Answer = { status?: string; success?: boolean; error?: string; filename?: string; upload_url?: string; at_bookmark?: string };
-  const init = await cf.call<Answer>("POST", path, `start loading the copy into ${name}`, { action: "init", etag });
-  if (init?.upload_url) {
-    const put = await site(init.upload_url, { method: "PUT", body: sql }).catch(() => null);
-    if (!put?.ok)
-      throw new DeployError({ message: `The copy couldn't be uploaded for ${name} (${put?.status ?? "no answer"}). Deploy again.` });
-    const got = put.headers.get("etag")?.replace(/"/g, "");
-    if (got && got != etag)
-      throw new DeployError({ message: `The copy uploaded for ${name} arrived changed (its checksum doesn't match). Deploy again.` });
-  }
-  const ingest = await cf.call<Answer>("POST", path, `load the copy into ${name}`, { action: "ingest", etag, filename: init?.filename });
-  let bookmark = ingest?.at_bookmark;
-  if (ingest?.status == "complete") return;
-  for (let tries = 0; ; tries++) {
-    const r = await cf.call<Answer>("POST", path, `check on loading the copy into ${name}`, { action: "poll", current_bookmark: bookmark });
-    if (r?.status == "complete" || r?.error == "Not currently importing anything.") return;
-    if (r?.status == "error" || (r?.error && r.success === false))
-      throw new DeployError({ message: `D1 couldn't load the copy into ${name}: ${r?.error ?? "it said it failed"}.` });
-    bookmark = r?.at_bookmark ?? bookmark;
-    if (tries >= 300) throw new DeployError({ message: `Loading the copy into ${name} took too long. Deploy again.` });
-    await sleep(1000);
-  }
-}
+export const importD1 = (
+  cf: Cloudflare,
+  acc: string,
+  dbId: string,
+  name: string,
+  sql: string,
+  site: Fetch
+): Effect.Effect<void, DeployError> =>
+  Effect.gen(function* () {
+    const etag = md5hex(sql);
+    const path = `${acc}/d1/database/${dbId}/import`;
+    const init = yield* cf.request("POST", path, `start loading the copy into ${name}`, { action: "init", etag }, { schema: D1Import });
+    const upload = init?.upload_url;
+    if (upload) {
+      const put = yield* Effect.promise(() => site(upload, { method: "PUT", body: sql }).catch(() => null));
+      if (!put?.ok)
+        return yield* new DeployError({
+          message: `The copy couldn't be uploaded for ${name} (${put?.status ?? "no answer"}). Deploy again.`,
+        });
+      const got = put.headers.get("etag")?.replace(/"/g, "");
+      if (got && got != etag)
+        return yield* new DeployError({
+          message: `The copy uploaded for ${name} arrived changed (its checksum doesn't match). Deploy again.`,
+        });
+    }
+    const ingest = yield* cf.request(
+      "POST",
+      path,
+      `load the copy into ${name}`,
+      { action: "ingest", etag, filename: init?.filename },
+      { schema: D1Import }
+    );
+    if (ingest?.status == "complete") return;
+    let bookmark = ingest?.at_bookmark;
+    const done = (r: D1Import | null) => r?.status == "complete" || r?.error == "Not currently importing anything.";
+    const ask = Effect.suspend(() =>
+      cf.request(
+        "POST",
+        path,
+        `check on loading the copy into ${name}`,
+        { action: "poll", current_bookmark: bookmark },
+        { schema: D1Import }
+      )
+    ).pipe(
+      Effect.tap((r) => {
+        if (done(r)) return Effect.void;
+        if (r?.status == "error" || (r?.error && r.success === false))
+          return new DeployError({ message: `D1 couldn't load the copy into ${name}: ${r?.error ?? "it said it failed"}.` });
+        bookmark = r?.at_bookmark ?? bookmark;
+        return Effect.void;
+      })
+    );
+    // Asked again each second until it's loaded: at most 300 times more.
+    const r = yield* ask.pipe(Effect.repeat({ schedule: POLL, times: 300, until: done }));
+    if (!done(r)) return yield* new DeployError({ message: `Loading the copy into ${name} took too long. Deploy again.` });
+  });
 
 /** The static assets' 32-hex hash, as Cloudflare's direct upload takes it: SHA-256 of the base64 contents and the extension. */
 export async function assetHash(path: string, bytes: Uint8Array): Promise<string> {
   const ext = /\.([^./]+)$/.exec(path)?.[1] ?? "";
-  return (await sha256Hex(base64(bytes) + ext)).slice(0, 32);
+  return (await sha256Hex(Base64.encode(bytes) + ext)).slice(0, 32);
 }
 
 const TYPES: Record<string, string> = { html: "text/html", js: "application/javascript", css: "text/css", json: "application/json", svg: "image/svg+xml", woff2: "font/woff2", woff: "font/woff", png: "image/png", ico: "image/x-icon", txt: "text/plain", md: "text/markdown", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", pdf: "application/pdf", xml: "application/xml", mp4: "video/mp4", webmanifest: "application/manifest+json" };
 export const typeOf = (path: string) => TYPES[/\.([^./]+)$/.exec(path)?.[1]?.toLowerCase() ?? ""] ?? "application/octet-stream";
+
+/** An upload of the assets: tried up to four times, 1, 2 and 4 seconds apart, unless Cloudflare refused it (a 4xx but 429). */
+const UPLOAD_RETRY = {
+  schedule: Schedule.exponential("1 second"),
+  times: 3,
+  while: (e: DeployError) => !(e.status >= 400 && e.status < 500 && e.status != 429),
+};
+
+/** What an upload session, or an upload, answers. */
+const UploadSession = Schema.Struct({
+  jwt: Schema.optionalKey(Schema.String),
+  buckets: Schema.optionalKey(Schema.Array(Schema.Array(Schema.String))),
+});
 
 /**
  * Uploads the assets Cloudflare doesn't have yet; the completion token for
@@ -296,73 +423,84 @@ export const typeOf = (path: string) => TYPES[/\.([^./]+)$/.exec(path)?.[1]?.toL
  * session (its JWT, and buckets of hashes still needed), then each bucket goes
  * up as base64 multipart, or, when the JWT says so
  * (wrangler_single_asset_uploads), each file on its own as its raw bytes.
- * Each upload is tried up to four times.
  */
-export async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets: Record<string, Uint8Array>, label = "the editor's files"): Promise<string> {
-  const manifest: Record<string, { hash: string; size: number }> = {};
-  const byHash = new Map<string, string>();
-  for (const [path, bytes] of Object.entries(assets)) {
-    const hash = await assetHash(path, bytes);
-    manifest[path] = { hash, size: bytes.byteLength };
-    byHash.set(hash, path);
-  }
-  const session = await cf.call<{ jwt: string; buckets?: string[][] }>(
-    "POST",
-    `${acc}/workers/scripts/${worker}/assets-upload-session`,
-    `start uploading ${label}`,
-    { manifest }
-  );
-  if (!session?.jwt)
-    throw new DeployError({ message: `Cloudflare didn't start the upload of ${label} (no upload token came back). Deploy again.` });
-  const buckets = (session.buckets ?? []).filter((b) => b.length);
-  if (!buckets.length) return session.jwt;
-  const single = jwtClaims(session.jwt).wrangler_single_asset_uploads === true;
-  let jwt: string | null = null;
-  const pathOf = (hash: string) => {
-    const path = byHash.get(hash);
-    if (!path) throw new DeployError({ message: "Cloudflare asked for a file the release doesn't have. Deploy again." });
-    return path;
-  };
-  for (const bucket of single ? buckets.flat().map((h) => [h]) : buckets) {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        let done: { jwt?: string } | null;
-        if (single) {
-          const path = pathOf(bucket[0]);
-          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload/${bucket[0]}`, `upload ${path}`, new Blob([new Uint8Array(assets[path])], { type: typeOf(path) }), { bearer: session.jwt });
-        } else {
-          const form = new FormData();
-          for (const hash of bucket) {
-            const path = pathOf(hash);
-            form.append(hash, new File([base64(assets[path])], hash, { type: typeOf(path) }));
-          }
-          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload?base64=true`, `upload ${label}`, form, {
-            bearer: session.jwt,
-          });
-        }
-        if (done?.jwt) jwt = done.jwt;
-        break;
-      } catch (e) {
-        if (attempt >= 4 || (e instanceof DeployError && e.status >= 400 && e.status < 500 && e.status != 429)) throw e;
-        await sleep(500 * 2 ** attempt);
-      }
+export const uploadAssets = (
+  cf: Cloudflare,
+  acc: string,
+  worker: string,
+  assets: Record<string, Uint8Array>,
+  label = "the editor's files"
+): Effect.Effect<string, DeployError> =>
+  Effect.gen(function* () {
+    const manifest: Record<string, { hash: string; size: number }> = {};
+    const byHash = new Map<string, string>();
+    for (const [path, bytes] of Object.entries(assets)) {
+      const hash = yield* Effect.promise(() => assetHash(path, bytes));
+      manifest[path] = { hash, size: bytes.byteLength };
+      byHash.set(hash, path);
     }
-  }
-  if (!jwt)
-    throw new DeployError({
-      message: `Cloudflare took ${label} but didn't say the upload was complete (no completion token). Deploy again: files already up aren't sent twice.`,
-    });
-  return jwt;
-}
+    const session = yield* cf.request(
+      "POST",
+      `${acc}/workers/scripts/${worker}/assets-upload-session`,
+      `start uploading ${label}`,
+      { manifest },
+      { schema: UploadSession }
+    );
+    const bearer = session?.jwt;
+    if (!bearer)
+      return yield* new DeployError({
+        message: `Cloudflare didn't start the upload of ${label} (no upload token came back). Deploy again.`,
+      });
+    const buckets = (session.buckets ?? []).filter((b) => b.length);
+    if (!buckets.length) return bearer;
+    const single = jwtClaims(bearer).wrangler_single_asset_uploads === true;
+    const pathOf = (hash: string) => {
+      const path = byHash.get(hash);
+      return path
+        ? Effect.succeed(path)
+        : Effect.fail(new DeployError({ message: "Cloudflare asked for a file the release doesn't have. Deploy again." }));
+    };
+    const upload = (bucket: readonly string[]) =>
+      Effect.gen(function* () {
+        if (single) {
+          const path = yield* pathOf(bucket[0]);
+          return yield* cf.request(
+            "POST",
+            `${acc}/workers/assets/upload/${bucket[0]}`,
+            `upload ${path}`,
+            new Blob([new Uint8Array(assets[path])], { type: typeOf(path) }),
+            { bearer, schema: UploadSession }
+          );
+        }
+        const form = new FormData();
+        for (const hash of bucket) {
+          const path = yield* pathOf(hash);
+          form.append(hash, new File([Base64.encode(assets[path])], hash, { type: typeOf(path) }));
+        }
+        return yield* cf.request("POST", `${acc}/workers/assets/upload?base64=true`, `upload ${label}`, form, {
+          bearer,
+          schema: UploadSession,
+        });
+      });
+    let jwt: string | null = null;
+    for (const bucket of single ? buckets.flat().map((h) => [h]) : buckets) {
+      const done = yield* upload(bucket).pipe(Effect.retry(UPLOAD_RETRY));
+      if (done?.jwt) jwt = done.jwt;
+    }
+    if (!jwt)
+      return yield* new DeployError({
+        message: `Cloudflare took ${label} but didn't say the upload was complete (no completion token). Deploy again: files already up aren't sent twice.`,
+      });
+    return jwt;
+  });
 
 /** A JWT's claims, unchecked (only to read how Cloudflare wants the files sent). */
-function jwtClaims(jwt: string): Record<string, unknown> {
-  try {
-    return JSON.parse(new TextDecoder().decode(fromBase64url(jwt.split(".")[1])));
-  } catch {
-    return {};
-  }
-}
+const jwtClaims = (jwt: string): Record<string, unknown> =>
+  Result.match(Base64Url.decodeString(jwt.split(".")[1] ?? ""), {
+    onFailure: () => ({}),
+    onSuccess: (json) => Option.getOrElse(claimsOf(json), () => ({})),
+  });
+const claimsOf = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)));
 
 /** One statement (or a few, separated by semicolons) on a D1 database, through the API: the first statement's rows. */
 /**

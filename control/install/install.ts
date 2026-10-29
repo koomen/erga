@@ -34,12 +34,13 @@
 
 import { Cloudflare, DeployError, type Fetch } from "../deploys/cloudflare-api";
 import { DB_NAME, type DeployPlan } from "../deploys/plan";
-import { checkHealth, WORKER_TAG } from "../deploys/account";
+import { checkHealth, untilUp, WORKER_TAG } from "../deploys/account";
 import { runPipeline, STEPS, targetHost, targetOfPlan, type Carry, type Report, type Target } from "../deploys/pipeline";
 import type { Release } from "../deploys/release-format";
 import { installControlMetadata } from "../deploys/control-worker";
 import { CONTROL_ENTRYPOINT } from "../../deploy/targets";
-import { sleep } from "../../shared/time";
+import * as Effect from "effect/Effect";
+import { runWith } from "../clock";
 
 /** The install's steps, as the page lists them: the pipeline's, with the control Worker's two among them. */
 export const INSTALL_STEPS = [
@@ -127,7 +128,6 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
   site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number;
 }): Promise<Installed> {
   const site = o.site ?? globalThis.fetch;
-  const wait = o.sleep ?? sleep;
   const controlHost = controlHostOf(plan);
   const app = installAppTarget(plan, o.sessionSecret, controlHost, o.upstream, o.snapshotToken);
   const appHost = targetHost(app);
@@ -186,18 +186,14 @@ export async function runInstall(cf: Cloudflare, release: Release, plan: DeployP
 
   // The control Worker answers, healthy.
   o.report("control-live", "running");
-  const until = Date.now() + (o.waitMs ?? 180_000);
-  for (let tries = 0; ; tries++) {
-    const h = await checkHealth(site, controlHost, release.version).catch(() => null);
-    if (h?.ok) {
-      o.report("control-live", "done", `https://${controlHost}, release ${release.version} (${h.summary})`);
-      break;
-    }
-    if (Date.now() > until)
-      throw new DeployError({
-        message: `The control Worker is uploaded, but https://${controlHost} hasn't answered yet${h?.why ? ` (${h.why})` : ""}. Open it in a little while; if it still doesn't answer, try again.`,
-      });
-    await wait(Math.min(5000, 1000 + tries * 500));
-  }
+  const h = await runWith(
+    o.sleep,
+    checkHealth(site, controlHost, release.version).pipe(Effect.repeat({ schedule: untilUp(o.waitMs ?? 180_000), until: (h) => h.ok }))
+  );
+  if (!h.ok)
+    throw new DeployError({
+      message: `The control Worker is uploaded, but https://${controlHost} hasn't answered yet${h.why ? ` (${h.why})` : ""}. Open it in a little while; if it still doesn't answer, try again.`,
+    });
+  o.report("control-live", "done", `https://${controlHost}, release ${release.version} (${h.summary})`);
   return { ...made, control: `https://${controlHost}`, staging: `https://${stagingHostOf(plan)}` };
 }

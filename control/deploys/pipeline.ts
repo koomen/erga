@@ -31,6 +31,7 @@
 // page from the landing project built into it, the first time someone opens
 // it, owned by its first admin.
 
+import * as Effect from "effect/Effect";
 import { runControlPipeline } from "./control-worker";
 import { copyDocuments } from "./copy-documents";
 import { Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
@@ -39,7 +40,7 @@ import { DB_NAME, type DeployPlan } from "./plan";
 import {
   PAGES_PROXY,
   WORKER_TAG,
-  checkHealth,
+  answeredVersion,
   d1,
   ensureBuckets,
   exportD1,
@@ -49,11 +50,13 @@ import {
   ownCredentials,
   restorePoint,
   servedAssets,
+  settledHealth,
+  untilUp,
   uploadAssets,
   workerMetadata,
   zoneIdOf,
 } from "./account";
-import { sleep } from "../../shared/time";
+import { runWith } from "../clock";
 export * from "./cloudflare-api";
 export * from "./release-format";
 export * from "./plan";
@@ -331,7 +334,6 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   if (target.control) return runControlPipeline(cf, release, target, opts);
   const { report, signal } = opts;
   const site = opts.site ?? globalThis.fetch;
-  const wait = opts.sleep ?? sleep;
   const carry: Carry = opts.carry ?? {};
   const acc = `/accounts/${target.accountId}`;
   const host = targetHost(target);
@@ -469,8 +471,8 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       const source = await findDatabase(cf, acc, snap.databaseName);
       if (!source) throw new DeployError({ message: `There's no database called ${snap.databaseName} to copy.` });
       if (source == carry.dbId) throw new DeployError({ message: "The snapshot's source and target are the same database: stopped." });
-      const sql = await exportD1(cf, acc, source, snap.databaseName, site, wait);
-      await importD1(cf, acc, carry.dbId!, target.databaseName, sql, site, wait);
+      const sql = await runWith(opts.sleep, exportD1(cf, acc, source, snap.databaseName, site));
+      await runWith(opts.sleep, importD1(cf, acc, carry.dbId!, target.databaseName, sql, site));
       return `${snap.databaseName} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
     },
 
@@ -499,7 +501,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     async assets() {
       const rel = needRelease();
       const files = servedAssets(rel);
-      (carry as Carry & { assetsJwt?: string }).assetsJwt = await uploadAssets(cf, acc, target.workerName, files);
+      (carry as Carry & { assetsJwt?: string }).assetsJwt = await runWith(opts.sleep, uploadAssets(cf, acc, target.workerName, files));
       return `${Object.keys(files).length} files`;
     },
 
@@ -572,37 +574,47 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
 
     // Up: a new workers.dev address or certificate can take a minute or two. With checkVersion, until this release is the
     // one answering, and then its health check says it works (GET /api/health: the database, a document).
-    async live() {
-      const until = Date.now() + (opts.waitMs ?? 180_000);
-      const want = carry.version;
-      let seen = "";
-      for (let tries = 0; ; tries++) {
-        if (target.checkVersion && want) {
-          const r = await site(`https://${host}/api/deploys/version`).catch(() => null);
-          const v = r?.ok ? ((await r.json().catch(() => null)) as { version?: string } | null)?.version ?? "" : "";
-          if (v == want) {
-            // Healthy, or unhealthy three times over ten seconds (one slow cold start isn't a broken release).
-            let h = await checkHealth(site, host, want);
-            for (let again = 0; !h.ok && again < 2; again++) {
-              await wait(5000);
-              h = await checkHealth(site, host, want);
-            }
-            if (!h.ok) throw new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why);
-            return `https://${host}, release ${want}, healthy (${h.summary})`;
+    live: () =>
+      runWith(
+        opts.sleep,
+        Effect.gen(function* () {
+          const want = carry.version;
+          if (!(target.checkVersion && want)) {
+            // Up when its logo answers.
+            const answers = Effect.promise(() =>
+              site(`https://${host}/logo.png`).then(
+                (r) => r.ok,
+                () => false
+              )
+            );
+            if (!(yield* answers.pipe(Effect.repeat({ schedule: untilUp(opts.waitMs ?? 180_000), until: (ok) => ok }))))
+              return yield* new DeployError({
+                message: `The Worker is deployed, but https://${host} hasn't answered yet (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`,
+              });
+            return `https://${host}`;
           }
-          if (v) seen = v;
-        } else {
-          const r = await site(`https://${host}/logo.png`).catch(() => null);
-          if (r?.ok) break;
-        }
-        if (Date.now() > until)
-          throw new DeployError({
-            message: `The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`,
-          });
-        await wait(Math.min(5000, 1000 + tries * 500));
-      }
-      return `https://${host}${target.checkVersion && want ? `, release ${want}` : ""}`;
-    },
+          // Until this release is the one answering, and then its health check says it works.
+          let seen = "";
+          const v = yield* answeredVersion(site, `https://${host}/api/deploys/version`).pipe(
+            Effect.tap((v) =>
+              Effect.sync(() => {
+                if (v) seen = v;
+              })
+            ),
+            Effect.repeat({ schedule: untilUp(opts.waitMs ?? 180_000), until: (v) => v == want })
+          );
+          if (v != want)
+            return yield* new DeployError({
+              message: `The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`,
+            });
+          const h = yield* settledHealth(site, host, want);
+          if (!h.ok)
+            return yield* Effect.fail(
+              new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why)
+            );
+          return `https://${host}, release ${want}, healthy (${h.summary})`;
+        })
+      ),
 
     // Each document's Durable Object: production's storage, read through its snapshot endpoint, written into the new server's.
     async documents() {

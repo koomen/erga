@@ -19,12 +19,13 @@
 // the step after the upload), and a rollback of it restarts the object into
 // the older one (the deploy's record is written before the call).
 
-import { checkHealth, findDatabase, liveVersion, workerVersion, WORKER_TAG } from "./account";
+import { answeredVersion, findDatabase, liveVersion, settledHealth, untilUp, workerVersion, WORKER_TAG } from "./account";
 import { CONTROL_STEPS, targetHost, type Carry, type Report, type RestorePoint, type StepId, type Target } from "./pipeline";
 import { DeployError, Unhealthy, type Cloudflare, type Fetch } from "./cloudflare-api";
 import type { Release } from "./release-format";
 import { CONTROL } from "../../deploy/targets";
-import { sleep } from "../../shared/time";
+import * as Effect from "effect/Effect";
+import { runWith } from "../clock";
 
 /** The control Worker as a target of the pipeline: its own steps, secrets kept, in the account. */
 export function controlTarget(env: { CLOUDFLARE_ACCOUNT_ID?: string }): Target {
@@ -86,7 +87,6 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
 }): Promise<{ url: string; pages: string; database: string; worker: string }> {
   const { report, signal } = opts;
   const site = opts.site ?? globalThis.fetch;
-  const wait = opts.sleep ?? sleep;
   const carry: Carry = opts.carry ?? {};
   const acc = `/accounts/${target.accountId}`;
   const host = targetHost(target);
@@ -175,31 +175,33 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
     // The check is shallow (?self=1): this very object runs the deploy, and a request from here back into it can loop
     // ("Subrequest depth limit exceeded", 2026-10-14); that the deploy goes on at all says the object answers. A new
     // version of this Worker has taken more than three minutes to answer (2026-10-14): ten minutes, before giving up.
-    async live() {
-      const until = Date.now() + (opts.waitMs ?? 600_000);
-      const want = carry.version;
-      if (!want) throw new DeployError({ message: "This deploy doesn't know which release it uploaded: deploy again." });
-      let seen = "";
-      for (let tries = 0; ; tries++) {
-        const r = await site(`https://${host}/api/health?self=1`).catch(() => null);
-        const body = r ? ((await r.json().catch(() => null)) as { version?: string } | null) : null;
-        if (body?.version == want) {
-          let h = await checkHealth(site, host, want, { query: "self=1" });
-          for (let again = 0; !h.ok && again < 2; again++) {
-            await wait(5000);
-            h = await checkHealth(site, host, want, { query: "self=1" });
-          }
-          if (!h.ok) throw new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why);
+    live: () =>
+      runWith(
+        opts.sleep,
+        Effect.gen(function* () {
+          const want = carry.version;
+          if (!want) return yield* new DeployError({ message: "This deploy doesn't know which release it uploaded: deploy again." });
+          let seen = "";
+          const v = yield* answeredVersion(site, `https://${host}/api/health?self=1`, { anyStatus: true }).pipe(
+            Effect.tap((v) =>
+              Effect.sync(() => {
+                if (v) seen = v;
+              })
+            ),
+            Effect.repeat({ schedule: untilUp(opts.waitMs ?? 600_000), until: (v) => v == want })
+          );
+          if (v != want)
+            return yield* new DeployError({
+              message: `The control Worker is uploaded, but https://${host} hasn't answered with release ${want} yet${seen ? ` (it still says ${seen})` : ""}. Check it in a little while; if it still doesn't answer, deploy again.`,
+            });
+          const h = yield* settledHealth(site, host, want, { query: "self=1" });
+          if (!h.ok)
+            return yield* Effect.fail(
+              new Unhealthy(`Release ${want} is up at https://${host}, but its health check fails: ${h.why}`, h.why)
+            );
           return `https://${host}, release ${want}, healthy (${h.summary})`;
-        }
-        if (body?.version) seen = body.version;
-        if (Date.now() > until)
-          throw new DeployError({
-            message: `The control Worker is uploaded, but https://${host} hasn't answered with release ${want} yet${seen ? ` (it still says ${seen})` : ""}. Check it in a little while; if it still doesn't answer, deploy again.`,
-          });
-        await wait(Math.min(5000, 1000 + tries * 500));
-      }
-    },
+        })
+      ),
   } as Record<StepId, () => Promise<string | undefined>>;
 
   for (const id of steps.slice(start, end)) {

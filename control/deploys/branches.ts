@@ -45,6 +45,8 @@
 // id, commit, times, state, what started it) and its whole log, the last
 // HISTORY_KEEP of each target, in the same storage (control/deploys/history.ts).
 
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import {
   ALL_STEPS,
@@ -69,6 +71,7 @@ import type { ChannelFile, ReleaseStore } from "./releases";
 import type { Fleet } from "./fleet";
 import { compareVersions, type UpdateResult } from "../source/index.ts";
 import { plural } from "../../shared/time";
+import { runWith } from "../clock";
 import { DeployHistory, HISTORY_KEEP, type DeployRecord, type LogLine } from "./history";
 import { Domains } from "./domains";
 
@@ -478,8 +481,20 @@ export class BranchDeploys {
       return { ok: false, error: message, status: 502 };
     }
     // Then wait for it to answer, so the log says it did.
-    const h = await (async () => { for (let i = 0; i < 30; i++) { const r = await checkHealth(this.deps.net, targetHost(target), restore.version).catch(() => null); if (r?.ok) return r; await (this.deps.sleep ?? ((ms: number) => new Promise((ok) => setTimeout(ok, ms))))(2000); } return null; })();
-    this.line(s, h ? `https://${this.specOf(name).host} answers ${restore.version ?? "the older version"}, healthy (${h.summary})` : `https://${this.specOf(name).host} hasn't answered the older version yet: check it`, "rollback");
+    // Asked every two seconds, at most 30 times.
+    const h = await runWith(
+      this.deps.sleep,
+      checkHealth(this.deps.net, targetHost(target), restore.version).pipe(
+        Effect.repeat({ schedule: Schedule.spaced("2 seconds"), times: 29, until: (h) => h.ok })
+      )
+    );
+    this.line(
+      s,
+      h.ok
+        ? `https://${this.specOf(name).host} answers ${restore.version ?? "the older version"}, healthy (${h.summary})`
+        : `https://${this.specOf(name).host} hasn't answered the older version yet: check it`,
+      "rollback"
+    );
     await this.save(s);
     return { ok: true, status: (await this.load(name)).status };
   }
@@ -801,15 +816,28 @@ export class BranchDeploys {
       await this.history.putRecords(name, list);
     }
     try {
-      // Cloudflare's side can fail for a moment (a 500 from its token endpoint refreshing the credential, 2026-10-14): three tries.
-      for (let attempt = 1; ; attempt++) {
-        try { await rollbackTo(await this.cf(), this.targetFor(name), restore.versionId, `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`); break; } catch (e) {
-          const status = e instanceof DeployError ? e.status : undefined;
-          if (attempt >= 3 || (status && status >= 400 && status < 500)) throw e;
-          this.line(s, `the rollback didn't go through (${(e as Error).message}): trying again`, "rollback");
-          await (this.deps.sleep ?? ((ms: number) => new Promise<void>((ok) => setTimeout(ok, ms))))(5000);
-        }
-      }
+      // Cloudflare's side can fail for a moment (a 500 from its token endpoint refreshing the credential, 2026-10-14): three
+      // tries, five seconds apart, unless Cloudflare refused it (a 4xx).
+      const versionId = restore.versionId;
+      const again = (e: unknown) => !(e instanceof DeployError && e.status >= 400 && e.status < 500);
+      let tries = 0;
+      const roll = Effect.tryPromise({
+        try: async () =>
+          rollbackTo(
+            await this.cf(),
+            this.targetFor(name),
+            versionId,
+            `Erga: ${run.commit.slice(0, 12)} failed its health check; back to ${to}`
+          ),
+        catch: (e) => e,
+      }).pipe(
+        Effect.tapError((e) =>
+          Effect.sync(() => {
+            if (++tries < 3 && again(e)) this.line(s, `the rollback didn't go through (${(e as Error).message}): trying again`, "rollback");
+          })
+        )
+      );
+      await runWith(this.deps.sleep, roll.pipe(Effect.retry({ schedule: Schedule.spaced("5 seconds"), times: 2, while: again })));
     } catch (e) {
       const message = e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}`;
       console.log(`the rollback of ${name} failed: ${message}`);
