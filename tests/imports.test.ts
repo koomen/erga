@@ -16,7 +16,8 @@
 //      and the tests (layers 4 and 7, when ERGA_DEPLOY_MOCK is set).
 //
 // And:
-//   - control/ is a Worker too: it may import the Worker plumbing it shares with the app Worker (WORKER_PLUMBING).
+//   - control/ is a Worker of its own, and never imports cloudflare/, the app Worker: not even a type. Its bindings
+//     are control/env.ts's, and the app Worker hosts its objects only on a HostEnv (cloudflare/dev-entry.ts).
 //   - An area of server/ is imported from outside only through its index.ts. Tools may look inside, and so may
 //     deploy/locked-settings.ts, which the Worker's config loads before anything else and which reads the settings'
 //     definitions alone.
@@ -31,8 +32,6 @@ import { expect, test } from "bun:test";
 
 const ROOT = resolve(import.meta.dir, "..");
 const AREAS = ["directory", "identity", "documents", "pages", "home", "admin"];
-/** cloudflare/'s files the control Worker uses too: the bindings, the database, the blobs, a document's object. */
-const WORKER_PLUMBING = ["cloudflare/env", "cloudflare/d1", "cloudflare/blobs", "cloudflare/objects/document-stub"];
 /** The repository's folders (an import that names none is a package's). */
 const REPO = readdirSync(ROOT).filter((n) => !n.startsWith(".") && n != "node_modules" && statSync(join(ROOT, n)).isDirectory());
 const BROWSER_DOCUMENT = ["document/content", "document/pages", "document/merge"];
@@ -99,7 +98,6 @@ function wrong(from: string, to: string, type: boolean): string | null {
     return "nothing above the tools imports them";
   }
   if (theirs == 8) return "only the browser imports client/";
-  if (mine == 4 && WORKER_PLUMBING.includes(to)) return null;
   if (theirs > mine) return `layer ${mine} imports layer ${theirs}`;
   const area = /^server\/([a-z-]+)\/(.+)$/.exec(to);
   if (area && AREAS.includes(area[1]) && area[2] != "index" && !from.startsWith(`server/${area[1]}/`))
@@ -136,6 +134,8 @@ test("the rules catch what they are for", () => {
     ["server/identity/settings", "deploy/targets"],
     ["cloudflare/objects/document", "dev/disk-storage"],
     ["control/routes", "cloudflare/index"],
+    ["control/platform", "cloudflare/d1"],
+    ["control/index", "cloudflare/env"],
     ["server/app", "cloudflare:workers"],
     ["client/shell/main", "document/host"],
   ];
@@ -144,7 +144,7 @@ test("the rules catch what they are for", () => {
     ["client/shell/main", "document/api", true],
     ["agents/admin/sessions", "control/source/index", false],
     ["control/source/page", "server/admin/index", false],
-    ["control/platform", "cloudflare/d1", false],
+    ["cloudflare/d1", "control/d1", false],
     ["cloudflare/index", "control/index", false],
     ["tests/room.test", "cloudflare/objects/document", false],
   ] as const;

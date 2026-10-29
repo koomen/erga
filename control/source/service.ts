@@ -5,10 +5,10 @@
 
 import { NOT_SET_UP, tar, type SourceService } from "./index.ts";
 import { artifactsRemote, hasSource } from "../cloudflare";
-import type { Env } from "../../cloudflare/env";
+import type { HostEnv } from "../env";
 
 /** Erga's repository, as the app reaches it; null on a server with no repository. */
-export function sourceService(env: Env): SourceService | null {
+export function sourceService(env: HostEnv): SourceService | null {
   if (!hasSource(env) || !env.SOURCE) return null;
   return { object: env.SOURCE.getByName("erga"), remote: (scope, origin) => artifactsRemote(env, scope, origin) };
 }
@@ -20,7 +20,11 @@ export function sourceService(env: Env): SourceService | null {
  * commit's files as a tar archive, read here. `commit` should be a
  * branch's head (Artifacts lets those be fetched).
  */
-export async function sourceForBuild(env: Env, commit: string, origin?: string): Promise<{ commit: string; remote: string; token: string; expiresAt: string; archive(): Promise<Uint8Array> }> {
+export async function sourceForBuild(
+  env: HostEnv,
+  commit: string,
+  origin?: string
+): Promise<{ commit: string; remote: string; token: string; expiresAt: string; archive(): Promise<Uint8Array> }> {
   const access = await artifactsRemote(env, "read", origin);
   const source = env.SOURCE;
   if (!access || !source) throw new Error(NOT_SET_UP);

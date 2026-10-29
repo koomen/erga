@@ -27,7 +27,7 @@ import { appAnswer, controlRoutes, isOpsPagePath } from "../control/routes";
 import { FLEET_ACCOUNT, mockCloudflare } from "../dev/mock-cloudflare";
 import { CONTROL } from "../deploy/targets";
 import type { DeploysObject } from "../control/deploys/api";
-import { deploysRoutes, isDeploysPath } from "../control/deploys/app-routes";
+import { deploysRoutes, isDeploysPath } from "./deploy-routes";
 import { deployRoutes } from "../control/install/routes";
 import { devRoutes } from "./dev";
 import type { Env } from "./env";

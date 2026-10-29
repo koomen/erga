@@ -23,7 +23,7 @@ import { hashSecret } from "./forks";
 import { githubAppOf, releaseStoreOf } from "../cloudflare";
 import { mockCloudflare, type MockState } from "../../dev/mock-cloudflare";
 import { open, seal, type Sealed } from "../deploys/seal";
-import type { Env } from "../../cloudflare/env";
+import type { HostEnv } from "../env";
 import { randomString, randomToken } from "../../shared/bytes";
 
 const SESSION = "session", RUN = "run";
@@ -46,7 +46,7 @@ export interface RunState {
 }
 export type Answer<T> = ({ ok: true } & T) | { ok: false; error: string };
 
-export class Deployer extends DurableObject<Env> {
+export class Deployer extends DurableObject<HostEnv> {
   private mock: ReturnType<typeof mockCloudflare> | null = null;
   private running = false;
 
@@ -154,10 +154,11 @@ export class Deployer extends DurableObject<Env> {
       }
       if (!this.env.ASSETS) return { error: "No release is on stable yet: an admin promotes one on the Ops page (Releases) first." };
     }
-    if (!this.env.ASSETS) return { error: "This server has no release store." };
+    const assets = this.env.ASSETS;
+    if (!assets) return { error: "This server has no release store." };
     let unreadable = "";
     const r = await loadRelease(async (path) => {
-      const res = await this.env.ASSETS.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
+      const res = await assets.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
       return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
     }).catch((e) => { unreadable = message(e); return null; });
     if (!r) return { error: unreadable || "This server has no release to deploy (it's built with the server's deploy: bun deploy/release.ts)." };

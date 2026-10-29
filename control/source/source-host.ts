@@ -33,14 +33,14 @@ import {
   type UpstreamSource,
 } from "./index.ts";
 import { artifactsRemote, forkOf, githubAppOf, githubTokenFor, githubUninstallFor } from "../cloudflare";
-import { directoryOf } from "../../cloudflare/d1";
-import type { Env } from "../../cloudflare/env";
+import { controlDirectory } from "../d1";
+import type { HostEnv } from "../env";
 
-export class SourceHost extends DurableObject<Env> implements SourceObject {
+export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
   private origin = "";
   private repo: SourceRepo;
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: DurableObjectState, env: HostEnv) {
     super(ctx, env);
     const sql = ctx.storage.sql;
     const app = githubAppOf(env), fork = forkOf(env);
@@ -76,7 +76,7 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
         if (m.branch == "main") {
           ctx.waitUntil((async () => {
             const change = { key: "main", from: m.old == ZERO ? null : m.old, to: m.new, release: { ...this.repo.newCommits(m.old, m.new), ...(m.override ? { override: m.override } : {}) } };
-            await directoryOf(env).config.record(m.by, [change], m.at, m.via ?? null);
+              await controlDirectory(env).config.record(m.by, [change], m.at, m.via ?? null);
           })().catch((e) => console.error("change log (main):", e)));
         }
       },
@@ -170,7 +170,7 @@ export class SourceHost extends DurableObject<Env> implements SourceObject {
 }
 
 /** A downstream's upstream (its UPSTREAM setting: erga.dev's control Worker), whose Git endpoint anyone may read; null on erga.dev's own. */
-export function upstreamOf(env: Pick<Env, "UPSTREAM" | "CHANNEL">): UpstreamSource | null {
+export function upstreamOf(env: Pick<HostEnv, "UPSTREAM" | "CHANNEL">): UpstreamSource | null {
   const origin = env.UPSTREAM?.trim().replace(/\/+$/, "");
   if (!origin) return null;
   return { remote: { url: `${origin}/git/erga.git`, headers: {} }, origin, channel: env.CHANNEL?.trim() == "edge" ? "edge" : "stable" };

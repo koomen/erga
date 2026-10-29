@@ -34,14 +34,24 @@ import { esc } from "../../shared/html.ts";
 import { base64url, randomToken, sha256 } from "../../shared/bytes.ts";
 import { whoOf, type Platform } from "../../server/platform";
 import { cookies, mayDeploy, setCookie } from "../../server/identity/index.ts";
-import type { Env } from "../../cloudflare/env";
+import type { HostEnv } from "../env";
 import { releaseStoreOf } from "../cloudflare";
 
 const COOKIE = "erga_deploy", OAUTH_COOKIE = DEPLOY_OAUTH_COOKIE;
 
 /** Where the page runs: the Worker's bindings it uses, and where Cloudflare's consent comes back to. */
 export interface DeployHost {
-  env: Pick<Env, "DEPLOYS" | "SESSION_SECRET" | "CLOUDFLARE_OAUTH_CLIENT_ID" | "CLOUDFLARE_OAUTH_SCOPES" | "ERGA_DEPLOY_MOCK" | "ASSETS" | "RELEASES" | "PIPELINE">;
+  env: Pick<
+    HostEnv,
+    | "DEPLOYS"
+    | "SESSION_SECRET"
+    | "CLOUDFLARE_OAUTH_CLIENT_ID"
+    | "CLOUDFLARE_OAUTH_SCOPES"
+    | "ERGA_DEPLOY_MOCK"
+    | "ASSETS"
+    | "RELEASES"
+    | "PIPELINE"
+  >;
   platform: Platform;
   /** The path Cloudflare sends the browser back to after the consent (the one registered on the OAuth client): /install/callback on the control Worker. */
   oauthCallback: string;

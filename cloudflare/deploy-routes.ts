@@ -1,6 +1,6 @@
 // The app Worker's own deploy routes: what the deploy pipeline (in the
 // control Worker) asks of a server it deploys, and what staging's data copy
-// goes through. The deploys' API itself (/api/deploys, /api/events) is the
+// goes through. They run in the app Worker only: they read its documents. The deploys' API itself (/api/deploys, /api/events) is the
 // control Worker's (control/deploys/api.ts); in local development the app
 // hosts it too (cloudflare/index.ts).
 //
@@ -9,14 +9,14 @@
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
 //   GET  /api/snapshot/blob/<sha-256>   SNAPSHOT_TOKEN: one of the documents' blobs (any server), read-only
 
-import { snapshotRoutes } from "../../document/snapshot";
-import { PRODUCTION } from "../../deploy/targets";
-import { health } from "../../server/health";
-import type { Platform } from "../../server/platform";
-import type { Env } from "../../cloudflare/env";
-import { documentOf } from "../../cloudflare/objects/document-stub";
-import { snapshotBlob } from "../../cloudflare/blobs";
-import { json } from "../../shared/http";
+import { snapshotRoutes } from "../document/snapshot";
+import { PRODUCTION } from "../deploy/targets";
+import { health } from "../server/health";
+import type { Platform } from "../server/platform";
+import type { Env } from "./env";
+import { documentOf } from "./objects/document-stub";
+import { snapshotBlob } from "./blobs";
+import { json } from "../shared/http";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) => path == "/api/deploys/version" || path == "/api/health" || path.startsWith("/api/snapshot/");

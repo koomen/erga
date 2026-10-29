@@ -20,8 +20,8 @@ import { CONTROL } from "../deploy/targets";
 import { githubAppOf, releaseStoreOf } from "./cloudflare";
 import { installFleet } from "./deploys/fleet";
 import { deployRoutes } from "./install/routes";
-import type { Env } from "../cloudflare/env";
-import { controlPlatform, type ControlEnv } from "./platform";
+import type { ControlEnv } from "./env";
+import { controlPlatform } from "./platform";
 import { controlLayout, controlRoutes } from "./routes";
 import { sealKeyFrom } from "./deploys/credential";
 import { hashSecret } from "./install/forks";
@@ -95,8 +95,7 @@ export default {
       ...(upstream
         ? { upstream, ...(hosts ? { hosts } : {}), ...(env.FORK_SECRET ? { forkSecretHash: await hashSecret(env.FORK_SECRET) } : {}) }
         : {
-            deploy: (request: Request) =>
-              deployRoutes(request, { env: env as unknown as Env, platform, oauthCallback: "/install/callback" }),
+            deploy: (request: Request) => deployRoutes(request, { env, platform, oauthCallback: "/install/callback" }),
         forks: {
           access: (id: string, secret: string, scope: "read" | "write") => env.PIPELINE.getByName("deploys").forkAccess(id, secret, scope),
           builder: async (id: string, secret: string, request: Request) => {
@@ -120,8 +119,13 @@ export default {
       version: env.ERGA_VERSION?.trim() || env.CF_VERSION_METADATA?.id || null,
       build: env.CF_VERSION_METADATA?.id ?? null,
       oauth: {
-        clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "", ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}),
-        accountId: env.CLOUDFLARE_ACCOUNT_ID, worker: upstream ? "erga-control" : CONTROL.worker, net: globalThis.fetch.bind(globalThis), mock: env.ERGA_DEPLOY_MOCK == "1",
+        clientId: env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim() ?? "",
+        ...(env.CLOUDFLARE_OAUTH_CLIENT_SECRET ? { secret: env.CLOUDFLARE_OAUTH_CLIENT_SECRET } : {}),
+        accountId: env.CLOUDFLARE_ACCOUNT_ID,
+        worker: upstream ? "erga-control" : CONTROL.worker,
+        net: globalThis.fetch.bind(globalThis),
+        // The mock Cloudflare is local development's, where the app serves these routes: never here.
+        mock: false,
         // An install's consent goes through erga.dev's callback (the one registered on the client), which relays it here.
         ...(upstream ? { relay: upstream } : {}),
       },

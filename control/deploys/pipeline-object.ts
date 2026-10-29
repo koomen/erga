@@ -29,8 +29,8 @@ import { SOURCE } from "../../deploy/targets";
 import { artifactsRemoteFor, forkOf, githubAppOf, hasSource, releaseStoreOf } from "../cloudflare";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../../dev/mock-cloudflare";
 import { containerBuilder } from "../builder/client";
-import { builderFetch } from "../builder/worker";
-import type { Env } from "../../cloudflare/env";
+import { builderFetch, type BuilderEnv } from "../builder/worker";
+import type { HostEnv } from "../env";
 import { GithubError, installationToken, uninstall } from "../source/index.ts";
 import { SYSTEM } from "../../shared/attribution";
 import { sourceForBuild } from "../source/service";
@@ -48,7 +48,11 @@ export interface InstallRecord { control: string; app: string; staging?: string;
  */
 let fleetMock: ReturnType<typeof mockCloudflare> | null = null;
 
-export class Pipeline extends DurableObject<Env> {
+/** The build containers' bindings, where this Worker has them (the control Worker; never the app). */
+const buildsOf = (env: HostEnv): BuilderEnv | null =>
+  env.BUILDS ? { BUILDS: env.BUILDS, CF_VERSION_METADATA: env.CF_VERSION_METADATA } : null;
+
+export class Pipeline extends DurableObject<HostEnv> {
   private deploys: BranchDeploys;
   private store: ReleaseStore | null;
   private deps: { net: typeof globalThis.fetch };
@@ -59,16 +63,17 @@ export class Pipeline extends DurableObject<Env> {
   /** The mock's builder over HTTP, for forks' builds in local development (erga.dev's go to the build container). */
   private mockBuilds: ((request: Request) => Promise<Response>) | null = null;
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: DurableObjectState, env: HostEnv) {
     super(ctx, env);
     const mock = env.ERGA_DEPLOY_MOCK == "1";
     const deployEnv: DeployEnv = mock
       ? { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN }
       : { CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID, SNAPSHOT_TOKEN: env.SNAPSHOT_TOKEN };
+    // The dev server's own release: the app hosts this object there, with its files (ASSETS).
     const release = async (): Promise<Release> => {
       const r = await loadRelease(async (path) => {
-        const res = await env.ASSETS.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
-        return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+        const res = await env.ASSETS?.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
+        return res?.ok ? new Uint8Array(await res.arrayBuffer()) : null;
       });
       if (!r) throw new Error("this dev server has no release to stand in for a build (run bun deploy/release.ts)");
       return r;
@@ -103,6 +108,7 @@ export class Pipeline extends DurableObject<Env> {
     const fork = forkOf(env);
     const devOrigin = env.ERGA_DEV_ORIGIN ?? "";
     const repo = () => { if (!env.SOURCE || !hasSource(env)) throw new Error("This control Worker has no repository."); return env.SOURCE.getByName("erga"); };
+    const builds = buildsOf(env);
     const mockBuild = mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : null;
     this.deploys = new BranchDeploys({
       storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v), delete: (k) => ctx.storage.delete(k) },
@@ -123,7 +129,14 @@ export class Pipeline extends DurableObject<Env> {
       } : {}),
       // The build container, in this Worker (the control Worker's BUILDS objects), or the mock; a downstream fetches upstream's
       // releases, and has its own commits built at upstream.
-      builder: upstream ? (fork ? forkBuilder(fork, upstream, net) : null) : mockBuild ?? (env.BUILDS ? containerBuilder({ fetch: (input, init) => builderFetch(new Request(input, init), env as never, (p) => ctx.waitUntil(p)) }) : null),
+      builder: upstream
+        ? fork
+          ? forkBuilder(fork, upstream, net)
+          : null
+        : (mockBuild ??
+          (builds
+            ? containerBuilder({ fetch: (input, init) => builderFetch(new Request(input, init), builds, (p) => ctx.waitUntil(p)) })
+            : null)),
       schedule,
       changed: () => this.publish({ type: "deploys" }),
       logged: (event) => this.publish(event),
@@ -284,8 +297,9 @@ export class Pipeline extends DurableObject<Env> {
     const source = await artifactsRemoteFor(this.env, forkRepo(id), "read", this.env.ERGA_DEV_ORIGIN ?? "");
     const request = new Request(`http://builder/${path}?id=${encodeURIComponent(buildId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: path == "build" ? forkBuildBody(body, { cloneUrl: source.url, token: source.token.split("?")[0] }) : body });
     if (this.mockBuilds) return this.mockBuilds(request);
-    if (!this.env.BUILDS) return Response.json({ error: "This control Worker has no build container." }, { status: 503 });
-    return builderFetch(request, this.env as never, (p) => this.ctx.waitUntil(p));
+    const builds = buildsOf(this.env);
+    if (!builds) return Response.json({ error: "This control Worker has no build container." }, { status: 503 });
+    return builderFetch(request, builds, (p) => this.ctx.waitUntil(p));
   }
 
   // ---- the release store (control/deploys/releases.ts): both channels; a release tag cut (stable follows the newest).

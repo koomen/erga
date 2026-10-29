@@ -94,10 +94,6 @@ export interface Env {
   CONTROL?: Fetcher;
   /** Where the control Worker is (https://ops.erga.dev), on an app Worker the pipeline deployed; the app sends its admins there. */
   CONTROL_URL?: string;
-  /** The control Worker only: its build containers (control/builder/worker.ts), and its own version (the release cache's key). */
-  BUILDS?: DurableObjectNamespace<import("../control/builder/worker").Builder>;
-  /** The control Worker only: the release store's bucket (control/deploys/releases.ts). */
-  RELEASES?: R2Bucket;
   /** An install's control Worker only (control/install/install.ts): erga.dev's control Worker, whose store it upgrades from and whose OAuth callback relays its consent; and its one target, as JSON (InstallSpec). */
   UPSTREAM?: string;
   INSTALL?: string;
