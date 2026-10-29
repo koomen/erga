@@ -59,6 +59,13 @@
 // admin-scope token made on the app. A broken app changes nothing here: the
 // admins and their tokens are read from production's database directly.
 
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import { Base64Url } from "effect/encoding";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import {
   authorizeUrl,
   CONTROL_OAUTH_SCOPES,
@@ -106,7 +113,7 @@ import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/index.ts";
 import { accountHtml, accountOf, appPage, crumbs, webPage as page } from "../server/pages/index.ts";
 import { esc, jsonInScript } from "../shared/html.ts";
-import { base64url, fromBase64url, randomToken } from "../shared/bytes.ts";
+import { randomToken } from "../shared/bytes.ts";
 import { whoOf, type Platform } from "../server/platform.ts";
 import { respond } from "../server/http.ts";
 import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
@@ -207,14 +214,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/auth/google/callback") return googleRelay(request, url, c);
   if (path == "/auth/logout") return respond(signOut, request, p);
   if (path == "/github/webhook" && method == "POST") return githubWebhook(request, url, c);
-  if (path == "/api/health" && read) {
-    // ?self=1: the pipeline's own check of this Worker after its self-deploy (control/deploys/control-worker.ts): the version only, no call
-    // into the deploys' object, which is the one running that check.
-    if (url.searchParams.get("self") == "1") return json({ ok: true, worker: "control", version: c.version, build: c.build ?? null, checks: {} });
-    const started = Date.now();
-    try { await c.deploys.status(0); } catch (e) { return json({ ok: false, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: false, ms: Date.now() - started, error: (e as Error).message } } }, 503); }
-    return json({ ok: true, worker: "control", version: c.version, build: c.build ?? null, checks: { deploys: { ok: true, ms: Date.now() - started } } });
-  }
+  if (path == "/api/health" && read) return apiAnswer(request, c, null);
   // The app's favicon, for the page: fetched from the app.
   if (read && path.startsWith("/favicon")) {
     const r = await fetch(`${c.app}${path}`).catch(() => null);
@@ -242,7 +242,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
   // A downstream's control Worker, with its fork's secret: its repository's token, and builds of its commits.
-  if (path.startsWith("/forks/")) return forkRoutes(request, path, c);
+  if (path.startsWith("/forks/")) return isForkBuild(path) ? forkBuild(request, c) : apiAnswer(request, c, null);
 
   // An admin, from here: signed in here, or an admin-scope token.
   const session = await p.sessionOf(request);
@@ -264,8 +264,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   }
   if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
   if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
-  if (path == "/api/domains") return domainRoutes(request, url, c, session);
-  if (path == "/api/releases" && read) { const r = await c.deploys.releases(); return r ? json(r) : json({ error: "This server has no release store." }, 404); }
+  if (path == "/api/domains" || (path == "/api/releases" && read)) return apiAnswer(request, c, session);
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
   if (path == "/github/connect" || path == "/github/connect/pick") return githubConnectRoutes(request, url, c, session);
   return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">Ops</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
@@ -273,51 +272,163 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
 
 const wantsPageAt = (request: Request, path: string) => !path.startsWith("/api/") && (request.headers.get("accept") ?? "").includes("text/html");
 
-// ---------------------------------------------------------------- /api/domains: each environment's domains
+// ---------------------------------------------------------------- the JSON routes: the health check, /api/domains, /api/releases, /forks
 
-async function domainRoutes(request: Request, url: URL, c: Control, session: AdminLayout["session"]): Promise<Response> {
-  const method = request.method;
-  if (method == "GET" || method == "HEAD") {
-    const r = await c.deploys.domains();
-    return "error" in r ? json({ error: r.error }, r.status ?? 502) : json(r);
-  }
-  if (method != "POST" && method != "DELETE") return json({ error: "Not found" }, 404);
-  if (!session.agent && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
-  const body = (await request.json().catch(() => ({}))) as { target?: unknown; hostname?: unknown };
-  const target = typeof body.target == "string" ? body.target : "", hostname = typeof body.hostname == "string" ? body.hostname.trim().toLowerCase() : "";
-  if (!target || !hostname) return json({ error: "Give the environment (target) and the hostname." }, 400);
-  const by = byLine(session.login.toLowerCase(), whoOf(session).via);
-  const r = method == "POST" ? await c.deploys.addDomain(target, hostname, by) : await c.deploys.removeDomain(target, hostname, by);
-  return "error" in r ? json({ error: r.error }, r.status ?? 400) : json(r);
-}
+/** Who asks and what the routes run on: given with each request (the routes are made once). `session`: an admin, for the admins' routes. */
+class Asking extends Context.Service<
+  Asking,
+  { readonly request: Request; readonly c: Control; readonly session: AdminLayout["session"] | null }
+>()("erga/control/Asking") {}
 
-// ---------------------------------------------------------------- /forks: a downstream's repository and builds, here
+/** A JSON answer: no cache keeps it. */
+const answer = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } });
+const notFound = answer({ error: "Not found" }, 404);
+const call = <A>(f: (c: Control, request: Request) => Promise<A>) => Asking.use(({ c, request }) => Effect.promise(() => f(c, request)));
+/** A body as `schema` reads it (JSON); one that isn't JSON, or doesn't match, is `otherwise`. */
+const bodyOf = <A>(schema: Schema.Codec<A>, otherwise: A) =>
+  Effect.map(
+    call((_, request) => request.text().catch(() => "")),
+    (text) => Option.getOrElse(Schema.decodeUnknownOption(Schema.fromJsonString(schema))(text), () => otherwise)
+  );
+/** A fork's caller: its fork secret, the Bearer token. */
+const forkSecret = Asking.useSync(({ request }) => /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "");
+const forkId = HttpRouter.schemaPathParams(Schema.Struct({ id: Schema.String.check(Schema.isPattern(/^[a-z0-9-]{4,40}$/)) }));
+type Forks = NonNullable<Control["forks"]>;
+/** A fork's route: its id, its secret and the forks, or the answer that stops it. */
+const fork = <E, R>(f: (forks: Forks, id: string, secret: string) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+  Effect.gen(function* () {
+    const { c } = yield* Asking;
+    const { id } = yield* forkId;
+    if (!c.forks) return answer({ error: "This control Worker hosts no forks: forks live at upstream's." }, 404);
+    const secret = yield* forkSecret;
+    if (!secret) return answer({ error: "This fork's secret (FORK_SECRET) goes as the Bearer token." }, 401);
+    return yield* f(c.forks, id, secret);
+  });
+const either = (r: object | { error: string; status?: number }, otherwise: number) =>
+  "error" in r ? answer({ error: r.error }, (r as { status?: number }).status ?? otherwise) : answer(r);
 
-async function forkRoutes(request: Request, path: string, c: Control): Promise<Response> {
-  const m = /^\/forks\/([a-z0-9-]{4,40})\/(token|builder\/build|builder\/cancel|github\/token|github\/uninstall|hosts)$/.exec(path);
-  if (!m || request.method != "POST") return json({ error: "Not found" }, 404);
+/** A domain added or removed: { target, hostname }. */
+const DomainChange = Schema.Struct({ target: Schema.optionalKey(Schema.Unknown), hostname: Schema.optionalKey(Schema.Unknown) });
+const Installation = Schema.Struct({ installation: Schema.optionalKey(Schema.Unknown) });
+
+const domainChange = (add: boolean) =>
+  Effect.gen(function* () {
+    const { request, c, session } = yield* Asking;
+    if (!session) return notFound;
+    if (!session.agent && request.headers.get("origin") != new URL(request.url).origin) return answer({ error: "Forbidden" }, 403);
+    const body = yield* bodyOf(DomainChange, {});
+    const target = typeof body.target == "string" ? body.target : "",
+      hostname = typeof body.hostname == "string" ? body.hostname.trim().toLowerCase() : "";
+    if (!target || !hostname) return answer({ error: "Give the environment (target) and the hostname." }, 400);
+    const by = byLine(session.login.toLowerCase(), whoOf(session).via);
+    return either(
+      yield* Effect.promise(() => (add ? c.deploys.addDomain(target, hostname, by) : c.deploys.removeDomain(target, hostname, by))),
+      400
+    );
+  });
+
+const githubFork = (what: "token" | "uninstall") =>
+  fork((forks, id, secret) =>
+    Effect.gen(function* () {
+      const installation = Number((yield* bodyOf(Installation, {})).installation) || 0;
+      if (!installation) return answer({ error: "Give the installation's id." }, 400);
+      return either(
+        yield* Effect.promise(
+          (): Promise<object> =>
+            what == "token" ? forks.githubToken(id, secret, installation) : forks.githubUninstall(id, secret, installation)
+        ),
+        502
+      );
+    })
+  );
+
+// ?self=1: the pipeline's own check of this Worker after its self-deploy (control/deploys/control-worker.ts): the version
+// only, no call into the deploys' object, which is the one running that check.
+const health = Effect.gen(function* () {
+  const { request, c } = yield* Asking;
+  const head = { worker: "control", version: c.version, build: c.build ?? null };
+  if (new URL(request.url).searchParams.get("self") == "1") return answer({ ok: true, ...head, checks: {} });
+  const started = Date.now();
+  return yield* Effect.tryPromise(() => c.deploys.status(0)).pipe(
+    Effect.match({
+      onFailure: (e) =>
+        answer(
+          { ok: false, ...head, checks: { deploys: { ok: false, ms: Date.now() - started, error: (e.cause as Error).message } } },
+          503
+        ),
+      onSuccess: () => answer({ ok: true, ...head, checks: { deploys: { ok: true, ms: Date.now() - started } } }),
+    })
+  );
+});
+const domains = Effect.map(
+  call((c) => c.deploys.domains()),
+  (r) => either(r, 502)
+);
+const releases = Effect.map(
+  call((c) => c.deploys.releases()),
+  (r) => (r ? answer(r) : answer({ error: "This server has no release store." }, 404))
+);
+
+/** The reads answer a HEAD as a GET. */
+const read = (path: HttpRouter.PathInput, handler: typeof domains) => [
+  HttpRouter.route("GET", path, handler),
+  HttpRouter.route("HEAD", path, handler),
+];
+
+const apiRoutes = HttpRouter.addAll(
+  [
+    ...read("/api/health", health),
+    ...read("/api/domains", domains),
+    ...read("/api/releases", releases),
+    HttpRouter.route("POST", "/api/domains", domainChange(true)),
+    HttpRouter.route("DELETE", "/api/domains", domainChange(false)),
+    HttpRouter.route(
+      "POST",
+      "/forks/:id/token",
+      fork((forks, id, secret) =>
+        Effect.gen(function* () {
+          const scope =
+            (yield* bodyOf(Schema.Struct({ scope: Schema.optionalKey(Schema.Unknown) }), {})).scope == "write" ? "write" : "read";
+          const access = yield* Effect.promise(() => forks.access(id, secret, scope));
+          return access ? answer(access) : answer({ error: "No such fork, or the secret is wrong." }, 403);
+        })
+      )
+    ),
+    HttpRouter.route("POST", "/forks/:id/github/token", githubFork("token")),
+    HttpRouter.route("POST", "/forks/:id/github/uninstall", githubFork("uninstall")),
+    HttpRouter.route(
+      "POST",
+      "/forks/:id/hosts",
+      fork((forks, id, secret) =>
+        Effect.gen(function* () {
+          const body = yield* bodyOf(Schema.Struct({ hosts: Schema.optionalKey(Schema.Unknown) }), {});
+          return either(yield* Effect.promise(() => forks.hosts(id, secret, Array.isArray(body.hosts) ? body.hosts.map(String) : [])), 502);
+        })
+      )
+    ),
+    HttpRouter.route("*", "*", notFound),
+  ].map((r) =>
+    HttpRouter.route(
+      r.method,
+      r.path,
+      Effect.catchTag(r.handler, "SchemaError", () => Effect.succeed(notFound))
+    )
+  )
+);
+
+const api = HttpRouter.toWebHandler(apiRoutes, { disableLogger: true, routerConfig: { ignoreTrailingSlash: true } });
+const apiAnswer = (request: Request, c: Control, session: AdminLayout["session"] | null) =>
+  api.handler(request, Context.make(Asking, { request, c, session }));
+
+/** A downstream's build here: its output streams back as the container sends it, so it goes past the router. */
+const isForkBuild = (path: string) => /^\/forks\/[a-z0-9-]{4,40}\/builder\/(build|cancel)$/.test(path);
+
+async function forkBuild(request: Request, c: Control): Promise<Response> {
+  if (request.method != "POST") return json({ error: "Not found" }, 404);
   if (!c.forks) return json({ error: "This control Worker hosts no forks: forks live at upstream's." }, 404);
   const secret = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
   if (!secret) return json({ error: "This fork's secret (FORK_SECRET) goes as the Bearer token." }, 401);
-  const [, id, what] = m;
-  if (what == "token") {
-    const body = (await request.json().catch(() => ({}))) as { scope?: unknown };
-    const access = await c.forks.access(id, secret, body.scope == "write" ? "write" : "read");
-    return access ? json(access) : json({ error: "No such fork, or the secret is wrong." }, 403);
-  }
-  if (what == "github/token" || what == "github/uninstall") {
-    const body = (await request.json().catch(() => ({}))) as { installation?: unknown };
-    const installation = Number(body.installation) || 0;
-    if (!installation) return json({ error: "Give the installation's id." }, 400);
-    const r = what == "github/token" ? await c.forks.githubToken(id, secret, installation) : await c.forks.githubUninstall(id, secret, installation);
-    return "error" in r ? json({ error: r.error }, r.status) : json(r);
-  }
-  if (what == "hosts") {
-    const body = (await request.json().catch(() => ({}))) as { hosts?: unknown };
-    const r = await c.forks.hosts(id, secret, Array.isArray(body.hosts) ? body.hosts.map(String) : []);
-    return "error" in r ? json({ error: r.error }, r.status) : json(r);
-  }
-  return c.forks.builder(id, secret, request);
+  return c.forks.builder(new URL(request.url).pathname.split("/")[2], secret, request);
 }
 
 // ---------------------------------------------------------------- GitHub: the App's callback, Connect GitHub, the webhook
@@ -326,14 +437,16 @@ const GITHUB_COOKIE = "erga_github";
 /** What the connect popup posts to the page that opened it (the Ops page, here or on the app), and on its BroadcastChannel. */
 export const GITHUB_MESSAGE = "erga-github";
 /** The consent in flight, in its cookie: the state, whether it runs in a popup; and, while the person picks a repository, the installation and their token (sealed). */
-interface GithubConsent { state: string; popup: boolean; installation?: number; token?: Sealed }
+const GithubConsent = Schema.Struct({
+  state: Schema.String,
+  popup: Schema.Boolean,
+  installation: Schema.optionalKey(Schema.Number),
+  token: Schema.optionalKey(Schema.Struct({ iv: Schema.String, data: Schema.String })),
+});
+type GithubConsent = typeof GithubConsent.Type;
 const readGithubConsent = (request: Request): GithubConsent | null => {
-  try {
-    const c = JSON.parse(unb64u(cookies(request).get(GITHUB_COOKIE) ?? "")) as GithubConsent;
-    return c?.state ? c : null;
-  } catch {
-    return null;
-  }
+  const c = cookieOf(GithubConsent, cookies(request).get(GITHUB_COOKIE));
+  return c?.state ? c : null;
 };
 /** Where this repository lives, for the source object's calls (the control Worker's own origin, wherever the page is). */
 const sourceOrigin = (c: Control, url: URL) => c.platform.control?.url ?? url.origin;
@@ -586,17 +699,19 @@ const INSTALL_COOKIE = "erga_install";
 /** What the consent's popup posts to the page that opened it (the Ops page, here or on the app), and on CONSENT_CHANNEL. */
 export const CONSENT_MESSAGE = "erga-deploy-credential";
 /** An install's consent state: its control Worker's origin (base64url), a dot, a random part (shared/relay.ts relayState; relayOrigin reads the origin back). */
-const b64u = (s: string) => base64url(new TextEncoder().encode(s));
-const unb64u = (s: string) => new TextDecoder().decode(fromBase64url(s));
+const b64u = (s: string) => Base64Url.encode(s);
+/** A consent's cookie (base64url JSON) as `schema` reads it, or null. */
+const cookieOf = <A>(schema: Schema.Codec<A>, value: string | undefined): A | null =>
+  Result.match(Base64Url.decodeString(value ?? ""), {
+    onFailure: () => null,
+    onSuccess: (json) => Option.getOrNull(Schema.decodeUnknownOption(Schema.fromJsonString(schema))(json)),
+  });
 /** The consent in flight, in its cookie: the state, the PKCE verifier, and whether it runs in a popup. */
-interface Consent { state: string; verifier: string; popup: boolean }
+const Consent = Schema.Struct({ state: Schema.String, verifier: Schema.String, popup: Schema.Boolean });
+type Consent = typeof Consent.Type;
 const readConsent = (request: Request): Consent | null => {
-  try {
-    const c = JSON.parse(unb64u(cookies(request).get(INSTALL_COOKIE) ?? "")) as Consent;
-    return c?.state && c.verifier ? c : null;
-  } catch {
-    return null;
-  }
+  const c = cookieOf(Consent, cookies(request).get(INSTALL_COOKIE));
+  return c?.state && c.verifier ? c : null;
 };
 /** What a consent came to: connected (with what its first read said), or why not. */
 type Outcome = { ok: true; check?: string; missing?: string; norefresh?: boolean } | { ok: false; error: string } | { ok: true; disconnected: true };
