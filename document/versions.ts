@@ -19,10 +19,17 @@
 // fallback description used when no model writes one.
 
 import { createTwoFilesPatch, structuredPatch } from "diff";
-import Anthropic from "@anthropic-ai/sdk";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
+import { LanguageModel, Prompt } from "effect/ai";
+import { FetchHttpClient } from "effect/http";
+import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic";
 import { OBJECT_MAX, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import { sha256Hex } from "../shared/bytes.ts";
 import { isTextPath } from "./content.ts";
+import { StoreError } from "./room.ts";
 
 /** A version as the API shows it (the contract shared with the settings UI, client/pages/versions.ts, and the homepage deploy, server/home/deploys.ts). */
 export interface Version {
@@ -67,27 +74,33 @@ export function versionNumber(ref: unknown): number | null {
 
 export const publicVersion = (v: StoredVersion): Version => ({ id: v.id, n: v.n, at: v.at, authors: v.authors, description: v.description });
 
+const storeError = (e: unknown) => new StoreError({ message: e instanceof Error ? e.message : String(e) });
+/** A call to the KV or the blob store (both Promise-based: the Durable Object's storage, R2), its failure a StoreError. */
+const io = <T>(f: () => Promise<T>) => Effect.tryPromise({ try: f, catch: storeError });
+
 export class Versions {
   /** Versions already read, by number: they never change, except their description. */
   private cache = new Map<number, StoredVersion>();
   constructor(private kv: KV, private now: () => number = Date.now, private blobs?: BlobStore) {}
 
   /** The latest version's number (0: none yet). */
-  async head(): Promise<number> {
-    return (await this.kv.get<number>(HEAD)) ?? 0;
+  get head(): Effect.Effect<number, StoreError> {
+    return io(async () => (await this.kv.get<number>(HEAD)) ?? 0);
   }
 
-  async get(n: number): Promise<StoredVersion | null> {
+  get(n: number): Effect.Effect<StoredVersion | null, StoreError> {
     const hit = this.cache.get(n);
-    if (hit) return hit;
-    const v = await this.kv.get<StoredVersion>(key(n));
-    if (v) this.cache.set(n, v);
-    return v ?? null;
+    if (hit) return Effect.succeed(hit);
+    const self = this;
+    return Effect.gen(function* () {
+      const v = yield* io(() => self.kv.get<StoredVersion>(key(n)));
+      if (v) self.cache.set(n, v);
+      return v ?? null;
+    });
   }
 
-  async latest(): Promise<StoredVersion | null> {
-    const n = await this.head();
-    return n ? this.get(n) : null;
+  get latest(): Effect.Effect<StoredVersion | null, StoreError> {
+    return Effect.flatMap(this.head, (n) => (n ? this.get(n) : Effect.succeed(null)));
   }
 
   /**
@@ -95,85 +108,116 @@ export class Versions {
    * or a blob's ref), unless nothing changed since the latest one: then null.
    * Only blobs storage doesn't have yet are written.
    */
-  async cut(files: Map<string, Uint8Array | BlobRef>, index: string, authors: string[], description: string | null = null, folders: string[] = []): Promise<{ version: StoredVersion; previous: StoredVersion | null } | null> {
-    const previous = await this.latest();
-    const manifest: Record<string, string> = {};
-    const bytesOf = new Map<string, Uint8Array>();
-    for (const [path, data] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
-      if (!(data instanceof Uint8Array)) { manifest[path] = data.hash; continue; }
-      const digest = await sha256Hex(data);
-      manifest[path] = digest;
-      bytesOf.set(digest, data);
-    }
-    const dirs = [...new Set(folders)].sort();
-    if (previous && sameFiles(previous.files, manifest) && previous.index == index && (previous.folders ?? []).join("\n") == dirs.join("\n")) return null;
-    // Blobs the latest version has are stored; the rest are checked, and written if they're new.
-    const known = new Set(previous ? Object.values(previous.files) : []);
-    const unknown = [...bytesOf.keys()].filter((d) => !known.has(d));
-    const missing: Record<string, Uint8Array> = {};
-    for (let i = 0; i < unknown.length; i += BATCH) {
-      const chunk = unknown.slice(i, i + BATCH);
-      const have = await this.kv.get<Uint8Array>(chunk.map((d) => BLOB + d));
-      for (const d of chunk) {
-        const bytes = bytesOf.get(d)!;
-        // In the blob store too, unless it's there (the object's copy, while one is kept, may predate it).
-        if (this.blobs && !(await this.blobs.head(d))) await this.blobs.put(d, bytes, bytes.length);
-        if (!have.has(BLOB + d) && (!this.blobs || bytes.length <= OBJECT_MAX)) missing[BLOB + d] = bytes;
+  cut(
+    files: Map<string, Uint8Array | BlobRef>,
+    index: string,
+    authors: string[],
+    description: string | null = null,
+    folders: string[] = []
+  ): Effect.Effect<{ version: StoredVersion; previous: StoredVersion | null } | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const previous = yield* self.latest;
+      const manifest: Record<string, string> = {};
+      const bytesOf = new Map<string, Uint8Array>();
+      for (const [path, data] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+        if (!(data instanceof Uint8Array)) { manifest[path] = data.hash; continue; }
+        const digest = yield* io(() => sha256Hex(data));
+        manifest[path] = digest;
+        bytesOf.set(digest, data);
       }
-    }
-    const entries = Object.entries(missing);
-    for (let i = 0; i < entries.length; i += BATCH) await this.kv.put(Object.fromEntries(entries.slice(i, i + BATCH)));
-    const n = (previous?.n ?? 0) + 1;
-    const version: StoredVersion = { id: versionId(n), n, at: new Date(this.now()).toISOString(), authors: [...new Set(authors)].sort(), description, files: manifest, index, ...(dirs.length ? { folders: dirs } : {}) };
-    await this.kv.put({ [key(n)]: version, [HEAD]: n });
-    this.cache.set(n, version);
-    return { version, previous };
+      const dirs = [...new Set(folders)].sort();
+      if (previous && sameFiles(previous.files, manifest) && previous.index == index && (previous.folders ?? []).join("\n") == dirs.join("\n")) return null;
+      // Blobs the latest version has are stored; the rest are checked, and written if they're new.
+      const known = new Set(previous ? Object.values(previous.files) : []);
+      const unknown = [...bytesOf.keys()].filter((d) => !known.has(d));
+      const missing: Record<string, Uint8Array> = {};
+      const blobs = self.blobs;
+      for (let i = 0; i < unknown.length; i += BATCH) {
+        const chunk = unknown.slice(i, i + BATCH);
+        const have = yield* io(() => self.kv.get<Uint8Array>(chunk.map((d) => BLOB + d)));
+        for (const d of chunk) {
+          const bytes = bytesOf.get(d)!;
+          // In the blob store too, unless it's there (the object's copy, while one is kept, may predate it).
+          if (blobs && !(yield* io(() => blobs.head(d)))) yield* io(() => blobs.put(d, bytes, bytes.length));
+          if (!have.has(BLOB + d) && (!blobs || bytes.length <= OBJECT_MAX)) missing[BLOB + d] = bytes;
+        }
+      }
+      const entries = Object.entries(missing);
+      for (let i = 0; i < entries.length; i += BATCH) yield* io(() => self.kv.put(Object.fromEntries(entries.slice(i, i + BATCH))));
+      const n = (previous?.n ?? 0) + 1;
+      const version: StoredVersion = {
+        id: versionId(n),
+        n,
+        at: new Date(self.now()).toISOString(),
+        authors: [...new Set(authors)].sort(),
+        description,
+        files: manifest,
+        index,
+        ...(dirs.length ? { folders: dirs } : {}),
+      };
+      yield* io(() => self.kv.put({ [key(n)]: version, [HEAD]: n }));
+      self.cache.set(n, version);
+      return { version, previous };
+    });
   }
 
   /** Sets a version's description (the model's five words). */
-  async describe(n: number, description: string): Promise<void> {
-    const v = await this.get(n);
-    if (!v) return;
-    const next = { ...v, description };
-    await this.kv.put({ [key(n)]: next });
-    this.cache.set(n, next);
+  describe(n: number, description: string): Effect.Effect<void, StoreError> {
+    return Effect.flatMap(this.get(n), (v) => {
+      if (!v) return Effect.void;
+      const next = { ...v, description };
+      return io(() => this.kv.put({ [key(n)]: next })).pipe(
+        Effect.map(() => {
+          this.cache.set(n, next);
+        })
+      );
+    });
   }
 
   /** Versions newest first: `limit` of them, before version `before` (or from the latest), and how many there are. */
-  async list(opts: { before?: number | null; limit?: number } = {}): Promise<{ versions: StoredVersion[]; total: number }> {
-    const total = await this.head();
-    const limit = Math.max(1, Math.min(100, opts.limit ?? 10));
-    const from = Math.min(total, opts.before != null ? opts.before - 1 : total);
-    const want: number[] = [];
-    for (let n = from; n > 0 && want.length < limit; n--) want.push(n);
-    const missing = want.filter((n) => !this.cache.has(n));
-    if (missing.length) {
-      const got = await this.kv.get<StoredVersion>(missing.map(key));
-      for (const n of missing) { const v = got.get(key(n)); if (v) this.cache.set(n, v); }
-    }
-    return { versions: want.map((n) => this.cache.get(n)).filter((v): v is StoredVersion => !!v), total };
+  list(opts: { before?: number | null; limit?: number } = {}): Effect.Effect<{ versions: StoredVersion[]; total: number }, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const total = yield* self.head;
+      const limit = Math.max(1, Math.min(100, opts.limit ?? 10));
+      const from = Math.min(total, opts.before != null ? opts.before - 1 : total);
+      const want: number[] = [];
+      for (let n = from; n > 0 && want.length < limit; n--) want.push(n);
+      const missing = want.filter((n) => !self.cache.has(n));
+      if (missing.length) {
+        const got = yield* io(() => self.kv.get<StoredVersion>(missing.map(key)));
+        for (const n of missing) {
+          const v = got.get(key(n));
+          if (v) self.cache.set(n, v);
+        }
+      }
+      return { versions: want.map((n) => self.cache.get(n)).filter((v): v is StoredVersion => !!v), total };
+    });
   }
 
   /** One file of a version (null if it has no such file): from the object, else the blob store. */
-  async file(v: StoredVersion, path: string): Promise<Uint8Array | null> {
+  file(v: StoredVersion, path: string): Effect.Effect<Uint8Array | null, StoreError> {
     const digest = v.files[path];
-    if (!digest) return null;
-    return (await this.kv.get<Uint8Array>(BLOB + digest)) ?? (await this.blobs?.bytes(digest)) ?? null;
+    if (!digest) return Effect.succeed(null);
+    return io(async () => (await this.kv.get<Uint8Array>(BLOB + digest)) ?? (await this.blobs?.bytes(digest)) ?? null);
   }
 
   /** Every file of a version. */
-  async files(v: StoredVersion): Promise<Map<string, Uint8Array>> {
-    const paths = Object.keys(v.files);
-    const out = new Map<string, Uint8Array>();
-    for (let i = 0; i < paths.length; i += BATCH) {
-      const chunk = paths.slice(i, i + BATCH);
-      const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
-      for (const p of chunk) {
-        const b = got.get(BLOB + v.files[p]) ?? (await this.blobs?.bytes(v.files[p]));
-        if (b) out.set(p, b);
+  files(v: StoredVersion): Effect.Effect<Map<string, Uint8Array>, StoreError> {
+    return io(async () => {
+      const paths = Object.keys(v.files);
+      const out = new Map<string, Uint8Array>();
+      for (let i = 0; i < paths.length; i += BATCH) {
+        const chunk = paths.slice(i, i + BATCH);
+        const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
+        for (const p of chunk) {
+          const b = got.get(BLOB + v.files[p]) ?? (await this.blobs?.bytes(v.files[p]));
+          if (b) out.set(p, b);
+        }
       }
-    }
-    return out;
+      return out;
+    });
   }
 
   /**
@@ -181,48 +225,53 @@ export class Versions {
    * the object keeps) as bytes, any other file as a blob's ref, with no
    * bytes read; null for one no store has.
    */
-  async entries(v: StoredVersion): Promise<Map<string, Uint8Array | BlobRef>> {
-    const paths = Object.keys(v.files);
-    const out = new Map<string, Uint8Array | BlobRef>();
-    for (let i = 0; i < paths.length; i += BATCH) {
-      const chunk = paths.slice(i, i + BATCH);
-      const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
-      for (const p of chunk) {
-        const hash = v.files[p], b = got.get(BLOB + hash);
-        if (b) { out.set(p, b); continue; }
-        const there = await this.blobs?.head(hash);
-        if (!there) continue;
-        // A text file comes back as text (it may be one): its bytes.
-        const bytes = isTextPath(p) && there.size <= TEXT_MAX ? await this.blobs!.bytes(hash) : null;
-        out.set(p, bytes ?? { hash, size: there.size, at: this.now() });
+  entries(v: StoredVersion): Effect.Effect<Map<string, Uint8Array | BlobRef>, StoreError> {
+    return io(async () => {
+      const paths = Object.keys(v.files);
+      const out = new Map<string, Uint8Array | BlobRef>();
+      for (let i = 0; i < paths.length; i += BATCH) {
+        const chunk = paths.slice(i, i + BATCH);
+        const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
+        for (const p of chunk) {
+          const hash = v.files[p], b = got.get(BLOB + hash);
+          if (b) { out.set(p, b); continue; }
+          const there = await this.blobs?.head(hash);
+          if (!there) continue;
+          // A text file comes back as text (it may be one): its bytes.
+          const bytes = isTextPath(p) && there.size <= TEXT_MAX ? await this.blobs!.bytes(hash) : null;
+          out.set(p, bytes ?? { hash, size: there.size, at: this.now() });
+        }
       }
-    }
-    return out;
+      return out;
+    });
   }
 
   /** What changed from `previous` to `version`: files added, removed and changed, and a compact diff of the text. */
-  async changes(previous: StoredVersion | null, version: StoredVersion, maxChars = 6000): Promise<Changes> {
-    const before = previous?.files ?? {};
-    const added = Object.keys(version.files).filter((p) => !(p in before));
-    const removed = Object.keys(before).filter((p) => !(p in version.files));
-    const changed = Object.keys(version.files).filter((p) => p in before && before[p] != version.files[p]);
-    const parts: string[] = [];
-    let used = 0;
-    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
-    const text = (b: Uint8Array | null) => { try { return b ? decoder.decode(b) : ""; } catch { return null; } };
-    for (const path of [...changed, ...added]) {
-      if (used >= maxChars) { parts.push(`(and more)`); break; }
-      const now = text(await this.file(version, path));
-      const was = previous && path in before ? text(await this.file(previous, path)) : "";
-      if (now == null || was == null) { parts.push(`${path}: binary file ${path in before ? "changed" : "added"}`); continue; }
-      const patch = structuredPatch(path, path, was, now, undefined, undefined, { context: 1 });
-      const body = patch.hunks.map((h) => h.lines.map((l) => (l.length > 300 ? l.slice(0, 300) + "…" : l)).join("\n")).join("\n…\n");
-      const piece = `--- ${path}${path in before ? "" : " (new file)"}\n${body}`;
-      parts.push(piece.slice(0, Math.max(200, maxChars - used)));
-      used += piece.length;
-    }
-    for (const path of removed) parts.push(`${path}: deleted`);
-    return { added, removed, changed, diff: parts.join("\n\n") };
+  changes(previous: StoredVersion | null, version: StoredVersion, maxChars = 6000): Effect.Effect<Changes, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const before = previous?.files ?? {};
+      const added = Object.keys(version.files).filter((p) => !(p in before));
+      const removed = Object.keys(before).filter((p) => !(p in version.files));
+      const changed = Object.keys(version.files).filter((p) => p in before && before[p] != version.files[p]);
+      const parts: string[] = [];
+      let used = 0;
+      const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+      const text = (b: Uint8Array | null) => { try { return b ? decoder.decode(b) : ""; } catch { return null; } };
+      for (const path of [...changed, ...added]) {
+        if (used >= maxChars) { parts.push(`(and more)`); break; }
+        const now = text(yield* self.file(version, path));
+        const was = previous && path in before ? text(yield* self.file(previous, path)) : "";
+        if (now == null || was == null) { parts.push(`${path}: binary file ${path in before ? "changed" : "added"}`); continue; }
+        const patch = structuredPatch(path, path, was, now, undefined, undefined, { context: 1 });
+        const body = patch.hunks.map((h) => h.lines.map((l) => (l.length > 300 ? l.slice(0, 300) + "…" : l)).join("\n")).join("\n…\n");
+        const piece = `--- ${path}${path in before ? "" : " (new file)"}\n${body}`;
+        parts.push(piece.slice(0, Math.max(200, maxChars - used)));
+        used += piece.length;
+      }
+      for (const path of removed) parts.push(`${path}: deleted`);
+      return { added, removed, changed, diff: parts.join("\n\n") };
+    });
   }
 }
 
@@ -291,32 +340,38 @@ export function fallbackDescription(c: Pick<Changes, "added" | "removed" | "chan
 /** The model that writes descriptions: the latest Sonnet (agents/document/session.ts's MODELS.sonnet). */
 export const DESCRIBE_MODEL = "claude-sonnet-5-5";
 
+const DESCRIBE_SYSTEM =
+  'You name changes to a document (a web page and its files) the way a good commit title does. Reply with exactly five words describing what changed for a reader of the page: plain words, sentence case, no quotes, no final period. Describe the content change ("Tightened the pricing section intro"), not the mechanics ("Edited index.html").';
+
 /**
  * Five words on a change, from the model, given the compact diff; null if it
  * can't (no answer, a refusal, an error), and the caller uses the fallback.
+ * One retry, and 30 seconds for each try.
  */
-export async function describeChange(apiKey: string, changes: Changes, fetchImpl?: typeof fetch): Promise<string | null> {
-  const client = new Anthropic({ apiKey, maxRetries: 1, timeout: 30_000, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
+export function describeChange(apiKey: string, changes: Changes): Effect.Effect<string | null> {
   const files = [
     changes.changed.length ? `Changed: ${changes.changed.join(", ")}` : "",
     changes.added.length ? `Added: ${changes.added.join(", ")}` : "",
     changes.removed.length ? `Deleted: ${changes.removed.join(", ")}` : "",
-  ].filter(Boolean).join("\n");
-  try {
-    const response = await client.messages.create({
-      model: DESCRIBE_MODEL,
-      max_tokens: 2000,
-      output_config: { effort: "low" },
-      system: "You name changes to a document (a web page and its files) the way a good commit title does. Reply with exactly five words describing what changed for a reader of the page: plain words, sentence case, no quotes, no final period. Describe the content change (\"Tightened the pricing section intro\"), not the mechanics (\"Edited index.html\").",
-      messages: [{ role: "user", content: `${files}\n\nThe diff (\"-\" removed, \"+\" added):\n\n${changes.diff}` }],
-    } as Anthropic.MessageCreateParamsNonStreaming);
-    if (response.stop_reason == "refusal") return null;
-    const text = response.content.map((b) => (b.type == "text" ? b.text : "")).join(" ").trim();
-    return cleanDescription(text);
-  } catch (e) {
-    console.log(`couldn't describe a version: ${e instanceof Error ? e.message : e}`);
-    return null;
-  }
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const model = AnthropicLanguageModel.layer({
+    model: DESCRIBE_MODEL,
+    config: { max_tokens: 2000, output_config: { effort: "low" } },
+  }).pipe(Layer.provide(AnthropicClient.layer({ apiKey: Redacted.make(apiKey) })), Layer.provide(FetchHttpClient.layer));
+  return LanguageModel.generateText({
+    prompt: Prompt.make([
+      { role: "system", content: DESCRIBE_SYSTEM },
+      { role: "user", content: [{ type: "text", text: `${files}\n\nThe diff ("-" removed, "+" added):\n\n${changes.diff}` }] },
+    ]),
+  }).pipe(
+    Effect.timeout("30 seconds"),
+    Effect.retry(Schedule.recurs(1)),
+    Effect.map((r) => (r.finishReason == "content-filter" ? null : cleanDescription(r.text))),
+    Effect.provide(model),
+    Effect.catch((e) => Effect.as(Effect.log(`couldn't describe a version: ${e.message}`), null))
+  );
 }
 
 /** The model's answer as a description: one line, no quotes or final period, at most eight words. */

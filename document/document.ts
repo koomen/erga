@@ -37,6 +37,7 @@
 // journal is kept here. A single file on its own (`only`) is the only file
 // such a document has.
 
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -48,7 +49,7 @@ import type { DocumentAgents } from "./agent.ts";
 import { docFile, makeHost, typeOf } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, DocName, Hello } from "./api.ts";
-import { digest, FileStore, Room, StateStore, type Connection } from "./room.ts";
+import { digest, FileStore, Room, StateStore, type Connection, type StoreError } from "./room.ts";
 import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storage } from "./storage.ts";
 import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
@@ -358,7 +359,7 @@ export class Document {
     const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
     // Copied as it is: the blobs it has were checked already, and its first open copies what's in the object to the blob store.
     if (this.deps.blobs && !Object.values(files).some((d) => d instanceof Uint8Array)) await this.storage.put(COPIED, { at: Date.now() });
-    await this.versions.cut(first, index, [info.owner], "First version");
+    await Effect.runPromise(this.versions.cut(first, index, [info.owner], "First version"));
     // Who may open it, from the start: its first viewer needn't wait for the directory.
     await this.access.readPermissions(id).catch((e) => this.deps.log(`couldn't read ${id}'s permissions: ${e}`));
     return true;
@@ -927,32 +928,47 @@ export class Document {
     return run;
   }
 
-  private async cutNow(_reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
-    // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
-    await sleep(0);
-    const opened = this.opened;
-    const info = await this.readInfo();
-    if (!opened || !info) return null;
-    const { authors } = this.clearPending();
-    const r = await this.versions.cut(await opened.entries(), info.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null), opened.room.folderPaths());
-    if (!this.pending.dirty) await this.markUncut(false);
-    // At a version, a long log becomes a snapshot: the next open reads less.
-    await Effect.runPromise(opened.room.settle);
-    if (!r) return null;
-    opened.broadcast({ type: "versions" });
-    this.versionCut(info.id);
-    if (r.previous && !as) this.deps.background(this.describe(r.version, r.previous, info).catch((e) => this.deps.log(`couldn't describe version ${r.version.n}: ${e}`)));
-    return r.version;
+  private cutNow(_reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
+    return Effect.runPromise(this.cutVersion(as));
+  }
+
+  private cutVersion(as?: { authors: string[]; description: string }): Effect.Effect<StoredVersion | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
+      yield* Effect.sleep(0);
+      const opened = self.opened;
+      const info = yield* Effect.promise(() => self.readInfo());
+      if (!opened || !info) return null;
+      const { authors } = self.clearPending();
+      const entries = yield* Effect.promise(() => opened.entries());
+      const first = (yield* self.versions.head) == 0;
+      const description = as?.description ?? (first ? "First version" : null);
+      const r = yield* self.versions.cut(entries, info.index, as?.authors ?? authors, description, opened.room.folderPaths());
+      if (!self.pending.dirty) yield* Effect.promise(() => self.markUncut(false));
+      // At a version, a long log becomes a snapshot: the next open reads less.
+      yield* opened.room.settle;
+      if (!r) return null;
+      opened.broadcast({ type: "versions" });
+      self.versionCut(info.id);
+      if (r.previous && !as) self.deps.background(Effect.runPromise(self.describe(r.version, r.previous, info)));
+      return r.version;
+    });
   }
 
   /** Writes a version's description in the background: the model's five words, or the fallback. Never in the way of editing. */
-  private async describe(version: StoredVersion, previous: StoredVersion, info: DocumentInfo): Promise<void> {
-    const changes = await this.versions.changes(previous, version);
-    // The agent's key, as it is now (an admin may have stored one since the document opened).
-    const key = info.test ? "" : await this.deps.agents.descriptionKey();
-    const text = (key ? await describeChange(key, changes) : null) ?? fallbackDescription(changes);
-    await this.versions.describe(version.n, text);
-    this.opened?.broadcast({ type: "versions" });
+  private describe(version: StoredVersion, previous: StoredVersion, info: DocumentInfo): Effect.Effect<void> {
+    const self = this;
+    return Effect.gen(function* () {
+      const changes = yield* self.versions.changes(previous, version);
+      // The agent's key, as it is now (an admin may have stored one since the document opened).
+      const key = info.test ? "" : yield* Effect.promise(() => self.deps.agents.descriptionKey());
+      const text = (key ? yield* describeChange(key, changes) : null) ?? fallbackDescription(changes);
+      yield* self.versions.describe(version.n, text);
+      self.opened?.broadcast({ type: "versions" });
+    }).pipe(
+      Effect.catchCause((cause) => Effect.sync(() => self.deps.log(`couldn't describe version ${version.n}: ${Cause.pretty(cause)}`)))
+    );
   }
 
   /** A new version: the homepage, which shows the document as it is, deploys again soon. */
@@ -967,7 +983,7 @@ export class Document {
     const opened = await this.room();
     if (!opened) { this.open = null; return null; }
     await this.cutting;
-    if ((await this.versions.head()) == 0) await this.cutSoon("first");
+    if ((await Effect.runPromise(this.versions.head)) == 0) await this.cutSoon("first");
     const info = await this.readInfo();
     return info ? { opened, info } : null;
   }
@@ -977,8 +993,8 @@ export class Document {
     const r = await this.ready();
     if (!r) return null;
     const before = opts.before != null ? versionNumber(opts.before) : null;
-    const { versions, total } = await this.versions.list({ before, limit: opts.limit });
-    const latest = (await this.versions.latest())!;
+    const { versions, total } = await Effect.runPromise(this.versions.list({ before, limit: opts.limit }));
+    const latest = (await Effect.runPromise(this.versions.latest))!;
     return { current: publicVersion(latest), versions: versions.map(publicVersion), total, pending: this.pending.dirty };
   }
 
@@ -986,7 +1002,7 @@ export class Document {
   async version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null> {
     const n = versionNumber(ref);
     if (!(await this.ready()) || n == null) return null;
-    const v = await this.versions.get(n);
+    const v = await Effect.runPromise(this.versions.get(n));
     return v && { ...publicVersion(v), index: v.index, files: Object.keys(v.files) };
   }
 
@@ -994,8 +1010,8 @@ export class Document {
   async versionFile(ref: string | number, path: string): Promise<Uint8Array | null> {
     const n = versionNumber(ref);
     if (!(await this.ready()) || n == null) return null;
-    const v = await this.versions.get(n);
-    return v ? this.versions.file(v, path) : null;
+    const v = await Effect.runPromise(this.versions.get(n));
+    return v ? Effect.runPromise(this.versions.file(v, path)) : null;
   }
 
   /**
@@ -1011,19 +1027,24 @@ export class Document {
     const r = await this.ready();
     if (!r) return { ok: false, status: 404, error: "There's no such document." };
     const n = versionNumber(ref);
-    const v = n != null ? await this.versions.get(n) : null;
-    if (!v) return { ok: false, status: 404, error: `There's no version ${ref} of this document: its versions are v1 to v${await this.versions.head()}.` };
+    const v = n != null ? await Effect.runPromise(this.versions.get(n)) : null;
+    if (!v)
+      return {
+        ok: false,
+        status: 404,
+        error: `There's no version ${ref} of this document: its versions are v1 to v${await Effect.runPromise(this.versions.head)}.`,
+      };
     if (path != null) {
       path = path.replace(/^\.?\/+/, "");
       if (!(path in v.files)) return { ok: false, status: 404, error: `Version ${v.n} has no file ${path}: its files are ${Object.keys(v.files).sort().join(", ")}.` };
     }
     await this.cutSoon("restore");
-    const files = await this.versions.entries(v);
+    const files = await Effect.runPromise(this.versions.entries(v));
     if (path != null) {
       const out = await this.publish({ [path]: files.get(path)! }, [], by);
       if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` };
       const made = await this.cutSoon("restored", { authors: [by], description: `Restored ${path} from version ${v.n}` });
-      return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!), from: v.id, files: [path] };
+      return { ok: true, current: publicVersion(made ?? (await Effect.runPromise(this.versions.latest))!), from: v.id, files: [path] };
     }
     const room = r.opened.room;
     // Folders it didn't have go (unless something of it is inside); then its files over the current ones; then its folders.
@@ -1034,7 +1055,12 @@ export class Document {
     for (const d of v.folders ?? []) if (room.exists(d) != "folder") await Effect.runPromise(room.mkdir(d)).catch(() => {});
     if (out.refused.length) this.deps.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
     const made = await this.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` });
-    return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!), from: v.id, files: [...files.keys()].sort() };
+    return {
+      ok: true,
+      current: publicVersion(made ?? (await Effect.runPromise(this.versions.latest))!),
+      from: v.id,
+      files: [...files.keys()].sort(),
+    };
   }
 
   /**
@@ -1044,7 +1070,11 @@ export class Document {
   async currentFiles(): Promise<{ version: Version; index: string; files: Map<string, Uint8Array> } | null> {
     const r = await this.ready();
     if (!r) return null;
-    return { version: publicVersion((await this.versions.latest())!), index: r.info.index, files: await r.opened.current() };
+    return {
+      version: publicVersion((await Effect.runPromise(this.versions.latest))!),
+      index: r.info.index,
+      files: await r.opened.current(),
+    };
   }
 
   // ---------------------------------------------------------------- files arriving whole, and blobs
@@ -1256,15 +1286,15 @@ export class Document {
       // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
       // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
-      turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await this.versions.latest()))?.id ?? null),
+      turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await Effect.runPromise(this.versions.latest)))?.id ?? null),
       versions: {
         state: (opts) => this.versionsState(opts).then((s) => s!),
         version: (ref) => this.version(ref),
         file: (ref, path) => this.versionFile(ref, path),
         files: async (ref) => {
           const n = versionNumber(ref);
-          const v = n != null && (await this.ready()) ? await this.versions.get(n) : null;
-          return v ? this.versions.files(v) : null;
+          const v = n != null && (await this.ready()) ? await Effect.runPromise(this.versions.get(n)) : null;
+          return v ? Effect.runPromise(this.versions.files(v)) : null;
         },
         current: async () => (await this.ready())?.opened.current() ?? new Map(),
         restore: (ref, by, path) => this.restore(ref, by, path),
@@ -1346,7 +1376,7 @@ export class Document {
     };
     this.opened = opened;
     // A version of what it holds, if it stopped with edits no version has (or there's none yet).
-    if (info.uncut || (await this.versions.head()) == 0) void this.cutSoon("open");
+    if (info.uncut || (await Effect.runPromise(this.versions.head)) == 0) void this.cutSoon("open");
     // What it kept in its object before blobs goes to the blob store too (once; copied, not moved).
     if (blobs && !(await this.storage.get(COPIED))) this.deps.background(this.copyToBlobs(room, refs, blobs).catch((e) => this.deps.log(`couldn't copy ${info.id}'s files to the blob store: ${e}`)));
     // Tabs connected while it was closed join it now.

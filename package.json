@@ -22,7 +22,6 @@
     "bench": "bun e2e/bench/run.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.91.1",
     "@codemirror/commands": "6.11.1",
     "@codemirror/lang-html": "6.4.12",
     "@codemirror/language": "6.12.4",
