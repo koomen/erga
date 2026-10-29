@@ -6,6 +6,8 @@
 // good. Where there's no edge cache (workers.dev has none) the isolate's
 // memory serves alone.
 
+import * as Effect from "effect/Effect";
+import { call, ctx, fromWeb } from "../http.ts";
 import { roleMay } from "../directory/index.ts";
 import { accountOf, link, OWN_ACCOUNT, withEdit } from "../pages/index.ts";
 import { whoOf, type Platform } from "../platform.ts";
@@ -74,7 +76,15 @@ async function livePage(platform: Platform, url: URL): Promise<{ page: LivePage;
  * it's known who's asking (signed out, that's at once too). Null when there's
  * no snapshot yet: the caller shows the viewer, and a deploy starts.
  */
-export async function serveHome(request: Request, platform: Platform): Promise<Response | null> {
+export const serveHome = Effect.flatMap(ctx, ({ request, platform }) =>
+  Effect.map(
+    call(() => homePage(request, platform)),
+    (r) => r && fromWeb(r)
+  )
+);
+
+/** serveHome's answer, as a web Response (its header streams in after the page's start), or null. */
+async function homePage(request: Request, platform: Platform): Promise<Response | null> {
   const url = new URL(request.url);
   const live = await livePage(platform, url);
   if (!live) {
@@ -125,7 +135,15 @@ export async function serveHome(request: Request, platform: Platform): Promise<R
 }
 
 /** One of a deploy's files, /_home/<gen>/<path>: the same forever, so kept for good, in the browser and the edge's cache. */
-export async function serveHomeFile(request: Request, platform: Platform): Promise<Response> {
+export const serveHomeFile = Effect.flatMap(ctx, ({ request, platform }) =>
+  Effect.map(
+    call(() => homeFile(request, platform)),
+    fromWeb
+  )
+);
+
+/** serveHomeFile's answer, as a web Response (the edge's cache keeps it so). */
+async function homeFile(request: Request, platform: Platform): Promise<Response> {
   const url = new URL(request.url);
   const [, gen, rest] = /^\/_home\/([a-z0-9]+)\/(.+)$/.exec(url.pathname) ?? [];
   let path: string | null = null;
@@ -150,7 +168,14 @@ const AUTHORS_POLICY = { "Content-Security-Policy": "frame-ancestors 'self'" };
  * its other pages, a file its script fetches by a relative URL): the current
  * deploy's, if it has it. Null otherwise (the path is the app's).
  */
-export async function serveHomeRoot(request: Request, platform: Platform): Promise<Response | null> {
+export const serveHomeRoot = Effect.flatMap(ctx, ({ request, platform }) =>
+  Effect.map(
+    call(() => homeRoot(request, platform)),
+    (r) => r && fromWeb(r)
+  )
+);
+
+async function homeRoot(request: Request, platform: Platform): Promise<Response | null> {
   const url = new URL(request.url);
   let rel: string;
   try { rel = decodeURIComponent(url.pathname.slice(1)); } catch { return null; }

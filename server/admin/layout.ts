@@ -29,6 +29,8 @@
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in server/app.ts; and each page's own routes).
 
+import * as Effect from "effect/Effect";
+import { call, ctx, html, NO_STORE, plainJson, redirect } from "../http.ts";
 import {
   appPage,
   asset,
@@ -140,8 +142,12 @@ ${scriptTag("admin-agent.js")}
 ${scriptTag("admin-nav.js")}`, false);
 }
 
-/** adminLayout as a response. */
-export const adminResponse = (o: AdminLayout, status = 200) => new Response(adminLayout(o), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+/** adminLayout as the answer of a route. */
+export const adminPage = (o: AdminLayout, status = 200) => html(adminLayout(o), status, NO_STORE);
+
+/** adminLayout as a web Response, for the control Worker's routes (control/), which make web Responses. */
+export const adminResponse = (o: AdminLayout, status = 200) =>
+  new Response(adminLayout(o), { status, headers: { "Content-Type": "text/html; charset=utf-8", ...NO_STORE } });
 
 export const isAdminPath = (path: string) => path == "/admin" || path.startsWith("/admin/");
 
@@ -154,16 +160,16 @@ export const isAdminPath = (path: string) => path == "/admin" || path.startsWith
  * an agent or test token) makes anyone an admin. Null lets an admin through;
  * each page's routes still check on their own, and asks for the unlock.
  */
-export async function adminGate(platform: Platform, request: Request): Promise<Response | null> {
-  const url = new URL(request.url);
+export const adminGate = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
   const read = request.method == "GET" || request.method == "HEAD";
-  const session = await platform.sessionOf(request);
+  const session = yield* call(() => platform.sessionOf(request));
   if (!session) {
-    if (read) return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(url.pathname + url.search)}`, "Cache-Control": "no-store" } });
-    return Response.json({ error: "Sign in as an admin first." }, { status: 401 });
+    if (read) return redirect(`/auth/sign-in?next=${encodeURIComponent(url.pathname + url.search)}`, 302, NO_STORE);
+    return plainJson({ error: "Sign in as an admin first." }, 401);
   }
-  const admin = !session.agent && (await actingAdmin(platform.directory.users, session));
+  const admin = !session.agent && (yield* call(() => actingAdmin(platform.directory.users, session)));
   if (admin) return null;
   if (read) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
-  return Response.json({ error: "Only an admin can do that." }, { status: 403 });
-}
+  return plainJson({ error: "Only an admin can do that." }, 403);
+});

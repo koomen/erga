@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { controlRoutes, isControlPath, type Control } from "../control/routes";
 import { localToken } from "../dev/git-server.ts";
 import { adminsOnlyGate } from "../server/identity/admins-only.ts";
+import { runOn } from "../server/http.ts";
 import type { Platform } from "../server/platform";
 import { TARGETS } from "../deploy/targets";
 import type { SourceService } from "../control/source/index.ts";
@@ -159,7 +160,7 @@ describe("what stays shut", () => {
     } as unknown as Platform;
     for (const p of ["/git", "/git/erga.git", "/git/tree/main/README.md", "/git/erga.git/info/refs?service=git-upload-pack"]) {
       const url = new URL(`https://staging.erga.test${p}`);
-      const refused = await adminsOnlyGate(new Request(url, { headers: { accept: "text/html" } }), staging, url);
+      const refused = await runOn(adminsOnlyGate, new Request(url, { headers: { accept: "text/html" } }), staging);
       expect(`${p}: ${refused?.status}`).toMatch(new RegExp(`^${p.replace(/[?]/g, "\\?")}: 40[13]$`));
     }
   });

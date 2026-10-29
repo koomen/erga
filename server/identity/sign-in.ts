@@ -31,13 +31,18 @@
 //   /auth/logout                         signs out (another site's link to it asks first)
 //   /auth/test?token=&as=                a test person, signed in with a test token
 
+import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Result from "effect/Result";
+import { HttpServerResponse } from "effect/http";
 import { confirmAction, fromElsewhere, page, safeNext } from "../pages/index.ts";
 import type { Platform, Session } from "../platform.ts";
-import { cookies, setCookie } from "./cookies.ts";
+import { call, ctx, redirect, text, type Route } from "../http.ts";
+import { cookies, withCookie } from "./cookies.ts";
 import { providersOn, signInApp, testedSignIn } from "./settings.ts";
 import { type AppValues, googleEndpoints, PROVIDERS, type Provider } from "./apps.ts";
 import { SESSION_COOKIE, sign, SIGNED_OUT, unsign } from "./session.ts";
-import { base64url, fromBase64url, randomToken } from "../../shared/bytes.ts";
+import { randomToken } from "../../shared/bytes.ts";
 import { openRelay, relayNonce, relayState } from "../../shared/relay.ts";
 import { type GithubLookup, NotAllowed, type Vouched } from "../directory/index.ts";
 import { vouchedSignIn } from "./accounts.ts";
@@ -60,9 +65,11 @@ export function githubAccounts(github: string): GithubLookup {
     if (r?.status == 404) return null;
     const body = r?.ok ? ((await r.json().catch(() => null)) as { id?: number; login?: string; type?: string } | null) : null;
     if (!body?.id || !body.login)
-      throw new NotAllowed(`GitHub didn't answer for "${login}" (${r ? `status ${r.status}` : "no answer"}): try again in a minute.`);
+      throw new NotAllowed({
+        message: `GitHub didn't answer for "${login}" (${r ? `status ${r.status}` : "no answer"}): try again in a minute.`,
+      });
     if (body.type && body.type != "User")
-      throw new NotAllowed(`"${body.login}" is a GitHub ${body.type.toLowerCase()}, not a person's account.`);
+      throw new NotAllowed({ message: `"${body.login}" is a GitHub ${body.type.toLowerCase()}, not a person's account.` });
     return { id: String(body.id), login: body.login };
   };
 }
@@ -71,35 +78,40 @@ const STATE = "erga_oauth";
 const DAY = 24 * 60 * 60;
 
 
-/** The cookie that clears the sign-in's state. */
-export const clearCookie = (request: Request) => setCookie(request, STATE, "", 0);
+/** An answer that clears the sign-in's state too. */
+export const clearState = (response: HttpServerResponse.HttpServerResponse, request: Request) =>
+  withCookie(response, request, STATE, "", 0);
 
 /** Signs `session` in: its cookie, and on to `next`. */
-export async function signIn(platform: Pick<Platform, "secret">, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
-  const value = base64url(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
-  const headers = new Headers({ Location: next });
-  headers.append("Set-Cookie", setCookie(request, SESSION_COOKIE, await sign(platform.secret, value), ttl));
-  headers.append("Set-Cookie", setCookie(request, STATE, "", 0));
-  if (cookies(request).has(SIGNED_OUT)) headers.append("Set-Cookie", setCookie(request, SIGNED_OUT, "", 0));
-  return new Response(null, { status: 302, headers });
-}
+export const signIn = Effect.fnUntraced(function* (
+  platform: Pick<Platform, "secret">,
+  request: Request,
+  session: Session,
+  next: string,
+  ttl = 30 * DAY
+) {
+  const value = Base64Url.encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl }));
+  let answer = withCookie(redirect(next), request, SESSION_COOKIE, yield* call(() => sign(platform.secret, value)), ttl);
+  answer = clearState(answer, request);
+  return cookies(request).has(SIGNED_OUT) ? withCookie(answer, request, SIGNED_OUT, "", 0) : answer;
+});
 
 /** /auth/github: off to GitHub to sign in, coming back to `next`. */
-export async function startSignIn(platform: Platform, request: Request): Promise<Response> {
-  const url = new URL(request.url);
+export const startSignIn: Route = Effect.gen(function* () {
+  const { platform, request, url } = yield* ctx;
   const next = safeNext(url.searchParams.get("next"));
   // Local development: sign in as the dev login (or ?as=, for the test suite's people), never on a real hostname.
   if (platform.dev(url)) {
     const login = url.searchParams.get("as") || platform.signIn.devLogin!;
-    return signIn(platform, request, { login, name: login }, next);
+    return yield* signIn(platform, request, { login, name: login }, next);
   }
   // A test sign-in with the values that wait on /admin/auth: the state says so, for the callback.
   const relay = platform.signIn.relay;
   const testing = !relay && url.searchParams.get("app") == "pending";
   // Sign-in with GitHub turned off on /admin/auth: only an admin's test sign-in (?app=test) goes on.
   const offTest = !testing && url.searchParams.get("app") == "test";
-  if (!testing && !offTest && !(await providersOn(platform)).github) return providerOff(platform, "github", next);
-  const app = await signInApp(platform, testing ? "pending" : "active");
+  if (!testing && !offTest && !(yield* call(() => providersOn(platform))).github) return yield* providerOff(platform, "github", next);
+  const app = yield* call(() => signInApp(platform, testing ? "pending" : "active"));
   if (testing && !app) return nothingToTest();
   // No GitHub OAuth app yet (staging's, until an admin makes one): GitHub would answer a 404, so say so here instead.
   if (!app?.clientId) return noOAuthApp(url.origin);
@@ -110,17 +122,11 @@ export async function startSignIn(platform: Platform, request: Request): Promise
   github.searchParams.set("redirect_uri", `${relay ?? url.origin}/auth/github/callback`);
   // read:org, only while a rule names a GitHub organization: their memberships, private ones too (an OAuth app's scope;
   // Erga's GitHub App ignores scopes: it needs the Members permission, and to be installed on the organization).
-  github.searchParams.set("scope", (await orgRules(platform)).length ? "read:user read:org" : "read:user");
+  github.searchParams.set("scope", (yield* call(() => orgRules(platform))).length ? "read:user read:org" : "read:user");
   github.searchParams.set("state", state);
   github.searchParams.set("allow_signup", "false");
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: github.toString(),
-      "Set-Cookie": setCookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600),
-    },
-  });
-}
+  return withCookie(redirect(github.toString()), request, STATE, yield* call(() => sign(platform.secret, stateValue(state, next))), 600);
+});
 
 /** A state that starts so is a test sign-in with the pending values ("." is never in base64url). */
 const TESTING = "p.";
@@ -138,23 +144,24 @@ function readState(value: string | null | undefined): { state?: string; next?: s
 /**
  * Sign-in with a provider that's off here: the page says so and offers Sign in (the other one), in place.
  */
-async function providerOff(platform: Platform, provider: Provider, next: string): Promise<Response> {
-  const on = await providersOn(platform);
+const providerOff = Effect.fnUntraced(function* (platform: Platform, provider: Provider, next: string) {
+  const on = yield* call(() => providersOn(platform));
   const others = (Object.keys(PROVIDERS) as Provider[]).filter((p) => p != provider && on[p]);
   return page(
     `${PROVIDERS[provider].label} sign-in is off`,
     `This server doesn't take sign-in with ${PROVIDERS[provider].label}.${others.length ? `</p><p><a class="new" href="/auth/sign-in?next=${encodeURIComponent(next)}">Sign in</a>` : " An admin turns it on at /admin/auth."}`,
     403
   );
-}
+});
 
 /** /auth/sign-in: the providers that are on, to choose from (one: straight there). */
-export async function chooseSignIn(platform: Platform, request: Request): Promise<Response> {
-  const url = new URL(request.url);
+export const chooseSignIn: Route = Effect.gen(function* () {
+  const { platform, url } = yield* ctx;
   const next = safeNext(url.searchParams.get("next"));
-  const on = await providersOn(platform);
+  const on = yield* call(() => providersOn(platform));
   const providers = (Object.keys(PROVIDERS) as Provider[]).filter((p) => on[p]);
-  if (providers.length == 1) return new Response(null, { status: 302, headers: { Location: `/auth/${providers[0]}?next=${encodeURIComponent(next)}`, "Cache-Control": "no-store" } });
+  if (providers.length == 1)
+    return redirect(`/auth/${providers[0]}?next=${encodeURIComponent(next)}`, 302, { "Cache-Control": "no-store" });
   // Each provider's own button, as its brand rules say (Google's white with its G; GitHub's dark with its mark): client/inline/plain.css.
   const buttons = providers
     .map(
@@ -163,7 +170,7 @@ export async function chooseSignIn(platform: Platform, request: Request): Promis
     )
     .join("");
   return page("Sign in", buttons ? `<span class="providers">${buttons}</span>` : "No sign-in is on here.", 200);
-}
+});
 
 /** Each provider's logo, for its button: GitHub's mark (in the button's text colour) and Google's G, in its four colours. */
 const PROVIDER_LOGOS: Record<Provider, string> = {
@@ -203,56 +210,88 @@ export async function memberships(api: string, token: string): Promise<string[]>
 }
 
 /** /auth/github/callback: GitHub sends the person back with a code to trade for who they are. */
-export async function finishSignIn(platform: Platform, request: Request): Promise<Response> {
-  const url = new URL(request.url);
+/** What GitHub's or Google's token exchange answers. */
+type Token = { access_token?: string; error?: string; error_description?: string };
+
+/** The token erga.dev relayed for an install's sign-in, sealed under the state's nonce. */
+const relayedToken = (state: string, relayed: string): Promise<Token> =>
+  openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) =>
+    o
+      ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error }
+      : { error: "relay", error_description: "the answer relayed from upstream didn't open: it was for another sign-in" }
+  );
+
+/** GitHub's token for the callback's code, traded with the app's secret. */
+const githubToken = (platform: Platform, www: string, app: AppValues | null, url: URL): Promise<Token> =>
+  fetch(`${www}/login/oauth/access_token`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Erga" },
+    body: JSON.stringify({
+      client_id: app?.clientId ?? platform.signIn.app.clientId,
+      client_secret: app?.secret ?? platform.signIn.app.secret,
+      code: url.searchParams.get("code"),
+      redirect_uri: `${url.origin}/auth/github/callback`,
+    }),
+  }).then((r) => r.json() as Promise<Token>);
+
+/** Who GitHub says the token's person is. */
+const githubUser = (api: string, token: string) =>
+  fetch(`${api}/user`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "Erga" },
+  }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
+
+export const finishSignIn: Route = Effect.gen(function* () {
+  const { platform, request, url } = yield* ctx;
   const users = platform.directory.users;
   const dev = platform.dev(url);
   const saved = cookies(request).get(STATE);
-  const value = saved && await unsign(platform.secret, saved);
+  const value = saved && (yield* call(() => unsign(platform.secret, saved)));
   const { state, next } = readState(value);
   const testing = !!state?.startsWith(TESTING);
-  const app = dev ? null : await signInApp(platform, testing ? "pending" : "active");
+  const app = dev ? null : yield* call(() => signInApp(platform, testing ? "pending" : "active"));
   // GitHub turned off on /admin/auth: only an admin's sign-in (a test) goes through.
-  const onlyAdmins = !(await providersOn(platform)).github;
+  const onlyAdmins = !(yield* call(() => providersOn(platform))).github;
   if (!dev && !app?.clientId) return testing ? nothingToTest() : noOAuthApp(url.origin);
   if (!state || state != url.searchParams.get("state")) return page("Sign-in expired", "That sign-in link is stale. <a href=\"/\">Start again</a>.", 400);
 
   const { www, api } = originsOf(platform);
   // The token: relayed from erga.dev (an install: sealed under the state's nonce), or the code traded here.
   const relayed = url.searchParams.get("relay");
-  const token = relayed
-    ? (await openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) => (o ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error } : { error: "relay", error_description: "the answer relayed from upstream didn't open: it was for another sign-in" })))
-    : await fetch(`${www}/login/oauth/access_token`, {
-      method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Erga" },
-      body: JSON.stringify({ client_id: app?.clientId ?? platform.signIn.app.clientId, client_secret: app?.secret ?? platform.signIn.app.secret, code: url.searchParams.get("code"), redirect_uri: `${url.origin}/auth/github/callback` }),
-    }).then((r) => r.json() as Promise<{ access_token?: string; error?: string; error_description?: string }>);
+  const token = yield* call(() => (relayed ? relayedToken(state, relayed) : githubToken(platform, www, app, url)));
   if (!token.access_token) {
     // GitHub's own reason (e.g. incorrect_client_credentials: a wrong GITHUB_CLIENT_SECRET) goes to the logs and the page.
     console.log(`GitHub sign-in failed: ${token.error}: ${token.error_description}`);
     const why = token.error ? ` (${esc(token.error_description ?? token.error)})` : "";
     if (testing && app) {
-      await testedSignIn(platform, app.clientId, { ok: false, error: `GitHub refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` });
-      return page("Test sign-in failed", `GitHub didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`, 400);
+      yield* call(() =>
+        testedSignIn(platform, app.clientId, {
+          ok: false,
+          error: `GitHub refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.`,
+        })
+      );
+      return page(
+        "Test sign-in failed",
+        `GitHub didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`,
+        400
+      );
     }
     return page("Sign-in failed", `GitHub didn't let you in${why}. <a href="/">Try again</a>.`, 400);
   }
   // GitHub's access token reads who they are, once, and is never stored.
-  const user = await fetch(`${api}/user`, {
-    headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "Erga" },
-  }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
-  if (!user.login || typeof user.id != "number") return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
+  const user = yield* call(() => githubUser(api, token.access_token!));
+  if (!user.login || typeof user.id != "number")
+    return page("Sign-in failed", 'GitHub didn\'t say who you are. <a href="/">Try again</a>.', 400);
   // No email: GitHub's profile email isn't one it vouches for, so a GitHub account never matches a domain rule. Its
   // organizations, when a rule names any: asked now, with their token, and recorded on the identity.
-  const orgs = (await orgRules(platform)).length ? await memberships(api, token.access_token) : null;
+  const orgs = (yield* call(() => orgRules(platform))).length ? yield* call(() => memberships(api, token.access_token!)) : null;
   const v: Vouched = { provider: "github", subject: String(user.id), handle: user.login.toLowerCase(), name: user.name?.trim() || null, emails: [], orgs };
-  return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
+  return yield* vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
     // Their GitHub id on their row too (users.github_id), as before identities.
     if (login == v.handle) await users.setGithubId(login, user.id!).catch(() => {});
     // A test sign-in with the pending values worked: an admin's puts them in use.
     if (testing && app) await testedSignIn(platform, app.clientId, { ok: true, login, admin: await users.isAdmin({ login }) });
   });
-}
+});
 
 // ------------------------------------------------------------ Google
 
@@ -265,16 +304,16 @@ const noGoogleClient = (origin: string) =>
   );
 
 /** /auth/google: off to Google to sign in, coming back to `next`. ?app=pending tests the values that wait; ?app=test, the values in use while Google is off. */
-export async function startGoogleSignIn(platform: Platform, request: Request): Promise<Response> {
-  const url = new URL(request.url);
+export const startGoogleSignIn: Route = Effect.gen(function* () {
+  const { platform, request, url } = yield* ctx;
   const next = safeNext(url.searchParams.get("next"));
   // Local development signs in without a provider, as /auth/github does.
-  if (platform.dev(url)) return startSignIn(platform, request);
+  if (platform.dev(url)) return yield* startSignIn;
   const relay = platform.signIn.relay;
   const testing = !relay && url.searchParams.get("app") == "pending";
   const offTest = !testing && url.searchParams.get("app") == "test";
-  if (!testing && !offTest && !(await providersOn(platform)).google) return providerOff(platform, "google", next);
-  const app = await signInApp(platform, testing ? "pending" : "active", "google");
+  if (!testing && !offTest && !(yield* call(() => providersOn(platform))).google) return yield* providerOff(platform, "google", next);
+  const app = yield* call(() => signInApp(platform, testing ? "pending" : "active", "google"));
   if (testing && !app) return nothingToTest();
   if (!app?.clientId) return noGoogleClient(url.origin);
   // An install: the state names this origin, for erga.dev's callback to relay the answer here, as GitHub's does.
@@ -286,14 +325,8 @@ export async function startGoogleSignIn(platform: Platform, request: Request): P
   google.searchParams.set("scope", "openid email profile");
   google.searchParams.set("state", state);
   google.searchParams.set("prompt", "select_account");
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: google.toString(),
-      "Set-Cookie": setCookie(request, STATE, await sign(platform.secret, stateValue(state, next)), 600),
-    },
-  });
-}
+  return withCookie(redirect(google.toString()), request, STATE, yield* call(() => sign(platform.secret, stateValue(state, next))), 600);
+});
 
 /** Google's token for a code: traded here with the client's secret. */
 export async function googleToken(endpoints: { token: string }, app: AppValues, code: string, redirect: string, f: typeof fetch = fetch): Promise<{ access_token?: string; error?: string; error_description?: string }> {
@@ -315,13 +348,13 @@ interface GoogleUser {
 }
 
 /** /auth/google/callback: Google sends the person back with a code to trade for who they are. */
-export async function finishGoogleSignIn(platform: Platform, request: Request): Promise<Response> {
-  const url = new URL(request.url);
+export const finishGoogleSignIn: Route = Effect.gen(function* () {
+  const { platform, request, url } = yield* ctx;
   const saved = cookies(request).get(STATE);
-  const value = saved && await unsign(platform.secret, saved);
+  const value = saved && (yield* call(() => unsign(platform.secret, saved)));
   const { state, next } = readState(value);
   const testing = !!state?.startsWith(TESTING);
-  const app = await signInApp(platform, testing ? "pending" : "active", "google");
+  const app = yield* call(() => signInApp(platform, testing ? "pending" : "active", "google"));
   if (!app?.clientId) return testing ? nothingToTest() : noGoogleClient(url.origin);
   if (!state || state != url.searchParams.get("state")) return page("Sign-in expired", "That sign-in link is stale. <a href=\"/\">Start again</a>.", 400);
   const endpoints = googleEndpoints(platform.signIn.google ?? null);
@@ -329,22 +362,41 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
   const refused = url.searchParams.get("error");
   // The token: relayed from erga.dev (an install: sealed under the state's nonce), or the code traded here.
   const relayed = url.searchParams.get("relay");
-  const token = refused ? { error: refused, error_description: refused == "access_denied" ? "you didn't allow it" : refused }
-    : relayed ? await openRelay<{ token?: string; error?: string }>(relayNonce(state), relayed).then((o) => (o ? { access_token: o.token, error: o.error ? "relay" : undefined, error_description: o.error } : { error: "relay", error_description: "the answer relayed from upstream didn't open: it was for another sign-in" }))
-    : await googleToken(endpoints, app, url.searchParams.get("code") ?? "", `${url.origin}/auth/google/callback`);
+  const token: Token = refused
+    ? { error: refused, error_description: refused == "access_denied" ? "you didn't allow it" : refused }
+    : yield* call(() =>
+        relayed
+          ? relayedToken(state, relayed)
+          : googleToken(endpoints, app, url.searchParams.get("code") ?? "", `${url.origin}/auth/google/callback`)
+      );
   if (!token.access_token) {
     console.log(`Google sign-in failed: ${token.error}: ${token.error_description}`);
     const why = token.error ? ` (${esc(token.error_description ?? token.error)})` : "";
     if (testing) {
-      await testedSignIn(platform, app.clientId, { ok: false, error: `Google refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` }, "google");
-      return page("Test sign-in failed", `Google didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`, 400);
+      yield* call(() =>
+        testedSignIn(
+          platform,
+          app.clientId,
+          { ok: false, error: `Google refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` },
+          "google"
+        )
+      );
+      return page(
+        "Test sign-in failed",
+        `Google didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`,
+        400
+      );
     }
     return page("Sign-in failed", `Google didn't let you in${why}. <a href="/auth/sign-in">Try again</a>.`, 400);
   }
   // Google's access token reads who they are, once, and is never stored.
-  const user = await fetch(endpoints.userinfo, { headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/json" } })
-    .then((r) => r.json() as Promise<GoogleUser>, () => ({} as GoogleUser));
-  if (!user.sub) return page("Sign-in failed", "Google didn't say who you are. <a href=\"/auth/sign-in\">Try again</a>.", 400);
+  const user = yield* call(() =>
+    fetch(endpoints.userinfo, { headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/json" } }).then(
+      (r) => r.json() as Promise<GoogleUser>,
+      () => ({}) as GoogleUser
+    )
+  );
+  if (!user.sub) return page("Sign-in failed", 'Google didn\'t say who you are. <a href="/auth/sign-in">Try again</a>.', 400);
   const email = user.email?.trim().toLowerCase() ?? "";
   // Only an email Google says is verified ever passes a domain rule; none ever finds an account.
   // hd: the Google Workspace organization of a Workspace account (a personal one has none), for the access rules.
@@ -353,11 +405,11 @@ export async function finishGoogleSignIn(platform: Platform, request: Request): 
     emails: email ? [{ email, verified: user.email_verified === true || user.email_verified === "true" }] : [], hd: user.hd?.trim().toLowerCase() || null,
     picture: user.picture ?? null,
   };
-  const onlyAdmins = !(await providersOn(platform)).google;
-  return vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
+  const onlyAdmins = !(yield* call(() => providersOn(platform))).google;
+  return yield* vouchedSignIn(platform, request, v, next ?? "/", { onlyAdmins }, async (login) => {
     if (testing) await testedSignIn(platform, app.clientId, { ok: true, login, admin: await platform.directory.users.isAdmin({ login }) }, "google");
   });
-}
+});
 
 // ------------------------------------------------------------ test tokens
 
@@ -367,7 +419,7 @@ const TOKEN = "erga_test_", TOKEN_DAYS = 7;
 export async function mintTestToken(platform: Pick<Platform, "secret">, by: string): Promise<{ token: string; expires: Date }> {
   const exp = Math.floor(Date.now() / 1000) + TOKEN_DAYS * DAY;
   // Signed with a "test-token:" prefix, so a token can never pass for a session cookie or the other way round.
-  const payload = base64url(new TextEncoder().encode(JSON.stringify({ by, exp })));
+  const payload = Base64Url.encode(JSON.stringify({ by, exp }));
   const signed = await sign(platform.secret, `test-token:${payload}`);
   return { token: TOKEN + signed.slice("test-token:".length), expires: new Date(exp * 1000) };
 }
@@ -377,29 +429,37 @@ async function readTestToken(platform: Platform, token: string): Promise<{ by: s
   const value = await unsign(platform.secret, `test-token:${token.slice(TOKEN.length)}`);
   if (!value) return null;
   try {
-    const t = JSON.parse(new TextDecoder().decode(fromBase64url(value.slice("test-token:".length)))) as { by: string; exp: number };
+    const t = JSON.parse(Result.getOrThrow(Base64Url.decodeString(value.slice("test-token:".length)))) as { by: string; exp: number };
     return t.exp > Date.now() / 1000 && (await platform.directory.users.allowed(t.by)) ? t : null;
   } catch { return null; }
 }
 
 /** /auth/test?token=...&as=Ada: signs in a test person, for as long as the token lasts. */
-export async function testSignIn(platform: Platform, request: Request): Promise<Response> {
-  const url = new URL(request.url);
-  const t = await readTestToken(platform, url.searchParams.get("token") ?? "");
-  if (!t) return new Response("Unknown or expired test token", { status: 401 });
+export const testSignIn: Route = Effect.gen(function* () {
+  const { platform, request, url } = yield* ctx;
+  const t = yield* call(() => readTestToken(platform, url.searchParams.get("token") ?? ""));
+  if (!t) return text("Unknown or expired test token", 401);
   const name = (url.searchParams.get("as") ?? "Tester").trim().slice(0, 40) || "Tester";
-  const login = "test-" + (name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "tester");
-  return signIn(platform, request, { login, name, test: { by: t.by } }, safeNext(url.searchParams.get("next")), t.exp - Math.floor(Date.now() / 1000));
-}
+  const login =
+    "test-" +
+    (name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "tester");
+  return yield* signIn(
+    platform,
+    request,
+    { login, name, test: { by: t.by } },
+    safeNext(url.searchParams.get("next")),
+    t.exp - Math.floor(Date.now() / 1000)
+  );
+});
 
 /** /auth/logout (another site's link to it asks first) */
-export function signOut(platform: Platform, request: Request): Response {
-  const url = new URL(request.url);
+export const signOut: Route = Effect.map(ctx, ({ platform, request, url }) => {
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
-  const headers = new Headers({ Location: "/" });
-  headers.append("Set-Cookie", setCookie(request, SESSION_COOKIE, "", 0));
+  const out = withCookie(redirect("/"), request, SESSION_COOKIE, "", 0);
   // Locally someone is always signed in (the dev login), unless the browser signs out: then nobody, as on erga.dev.
-  if (platform.dev(url)) headers.append("Set-Cookie", setCookie(request, SIGNED_OUT, "1", 30 * DAY));
-  return new Response(null, { status: 302, headers });
-}
+  return platform.dev(url) ? withCookie(out, request, SIGNED_OUT, "1", 30 * DAY) : out;
+});
 

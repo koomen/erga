@@ -47,12 +47,14 @@
 // an admin's. A setting the deploy locks is shown, read-only,
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all.
-
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { ConfigError, CredentialError, NotAllowed, roleValue, type UserRole } from "../directory/index.ts";
 import { link, page } from "../pages/index.ts";
-import { type Platform, whoOf } from "../platform.ts";
+import { type Platform, type Session, whoOf } from "../platform.ts";
 import { authOps, AuthError, ScopeError, type Provider } from "../identity/index.ts";
-import { json } from "../../shared/http.ts";
+import type { Who } from "../directory/index.ts";
+import { call, ctx, Field, form, json, plainJson, redirect } from "../http.ts";
 import { settingsPage } from "./settings.ts";
 import { apiKeysPage } from "./api-keys.ts";
 import { authPage } from "./auth.ts";
@@ -61,117 +63,169 @@ import { accessPage } from "./access.ts";
 import { changesPage } from "./changes.ts";
 
 /** /admin and its POSTs. */
-export async function adminRoutes(platform: Platform, request: Request): Promise<Response> {
-  const session = await platform.sessionOf(request);
-  const url = new URL(request.url);
+export const adminRoutes = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const session = yield* call(() => platform.sessionOf(request));
   const read = request.method == "GET" || request.method == "HEAD";
-  if (!session && read) {
-    return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(url.pathname)}` } });
-  }
+  if (!session && read) return redirect(`/auth/sign-in?next=${encodeURIComponent(url.pathname)}`);
   const who = session && whoOf(session);
   // Only the person themselves, in a browser (which comes with admin power): an agent with their token isn't an admin here.
-  const admin = !!who && !session?.agent && (await platform.directory.users.actsAsAdmin(who));
+  const admin = !!who && !session?.agent && (yield* call(() => platform.directory.users.actsAsAdmin(who)));
   if (read) {
     if (!admin || url.pathname == "/admin/share") return notFound();
-    if (url.pathname == "/admin/settings") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
-    if (url.pathname == "/admin/credentials") return new Response(null, { status: 302, headers: { Location: link("/admin/api-keys", session!) } });
+    if (url.pathname == "/admin/settings") return redirect(link("/admin", session!));
+    if (url.pathname == "/admin/credentials") return redirect(link("/admin/api-keys", session!));
 
     if (url.pathname == "/admin/changes") {
       const before = Number(url.searchParams.get("before"));
-      return changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined);
+      return yield* call(() => changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined));
     }
-    if (url.pathname == "/admin/api-keys") return apiKeysPage(platform, session!);
+    if (url.pathname == "/admin/api-keys") return yield* call(() => apiKeysPage(platform, session!));
     if (url.pathname == "/admin/auth" || url.pathname == "/admin/auth/status") {
-      const status = await authOps(platform, url.origin).status(who!);
+      const status = yield* call(() => authOps(platform, url.origin).status(who!));
       return url.pathname == "/admin/auth" ? authPage(session!, status) : json(status);
     }
-    if (url.pathname == "/admin/access") return accessPage(platform, session!);
+    if (url.pathname == "/admin/access") return yield* call(() => accessPage(platform, session!));
     if (url.pathname == "/admin/documents") {
-      const found = await platform.directory.search(who!, url.searchParams.get("q") ?? "", Number(url.searchParams.get("limit")) || 20);
+      const found = yield* call(() =>
+        platform.directory.search(who!, url.searchParams.get("q") ?? "", Number(url.searchParams.get("limit")) || 20)
+      );
       return json({ found });
     }
-    return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
+    return yield* call(() => (url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!)));
   }
   if (request.method != "POST") return notFound();
-  if (!admin) return Response.json({ error: "Only an admin can do that." }, { status: session ? 403 : 401 });
+  if (!admin) return plainJson({ error: "Only an admin can do that." }, session ? 403 : 401);
 
-  if (request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
-  const form = await request.formData();
-  const field = (name: string) => String(form.get(name) ?? "");
-  try {
-    // Share with agent: a person in a browser only (an agent never makes a token, whatever its scope; checked above too).
-    if (url.pathname == "/admin/share") {
-      if (session!.agent || session!.test) return Response.json({ error: "An agent can't make tokens." }, { status: 403 });
-      const { token, info } = await platform.tokens.shareAdmin({ login: session!.login, name: session!.name }, field("rotate") == "1");
-      return json({ token, id: info.id, label: info.label, expires: info.expires });
-    }
-    if (url.pathname == "/admin/credentials") {
-      const credentials = platform.directory.credentials, name = field("name");
-      // The answer says what the page shows: never the key.
-      return Response.json({ credential: form.get("clear") ? await credentials.clear(who!, name) : await credentials.set(who!, name, field("value")) });
-    }
-    if (url.pathname == "/admin/auth") {
-      const auth = authOps(platform, url.origin);
-      const provider: Provider = field("provider") == "google" ? "google" : "github";
-      // The answers say what the page shows: never the secret.
-      switch (field("do")) {
-        case "save":
-          return Response.json({ result: await auth.save(who!, { clientId: field("clientId"), secret: field("secret") }, provider) });
-        case "discard":
-          return Response.json({ result: await auth.discard(who!, provider) });
-        case "clear":
-          return Response.json({ result: await auth.clear(who!, field("force") == "1", provider) });
-        case "providers":
-          return Response.json({ providers: await auth.setProvider(who!, provider, field("on") == "1") });
-        default:
-          return Response.json({ error: "do= save, discard, clear or providers" }, { status: 400 });
-      }
-    }
-    if (url.pathname == "/admin/access") {
-      const rules = platform.directory.rules;
-      switch (field("do")) {
-        case "add_rule": return Response.json({ rule: await rules.add(who!, { kind: field("kind"), value: field("value"), access: field("access") }) });
-        case "change_rule": return Response.json({ rule: await rules.change(who!, Number(field("id")), field("access")) });
-        case "remove_rule": await rules.remove(who!, Number(field("id"))); return Response.json({ ok: true });
-        case "public_sharing": return Response.json({ entry: await platform.directory.config.set(who!, "public_sharing", field("on") == "1") });
-        default: return Response.json({ error: "do= add_rule, change_rule, remove_rule or public_sharing" }, { status: 400 });
-      }
-    }
-    if (url.pathname == "/admin/settings") {
-      const key = field("key");
-      if (form.get("reset")) return Response.json({ entry: await platform.directory.config.reset(who!, key) });
-      let value: unknown;
-      try { value = JSON.parse(field("value")); } catch { throw new ConfigError(`${key} needs a value as JSON (a number, true or false, "text" in quotes...).`); }
-      return Response.json({ entry: await platform.directory.config.set(who!, key, value) });
-    }
-    const dir = platform.directory,
-      users = dir.users,
-      login = field("login"),
-      person = Number(field("person"));
-    switch (field("do")) {
-      case "add":
-        return Response.json(
-          await dir.addUser(who!, { provider: field("provider"), handle: field("handle") }, roleValue(field("role")) as UserRole)
-        );
-      case "role": {
-        if (person) return Response.json({ person: await dir.people.setRole(who!, person, roleValue(field("role")) as UserRole) });
-        return Response.json({ user: await users.setUserRole(who!, login, roleValue(field("role"), { none: true })) });
-      }
-      case "deploy": {
-        const deploy = field("deploy");
-        if (deploy != "1" && deploy != "0") throw new NotAllowed("deploy= 1 to grant the deploy role, or 0 to revoke it.");
-        return Response.json({ user: await users.setDeploy(who!, login, deploy == "1") });
-      }
-      case "remove":
-        await (person ? dir.people.remove(who!, person) : users.remove(who!, login));
-        return Response.json({ ok: true });
+  if (request.headers.get("origin") != url.origin) return plainJson({ error: "Forbidden" }, 403);
+  const fields = yield* form(AdminForm).pipe(Effect.orDie);
+  return yield* Effect.tryPromise({ try: () => act(platform, session!, who!, url, fields), catch: refusal }).pipe(
+    // The directory's own words, for a person to act on.
+    Effect.catchTags({
+      NotAllowed: (e) => Effect.succeed(plainJson({ error: e.message }, 403)),
+      ScopeError: (e) => Effect.succeed(plainJson({ error: e.message }, 403)),
+      ConfigError: (e) => Effect.succeed(plainJson({ error: e.message }, 400)),
+      CredentialError: (e) => Effect.succeed(plainJson({ error: e.message }, 400)),
+      AuthError: (e) => Effect.succeed(plainJson({ error: e.message }, 400)),
+    })
+  );
+});
+
+/** Every POST's fields (a field that's missing is ""). */
+const AdminForm = Schema.Struct({
+  do: Field,
+  key: Field,
+  value: Field,
+  reset: Field,
+  name: Field,
+  clear: Field,
+  provider: Field,
+  clientId: Field,
+  secret: Field,
+  force: Field,
+  on: Field,
+  kind: Field,
+  access: Field,
+  id: Field,
+  login: Field,
+  person: Field,
+  role: Field,
+  handle: Field,
+  deploy: Field,
+  rotate: Field,
+});
+type AdminFields = typeof AdminForm.Type;
+
+/** What a POST's call may refuse with, as its typed error; anything else is a defect. */
+function refusal(e: unknown): NotAllowed | ScopeError | ConfigError | CredentialError | AuthError {
+  if (
+    e instanceof NotAllowed ||
+    e instanceof ScopeError ||
+    e instanceof ConfigError ||
+    e instanceof CredentialError ||
+    e instanceof AuthError
+  )
+    return e;
+  throw e;
+}
+
+/** A POST, done: its answer. */
+async function act(platform: Platform, session: Session, who: Who, url: URL, f: AdminFields) {
+  // Share with agent: a person in a browser only (an agent never makes a token, whatever its scope; checked above too).
+  if (url.pathname == "/admin/share") {
+    if (session.agent || session.test) return plainJson({ error: "An agent can't make tokens." }, 403);
+    const { token, info } = await platform.tokens.shareAdmin({ login: session.login, name: session.name }, f.rotate == "1");
+    return json({ token, id: info.id, label: info.label, expires: info.expires });
+  }
+  if (url.pathname == "/admin/credentials") {
+    const credentials = platform.directory.credentials;
+    // The answer says what the page shows: never the key.
+    return plainJson({ credential: f.clear ? await credentials.clear(who, f.name) : await credentials.set(who, f.name, f.value) });
+  }
+  if (url.pathname == "/admin/auth") {
+    const auth = authOps(platform, url.origin);
+    const provider: Provider = f.provider == "google" ? "google" : "github";
+    // The answers say what the page shows: never the secret.
+    switch (f.do) {
+      case "save":
+        return plainJson({ result: await auth.save(who, { clientId: f.clientId, secret: f.secret }, provider) });
+      case "discard":
+        return plainJson({ result: await auth.discard(who, provider) });
+      case "clear":
+        return plainJson({ result: await auth.clear(who, f.force == "1", provider) });
+      case "providers":
+        return plainJson({ providers: await auth.setProvider(who, provider, f.on == "1") });
       default:
-        return Response.json({ error: "do= add, role, deploy or remove" }, { status: 400 });
+        return plainJson({ error: "do= save, discard, clear or providers" }, 400);
     }
-  } catch (e) {
-    if (e instanceof NotAllowed || e instanceof ScopeError) return Response.json({ error: e.message }, { status: 403 });
-    if (e instanceof ConfigError || e instanceof CredentialError || e instanceof AuthError) return Response.json({ error: e.message }, { status: 400 });
-    throw e;
+  }
+  if (url.pathname == "/admin/access") {
+    const rules = platform.directory.rules;
+    switch (f.do) {
+      case "add_rule":
+        return plainJson({ rule: await rules.add(who, { kind: f.kind, value: f.value, access: f.access }) });
+      case "change_rule":
+        return plainJson({ rule: await rules.change(who, Number(f.id), f.access) });
+      case "remove_rule":
+        await rules.remove(who, Number(f.id));
+        return plainJson({ ok: true });
+      case "public_sharing":
+        return plainJson({ entry: await platform.directory.config.set(who, "public_sharing", f.on == "1") });
+      default:
+        return plainJson({ error: "do= add_rule, change_rule, remove_rule or public_sharing" }, 400);
+    }
+  }
+  if (url.pathname == "/admin/settings") {
+    const key = f.key;
+    if (f.reset) return plainJson({ entry: await platform.directory.config.reset(who, key) });
+    let value: unknown;
+    try {
+      value = JSON.parse(f.value);
+    } catch {
+      throw new ConfigError({ message: `${key} needs a value as JSON (a number, true or false, "text" in quotes...).` });
+    }
+    return plainJson({ entry: await platform.directory.config.set(who, key, value) });
+  }
+  const dir = platform.directory,
+    users = dir.users,
+    login = f.login,
+    person = Number(f.person);
+  switch (f.do) {
+    case "add":
+      return plainJson(await dir.addUser(who, { provider: f.provider, handle: f.handle }, roleValue(f.role) as UserRole));
+    case "role": {
+      if (person) return plainJson({ person: await dir.people.setRole(who, person, roleValue(f.role) as UserRole) });
+      return plainJson({ user: await users.setUserRole(who, login, roleValue(f.role, { none: true })) });
+    }
+    case "deploy": {
+      if (f.deploy != "1" && f.deploy != "0") throw new NotAllowed({ message: "deploy= 1 to grant the deploy role, or 0 to revoke it." });
+      return plainJson({ user: await users.setDeploy(who, login, f.deploy == "1") });
+    }
+    case "remove":
+      await (person ? dir.people.remove(who, person) : users.remove(who, login));
+      return plainJson({ ok: true });
+    default:
+      return plainJson({ error: "do= add, role, deploy or remove" }, 400);
   }
 }
 

@@ -16,9 +16,12 @@
 // webhook, signed with the webhook secret, as GitHub does. Everything it was
 // asked is in `state`, which the tests read.
 
+import * as Base64 from "effect/encoding/Base64";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Result from "effect/Result";
 import { MOCK_GITHUB_TOKEN } from "./git-server.ts";
 import { esc } from "../shared/html.ts";
-import { fromBase64, fromBase64url, hex } from "../shared/bytes.ts";
+import { hex } from "../shared/bytes.ts";
 
 /** The id the pretend GitHub gives a login (/users/<login>): the same each time. */
 export const mockGithubId = (login: string) =>
@@ -101,7 +104,9 @@ export function mockGithub(opts: MockGithubOptions) {
   let publicKey: Promise<CryptoKey | null> | null = null;
   const verifier = () => (publicKey ??= (async () => {
     if (!opts.app.privateKey) return null;
-    const der = fromBase64(opts.app.privateKey.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""));
+    const der = Result.getOrThrow(
+      Base64.decode(opts.app.privateKey.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""))
+    ) as Uint8Array<ArrayBuffer>;
     const priv = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["sign"]);
     const jwk = await crypto.subtle.exportKey("jwk", priv);
     const pub = { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RS256", ext: true };
@@ -113,14 +118,14 @@ export function mockGithub(opts: MockGithubOptions) {
     const parts = t?.split(".") ?? [];
     if (parts.length != 3) return false;
     try {
-      const claims = JSON.parse(new TextDecoder().decode(fromBase64url(parts[1]))) as { exp?: number; iss?: string };
+      const claims = JSON.parse(Result.getOrThrow(Base64Url.decodeString(parts[1]))) as { exp?: number; iss?: string };
       if (!claims.iss || !claims.exp || claims.exp * 1000 < Date.now()) { state.badJwts++; return false; }
       const key = await verifier();
       if (!key) return true;
       const ok = await crypto.subtle.verify(
         "RSASSA-PKCS1-v1_5",
         key,
-        fromBase64url(parts[2]),
+        Result.getOrThrow(Base64Url.decode(parts[2])) as Uint8Array<ArrayBuffer>,
         new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
       );
       if (!ok) state.badJwts++;

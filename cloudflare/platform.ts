@@ -4,6 +4,8 @@
 // use it, and so does a document's host, for its agent's tools on the person's documents (agents/tools.ts: list,
 // make and delete them).
 
+import * as Base64 from "effect/encoding/Base64";
+import * as Result from "effect/Result";
 import { OWNER, type Route } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform";
 import { sessionOf } from "../server/identity/index.ts";
@@ -18,7 +20,6 @@ import { agentSettingsFrom } from "../agents/models";
 import { documentOf } from "./objects/document-stub";
 import { blobsOf } from "./blobs";
 import { BLOB_HEADER, INLINE_HEADER, serveBlob } from "../document/blobs";
-import { fromBase64 } from "../shared/bytes";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -41,7 +42,7 @@ const landingFile = (path: string, file: string | Uint8Array) => {
 // (Vite wants each glob written out.)
 for (const [path, text] of Object.entries(import.meta.glob(["../assets/landing/**", "!../assets/landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}"], { query: "?raw", import: "default", eager: true }) as Record<string, string>)) landingFile(path, text);
 for (const [path, url] of Object.entries(import.meta.glob("../assets/landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}", { query: "?inline", import: "default", eager: true }) as Record<string, string>)) {
-  landingFile(path, fromBase64(url.slice(url.indexOf(",") + 1)));
+  landingFile(path, Result.getOrThrow(Base64.decode(url.slice(url.indexOf(",") + 1))));
 }
 
 /** Whose the homepage is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
@@ -85,7 +86,6 @@ const noDeploys: Platform["deploys"] = (() => {
 
 /** Where documents' pages run: an origin each under PAGES_DOMAIN (production's pages domain when unset: deploy/targets.json), or the one PAGES_HOST. */
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || TARGETS.production.pages.domain;
-
 
 /**
  * The app on Cloudflare: people sign in with GitHub, the

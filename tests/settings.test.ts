@@ -7,6 +7,7 @@ import { afterAll, expect, test } from "bun:test";
 import { adminRoutes } from "../server/admin/index.ts";
 import { ConfigError, logins, type ConfigEntry } from "../server/directory/index.ts";
 import type { Platform } from "../server/platform.ts";
+import { respond } from "../server/http.ts";
 
 test("logins: a list of GitHub logins, tidied; a bad one is refused, saying which", () => {
   expect(logins(["Alice", "@bob", "alice", " "])).toEqual(["alice", "bob"]);
@@ -45,7 +46,7 @@ const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
-    return path == "/admin" || path.startsWith("/admin/") ? adminRoutes(platform, r) : new Response("", { status: 404 });
+    return path == "/admin" || path.startsWith("/admin/") ? respond(adminRoutes, r, platform) : new Response("", { status: 404 });
   },
 });
 afterAll(() => server.stop(true));

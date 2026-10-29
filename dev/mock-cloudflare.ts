@@ -45,12 +45,14 @@
 // step fail once (state.failNext = "worker"); `onUpload` hears of each
 // Worker uploaded (the tests restart the server that deployed itself).
 
+import * as Base64 from "effect/encoding/Base64";
+import * as Result from "effect/Result";
 import { createHash } from "node:crypto";
 import type { Fetch } from "../control/deploys/cloudflare-api";
 import type { Release } from "../control/deploys/release-format";
 import type { Builder } from "../control/deploys/branches";
 import { memoryStore, snapshotRoutes, type DocStore } from "../document/snapshot";
-import { base64, fromBase64, hex, randomBytes } from "../shared/bytes";
+import { hex, randomBytes } from "../shared/bytes";
 import { sleep } from "../shared/time";
 
 export interface MockState {
@@ -144,7 +146,7 @@ export function mockSite(state: MockState, hostname: string, path: string): { by
   const p = decodeURIComponent(path.replace(/^\/+/, ""));
   for (const c of [p, `${p}.html`, `${p.replace(/\/$/, "")}/index.html`, p == "" ? "index.html" : null]) {
     const hash = c != null ? files["/" + c] : undefined;
-    if (hash && state.blobs[hash] != null) return { bytes: fromBase64(state.blobs[hash]), path: "/" + c };
+    if (hash && state.blobs[hash] != null) return { bytes: Result.getOrThrow(Base64.decode(state.blobs[hash])), path: "/" + c };
   }
   return null;
 }
@@ -394,7 +396,7 @@ export function mockCloudflare(opts: {
         if (one) {
           if (!opts.singleAssetUploads) return fail(400, 10002, "single asset uploads aren't enabled for this session");
           if (!known(one[1])) return fail(400, 10002, `unexpected ${one[1]}`);
-          state.blobs[one[1]] = base64(await req.arrayBuffer());
+          state.blobs[one[1]] = Base64.encode(new Uint8Array(await req.arrayBuffer()));
           state.assets.uploaded.push(one[1]);
         } else if (rest == "/workers/assets/upload?base64=true") {
           if (opts.singleAssetUploads) return fail(400, 10002, "this session takes one file at a time");

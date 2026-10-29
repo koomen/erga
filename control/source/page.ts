@@ -61,7 +61,7 @@
 // events to the other). Only rows that changed are drawn again, so
 // the scroll, an open log or dialog, and the focus stay.
 
-import { inlineScript, page as plainPage } from "../../server/pages/index.ts";
+import { inlineScript, webPage as plainPage } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import type { Session } from "../../server/platform";
 import { adminResponse, type AdminLayout } from "../../server/admin/index.ts";

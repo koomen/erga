@@ -14,7 +14,8 @@
 //
 // A document's pages origin never gets any of it.
 
-import type { Platform } from "./platform.ts";
+import * as Effect from "effect/Effect";
+import { json, platform } from "./http.ts";
 import { assetManifest, scriptTag } from "./pages/index.ts";
 import { hex, sha256 } from "../shared/bytes.ts";
 
@@ -25,11 +26,15 @@ export const BUILD_HEADER = "x-erga-build";
 let boot = "";
 
 /** GET /api/release: the files' addresses, and the release (the deploy's version, ERGA_VERSION). */
-export function releaseApi(platform: Platform): Response {
+export const releaseApi = Effect.map(platform, (p) => {
   const assets = assetManifest();
   // (Without the editor's shell, the largest part, which only the app's own document pages put in: shared/assets.ts.)
-  return Response.json({ files: assets?.files ?? {}, version: platform.deploy.version ?? `boot-${boot ||= crypto.randomUUID().slice(0, 8)}`, assets: assets && { ...assets, shell: undefined } }, { headers: { "Cache-Control": "no-store" } });
-}
+  return json({
+    files: assets?.files ?? {},
+    version: p.deploy.version ?? `boot-${(boot ||= crypto.randomUUID().slice(0, 8))}`,
+    assets: assets && { ...assets, shell: undefined },
+  });
+});
 
 /** The digest of a page's code: its inline scripts and the scripts it loads, in order (not its text or data). */
 export async function pageBuild(html: string): Promise<string> {

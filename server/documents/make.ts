@@ -1,6 +1,9 @@
 // New documents, the documents list, deleting and sharing: what /new, /docs, /docs/delete,
 // /docs/share and the share token do. The list's page is pages/docs.ts.
 
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { FileData } from "../../document/document.ts";
 import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
 import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, type Who } from "../directory/index.ts";
@@ -20,8 +23,7 @@ import {
   withEdit,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { json } from "../../shared/http.ts";
-import { sleep } from "../../shared/time.ts";
+import { call, ctx, Field, form, html, json, NO_STORE, plainJson, redirect, text, webRequest } from "../http.ts";
 
 /** A template's starting files (server/pages/templates.ts: a folder under assets/templates/), its page and its kind; null if this server hasn't them. */
 export function templateFiles(
@@ -50,9 +52,9 @@ export async function startingFiles(platform: Platform, from: string | null, who
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/pages/templates.ts), or a copy of the homepage's (?from=landing). */
-export async function newDoc(platform: Platform, request: Request): Promise<Response> {
-  const session = await platform.sessionOf(request);
-  const url = new URL(request.url);
+export const newDoc = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const session = yield* call(() => platform.sessionOf(request));
   const params = url.searchParams;
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't make others.", 403);
@@ -63,10 +65,11 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
     return confirmAction("New document", params.get("from") ? "Make your copy of this page" : template ? `Make a new document: ${template.name}` : "Make a new document", `/new${url.search}`);
   }
-  if (!session.test && !(await platform.directory.mayWrite(session.login))) return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
+  if (!session.test && !(yield* call(() => platform.directory.mayWrite(session.login))))
+    return page("You can't make documents here", `${esc(NO_WRITE)} <a href="/docs">Your documents</a>`, 403);
   const wanted = params.get("id");
   const from = params.get("from");
-  const start = await startingFiles(platform, from, whoOf(session), template);
+  const start = yield* call(() => startingFiles(platform, from, whoOf(session), template));
   if (!start)
     return page(
       "Nothing to copy",
@@ -84,10 +87,10 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   if (session.test) {
     if (!wanted || !TEST_ID.test(wanted)) return page("Test documents only", "Name the test document: /new?id=test1234.", 400);
     const owner = session.test.by.toLowerCase();
-    const known = await platform.directory.route(wanted);
+    const known = yield* call(() => platform.directory.route(wanted));
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
-    if (!known) await makeDoc(platform, owner, wanted, files, { test: true, index, kind });
-    return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}?edit` } });
+    if (!known) yield* call(() => makeDoc(platform, owner, wanted, files, { test: true, index, kind }));
+    return redirect(`/${owner}/${wanted}?edit`);
   }
   // Local development may name the document (the test suite wants "test" in its address),
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/full/front/lifetime.e2e.ts).
@@ -95,11 +98,11 @@ export async function newDoc(platform: Platform, request: Request): Promise<Resp
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newDocId();
-    const made = await makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index, kind });
-    if (made) return new Response(null, { status: 302, headers: { Location: withEdit(link(`/${made.owner}/${made.slug}`, session)) } });
+    const made = yield* call(() => makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index, kind }));
+    if (made) return redirect(withEdit(link(`/${made.owner}/${made.slug}`, session)));
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
-}
+});
 
 /**
  * Makes a document from a template's files: its row in the directory (titled
@@ -151,13 +154,13 @@ export interface MakeOptions {
 /** A new document's id: 8 letters and digits, none easily mistaken for another. */
 
 /** How long the list waits for documents from before kinds to say theirs (they say it once, for good). */
-const KINDS_WAIT_MS = 1500;
+const KINDS_WAIT = Duration.millis(1500);
 
 /**
  * Documents from before kinds, in a list: each opens (in the background, if it takes longer than the list may wait),
  * which decides its kind from its pages and writes it to the directory. The list shows the ones known in time.
  */
-async function decideKinds(platform: Platform, docs: Listed[]): Promise<void> {
+const decideKinds = Effect.fnUntraced(function* (platform: Platform, docs: Listed[]) {
   const unknown = docs.filter((d) => !d.kind && d.path == null);
   if (!unknown.length) return;
   const work = Promise.all(unknown.map(async (d) => {
@@ -165,34 +168,42 @@ async function decideKinds(platform: Platform, docs: Listed[]): Promise<void> {
     if (paths?.length) d.kind = kindOf(paths);
   }));
   platform.edge.background(work);
-  await Promise.race([work, sleep(KINDS_WAIT_MS)]);
-}
+  yield* call(() => work).pipe(Effect.timeoutOption(KINDS_WAIT));
+});
 
 /** /docs: the signed-in person's documents, most recently edited first. */
-export async function listDocs(platform: Platform, request: Request): Promise<Response> {
-  const session = await platform.sessionOf(request);
+export const listDocs = Effect.gen(function* () {
+  const { request, platform } = yield* ctx;
+  const session = yield* call(() => platform.sessionOf(request));
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
   if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
-  const [docs, hours] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")]);
-  await decideKinds(platform, docs);
-  return new Response(docsPage(session, docs, Date.now(), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-}
+  const [docs, hours] = yield* call(() =>
+    Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")])
+  );
+  yield* decideKinds(platform, docs);
+  return html(docsPage(session, docs, Date.now(), hours), 200, NO_STORE);
+});
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
-export async function deleteDoc(platform: Platform, request: Request): Promise<Response> {
-  const session = await platform.sessionOf(request);
-  if (!session || session.test) return new Response("Sign in first", { status: 401 });
+export const deleteDoc = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const session = yield* call(() => platform.sessionOf(request));
+  if (!session || session.test) return text("Sign in first", 401);
   // Only from this site's own pages (the session cookie is SameSite=Lax already).
-  if (request.headers.get("origin") != new URL(request.url).origin) return new Response("Forbidden", { status: 403 });
-  const id = String((await request.formData()).get("id") ?? "");
-  const route = ID.test(id) ? await platform.directory.route(id) : null;
-  if (!route) return new Response("No such document", { status: 404 });
-  if (!(await platform.directory.may(whoOf(session), "delete", route))) return new Response("Only its owner can delete a document", { status: 403 });
+  if (request.headers.get("origin") != url.origin) return text("Forbidden", 403);
+  const { id } = yield* form(IdForm).pipe(Effect.orDie);
+  const route = ID.test(id) ? yield* call(() => platform.directory.route(id)) : null;
+  if (!route) return text("No such document", 404);
+  if (!(yield* call(() => platform.directory.may(whoOf(session), "delete", route))))
+    return text("Only its owner can delete a document", 403);
   // Gone already (or never made): drop a stale entry all the same.
-  if (!(await platform.docs.delete(route))) await platform.directory.remove(id);
-  return new Response(null, { status: 303, headers: { Location: link("/docs", session) } });
-}
+  if (!(yield* call(() => platform.docs.delete(route)))) yield* call(() => platform.directory.remove(id));
+  return redirect(link("/docs", session), 303);
+});
+
+const IdForm = Schema.Struct({ id: Field });
+const ShareForm = Schema.Struct({ id: Field, login: Field, role: Field });
 
 /**
  * POST /docs/share (id, login, role): gives someone a role on one of your
@@ -204,51 +215,70 @@ export async function deleteDoc(platform: Platform, request: Request): Promise<R
  * login: their picture, shared/avatars.ts), or the error. GET /docs/share?id=
  * answers the same without changing anything (the list's share dialog).
  */
-export async function shareDoc(platform: Platform, request: Request): Promise<Response> {
-  const session = await platform.sessionOf(request);
-  if (!session || session.test) return Response.json({ error: "Sign in first" }, { status: 401 });
-  const url = new URL(request.url);
-  const answer = async (permissions: Permission[]) => {
-    const notUsers = (await Promise.all(permissions.map(async (p) => (p.login == "*" || (await platform.directory.users.allowed(p.login)) ? null : p.login)))).filter((l) => l != null);
+export const shareDoc = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const session = yield* call(() => platform.sessionOf(request));
+  if (!session || session.test) return plainJson({ error: "Sign in first" }, 401);
+  const answer = (permissions: Permission[]) =>
+    call(async () => {
+      const notUsers = (
+        await Promise.all(
+          permissions.map(async (p) => (p.login == "*" || (await platform.directory.users.allowed(p.login)) ? null : p.login))
+        )
+      ).filter((l) => l != null);
     // Whether the server lets users share content publicly: the menus offer anyone with the link only then.
     const publicSharing = await platform.directory.config.get("public_sharing");
-    return Response.json({
+    return plainJson({
       permissions,
       notUsers,
       avatars: await platform.directory.users.avatars(permissions.map((p) => p.login)),
       publicSharing,
     });
-  };
+  });
   if (request.method == "GET") {
     const id = url.searchParams.get("id") ?? "";
-    const doc = ID.test(id) ? await platform.directory.get(id) : null;
-    if (!doc) return Response.json({ error: "No such document" }, { status: 404 });
-    if (!(await platform.directory.may(whoOf(session), "share", doc))) return Response.json({ error: "Only its owner can share a document." }, { status: 403 });
-    return answer(await platform.directory.permissions(id));
+    const doc = ID.test(id) ? yield* call(() => platform.directory.get(id)) : null;
+    if (!doc) return plainJson({ error: "No such document" }, 404);
+    if (!(yield* call(() => platform.directory.may(whoOf(session), "share", doc))))
+      return plainJson({ error: "Only its owner can share a document." }, 403);
+    return yield* answer(yield* call(() => platform.directory.permissions(id)));
   }
-  if (request.method != "POST") return Response.json({ error: "GET or POST" }, { status: 405 });
-  if (request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
-  const form = await request.formData();
-  const id = String(form.get("id") ?? ""), login = String(form.get("login") ?? ""), role = String(form.get("role") ?? "");
-  if (!ID.test(id) || !(await platform.directory.get(id))) return Response.json({ error: "No such document" }, { status: 404 });
-  try {
-    return answer(await platform.directory.share(whoOf(session), id, login, role == "" || role == "none" ? null : role as Grant));
-  } catch (e) {
-    if (e instanceof NotAllowed) return Response.json({ error: e.message }, { status: 403 });
-    throw e;
-  }
-}
+  if (request.method != "POST") return plainJson({ error: "GET or POST" }, 405);
+  if (request.headers.get("origin") != url.origin) return plainJson({ error: "Forbidden" }, 403);
+  const { id, login, role } = yield* form(ShareForm).pipe(Effect.orDie);
+  if (!ID.test(id) || !(yield* call(() => platform.directory.get(id)))) return plainJson({ error: "No such document" }, 404);
+  return yield* Effect.tryPromise({
+    try: () => platform.directory.share(whoOf(session), id, login, role == "" || role == "none" ? null : (role as Grant)),
+    catch: (e) => e,
+  }).pipe(
+    Effect.flatMap(answer),
+    Effect.catchIf(
+      (e): e is NotAllowed => e instanceof NotAllowed,
+      (e) => Effect.succeed(plainJson({ error: e.message }, 403))
+    ),
+    Effect.orDie
+  );
+});
 
 /**
  * POST <document>/api/share {rotate}: the share button's token, the
  * person's one 'share' token, the same each time until rotated.
  */
-export async function shareToken(platform: Platform, request: Request, session: Session): Promise<Response> {
-  const refuse = (error: string) => Response.json({ ok: false, error }, { status: 403 });
+export const shareToken = Effect.fnUntraced(function* (session: Session) {
+  const { request, url, platform } = yield* ctx;
+  const refuse = (error: string) => plainJson({ ok: false, error }, 403);
   if (session.agent) return refuse("An agent can't make tokens.");
   const origin = request.headers.get("origin");
-  if (origin && origin != new URL(request.url).origin) return refuse("Forbidden");
-  const body = (await request.json().catch(() => ({}))) as { rotate?: unknown };
-  const { token } = await platform.tokens.share({ login: session.login, name: session.name, testBy: session.test?.by }, body?.rotate === true);
+  if (origin && origin != url.origin) return refuse("Forbidden");
+  // Any body that isn't { rotate: true } keeps the token as it is.
+  const { rotate } = yield* call(() => request.json().catch(() => ({}))).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(RotateBody)),
+    Effect.orElseSucceed(() => ({ rotate: false }))
+  );
+  const { token } = yield* call(() =>
+    platform.tokens.share({ login: session.login, name: session.name, testBy: session.test?.by }, rotate === true)
+  );
   return json({ token });
-}
+});
+
+const RotateBody = Schema.Struct({ rotate: Schema.optional(Schema.Unknown) });

@@ -10,6 +10,7 @@ import { adminRoutes } from "../server/admin/index.ts";
 import { checkKey, CredentialError, Credentials, Directory, NotAllowed, type Param, type Sql } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
 import { quietConsole } from "./helpers/quiet.ts";
+import { respond } from "../server/http.ts";
 
 quietConsole();
 
@@ -103,7 +104,7 @@ const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
-    return path == "/admin" || path.startsWith("/admin/") ? adminRoutes(platform, r) : new Response("", { status: 404 });
+    return path == "/admin" || path.startsWith("/admin/") ? respond(adminRoutes, r, platform) : new Response("", { status: 404 });
   },
 });
 const origin = `http://localhost:${server.port}`;

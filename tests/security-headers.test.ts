@@ -61,7 +61,8 @@ test("a cookie that one document's page set for every page (erga-pages.dev isn't
     docs: { fetch: async (_: unknown, r: Request) => { seen = r; return new Response("x", { headers: { "Content-Type": "text/plain" } }); } },
   } as never;
   const url = new URL(`https://abcd1234-ada.erga-pages.dev/t/${token}/data.txt`);
-  const r = await pagesRoutes(new Request(url, { headers: { Cookie: "tossed=1" } }), url, { owner: "ada", id: "abcd1234" }, platform);
+  const { respond } = await import("../server/http.ts");
+  const r = await respond(pagesRoutes({ owner: "ada", id: "abcd1234" }), new Request(url, { headers: { Cookie: "tossed=1" } }), platform);
   expect(await r.text()).toBe("x");
   expect(seen!.headers.get("cookie")).toBeNull();
 });

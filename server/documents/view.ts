@@ -20,6 +20,10 @@
 // The page is rendered whole here, with the account corner and live.js (what server/app.ts
 // adds to the site's other pages, reading them back).
 
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Effect from "effect/Effect";
+import { HttpServerResponse } from "effect/http";
+import { call, ctx, html, redirect } from "../http.ts";
 import { pageAddress } from "../../document/pages.ts";
 import type { ViewAnswer } from "../../document/view.ts";
 import { mayDeploy } from "../identity/index.ts";
@@ -45,7 +49,7 @@ import {
   withEdit,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { base64url, sha256 } from "../../shared/bytes.ts";
+import { sha256 } from "../../shared/bytes.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -121,7 +125,17 @@ const suffix = (canonical: string) => (canonical ? `/${canonical.split("/").map(
  * The viewer at /<first>/<second>[/<page>] (`first` an owner, or "d" with an id): the document's page for whoever
  * it's shared with, at its canonical address (other addresses redirect there).
  */
-export async function viewAddress(platform: Platform, request: Request, session: Session, first: string, second: string, wanted: string): Promise<Response> {
+export const viewAddress = (session: Session, first: string, second: string, wanted: string) =>
+  Effect.flatMap(ctx, ({ platform, request }) => call(() => address(platform, request, session, first, second, wanted)));
+
+async function address(
+  platform: Platform,
+  request: Request,
+  session: Session,
+  first: string,
+  second: string,
+  wanted: string
+): Promise<HttpServerResponse.HttpServerResponse> {
   const url = new URL(request.url);
   const key = decisionKey(url, whoKey(session));
   let d = await keptDecision(platform, key);
@@ -146,7 +160,8 @@ export async function viewAddress(platform: Platform, request: Request, session:
     if (answer.quiet) keepDecision(platform, key, d);
   }
   const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
-  if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`)) return new Response(null, { status: 302, headers: { Location: canonical + url.search, "Cache-Control": "no-store" } });
+  if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
+    return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
   if (url.searchParams.has("files")) return renderFiles(platform, request, session, d);
   return render(platform, request, session, d, false);
 }
@@ -156,7 +171,16 @@ export async function viewAddress(platform: Platform, request: Request, session:
  * while the server lets users share content publicly (Directory.isPublic). They view it only. Null for any other: they
  * sign in first, as before.
  */
-export async function viewPublic(platform: Platform, request: Request, first: string, second: string, wanted: string): Promise<Response | null> {
+export const viewPublic = (first: string, second: string, wanted: string) =>
+  Effect.flatMap(ctx, ({ platform, request }) => call(() => publicView(platform, request, first, second, wanted)));
+
+async function publicView(
+  platform: Platform,
+  request: Request,
+  first: string,
+  second: string,
+  wanted: string
+): Promise<HttpServerResponse.HttpServerResponse | null> {
   const url = new URL(request.url);
   if (first == "d" || !OWNER.test(first)) return null;
   const row = (await platform.directory.locate(first, second))?.doc ?? null;
@@ -165,7 +189,8 @@ export async function viewPublic(platform: Platform, request: Request, first: st
   if (!answer || answer.file == null || answer.ver == null) return null;
   const d: Decision = { id: row.id, owner: row.owner, slug: row.slug, title: row.title, role: "viewer", ver: answer.ver, file: answer.file, canonical: answer.canonical ?? "" };
   const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
-  if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`)) return new Response(null, { status: 302, headers: { Location: canonical + url.search, "Cache-Control": "no-store" } });
+  if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
+    return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
   return render(platform, request, null, d, false);
 }
 
@@ -173,21 +198,28 @@ export async function viewPublic(platform: Platform, request: Request, first: st
  * The files view (?files: server/pages/files.ts): every file of the document, for whoever may view it; whoever may
  * edit adds, moves, renames and deletes them there. Its files come from the pages origin, under a token as the viewer's.
  */
-async function renderFiles(platform: Platform, request: Request, session: Session, d: Decision): Promise<Response> {
+async function renderFiles(platform: Platform, request: Request, session: Session, d: Decision) {
   const url = new URL(request.url);
   const canEdit = !session.agent && roleMay(d.role, "edit");
   const by = platform.adminsOnly ? session.login : null;
   const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, by ? { by } : {});
   const pages = `${pagesOrigin(d.owner, d.id, url, platform)}/t/${token}/`;
-  const html = filesPage({ session, title: d.title, address: `/${d.owner}/${d.slug}`, docId: d.id, pages, canEdit });
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+  return html(filesPage({ session, title: d.title, address: `/${d.owner}/${d.slug}`, docId: d.id, pages, canEdit }), 200, {
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+  });
 }
 
 /**
  * The homepage: the viewer on the landing document (the landing_document setting), for anyone, signed in or not.
  * Made from the repo's assets/landing/ if there's none (landing.ts).
  */
-export async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
+export const viewLanding = Effect.gen(function* () {
+  const { platform, request } = yield* ctx;
+  return yield* call(async () => landingView(platform, request, await platform.sessionOf(request)));
+});
+
+async function landingView(platform: Platform, request: Request, session: Session | null): Promise<HttpServerResponse.HttpServerResponse> {
   const url = new URL(request.url);
   // (Which document the setting names is part of the key: another one is another decision.)
   // None set yet: nothing kept (the seed below sets one).
@@ -221,7 +253,7 @@ const accountMeta = (session: Session, admin: boolean, deploy: boolean) => {
 
 /** A short digest of text, for the page's ETag. */
 async function digestOf(text: string): Promise<string> {
-  return base64url((await sha256(text)).slice(0, 16));
+  return Base64Url.encode((await sha256(text)).slice(0, 16));
 }
 
 /**
@@ -229,7 +261,13 @@ async function digestOf(text: string): Promise<string> {
  * files there: an editor's says so, and its pages come with what the editor needs). For whoever may edit, what the
  * editor needs too (the document's host, the account's links); opened with ?edit, the editor from the first response.
  */
-async function render(platform: Platform, request: Request, session: Session | null, d: Decision, landing: boolean): Promise<Response> {
+async function render(
+  platform: Platform,
+  request: Request,
+  session: Session | null,
+  d: Decision,
+  landing: boolean
+): Promise<HttpServerResponse.HttpServerResponse> {
   const url = new URL(request.url);
   const dir = platform.directory;
   const canEdit = !!session && !session.agent && roleMay(d.role, "edit");
@@ -256,18 +294,29 @@ async function render(platform: Platform, request: Request, session: Session | n
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
   const before = shell.before, after = shell.after + corner;
   const build = await pageBuild(before + after);
-  const headers = new Headers({
-    "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-cache", "Referrer-Policy": "no-referrer",
-    [BUILD_HEADER]: build, [OWN_ACCOUNT]: "1", Vary: "Cookie",
+  const headers: Record<string, string> = {
+    "Cache-Control": "private, no-cache",
+    "Referrer-Policy": "no-referrer",
+    [BUILD_HEADER]: build,
+    [OWN_ACCOUNT]: "1",
+    Vary: "Cookie",
     // The page's origin, connected to as early as can be (an early hint, where the edge sends them).
     Link: `<${origin}>; rel=preconnect`,
-  });
+  };
+  const empty = (status: number) =>
+    HttpServerResponse.empty({ status, headers: { "Content-Type": "text/html; charset=utf-8", ...headers } });
   // live.js asking whether the page's code changed: the build alone.
-  if (request.headers.get(CHECK_HEADER) == "build") return new Response(null, { status: 204, headers });
+  if (request.headers.get(CHECK_HEADER) == "build") return empty(204);
   const live = `<meta name="erga-build" content="${build}">${scriptTag("live.js")}`;
   const body = before + after + live + "\n</body>\n</html>";
   const etag = `"${await digestOf(body)}"`;
-  headers.set("ETag", etag);
-  if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
-  return new Response(request.method == "HEAD" ? null : body, { headers });
+  headers.ETag = etag;
+  if (
+    request.headers
+      .get("if-none-match")
+      ?.split(",")
+      .some((t) => t.trim().replace(/^W\//, "") == etag)
+  )
+    return empty(304);
+  return request.method == "HEAD" ? empty(200) : html(body, 200, headers);
 }

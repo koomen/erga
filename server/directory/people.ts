@@ -64,15 +64,15 @@ export function personHandle(provider: unknown, raw: unknown): { provider: SignI
   const p = String(provider ?? "")
     .trim()
     .toLowerCase() as SignInProvider;
-  if (!SIGN_IN_PROVIDERS.includes(p)) throw new NotAllowed(`"${provider}" isn't a provider: github or google.`);
+  if (!SIGN_IN_PROVIDERS.includes(p)) throw new NotAllowed({ message: `"${provider}" isn't a provider: github or google.` });
   const h = String(raw ?? "")
     .trim()
     .toLowerCase()
     .replace(/^@/, "");
-  if (!h) throw new NotAllowed(p == "github" ? "Give the GitHub login." : "Give the Google account's email address.");
-  if (p == "github" && !LOGIN.test(h)) throw new NotAllowed(`"${h}" isn't a GitHub login.`);
+  if (!h) throw new NotAllowed({ message: p == "github" ? "Give the GitHub login." : "Give the Google account's email address." });
+  if (p == "github" && !LOGIN.test(h)) throw new NotAllowed({ message: `"${h}" isn't a GitHub login.` });
   if (p == "google" && (!EMAIL.test(h) || h.endsWith("@users.noreply.github.com")))
-    throw new NotAllowed(`"${h}" isn't a Google account's email address.`);
+    throw new NotAllowed({ message: `"${h}" isn't a Google account's email address.` });
   return { provider: p, handle: h };
 }
 
@@ -145,7 +145,7 @@ export class People {
   async setRole(by: Actor, id: number, role: UserRole): Promise<Person> {
     await this.users.mustAdmin(by);
     const p = await this.get(id);
-    if (!p) throw new NotAllowed(`Nobody waits as ${id}: list_users lists them.`);
+    if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: list_users lists them.` });
     await this.sql.batch([
       ["UPDATE people SET role = ?2 WHERE id = ?1", id, role],
       logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "role", role),
@@ -156,7 +156,7 @@ export class People {
   async remove(by: Actor, id: number): Promise<void> {
     await this.users.mustAdmin(by);
     const p = await this.get(id);
-    if (!p) throw new NotAllowed(`Nobody waits as ${id}: list_users lists them.`);
+    if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: list_users lists them.` });
     await this.sql.batch([["DELETE FROM people WHERE id = ?1", id], logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "removed")]);
   }
 

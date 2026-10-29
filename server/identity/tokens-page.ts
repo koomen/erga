@@ -2,12 +2,15 @@
 // and approve or deny an agent's request for one. And a token's expiry as given, which the API reads too.
 
 
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { nameOf } from "../../document/names.ts";
 import { appPage, crumbs, ICON, inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform";
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
 import { mintTestToken } from "./sign-in.ts";
+import { call, ctx, Field, form, html, NO_STORE, redirect, text, type Route } from "../http.ts";
 
 /** A token's expiry as given: an ISO 8601 time, a date (the end of that day, UTC), milliseconds since the epoch, or nothing (never). */
 export function expiryOf(v: unknown): number | null | "bad" {
@@ -27,57 +30,69 @@ export function expiryOf(v: unknown): number | null | "bad" {
  * (/tokens/approve?code=), and, where the platform makes them, a test token
  * for running the test suite. /settings is the same page.
  */
-export async function tokensRoutes(request: Request, platform: Platform): Promise<Response> {
-  const url = new URL(request.url), path = url.pathname.replace(/\/+$/, "");
-  const session = await platform.sessionOf(request);
-  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/sign-in?next=${encodeURIComponent(safeNext(path + url.search))}` } });
+export const tokensRoutes: Route = Effect.gen(function* () {
+  const { request, platform, url } = yield* ctx;
+  const path = url.pathname.replace(/\/+$/, "");
+  const session = yield* call(() => platform.sessionOf(request));
+  if (!session) return redirect(`/auth/sign-in?next=${encodeURIComponent(safeNext(path + url.search))}`);
   if (session.agent) return page("Not for agents", "Tokens are made and approved by people, signed in.", 403);
   if (session.test) return page("Not for test people", "Sign in as yourself to make a token.", 403);
   const post = request.method == "POST";
   // Only this site's own pages may make, revoke, approve or deny.
-  if (post && request.headers.get("origin") != url.origin) return new Response("Forbidden", { status: 403 });
-  const form = post ? await request.formData() : null;
-  const field = (k: string) => String(form?.get(k) ?? "");
+  if (post && request.headers.get("origin") != url.origin) return text("Forbidden", 403);
+  const f = post ? yield* form(TokensForm).pipe(Effect.orDie) : Schema.decodeUnknownSync(TokensForm)({});
   const who = { login: session.login, name: session.name };
-  const origin = url.origin;
   const error = (message: string) => `<p class="notice error">${esc(message)}</p>`;
+  const show = (o: Parameters<typeof tokensPage>[3]) => call(() => tokensPage(platform, session, url, o));
+  /** A token call that may refuse the scope (ScopeError): its result, or the refusal. */
+  const scoped = <A>(f: () => Promise<A>) =>
+    Effect.tryPromise({ try: f, catch: (e) => e }).pipe(
+      Effect.map((value) => ({ value })),
+      Effect.catchIf(
+        (e): e is ScopeError => e instanceof ScopeError,
+        (e) => Effect.succeed({ refused: e.message })
+      ),
+      Effect.orDie
+    );
 
   if (path == "/tokens/approve") {
-    const code = normalCode(post ? field("code") : url.searchParams.get("code") ?? "");
-    const waiting = await platform.tokens.pending(code);
-    if (!waiting) return tokensPage(platform, session, url, { notice: error(`That request (${code}) has expired, or was already approved or denied. Ask the agent to start again.`) });
-    if (post && field("answer") == "deny") {
-      await platform.tokens.deny(code);
-      return tokensPage(platform, session, url, { notice: `<p class="notice">Denied: <b>${esc(waiting.label)}</b> gets no token.</p>` });
+    const code = normalCode(post ? f.code : (url.searchParams.get("code") ?? ""));
+    const waiting = yield* call(() => platform.tokens.pending(code));
+    if (!waiting)
+      return yield* show({
+        notice: error(`That request (${code}) has expired, or was already approved or denied. Ask the agent to start again.`),
+      });
+    if (post && f.answer == "deny") {
+      yield* call(() => platform.tokens.deny(code));
+      return yield* show({ notice: `<p class="notice">Denied: <b>${esc(waiting.label)}</b> gets no token.</p>` });
     }
-    if (!post) return tokensPage(platform, session, url, { notice: await approvalCard(platform, session, code, waiting) });
-    try {
-      const info = await platform.tokens.approve(code, who);
-      return tokensPage(platform, session, url, { notice: info ? `<p class="notice">Approved: <b>${esc(info.label)}</b> has its token now. Go back to it. You can revoke it below at any time.</p>` : error("That request has expired.") });
-    } catch (e) {
-      if (e instanceof ScopeError) return tokensPage(platform, session, url, { notice: error(`${e.message} The request is still waiting: deny it, or ask the agent for another scope.`) });
-      throw e;
-    }
+    if (!post) return yield* show({ notice: yield* call(() => approvalCard(platform, session, code, waiting)) });
+    const r = yield* scoped(() => platform.tokens.approve(code, who));
+    if ("refused" in r)
+      return yield* show({ notice: error(`${r.refused} The request is still waiting: deny it, or ask the agent for another scope.`) });
+    return yield* show({
+      notice: r.value
+        ? `<p class="notice">Approved: <b>${esc(r.value.label)}</b> has its token now. Go back to it. You can revoke it below at any time.</p>`
+        : error("That request has expired."),
+    });
   }
   if (path == "/tokens/new" && post) {
-    const scope = (field("scope") || "documents") as Scope;
-    const expires = expiryOf(field("expires"));
-    if (expires == "bad") return tokensPage(platform, session, url, { notice: error("That expiry isn't a date.") });
-    try {
-      const { token, info } = await platform.tokens.mint(who, field("label") || "Agent", { scope, docId: field("doc") || null, expires });
-      return tokensPage(platform, session, url, { made: { token, info } });
-    } catch (e) {
-      if (e instanceof ScopeError) return tokensPage(platform, session, url, { notice: error(e.message) });
-      throw e;
-    }
+    const scope = (f.scope || "documents") as Scope;
+    const expires = expiryOf(f.expires);
+    if (expires == "bad") return yield* show({ notice: error("That expiry isn't a date.") });
+    const r = yield* scoped(() => platform.tokens.mint(who, f.label || "Agent", { scope, docId: f.doc || null, expires }));
+    return yield* show("refused" in r ? { notice: error(r.refused) } : { made: r.value });
   }
   if (path == "/tokens/revoke" && post) {
-    await platform.tokens.revoke(session.login, field("id"));
-    return new Response(null, { status: 303, headers: { Location: "/tokens" } });
+    yield* call(() => platform.tokens.revoke(session.login, f.id));
+    return redirect("/tokens", 303);
   }
   if (path != "/tokens" && path != "/settings") return page("Not found", "There's nothing here. <a href=\"/tokens\">Your tokens</a>.", 404);
-  return tokensPage(platform, session, url, {});
-}
+  return yield* show({});
+});
+
+/** The form of each POST here (a field that's missing is ""). */
+const TokensForm = Schema.Struct({ code: Field, answer: Field, scope: Field, expires: Field, label: Field, doc: Field, id: Field });
 
 const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin" };
 
@@ -105,7 +120,12 @@ ${may ? `<p class="notice error">${esc(may)}</p>` : ""}
 <form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></form></section>`;
 }
 
-async function tokensPage(platform: Platform, session: Session, url: URL, o: { notice?: string; made?: { token: string; info: AgentToken }; anchor?: string }): Promise<Response> {
+async function tokensPage(
+  platform: Platform,
+  session: Session,
+  url: URL,
+  o: { notice?: string; made?: { token: string; info: AgentToken }; anchor?: string }
+) {
   const origin = url.origin;
   const [list, docs, admin] = await Promise.all([
     platform.tokens.list(session.login), platform.docs.list(session.login), platform.directory.users.isAdmin(whoOf(session)),
@@ -140,7 +160,7 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
 </section>` : "";
   const docOptions = docs.map((d) => `<option value="${esc(d.id)}">${esc(d.title)} (/${esc(d.owner)}/${esc(d.slug)})</option>`).join("");
   const title = url.pathname.startsWith("/settings") ? "Settings" : "Tokens";
-  const html = appPage(
+  const body = appPage(
     title,
     inlineStyle("tokens"),
     `${crumbs(session, [{ label: title }])}<main>
@@ -169,5 +189,5 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
 </main>
 ${inlineScript("tokens")}`
   );
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  return html(body, 200, NO_STORE);
 }

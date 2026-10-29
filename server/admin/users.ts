@@ -5,7 +5,7 @@ import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { adminResponse } from "./layout.ts";
+import { adminPage } from "./layout.ts";
 import { avatarHtml } from "./parts.ts";
 
 /** The deploy role's switch: a checkbox (role="switch"); off, with why in its title, for an admin (who may always deploy). */
@@ -68,12 +68,12 @@ function personRow(p: Person): string {
 }
 
 /** /admin/users: every user and everyone waiting for their first sign-in, each with one role; add one, remove one. */
-export async function usersPage(platform: Platform, session: Session): Promise<Response> {
+export async function usersPage(platform: Platform, session: Session) {
   const who = whoOf(session),
     dir = platform.directory;
   const [users, people, ids] = await Promise.all([dir.users.list(who), dir.people.list(who), dir.identities.byLogin()]);
   const admins = users.filter((u) => u.role == "admin");
-  return adminResponse({
+  return adminPage({
     session,
     title: "Users",
     here: "users",

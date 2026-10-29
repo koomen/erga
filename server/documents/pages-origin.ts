@@ -6,12 +6,15 @@
 // is the file at <path>, and a page (an HTML file the frame goes to) comes with what the
 // viewer and the editor need in it (pages/reader.ts, readerPage).
 
+import * as Effect from "effect/Effect";
+import { call, ctx, fromWeb } from "../http.ts";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Result from "effect/Result";
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./routes.ts";
 import { markPage, sourceDigest } from "../../shared/page-html.ts";
 import { readerPage, readerVersion } from "../pages/index.ts";
-import { base64url, fromBase64url } from "../../shared/bytes.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
 
@@ -35,7 +38,7 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
   if (shared && url.hostname == shared) {
     const claims = /^\/t\/([^/.]+)\./.exec(url.pathname)?.[1];
     try {
-      const d = claims && (JSON.parse(new TextDecoder().decode(fromBase64url(claims))) as { d?: unknown }).d;
+      const d = claims && (JSON.parse(Result.getOrThrow(Base64Url.decodeString(claims))) as { d?: unknown }).d;
       const [owner, id] = typeof d == "string" ? d.split("/") : [];
       return owner && id && OWNER.test(owner) && ID.test(id) ? { owner, id } : null;
     } catch { return null; }
@@ -64,7 +67,7 @@ const hmac = async (secret: string, value: string) => {
     if (hmacKeys.size > 4) hmacKeys.clear();
     hmacKeys.set(secret, key);
   }
-  return base64url(new Uint8Array(await crypto.subtle.sign("HMAC", await key, new TextEncoder().encode(value))));
+  return Base64Url.encode(new Uint8Array(await crypto.subtle.sign("HMAC", await key, new TextEncoder().encode(value))));
 };
 
 /**
@@ -77,7 +80,7 @@ export async function pagesToken(secret: string, owner: string, id: string, shel
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
   // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
   // scripts can read its address).
-  const claims = base64url(
+  const claims = Base64Url.encode(
     new TextEncoder().encode(
       JSON.stringify({
         d: `${owner.toLowerCase()}/${id}`,
@@ -101,7 +104,7 @@ export async function readPagesClaims(secret: string, token: string, owner: stri
   const [claims, mac, extra] = token.split(".");
   if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
   try {
-    const c = JSON.parse(new TextDecoder().decode(fromBase64url(claims))) as {
+    const c = JSON.parse(Result.getOrThrow(Base64Url.decodeString(claims))) as {
       d?: string;
       e?: number;
       s?: string;
@@ -135,7 +138,16 @@ function markedPage(etag: string | null, text: string): { html: string; src: str
  * page), which only the viewer on the token's site may frame. A page the frame goes to (an HTML file, as a frame's
  * document) comes marked, with the viewer's script first in it (readerPage); anything else as the file is.
  */
-export async function pagesRoutes(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
+export const pagesRoutes = (doc: { owner: string; id: string }) =>
+  Effect.flatMap(ctx, ({ request, url, platform }) =>
+    Effect.map(
+      call(() => pageFile(request, url, doc, platform)),
+      fromWeb
+    )
+  );
+
+/** The answer of pagesRoutes, as a web Response: mostly the document's own, passed on. */
+async function pageFile(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   const [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();

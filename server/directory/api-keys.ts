@@ -22,10 +22,13 @@
 // key that still doesn't open is shown as such (`unreadable`), and the agents
 // say so. The last four characters are kept in plain text, for the page.
 
+import * as Base64 from "effect/encoding/Base64";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { changeLogEntry } from "../../shared/attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
 import type { Actor, Users } from "./index.ts";
-import { base64, fromBase64, randomBytes, sha256 } from "../../shared/bytes.ts";
+import { randomBytes, sha256 } from "../../shared/bytes.ts";
 
 /**
  * The keys there are, by name: the Worker secret each stands in for, the
@@ -86,7 +89,7 @@ export interface CredentialEntry {
 }
 
 /** A key that can't be stored (not one, or no secret to encrypt it with): the message says why. */
-export class CredentialError extends Error {}
+export class CredentialError extends Schema.TaggedError<CredentialError>()("CredentialError", { message: Schema.String }) {}
 
 interface Row { name: string; iv: string; data: string; last4: string; updated: number; updated_by: string; updated_via?: string | null }
 
@@ -95,11 +98,14 @@ const enc = new TextEncoder();
 /** Checks and tidies a key as pasted: its own provider's, one line, no spaces. */
 export function checkKey(name: CredentialName, value: string): string {
   const c = CREDENTIALS[name], key = value.trim();
-  if (!key) throw new CredentialError(`Paste the ${c.label}, or use Clear to remove it.`);
-  if (name == "anthropic" && key.startsWith("sk-ant-oat")) throw new CredentialError(`That is a Claude plan token (sk-ant-oat…), not an API key. An API key starts with sk-ant-api.`);
+  if (!key) throw new CredentialError({ message: `Paste the ${c.label}, or use Clear to remove it.` });
+  if (name == "anthropic" && key.startsWith("sk-ant-oat"))
+    throw new CredentialError({ message: `That is a Claude plan token (sk-ant-oat…), not an API key. An API key starts with sk-ant-api.` });
   const prefixes: readonly string[] = c.prefixes;
-  if (prefixes.length && !prefixes.some((p) => key.startsWith(p))) throw new CredentialError(`That isn't ${aOrAn(c.label)}: one starts with ${prefixes.join(" or ")}.`);
-  if (!/^[\x21-\x7e]{20,400}$/.test(key)) throw new CredentialError(`That isn't ${aOrAn(c.label)}: a key is 20 to 400 characters, with no spaces.`);
+  if (prefixes.length && !prefixes.some((p) => key.startsWith(p)))
+    throw new CredentialError({ message: `That isn't ${aOrAn(c.label)}: one starts with ${prefixes.join(" or ")}.` });
+  if (!/^[\x21-\x7e]{20,400}$/.test(key))
+    throw new CredentialError({ message: `That isn't ${aOrAn(c.label)}: a key is 20 to 400 characters, with no spaces.` });
   return key;
 }
 
@@ -143,7 +149,8 @@ export class Credentials {
     await this.users.mustAdmin(by);
     const n = this.nameOf(name);
     const key = checkKey(n, value);
-    if (!this.aesKey) throw new CredentialError("This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts makes it.");
+    if (!this.aesKey)
+      throw new CredentialError({ message: "This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts makes it." });
     const iv = randomBytes(12);
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(n) }, await this.aesKey, enc.encode(key)));
     const had = await this.has(n), at = Date.now(), login = by.login.toLowerCase();
@@ -151,8 +158,8 @@ export class Credentials {
       [`INSERT INTO credentials (name, iv, data, last4, updated, updated_by, updated_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         ON CONFLICT (name) DO UPDATE SET iv = excluded.iv, data = excluded.data, last4 = excluded.last4, updated = excluded.updated, updated_by = excluded.updated_by, updated_via = excluded.updated_via`,
         n,
-        base64(iv),
-        base64(data),
+        Base64.encode(iv),
+        Base64.encode(data),
         key.slice(-4),
         at,
         login,
@@ -198,9 +205,9 @@ export class Credentials {
     try {
       return new TextDecoder().decode(
         await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: fromBase64(r.iv), additionalData: enc.encode(name) },
+          { name: "AES-GCM", iv: Result.getOrThrow(Base64.decode(r.iv)) as Uint8Array<ArrayBuffer>, additionalData: enc.encode(name) },
           await this.aesKey,
-          fromBase64(r.data)
+          Result.getOrThrow(Base64.decode(r.data)) as Uint8Array<ArrayBuffer>
         )
       );
     } catch {
@@ -213,7 +220,8 @@ export class Credentials {
   }
 
   private nameOf(name: string): CredentialName {
-    if (!isCredentialName(name)) throw new CredentialError(`There's no key "${name}": the keys are ${Object.keys(CREDENTIALS).join(", ")}.`);
+    if (!isCredentialName(name))
+      throw new CredentialError({ message: `There's no key "${name}": the keys are ${Object.keys(CREDENTIALS).join(", ")}.` });
     return name;
   }
 

@@ -4,7 +4,7 @@ import { inlineCall, link } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import type { Session } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
-import { adminResponse } from "./layout.ts";
+import { adminPage } from "./layout.ts";
 import { PROVIDERS, type AuthOps, type AuthStatus, type CheckState, type Provider, type ProvidersOn } from "../identity/index.ts";
 import { setAt } from "./parts.ts";
 
@@ -108,10 +108,10 @@ function providerSection(p: Provider, on: ProvidersOn, cards: string): string {
 }
 
 /** /admin/auth: how people sign in on this server. */
-export function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]>>): Response {
+export function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]>>) {
   const { here, google, providers } = status;
   const label = (s: AuthStatus) => (s.target ? `${s.target[0].toUpperCase()}${s.target.slice(1)} (this server)` : "This server");
-  return adminResponse({
+  return adminPage({
     session,
     title: "Authentication",
     here: "auth",

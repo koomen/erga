@@ -44,7 +44,7 @@ describe("/install", () => {
     expect(to.searchParams.get("scope")!.split(" ")).toContain("cloudchamber.write");
     expect(to.searchParams.get("code_challenge_method")).toBe("S256");
     expect(r.headers.get("set-cookie")).toMatch(
-      /^erga_install=[A-Za-z0-9_-]+; Path=\/install; Max-Age=600; HttpOnly; SameSite=Lax; Secure$/
+      /^erga_install=[A-Za-z0-9_-]+; Max-Age=600; Path=\/install; HttpOnly; Secure; SameSite=Lax$/
     );
   });
 
@@ -60,7 +60,7 @@ describe("/install", () => {
     const where = new URL(back.headers.get("location")!, ORIGIN);
     expect(where.pathname).toBe("/install");
     expect(where.searchParams.get("error")).toBe("Cloudflare didn't authorize Erga: The requested scope is invalid, unknown, or malformed. The OAuth 2.0 Client is not allowed to request scope 'cloudchamber.write'.");
-    expect(back.headers.get("set-cookie")).toContain("erga_install=; Path=/install; Max-Age=0");
+    expect(back.headers.get("set-cookie")).toContain("erga_install=; Max-Age=0; Path=/install");
     expect(calls).toEqual([]); // no token exchange
     expect(await credential.status()).toMatchObject({ connected: false, by: null });
     const html = await (await go(where.pathname + where.search)).text();
@@ -112,7 +112,7 @@ describe("Connect Cloudflare from the Ops page: a popup", () => {
     const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
     const back = await go(`/install/callback?code=mock-code&state=${state}`, { cookie });
     expect(back.status).toBe(200);
-    expect(back.headers.get("set-cookie")).toContain("erga_install=; Path=/install; Max-Age=0");
+    expect(back.headers.get("set-cookie")).toContain("erga_install=; Max-Age=0; Path=/install");
     const html = await back.clone().text();
     // Posted to Erga's own origins only (this one, the app's, and the environments'), and on the channel here.
     expect(html).toContain(`for (const o of ["${ORIGIN}","https://erga.test","https://erga.dev","https://staging.erga.dev","https://ops.erga.dev"])`);

@@ -13,7 +13,7 @@ import { link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
-import { adminResponse } from "./layout.ts";
+import { adminPage } from "./layout.ts";
 import { avatarHtml, shown } from "./parts.ts";
 import { plural } from "../../shared/time.ts";
 
@@ -133,7 +133,7 @@ function changeRow(
 }
 
 /** /admin/changes: the change log, every change to the settings, factory task added or merged, and production deploy, newest first (`before`: only those older than version n). */
-export async function changesPage(platform: Platform, session: Session, before?: number): Promise<Response> {
+export async function changesPage(platform: Platform, session: Session, before?: number) {
   const who = whoOf(session),
     config = platform.directory.config;
   const history = await config.history(who, { before, limit: CHANGES });
@@ -160,7 +160,7 @@ export async function changesPage(platform: Platform, session: Session, before?:
   const avatars = await platform.directory.users.avatars(history.versions.map((v) => v.by).filter((by) => by && by != SYSTEM));
   const last = history.versions.at(-1);
   const older = last && last.n > 1 && history.versions.length == CHANGES;
-  return adminResponse({
+  return adminPage({
     session,
     title: "Change log",
     here: "changes",

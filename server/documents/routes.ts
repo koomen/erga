@@ -41,6 +41,7 @@
 // Signing in, the editor's own files and the WebSockets stay with the
 // Worker.
 
+import * as Effect from "effect/Effect";
 import { VIA } from "../../shared/attribution.ts";
 import { adminRoutes } from "../admin/index.ts";
 import { ID, OWNER, type Route } from "../directory/index.ts";
@@ -49,19 +50,19 @@ import { deleteDoc, listDocs, newDoc, shareDoc, shareToken } from "./make.ts";
 import { pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
+import { call, ctx, fromWeb, plainJson, text, type Route as HttpRoute } from "../http.ts";
 
 /** The app's answer to a request, for any path (a page saying so when there's nothing there). */
-export async function documentRoutes(request: Request, base: Platform): Promise<Response> {
-  const url = new URL(request.url);
+export const documentRoutes: HttpRoute = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
   const path = url.pathname;
-  const pages = pagesHost(url, base);
-  if (pages) return pagesRoutes(request, url, pages, base);
-  const platform = base;
-  if (path == "/") return viewLanding(platform, request, await platform.sessionOf(request));
-  if (path == "/new") return newDoc(platform, request);
-  if (path == "/docs") return listDocs(platform, request);
-  if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
-  if (path == "/docs/share") return shareDoc(platform, request);
+  const pages = pagesHost(url, platform);
+  if (pages) return yield* pagesRoutes(pages);
+  if (path == "/") return yield* viewLanding;
+  if (path == "/new") return yield* newDoc;
+  if (path == "/docs") return yield* listDocs;
+  if (path == "/docs/delete" && request.method == "POST") return yield* deleteDoc;
+  if (path == "/docs/share") return yield* shareDoc;
   if (
     path == "/admin" ||
     path == "/admin/changes" ||
@@ -75,44 +76,58 @@ export async function documentRoutes(request: Request, base: Platform): Promise<
     path == "/admin/access" ||
     path == "/admin/documents"
   )
-    return adminRoutes(platform, request);
+    return yield* adminRoutes;
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
   if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
-  const session = await platform.sessionOf(request);
+  const session = yield* call(() => platform.sessionOf(request));
 
   // A document's address is the document: /<owner>/<slug>, and /<page> after it for its other pages. Its editor
   // is the same page with ?edit. Sign in first, then the page, at its canonical address.
   // /api/... and /doc/... under it are the document's host (so no page or folder at its top may be called api or doc).
   if (!/^\/(api|doc)(\/|$)/.test(rest ?? "")) {
     // Not signed in: a document shared publicly opens for them, to view (Directory.isPublic); any other, sign in first.
-    if (!session) return (await viewPublic(platform, request, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""))) ?? signInFirst(path + url.search);
+    if (!session) return (yield* viewPublic(first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""))) ?? signInFirst(path + url.search);
     if (first == "d" && !ID.test(second)) return nothing();
-    return viewAddress(platform, request, session, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""));
+    return yield* viewAddress(session, first, second, (rest ?? "").replace(/^\/+|\/+$/g, ""));
   }
   // By id (the editor's address), the document's host is asked straight away: it says whether there's such a document.
-  const route = first == "d" ? (ID.test(second) ? { id: second, owner: "", test: false } : null) : await documentRoute(platform, first, second);
-  if (!route) return new Response("No such document", { status: 404 });
+  const route =
+    first == "d"
+      ? ID.test(second)
+        ? { id: second, owner: "", test: false }
+        : null
+      : yield* call(() => documentRoute(platform, first, second));
+  if (!route) return text("No such document", 404);
   // An external agent brings its token (Session.agent); everyone else signs in.
   if (!session) {
     return rest.startsWith("/api/ext")
-      ? Response.json({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". If it stopped working it was revoked: ask for a new one." }, { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="erga"' } })
-      : new Response("Sign in first", { status: 401 });
+      ? plainJson(
+          {
+            ok: false,
+            error:
+              'Missing or unknown token: send the one you were given as "Authorization: Bearer <token>". If it stopped working it was revoked: ask for a new one.',
+          },
+          401,
+          { "WWW-Authenticate": 'Bearer realm="erga"' }
+        )
+      : text("Sign in first", 401);
   }
   // The share button's token is the app's, not the document's: for whoever may open the document.
   if (rest == "/api/share" && request.method == "POST") {
-    const doc = await platform.directory.route(route.id);
-    if (!doc || !(await platform.directory.access(whoOf(session), doc))) return new Response("Not allowed", { status: 403 });
-    return shareToken(platform, request, session);
+    const doc = yield* call(() => platform.directory.route(route.id));
+    if (!doc || !(yield* call(() => platform.directory.access(whoOf(session), doc)))) return text("Not allowed", 403);
+    return yield* shareToken(session);
   }
   // The document's sockets (its room, its events) are opened by this site's own pages: a page of another origin, even
   // of this site (another subdomain, which the session cookie reaches), may not open one as whoever's signed in.
   const origin = request.headers.get("origin");
-  if (request.headers.get("upgrade")?.toLowerCase() == "websocket" && origin && origin != url.origin) return new Response("Not from this site", { status: 403 });
+  if (request.headers.get("upgrade")?.toLowerCase() == "websocket" && origin && origin != url.origin)
+    return text("Not from this site", 403);
   // Who's asking: the document decides what they may do (document/document.ts, authorize), and refuses the rest.
-  const answer = await platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session));
-  if (answer.status == 101) return answer;
+  const answer = yield* call(() => platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session)));
+  if (answer.status == 101) return fromWeb(answer);
   // A document's files (an HTML page, an SVG) are its authors' code. Here, on this site's own origin, they run in a
   // sandbox of their own (an opaque origin, no scripts): opened at this address, a page's script would otherwise act as
   // whoever opened it, with their session. Pages run on their pages origin (pagesRoutes), never here.
@@ -121,8 +136,8 @@ export async function documentRoutes(request: Request, base: Platform): Promise<
   headers.set("X-Content-Type-Options", "nosniff");
   // A document's own files are its own: nothing of the site's goes into them.
   if (/^text\/html\b/i.test(answer.headers.get("content-type") ?? "")) headers.set(OWN_ACCOUNT, "1");
-  return new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers });
-}
+  return fromWeb(new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers }));
+});
 
 
 

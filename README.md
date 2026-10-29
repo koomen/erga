@@ -133,6 +133,7 @@ health checks and rollbacks work.
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
       app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
+      http.ts         the routes' HTTP in Effect (effect/http): a route is an Effect, the Platform a service, the answers they share
       api.ts          the HTTP API for outside agents: tokens, /api, /mcp (the tools: agents/tools.ts)
       health.ts       the health check, GET /api/health
       security.ts     the security headers on every answer of the app

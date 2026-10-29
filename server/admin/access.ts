@@ -5,7 +5,7 @@ import { type Access, ACCESS_LABEL, type AccessRule, KIND_LABEL } from "../direc
 import { ICON, inlineCall, link } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { adminResponse } from "./layout.ts";
+import { adminPage } from "./layout.ts";
 
 /** The group rules on the Access page: each rule a row (who, and its access); a form adds one. */
 function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; orgs: string[] }, session: Session): string {
@@ -36,14 +36,14 @@ ${rules.map(row).join("\n")}
 }
 
 /** /admin/access: the access rules, one list, and whether users can share content publicly. */
-export async function accessPage(platform: Platform, session: Session): Promise<Response> {
+export async function accessPage(platform: Platform, session: Session) {
   const who = whoOf(session);
   const [rules, suggestions, publicSharing] = await Promise.all([
     platform.directory.rules.list(who),
     platform.directory.rules.suggestions(who),
     platform.directory.config.get("public_sharing"),
   ]);
-  return adminResponse({
+  return adminPage({
     session,
     title: "Access",
     here: "access",
