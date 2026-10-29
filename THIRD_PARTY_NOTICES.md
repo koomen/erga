@@ -22,7 +22,7 @@ The direct dependencies (`package.json`), and their licenses:
 | `@anthropic-ai/sdk` | MIT | yes |
 | `@codemirror/commands`, `@codemirror/lang-html`, `@codemirror/language`, `@codemirror/state`, `@codemirror/view`, `@lezer/highlight` | MIT | yes |
 | `@mariozechner/pi-agent-core`, `@mariozechner/pi-ai` | MIT | yes |
-| `effect`, `@effect/platform-bun` | MIT | yes |
+| `effect`, `@effect/ai-anthropic` | MIT | yes |
 | `@opentelemetry/api` | Apache 2.0 | yes |
 | `diff` | BSD-3-Clause | yes |
 | `lib0`, `yjs`, `y-protocols`, `y-websocket` | MIT | yes |
