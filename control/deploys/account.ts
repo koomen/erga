@@ -312,21 +312,23 @@ export const exportD1 = (cf: Cloudflare, acc: string, dbId: string, name: string
 
 /** D1's answer to an export, polled. */
 const D1Export = Schema.Struct({
-  status: Schema.optionalKey(Schema.String),
-  at_bookmark: Schema.optionalKey(Schema.String),
-  error: Schema.optionalKey(Schema.String),
-  result: Schema.optionalKey(Schema.Struct({ signed_url: Schema.optionalKey(Schema.String), filename: Schema.optionalKey(Schema.String) })),
+  status: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  at_bookmark: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  error: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  result: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ signed_url: Schema.optionalKey(Schema.String), filename: Schema.optionalKey(Schema.String) }))
+  ),
 });
 type D1Export = typeof D1Export.Type;
 
 /** D1's answer at each step of an import. */
 const D1Import = Schema.Struct({
-  status: Schema.optionalKey(Schema.String),
-  success: Schema.optionalKey(Schema.Boolean),
-  error: Schema.optionalKey(Schema.String),
-  filename: Schema.optionalKey(Schema.String),
-  upload_url: Schema.optionalKey(Schema.String),
-  at_bookmark: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  success: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  error: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  filename: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  upload_url: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  at_bookmark: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 type D1Import = typeof D1Import.Type;
 
@@ -413,8 +415,8 @@ const UPLOAD_RETRY = {
 
 /** What an upload session, or an upload, answers. */
 const UploadSession = Schema.Struct({
-  jwt: Schema.optionalKey(Schema.String),
-  buckets: Schema.optionalKey(Schema.Array(Schema.Array(Schema.String))),
+  jwt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  buckets: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Array(Schema.String)))),
 });
 
 /**

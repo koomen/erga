@@ -55,7 +55,7 @@ export const GithubRepo = Schema.Struct({
   html_url: Schema.String,
   private: Schema.Boolean,
   default_branch: Schema.String,
-  owner: Schema.optionalKey(Account),
+  owner: Schema.optionalKey(Schema.NullOr(Account)),
 });
 export type GithubRepo = typeof GithubRepo.Type;
 
@@ -116,9 +116,9 @@ export async function installationToken(
 
 /** GitHub's answer for an installation token. */
 const InstallationToken = Schema.Struct({
-  token: Schema.optionalKey(Schema.String),
-  expires_at: Schema.optionalKey(Schema.String),
-  message: Schema.optionalKey(Schema.String),
+  token: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  expires_at: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  message: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 const tokenAnswer = Schema.decodeUnknownOption(Schema.fromJsonString(InstallationToken));
 
@@ -155,13 +155,15 @@ export async function verifyWebhook(secret: string, body: Uint8Array | string, s
 
 /** A push event's payload, the fields Erga reads. */
 export const PushEvent = Schema.Struct({
-  ref: Schema.optionalKey(Schema.String),
-  before: Schema.optionalKey(Schema.String),
-  after: Schema.optionalKey(Schema.String),
-  repository: Schema.optionalKey(Schema.Struct({ id: Schema.optionalKey(Schema.Number), full_name: Schema.optionalKey(Schema.String) })),
-  installation: Schema.optionalKey(Schema.Struct({ id: Schema.optionalKey(Schema.Number) })),
-  sender: Schema.optionalKey(Schema.Struct({ login: Schema.optionalKey(Schema.String) })),
-  pusher: Schema.optionalKey(Schema.Struct({ name: Schema.optionalKey(Schema.String) })),
+  ref: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  before: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  after: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  repository: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ id: Schema.optionalKey(Schema.Number), full_name: Schema.optionalKey(Schema.String) }))
+  ),
+  installation: Schema.optionalKey(Schema.NullOr(Schema.Struct({ id: Schema.optionalKey(Schema.Number) }))),
+  sender: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: Schema.optionalKey(Schema.String) }))),
+  pusher: Schema.optionalKey(Schema.NullOr(Schema.Struct({ name: Schema.optionalKey(Schema.String) }))),
 });
 export type PushEvent = typeof PushEvent.Type;
 
@@ -175,11 +177,11 @@ export function installUrl(app: GithubApp, state: string): string {
 }
 
 export const UserToken = Schema.Struct({
-  access_token: Schema.optionalKey(Schema.String),
-  expires_in: Schema.optionalKey(Schema.Number),
-  refresh_token: Schema.optionalKey(Schema.String),
-  error: Schema.optionalKey(Schema.String),
-  error_description: Schema.optionalKey(Schema.String),
+  access_token: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  expires_in: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  refresh_token: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  error: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  error_description: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type UserToken = typeof UserToken.Type;
 
@@ -200,10 +202,10 @@ export async function exchangeUserCode(app: GithubApp, o: { code: string; redire
   );
 }
 
-/** What GitHub answers for an error. */
+/** What GitHub answers for an error: its message, and `errors` (objects with a message, or strings, by endpoint). */
 const Refusal = Schema.Struct({
-  message: Schema.optionalKey(Schema.String),
-  errors: Schema.optionalKey(Schema.Array(Schema.Struct({ message: Schema.optionalKey(Schema.String) }))),
+  message: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  errors: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Unknown))),
 });
 
 /**
@@ -234,7 +236,7 @@ export async function api<T>(
       message: `GitHub answered ${r.status}${answer?.message ? `: ${answer.message}` : ""}${
         answer?.errors?.length
           ? ` (${answer.errors
-              .map((e) => e.message)
+              .map((e) => (typeof e == "string" ? e : (e as { message?: unknown } | null)?.message))
               .filter(Boolean)
               .join("; ")})`
           : ""
@@ -250,15 +252,19 @@ export async function api<T>(
 /** Who the token's person is. */
 export const userOf = (app: GithubApp, token: string, net?: Net) => api(app, token, "GET", "/user", undefined, net, User);
 const User = Schema.Struct({
-  login: Schema.optionalKey(Schema.String),
+  login: Schema.optionalKey(Schema.NullOr(Schema.String)),
   name: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  id: Schema.optionalKey(Schema.Number),
+  id: Schema.optionalKey(Schema.NullOr(Schema.Number)),
 });
 
 const Installations = Schema.Struct({
   installations: Schema.optionalKey(
     Schema.Array(
-      Schema.Struct({ id: Schema.Number, account: Schema.optionalKey(Account), repository_selection: Schema.optionalKey(Schema.String) })
+      Schema.Struct({
+        id: Schema.Number,
+        account: Schema.optionalKey(Schema.NullOr(Account)),
+        repository_selection: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      })
     )
   ),
 });

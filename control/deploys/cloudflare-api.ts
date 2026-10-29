@@ -25,14 +25,19 @@ export class Unhealthy extends DeployError {
   }
 }
 
-/** One of Cloudflare's refusals in its answer's `errors`. */
+/** One of Cloudflare's refusals in its answer's `errors`; one of another shape is left out, never the answer. */
 const Refusal = Schema.Struct({ code: Schema.optionalKey(Schema.Number), message: Schema.optionalKey(Schema.String) });
+const refusalOf = Schema.decodeUnknownOption(Refusal);
 
-/** Every answer of Cloudflare's API: whether it worked, its result, and why not. */
+/**
+ * Every answer of Cloudflare's API: whether it worked, its result, and why not. Read loosely, as Cloudflare sends it,
+ * not as its API schema says: the assets' upload answers `"errors": null, "messages": null` for none (recorded
+ * 2026-10-29, tests/cloudflare-api.test.ts). A field the envelope doesn't expect never loses the result.
+ */
 const Envelope = Schema.Struct({
-  success: Schema.optionalKey(Schema.Boolean),
+  success: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
   result: Schema.optionalKey(Schema.Unknown),
-  errors: Schema.optionalKey(Schema.Array(Refusal)),
+  errors: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Unknown))),
 });
 const envelopeOf = Schema.decodeUnknownOption(Schema.fromJsonString(Envelope));
 
@@ -69,7 +74,9 @@ export class Cloudflare {
       const answer = Option.getOrNull(envelopeOf(yield* Effect.promise(() => r.text().catch(() => ""))));
       if (r.status == 404 && opts.allow404) return null;
       if (!r.ok || answer?.success === false) {
-        const errors = (answer?.errors ?? []).map((e) => ({ code: e.code ?? 0, message: e.message ?? "" }));
+        const errors = (answer?.errors ?? [])
+          .flatMap((e) => Option.toArray(refusalOf(e)))
+          .map((e) => ({ code: e.code ?? 0, message: e.message ?? "" }));
         return yield* new DeployError({ message: this.words(what, r.status, errors), status: r.status });
       }
       if (answer?.result == null) return null;
