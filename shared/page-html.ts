@@ -17,6 +17,8 @@ export interface ReaderConfig {
   prefix: string;
   /** The digest of the text the page was made from (shared/page-html.ts, sourceDigest): the editor checks it has the same. */
   src: string;
+  /** The document's public address (https://erga.dev/<owner>/<slug>): the viewer says it once the page is up (erga-address). */
+  address?: string;
   /** For whoever may edit: the editor's half (frame.js), its chunks and their integrity. */
   editor?: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
 }

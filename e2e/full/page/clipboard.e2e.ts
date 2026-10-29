@@ -1,6 +1,8 @@
 // Paste in and copy out keep the basic formatting and drop the rest (client/page-editor/clipboard-html.ts): paragraphs, line breaks,
-// bold, italic, links, lists (nested), headings, quotes and code; never fonts, sizes, colours, classes or styles.
-import { expect, servers, test } from "../../helpers/fixtures";
+// bold, italic, links, lists (nested), headings, quotes and code; never fonts, sizes, colours, classes or styles. A copy writes
+// Markdown as its plain text, its links and pictures as they work elsewhere; the reader's copy (out of the editor) is the same.
+import type { Frame, Page } from "playwright-core";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { F, openEditor, type Editor } from "../../helpers/editor";
 import * as P from "./clipboard-payloads";
 
@@ -79,23 +81,164 @@ test("bold, italic and a link pasted inside a paragraph stay inline; over a sele
   await expect.poll(() => ed.source()).toBe(original);
 });
 
-test("a copy writes clean HTML and plain text with the line breaks and list markers; pasted back, it gives the same blocks", async ({ tab }) => {
+test("a copy writes clean HTML and Markdown; pasted back, either gives the same blocks", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "clipboard");
   const out = await copy(ed, "#rich", "#numbered");
-  expect(out.html).toBe(`<p>Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li>Top<ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`);
-  expect(out.text).toBe("Some bold, italic and a link.\nA second line.\n\n- Top\n  - Inner\n- Last\n\n1. One\n2. Two");
+  expect(out.html).toBe(
+    `<p>Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li>Top<ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
+  );
+  expect(out.text).toBe(
+    "Some **bold**, *italic* and [a link](https://example.com/x).  \nA second line.\n\n- Top\n    - Inner\n- Last\n\n1. One\n2. Two"
+  );
   // Back in, at the empty paragraph: the same blocks, and a copy of them gives the same clipboard.
   await ed.clickEnd("#empty");
   await paste(ed, out);
   await ed.idle();
-  expect(between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(`<p id="empty">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li><p>Top</p><ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`);
+  expect(between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(
+    `<p id="empty">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li><p>Top</p><ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
+  );
   expect(await copy(ed, "#empty", "main > ol:first-of-type li:last-child")).toEqual(out);
-  // The plain text alone gives the same blocks too, but the link (it has only the link's text).
+  // The Markdown alone gives the same blocks too.
   await ed.press("ControlOrMeta+z");
   await ed.clickEnd("#empty");
   await paste(ed, { text: out.text });
   await ed.idle();
-  expect(between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(`<p id="empty">Some bold, italic and a link.<br>A second line.</p><ul><li><p>Top</p><ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`);
+  expect(between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(
+    `<p id="empty">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li><p>Top</p><ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
+  );
+});
+
+test("one paragraph without formatting copies as its text alone; Markdown's characters in a copy are escaped only where they would read as Markdown", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "clipboard");
+  await ed.clickEnd("#empty");
+  await paste(ed, { text: "", html: `<p>2 * 3 = 6, snake_case, a [note] and 1. not a list</p><p>Under *stars* and #1</p>` });
+  await ed.idle();
+  expect((await copy(ed, "#empty", "#empty")).text).toBe("2 * 3 = 6, snake_case, a [note] and 1. not a list");
+  expect((await copy(ed, "#empty", "main > p:nth-of-type(3)")).text).toBe(
+    "2 * 3 = 6, snake_case, a \\[note\\] and 1. not a list\n\nUnder \\*stars\\* and #1"
+  );
+});
+
+/** The document's public address (the viewer's), as the copy's links have it. */
+const publicAddress = (ed: Editor) => ed.eval<string>(`location.origin + document.querySelector('meta[name="erga-address"]').content`);
+
+test("a copy's links go to the document's public address, its pictures are in it, a link to another file goes; pasted back, #id is #id again", async ({
+  tab,
+}) => {
+  const ed = await openEditor(tab, await servers.main(), "clipboard");
+  const doc = await publicAddress(ed);
+  await until(() => ed.frame<boolean>("!!window.__ergaReader.config.address"), 5000, "the viewer says the address");
+  const out = await copy(ed, "#links", "#end");
+  expect(out.html).toMatch(
+    new RegExp(
+      `^<p>See <a href="${doc}/other">the other page</a>, <a href="${doc}#rich">the rich part</a> and the notes\\.</p><p><img src="data:image/png;base64,[A-Za-z0-9+/=]+" alt="A dot"></p><h2>The end</h2>$`
+    )
+  );
+  expect(out.text).toBe(`See [the other page](${doc}/other), [the rich part](${doc}#rich) and the notes.\n\n## The end`);
+  await ed.clickEnd("#empty");
+  await paste(ed, out);
+  await ed.idle();
+  expect(between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(
+    `<p id="empty">See <a href="${doc}/other">the other page</a>, <a href="#rich">the rich part</a> and the notes.</p><h2>The end</h2>`
+  );
+});
+
+/** A page with nothing but an empty contenteditable, as a mail or a document that the copy is pasted into. */
+async function pasteInto(page: Page): Promise<{ html: string; text: string; pasted: string }> {
+  const other = await page.context().newPage();
+  // On the app's origin: the clipboard API is for a secure page (about:blank isn't one).
+  await other.goto(new URL(page.url()).origin + "/llms.txt");
+  await other.setContent(`<div id="box" contenteditable style="min-height:5em"></div>`);
+  await other.bringToFront();
+  await other.click("#box");
+  await other.keyboard.press("ControlOrMeta+v");
+  const clip = await other.evaluate(async () => {
+    const item = (await navigator.clipboard.read())[0];
+    return { html: await (await item.getType("text/html")).text(), text: await (await item.getType("text/plain")).text() };
+  });
+  const pasted = await other.evaluate(() => document.getElementById("box")!.innerHTML);
+  await other.close();
+  await page.bringToFront();
+  return { ...clip, pasted };
+}
+
+test("Cmd+C in the editor, Cmd+V into a plain page: the formatting comes, the page's fonts and colours don't", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "clipboard");
+  await tab.page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await ed.frame(
+    `(() => { const d = ${F}, a = d.querySelector("#rich").firstChild, b = d.querySelector("#numbered > li:last-child").firstChild; d.getSelection().setBaseAndExtent(a, 0, b, b.nodeValue.length); })()`
+  );
+  await ed.press("ControlOrMeta+c");
+  const out = await pasteInto(tab.page);
+  expect(out.html).not.toMatch(/style|class|font|color|Georgia|<meta|<span/i);
+  expect(out.text).toContain("Some **bold**");
+  expect(out.pasted).toContain(`<strong>bold</strong>`);
+  expect(out.pasted).toContain(`<a href="https://example.com/x">a link</a>`);
+  expect(out.pasted).toMatch(/<ul><li>Top<ul><li>Inner<\/li><\/ul><\/li>/);
+  expect(out.pasted).not.toMatch(/Georgia|rgb|#a00|#234|22px|font-size/i);
+});
+
+/** The document's page in the viewer's frame, out of the editor. */
+const readerFrame = (page: Page) =>
+  until<Frame | null>(
+    async () => {
+      const f = page.frames().find((f) => f.parentFrame() == page.mainFrame() && /\/t\//.test(f.url())) ?? null;
+      return f && (await f.evaluate("!!window.__ergaReader?.config.address").catch(() => false)) ? f : null;
+    },
+    10_000,
+    "the page in the viewer, with the document's address"
+  );
+
+test("a reader's copy (out of the editor) is the editor's: clean HTML, Markdown, links and pictures that work elsewhere", async ({
+  tab,
+}) => {
+  const server = await servers.main();
+  const { address } = await server.fixture("clipboard");
+  await tab.page.goto(address);
+  const frame = (await readerFrame(tab.page))!;
+  const doc = await tab.page.evaluate(`location.origin + document.querySelector('meta[name="erga-address"]').content`);
+  const copied = (from: string, to: string) =>
+    frame.evaluate(
+      ([from, to]) => {
+        const first = document.createTreeWalker(document.querySelector(from)!, 4).nextNode()!,
+          w = document.createTreeWalker(document.querySelector(to)!, 4);
+        let last: Node | null = null;
+        for (let t; (t = w.nextNode()); ) if (t.nodeValue!.trim()) last = t;
+        document.getSelection()!.setBaseAndExtent(first, 0, last!, last!.nodeValue!.length);
+        const dt = new DataTransfer();
+        document.querySelector(from)!.dispatchEvent(new ClipboardEvent("copy", { clipboardData: dt, bubbles: true, cancelable: true }));
+        return { html: dt.getData("text/html"), text: dt.getData("text/plain") };
+      },
+      [from, to]
+    );
+  const out = await copied("#rich", "#numbered");
+  expect(out.html).toBe(
+    `<p>Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li>Top<ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
+  );
+  expect(out.text).toBe(
+    "Some **bold**, *italic* and [a link](https://example.com/x).  \nA second line.\n\n- Top\n    - Inner\n- Last\n\n1. One\n2. Two"
+  );
+  const links = await copied("#links", "#end");
+  expect(links.html).toMatch(
+    new RegExp(
+      `^<p>See <a href="${doc}/other">the other page</a>, <a href="${doc}#rich">the rich part</a> and the notes\\.</p><p><img src="data:image/png;base64,[A-Za-z0-9+/=]+" alt="A dot"></p><h2>The end</h2>$`
+    )
+  );
+  // Cmd+C and Cmd+V into a plain page: none of the page's fonts and colours.
+  await tab.page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await frame.click("#numbered li");
+  await frame.evaluate(() => {
+    const a = document.querySelector("#rich")!.firstChild!,
+      b = document.querySelector("#numbered > li:last-child")!.firstChild!;
+    document.getSelection()!.setBaseAndExtent(a, 0, b, b.nodeValue!.length);
+  });
+  await tab.page.keyboard.press("ControlOrMeta+c");
+  const pasted = await pasteInto(tab.page);
+  expect(pasted.html).not.toMatch(/style|class|font|color|Georgia|<span/i);
+  expect(pasted.pasted).toContain(`<strong>bold</strong>`);
+  expect(pasted.pasted).not.toMatch(/Georgia|rgb|22px|font-size/i);
 });
 
 test("a cut writes the same clipboard as a copy, and takes the text out", async ({ tab }) => {
