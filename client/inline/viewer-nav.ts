@@ -1,7 +1,7 @@
 // Which of the document's pages is shown, for everyone on a document's page (server/pages/viewer.ts): the frame says
 // when the page in it goes to another of the document's pages (a link followed: server/pages/reader.ts), and the
 // address bar follows, without a reload: /<owner>/<slug>/<page>, ?edit kept while editing. ergaPageAddress() is the
-// page's address now. And a link that leaves the document.
+// page's address now. And a link that leaves the document, and the document's address, which the frame's copy needs.
 
 export default function viewerNav(): void {
   const meta = (name: string) => document.querySelector<HTMLMetaElement>('meta[name="' + name + '"]');
@@ -35,6 +35,11 @@ export default function viewerNav(): void {
     const here = ergaPageAddress();
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", ergaWithEdit(here, true));
+  });
+  // The page's script says it is up (reader.ts): it learns the document's public address, for the links in a copy.
+  addEventListener("message", (e) => {
+    if (!ergaFrames.from(e) || e.data?.type != "erga-hello") return;
+    ergaFrames.send({ type: "erga-address", address: location.origin + meta("erga-address")!.content });
   });
   // A link that leaves the document (reader.ts): a new tab (tab: "new"), or the whole tab when its author set it
   // to open in this one (target="_self"), on the reader's click only. (A tab the page opened itself would have its sandbox.)

@@ -28,7 +28,7 @@ declare global {
   interface Window {
     ergaFrame?: unknown; __ergaTimescale?: number;
     /** The viewer's script in the page (server/pages/reader.ts): its config, and what tells it the page's steps may have changed. */
-    __ergaReader?: { config: { shell: string; prefix: string; src: string }; changed?(): void; placed?(): void };
+    __ergaReader?: { config: { shell: string; prefix: string; src: string; address?: string }; changed?(): void; placed?(): void };
   }
 }
 

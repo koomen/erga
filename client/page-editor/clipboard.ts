@@ -6,6 +6,7 @@ import * as C from "./clipboard-html";
 import { contentIn, HEADING, SPLITS } from "./source";
 import { EditorMarkdown } from "./markdown";
 import { showDropNote } from "./drop";
+import { pageUrl } from "../../document/pages";
 
 export abstract class EditorClipboard extends EditorMarkdown {
   /**
@@ -31,7 +32,14 @@ export abstract class EditorClipboard extends EditorMarkdown {
     }
     // A URL pasted over selected text links the text (as the style bar's link does); where it can't, the URL replaces it.
     if (sel && !sel.empty && u && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink({ url: text.trim() }) == null) return;
-    let blocks = html ? C.fromHtml(html) : [];
+    // A link to a place in this page, copied from it (as its public address), is #id again.
+    const place = this.place(),
+      self = place?.address ? pageUrl(place.address, place.page) + "#" : null;
+    const link = (a: Element) => {
+      const href = a.getAttribute("href")?.trim() ?? "";
+      return self && href.startsWith(self) ? href.slice(self.length - 1) : href;
+    };
+    let blocks = html ? C.fromHtml(html, link) : [];
     if (!blocks.length) blocks = C.fromText(text);
     if (!blocks.length) return;
     const one = blocks.length == 1 && blocks[0].tag == "p" ? blocks[0] : null;
@@ -149,14 +157,21 @@ export abstract class EditorClipboard extends EditorMarkdown {
     e.clipboardData.setData("text/html", data.html);
   }
 
+  /** Where this page is, for the links and pictures in a copy (clipboard-html.ts, Place). */
+  protected place(): C.Place | null {
+    const win = this.doc?.defaultView;
+    return win ? C.placeOf(win, win.__ergaReader?.config) : null;
+  }
+
   /**
    * What a copy puts on the clipboard: the text of the units in the
    * selection, without the widgets and other page parts between them, nor
    * anything in a unit that isn't editable text, with the allow-list of
-   * clipboard.ts: paragraphs, headings, lists, quotes, code, bold, italic
-   * and links, with no classes or styles, so a paste elsewhere takes the
-   * text, not this page's fonts and colours. The plain text keeps the line
-   * breaks, and writes list items as "- " and "1. ".
+   * clipboard-html.ts: paragraphs, headings, lists, quotes, code, bold,
+   * italic, links and pictures, with no classes or styles, so a paste
+   * elsewhere takes the text, not this page's fonts and colours. Links and
+   * pictures work where the copy goes (publicHref, imageSrc). The plain text
+   * is Markdown; one line without formatting is its text alone.
    */
   protected clipboard(): { text: string; html: string } | null {
     const doc = this.doc,
@@ -165,6 +180,8 @@ export abstract class EditorClipboard extends EditorMarkdown {
     const range = sel.getRangeAt(0);
     const lines: C.Line[] = [];
     const taken: Element[] = [];
+    const place = this.place(),
+      link = (a: Element) => C.publicHref(a, place);
     // Widgets and text the page doesn't let you edit, and the editor's own marks.
     const skip = (el: Element) =>
       el.getAttribute("contenteditable") == "false" || el.localName.startsWith("erga-") || el.hasAttribute("data-erga");
@@ -177,8 +194,13 @@ export abstract class EditorClipboard extends EditorMarkdown {
       if (r.comparePoint(range.startContainer, range.startOffset) == 0) r.setStart(range.startContainer, range.startOffset);
       if (r.comparePoint(range.endContainer, range.endOffset) == 0) r.setEnd(range.endContainer, range.endOffset);
       const pre = u.tag == "pre";
-      const out = C.inline(r.cloneContents(), { pre, heading: HEADING.test(u.tag), skip });
-      if (!out.text.trim()) continue;
+      // A picture's copy (cloned) is the picture on the page with the same src: that one has loaded.
+      const image = (img: HTMLImageElement) => {
+        const live = [...el.querySelectorAll("img")].find((i) => i.getAttribute("src") == img.getAttribute("src"));
+        return live ? C.imageSrc(live) : null;
+      };
+      const out = C.inline(r.cloneContents(), { pre, heading: HEADING.test(u.tag), link, image, skip });
+      if (!out.text.trim() && !out.html.includes("<img")) continue;
       // A list item, or the <p> that holds the text of an item with a list in it.
       const item =
         u.tag == "li" ? el : el.parentElement?.localName == "li" && el.parentElement.firstElementChild == el ? el.parentElement : null;
@@ -187,14 +209,8 @@ export abstract class EditorClipboard extends EditorMarkdown {
         for (let p = item.parentElement; p && p != doc.body; p = p.parentElement)
           if (p.localName == "ul" || p.localName == "ol") list.unshift(p.localName);
       const tag = item ? "li" : pre || HEADING.test(u.tag) ? (u.tag as C.Line["tag"]) : "p";
-      lines.push({ tag, list, quote: !!el.closest("blockquote"), html: out.html, text: pre ? out.text : out.text.trim() });
+      lines.push({ tag, list, quote: !!el.closest("blockquote"), html: out.html, text: pre ? out.text : out.text.trim(), md: out.md });
     }
-    if (!lines.length) return null;
-    if (lines.length == 1 && lines[0].tag != "pre") return { text: lines[0].text, html: lines[0].html };
-    // The shallowest item copied is at the top level.
-    const top = Math.min(...lines.filter((l) => l.tag == "li").map((l) => l.list.length));
-    for (const l of lines) if (l.tag == "li") l.list = l.list.slice(top - 1);
-    const blocks = C.nest(lines);
-    return { text: C.toText(blocks), html: C.toHtml(blocks) };
+    return C.clipboardOf(lines);
   }
 }

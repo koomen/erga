@@ -6,6 +6,7 @@
 // half for whoever may edit.
 
 import type { ReaderConfig } from "../../shared/page-html";
+import { copyOf, placeOf } from "../page-editor/clipboard-html";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
 type Canvas = {
@@ -411,6 +412,21 @@ export default function reader(C: ReaderConfig): void {
   }
   addEventListener("dragover", stopFileDrop);
   addEventListener("drop", stopFileDrop);
+  // A copy out of the page (the editor has its own): its text with basic formatting only, never the page's fonts and
+  // colours, its links and pictures as they work elsewhere, and Markdown as the plain text (clipboard-html.ts). Not
+  // when the page wrote the clipboard itself (it stopped the browser's copy), nor out of a field.
+  addEventListener("copy", (e) => {
+    const field = document.activeElement;
+    if (editing() || e.defaultPrevented || !e.clipboardData || (field && /^(INPUT|TEXTAREA)$/.test(field.tagName))) return;
+    let out = null;
+    try {
+      out = copyOf(window, placeOf(window, C));
+    } catch {}
+    if (!out) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", out.text);
+    e.clipboardData.setData("text/html", out.html);
+  });
   addEventListener("message", (e) => {
     if (e.source != P || e.origin != C.shell || !e.data) return;
     const type = e.data.type;
@@ -418,6 +434,9 @@ export default function reader(C: ReaderConfig): void {
     if (type == "erga-step") step(e.data);
     else if (type == "erga-step-image") stepImage(e.data);
     else if (type == "erga-edit") load();
+    // The document's public address, for the links in a copy: on the viewer's origin, as the token names it.
+    else if (type == "erga-address" && typeof e.data.address == "string" && e.data.address.indexOf(C.shell + "/") == 0)
+      C.address = e.data.address;
     else if (type == "erga-prefetch" && editor && !loading) {
       [editor.src].concat(editor.preload).forEach((href) => {
         const l = document.createElement("link");
