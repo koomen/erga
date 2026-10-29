@@ -8,6 +8,7 @@ import { INLINE_HEADER, MemoryBlobs, serveBlob } from "../../document/blobs";
 import { MemoryStorage } from "../../document/storage";
 import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
 import { documentAgents } from "../../agents/document/session";
+import { promised } from "./promised";
 
 const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -37,7 +38,7 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
     ...(o.blobs === false ? {} : { blobs }),
   };
   await dir.add({ id: "doc12345", owner: "ada", title: "Files", created: Date.now(), expires: null });
-  const doc = new Document(deps);
+  const doc = promised(new Document(deps));
   // A test document's agent is the scripted one (no key needed).
   await doc.create("ada", "doc12345", { "index.html": "<h1>Files</h1>" }, "index.html", { expires: null, modified: Date.now(), ...(o.test ? { test: true } : {}) });
   const as = (headers: Record<string, string> = {}) => ({ "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers });

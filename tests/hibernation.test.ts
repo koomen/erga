@@ -6,6 +6,7 @@
 // joined to it.
 
 import { Database } from "bun:sqlite";
+import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
@@ -95,7 +96,13 @@ class World {
 
   /** A tab connects (the fetch that upgrades): the document opens, the tab joins and asks for what it lacks. `events`: an editor's tab, which hears events too. */
   async connect(events = false): Promise<FakeTab> {
-    const opened = (await this.document.admit(new Request("http://doc/api/room", { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-access": "edit" } })))!;
+    const opened = (await Effect.runPromise(
+      this.document.admit(
+        new Request("http://doc/api/room", {
+          headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-access": "edit" },
+        })
+      )
+    ))!;
     const tab = new FakeTab(this, { id: crypto.randomUUID(), readOnly: false, epoch: null, person: { id: "ada", name: "Ada" }, events });
     this.sockets.add(tab);
     expect(this.tabs.join(tab, opened, tab.tab)).toBe(true);
@@ -106,7 +113,7 @@ class World {
 
   /** A message from a tab reaches the object (and may wake it). */
   deliver(tab: FakeTab, m: Uint8Array): void {
-    queueMicrotask(() => this.inflight.push(this.tabs.message(tab, m)));
+    queueMicrotask(() => this.inflight.push(Effect.runPromise(this.tabs.message(tab, m))));
   }
 
   async settle(): Promise<void> {
@@ -123,7 +130,7 @@ async function made(settings?: () => Promise<AgentSettings>) {
   const dir = new Directory(memory(), { admins: ["ada"] });
   await dir.add({ id: "sleep123", owner: "ada", title: "Sleepy", created: Date.now(), expires: null });
   const w = new World(dir, settings);
-  await w.document.create("ada", "sleep123", { "index.html": "<p>Hi</p>" }, "index.html", { expires: null });
+  await Effect.runPromise(w.document.create("ada", "sleep123", { "index.html": "<p>Hi</p>" }, "index.html", { expires: null }));
   return w;
 }
 
@@ -145,7 +152,13 @@ test("idle, the document closes and tabs stay; presence passes between them with
   // Its hello names the room's history, which the tab's start (GET /api/start) must be of.
   expect((events.events[0] as { epoch: string }).epoch).toBe(a.tab.epoch!);
   // The start: the same hello and the room's whole state, in one answer.
-  const started = await w.document.handle(new Request("http://doc/api/start", { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) } }));
+  const started = await Effect.runPromise(
+    w.document.handle(
+      new Request("http://doc/api/start", {
+        headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) },
+      })
+    )
+  );
   const { hello, state } = decodeStart<{ type: string; epoch: string }>(new Uint8Array(await started.arrayBuffer()));
   expect(hello).toMatchObject({ type: "hello", epoch: a.tab.epoch! });
   const fresh = new Y.Doc();

@@ -11,6 +11,7 @@ import { kindOf, pageRefusal } from "../document/pages";
 import { docsPage } from "../server/pages/docs";
 import type { Listed, Session } from "../server/platform";
 import { setup } from "./helpers/files-fixture";
+import { promised } from "./helpers/promised";
 
 /** The document of the files tests, with its tree's API and its agent's tools as its owner. */
 async function withTree() {
@@ -96,12 +97,18 @@ test("a document from before kinds decides its kind as it opens: a project if it
   // Its row as the directory had it before kinds (no kind), and its object without one, as a Worker from before kinds left it.
   const storage = new MemoryStorage();
   await dir.add({ id: "old12345", owner: "ada", title: "Old site", created: Date.now(), expires: null });
-  await new Document({ ...deps, storage }).create("ada", "old12345", { "index.html": "<h1>Home</h1>", "about.html": "<h1>About</h1>" }, "index.html", { expires: null, modified: Date.now() });
+  await promised(new Document({ ...deps, storage })).create(
+    "ada",
+    "old12345",
+    { "index.html": "<h1>Home</h1>", "about.html": "<h1>About</h1>" },
+    "index.html",
+    { expires: null, modified: Date.now() }
+  );
   const info = (await storage.get<Record<string, unknown>>(KEYS.meta))!;
   delete info.kind;
   await storage.put(KEYS.meta, info);
   expect((await dir.get("old12345"))!.kind).toBeNull();
-  const opened = new Document({ ...deps, storage });
+  const opened = promised(new Document({ ...deps, storage }));
   expect(await opened.paths()).toEqual(["about.html", "index.html"]);
   expect((await storage.get<{ kind?: string }>(KEYS.meta))!.kind).toBe("project");
   await new Promise((r) => setTimeout(r, 10));

@@ -15,6 +15,7 @@
 // the files then stay on disk, reached over that WebSocket (document/disk.ts).
 // It's an ordinary socket: a document on disk never sleeps.
 
+import * as Effect from "effect/Effect";
 import { DurableObject } from "cloudflare:workers";
 import { Document, personOf, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
 import type { ViewAnswer } from "../../document/view";
@@ -45,17 +46,24 @@ const TEMPLATE =
     import.meta.glob("../../assets/templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>
   )[0] ?? "";
 
+/** The document's work, as the Worker's calls take it: a Promise (a failure rejects it, as a thrown error would). */
+const run = Effect.runPromise;
+
 export class DocumentObject extends DurableObject<Env> {
   /** The dev server's sockets (ordinary ones): a document on disk. */
   private mirrors = new Set<WebSocket>();
   /** A document on disk: its files, through the dev server. */
   private disk = new DiskLink({
-    changed: (path) => { this.document.diskChanged(path).catch((e) => console.log(`couldn't take ${path} from disk: ${e}`)); },
-    connected: () => { this.document.diskConnected().catch(() => {}); },
+    changed: (path) => {
+      run(this.document.diskChanged(path)).catch((e) => console.log(`couldn't take ${path} from disk: ${e}`));
+    },
+    connected: () => {
+      run(this.document.diskConnected()).catch(() => {});
+    },
     // Edits already on their way (another socket, a busy machine) land first: a tenth of a second is nothing to wait when stopping.
     flush: async () => {
       await sleep(100);
-      await this.document.flush();
+      await run(this.document.flush());
     },
   });
   private document = new Document(this.deps());
@@ -129,7 +137,7 @@ export class DocumentObject extends DurableObject<Env> {
   /** A caller from a newer deploy: the object writes what it holds, then stops; the next call starts it on the new code (document-host.ts). */
   private gate = new DeployGate(deployedOf(this.env), async () => {
     console.log("a caller from a newer deploy: this object writes its edits and restarts");
-    await this.document.flush().catch((e) => console.log(`couldn't write before the restart: ${e}`));
+    await run(this.document.flush()).catch((e) => console.log(`couldn't write before the restart: ${e}`));
     // After this answer goes.
     setTimeout(() => this.ctx.abort("a newer deploy"), 0);
   });
@@ -153,37 +161,71 @@ export class DocumentObject extends DurableObject<Env> {
     index: string,
     opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }
   ): Promise<boolean> {
-    return this.document.create(owner, id, files, index, opts);
+    return run(this.document.create(owner, id, files, index, opts));
   }
   link(owner: string, id: string, index: string, disk: OnDisk): Promise<NamedRow> {
-    return this.document.link(owner, id, index, disk);
+    return run(this.document.link(owner, id, index, disk));
   }
   // (Each call that opens the document holds it open until it's done: it doesn't close for being idle meanwhile.)
-  publish(files: Record<string, FileData>, remove: string[], by?: string) { return this.document.publish(files, remove, by); }
-  paths(): Promise<string[]> { return this.document.hold(() => this.document.paths()); }
-  index(): Promise<string | null> { return this.document.index(); }
-  snapshot() { return this.document.hold(() => this.document.snapshot()); }
-  delete(): Promise<boolean> { return this.document.delete(); }
+  publish(files: Record<string, FileData>, remove: string[], by?: string) {
+    return run(this.document.publish(files, remove, by));
+  }
+  paths(): Promise<string[]> {
+    return run(this.document.hold(this.document.paths()));
+  }
+  index(): Promise<string | null> {
+    return run(this.document.index());
+  }
+  snapshot() {
+    return run(this.document.hold(this.document.snapshot()));
+  }
+  delete(): Promise<boolean> {
+    return run(this.document.delete());
+  }
   /** A message for everyone who has the document open (the homepage's deploy status, home.ts). Opens nothing. */
-  async notify(msg: unknown): Promise<void> { this.tabs.notify(msg); }
-  diskPath(): Promise<string | null> { return this.document.diskPath(); }
-  exists(): Promise<boolean> { return this.document.exists(); }
-  exportStorage(id: string, page: Page): Promise<DocSnapshot | null> { return this.document.exportStorage(id, page); }
-  importStorage(snap: DocSnapshot): Promise<void> { return this.document.importStorage(snap); }
-  wipeStorage(): Promise<void> { return this.document.wipeStorage(); }
-  versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> { return this.document.hold(() => this.document.versionsState(opts)); }
-  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> { return this.document.hold(() => this.document.restore(ref, by, path)); }
-  currentFiles() { return this.document.hold(() => this.document.currentFiles()); }
+  async notify(msg: unknown): Promise<void> {
+    this.tabs.notify(msg);
+  }
+  diskPath(): Promise<string | null> {
+    return run(this.document.diskPath());
+  }
+  exists(): Promise<boolean> {
+    return run(this.document.exists());
+  }
+  exportStorage(id: string, page: Page): Promise<DocSnapshot | null> {
+    return run(this.document.exportStorage(id, page));
+  }
+  importStorage(snap: DocSnapshot): Promise<void> {
+    return run(this.document.importStorage(snap));
+  }
+  wipeStorage(): Promise<void> {
+    return run(this.document.wipeStorage());
+  }
+  versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> {
+    return run(this.document.hold(this.document.versionsState(opts)));
+  }
+  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> {
+    return run(this.document.hold(this.document.restore(ref, by, path)));
+  }
+  currentFiles() {
+    return run(this.document.hold(this.document.currentFiles()));
+  }
   /** The directory's permissions for this document now (Directory.share pushes each change): the document's copy. */
-  setPermissions(list: { login: string; role: Role }[]): Promise<void> { return this.document.setPermissions(list); }
+  setPermissions(list: { login: string; role: Role }[]): Promise<void> {
+    return run(this.document.setPermissions(list));
+  }
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */
-  view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> { return this.document.view(who, opts); }
+  view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
+    return run(this.document.view(who, opts));
+  }
   /** A person's agent run that a restart cut off goes on (their object's alarm asks). */
-  resumeAgent(person: { id: string; name: string }): Promise<void> { return this.document.hold(() => this.document.resumeAgent(person)); }
+  resumeAgent(person: { id: string; name: string }): Promise<void> {
+    return run(this.document.hold(this.document.resumeAgent(person)));
+  }
 
   /** Its unedited time is up (document.wake says what then). */
   async alarm(): Promise<void> {
-    await this.document.wake();
+    await run(this.document.wake());
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -191,14 +233,14 @@ export class DocumentObject extends DurableObject<Env> {
     const url = new URL(request.url);
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (url.pathname == "/api/mirror") return this.mirror(request);
-    if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return this.document.handle(request);
+    if (request.headers.get("upgrade")?.toLowerCase() != "websocket") return run(this.document.handle(request));
     // A tab's one socket: the room, and with ?events=1 its person's events (document/tabs.ts).
     if (!url.pathname.startsWith("/api/room")) return new Response("Not found", { status: 404 });
     // Who may: decided here, on the document's copy of its permissions (the app asked no database).
-    const allowed = await this.document.authorize(request);
+    const allowed = await run(this.document.authorize(request));
     if (allowed instanceof Response) return allowed;
     request = allowed;
-    const opened = await this.document.admit(request);
+    const opened = await run(this.document.admit(request));
     if (!opened) return new Response("No such document", { status: 404 });
     const tab: Tab = {
       id: crypto.randomUUID(), readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null,
@@ -221,7 +263,7 @@ export class DocumentObject extends DurableObject<Env> {
 
   /** A tab's message (it may wake the object: the document then opens again from storage). */
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    await this.tabs.message(ws, typeof message == "string" ? message : bytesOf(message));
+    await run(this.tabs.message(ws, typeof message == "string" ? message : bytesOf(message)));
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
@@ -236,7 +278,12 @@ export class DocumentObject extends DurableObject<Env> {
   /** The dev server's socket to the files of a document on disk (the app checked its secret; so does this). */
   private async mirror(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (!(await this.document.onDisk()) || !this.env.ERGA_LINK_SECRET || url.searchParams.get("link") != this.env.ERGA_LINK_SECRET || request.headers.get("upgrade")?.toLowerCase() != "websocket") {
+    if (
+      !(await run(this.document.onDisk())) ||
+      !this.env.ERGA_LINK_SECRET ||
+      url.searchParams.get("link") != this.env.ERGA_LINK_SECRET ||
+      request.headers.get("upgrade")?.toLowerCase() != "websocket"
+    ) {
       return new Response("Not found", { status: 404 });
     }
     const [client, server] = Object.values(new WebSocketPair());

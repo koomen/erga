@@ -10,6 +10,10 @@ import { KEYS, MemoryStorage } from "../document/storage";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
 import { sleep } from "../shared/time";
+import { promised, type Promised } from "./helpers/promised";
+
+/** A Document as the tests await it. */
+type Doc = Promised<Document>;
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 function memory(): Sql {
@@ -37,11 +41,20 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
     background: () => {},
     log: (line) => log.push(line),
   };
-  const make = () => { storage = new MemoryStorage(() => doc.wake()); const doc = new Document(deps); return doc; };
+  const make = () => {
+    storage = new MemoryStorage(() => doc.wake());
+    const doc = promised(new Document(deps));
+    return doc;
+  };
   return { dir, log, forgotten, make, deps, storage: () => storage };
 }
 
-const get = (doc: Document, path: string, headers: Record<string, string> = {}) => doc.handle(new Request(`http://doc${path}`, { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers } }));
+const get = (doc: Doc, path: string, headers: Record<string, string> = {}) =>
+  doc.handle(
+    new Request(`http://doc${path}`, {
+      headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }), ...headers },
+    })
+  );
 
 test("a document is made from files, read from storage while closed, edited by a publish, versioned and restored", async () => {
   const { dir, make, storage } = setup();
@@ -114,7 +127,7 @@ test("an unedited document goes when its alarm comes; an edited one stays", asyn
 
 test("the document decides who may do what from its own copy of its permissions, which the directory pushes; a file read with a checked key reads only", async () => {
   const pushed: string[] = [];
-  let doc!: Document;
+  let doc!: Doc;
   const dir = new Directory(memory(), { admins: ["ada"], permissionsChanged: async (id, list) => { pushed.push(id); await doc.setPermissions(list); } });
   const { make } = setup(dir);
   doc = make();
@@ -182,7 +195,7 @@ test("a document stored before publishing went (its record names a published ver
   stored.data.set(KEYS.meta, { ...(stored.data.get(KEYS.meta) as object), published: { n: 1 } });
   stored.data.delete("view");
   // The object starts again on that storage: what it shows is the document as it is now.
-  const again = new Document({ ...deps, storage: stored });
+  const again = promised(new Document({ ...deps, storage: stored }));
   expect(await (await get(again, "/doc/index.html")).text()).toBe("<h1>Two</h1>");
   expect(await again.view({ login: "ada" }, { page: "" })).toMatchObject({ role: "owner", file: "index.html" });
   expect((await again.snapshot())!.files["index.html"]).toBe("<h1>Two</h1>");

@@ -52,7 +52,7 @@ import type { DocumentAgents } from "./agent.ts";
 import { docFile, makeHost, typeOf } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, DocName, Hello } from "./api.ts";
-import { digest, FileStore, Room, StateStore, type Connection, type StoreError } from "./room.ts";
+import { digest, FileStore, Room, StateStore, StoreError, type Connection } from "./room.ts";
 import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storage } from "./storage.ts";
 import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
@@ -141,6 +141,21 @@ function later(ms: number, then: () => void, more: () => number = () => 0): Fibe
 
 /** A fiber of `later` that hasn't run yet doesn't. */
 const stop = (fiber: Fiber.Fiber<void>) => void Effect.runFork(Fiber.interrupt(fiber));
+
+/** A storage call's failure, as a StoreError. */
+const storeError = (e: unknown) => (e instanceof StoreError ? e : new StoreError({ message: e instanceof Error ? e.message : String(e) }));
+/** A call to the document's storage (or to the directory, the blob store: Promise-based, from outside), its failure a StoreError. */
+const io = <A>(f: () => Promise<A>) => Effect.tryPromise({ try: f, catch: storeError });
+
+/** Asked of a document that doesn't exist (not made yet, or deleted). */
+export class NoSuchDocument extends Schema.TaggedError<NoSuchDocument>()("NoSuchDocument", { message: Schema.String }) {}
+
+/** What a publish did with each file. */
+export interface Published {
+  written: string[];
+  removed: string[];
+  refused: { path: string; why: string }[];
+}
 
 /** A file that PUT /api/files refused: the status, and what to do about it. */
 class UploadRefused extends Schema.TaggedError<UploadRefused>()("UploadRefused", { status: Schema.Number, error: Schema.String }) {}
@@ -318,9 +333,17 @@ export class Document {
   }
 
   /** Runs `work` with the document held open: it doesn't close for being idle meanwhile. */
-  async hold<T>(work: () => Promise<T>): Promise<T> {
-    this.busy++;
-    try { return await work(); } finally { this.busy--; this.activity(); }
+  hold<A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
+    return Effect.suspend(() => {
+      this.busy++;
+      return Effect.ensuring(
+        work,
+        Effect.sync(() => {
+          this.busy--;
+          this.activity();
+        })
+      );
+    });
   }
 
   /**
@@ -372,8 +395,8 @@ export class Document {
   }
 
   /** Opens the document if it isn't (a tab's message after a sleep): null if there's no such document. */
-  reopen(): Promise<Opened | null> {
-    return this.room();
+  reopen(): Effect.Effect<Opened | null, StoreError> {
+    return io(() => this.room());
   }
 
   /**
@@ -382,25 +405,35 @@ export class Document {
    * someone edits it, it's deleted at `expires` (the delete_docs_after_hours setting
    * after it's made, or sooner when local development asks, to test it).
    */
-  async create(owner: string, id: string, files: Record<string, FileData>, index: string, opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }): Promise<boolean> {
-    if (await this.readInfo()) return false;
-    const encoder = new TextEncoder();
-    // A blob (a copy's file that is one) goes by its ref.
-    const entries = Object.entries(files).map(([path, data]) => isBlobRef(data) ? [REF + path, data] as const : [FILE + path, typeof data == "string" ? encoder.encode(data) : data] as const);
-    for (let i = 0; i < entries.length; i += 128) await this.storage.put(Object.fromEntries(entries.slice(i, i + 128)));
-    // A project if asked, or if its files have more than one page; else a document.
-    const kind = opts.kind ?? kindOf(Object.keys(files));
-    const info: DocumentInfo = { id, owner: owner.toLowerCase(), index, created: Date.now(), kind, ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
-    await this.saveInfo(info);
-    if (!info.test && opts.expires != null) await this.storage.setAlarm(opts.expires);
-    // Its first version: the files it starts from.
-    const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
-    // Copied as it is: the blobs it has were checked already, and its first open copies what's in the object to the blob store.
-    if (this.deps.blobs && !Object.values(files).some((d) => d instanceof Uint8Array)) await this.storage.put(COPIED, { at: Date.now() });
-    await Effect.runPromise(this.versions.cut(first, index, [info.owner], "First version"));
-    // Who may open it, from the start: its first viewer needn't wait for the directory.
-    await this.access.readPermissions(id).catch((e) => this.deps.log(`couldn't read ${id}'s permissions: ${e}`));
-    return true;
+  create(
+    owner: string,
+    id: string,
+    files: Record<string, FileData>,
+    index: string,
+    opts: { test?: boolean; expires: number | null; modified?: number; kind?: DocKind }
+  ): Effect.Effect<boolean, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (yield* io(() => self.readInfo())) return false;
+      const encoder = new TextEncoder();
+      // A blob (a copy's file that is one) goes by its ref.
+      const entries = Object.entries(files).map(([path, data]) => isBlobRef(data) ? [REF + path, data] as const : [FILE + path, typeof data == "string" ? encoder.encode(data) : data] as const);
+      for (let i = 0; i < entries.length; i += 128) yield* io(() => self.storage.put(Object.fromEntries(entries.slice(i, i + 128))));
+      // A project if asked, or if its files have more than one page; else a document.
+      const kind = opts.kind ?? kindOf(Object.keys(files));
+      const info: DocumentInfo = { id, owner: owner.toLowerCase(), index, created: Date.now(), kind, ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
+      yield* io(() => self.saveInfo(info));
+      if (!info.test && opts.expires != null) yield* io(() => self.storage.setAlarm(opts.expires!));
+      // Its first version: the files it starts from.
+      const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
+      // Copied as it is: the blobs it has were checked already, and its first open copies what's in the object to the blob store.
+      const copied = self.deps.blobs && !Object.values(files).some((d) => d instanceof Uint8Array);
+      if (copied) yield* io(() => self.storage.put(COPIED, { at: Date.now() }));
+      yield* self.versions.cut(first, index, [info.owner], "First version");
+      // Who may open it, from the start: its first viewer needn't wait for the directory.
+      yield* Effect.promise(() => self.access.readPermissions(id).catch((e) => self.deps.log(`couldn't read ${id}'s permissions: ${e}`)));
+      return true;
+    });
   }
 
   /**
@@ -410,11 +443,13 @@ export class Document {
    * server connects to /api/mirror to reach them); it never expires, and
    * deleting it leaves them as they are.
    */
-  async link(owner: string, id: string, index: string, disk: OnDisk): Promise<NamedRow> {
-    const info = await this.readInfo();
-    await this.saveInfo(info ? { ...info, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
-    await this.storage.deleteAlarm();
-    return (await this.addRow())!;
+  link(owner: string, id: string, index: string, disk: OnDisk): Effect.Effect<NamedRow, StoreError> {
+    return io(async () => {
+      const info = await this.readInfo();
+      await this.saveInfo(info ? { ...info, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
+      await this.storage.deleteAlarm();
+      return (await this.addRow())!;
+    });
   }
 
   /**
@@ -426,16 +461,25 @@ export class Document {
    * files. Says what it did with each. `by`: who the edits are by, as a
    * version records it ("ada", "ada, via a shared agent (CI)": byLine).
    */
-  async publish(files: Record<string, FileData>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
-    return this.hold(async () => {
-      const opened = await this.room();
-      if (!opened) throw new Error("There's no such document.");
-      this.publisher = by ?? null;
-      try { return await this.publishNow(opened, files, remove); } finally { this.publisher = null; }
-    });
+  publish(files: Record<string, FileData>, remove: string[], by?: string): Effect.Effect<Published, StoreError | NoSuchDocument> {
+    const self = this;
+    return this.hold(
+      Effect.gen(function* () {
+        const opened = yield* io(() => self.room());
+        if (!opened) return yield* new NoSuchDocument({ message: "There's no such document." });
+        self.publisher = by ?? null;
+        return yield* io(() => self.publishNow(opened, files, remove)).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              self.publisher = null;
+            })
+          )
+        );
+      })
+    );
   }
 
-  private async publishNow(opened: Opened, files: Record<string, FileData>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
+  private async publishNow(opened: Opened, files: Record<string, FileData>, remove: string[]): Promise<Published> {
     const info = (await this.readInfo())!;
     const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -486,23 +530,35 @@ export class Document {
    * a project may have more pages, a document one. The tree's operation checks a project has one page before it
    * becomes a document. Kept here, where the rule is checked, and in its row, which the documents list reads.
    */
-  async setKind(kind: DocKind): Promise<void> {
-    const info = await this.readInfo();
-    if (!info || info.kind == kind) return;
-    await this.saveInfo({ ...info, kind });
-    await this.directory.setKind(info.id, kind);
+  setKind(kind: DocKind): Effect.Effect<void, StoreError> {
+    return io(async () => {
+      const info = await this.readInfo();
+      if (!info || info.kind == kind) return;
+      await this.saveInfo({ ...info, kind });
+      await this.directory.setKind(info.id, kind);
+    });
   }
 
   /** Every file the document holds (the room's view: text files and others). */
-  async paths(): Promise<string[]> {
-    const opened = await this.room();
-    if (!opened) { this.open = null; return []; }
-    return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
+  paths(): Effect.Effect<string[], StoreError> {
+    return Effect.map(
+      io(() => this.room()),
+      (opened) => {
+        if (!opened) {
+          this.open = null;
+          return [];
+        }
+        return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
+      }
+    );
   }
 
   /** The document's page, or null if there's no such document. */
-  async index(): Promise<string | null> {
-    return (await this.readInfo())?.index ?? null;
+  index(): Effect.Effect<string | null, StoreError> {
+    return Effect.map(
+      io(() => this.readInfo()),
+      (info) => info?.index ?? null
+    );
   }
 
   /**
@@ -510,22 +566,30 @@ export class Document {
    * latest edits are in it), and its page: what a copy of it starts from.
    * Null if there's no such document.
    */
-  async snapshot(): Promise<{ index: string; files: Record<string, FileData> } | null> {
-    const info = await this.readInfo();
-    const opened = info && await this.room();
-    if (!info || !opened) { if (!opened) this.open = null; return null; }
-    // Text as text, a blob as its ref.
-    const files: Record<string, FileData> = {};
-    for (const [path, data] of await opened.entries()) files[path] = data instanceof Uint8Array && opened.room.text(path) != null ? opened.room.text(path)! : data;
-    return { index: info.index, files };
+  snapshot(): Effect.Effect<{ index: string; files: Record<string, FileData> } | null, StoreError> {
+    return io(async () => {
+      const info = await this.readInfo();
+      const opened = info && (await this.room());
+      if (!info || !opened) {
+        if (!opened) this.open = null;
+        return null;
+      }
+      // Text as text, a blob as its ref.
+      const files: Record<string, FileData> = {};
+      for (const [path, data] of await opened.entries())
+        files[path] = data instanceof Uint8Array && opened.room.text(path) != null ? opened.room.text(path)! : data;
+      return { index: info.index, files };
+    });
   }
 
   /** Deletes the document (the app has asked the directory who may): everyone on it is disconnected. */
-  async delete(): Promise<boolean> {
-    const info = await this.readInfo();
-    if (!info) return false;
-    await this.destroy(info);
-    return true;
+  delete(): Effect.Effect<boolean, StoreError> {
+    return io(async () => {
+      const info = await this.readInfo();
+      if (!info) return false;
+      await this.destroy(info);
+      return true;
+    });
   }
 
   /**
@@ -555,22 +619,26 @@ export class Document {
    * One open somewhere waits an hour more, so it isn't pulled from under
    * someone about to type. If delete_docs_after_hours is now never, it stays.
    */
-  async wake(): Promise<void> {
-    const info = await this.readInfo();
-    if (!info) return;
-    const next = afterUnedited(info, this.deps.tabs.count() > 0, Date.now());
-    if (next == "keep") return;
-    if ((await this.directory.config.get("delete_docs_after_hours")) == null) {
-      await this.directory.setExpires(info.id, null).catch((e) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`));
-      return;
-    }
-    if (next != "delete") {
-      await this.storage.setAlarm(next);
-      await this.directory.setExpires(info.id, next).catch((e) => this.deps.log(`couldn't update ${info.id}'s row: ${e}`));
-      return;
-    }
-    this.deps.log(`deleting ${info.owner}/${info.id}: never edited`);
-    await this.destroy(info);
+  wake(): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const info = yield* io(() => self.readInfo());
+      if (!info) return;
+      const next = afterUnedited(info, self.deps.tabs.count() > 0, Date.now());
+      if (next == "keep") return;
+      const forgot = (e: unknown) => self.deps.log(`couldn't update ${info.id}'s row: ${e}`);
+      if ((yield* io(() => self.directory.config.get("delete_docs_after_hours"))) == null) {
+        yield* Effect.promise(() => self.directory.setExpires(info.id, null).catch(forgot));
+        return;
+      }
+      if (next != "delete") {
+        yield* io(() => self.storage.setAlarm(next));
+        yield* Effect.promise(() => self.directory.setExpires(info.id, next).catch(forgot));
+        return;
+      }
+      self.deps.log(`deleting ${info.owner}/${info.id}: never edited`);
+      yield* io(() => self.destroy(info));
+    });
   }
 
   private async destroy(info: DocumentInfo): Promise<void> {
@@ -657,35 +725,50 @@ export class Document {
   }
 
   /** Where its files are, for a document on disk (local development); null for any other. */
-  async diskPath(): Promise<string | null> {
-    return (await this.readInfo())?.disk?.path ?? null;
+  diskPath(): Effect.Effect<string | null, StoreError> {
+    return Effect.map(
+      io(() => this.readInfo()),
+      (info) => info?.disk?.path ?? null
+    );
   }
 
   /** Whether it is a document on disk. */
-  async onDisk(): Promise<boolean> {
-    return !!(await this.readInfo())?.disk;
+  onDisk(): Effect.Effect<boolean, StoreError> {
+    return Effect.map(
+      io(() => this.readInfo()),
+      (info) => !!info?.disk
+    );
   }
 
   /** Whether the document exists. */
-  async exists(): Promise<boolean> {
-    return (await this.readInfo()) != null;
+  exists(): Effect.Effect<boolean, StoreError> {
+    return Effect.map(
+      io(() => this.readInfo()),
+      (info) => info != null
+    );
   }
 
   /** A file on disk changed (the dev server says which): the room takes it. */
-  async diskChanged(path: string): Promise<void> {
-    const o = await this.open;
-    if (o) await Effect.runPromise(o.room.fileChanged(path));
+  diskChanged(path: string): Effect.Effect<void, StoreError> {
+    return Effect.flatMap(
+      io(async () => this.open && (await this.open)),
+      (o) => (o ? o.room.fileChanged(path) : Effect.void)
+    );
   }
 
   /** The dev server is back: every file there, and every one the room holds, is looked at again. */
-  async diskConnected(): Promise<void> {
-    await (await this.open)?.catchUp();
+  diskConnected(): Effect.Effect<void, StoreError> {
+    return io(async () => {
+      await (await this.open)?.catchUp();
+    });
   }
 
   /** Writes what the room holds (before the dev server goes). */
-  async flush(): Promise<void> {
-    const o = await this.open;
-    if (o) await Effect.runPromise(o.room.flush);
+  flush(): Effect.Effect<void, StoreError> {
+    return Effect.flatMap(
+      io(async () => this.open && (await this.open)),
+      (o) => (o ? o.room.flush : Effect.void)
+    );
   }
 
   /**
@@ -694,12 +777,18 @@ export class Document {
    * one RPC carries. Only reads: the room isn't opened, nothing is written,
    * the directory isn't touched. Null if there's no document.
    */
-  async exportStorage(id: string, page: Page): Promise<DocSnapshot | null> {
-    if (page.after == null && (await this.storage.get(INFO)) == null) return null;
-    // An open room writes its files first, so the copy has them as they are (else it writes them as it opens there).
-    if (page.after == null) await this.flush().catch(() => {});
-    const storage = this.storage;
-    return exportPage(id, page, await storage.getAlarm(), (after, limit) => storage.list(after == null ? { limit } : { startAfter: after, limit }));
+  exportStorage(id: string, page: Page): Effect.Effect<DocSnapshot | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const storage = self.storage;
+      if (page.after == null && (yield* io(() => storage.get(INFO))) == null) return null;
+      // An open room writes its files first, so the copy has them as they are (else it writes them as it opens there).
+      if (page.after == null) yield* Effect.ignore(self.flush());
+      const alarm = yield* io(() => storage.getAlarm());
+      return yield* io(() =>
+        exportPage(id, page, alarm, (after, limit) => storage.list(after == null ? { limit } : { startAfter: after, limit }))
+      );
+    });
   }
 
   /**
@@ -709,25 +798,30 @@ export class Document {
    * closes), then its storage is emptied and the snapshot written in. A
    * later part (`append`) is only written in.
    */
-  async importStorage(snap: DocSnapshot): Promise<void> {
-    await this.closeForSnapshot();
-    if (!snap.append) {
-      await this.storage.deleteAlarm();
-      await this.storage.deleteAll();
-    }
-    const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
-    const keys = Object.keys(entries);
-    for (let i = 0; i < keys.length; i += 100) await this.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
-    if (snap.alarm != null) await this.storage.setAlarm(snap.alarm);
-    this.forgetStorage();
+  importStorage(snap: DocSnapshot): Effect.Effect<void, StoreError> {
+    return io(async () => {
+      await this.closeForSnapshot();
+      if (!snap.append) {
+        await this.storage.deleteAlarm();
+        await this.storage.deleteAll();
+      }
+      const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
+      const keys = Object.keys(entries);
+      for (let i = 0; i < keys.length; i += 100)
+        await this.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
+      if (snap.alarm != null) await this.storage.setAlarm(snap.alarm);
+      this.forgetStorage();
+    });
   }
 
   /** Empties it (staging only: a document production no longer has). The directory row is already gone with the old database. */
-  async wipeStorage(): Promise<void> {
-    await this.closeForSnapshot();
-    await this.storage.deleteAlarm();
-    await this.storage.deleteAll();
-    this.forgetStorage();
+  wipeStorage(): Effect.Effect<void, StoreError> {
+    return io(async () => {
+      await this.closeForSnapshot();
+      await this.storage.deleteAlarm();
+      await this.storage.deleteAll();
+      this.forgetStorage();
+    });
   }
 
   private async closeForSnapshot(): Promise<void> {
@@ -743,26 +837,31 @@ export class Document {
    * A request inside the document (not a WebSocket: the adapter takes those
    * after `admit`). Viewers see the files as they are now, at /doc/.
    */
-  async handle(request: Request): Promise<Response> {
-    const allowed = await this.authorize(request);
-    if (allowed instanceof Response) return allowed;
-    request = allowed;
-    return this.serve(request);
+  handle(request: Request): Effect.Effect<Response, StoreError> {
+    return Effect.flatMap(this.authorize(request), (allowed) =>
+      allowed instanceof Response ? Effect.succeed(allowed) : io(() => this.serve(allowed))
+    );
   }
 
   private async serve(request: Request): Promise<Response> {
-    if (request.method == "PUT" && new URL(request.url).pathname.startsWith("/api/files/")) return this.hold(() => this.upload(request));
+    if (request.method == "PUT" && new URL(request.url).pathname.startsWith("/api/files/"))
+      return Effect.runPromise(this.hold(io(() => this.upload(request))));
     // Someone viewing it: its files straight from storage while the room isn't open, without opening it
     // (once a room closing a moment ago has written them).
     await this.closing;
     const stored = this.opened || this.open ? null : await this.storedFile(request);
     if (stored) return stored;
-    return this.hold(async () => {
-      const opened = await this.admit(request);
-      // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
-      if (!opened) return new Response("No such document", { status: 404 });
-      return opened.handler(request);
-    });
+    const self = this;
+    return Effect.runPromise(
+      this.hold(
+        Effect.gen(function* () {
+          const opened = yield* self.admit(request);
+          // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
+          if (!opened) return new Response("No such document", { status: 404 });
+          return yield* io(() => opened.handler(request));
+        })
+      )
+    );
   }
 
   /**
@@ -770,11 +869,19 @@ export class Document {
    * person may do; null if there's no such document. The adapter calls it
    * before it accepts a WebSocket.
    */
-  async admit(request: Request): Promise<Opened | null> {
-    const opened = await this.room();
-    if (!opened) { this.open = null; return null; }
-    if (request.headers.has("x-erga-person")) this.editors.set(personOf(request.headers).id, request.headers.get("x-erga-access") == "edit");
-    return opened;
+  admit(request: Request): Effect.Effect<Opened | null, StoreError> {
+    return Effect.map(
+      io(() => this.room()),
+      (opened) => {
+        if (!opened) {
+          this.open = null;
+          return null;
+        }
+        if (request.headers.has("x-erga-person"))
+          this.editors.set(personOf(request.headers).id, request.headers.get("x-erga-access") == "edit");
+        return opened;
+      }
+    );
   }
 
   /**
@@ -782,16 +889,22 @@ export class Document {
    * asks: cloudflare/objects/person-agent.ts). Until the person comes back,
    * what they may do is what the directory says now.
    */
-  async resumeAgent(person: Person): Promise<void> {
-    const info = await this.readInfo();
-    const opened = info && await this.room();
-    if (!info || !opened) { if (!opened) this.open = null; return; }
-    if (!this.editors.has(person.id)) {
-      const test = person.id.startsWith("test-");
-      const role = await this.roleOf(test ? { login: person.id, test, by: info.owner } : { login: person.id });
-      this.editors.set(person.id, role == "owner" || role == "editor");
-    }
-    await opened.resumeAgent(person);
+  resumeAgent(person: Person): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const info = yield* io(() => self.readInfo());
+      const opened = info && (yield* io(() => self.room()));
+      if (!info || !opened) {
+        if (!opened) self.open = null;
+        return;
+      }
+      if (!self.editors.has(person.id)) {
+        const test = person.id.startsWith("test-");
+        const role = yield* self.roleOf(test ? { login: person.id, test, by: info.owner } : { login: person.id });
+        self.editors.set(person.id, role == "owner" || role == "editor");
+      }
+      yield* io(() => opened.resumeAgent(person));
+    });
   }
 
   /**
@@ -868,18 +981,18 @@ export class Document {
   // ---------------------------------------------------------------- who may, and what viewers see
 
   /** A request from the app, decided here (access.ts): it goes on with x-erga-access; a Response refuses it. */
-  authorize(request: Request): Promise<Request | Response> {
-    return this.access.authorize(request);
+  authorize(request: Request): Effect.Effect<Request | Response, StoreError> {
+    return io(() => this.access.authorize(request));
   }
 
   /** What `who` may do with the document, as a role (null: nothing), from its copy of its permissions. */
-  roleOf(who: Asker): Promise<Role | null> {
-    return this.access.roleOf(who);
+  roleOf(who: Asker): Effect.Effect<Role | null, StoreError> {
+    return io(() => this.access.roleOf(who));
   }
 
   /** The directory says who may do what with this document now (every change is pushed here). */
-  setPermissions(list: readonly { login: string; role: Role }[], at?: number): Promise<void> {
-    return this.access.setPermissions(list, at);
+  setPermissions(list: readonly { login: string; role: Role }[], at?: number): Effect.Effect<void, StoreError> {
+    return io(() => this.access.setPermissions(list, at));
   }
 
   /**
@@ -888,13 +1001,16 @@ export class Document {
    * document's; "" its own page) in what viewers see (view.ts), that version, and the document's name (the page itself comes
    * from the document's pages origin: server/documents/pages-origin.ts). Null if there's no such document.
    */
-  async view(who: Asker | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
-    const info = await this.readInfo();
-    if (!info) return null;
-    const role = who ? await this.roleOf(who) : null;
-    const name = info.name ?? null;
-    if (!role && !opts.anyone) return { role: null, name, test: !!info.test };
-    return this.hold(() => this.views.answer(info, role, name, opts.page));
+  view(who: Asker | null, opts: { page: string; anyone?: boolean }): Effect.Effect<ViewAnswer | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const info = yield* io(() => self.readInfo());
+      if (!info) return null;
+      const role = who ? yield* self.roleOf(who) : null;
+      const name = info.name ?? null;
+      if (!role && !opts.anyone) return { role: null, name, test: !!info.test };
+      return yield* self.hold(io(() => self.views.answer(info, role, name, opts.page)));
+    });
   }
 
   // ---------------------------------------------------------------- versions
@@ -1039,29 +1155,38 @@ export class Document {
   }
 
   /** Its versions, newest first (`limit`, before version `before`), and the current one. Null if there's no such document. */
-  async versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> {
-    const r = await this.ready();
-    if (!r) return null;
-    const before = opts.before != null ? versionNumber(opts.before) : null;
-    const { versions, total } = await Effect.runPromise(this.versions.list({ before, limit: opts.limit }));
-    const latest = (await Effect.runPromise(this.versions.latest))!;
-    return { current: publicVersion(latest), versions: versions.map(publicVersion), total, pending: this.pending.dirty };
+  versionsState(opts: { before?: string | number | null; limit?: number } = {}): Effect.Effect<VersionsState | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const r = yield* io(() => self.ready());
+      if (!r) return null;
+      const before = opts.before != null ? versionNumber(opts.before) : null;
+      const { versions, total } = yield* self.versions.list({ before, limit: opts.limit });
+      const latest = (yield* self.versions.latest)!;
+      return { current: publicVersion(latest), versions: versions.map(publicVersion), total, pending: self.pending.dirty };
+    });
   }
 
   /** One version (by id or number), with its files' paths; null if there's none. */
-  async version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null> {
-    const n = versionNumber(ref);
-    if (!(await this.ready()) || n == null) return null;
-    const v = await Effect.runPromise(this.versions.get(n));
-    return v && { ...publicVersion(v), index: v.index, files: Object.keys(v.files) };
+  version(ref: string | number): Effect.Effect<(Version & { files: string[]; index: string }) | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const n = versionNumber(ref);
+      if (!(yield* io(() => self.ready())) || n == null) return null;
+      const v = yield* self.versions.get(n);
+      return v && { ...publicVersion(v), index: v.index, files: Object.keys(v.files) };
+    });
   }
 
   /** One file of a version; null if there's no such version or file. */
-  async versionFile(ref: string | number, path: string): Promise<Uint8Array | null> {
-    const n = versionNumber(ref);
-    if (!(await this.ready()) || n == null) return null;
-    const v = await Effect.runPromise(this.versions.get(n));
-    return v ? Effect.runPromise(this.versions.file(v, path)) : null;
+  versionFile(ref: string | number, path: string): Effect.Effect<Uint8Array | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const n = versionNumber(ref);
+      if (!(yield* io(() => self.ready())) || n == null) return null;
+      const v = yield* self.versions.get(n);
+      return v ? yield* self.versions.file(v, path) : null;
+    });
   }
 
   /**
@@ -1073,58 +1198,77 @@ export class Document {
    * Edits not yet in a version become one first, so nothing is lost.
    * Viewers then see it.
    */
-  async restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> {
-    const r = await this.ready();
-    if (!r) return { ok: false, status: 404, error: "There's no such document." };
-    const n = versionNumber(ref);
-    const v = n != null ? await Effect.runPromise(this.versions.get(n)) : null;
-    if (!v)
+  restore(ref: string | number, by: string, path?: string | null): Effect.Effect<RestoreResult, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const r = yield* io(() => self.ready());
+      if (!r) return { ok: false, status: 404, error: "There's no such document." } as const;
+      const n = versionNumber(ref);
+      const v = n != null ? yield* self.versions.get(n) : null;
+      if (!v)
+        return {
+          ok: false,
+          status: 404,
+          error: `There's no version ${ref} of this document: its versions are v1 to v${yield* self.versions.head}.`,
+        } as const;
+      if (path != null) {
+        path = path.replace(/^\.?\/+/, "");
+        if (!(path in v.files))
+          return {
+            ok: false,
+            status: 404,
+            error: `Version ${v.n} has no file ${path}: its files are ${Object.keys(v.files).sort().join(", ")}.`,
+          } as const;
+      }
+      yield* io(() => self.cutSoon("restore"));
+      const files = yield* self.versions.entries(v);
+      // The document went while it was restored: as if it had never been there.
+      const gone = (put: Record<string, FileData>, remove: string[]): Published => ({
+        written: [],
+        removed: [],
+        refused: [...Object.keys(put), ...remove].map((p) => ({ path: p, why: "there's no such document" })),
+      });
+      const publish = (put: Record<string, FileData>, remove: string[]) =>
+        Effect.catchTag(self.publish(put, remove, by), "NoSuchDocument", () => Effect.succeed(gone(put, remove)));
+      if (path != null) {
+        const out = yield* publish({ [path]: files.get(path)! }, []);
+        if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` } as const;
+        const made = yield* io(() => self.cutSoon("restored", { authors: [by], description: `Restored ${path} from version ${v.n}` }));
+        return { ok: true, current: publicVersion(made ?? (yield* self.versions.latest)!), from: v.id, files: [path] } as const;
+      }
+      const room = r.opened.room;
+      // Folders it didn't have go (unless something of it is inside); then its files over the current ones; then its folders.
+      const keep = [...files.keys(), ...(v.folders ?? [])];
+      for (const d of room.folderPaths())
+        if (!keep.some((p) => p == d || p.startsWith(`${d}/`)) && room.exists(d) == "folder") yield* Effect.ignore(room.remove(d));
+      const now = new Set((yield* io(() => r.opened.current())).keys());
+      const out = yield* publish(
+        Object.fromEntries(files),
+        [...now].filter((p) => !files.has(p))
+      );
+      for (const d of v.folders ?? []) if (room.exists(d) != "folder") yield* Effect.ignore(room.mkdir(d));
+      if (out.refused.length) self.deps.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
+      const made = yield* io(() => self.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` }));
       return {
-        ok: false,
-        status: 404,
-        error: `There's no version ${ref} of this document: its versions are v1 to v${await Effect.runPromise(this.versions.head)}.`,
-      };
-    if (path != null) {
-      path = path.replace(/^\.?\/+/, "");
-      if (!(path in v.files)) return { ok: false, status: 404, error: `Version ${v.n} has no file ${path}: its files are ${Object.keys(v.files).sort().join(", ")}.` };
-    }
-    await this.cutSoon("restore");
-    const files = await Effect.runPromise(this.versions.entries(v));
-    if (path != null) {
-      const out = await this.publish({ [path]: files.get(path)! }, [], by);
-      if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` };
-      const made = await this.cutSoon("restored", { authors: [by], description: `Restored ${path} from version ${v.n}` });
-      return { ok: true, current: publicVersion(made ?? (await Effect.runPromise(this.versions.latest))!), from: v.id, files: [path] };
-    }
-    const room = r.opened.room;
-    // Folders it didn't have go (unless something of it is inside); then its files over the current ones; then its folders.
-    const keep = [...files.keys(), ...(v.folders ?? [])];
-    for (const d of room.folderPaths()) if (!keep.some((p) => p == d || p.startsWith(`${d}/`)) && room.exists(d) == "folder") await Effect.runPromise(room.remove(d)).catch(() => {});
-    const now = new Set((await r.opened.current()).keys());
-    const out = await this.publish(Object.fromEntries(files), [...now].filter((p) => !files.has(p)), by);
-    for (const d of v.folders ?? []) if (room.exists(d) != "folder") await Effect.runPromise(room.mkdir(d)).catch(() => {});
-    if (out.refused.length) this.deps.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
-    const made = await this.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` });
-    return {
-      ok: true,
-      current: publicVersion(made ?? (await Effect.runPromise(this.versions.latest))!),
-      from: v.id,
-      files: [...files.keys()].sort(),
-    };
+        ok: true,
+        current: publicVersion(made ?? (yield* self.versions.latest)!),
+        from: v.id,
+        files: [...files.keys()].sort(),
+      } as const;
+    });
   }
 
   /**
    * The document as it is now (up to the keystroke), with its current
    * version: what the homepage and the document's site deploy.
    */
-  async currentFiles(): Promise<{ version: Version; index: string; files: Map<string, Uint8Array> } | null> {
-    const r = await this.ready();
-    if (!r) return null;
-    return {
-      version: publicVersion((await Effect.runPromise(this.versions.latest))!),
-      index: r.info.index,
-      files: await r.opened.current(),
-    };
+  currentFiles(): Effect.Effect<{ version: Version; index: string; files: Map<string, Uint8Array> } | null, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const r = yield* io(() => self.ready());
+      if (!r) return null;
+      return { version: publicVersion((yield* self.versions.latest)!), index: r.info.index, files: yield* io(() => r.opened.current()) };
+    });
   }
 
   // ---------------------------------------------------------------- files arriving whole, and blobs
@@ -1252,7 +1396,7 @@ export class Document {
       try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); } catch { /* not UTF-8: a blob */ }
     }
     if (text != null || !blobs) {
-      const r = await this.publish({ [path]: text ?? bytes }, [], by);
+      const r = await Effect.runPromise(this.publish({ [path]: text ?? bytes }, [], by));
       if (r.refused.length) return { ok: false, status: 409, error: `Couldn't add ${path}: ${r.refused[0].why}.` };
       return { ok: true, kind: text != null ? "text" : "file" };
     }
@@ -1265,17 +1409,24 @@ export class Document {
 
   /** An agent's write of bytes (document/host.ts, putFile): as an upload, within its limits; throws why not. */
   private async putFile(path: string, bytes: Uint8Array, by: string): Promise<{ kind: "text" | "file"; replaced: boolean }> {
-    return this.hold(async () => {
-      const opened = await this.room();
-      if (!opened) { this.open = null; throw new Error("There's no such document."); }
-      const clean = cleanRel(path);
-      if (!clean) throw new Error(`${path} isn't a path a file can have here (no "..", and no part that starts with a dot).`);
-      const check = await this.mayAdd(opened, clean, bytes.length);
-      if (!check.ok) throw new Error(check.error);
-      const r = await this.addBytes(opened, clean, bytes, by);
-      if (!r.ok) throw new Error(r.error);
-      return { kind: r.kind, replaced: check.replaced };
-    });
+    return Effect.runPromise(
+      this.hold(
+        io(async () => {
+          const opened = await this.room();
+          if (!opened) {
+            this.open = null;
+            throw new Error("There's no such document.");
+          }
+          const clean = cleanRel(path);
+          if (!clean) throw new Error(`${path} isn't a path a file can have here (no "..", and no part that starts with a dot).`);
+          const check = await this.mayAdd(opened, clean, bytes.length);
+          if (!check.ok) throw new Error(check.error);
+          const r = await this.addBytes(opened, clean, bytes, by);
+          if (!r.ok) throw new Error(r.error);
+          return { kind: r.kind, replaced: check.replaced };
+        })
+      )
+    );
   }
 
   /** How many bytes the project's files have together: each text as it is, each blob as its ref says (one of storage's lists). */
@@ -1377,16 +1528,16 @@ export class Document {
       // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
       turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await Effect.runPromise(this.versions.latest)))?.id ?? null),
       versions: {
-        state: (opts) => this.versionsState(opts).then((s) => s!),
-        version: (ref) => this.version(ref),
-        file: (ref, path) => this.versionFile(ref, path),
+        state: (opts) => Effect.runPromise(this.versionsState(opts)).then((s) => s!),
+        version: (ref) => Effect.runPromise(this.version(ref)),
+        file: (ref, path) => Effect.runPromise(this.versionFile(ref, path)),
         files: async (ref) => {
           const n = versionNumber(ref);
           const v = n != null && (await this.ready()) ? await Effect.runPromise(this.versions.get(n)) : null;
           return v ? Effect.runPromise(this.versions.files(v)) : null;
         },
         current: async () => (await this.ready())?.opened.current() ?? new Map(),
-        restore: (ref, by, path) => this.restore(ref, by, path),
+        restore: (ref, by, path) => Effect.runPromise(this.restore(ref, by, path)),
       },
       // A new page in its file tree starts as a new document does.
       newPage: this.deps.pageTemplate,
@@ -1395,7 +1546,7 @@ export class Document {
       putFile: (path, bytes, by) => this.putFile(path, bytes, by),
       // One from before kinds is decided (below) before anyone reaches it.
       kind: () => this.info?.kind ?? "project",
-      setKind: (kind) => this.setKind(kind),
+      setKind: (kind) => Effect.runPromise(this.setKind(kind)),
     });
     // From before kinds: a project if it has more than one page, else a document. Kept, and told to the directory.
     if (!info.kind && !info.disk?.only) {

@@ -22,7 +22,10 @@
 // Platform-neutral on purpose (sockets are anything with send and close), so
 // the tests can put a document to sleep and wake it.
 
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import type { Document, Opened, Person } from "./document.ts";
+import type { StoreError } from "./room.ts";
 import { isAwareness } from "./room.ts";
 import { PING, PONG } from "../shared/room-socket.ts";
 
@@ -31,6 +34,9 @@ import { PING, PONG } from "../shared/room-socket.ts";
  * whether it hears its person's events (and the document's details as it joins: Document.joinRoom).
  */
 export type Tab = { id: string; readOnly: boolean; epoch: string | null; person: Person; events: boolean; watch?: boolean };
+
+/** A socket call that may find it closed already: nothing to do then. */
+const quietly = (f: () => void) => void Result.try(f);
 
 export interface TabSocket {
   send(message: string | Uint8Array): void;
@@ -55,7 +61,7 @@ export class Tabs<S extends TabSocket> {
   /** A new socket, or one waiting, joins the open document; false if it holds another epoch's history (it's refused). */
   join(socket: S, opened: Opened, tab = this.o.tabOf(socket)): boolean {
     if (!tab || this.joined.has(tab.id)) return true;
-    const send = (m: string | Uint8Array) => { try { socket.send(m); } catch { /* already closed */ } };
+    const send = (m: string | Uint8Array) => quietly(() => socket.send(m));
     const joined = this.o.document().joinRoom(opened, { epoch: tab.epoch, readOnly: tab.readOnly, send, events: tab.events ? tab.person : null, watch: tab.watch });
     if (!joined) return false;
     if (tab.watch) { this.joined.set(tab.id, { receive: joined.receive, leave: joined.left }); return true; }
@@ -68,7 +74,7 @@ export class Tabs<S extends TabSocket> {
   /** The document opened (again): every socket joins it; one holding another history is closed (the tab reloads). */
   attachAll(opened: Opened): void {
     for (const socket of this.o.sockets()) {
-      if (!this.join(socket, opened)) { try { socket.close(4409, "stale epoch"); } catch { /* gone */ } }
+      if (!this.join(socket, opened)) quietly(() => socket.close(4409, "stale epoch"));
     }
   }
 
@@ -78,27 +84,33 @@ export class Tabs<S extends TabSocket> {
   }
 
   /** A message from a tab: binary, the room's; text, only PING (where nothing answered it for us). */
-  async message(socket: S, data: Uint8Array | string): Promise<void> {
-    const tab = this.o.tabOf(socket);
-    if (!tab) return;
-    if (typeof data == "string") { if (data == PING) { try { socket.send(PONG); } catch { /* gone */ } } return; }
-    // A files view only listens.
-    if (tab.watch) return;
-    const document = this.o.document();
-    let joined = this.joined.get(tab.id);
-    if (!joined) {
-      // Presence while the document is closed: to the other tabs, and nothing opens.
-      if (isAwareness(data) && !document.isOpen()) return this.relay(socket, tab.id, data);
-      const opened = await document.reopen();
-      if (!opened) { try { socket.close(4404, "document deleted"); } catch { /* gone */ } return; }
-      // Joined as it opened (attachAll); one refused there is closed.
-      joined = this.joined.get(tab.id);
-      if (!joined && !this.join(socket, opened)) { try { socket.close(4409, "stale epoch"); } catch { /* gone */ } return; }
-      joined = this.joined.get(tab.id);
-    }
-    if (!joined) return;
-    if (!joined.receive(data)) { try { socket.close(4400, "malformed message"); } catch { /* gone */ } return; }
-    if (!isAwareness(data)) document.activity();
+  message(socket: S, data: Uint8Array | string): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const tab = self.o.tabOf(socket);
+      if (!tab) return;
+      if (typeof data == "string") {
+        if (data == PING) quietly(() => socket.send(PONG));
+        return;
+      }
+      // A files view only listens.
+      if (tab.watch) return;
+      const document = self.o.document();
+      let joined = self.joined.get(tab.id);
+      if (!joined) {
+        // Presence while the document is closed: to the other tabs, and nothing opens.
+        if (isAwareness(data) && !document.isOpen()) return self.relay(socket, tab.id, data);
+        const opened = yield* document.reopen();
+        if (!opened) return quietly(() => socket.close(4404, "document deleted"));
+        // Joined as it opened (attachAll); one refused there is closed.
+        joined = self.joined.get(tab.id);
+        if (!joined && !self.join(socket, opened)) return quietly(() => socket.close(4409, "stale epoch"));
+        joined = self.joined.get(tab.id);
+      }
+      if (!joined) return;
+      if (!joined.receive(data)) return quietly(() => socket.close(4400, "malformed message"));
+      if (!isAwareness(data)) document.activity();
+    });
   }
 
   /** A socket closed. */
@@ -115,7 +127,7 @@ export class Tabs<S extends TabSocket> {
     const document = this.o.document();
     if (document.isOpen()) return document.notify(msg);
     for (const socket of this.o.sockets()) {
-      if (this.o.tabOf(socket)?.events) { try { socket.send(JSON.stringify(msg)); } catch { /* gone */ } }
+      if (this.o.tabOf(socket)?.events) quietly(() => socket.send(JSON.stringify(msg)));
     }
   }
 
@@ -123,7 +135,7 @@ export class Tabs<S extends TabSocket> {
     for (const socket of this.o.sockets()) {
       if (socket === from) continue;
       const tab = this.o.tabOf(socket);
-      if (tab && tab.id != id) { try { socket.send(data); } catch { /* gone */ } }
+      if (tab && tab.id != id) quietly(() => socket.send(data));
     }
   }
 }
