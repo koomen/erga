@@ -1,7 +1,6 @@
 // The API keys an admin enters on /admin/api-keys: Anthropic's,
-// for the document agent, the admin's agent and version descriptions;
-// OpenAI's, for OpenAI's models; the GitHub mirror's token; and the
-// Cloudflare token a server deploys itself with. They are kept so:
+// for the document agent, the admin's agent and version descriptions. They
+// are kept so:
 //
 //   - Each key is encrypted with AES-GCM, a fresh IV each time, its name as
 //     the additional data, under a key derived from a deploy-time secret
@@ -15,7 +14,7 @@
 //   - Admins only (Users.mustAdmin); server/admin/routes.ts takes changes only from an
 //     admin, in a browser, with a same-origin request.
 //   - A server with no key stored uses the Worker secret of the same name
-//     (`withCredentials`), so a server deployed without this page still works.
+//     (agents/models.ts), so a server deployed without this page still works.
 //
 // Staging has a FACTORY_KEY of its own, so production's keys, copied into
 // staging's database, don't open there: on each new copy the deploy removes
@@ -40,21 +39,6 @@ export const CREDENTIALS = {
     prefixes: ["sk-ant-"],
     description: "The document agent, the admin's agent and the descriptions of versions call Anthropic's API with it.",
   },
-  openai: {
-    env: "OPENAI_API_KEY",
-    label: "OpenAI API key",
-    service: "OpenAI",
-    prefixes: ["sk-"],
-    description: "For OpenAI's models. Erga doesn't call OpenAI yet: a key set here is ready for when it does.",
-  },
-  cloudflare_deploy: {
-    env: "CLOUDFLARE_DEPLOY_TOKEN",
-    label: "Cloudflare deploy token",
-    service: "Cloudflare",
-    prefixes: [],
-    description:
-      "The server deploys itself with it when its branch moves. A Cloudflare API token: bun deploy/setup.ts makes one as narrow as Cloudflare allows.",
-  },
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 
 /**
@@ -69,7 +53,6 @@ export const DEPLOY_SECRETS = [
   { env: "FACTORY_KEY", service: "Erga", description: "Encrypts the keys on this page and the sign-in secrets.", why: "The keys on this page are encrypted with it." },
   { env: "GITHUB_CLIENT_SECRET", service: "GitHub", description: "Signs people in with GitHub (the OAuth app). The Authentication page (/admin/auth) shows whether it works, and can set another app's values over it.", why: "A wrong value stops every sign-in, the admin's too: the Authentication page checks values with GitHub before it uses them." },
   { env: "SNAPSHOT_TOKEN", service: "Erga", description: "Lets staging copy production's documents.", why: "Production and staging must have the same value." },
-  { env: "DEPLOY_HOOK_SECRET", service: "Erga", description: "Lets production and staging tell each other that a branch moved.", why: "Production and staging must have the same value." },
 ] as const;
 
 /** A deploy-time secret as an admin sees it: only whether the deploy has it. */
@@ -239,24 +222,3 @@ export class Credentials {
     return changeLogEntry(at, by, via, [{ key: CREDENTIALS[name].env, from: null, to: null, credential: what }]);
   }
 }
-
-/**
- * The Worker's bindings with the stored keys in place of the Worker secrets
- * of the same name: what the code that calls Anthropic or OpenAI reads its
- * key from. A key that isn't stored, or a database that doesn't answer,
- * leaves the Worker secret (if any) as it is.
- */
-export async function withCredentials<E extends object>(env: E, credentials: Credentials | null): Promise<E> {
-  if (!credentials) return env;
-  const out = { ...env } as Record<string, unknown>;
-  await Promise.all((Object.keys(CREDENTIALS) as CredentialName[]).map(async (name) => {
-    try {
-      const key = await credentials.value(name);
-      if (key) out[CREDENTIALS[name].env] = key;
-    } catch (e) {
-      console.log(`couldn't read the stored ${CREDENTIALS[name].label}, so the Worker secret stands: ${e instanceof Error ? e.message : e}`);
-    }
-  }));
-  return out as unknown as E;
-}
-

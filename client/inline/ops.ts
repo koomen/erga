@@ -1219,7 +1219,7 @@ export default function ops(): void {
   loadReleases();
   loadDomains();
   listen();
-  // Events don't tell everything: the other server's events can fail to come (no DEPLOY_HOOK_SECRET, or it doesn't
+  // Events don't tell everything: the other server's events can fail to come (it doesn't
   // answer), and a server that deploys itself cuts the stream and can miss its last change. So while
   // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
   setInterval(() => {

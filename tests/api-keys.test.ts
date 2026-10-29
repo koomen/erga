@@ -1,14 +1,13 @@
 // The API keys admins enter on /admin/api-keys, on an
 // in-memory SQLite database with the same migrations D1 gets: stored
 // encrypted, never answered back (only set, the last four characters, and who
-// set it when), in the change log without the value, admins only, and read by
-// the code that calls the providers before the Worker secret of the same name.
+// set it when), in the change log without the value, and admins only.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, expect, test } from "bun:test";
 import { adminRoutes } from "../server/admin/index.ts";
-import { checkKey, CredentialError, Credentials, Directory, NotAllowed, type Param, type Sql, withCredentials } from "../server/directory/index.ts";
+import { checkKey, CredentialError, Credentials, Directory, NotAllowed, type Param, type Sql } from "../server/directory/index.ts";
 import type { Platform, Session } from "../server/platform.ts";
 import { quietConsole } from "./helpers/quiet.ts";
 
@@ -17,8 +16,6 @@ quietConsole();
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const ANTHROPIC = "sk-ant-api03-" + "x".repeat(80) + "Ab12";
 const OPENAI = "sk-proj-" + "y".repeat(60) + "Zz90";
-const GITHUB = "github_pat_" + "g".repeat(70) + "Gh12";
-const CLOUDFLARE = "c".repeat(36) + "Cf34";
 
 function fresh(secret: string | null = "the factory key", fallback: string[] = []) {
   const db = new Database(":memory:", { strict: true });
@@ -60,17 +57,14 @@ test("a key is stored encrypted: the table and the change log never hold it; the
 
 test("a fresh IV each time; another secret (staging, with a copy of production's database) can't open it", async () => {
   const { db, sql, dir } = fresh();
-  await dir.credentials.set(ada, "openai", OPENAI);
+  await dir.credentials.set(ada, "anthropic", ANTHROPIC);
   const first = db.query("SELECT iv, data FROM credentials").get() as { iv: string; data: string };
-  await dir.credentials.set(ada, "openai", OPENAI);
+  await dir.credentials.set(ada, "anthropic", ANTHROPIC);
   const second = db.query("SELECT iv, data FROM credentials").get() as { iv: string; data: string };
   expect(second.iv).not.toBe(first.iv);
   expect(second.data).not.toBe(first.data);
   const elsewhere = new Credentials(sql, dir.users, "another key");
-  expect(await elsewhere.value("openai")).toBeNull();
-  // A row moved to another name doesn't open either: the name is bound into the ciphertext.
-  db.query("UPDATE credentials SET name = 'anthropic' WHERE name = 'openai'").run();
-  expect(await dir.credentials.value("anthropic")).toBeNull();
+  expect(await elsewhere.value("anthropic")).toBeNull();
 });
 
 test("admins only, with admin power; a key that isn't one, or a server with no secret, is refused saying why", async () => {
@@ -78,38 +72,27 @@ test("admins only, with admin power; a key that isn't one, or a server with no s
   await expect(dir.credentials.set({ login: "mallory" }, "anthropic", ANTHROPIC)).rejects.toThrow(NotAllowed);
   await expect(dir.credentials.list({ login: "ada" })).rejects.toThrow(/no admin power/);
   await expect(dir.credentials.set(ada, "gemini", ANTHROPIC)).rejects.toThrow(/no key "gemini"/);
+  await expect(dir.credentials.set(ada, "openai", OPENAI)).rejects.toThrow(/no key "openai"/);
   expect(() => checkKey("anthropic", "sk-ant-oat01-" + "z".repeat(40))).toThrow(/Claude plan token/);
   expect(() => checkKey("anthropic", OPENAI)).toThrow(/starts with sk-ant-/);
-  expect(() => checkKey("openai", "sk-has a space in it xxxxxxxxxxxx")).toThrow(CredentialError);
-  expect(() => checkKey("openai", "")).toThrow(/Paste/);
+  expect(() => checkKey("anthropic", "sk-ant-has a space in it xxxxxxxxxxxx")).toThrow(CredentialError);
+  expect(() => checkKey("anthropic", "")).toThrow(/Paste/);
   const none = fresh(null, ["ANTHROPIC_API_KEY"]).dir;
   await expect(none.credentials.set(ada, "anthropic", ANTHROPIC)).rejects.toThrow(/no FACTORY_KEY/);
-  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])).toEqual([["anthropic", false, true], ["openai", false, false], ["cloudflare_deploy", false, false]]);
+  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])).toEqual([["anthropic", false, true]]);
 });
 
-test("every key Erga calls a service with: Cloudflare's too; the deploy's own secrets only as set or not", async () => {
+test("the deploy's own secrets only as set or not", async () => {
   const { dir } = fresh("the factory key", ["SESSION_SECRET", "GITHUB_CLIENT_SECRET"]);
-  expect(checkKey("cloudflare_deploy", CLOUDFLARE)).toBe(CLOUDFLARE);
-  expect(() => checkKey("cloudflare_deploy", "short")).toThrow(/20 to 400 characters/);
-  await dir.credentials.set(ada, "cloudflare_deploy", CLOUDFLARE);
-  const env = { ANTHROPIC_API_KEY: "sk-ant-from-the-deploy", CLOUDFLARE_DEPLOY_TOKEN: "from-the-deploy" };
-  expect(await withCredentials(env, dir.credentials)).toEqual({ ANTHROPIC_API_KEY: "sk-ant-from-the-deploy", CLOUDFLARE_DEPLOY_TOKEN: CLOUDFLARE });
   const deployed = await dir.credentials.deployed(ada);
-  expect(deployed.map((d) => [d.env, d.set])).toEqual([["SESSION_SECRET", true], ["FACTORY_KEY", false], ["GITHUB_CLIENT_SECRET", true], ["SNAPSHOT_TOKEN", false], ["DEPLOY_HOOK_SECRET", false]]);
+  expect(deployed.map((d) => [d.env, d.set])).toEqual([
+    ["SESSION_SECRET", true],
+    ["FACTORY_KEY", false],
+    ["GITHUB_CLIENT_SECRET", true],
+    ["SNAPSHOT_TOKEN", false],
+  ]);
   expect(deployed.find((d) => d.env == "FACTORY_KEY")!.standIn).toBe(true);
   await expect(dir.credentials.deployed({ login: "mallory" })).rejects.toThrow(NotAllowed);
-});
-
-test("the code that calls the providers reads the stored key first, else the Worker secret", async () => {
-  const { dir } = fresh();
-  const env = { ANTHROPIC_API_KEY: "sk-ant-from-the-deploy", OPENAI_API_KEY: "sk-openai-from-the-deploy", OTHER: 1 };
-  expect(await withCredentials(env, dir.credentials)).toEqual(env);
-  await dir.credentials.set(ada, "anthropic", ANTHROPIC);
-  expect(await withCredentials(env, dir.credentials)).toEqual({ ...env, ANTHROPIC_API_KEY: ANTHROPIC });
-  expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-from-the-deploy");
-  // A database that doesn't answer leaves the Worker secret.
-  const broken = new Credentials({ all: async () => { throw new Error("D1 is down"); }, run: async () => {}, batch: async () => {} }, dir.users, "the factory key");
-  expect(await withCredentials(env, broken)).toEqual(env);
 });
 
 // The real page, on the real directory: what POST /admin/credentials answers, and what the pages show.
@@ -127,25 +110,32 @@ const origin = `http://localhost:${server.port}`;
 afterAll(() => server.stop(true));
 
 test("POST /admin/credentials: only from this site's pages; the answer never holds the key", async () => {
-  const post = (fields: Record<string, string>, from = origin) => fetch(`${origin}/admin/credentials`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: from } });
-  expect((await post({ name: "openai", value: OPENAI }, "https://evil.example")).status).toBe(403);
-  const r = await post({ name: "openai", value: OPENAI });
+  const post = (fields: Record<string, string>, from = origin) =>
+    fetch(`${origin}/admin/credentials`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: from } });
+  expect(await (await fetch(`${origin}/admin/api-keys`)).text()).toContain(
+    "Not set here. The server uses ANTHROPIC_API_KEY from the deploy."
+  );
+  expect((await post({ name: "anthropic", value: ANTHROPIC }, "https://evil.example")).status).toBe(403);
+  const r = await post({ name: "anthropic", value: ANTHROPIC });
   expect(r.status).toBe(200);
   const text = await r.text();
-  expect(text).not.toContain(OPENAI.slice(0, 20));
-  expect(JSON.parse(text).credential).toMatchObject({ name: "openai", set: true, last4: "Zz90" });
-  expect((await post({ name: "openai", value: "nope" })).status).toBe(400);
+  expect(text).not.toContain(ANTHROPIC.slice(0, 20));
+  expect(JSON.parse(text).credential).toMatchObject({ name: "anthropic", set: true, last4: "Ab12" });
+  expect((await post({ name: "anthropic", value: "nope" })).status).toBe(400);
+  expect((await post({ name: "openai", value: OPENAI })).status).toBe(400);
   const html = await (await fetch(`${origin}/admin/api-keys`)).text();
-  expect(html).not.toContain(OPENAI.slice(0, 20));
-  expect(html).toContain(`ends in <span class="last4">…Zz90</span>`);
-  expect(html).toContain("Not set here. The server uses ANTHROPIC_API_KEY from the deploy.");
+  expect(html).not.toContain(ANTHROPIC.slice(0, 20));
+  expect(html).toContain(`ends in <span class="last4">…Ab12</span>`);
   const log = await (await fetch(`${origin}/admin/changes`)).text();
-  expect(log).toContain(`<span class="key">OPENAI_API_KEY</span> key set`);
-  expect(log).not.toContain(OPENAI.slice(0, 20));
+  expect(log).toContain(`<span class="key">ANTHROPIC_API_KEY</span> key set`);
+  expect(log).not.toContain(ANTHROPIC.slice(0, 20));
   expect((await fetch(`${origin}/admin/credentials`, { redirect: "manual" })).headers.get("location")).toBe("/admin/api-keys");
   // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
   expect(await (await fetch(`${origin}/admin`)).text()).not.toContain("li class=\"setting credential");
-  for (const name of ["anthropic", "openai", "cloudflare_deploy"]) expect(html).toContain(`data-name="${name}"`);
-  for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN", "DEPLOY_HOOK_SECRET"]) expect(html).toContain(`data-env="${env}"`);
+  expect(html).toContain(`data-name="anthropic"`);
+  for (const name of ["openai", "cloudflare_deploy"]) expect(html).not.toContain(`data-name="${name}"`);
+  for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN"])
+    expect(html).toContain(`data-env="${env}"`);
+  expect(html).not.toContain("DEPLOY_HOOK_SECRET");
   expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);
 });

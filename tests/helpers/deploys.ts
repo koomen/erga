@@ -13,7 +13,6 @@ import { Cloudflare } from "../../control/deploys/cloudflare-api";
 import { loadRelease, type Release } from "../../control/deploys/release-format";
 import {
   FLEET_ACCOUNT,
-  MOCK_HOOK_SECRET,
   MOCK_SNAPSHOT_TOKEN,
   mockBuilder,
   mockCloudflare,
@@ -49,7 +48,6 @@ export const stagingSecrets = {
   SESSION_SECRET: "staging-session-secret-0123456789",
   GITHUB_CLIENT_SECRET: "staging-github-secret-0123456789",
   SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN,
-  DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET,
 };
 export const staging = (over: Partial<Target> = {}): Target => ({ ...targetOf(TARGETS.staging, env()), ...over });
 /** The target with a fresh copy of production's data asked for (a Redeploy with a fresh copy): staging's copy is frozen otherwise. */
