@@ -52,7 +52,9 @@ import type { DocumentAgents } from "./agent.ts";
 import { docFile, makeHost, typeOf } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, DocName, Hello } from "./api.ts";
-import { digest, FileStore, Room, StateStore, StoreError, type Connection } from "./room.ts";
+import { digest, FileStore, NoSuchDocument, Room, StateStore, StoreError, type Connection } from "./room.ts";
+
+export { NoSuchDocument };
 import { fileStoreOf, KEYS, kvOf, RefIndex, stateStoreOf, TimeIndex, type Storage } from "./storage.ts";
 import { byLine, VIA } from "../shared/attribution.ts";
 import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "./content.ts";
@@ -146,9 +148,6 @@ const stop = (fiber: Fiber.Fiber<void>) => void Effect.runFork(Fiber.interrupt(f
 const storeError = (e: unknown) => (e instanceof StoreError ? e : new StoreError({ message: e instanceof Error ? e.message : String(e) }));
 /** A call to the document's storage (or to the directory, the blob store: Promise-based, from outside), its failure a StoreError. */
 const io = <A>(f: () => Promise<A>) => Effect.tryPromise({ try: f, catch: storeError });
-
-/** Asked of a document that doesn't exist (not made yet, or deleted). */
-export class NoSuchDocument extends Schema.TaggedError<NoSuchDocument>()("NoSuchDocument", { message: Schema.String }) {}
 
 /** What a publish did with each file. */
 export interface Published {
@@ -290,7 +289,11 @@ export class Document {
       log: deps.log,
       isOpen: () => !!this.opened,
       closing: () => this.closing,
-      doc: async () => (await this.room())?.room.doc ?? null,
+      doc: () =>
+        Effect.map(
+          io(() => this.room()),
+          (opened) => opened?.room.doc ?? null
+        ),
       changedAfterQuiet: () => {
         const id = this.info?.id;
         if (id) deps.viewChanged?.(id);
@@ -505,7 +508,7 @@ export class Document {
       if (path == info.index) { out.refused.push({ path, why: "it's the document's page, which is text" }); continue; }
       if (blobs) {
         const bytes = isBlobRef(data) ? undefined : typeof data == "string" ? new TextEncoder().encode(data) : data;
-        const ref = isBlobRef(data) ? data : await storeBlob(blobs, bytes!);
+        const ref = isBlobRef(data) ? data : await Effect.runPromise(storeBlob(blobs, bytes!));
         await Effect.runPromise(opened.room.putBlob(path, ref, bytes));
         out.written.push(path);
         continue;
@@ -1009,7 +1012,9 @@ export class Document {
       const role = who ? yield* self.roleOf(who) : null;
       const name = info.name ?? null;
       if (!role && !opts.anyone) return { role: null, name, test: !!info.test };
-      return yield* self.hold(io(() => self.views.answer(info, role, name, opts.page)));
+      return yield* self
+        .hold(self.views.answer(info, role, name, opts.page))
+        .pipe(Effect.catchTag("NoSuchDocument", () => Effect.succeed(null)));
     });
   }
 
@@ -1401,7 +1406,7 @@ export class Document {
       return { ok: true, kind: text != null ? "text" : "file" };
     }
     if (path == info.index) return { ok: false, status: 409, error: `${path} is the document's page, which is text: it can't be replaced by a file that isn't.` };
-    const ref = await storeBlob(blobs, bytes);
+    const ref = await Effect.runPromise(storeBlob(blobs, bytes));
     this.publisher = by;
     try { await Effect.runPromise(opened.room.putBlob(path, ref, bytes)); } finally { this.publisher = null; }
     return { ok: true, kind: "file", hash: ref.hash };
@@ -1459,7 +1464,7 @@ export class Document {
       if (await refs.has(path)) continue;
       const bytes = await this.storage.get<Uint8Array>(FILE + path);
       if (!bytes) continue;
-      const ref = await storeBlob(blobs, bytes);
+      const ref = await Effect.runPromise(storeBlob(blobs, bytes));
       // Still these bytes, and still no blob (an upload may have replaced the file meanwhile): only then its ref.
       if (assets(room.doc).get(path) != digest(bytes) || (await refs.has(path))) continue;
       await refs.add(path);
@@ -1546,7 +1551,7 @@ export class Document {
       putFile: (path, bytes, by) => this.putFile(path, bytes, by),
       // One from before kinds is decided (below) before anyone reaches it.
       kind: () => this.info?.kind ?? "project",
-      setKind: (kind) => Effect.runPromise(this.setKind(kind)),
+      setKind: (kind) => this.setKind(kind),
     });
     // From before kinds: a project if it has more than one page, else a document. Kept, and told to the directory.
     if (!info.kind && !info.disk?.only) {

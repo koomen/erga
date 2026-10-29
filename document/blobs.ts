@@ -9,6 +9,7 @@
 // No blob is ever deleted yet. A sweep that deletes the blobs nothing
 // refers to (no file, no version, no copy of a document) comes later.
 
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { sha256Hex } from "../shared/bytes.ts";
 
@@ -54,17 +55,26 @@ export const OBJECT_MAX = 2_000_000;
 /** The most bytes a file can have and still be text: a file that arrives whole bigger than this is a blob (D5: two kinds). */
 export const TEXT_MAX = 2_000_000;
 
+/** The blob store failed (R2 didn't answer, or refused the bytes). */
+export class BlobStoreError extends Schema.TaggedError<BlobStoreError>()("BlobStoreError", { message: Schema.String }) {}
+
+const blobStore = <A>(f: () => Promise<A>) =>
+  Effect.tryPromise({ try: f, catch: (e) => new BlobStoreError({ message: e instanceof Error ? e.message : String(e) }) });
+
 /** A blob's ref, for bytes in memory: their hash and size, written now. */
-export async function refOf(bytes: Uint8Array, at = Date.now()): Promise<BlobRef> {
-  return { hash: await sha256Hex(bytes), size: bytes.length, at };
-}
+export const refOf = (bytes: Uint8Array, at = Date.now()): Effect.Effect<BlobRef> =>
+  Effect.map(
+    Effect.promise(() => sha256Hex(bytes)),
+    (hash) => ({ hash, size: bytes.length, at })
+  );
 
 /** Stores bytes in `blobs` (once: a blob that's there isn't written again) and gives their ref. */
-export async function storeBlob(blobs: BlobStore, bytes: Uint8Array, at = Date.now()): Promise<BlobRef> {
-  const ref = await refOf(bytes, at);
-  if (!(await blobs.head(ref.hash))) await blobs.put(ref.hash, bytes, bytes.length);
-  return ref;
-}
+export const storeBlob = (blobs: BlobStore, bytes: Uint8Array, at = Date.now()): Effect.Effect<BlobRef, BlobStoreError> =>
+  Effect.gen(function* () {
+    const ref = yield* refOf(bytes, at);
+    if (!(yield* blobStore(() => blobs.head(ref.hash)))) yield* blobStore(() => blobs.put(ref.hash, bytes, bytes.length));
+    return ref;
+  });
 
 /** Blobs in memory, for the tests and local tools. */
 export class MemoryBlobs implements BlobStore {
@@ -139,7 +149,19 @@ export function byteRange(header: string, size: number): { start: number; end: n
  * when the blob store doesn't have the blob (a copy of the data that came
  * without it); null if the answer isn't a pointer.
  */
-export async function serveBlob(answer: Response, request: Request, blobs: BlobStore | null, inline: () => Promise<Response>): Promise<Response | null> {
+export const serveBlob = (
+  answer: Response,
+  request: Request,
+  blobs: BlobStore | null,
+  inline: () => Promise<Response>
+): Effect.Effect<Response | null, BlobStoreError> => blobStore(() => blobAnswer(answer, request, blobs, inline));
+
+async function blobAnswer(
+  answer: Response,
+  request: Request,
+  blobs: BlobStore | null,
+  inline: () => Promise<Response>
+): Promise<Response | null> {
   const hash = answer.headers.get(BLOB_HEADER);
   if (!hash) return null;
   const size = Number(answer.headers.get(BLOB_SIZE_HEADER)) || 0;

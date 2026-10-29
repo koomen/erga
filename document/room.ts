@@ -58,6 +58,9 @@ import { parentOf } from "./pages";
 /** Storage failed: a file couldn't be listed, read or written. */
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { message: Schema.String }) {}
 
+/** Asked of a document that doesn't exist (not made yet, or deleted). */
+export class NoSuchDocument extends Schema.TaggedError<NoSuchDocument>()("NoSuchDocument", { message: Schema.String }) {}
+
 /**
  * Where a room's files live: a Durable Object's storage, or a folder on disk
  * (local development). The folder operations are optional: a store without
