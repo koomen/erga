@@ -59,7 +59,7 @@ import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type A
 import { describeChange, fallbackDescription, publicVersion, versionNumber, Versions, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "./versions.ts";
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
 import { cleanRel, kindOf, pageRefusal, parentsOf, titleOf, type DocKind } from "./pages.ts";
-import { sleep, throttle } from "../shared/time.ts";
+import { throttle } from "../shared/time.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
