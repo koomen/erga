@@ -371,6 +371,13 @@ export abstract class EditorRender extends EditorMarks {
   protected applyChanges(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): void {
     if (!this.doc || this.rendering) return;
     if (this.patch(tr, oldUnits, oldSrc)) this.recheck(tr.changes);
+    this.showChecks();
+  }
+
+  /** The checkboxes in the text, ticked as the file says: once someone clicks one, its attribute no longer shows. */
+  protected showChecks(): void {
+    for (const box of this.doc?.querySelectorAll<HTMLInputElement>('[data-erga-id] input[type="checkbox" i]') ?? [])
+      box.checked = box.hasAttribute("checked");
   }
 
   /**

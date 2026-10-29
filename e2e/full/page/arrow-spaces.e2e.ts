@@ -151,3 +151,17 @@ test("ArrowUp and ArrowDown keep the caret's column across a block that ends in 
   expect(down.id).toBe("after-spaces");
   expect(Math.abs(down.x - before.x)).toBeLessThan(10);
 });
+
+test("on a Mac, Control-N and Control-P go to the next and the previous block at a block's last and first line", async ({ tab }) => {
+  // (Control-N and Control-P move the caret only on a Mac.)
+  if (process.platform != "darwin") return;
+  const ed = await openEditor(tab, await servers.main(), "page");
+  await ed.clickEnd("li:first-child");
+  await ed.press("Control+n");
+  await ed.type("N");
+  const items = async () => [...(await ed.source()).matchAll(/<li>((?:(?!<\/li>)[\s\S])*)<\/li>/g)].map((m) => m[1]);
+  await expect.poll(async () => (await items())[1]).toContain("N");
+  await ed.press("Control+p");
+  await ed.type("P");
+  await expect.poll(async () => (await items())[0]).toContain("P");
+});

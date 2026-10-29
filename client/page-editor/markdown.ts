@@ -1,9 +1,10 @@
-// The page editor's Markdown shortcuts: "# " makes a heading, "- " a list, **text** bold, and so on, as you type.
+// The page editor's Markdown shortcuts: "# " makes a heading, "- " a list, "[ ] " a to-do item, **text** bold, and so
+// on, as you type.
 
 import * as M from "../../shared/manuscript";
 import { isolateHistory } from "@codemirror/commands";
 import type { InlineStyle } from "./types";
-import { STYLE_TAGS, textIn } from "./source";
+import { attrOf, setChecked, STYLE_TAGS, TODO_BOX, TODO_ITEM, textIn, todoBox } from "./source";
 import { EditorFormat } from "./format";
 
 export abstract class EditorMarkdown extends EditorFormat {
@@ -17,6 +18,7 @@ export abstract class EditorMarkdown extends EditorFormat {
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u)) return;
     const typed = textIn([u], u.contentFrom, pos).replace(/^\s+/, "");
+    if (this.todoRule(u, pos, typed)) return;
     const m = /^(#{1,6}|[-*+]|\d{1,9}[.)]|>) $/.exec(typed);
     if (!m) return;
     const mark = m[1];
@@ -48,6 +50,39 @@ export abstract class EditorMarkdown extends EditorFormat {
       userEvent: "input.format",
       scrollIntoView: true,
     });
+  }
+
+  /**
+   * `[ ] ` (or `[] `, `[x] `) at the start of a list item or a paragraph makes a to-do item: a checkbox before its text
+   * (todoBox), and no bullet. In a paragraph (`- [ ] ` too), a list of one such item. Returns whether it did.
+   */
+  protected todoRule(u: M.Unit, pos: number, typed: string): boolean {
+    const m = /^(?:[-*+] )?\[([ xX]?)\] $/.exec(typed);
+    if (!m || (u.tag != "li" && u.tag != "p") || (u.tag == "li" && m[0][0] != "[")) return false;
+    const src = this.src;
+    if (u.tag == "li" && (todoBox(src, u) || /<input\b/i.test(src.slice(u.contentFrom, pos)))) return false;
+    const box = setChecked(TODO_BOX.trimEnd(), m[1] != "" && m[1] != " ") + " ";
+    const rest = src.slice(pos, u.contentTo);
+    let change: { from: number; to: number; insert: string }, caret: number;
+    if (u.tag == "li") {
+      const open = src.slice(u.openFrom, u.openTo);
+      const li = attrOf(open, "style") == null ? open.replace(/\s*>$/, `${TODO_ITEM}>`) : open;
+      change = { from: u.openFrom, to: u.contentTo, insert: li + box + rest };
+      caret = u.openFrom + li.length + box.length;
+    } else {
+      const indent = M.lineIndent(src, u.from);
+      const open = `<ul>\n${indent}  <li${TODO_ITEM}>${box}`;
+      change = { from: u.from, to: u.to, insert: open + rest + `</li>\n${indent}</ul>` };
+      caret = u.from + open.length;
+    }
+    this.dispatch({
+      changes: change,
+      selection: { anchor: caret },
+      annotations: isolateHistory.of("full"),
+      userEvent: "input.format",
+      scrollIntoView: true,
+    });
+    return true;
   }
 
   /**
