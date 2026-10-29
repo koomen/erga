@@ -181,18 +181,18 @@ health checks and rollbacks work.
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
                   (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the app's Durable Objects (objects/:
                   each gives its logic in server/, agents/ or document/ storage, alarms and sockets, and decides
-                  nothing), the dev server's routes (dev.ts, dev-entry.ts)
+                  nothing), what the deploy pipeline asks of the app (deploy-routes.ts), the dev server's routes
+                  (dev.ts, dev-entry.ts)
     control/      the control Worker: Erga's repository and Git endpoint, the deploy pipeline, the Ops page and its
                   sign-in, and the build container (builder/), apart from the app, so a broken app never takes the
-                  way to fix it down (index.ts the entry, routes.ts, platform.ts, wrangler.jsonc: its bindings). The app reaches it
+                  way to fix it down (index.ts the entry, routes.ts, platform.ts, wrangler.jsonc: its bindings, env.ts types them; d1.ts). The app reaches it
                   over a service binding; locally the app hosts its routes.
       source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts) and its Durable
                       Object (source-host.ts), Git itself (git.ts, http.ts, merge.ts), the GitHub App (github.ts),
                       the Ops page (page.ts)
       deploys/        the deploy pipeline (pipeline.ts; control-worker.ts for the control Worker's own deploy), its
                       Cloudflare credential (credential.ts: an OAuth grant), branch deploys (branches.ts, in
-                      pipeline-object.ts), the release store (releases.ts), the deploys' API (api.ts), and the app's
-                      own deploy routes (app-routes.ts)
+                      pipeline-object.ts), the release store (releases.ts), the deploys' API (api.ts)
       install/        /deploy: installs in other accounts (install.ts, forks.ts, the page, its routes and session)
       cloudflare.ts   what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
     deploy/       what a person runs on a machine: a deploy (run.ts), the release build (release.ts), the setup
@@ -214,7 +214,7 @@ below it, lowest first: `shared/`, `document/`, the areas of `server/`,
 `dev/`, `tests/` and `e2e/` import anything. Each area of `server/`
 (directory, identity, documents, pages, home, admin) is imported through
 its `index.ts`, its interface. Only `cloudflare/` and `control/` read the
-Workers' bindings. `tests/imports.test.ts` has the whole rules and checks
+Workers' bindings, and `control/` never imports `cloudflare/`. `tests/imports.test.ts` has the whole rules and checks
 them.
 
 The configs at the root are the ones their tools look for there:

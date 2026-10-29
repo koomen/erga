@@ -6,7 +6,7 @@ import { forkGithubToken, forkGithubUninstall, forkRemote, type ForkAccess } fro
 import type { InstallSpec } from "./install/install";
 import { githubOrigins, installationToken, uninstall, type GithubApp, type Remote } from "./source/index.ts";
 import { memoryBlobs, r2Blobs, ReleaseStore } from "./deploys/releases";
-import type { Env } from "../cloudflare/env";
+import type { HostEnv } from "./env";
 import { hex } from "../shared/bytes";
 
 // ---- Erga's repository
@@ -45,21 +45,21 @@ export interface ArtifactsBinding {
 }
 
 /** Local development: the dev server's address, where the stand-ins are (ERGA_DEV_ORIGIN, else the request's). */
-const devOrigin = (env: Env, origin?: string) => env.ERGA_DEV_ORIGIN || origin || "";
-const local = (env: Env) => !env.ARTIFACTS && !!env.ERGA_LINK_SECRET;
+const devOrigin = (env: HostEnv, origin?: string) => env.ERGA_DEV_ORIGIN || origin || "";
+const local = (env: HostEnv) => !env.ARTIFACTS && !!env.ERGA_LINK_SECRET;
 
 /**
  * A downstream's control Worker (control/install/install.ts): its fork at upstream, reached with its FORK_SECRET (control/install/forks.ts);
  * null elsewhere.
  */
-export function forkOf(env: Pick<Env, "UPSTREAM" | "INSTALL" | "FORK_SECRET">): ForkAccess | null {
+export function forkOf(env: Pick<HostEnv, "UPSTREAM" | "INSTALL" | "FORK_SECRET">): ForkAccess | null {
   const upstream = env.UPSTREAM?.trim().replace(/\/+$/, ""), secret = env.FORK_SECRET?.trim();
   if (!upstream || !secret || !env.INSTALL) return null;
   try { const id = (JSON.parse(env.INSTALL) as InstallSpec).fork; return id ? { upstream, id, secret } : null; } catch { return null; }
 }
 
 /** Whether this server has a repository at all (the binding, local development's stand-in, or a downstream's fork at upstream). */
-export const hasSource = (env: Env) => !!env.ARTIFACTS || local(env) || !!forkOf(env);
+export const hasSource = (env: HostEnv) => !!env.ARTIFACTS || local(env) || !!forkOf(env);
 
 /** Tokens minted, kept while they have more than ten minutes left. */
 const minted = new Map<string, { token: string; remote: string; expires: number }>();
@@ -67,7 +67,7 @@ const minted = new Map<string, { token: string; remote: string; expires: number 
 export interface RepoAccess extends Remote { token: string; expiresAt: string }
 
 /** This server's repository (Erga's own, or a downstream's fork) as a Git remote, with a token of this scope. Null when there's no repository. */
-export async function artifactsRemote(env: Env, scope: "read" | "write", origin?: string): Promise<RepoAccess | null> {
+export async function artifactsRemote(env: HostEnv, scope: "read" | "write", origin?: string): Promise<RepoAccess | null> {
   if (!hasSource(env)) return null;
   const fork = forkOf(env);
   return fork ? artifactsRemoteFor(env, `fork:${fork.id}`, scope, origin, fork) : artifactsRemoteFor(env, REPO, scope, origin);
@@ -78,7 +78,13 @@ export async function artifactsRemote(env: Env, scope: "read" | "write", origin?
  * development's stand-in); a downstream's fork, through upstream (control/install/forks.ts). Tokens are kept while they have
  * more than ten minutes left.
  */
-export async function artifactsRemoteFor(env: Env, repo: string, scope: "read" | "write", origin?: string, fork?: ForkAccess): Promise<RepoAccess> {
+export async function artifactsRemoteFor(
+  env: HostEnv,
+  repo: string,
+  scope: "read" | "write",
+  origin?: string,
+  fork?: ForkAccess
+): Promise<RepoAccess> {
   const key = `${repo}:${scope}`;
   const have = minted.get(key);
   if (have && have.expires - Date.now() > 10 * 60_000) return access(have.remote, have.token, have.expires);
@@ -123,7 +129,19 @@ async function localToken(secret: string, repo: string, scope: string, exp: numb
 // the consent's relay. Local development has the pretend GitHub
 // (dev/github-mock.ts) at the dev server, ERGA_GITHUB_ORIGIN.
 
-export type GithubAppEnv = Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_SLUG" | "GITHUB_APP_CLIENT_ID" | "GITHUB_APP_CLIENT_SECRET" | "GITHUB_APP_PRIVATE_KEY" | "GITHUB_WEBHOOK_SECRET" | "ERGA_GITHUB_ORIGIN" | "UPSTREAM" | "INSTALL" | "FORK_SECRET">;
+export type GithubAppEnv = Pick<
+  HostEnv,
+  | "GITHUB_APP_ID"
+  | "GITHUB_APP_SLUG"
+  | "GITHUB_APP_CLIENT_ID"
+  | "GITHUB_APP_CLIENT_SECRET"
+  | "GITHUB_APP_PRIVATE_KEY"
+  | "GITHUB_WEBHOOK_SECRET"
+  | "ERGA_GITHUB_ORIGIN"
+  | "UPSTREAM"
+  | "INSTALL"
+  | "FORK_SECRET"
+>;
 
 /** The App as this Worker knows it (the public parts at least), or null where there's none (an app Worker). */
 export function githubAppOf(env: GithubAppEnv): GithubApp | null {
@@ -167,5 +185,5 @@ export async function githubUninstallFor(env: GithubAppEnv, installationId: numb
 export const DEV_BLOBS = memoryBlobs();
 
 /** The release store this Worker has, or null. */
-export const releaseStoreOf = (env: Pick<Env, "RELEASES" | "ERGA_DEPLOY_MOCK">): ReleaseStore | null =>
+export const releaseStoreOf = (env: Pick<HostEnv, "RELEASES" | "ERGA_DEPLOY_MOCK">): ReleaseStore | null =>
   env.RELEASES ? new ReleaseStore(r2Blobs(env.RELEASES)) : env.ERGA_DEPLOY_MOCK == "1" ? new ReleaseStore(DEV_BLOBS) : null;

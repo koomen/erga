@@ -1,22 +1,17 @@
 // The directory, with the server's users and
 // settings, on D1, through D1's API. A batch is one transaction.
 
-import { Directory, type Param, parseDeployed, type Permission, type Sql } from "../server/directory/index.ts";
+import { Directory, parseDeployed, type Permission, type Sql } from "../server/directory/index.ts";
 import { githubAccounts, Tokens } from "../server/identity/index.ts";
 import { forgetDecisions } from "../server/documents/index.ts";
 
 import type { Env } from "./env";
 import { counted } from "./timing";
 import { documentOf } from "./objects/document-stub";
+import { sqlOn as d1Sql } from "../control/d1";
 
-export const sqlOn = (db: D1Database): Sql => {
-  const statement = (q: string, params: Param[]) => db.prepare(q).bind(...params);
-  return {
-    all: <T>(q: string, ...params: Param[]) => counted("db", async () => (await statement(q, params).all<T>()).results),
-    run: (q, ...params) => counted("db", async () => { await statement(q, params).run(); }),
-    batch: (statements) => counted("db", async () => { await db.batch(statements.map(([q, ...params]) => statement(q, params))); }),
-  };
-};
+/** The database as Sql, each call counted for the request's Server-Timing. */
+export const sqlOn = (db: D1Database): Sql => d1Sql(db, (call) => counted("db", call));
 
 // One per isolate, so its memory of documents' routes (they never change) lasts across requests.
 let directory: { db: D1Database; dir: Directory } | null = null;

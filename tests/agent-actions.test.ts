@@ -26,7 +26,7 @@ const ROUTE_TABLES = [
   "cloudflare/dev.ts",
   "agents/admin/sessions.ts",
   "control/source/routes.ts",
-  "control/deploys/app-routes.ts",
+  "cloudflare/deploy-routes.ts",
   "control/install/routes.ts",
   "server/home/api.ts",
   "server/identity/settings.ts",
