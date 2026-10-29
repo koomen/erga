@@ -1,5 +1,5 @@
-// Image files dropped on the page's text (input.ts takes the drop): while they're dragged over the text, a line shows
-// where they will go; if they can't go in, a note says why at that place. Both are the editor's own elements on the
+// Files dropped or pasted on the page's text (input.ts and clipboard.ts take them): while they're dragged over the text,
+// a line shows where they will go; if they can't go in, a note says why at that place. Both are the editor's own elements on the
 // page (like its caret: caret.ts), on the page's <html>, outside the text.
 
 const STYLE = `
@@ -11,12 +11,6 @@ erga-drop-note { all: initial; position: absolute; z-index: 2147483647; max-widt
 
 /** Whether a drag carries files (from outside the page: the computer). */
 export const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
-
-/** Whether a drag carries an image file (while it's dragged, only the files' types are known). */
-export const hasImages = (e: DragEvent) => [...(e.dataTransfer?.items ?? [])].some((i) => i.kind == "file" && i.type.startsWith("image/"));
-
-/** The dropped files that are images, in order. */
-export const imageFiles = (e: DragEvent) => [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith("image/"));
 
 function styleOnce(doc: Document): void {
   if (doc.querySelector("style[data-erga-drop]")) return;

@@ -401,7 +401,7 @@ export default function reader(C: ReaderConfig): void {
         answer(null);
       });
   }
-  // A file dragged from the computer onto the page never opens in its place (the editor puts an image in: its drop). A
+  // A file dragged from the computer onto the page never opens in its place (the editor puts it in: its drop). A
   // page that takes the drop itself has already stopped the browser's own.
   function stopFileDrop(e: DragEvent) {
     if (!e.defaultPrevented && e.dataTransfer && e.dataTransfer.types.indexOf("Files") >= 0) {

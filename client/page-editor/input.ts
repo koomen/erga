@@ -4,8 +4,8 @@
 import * as M from "../../shared/manuscript";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { escapeAttr, findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
-import { hasFiles, hasImages, imageFiles, showDropCaret, showDropNote } from "./drop";
+import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
+import { hasFiles, showDropCaret, showDropNote } from "./drop";
 import { isMac } from "./core";
 import { EditorClipboard } from "./clipboard";
 
@@ -56,11 +56,11 @@ export abstract class EditorInput extends EditorClipboard {
     on("dragstart", (e) => {
       if (this.ours(e)) e.preventDefault();
     });
-    // Files dragged from the computer: images go in where they're dropped (dropImages); never does the browser open a file.
+    // Files dragged from the computer go in where they're dropped (dropFiles); never does the browser open a file.
     on("dragover", (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
-      const at = hasImages(e) ? this.dropAt(e) : null;
+      const at = this.dropAt(e);
       e.dataTransfer!.dropEffect = at ? "copy" : "none";
       showDropCaret(doc, at?.range ?? null);
     });
@@ -71,7 +71,7 @@ export abstract class EditorInput extends EditorClipboard {
       if (hasFiles(e)) {
         e.preventDefault();
         showDropCaret(doc, null);
-        this.dropImages(e);
+        this.dropFiles(e);
       } else if (this.ours(e)) e.preventDefault();
     });
     on("mousedown", (e) => this.mousedown(e));
@@ -125,32 +125,51 @@ export abstract class EditorInput extends EditorClipboard {
     return pos != null && this.editableAt(u!, pos) ? { pos, range } : null;
   }
 
-  /** Image files dropped on the text: to the caller, which adds them to the document's files (onDropImages). Others are left out. */
-  protected dropImages(e: DragEvent): void {
-    const files = imageFiles(e);
+  /** Files dropped on the text: to the caller, which adds them to the document's files (onDropFiles). */
+  protected dropFiles(e: DragEvent): void {
+    const files = [...(e.dataTransfer?.files ?? [])];
     if (!files.length) return;
     const point = { x: e.clientX, y: e.clientY };
     const at = this.dropAt(e);
-    if (!at) return showDropNote(this.doc!, point, "An image can go only into the text you can edit. Drop it on a paragraph.");
-    this.config.onDropImages?.(files, at.pos, point);
+    if (!at) return showDropNote(this.doc!, point, "A file can go only into the text you can edit. Drop it on a paragraph.");
+    this.config.onDropFiles?.(files, at.pos, point);
   }
 
   /**
-   * Puts images at `at` (dropped there: dropImages), as `<img>` elements in the text, in order. The caret stays where it
-   * is. False if the text there can't take them (it changed meanwhile).
+   * Puts the files dropped or pasted at `at` (dropFiles, pasteFiles) there, in order: an image as an `<img>`, another
+   * file as a link to it with its name as the text. Images at the start or end of a paragraph or heading go in as
+   * paragraphs of their own, before or after it; in the middle of the text, or into an empty line, as they are. The
+   * caret stays where it is. False if the text there can't take them (it changed meanwhile).
    */
-  insertImages(at: number, images: { src: string; alt: string }[]): boolean {
+  insertFiles(at: number, items: { href: string; name: string; image: boolean }[]): boolean {
     const u = M.unitAt(this.units, at);
-    if (!images.length || !u || !this.verify(u) || !this.editableAt(u, at)) return false;
-    const insert = images.map((i) => `<img src="${escapeAttr(i.src)}" alt="${escapeAttr(i.alt)}">`).join("");
-    this.dispatch({
-      changes: [{ from: at, to: at, insert }, ...this.placeholderDrops(this.src, [u], at, at, true)],
-      userEvent: "input.drop",
-    });
+    if (!items.length || !u || !this.verify(u) || !this.editableAt(u, at)) return false;
+    const src = this.src;
+    const html = items.map((i) =>
+      i.image
+        ? `<img src="${escapeAttr(i.href)}" alt="${escapeAttr(i.name)}">`
+        : `<a href="${escapeAttr(i.href)}">${M.escapeHtmlText(i.name)}</a>`
+    );
+    const before = contentIn(src, u, u.contentFrom, at),
+      after = contentIn(src, u, at, u.contentTo);
+    if (items.some((i) => i.image) && /^(p|h[1-6])$/.test(u.tag) && before != after) {
+      const sep = "\n" + M.lineIndent(src, u.openFrom),
+        blocks = html.map((h) => `<p>${h}</p>`).join(sep);
+      this.dispatch({
+        changes: before ? { from: u.to, insert: sep + blocks } : { from: u.from, insert: blocks + sep },
+        userEvent: "input.drop",
+      });
+      return true;
+    }
+    // A link can't hold another: the links go between the parts of the one at the drop.
+    const stack = M.inlineStackAt(src, u, at),
+      split = items.some((i) => !i.image) && stack.some((t) => t.tag == "a");
+    const insert = split ? M.closeTags(stack) + html.join("") + M.openTags(stack) : html.join("");
+    this.dispatch({ changes: [{ from: at, to: at, insert }, ...this.placeholderDrops(src, [u], at, at, true)], userEvent: "input.drop" });
     return true;
   }
 
-  /** Says why images dropped at `point` (the window's coordinates) didn't go in, there on the page. */
+  /** Says why files dropped at `point` (the window's coordinates) didn't go in, there on the page. */
   dropError(point: { x: number; y: number }, message: string): void {
     if (this.doc) showDropNote(this.doc, point, message);
   }

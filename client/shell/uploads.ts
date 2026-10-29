@@ -1,41 +1,40 @@
-// Images dropped on the page in the editor (the page's editor sends them: client/page-editor/input.ts, dropImages): each
-// goes into the document's files, in images/ beside the page, under its own name or, if a file has that name already,
-// the name with -2, -3, ... before its extension. The page's editor then puts them on the page where they were dropped.
+// Files dropped or pasted on the page in the editor (the page's editor sends them: client/page-editor/input.ts): each
+// goes into the document's files at its top, an image in images/ and any other file in files/, under its own name or,
+// if a file has that name already, the name with -2, -3, ... before its extension. The page's editor then puts them on
+// the page where they were dropped: an image as an image, another file as a link to it.
 
-import { encodePath, joinPath } from "../../document/pages";
+import { encodePath } from "../../document/pages";
 import { sha256Hex } from "../../shared/bytes";
 
 /** Files over this size go with their sha-256, so they stream to storage (the server asks for it over 25 MB). */
 const HASH_FROM = 20_000_000;
 
+/** The folder a file goes in. */
+export const folderFor = (file: File) => (file.type.startsWith("image/") ? "images" : "files");
+
 /** A file's name as it can be in the document: no folders, no dot at the start. */
-const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "image";
+const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, "").trim() || "file";
 
 /**
- * Adds `files` to the document's files (`api`: a path of the document's API to its address), in images/ in `folder`.
- * Returns the names they got, in order, up to the first that couldn't be added, and why it couldn't.
+ * Adds `files` to the document's files (`api`: a path of the document's API to its address). Returns the paths they
+ * got, in order, up to the first that couldn't be added, and why it couldn't.
  */
-export async function addImages(
-  api: (path: string) => string,
-  folder: string,
-  files: File[]
-): Promise<{ names: string[]; error: string | null }> {
-  const dir = joinPath(folder.replace(/\/+$/, ""), "images");
+export async function addFiles(api: (path: string) => string, files: File[]): Promise<{ paths: string[]; error: string | null }> {
   const listed = await fetch(api("/api/files"), { cache: "no-store" }).catch(() => null);
-  if (!listed?.ok) return { names: [], error: await why(listed, "the image") };
+  if (!listed?.ok) return { paths: [], error: await why(listed, files.length == 1 ? files[0].name : "the files") };
   const taken = new Set(((await listed.json()) as { files: { path: string }[] }).files.map((f) => f.path.toLowerCase()));
-  const names: string[] = [];
+  const paths: string[] = [];
   for (const file of files) {
-    const name = unique(cleanName(file.name), (n) => taken.has(joinPath(dir, n).toLowerCase()));
-    const path = joinPath(dir, name);
+    const dir = folderFor(file);
+    const path = `${dir}/${unique(cleanName(file.name), (n) => taken.has(`${dir}/${n}`.toLowerCase()))}`;
     const headers: Record<string, string> = {};
     if (file.size > HASH_FROM) headers["x-erga-sha256"] = await sha256Hex(await file.arrayBuffer());
     const r = await fetch(api(`/api/files/${encodePath(path)}`), { method: "PUT", body: file, headers }).catch(() => null);
-    if (!r?.ok) return { names, error: await why(r, file.name) };
+    if (!r?.ok) return { paths, error: await why(r, file.name) };
     taken.add(path.toLowerCase());
-    names.push(name);
+    paths.push(path);
   }
-  return { names, error: null };
+  return { paths, error: null };
 }
 
 /** `name`, or with -2, -3, ... before its extension, the first that isn't `taken`. */

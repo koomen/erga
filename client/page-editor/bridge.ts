@@ -104,8 +104,8 @@ export type ToFrame =
   | { type: "capture"; id: number; req: ViewRequest; text?: string }
   /** The agent's request to the live page (shared/live-page.ts). */
   | { type: "live"; id: number; req: LiveRequest }
-  /** The images the frame sent (images) are in the document's files, under these names in images/ beside the page, in order; `error` says why the others aren't. */
-  | { type: "imaged"; id: number; names: string[]; error: string | null };
+  /** The files the frame sent (upload) are in the document's files at these paths, in order; `error` says why the others aren't. */
+  | { type: "uploaded"; id: number; paths: string[]; error: string | null };
 
 /** Frame → shell. Nothing here is trusted: the page can send any of it. */
 export type FromFrame =
@@ -136,8 +136,8 @@ export type FromFrame =
   | { type: "lived"; id: number; result: LiveResult }
   /** A link to another of the document's pages, followed on the page: the shell goes to it. */
   | { type: "open"; path: string }
-  /** Image files dropped on the page, for the shell to add to the document's files, in images/ in `folder` (the page's own: "" or "blog/"). */
-  | { type: "images"; id: number; folder: string; files: File[] };
+  /** Files dropped or pasted on the page (at most 50), for the shell to add to the document's files. */
+  | { type: "upload"; id: number; files: File[] };
 
 /** A state as it crosses: text, selection and undo history. */
 export const stateJSON = (state: EditorState, historyField: unknown) => state.toJSON({ history: historyField as never });

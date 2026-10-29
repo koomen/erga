@@ -1,10 +1,11 @@
-// The page editor's paste, cut and copy: plain text and basic formatting, in and out.
+// The page editor's paste, cut and copy: plain text and basic formatting, in and out; pasted files go into the document.
 
 import * as M from "../../shared/manuscript";
 import type { ChangeSet } from "@codemirror/state";
 import * as C from "./clipboard-html";
 import { contentIn, HEADING, SPLITS } from "./source";
 import { EditorMarkdown } from "./markdown";
+import { showDropNote } from "./drop";
 
 export abstract class EditorClipboard extends EditorMarkdown {
   /**
@@ -18,6 +19,10 @@ export abstract class EditorClipboard extends EditorMarkdown {
     const data = e.clipboardData;
     const text = (data?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n");
     const html = data?.getData("text/html") ?? "";
+    // Files (a screenshot, a file copied in the Finder): into the document's files, at the caret. Not when the clipboard
+    // has HTML too: an app that copies formatted text may add a picture of it.
+    const files = [...(data?.files ?? [])];
+    if (files.length && !html) return this.pasteFiles(files);
     const sel = this.currentSelection();
     const u = sel ? M.unitAt(this.units, sel.from) : null;
     if (u?.tag == "pre") {
@@ -36,6 +41,19 @@ export abstract class EditorClipboard extends EditorMarkdown {
       return;
     }
     this.pasteBlocks(blocks);
+  }
+
+  /** Pasted files: to the caller, which adds them to the document's files (onDropFiles), then puts them at the caret. */
+  protected pasteFiles(files: File[]): void {
+    const at = this.currentSelection().from,
+      u = M.unitAt(this.units, at);
+    const r = this.coordsAtPos(at),
+      point = { x: r?.left ?? 0, y: r?.bottom ?? 0 };
+    if (!u || !this.verify(u) || !this.editableAt(u, at)) {
+      if (this.doc) showDropNote(this.doc, point, "A file can go only into the text you can edit. Put the caret in a paragraph.");
+      return;
+    }
+    this.config.onDropFiles?.(files, at, point);
   }
 
   /**
