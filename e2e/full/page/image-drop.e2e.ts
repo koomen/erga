@@ -3,7 +3,7 @@
 // files/, as a link to it. After a reload too, and from a page in a folder. The browser opens none of them. A file
 // that can't be added says why, there on the page. (A document the server keeps, as on a deployment: one on disk takes
 // only text files.)
-import { expect, servers, settle, test, type Server, type Tab } from "../../helpers/fixtures";
+import { expect, servers, settle, test, until, type Server, type Tab } from "../../helpers/fixtures";
 import { editor, F, type Editor } from "../../helpers/editor";
 
 await servers.main();
@@ -52,13 +52,25 @@ const make = (files: Made[]) => `
     for (const f of ${JSON.stringify(files)}) dt.items.add(new File([f.png ? await png() : "some notes"], f.name, { type: f.type }));`;
 
 /**
+ * The editor takes a drop: it's on the page, which isn't loading again (an edit the editor can't patch in makes the page
+ * afresh, a moment after it shows in the text) and has sent its edits. A person can't drop sooner.
+ */
+const ready = (ed: Editor) =>
+  until(
+    () => ed.frame<boolean>(`!!window.ergaFrame?.page && !ergaFrame.reloading && !ergaFrame.page.rendering && ergaFrame.relay.idle`),
+    10_000,
+    "the editor takes a drop"
+  );
+
+/**
  * Drops files made in the page's frame at boundary `i` of the first text of `selector` (0: before its first character; an
  * element with no text: at its start):
  * a dragover, then the drop. Returns whether the page stopped the browser's own drop (which would open the file) both
  * times, and whether the dragover showed where the drop goes.
  */
-const drop = (ed: Editor, selector: string, i: number, files: Made[]) =>
-  ed.frame<{ stopped: boolean; shown: boolean }>(`(async () => {${make(files)}
+const drop = async (ed: Editor, selector: string, i: number, files: Made[]) => {
+  await ready(ed);
+  return ed.frame<{ stopped: boolean; shown: boolean }>(`(async () => {${make(files)}
     const el = ${F}.querySelector(${JSON.stringify(selector)}), t = ${F}.createTreeWalker(el, 4).nextNode();
     const rg = ${F}.createRange(), first = ${i} == 0;
     if (t) { rg.setStart(t, first ? 0 : ${i} - 1); rg.setEnd(t, first ? 1 : ${i}); } else rg.selectNodeContents(el);
@@ -70,13 +82,16 @@ const drop = (ed: Editor, selector: string, i: number, files: Made[]) =>
     at.dispatchEvent(dropped);
     return { stopped: over.defaultPrevented && dropped.defaultPrevented, shown };
   })()`);
+};
 
 /** Pastes files made in the page's frame (a clipboard with files only, as a screenshot is) where the caret is. */
-const paste = (ed: Editor, files: Made[]) =>
-  ed.frame(`(async () => {${make(files)}
+const paste = async (ed: Editor, files: Made[]) => {
+  await ready(ed);
+  return ed.frame(`(async () => {${make(files)}
     ${F}.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     return true;
   })()`);
+};
 
 /** The images on the page: their src as written, and whether each has loaded. */
 const images = (ed: Editor) =>

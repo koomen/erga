@@ -9,6 +9,9 @@ erga-drop-note { all: initial; position: absolute; z-index: 2147483647; max-widt
   font: 13px/1.4 system-ui, sans-serif; white-space: pre-wrap; cursor: default; }
 `;
 
+/** Why files dropped or pasted while the page loads again (made afresh) don't go in. */
+export const LOADING_AGAIN = "The page is loading again. Drop or paste the file again in a moment.";
+
 /** Whether a drag carries files (from outside the page: the computer). */
 export const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
 

@@ -5,7 +5,7 @@ import type { ChangeSet } from "@codemirror/state";
 import * as C from "./clipboard-html";
 import { contentIn, HEADING, SPLITS } from "./source";
 import { EditorMarkdown } from "./markdown";
-import { showDropNote } from "./drop";
+import { LOADING_AGAIN, showDropNote } from "./drop";
 import { pageUrl } from "../../document/pages";
 
 export abstract class EditorClipboard extends EditorMarkdown {
@@ -57,6 +57,7 @@ export abstract class EditorClipboard extends EditorMarkdown {
       u = M.unitAt(this.units, at);
     const r = this.coordsAtPos(at),
       point = { x: r?.left ?? 0, y: r?.bottom ?? 0 };
+    if (this.rendering) return this.doc ? showDropNote(this.doc, point, LOADING_AGAIN) : undefined;
     if (!u || !this.verify(u) || !this.editableAt(u, at)) {
       if (this.doc) showDropNote(this.doc, point, "A file can go only into the text you can edit. Put the caret in a paragraph.");
       return;

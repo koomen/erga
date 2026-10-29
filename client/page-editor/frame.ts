@@ -11,6 +11,7 @@
 import { ChangeSet, EditorState, Transaction, type Extension } from "@codemirror/state";
 import { history, historyField } from "@codemirror/commands";
 import { PageEditor, type LinkInfo } from "./editor";
+import { LOADING_AGAIN } from "./drop";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
@@ -212,9 +213,24 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     try {
       let carried = stateFrom(m.carry);
       const from = carried.doc.toString(), to = state.doc.toString();
+      // The files dropped before the page loaded again, still on their way into the document: they go in here.
+      const carriedDrops = Array.isArray(m.drops)
+        ? (m.drops as { id: unknown; at: unknown; point: { x: unknown; y: unknown } | null }[])
+        : [];
+      for (const d of carriedDrops)
+        if (
+          Number.isInteger(d?.id) &&
+          Number.isInteger(d.at) &&
+          (d.at as number) <= from.length &&
+          Number.isFinite(d.point?.x) &&
+          Number.isFinite(d.point?.y)
+        )
+          drops.set(d.id as number, { at: d.at as number, point: { x: d.point!.x as number, y: d.point!.y as number } });
+      dropSeq = Math.max(dropSeq, ...drops.keys());
       if (from != to) {
         const tr = carried.update({ changes: changesBetween(from, to), annotations: Transaction.addToHistory.of(false) });
         if (view) view = { pos: tr.changes.mapPos(view.pos, 1), top: view.top };
+        for (const d of drops.values()) d.at = tr.changes.mapPos(d.at, 1);
         carried = tr.state;
       }
       state = carried;
@@ -262,13 +278,26 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     onProblem: (p) => post({ type: "problem", key: p.key, message: p.message, fix: p.fix }),
     onPointer: (e) => post({ type: "pointer", kind: "move", x: z(e.clientX), y: z(e.clientY) }),
     onDropFiles(files, at, point) {
+      // (Its state has gone to the shell already: what's dropped now would have nowhere to go in.)
+      if (reloading) return page?.dropError(point, LOADING_AGAIN);
       const id = ++dropSeq;
       drops.set(id, { at, point });
       post({ type: "upload", id, files: files.slice(0, 50) });
     },
   });
   if (m.tracking) page.setTracking(true);
-  window.ergaFrame = { page, get relay() { return relay; }, get zoom() { return zoom; } };
+  window.ergaFrame = {
+    page,
+    get relay() {
+      return relay;
+    },
+    get zoom() {
+      return zoom;
+    },
+    get reloading() {
+      return reloading;
+    },
+  };
 }
 
 /**
@@ -289,7 +318,15 @@ function reload(view: { pos: number; top: number } | null) {
       location.replace(location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : ""));
     };
     setTimeout(() => goAgain?.(), 4000);
-    if (page && relay) post({ type: "reloading", state: stateJSON(page.state, historyField), version: relay.version, view, focus: document.hasFocus() });
+    if (page && relay)
+      post({
+        type: "reloading",
+        state: stateJSON(page.state, historyField),
+        version: relay.version,
+        view,
+        focus: document.hasFocus(),
+        drops: [...drops].map(([id, d]) => ({ id, ...d })),
+      });
     else goAgain();
   };
   // (After the change in hand: the render it asked for comes in the middle of it, before its selection and its push.)

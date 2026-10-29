@@ -82,6 +82,7 @@ export class RemotePage {
   private active = false;
   /** The page's editor's last state (undo history and all), for the next one: as the page loads again, or back into the editor. */
   private carry: unknown = null;
+  private carryDrops: unknown[] | null = null;
   /** And where the reader was on the page that loads again (the text on its top line), to show there again. */
   private carryView: { pos: number; top: number } | null = null;
   /** While the page loads again with the focus: what holds the keys meanwhile (here, in the shell), and the keys. */
@@ -175,8 +176,23 @@ export class RemotePage {
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
-        this.post({ type: "init", state: this.state.toJSON(), version: this.authority.version, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}), ...(this.zoom != 1 ? { zoom: this.zoom } : {}), ...(this.carry ? { carry: this.carry } : {}), ...(this.carryView ? { view: this.carryView } : {}), ...(this.sink ? { held: this.held, focus: true } : {}), frame: { sandbox: this.frame.getAttribute("sandbox"), allow: this.frame.getAttribute("allow") }, ...(this.snapshot.paused ? { paused: true } : {}) });
+        this.post({
+          type: "init",
+          state: this.state.toJSON(),
+          version: this.authority.version,
+          self: c.self,
+          tracking: this.tracking,
+          ...(timescale ? { timescale } : {}),
+          ...(c.scroll ? { scroll: c.scroll } : {}),
+          ...(this.zoom != 1 ? { zoom: this.zoom } : {}),
+          ...(this.carry ? { carry: this.carry, ...(this.carryDrops?.length ? { drops: this.carryDrops } : {}) } : {}),
+          ...(this.carryView ? { view: this.carryView } : {}),
+          ...(this.sink ? { held: this.held, focus: true } : {}),
+          frame: { sandbox: this.frame.getAttribute("sandbox"), allow: this.frame.getAttribute("allow") },
+          ...(this.snapshot.paused ? { paused: true } : {}),
+        });
         this.carry = null;
+        this.carryDrops = null;
         this.carryView = null;
         if (this.sink) {
           // The keys held go to the page's editor with its start (above); the focus goes back to the page.
@@ -250,6 +266,8 @@ export class RemotePage {
       // The page loads again: its editor's state goes to the one in the page that comes (its init).
       case "reloading": {
         this.carry = m.state;
+        // (The files dropped on it that are on their way into the document, with the state: their answer goes to the page that comes.)
+        this.carryDrops = Array.isArray(m.drops) ? m.drops.slice(0, 100) : null;
         // (Only keys that were going to the page anyway: the page itself can say this, and mustn't take the focus from the shell.)
         if (m.focus === true && document.activeElement == this.frame) this.holdKeys();
         // It loads again once the room has its edits (else it would come made from the text before them, and load again).
