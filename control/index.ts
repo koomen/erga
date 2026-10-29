@@ -15,9 +15,6 @@
 // the app serves at /admin/ops, as the admin.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
-import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
 import type { Actor, GithubLink, PushEvent, SourceRead } from "./source/index.ts";
 import { CONTROL } from "../deploy/targets";
 import { githubAppOf, releaseStoreOf } from "./cloudflare";
@@ -25,6 +22,7 @@ import { installFleet } from "./deploys/fleet";
 import { deployRoutes } from "./install/routes";
 import type { ControlEnv } from "./env";
 import { controlPlatform } from "./platform";
+import { controlSettings } from "./settings";
 import { controlLayout, controlRoutes } from "./routes";
 import { sealKeyFrom } from "./deploys/credential";
 import { hashSecret } from "./install/forks";
@@ -80,31 +78,9 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   fetch(request: Request) { return this.deploys.fetch(request); }
 }
 
-/** A text setting, trimmed: null when it's unset or blank. */
-const setting = (name: string) =>
-  Config.String(name).pipe(
-    Config.map((s) => s.trim() || null),
-    Config.withDefault(null)
-  );
-/** A secret, as it was set: "" when it isn't. */
-const secret = (name: string) => Config.String(name).pipe(Config.withDefault(""));
-
-/** The control Worker's settings, from its bindings (control/env.ts says what each is). */
-const Settings = Config.all({
-  app: Config.String("APP_URL"),
-  accountId: Config.String("CLOUDFLARE_ACCOUNT_ID"),
-  upstream: setting("UPSTREAM").pipe(Config.map((s) => s?.replace(/\/+$/, "") || null)),
-  forkSecret: secret("FORK_SECRET"),
-  googleId: setting("GOOGLE_APP_CLIENT_ID"),
-  googleSecret: setting("GOOGLE_APP_CLIENT_SECRET"),
-  version: setting("ERGA_VERSION"),
-  oauthClientId: setting("CLOUDFLARE_OAUTH_CLIENT_ID"),
-  oauthSecret: secret("CLOUDFLARE_OAUTH_CLIENT_SECRET"),
-});
-
 export default {
   async fetch(request: Request, env: ControlEnv, ctx: ExecutionContext): Promise<Response> {
-    const set = Effect.runSync(Settings.parse(ConfigProvider.fromUnknown(env)));
+    const set = controlSettings(env);
     // The app's files' addresses, which the pages here name (server/pages/assets.ts): the app's stylesheet and typeface.
     await remoteAssets(set.app);
     const platform = controlPlatform(env, ctx);
