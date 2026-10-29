@@ -606,6 +606,20 @@ export abstract class EditorEdit extends EditorRender {
     } else {
       const parent = list.parent;
       if (parent?.tag != "li" || !closed(parent)) return true;
+      // What goes between two items of the parent's list: as its items are now (a list on one line stays so).
+      const itemGap = (li: M.ElementNode) => {
+        const outer = li.parent ? elements(li.parent) : [],
+          k = outer.indexOf(li);
+        const gap =
+          k > 0 ? src.slice(outer[k - 1].to, li.from) : k >= 0 && k + 1 < outer.length ? src.slice(li.to, outer[k + 1].from) : null;
+        return gap != null && !gap.trim()
+          ? gap
+          : li.parent &&
+              !src.slice(li.parent.openTo, outer[0]?.from ?? li.from).trim() &&
+              !src.slice(li.parent.openTo, li.from).includes("\n")
+            ? ""
+            : "\n" + indent(li);
+      };
       // The items after them go with the last, nested in it, so the order stays.
       const after = siblings.slice(k + 1);
       const own = items.slice(0, -1).map((e) => cut(e.from, e.to) + "\n" + indent(e));
@@ -622,7 +636,7 @@ export abstract class EditorEdit extends EditorRender {
       ({ from, to, insert } = {
         from: parent.from,
         to: parent.to,
-        insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + "\n" + indent(parent) + moved,
+        insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + itemGap(parent) + moved,
       });
     }
     // Where the marks are in the new text, once both are out of it.
