@@ -128,5 +128,14 @@ For example:
    bundles may import `shared/`, and of `document/` only `content.ts`,
    `pages.ts`, `merge.ts` and the types of `api.ts`.
    `tests/imports.test.ts` and `tests/browser-imports.test.ts` check it.
-5. **Fix errors where they show.** Erga's pages never send a person to
+5. **Server code uses Effect.** Everything that runs on the server
+   (`document/`, `server/`, `control/`, `agents/`, `cloudflare/`, `deploy/`,
+   `dev/`) uses Effect (the `effect` package): Schema for every outside
+   value, typed errors (`Schema.TaggedError`), Schedule for retries and
+   timeouts, Config for settings, `effect/http` for routes, `effect/ai`
+   for the models. Never add a hand-written helper or a dependency that
+   Effect covers. The browser never imports effect (only its types):
+   `shared/` and the files of `document/` the browser has stay free of it,
+   and `tests/browser-imports.test.ts` fails if a bundle pulls it in.
+6. **Fix errors where they show.** Erga's pages never send a person to
    another page to fix an error: the fix shows in place.

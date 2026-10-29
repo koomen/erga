@@ -59,7 +59,11 @@ AGENTS.md has the full rules. The most important:
    `tests/browser-imports.test.ts` check it.
 4. **New routes on staging stay behind the admins-only guard**
    (`server/identity/admins-only.ts`).
-5. **Write code like the code around it**: the same names, the same
+5. **Server code uses Effect.** Use Effect's module (Schema, Schedule,
+   Config, Encoding, effect/http, effect/ai) where it has one: no new
+   helper or dependency that does the same. The browser never imports
+   effect; `tests/browser-imports.test.ts` checks it.
+6. **Write code like the code around it**: the same names, the same
    amount of comment, the same idiom. A comment tells why, not the
    history of the change.
 
