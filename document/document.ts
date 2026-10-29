@@ -40,6 +40,7 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { HttpServerResponse } from "effect/http";
@@ -125,6 +126,22 @@ export interface DocumentDirectory extends NamesDirectory<Asker> {
 const DIRECTORY_EVERY_MS = 2000;
 
 
+/**
+ * Runs `then` in `ms`, in a fiber of its own; `more`, asked then, may wait
+ * longer first (again and again: while an agent works, its milliseconds).
+ */
+function later(ms: number, then: () => void, more: () => number = () => 0): Fiber.Fiber<void> {
+  const run = Effect.gen(function* () {
+    yield* Effect.sleep(ms);
+    for (let wait = more(); wait > 0; wait = more()) yield* Effect.sleep(wait);
+    then();
+  });
+  return Effect.runFork(run);
+}
+
+/** A fiber of `later` that hasn't run yet doesn't. */
+const stop = (fiber: Fiber.Fiber<void>) => void Effect.runFork(Fiber.interrupt(fiber));
+
 /** A file that PUT /api/files refused: the status, and what to do about it. */
 class UploadRefused extends Schema.TaggedError<UploadRefused>()("UploadRefused", { status: Schema.Number, error: Schema.String }) {}
 
@@ -209,7 +226,13 @@ export class Document {
    * Edits not yet in a version: since when, by whom, and the timers that cut
    * one (see `noteEdit` for the rule).
    */
-  private pending = { dirty: false, since: 0, authors: new Set<string>(), idle: null as ReturnType<typeof setTimeout> | null, max: null as ReturnType<typeof setTimeout> | null };
+  private pending = {
+    dirty: false,
+    since: 0,
+    authors: new Set<string>(),
+    idle: null as Fiber.Fiber<void> | null,
+    max: null as Fiber.Fiber<void> | null,
+  };
   /** Cuts, one at a time. */
   private cutting: Promise<unknown> = Promise.resolve();
   /** Room connections that may edit: when the last one goes, a version is cut. */
@@ -235,7 +258,7 @@ export class Document {
   /** Requests and calls under way: the document doesn't close under them. */
   private busy = 0;
   private lastActive = 0;
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleTimer: Fiber.Fiber<void> | null = null;
 
   constructor(private deps: DocumentDeps) {
     this.storage = deps.storage;
@@ -309,7 +332,11 @@ export class Document {
     const ms = this.deps.timing.closeIdleMs;
     if (!ms) return;
     this.lastActive = Date.now();
-    if (!this.idleTimer) this.idleTimer = setTimeout(() => { this.idleTimer = null; void this.closeIfIdle(); }, ms);
+    if (!this.idleTimer)
+      this.idleTimer = later(ms, () => {
+        this.idleTimer = null;
+        void this.closeIfIdle();
+      });
   }
 
   /**
@@ -325,7 +352,10 @@ export class Document {
     if (!opened || this.info?.disk || this.idleTimer) return;
     const wait = this.lastActive + ms - Date.now();
     if (wait > 0 || this.busy > 0 || this.pending.dirty || this.agentWorking()) {
-      this.idleTimer = setTimeout(() => { this.idleTimer = null; void this.closeIfIdle(); }, wait > 0 ? wait : Math.min(ms, 1000));
+      this.idleTimer = later(wait > 0 ? wait : Math.min(ms, 1000), () => {
+        this.idleTimer = null;
+        void this.closeIfIdle();
+      });
       return;
     }
     this.open = null;
@@ -893,12 +923,24 @@ export class Document {
       p.since = Date.now();
       // Stored, so a document stopped before it cut the version cuts it as it opens again.
       void this.markUncut(true);
-      const burst = () => { p.max = this.agentWorking() ? setTimeout(burst, this.idleMs) : null; if (!p.max) void this.cutSoon("burst"); };
-      p.max = setTimeout(burst, this.maxMs);
+      p.max = later(
+        this.maxMs,
+        () => {
+          p.max = null;
+          void this.cutSoon("burst");
+        },
+        () => (this.agentWorking() ? this.idleMs : 0)
+      );
     }
-    if (p.idle) clearTimeout(p.idle);
-    const idle = () => { p.idle = this.agentWorking() ? setTimeout(idle, this.idleMs) : null; if (!p.idle) void this.cutSoon("idle"); };
-    p.idle = setTimeout(idle, this.idleMs);
+    if (p.idle) stop(p.idle);
+    p.idle = later(
+      this.idleMs,
+      () => {
+        p.idle = null;
+        void this.cutSoon("idle");
+      },
+      () => (this.agentWorking() ? this.idleMs : 0)
+    );
   }
 
   /** Notes in its record whether it has edits no version holds yet (only when that changes). */
@@ -922,8 +964,8 @@ export class Document {
 
   private clearPending(): { authors: string[]; dirty: boolean } {
     const p = this.pending;
-    if (p.idle) clearTimeout(p.idle);
-    if (p.max) clearTimeout(p.max);
+    if (p.idle) stop(p.idle);
+    if (p.max) stop(p.max);
     const out = { authors: [...p.authors], dirty: p.dirty };
     this.pending = { dirty: false, since: 0, authors: new Set(), idle: null, max: null };
     return out;
