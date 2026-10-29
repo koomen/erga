@@ -66,6 +66,11 @@ export interface PageEditorConfig {
    * file it refers to didn't load. Reported once per render per problem.
    */
   onProblem?: (problem: PageProblem) => void;
+  /**
+   * Image files dropped on the text, at source position `at` (`point`: where, in the page's coordinates): the caller
+   * adds them to the document's files, then puts them on the page (insertImages), or says why not (dropError).
+   */
+  onDropImages?: (files: File[], at: number, point: { x: number; y: number }) => void;
   /** Whoever is using this editor, for the marks on their own edits while tracking. */
   self?: MarkAuthor;
   /** The page is paused (it loaded again while it was: setPaused). */

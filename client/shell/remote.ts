@@ -55,6 +55,8 @@ export interface RemotePageConfig {
   scroll?: number;
   /** A link on the page to another of the document's pages was followed (its path in the document). */
   onOpen?: (path: string) => void;
+  /** Image files dropped on the page, for the document's files in images/ in `folder` (the page's): the names they got, in order, and why the rest didn't go in. */
+  onImages?: (folder: string, files: File[]) => Promise<{ names: string[]; error: string | null }>;
   /** Resolves once the room has every edit this tab made (the page that loads again is made from the room's text). */
   flushed?: () => Promise<unknown>;
 }
@@ -236,6 +238,17 @@ export class RemotePage {
       }
       case "activity": if (m.kind == "focus" || m.kind == "key") c.onActivity(m.kind); return;
       case "open": if (typeof m.path == "string" && m.path.length < 1000) c.onOpen?.(m.path); return;
+      case "images": {
+        const files = Array.isArray(m.files)
+          ? m.files.filter((f): f is File => f instanceof File && f.type.startsWith("image/")).slice(0, 50)
+          : [];
+        if (!Number.isInteger(m.id) || typeof m.folder != "string" || m.folder.length > 1000 || !files.length || !c.onImages) return;
+        void c
+          .onImages(m.folder, files)
+          .catch((e: Error) => ({ names: [], error: `Couldn't add the image: ${e.message}` }))
+          .then((r) => this.post({ type: "imaged", id: m.id, names: r.names, error: r.error }));
+        return;
+      }
       // The page loads again: its editor's state goes to the one in the page that comes (its init).
       case "reloading": {
         this.carry = m.state;

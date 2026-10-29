@@ -34,6 +34,7 @@ import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { mountAgent } from "./agent";
 import { mountPause } from "./pause";
+import { addImages } from "./images";
 import { sleep } from "../../shared/time";
 
 declare global {
@@ -313,11 +314,20 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => shell.room.needRefresh(),
     onOpen: (path) => openPage(path),
+    onImages: (folder, files) => addImages(api, folder, files),
     flushed: () => collab.flushed(),
     onZoom: (by) => zoomPage(by),
   });
   if (editing()) page.start();
   performance.mark("erga:frame-asked");
+  // A file dropped on the shell around the page (not the agent's panel, which takes it) never opens in its place.
+  for (const type of ["dragover", "drop"] as const)
+    window.addEventListener(type, (e) => {
+      if (!e.defaultPrevented && e.dataTransfer?.types.includes("Files")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "none";
+      }
+    });
 
   // ---------------------------------------------------------------- zoom
 
