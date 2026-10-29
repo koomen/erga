@@ -1,7 +1,10 @@
-// What the admin pages' scripts (client/inline/admin-*.ts) share: a POST to the server, a hint that says how it went,
-// and the page again as the server has it now.
+// What the admin pages' scripts (client/inline/admin-*.ts) share: a hint that says how it went, the page again as the
+// server has it now, and a POST of a secret (a key, an app's values) to its page. Every other change is an operation
+// (client/common/tools.ts).
 
-/** POSTs `fields` to `action` and answers its JSON; the server's error, or a line about the network, as an Error. */
+export { runTool } from "./tools";
+
+/** POSTs `fields` (a secret) to `action` and answers its JSON; the server's error, or a line about the network, as an Error. */
 export async function post(action: string, fields: Record<string, string>): Promise<any> {
   const r = await fetch(action, { method: "POST", body: new URLSearchParams(fields), headers: { Accept: "application/json" } }).catch(
     () => null

@@ -2,24 +2,22 @@
 // Each change goes to the server, which checks it (admins only, and never the last admin); the page reloads to show the
 // list as it is now.
 
-import { post, reload, say } from "../common/admin-post";
+import { reload, runTool, say } from "../common/admin-post";
 
 export interface UsersConfig {
   /** The signed-in admin's login, in lower case. */
   me: string;
-  /** Where the changes go: POST /admin/users. */
-  action: string;
 }
 
 export default function adminUsers(c: UsersConfig): void {
-  const { me, action } = c;
+  const { me } = c;
   const hint = document.getElementById("users-hint")!,
     addForm = document.querySelector<HTMLFormElement>("form.add-user")!;
   const field = <T extends HTMLElement = HTMLInputElement>(name: string) => addForm.elements.namedItem(name) as unknown as T;
-  async function change(fields: Record<string, string>, saying: string, undo?: () => void) {
+  async function change(op: string, args: Record<string, unknown>, saying: string, undo?: () => void) {
     say(hint, saying);
     try {
-      const answer = await post(action, fields);
+      const answer = await runTool(op, args);
       if (answer.note) {
         say(hint, answer.note);
         undo?.();
@@ -36,7 +34,8 @@ export default function adminUsers(c: UsersConfig): void {
   addForm.addEventListener("submit", (e) => {
     e.preventDefault();
     change(
-      { do: "add", provider: provider.value, handle: field("handle").value.trim(), role: field<HTMLSelectElement>("role").value },
+      "add_user",
+      { provider: provider.value, handle: field("handle").value.trim(), role: field<HTMLSelectElement>("role").value },
       "Adding…"
     );
   });
@@ -46,17 +45,17 @@ export default function adminUsers(c: UsersConfig): void {
       role = li.querySelector<HTMLSelectElement>("select.role")!,
       deploy = li.querySelector<HTMLInputElement>("input.deploy"),
       remove = li.querySelector(".remove")!;
-    const whom: Record<string, string> = login ? { login } : { person: person! };
+    const whom: Record<string, unknown> = login ? { login } : { person: Number(person) };
     let was = role.value;
     role.addEventListener("change", () => {
       const undo = () => {
         role.value = was;
       };
       if (login == me && was == "admin" && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
-      change({ do: "role", ...whom, role: role.value }, "Saving…", undo);
+      change("set_user_role", { ...whom, role: role.value }, "Saving…", undo);
     });
     deploy?.addEventListener("change", () =>
-      change({ do: "deploy", login: login!, deploy: deploy.checked ? "1" : "0" }, "Saving…", () => {
+      change("set_user_deploy", { login: login!, deploy: deploy.checked }, "Saving…", () => {
         deploy.checked = !deploy.checked;
       })
     );
@@ -69,7 +68,7 @@ export default function adminUsers(c: UsersConfig): void {
         )
       )
         return;
-      change({ do: "remove", ...whom }, "Removing…");
+      change("remove_user", whom, "Removing…");
     });
   }
 }

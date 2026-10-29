@@ -1,6 +1,7 @@
 // Someone who may only view a document sees its tree read-only ("a viewer").
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { clickOn, multi, row, signIn, js } from "./tree";
+import { runTool } from "../../helpers/tools";
 
 await servers.main();
 
@@ -10,7 +11,8 @@ test("for a viewer the tree has no add, rename, move or delete, no keys that cha
   await doc.agentTool("new_page", { path: "owl-calls" });
   // A document linked from disk starts shared with anyone signed in, to edit: that goes first.
   const owner = await signIn(server, null);
-  const share = (login: string, role: string) => fetch(`${server.root}/docs/share`, { method: "POST", redirect: "manual", headers: { Cookie: owner, Origin: server.root }, body: new URLSearchParams({ id: doc.id, login, role }) });
+  const share = (login: string, role: string) =>
+    runTool(server.root, "share_document", { document: doc.id, login, role }, { cookie: owner });
   expect((await share("*", "none")).ok).toBe(true);
   expect((await share("ada", "viewer")).ok).toBe(true);
   const ada = await signIn(server, "ada");

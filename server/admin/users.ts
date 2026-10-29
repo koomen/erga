@@ -1,7 +1,7 @@
 // /admin/users, the Users page (client/inline/admin-users.ts makes its changes).
 
 import { type Identity, type Person, ROLE_LABEL, type User, USER_ROLES, type UserRole } from "../directory/index.ts";
-import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
+import { ICON, inlineCall, TIMES_SCRIPT } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
@@ -80,7 +80,7 @@ export async function usersPage(platform: Platform, session: Session) {
     body: `
   <section aria-label="Users">
     <h2>Users</h2>
-    <form class="add-user" method="post" action="${esc(link("/admin/users", session))}">
+    <form class="add-user">
       <select name="provider" aria-label="Provider"><option value="github">GitHub</option><option value="google">Google</option></select>
       <input class="input" name="handle" placeholder="a GitHub login" aria-label="The GitHub login or Google email" autocomplete="off" autocapitalize="off" spellcheck="false" required>
       <select name="role" aria-label="Role">${USER_ROLES.map((r) => `<option value="${r}"${r == "write" ? " selected" : ""}>${esc(ROLE_LABEL[r])}</option>`).join("")}</select>
@@ -93,6 +93,6 @@ ${users.map((u) => userRow(u, ids.get(u.login) ?? [], session, u.role == "admin"
 ${people.map(personRow).join("\n")}
     </ol>
   </section>
-<script>${TIMES_SCRIPT}${inlineCall("admin-users", { me: session.login.toLowerCase(), action: link("/admin/users", session) })}</script>`,
+<script>${TIMES_SCRIPT}${inlineCall("admin-users", { me: session.login.toLowerCase() })}</script>`,
   });
 }

@@ -3,6 +3,7 @@
 
 import { fastClick } from "../common/fast-click";
 import { newDocPicker } from "../common/new-doc";
+import { runTool } from "../common/tools";
 import type { TreeHandle } from "../pages/pages-tree";
 import times from "./times";
 
@@ -42,13 +43,20 @@ export default function docs(c: DocsConfig): void {
       "disk" in f.dataset
         ? "Take “" + f.dataset.title + "” off your list? Its files stay where they are."
         : "Delete “" + f.dataset.title + "”? This can't be undone.";
-    f.addEventListener("submit", (e) => {
-      if (!confirm(q)) e.preventDefault();
+    // Delete is the operation delete_document, as an agent's is; the list follows.
+    f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!confirm(q)) return;
+      try {
+        await runTool("delete_document", { document: (f.elements.namedItem("id") as HTMLInputElement).value });
+        location.reload();
+      } catch (err) {
+        alert((err as Error).message);
+      }
     });
   }
-  // Sharing: each change is saved as it's made (POST /docs/share), and the list follows when the dialog closes.
+  // Sharing: each change is saved as it's made (the operation share_document), and the list follows when the dialog closes.
   const share = document.getElementById("share") as HTMLDialogElement,
-    action = share.dataset.action!,
     me = share.dataset.me;
   const people = share.querySelector(".people")!,
     adder = share.querySelector<HTMLFormElement>("form.add")!,
@@ -122,19 +130,13 @@ export default function docs(c: DocsConfig): void {
       ? "Signed in or not; people who aren't signed in view it"
       : "Public sharing is off here: only people who sign in can open it";
   }
-  async function call(init?: Record<string, string>): Promise<ShareAnswer> {
-    const r = await fetch(
-      init ? action : action + (action.includes("?") ? "&" : "?") + "id=" + doc!.id,
-      init ? { method: "POST", body: new URLSearchParams(init), headers: { Accept: "application/json" } } : {}
-    ).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
-    if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
-    return body;
-  }
+  /** Who it's shared with (document_access), or that after a change (share_document). */
+  const call = (change?: { login: string; role: string }): Promise<ShareAnswer> =>
+    change ? runTool("share_document", { document: doc!.id, ...change }) : runTool("document_access", { document: doc!.id });
   async function change(login: string, role: string) {
     tell("Saving…");
     try {
-      render(await call({ id: doc!.id, login, role }));
+      render(await call({ login, role }));
       changed = true;
       tell("");
       return true;

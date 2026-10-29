@@ -1,8 +1,9 @@
 // The Homepage Project setting on /admin (landing_document): a box that finds any of the server's documents and projects
-// as you type (GET /admin/documents), each with its owner, address and kind; choosing one saves it, and Reset puts the
+// as you type (the operation search_documents), each with its owner, address and kind; choosing one saves it, and Reset puts the
 // repo's demo page back.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { adminToken, fresh, landingSetting, publish, resetLanding } from "./home";
+import { runTool } from "../../helpers/tools";
 
 await servers.short();
 test.afterEach(async () => {
@@ -61,10 +62,10 @@ test("the Homepage Project picker finds a document by its title as you type; cho
   expect(await landingSetting(server)).toBe("");
 });
 
-test("GET /admin/documents is an admin's: someone else gets nothing", async () => {
+test("search_documents is an admin's: someone else is refused", async () => {
   const server = await servers.short();
-  expect((await fetch(`${server.root}/admin/documents?q=&user=someone-else`, { redirect: "manual" })).status).toBe(404);
-  const mine = (await (await fetch(`${server.root}/admin/documents?q=`)).json()) as { found: { address: string; kind: string }[] };
+  expect((await runTool(server.root, "search_documents", { query: "" }, { user: "someone-else" })).status).toBe(403);
+  const mine = (await runTool<{ found: { address: string; kind: string }[] }>(server.root, "search_documents", { query: "" })).result!;
   expect(mine.found.length).toBeGreaterThan(0);
   expect(mine.found[0]).toMatchObject({
     address: expect.stringMatching(/^\/[^/]+\/[^/]+$/),

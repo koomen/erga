@@ -134,7 +134,8 @@ health checks and rollbacks work.
       app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
       http.ts         the routes' HTTP in Effect (effect/http): a route is an Effect, the Platform a service, the answers they share
-      api.ts          the HTTP API for outside agents: tokens, /api, /mcp (the tools: agents/tools.ts)
+      api.ts          the HTTP API: /api/tools (the operations, for the pages and every agent), tokens, /api, /mcp
+                      (the tools: agents/tools.ts)
       health.ts       the health check, GET /api/health
       security.ts     the security headers on every answer of the app
       live.ts         open pages follow a redeploy
@@ -144,19 +145,23 @@ health checks and rollbacks work.
                       /tokens, /settings), sign-in with GitHub or Google (sign-in.ts, accounts.ts) and its settings
                       (settings.ts, apps.ts), cookies, the staging guard (admins-only.ts)
       documents/      the app for documents: a document's address and access (routes.ts), the pages origin
-                      and its tokens (pages-origin.ts), the viewer (view.ts), new/list/delete/share (make.ts), the
-                      homepage's document (landing.ts)
+                      and its tokens (pages-origin.ts), the viewer (view.ts), new documents and the list (make.ts),
+                      the homepage's document (landing.ts)
       pages/          the HTML the server renders, no routing: the viewer's scripts and styles (viewer.ts), the page's
                       own script (reader.ts), the files view (files.ts), the documents list (docs.ts), the start page,
                       the account menu, the templates, and what every page shares (chrome.ts)
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
       admin/          the admin pages, one file for each (settings.ts, api-keys.ts, auth.ts, access.ts, changes.ts,
                       users.ts), their routes (routes.ts) and the layout they share
+      operations/     each thing a person does on the server, defined once (operation.ts): documents, sharing and
+                      tokens (documents.ts), the admin pages' settings, keys, sign-in, users and rules (admin.ts).
+                      The pages call them over POST /api/tools/<name>; every agent has them as tools
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
     agents/       both embedded agents, their tools, and the guides for outside agents
       run.ts          the agent loop both agents run, on Effect AI: the model, the transcript, the checkpoints
-      tools.ts        the one tool registry: every server tool, for the embedded agents and the outside API;
-                      actions.ts, the audit of every action and its tool
+      tools.ts        the one tool set: the server's operations and the document tools for any document, for every
+                      agent as its person (the editor's agent never with admin power); actions.ts, the audit of
+                      every action and its tool
       guides.ts       what an outside agent reads first: the server's guide, a document's and the admin pages'
       models.ts       the models (Effect AI's Anthropic provider), the agent's configuration and the scripted test model
       checkpoint.ts   an agent's conversation, kept step by step (chat-store.ts, in a Durable Object's SQLite)
@@ -213,7 +218,7 @@ below it, lowest first: `shared/`, `document/`, the areas of `server/`,
 `control/`, `agents/`, `server/app.ts` and `server/api.ts`, `cloudflare/`.
 `client/` imports `shared/` and a few files of `document/`; `deploy/`,
 `dev/`, `tests/` and `e2e/` import anything. Each area of `server/`
-(directory, identity, documents, pages, home, admin) is imported through
+(directory, identity, documents, pages, home, admin, operations) is imported through
 its `index.ts`, its interface. Only `cloudflare/` and `control/` read the
 Workers' bindings, and `control/` never imports `cloudflare/`. `tests/imports.test.ts` has the whole rules and checks
 them.

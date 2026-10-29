@@ -6,6 +6,7 @@ import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { ROOT } from "../../helpers/env";
 import { editor, F } from "../../helpers/editor";
 import { deployed, docOf, editOf, fresh, front, get, resetLanding } from "./home";
+import { runTool } from "../../helpers/tools";
 
 await servers.short();
 test.afterEach(async () => { await resetLanding(await servers.short()); });
@@ -64,8 +65,8 @@ test("someone who isn't an admin sees it with Clone, without Edit; /new?from=lan
 test("deleted, the landing document is made again from assets/landing/ on the next /", async () => {
   const server = await servers.short();
   const { id } = await fresh(server);
-  const del = await get(server, "/docs/delete", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ id }) });
-  expect(del.status).toBe(303);
+  const del = await runTool(server.root, "delete_document", { document: id });
+  expect(del.status).toBe(200);
   const again = (await front(server)).html;
   const id2 = docOf(again);
   expect(id2).toBeTruthy();
@@ -81,7 +82,7 @@ test("a landing document an admin chose is the homepage, and nothing more is mad
   const before = await landings();
   const mine = (await get(server, "/new")).headers.get("location")!.replace(/[?&]edit=?$/, "");
   const mineId = ((await (await get(server, `${mine}/api/name`)).json()) as { id: string }).id;
-  const set = await get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(mine) }) });
+  const set = await runTool(server.root, "set_setting", { key: "landing_document", value: mine });
   expect(set.ok).toBe(true);
   expect(docOf((await front(server)).html)).toBe(mineId);
   expect(await landings()).toBe(before);

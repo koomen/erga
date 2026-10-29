@@ -48,9 +48,11 @@ AGENTS.md has the full rules. The most important:
 1. **Migrations only add.** Change the database with a new file in
    `server/migrations/`. Never edit a migration that is there. A migration
    never drops or renames a column; `tests/migrations.test.ts` checks it.
-2. **The embedded agents can do what their person can.** A new button or
-   HTTP route needs a tool for the agent, and a line in `agents/actions.ts`.
-   `tests/agent-actions.test.ts` checks it.
+2. **An agent can do what its person can.** A page's action is an
+   operation (`server/operations/`), which the page calls over
+   `POST /api/tools/<name>` and every agent has as a tool. The document agent
+   never has admin power. A new HTTP route needs a line in
+   `agents/actions.ts`. `tests/agent-actions.test.ts` checks it.
 3. **Keep the layers.** A folder imports only the layers below it
    (README.md, "The layout"). Import each area of `server/` through its
    `index.ts`. Only `cloudflare/` and `control/` read the Workers'

@@ -1,7 +1,6 @@
 // The admin agent's own tools, beside the admin tools of agents/tools.ts: the
 // Ops page's (`opsTools`: staging and main, production's deploy, GitHub,
-// the deploys and their logs, releases, domains, the homepage's deploy, and the
-// admin's own agent tokens) and read-only reads of Erga's own source
+// the deploys and their logs, releases, domains, and the homepage's deploy) and read-only reads of Erga's own source
 // (`sourceTools`). agents/admin/sessions.ts gives them to the agent with
 // agents/tools.ts `agentTools`, which checks the admin first (`guard`).
 
@@ -9,7 +8,7 @@ import * as Schema from "effect/Schema";
 import type { Tool } from "../tools";
 import { MAX_LINES, MAX_MATCHES, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
 
-/** What the Ops page tools do, as the admin: the source and deploys on /admin/ops, and agent tokens. */
+/** What the Ops page tools do, as the admin: the source and deploys on /admin/ops. */
 export interface OpsCalls {
   branches(): Promise<object>;
   /** main to staging's head (or to that staging commit): production deploys it. */
@@ -43,18 +42,12 @@ export interface OpsCalls {
   dropWaitingMerge(): Promise<object>;
   /** The homepage (the landing_document setting) deployed again, as Redeploy in the editor's settings does. */
   deployHome(): Promise<object>;
-  agentTokens(): Promise<object[]>;
-  revokeAgentToken(id: string): Promise<boolean>;
 }
-
-/** Times (ms since the epoch) as ISO strings, for the model. */
-const times = (o: object) =>
-  Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v == "number" && v > 1e12 ? new Date(v).toISOString() : v]));
 
 /**
  * The Ops page's tools: the source and deploys on /admin/ops (staging and main, GitHub, every
- * target's deploys and their logs, a redeploy, main moved to staging: production) and the admin's own agent tokens
- * (/settings: read and revoke; made, and an agent's request approved, only there). They act as the admin: the
+ * target's deploys and their logs, a redeploy, main moved to staging: production). Their agent tokens are the
+ * operations list_tokens and revoke_token (server/operations/). They act as the admin: the
  * change log and the deploys' triggers name them.
  */
 export function opsTools(ops: OpsCalls): Tool[] {
@@ -254,24 +247,6 @@ export function opsTools(ops: OpsCalls): Tool[] {
       "Deploys the homepage (the document the landing_document setting names, which set_setting changes) again now, as Redeploy in that document's settings does in the editor.",
       Schema.Struct({}),
       () => ops.deployHome()
-    ),
-    tool(
-      "list_agent_tokens",
-      "Read your agent tokens",
-      "Your own agent tokens (/settings): id, label, kind (share: a share button's: the editor's, scope documents, or Share with agent's on the admin pages, scope admin), scope (document, documents or admin), when made, when it ends and when last used. Never a token itself: a token is made, or an agent's request for one approved, only on /settings.",
-      Schema.Struct({}),
-      async () => (await ops.agentTokens()).map(times)
-    ),
-    tool(
-      "revoke_agent_token",
-      "Revoke an agent token",
-      "Revokes one of your own agent tokens (list_agent_tokens lists them), as Revoke on /settings does: the agent that holds it can't act as you any more.",
-      Schema.Struct({ id: Schema.String.annotate({ description: "The token's id" }) }),
-      async (a) => {
-        if (!(await ops.revokeAgentToken(String(a.id ?? ""))))
-          throw new Error(`You have no token "${a.id}". list_agent_tokens lists them.`);
-        return { revoked: a.id };
-      }
     ),
   ];
 }

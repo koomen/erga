@@ -3,7 +3,7 @@
 // list, delete and share; the homepage's document. The rest of the app imports documents
 // through this file.
 
-export { forwarded, documentRoutes } from "./routes.ts";
+export { forwarded, forwardedAs, documentRoutes } from "./routes.ts";
 export { forgetDecisions } from "./view.ts";
 export { landingDocument } from "./landing.ts";
 export { makeDoc, startingFiles } from "./make.ts";

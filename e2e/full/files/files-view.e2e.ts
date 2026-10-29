@@ -4,6 +4,7 @@
 import type { Page } from "playwright-core";
 import { request } from "node:http";
 import { expect, servers, test, until, type Server } from "../../helpers/fixtures";
+import { runTool } from "../../helpers/tools";
 
 /** A GET of a pages origin's address (<id>-<owner>.localhost, which this process can't look up): to this machine, with its Host. */
 function viaHost(url: string): Promise<{ type: string; body: string }> {
@@ -155,8 +156,8 @@ test("someone who may only view sees the files, and no way to change them", asyn
   const server = await servers.main();
   const doc = await newDoc(server);
   await doc.put("a.pdf", pdf("a"));
-  // Shared with anyone signed in, to view (the docs' share form, as its owner).
-  await fetch(`${server.root}/docs/share`, { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ id: doc.id, login: "*", role: "viewer" }) });
+  // Shared with anyone signed in, to view (the operation share_document, as its owner).
+  await runTool(server.root, "share_document", { document: doc.id, login: "*", role: "viewer" });
   await page.goto(`${server.root}/auth/github?as=viewer${crypto.randomUUID().slice(0, 6)}&next=${encodeURIComponent(`${doc.address}?files`)}`);
   await until(() => js(page, `document.querySelector("main.files")?.getAttribute("aria-busy") == "false"`), 8000, "the viewer's files view lists the files");
   expect(await rowPaths(page)).toContain("a.pdf");

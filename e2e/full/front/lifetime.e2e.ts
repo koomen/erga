@@ -2,6 +2,7 @@
 // edited or open stays, and one deleted from the list is gone, addresses and all.
 import { expect, test, until } from "../../helpers/fixtures";
 import { person, servers, tools } from "./front";
+import { runTool } from "../../helpers/tools";
 
 await servers.script();
 
@@ -35,9 +36,12 @@ test("a document is deleted only from this site's pages (a delete without an Ori
   const p = await person(await servers.script());
   const id = await p.make();
   const address = (await p.nameOf(id)).address;
-  const form = (headers: Record<string, string>) => p.get("/docs/delete", { method: "POST", body: new URLSearchParams({ id }), headers });
-  expect((await form({})).status).toBe(403);
-  expect((await form({ Origin: p.origin })).status).toBe(303);
+  // The page's Delete is the operation delete_document; another site's (or no) Origin is refused.
+  expect((await runTool(p.base, "delete_document", { document: id }, { cookie: p.cookie, origin: null })).status).toBe(403);
+  expect(
+    (await runTool(p.base, "delete_document", { document: id }, { cookie: p.cookie, origin: "https://elsewhere.example" })).status
+  ).toBe(403);
+  expect((await p.tool("delete_document", { document: id })).status).toBe(200);
   expect(await p.exists(id)).toBe(false);
   expect(await p.docs()).not.toContain(`value="${id}"`);
   expect((await p.get(address)).status).toBe(404);

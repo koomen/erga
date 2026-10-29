@@ -3,8 +3,9 @@
 //
 //   1. shared/        nothing of ours (assets/ is data: any layer may import it)
 //   2. document/      shared/. It gets the directory and the agents through DocumentDeps.
-//   3. server/'s areas (directory, identity, documents, pages, home, admin) and its other files but app.ts and
-//                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts. directory/ never imports identity/.
+//   3. server/'s areas (directory, identity, documents, pages, home, admin, operations) and its other files but app.ts and
+//                     api.ts: platform.ts, http.ts, security.ts, live.ts, health.ts. directory/ never imports identity/;
+//                     documents/ and admin/ never import operations/.
 //   4. control/       the control plane: Erga's repository, its deploys, installs, the Ops page. Also deploy/targets.ts.
 //   5. agents/        both embedded agents (the admin agent's tools work the control plane)
 //   6. server/app.ts and server/api.ts: the route table, and the HTTP API for outside agents
@@ -31,7 +32,7 @@ import { join, relative, resolve } from "node:path";
 import { expect, test } from "bun:test";
 
 const ROOT = resolve(import.meta.dir, "..");
-const AREAS = ["directory", "identity", "documents", "pages", "home", "admin"];
+const AREAS = ["directory", "identity", "documents", "pages", "home", "admin", "operations"];
 /** The repository's folders (an import that names none is a package's). */
 const REPO = readdirSync(ROOT).filter((n) => !n.startsWith(".") && n != "node_modules" && statSync(join(ROOT, n)).isDirectory());
 const BROWSER_DOCUMENT = ["document/content", "document/pages", "document/merge"];
@@ -103,6 +104,8 @@ function wrong(from: string, to: string, type: boolean): string | null {
   if (area && AREAS.includes(area[1]) && area[2] != "index" && !from.startsWith(`server/${area[1]}/`))
     return `server/${area[1]} is imported through its index.ts`;
   if (from.startsWith("server/directory/") && to.startsWith("server/identity/")) return "directory/ never imports identity/";
+  if ((from.startsWith("server/documents/") || from.startsWith("server/admin/")) && to.startsWith("server/operations/"))
+    return "documents/ and admin/ never import operations/ (operations/ imports documents/, which imports admin/)";
   return null;
 }
 
@@ -126,6 +129,7 @@ test("the rules catch what they are for", () => {
     ["document/document", "agents/models"],
     ["server/directory/settings", "server/identity/index"],
     ["server/documents/view", "server/directory/users"],
+    ["server/admin/routes", "server/operations/index"],
     ["server/platform", "agents/admin/sessions"],
     ["server/platform", "control/source/index"],
     ["control/deploys/api", "agents/admin/sessions"],

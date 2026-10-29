@@ -11,6 +11,7 @@
 import { until, type Server } from "../../helpers/fixtures";
 import type { HomeState } from "../versions/versions";
 import { postForm } from "../../helpers/form-post";
+import { runTool } from "../../helpers/tools";
 
 export type { HomeState };
 
@@ -35,11 +36,13 @@ export const editOf = (html: string) => /href="([^"?]+)\?edit"/.exec(html)?.[1] 
 export const landingSetting = async (server: Server) => (await (await get(server, "/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
 
 /** Makes a document the homepage, as an admin does on /admin (landing_document): the setting's answer, or its error. */
-export const setLanding = async (server: Server, id: string) =>
-  (await (await get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(id) }) })).json()) as { entry?: { value: unknown }; error?: string };
+export const setLanding = async (server: Server, id: string) => {
+  const r = await runTool<{ value: unknown }>(server.root, "set_setting", { key: "landing_document", value: id });
+  return { entry: r.result, error: r.error };
+};
 
 /** Unsets landing_document: the next / makes a fresh homepage from assets/landing/. */
-export const resetLanding = (server: Server) => get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", reset: "1" }) });
+export const resetLanding = (server: Server) => runTool(server.root, "reset_setting", { key: "landing_document" });
 
 /** A fresh homepage from assets/landing/ (made by the first / after the reset): its id and address. */
 export async function fresh(server: Server) {

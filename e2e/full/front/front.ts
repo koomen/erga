@@ -13,6 +13,7 @@ import type { Doc } from "../suite/target";
 import { ROOT } from "../../helpers/env";
 import { expect, servers, type Server } from "../../helpers/fixtures";
 import { postForm } from "../../helpers/form-post";
+import { runTool } from "../../helpers/tools";
 
 export { servers };
 
@@ -61,9 +62,17 @@ export async function person(s: Server, login = freshLogin()) {
     },
     /** Shares a document (as its owner, or `as` someone) with someone ("*": anyone with the link); role "none" stops sharing it. */
     async share(id: string, who: string, role: "editor" | "viewer" | "none", as?: string) {
-      const r = await get(`/docs/share${as ? `?user=${as}` : ""}`, { method: "POST", body: new URLSearchParams({ id, login: who, role }), headers: { Origin: origin } });
-      return { status: r.status, body: (await r.json()) as { permissions?: { login: string; role: string }[]; error?: string } };
+      const r = await runTool<{ permissions: { login: string; role: string }[] }>(
+        base,
+        "share_document",
+        { document: id, login: who, role },
+        as ? { user: as, origin } : { cookie, origin }
+      );
+      return { status: r.status, body: { permissions: r.result?.permissions, error: r.error } };
     },
+    /** Runs an operation as this person, as their pages do (POST /api/tools/<name>); `as` someone else by ?user=. */
+    tool: <T = any>(name: string, args: Record<string, unknown> = {}, as?: string) =>
+      runTool<T>(base, name, args, as ? { user: as, origin } : { cookie, origin }),
     /** A participant in a document's room, as the suite's client joins one (the dev server's ?user= says who). */
     join(id: string, name = "Ada"): Promise<Participant> {
       const doc = { base: `${base}/d/${id}`, path: "index.html", roomUrl: `${base.replace(/^http/, "ws")}/d/${id}/api/room`, roomName: "doc", headersFor: () => ({}) } as unknown as Doc;
@@ -119,5 +128,9 @@ export async function admin(s: Server) {
 
 /** Runs `f`, then puts setting `key` back to its default, however `f` ends. */
 export async function resetting<T>(s: Server, key: string, f: () => Promise<T>): Promise<T> {
-  try { return await f(); } finally { await fetch(`${s.root}/admin/settings`, { method: "POST", headers: { Origin: s.root, Accept: "application/json" }, body: new URLSearchParams({ key, reset: "1" }) }); }
+  try {
+    return await f();
+  } finally {
+    await runTool(s.root, "reset_setting", { key });
+  }
 }

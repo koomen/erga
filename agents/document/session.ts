@@ -66,6 +66,11 @@ export interface AgentSessionOptions extends SessionOptions {
    * Each says what the agent is doing while it runs (`activity`).
    */
   serverTools?: () => Promise<ServerAgentTool[]>;
+  /**
+   * The agent's own tool in another document, named by `ref` (its address, URL or id): run there as the person's
+   * agent, as the person may (agents/tools.ts `elsewhere`). Null when `ref` is this document: the tool runs here.
+   */
+  elsewhere?: (ref: string, name: string, args: Record<string, unknown>) => Promise<ToolContent[] | null>;
 }
 
 /** The settings of a test document's agent: the scripted model, free and the same every run. */
@@ -81,6 +86,13 @@ export function documentAgents(o: {
   settings: () => Promise<AgentSettings>;
   chats?: (person: { id: string; name: string }, docId: string) => ChatStore;
   serverTools?: (person: { id: string; name: string }, docId: string) => Promise<ServerAgentTool[]>;
+  elsewhere?: (
+    person: { id: string; name: string },
+    docId: string,
+    ref: string,
+    name: string,
+    args: Record<string, unknown>
+  ) => Promise<ToolContent[] | null>;
 }): DocumentAgents {
   /** The settings now, or why the agent is off. */
   const settings = () =>
@@ -97,6 +109,7 @@ export function documentAgents(o: {
         store: store && opts.blobs ? withBlobs(store, opts.blobs) : store,
         meta: { doc: opts.docId },
         serverTools: o.serverTools && (() => o.serverTools!(opts.owner, opts.docId)),
+        elsewhere: o.elsewhere && ((ref, name, args) => o.elsewhere!(opts.owner, opts.docId, ref, name, args)),
       });
     },
     guide: documentGuide,
@@ -108,6 +121,13 @@ export function documentAgents(o: {
     },
   };
 }
+
+/** The `document` argument of the agent's own tools: another document to run it in. */
+const ELSEWHERE = Schema.optionalKey(
+  Schema.String.annotate({
+    description: "Another document to do this in: its address (/<owner>/<slug>), URL or id. Leave it out for this document.",
+  })
+);
 
 /** A tool beyond the document (agents/tools.ts), with what the agent is doing while it runs. */
 export type ServerAgentTool = AgentTool;
@@ -261,12 +281,50 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
     },
   });
 
-  /** The tools as the owner may use them now: someone who may only view the document has none that change it. */
-  const mine = () => (opts.canEdit() ? tools : tools.filter((t) => !CHANGES.has(t.name)));
+  /**
+   * Each tool, in any document the owner may use it in: with `document` naming another one, it runs there, as
+   * their agent (opts.elsewhere); without, here. Someone who may only view this document changes others only.
+   */
+  const anywhere = (t: AgentTool): AgentTool => {
+    if (!opts.elsewhere) return t;
+    const elsewhere = opts.elsewhere;
+    return {
+      ...t,
+      description: `${t.description} (In another document ${owner.name} may ${CHANGES.has(t.name) ? "edit" : "open"}: name it with "document"; leave it out for this one.)`,
+      parameters: Schema.Struct({ document: ELSEWHERE, ...(t.parameters as Schema.Struct<Schema.Struct.Fields>).fields }),
+      execute: async (id, params) => {
+        const { document: ref, ...rest } = params;
+        if (typeof ref == "string" && ref.trim()) {
+          const there = await elsewhere(ref, t.name, rest);
+          if (there) return { content: there, details: {} };
+        }
+        if (CHANGES.has(t.name) && !opts.canEdit())
+          throw new Error(
+            `${owner.name} can only view this document, so you can't change it: ${t.name} works in another document they may edit, named with "document".`
+          );
+        return t.execute(id, rest);
+      },
+    };
+  };
+  const everywhere = tools.map(anywhere);
+  /** The tools as the owner may use them now: someone who may only view the document has none that change it, unless they reach other documents. */
+  const mine = () => (opts.canEdit() || opts.elsewhere ? everywhere : tools.filter((t) => !CHANGES.has(t.name)));
   // The tools beyond the document, as the owner may use them now (none if they can't be had).
   const beyond = async () => (await opts.serverTools?.().catch((e: unknown) => { console.log(`server tools for ${owner.id}: ${e}`); return null; })) ?? [];
   // Someone who may only view: the prompt says so, and why the tools that change the document aren't there.
-  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, owner.name, opts.only != null, more.map((t) => t.name)) + kindLine(opts.only != null ? null : opts.kind?.() ?? null, owner.name) + (opts.canEdit() ? "" : `\n\n${owner.name} can only view this document, so you can't change it: you have only the tools that change nothing (read, ls, find, grep and the like). If they ask for a change, say so.`);
+  const prompted = (more: AgentTool[]) =>
+    systemPrompt(
+      opts.docName,
+      owner.name,
+      opts.only != null,
+      more.map((t) => t.name)
+    ) +
+    kindLine(opts.only != null ? null : (opts.kind?.() ?? null), owner.name) +
+    (opts.canEdit()
+      ? ""
+      : opts.elsewhere
+        ? `\n\n${owner.name} can only view this document, so you can't change it. The tools that change files work only in another document they may edit, named with "document". If they ask for a change here, say so.`
+        : `\n\n${owner.name} can only view this document, so you can't change it: you have only the tools that change nothing (read, ls, find, grep and the like). If they ask for a change, say so.`);
   /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
   const makeAgent = async (first: AgentConfig) => {
     const serverTools = await beyond();
@@ -334,11 +392,21 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
     },
     subscribe: loop.subscribe,
     resume: loop.resume,
-    tools: () => mine().map((t) => ({ name: t.name, description: t.description, parameters: argumentsSchema(t.parameters) })),
+    // An outside agent's tools here: this document's (it names the document in the URL).
+    tools: () =>
+      (opts.canEdit() ? tools : tools.filter((t) => !CHANGES.has(t.name))).map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: argumentsSchema(t.parameters),
+      })),
     async runTool(name, args, via) {
-      if (CHANGES.has(name) && !opts.canEdit()) throw new Error(`${owner.name} can only view this document, so ${name} isn't one of the tools: they are ${mine().map((t) => t.name).join(", ")}.`);
+      const here = opts.canEdit() ? tools : tools.filter((t) => !CHANGES.has(t.name));
+      if (CHANGES.has(name) && !opts.canEdit())
+        throw new Error(
+          `${owner.name} can only view this document, so ${name} isn't one of the tools: they are ${here.map((t) => t.name).join(", ")}.`
+        );
       const tool = tools.find((t) => t.name == name);
-      if (!tool) throw new Error(`There's no tool named "${name}". The tools are: ${mine().map((t) => t.name).join(", ")}.`);
+      if (!tool) throw new Error(`There's no tool named "${name}". The tools are: ${here.map((t) => t.name).join(", ")}.`);
       const id = `ext-${crypto.randomUUID()}`;
       let params: Record<string, unknown>;
       try {

@@ -3,6 +3,7 @@
 // It switches Google on, so it has a server of its own.
 import { expect, type Page, servers, test } from "../../helpers/fixtures";
 import { getter } from "./access";
+import { runTool } from "../../helpers/tools";
 
 const server = () => servers.of("sign-in-chooser");
 await server();
@@ -30,9 +31,7 @@ test("one provider on: /auth/sign-in goes straight to it; both on: a button for 
   expect(one.status).toBe(302);
   expect(one.headers.get("location")).toBe("/auth/github?next=%2Fdocs");
 
-  const form = { origin: root, "Content-Type": "application/x-www-form-urlencoded" };
-  const turn = (on: boolean) =>
-    get("/admin/auth", { method: "POST", headers: form, body: `do=providers&provider=google&on=${on ? 1 : 0}` });
+  const turn = (on: boolean) => runTool(root, "switch_sign_in_provider", { provider: "google", on });
   expect((await turn(true)).status).toBe(200);
   try {
     for (const scheme of ["light", "dark"] as const) {

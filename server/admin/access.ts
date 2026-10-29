@@ -2,7 +2,7 @@
 // (client/inline/admin-access.ts changes them).
 
 import { type Access, ACCESS_LABEL, type AccessRule, KIND_LABEL } from "../directory/index.ts";
-import { ICON, inlineCall, link } from "../pages/index.ts";
+import { ICON, inlineCall } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { adminPage } from "./layout.ts";
@@ -20,7 +20,7 @@ function rulesSection(rules: AccessRule[], suggestions: { workspaces: string[]; 
     <ol class="rows rules">
 ${rules.map(row).join("\n")}
     </ol>
-    <form class="add-rule" method="post" action="${esc(link("/admin/access", session))}">
+    <form class="add-rule">
       <select name="kind" aria-label="Who">
         <option value="workspace">Google Workspace organization</option>
         <option value="github_org">GitHub organization</option>
@@ -54,6 +54,6 @@ export async function accessPage(platform: Platform, session: Session) {
     <label class="switch public"><input type="checkbox" role="switch" id="public-sharing"${publicSharing ? " checked" : ""}><span class="track" aria-hidden="true"></span><span>Users can share content publicly</span></label>
     <p class="hint" id="public-hint" role="status"></p>
   </section>
-<script>${inlineCall("admin-access", { action: link("/admin/access", session) })}</script>`,
+<script>${inlineCall("admin-access")}</script>`,
   });
 }

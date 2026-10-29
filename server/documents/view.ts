@@ -284,7 +284,7 @@ async function render(
   const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";
   const canShare = canEdit && !!session && !session.test && roleMay(d.role, "share");
   const meta = `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` + (canEdit && session
-    ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${accountMeta(session, admin && !session.agent, deploy)}`
+      ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent, deploy)}`
     : "");
   // The page's own address there: its file, under the token.
   const src = files + d.file.split("/").map(encodeURIComponent).join("/");

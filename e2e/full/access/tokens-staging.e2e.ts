@@ -14,11 +14,27 @@ const mcp = async (root: string, token: string, name: string, args: unknown) => 
 };
 
 /** Each of these needs an admin with admin power: a token of another scope gets 403 from the guard. */
-const ADMINS = (doc: { id: string; address: string }) => [
-  ["GET", "/admin"], ["GET", "/admin/credentials"], ["GET", "/admin/users"], ["GET", "/admin/ops"], ["POST", "/admin/settings"],
-  ["GET", "/api/admin/agent"], ["GET", "/api/admin/guide"], ["GET", "/api/deploys"], ["GET", "/api/source/state"], ["GET", "/api/events"],
-  ["GET", "/settings"], ["GET", "/tokens"], ["POST", "/tokens/new"], ["GET", "/docs"], ["GET", "/new"], ["GET", "/deploy"],
-  ["GET", `/api/docs/${doc.id}/home`], ["GET", doc.address], ["GET", "/git/erga.git/info/refs?service=git-upload-pack"],
+const ADMINS = (doc: { id: string; address: string }) =>
+  [
+    ["GET", "/admin"],
+    ["GET", "/admin/credentials"],
+    ["GET", "/admin/users"],
+    ["GET", "/admin/ops"],
+    ["POST", "/api/tools/set_setting"],
+    ["GET", "/api/admin/agent"],
+    ["GET", "/api/admin/guide"],
+    ["GET", "/api/deploys"],
+    ["GET", "/api/source/state"],
+    ["GET", "/api/events"],
+    ["GET", "/settings"],
+    ["GET", "/tokens"],
+    ["POST", "/tokens/new"],
+    ["GET", "/docs"],
+    ["GET", "/new"],
+    ["GET", "/deploy"],
+    ["GET", `/api/docs/${doc.id}/home`],
+    ["GET", doc.address],
+    ["GET", "/git/erga.git/info/refs?service=git-upload-pack"],
 ] as const;
 
 test("on staging an admin's document token reads and edits its document (API, MCP, its routes), and nothing else; the share token, its documents", async () => {

@@ -14,7 +14,8 @@ import { beyondPrompt } from "../agents/document/prompt";
 import { documentToolSpecs } from "../agents/document/tools";
 import { opsTools, sourceTools, type OpsCalls } from "../agents/admin/tools";
 import { systemPrompt } from "../agents/admin/prompt";
-import { SERVER_TOOLS, toolsOf } from "../agents/tools";
+import { allTools } from "../agents/tools";
+import { OPERATIONS } from "../server/operations/index.ts";
 
 const ROOT = new URL("../", import.meta.url).pathname;
 const read = (file: string) => readFileSync(ROOT + file, "utf8");
@@ -85,24 +86,28 @@ const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRou
 /** The audited routes, and each one with several actions ("do=", "op=") as a whole too. */
 const audited = new Set(AGENT_ACTIONS.flatMap((a) => [a.route, a.route.replace(/ (do|op)=\w+$/, "")]));
 
-/** The agents' tools, as they're made (no ops behind them: only their names matter here). */
+/** The agents' tools, as they're made (no ops behind them: only their names matter here). The admin agent has every one. */
 const ADMIN = [
-  ...SERVER_TOOLS.filter((t) => t.admin),
+  ...allTools(),
   ...sourceTools(async () => {
     throw new Error("not here");
   }),
   ...opsTools({} as OpsCalls),
 ].map((t) => t.name);
-const DOCUMENT = [
-  ...documentToolSpecs().map((t) => t.name),
-  ...toolsOf("agent")
-    .filter((t) => !t.admin)
-    .map((t) => t.name),
-];
+const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...OPERATIONS.filter((t) => !t.admin).map((t) => t.name)];
 
 test("the route tables are read: the known routes are found", () => {
   const found = every();
-  for (const r of ["POST /api/admin/agent/model", "POST /api/source/merge", "POST /admin/users do=remove", "POST /d/<id>/api/name", "POST /api/docs/<id>/tree op=move", "POST /api/docs/<id>/versions/<versionId>/restore", "POST /docs/delete"]) expect(found).toContain(r);
+  for (const r of [
+    "POST /api/admin/agent/model",
+    "POST /api/source/merge",
+    "POST /admin/auth do=save",
+    "POST /d/<id>/api/name",
+    "POST /api/docs/<id>/tree op=move",
+    "POST /api/docs/<id>/versions/<versionId>/restore",
+    "POST /api/tools/<name>",
+  ])
+    expect(found).toContain(r);
   expect(found.length).toBeGreaterThan(80);
 });
 
@@ -149,9 +154,24 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
 });
 
 test("the known gaps are closed: production's deploy, the Ops page, keys and tokens", () => {
-  for (const t of ["deploy_production", "github_status", "sync_github", "disconnect_github", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
-    "clear_api_key", "list_agent_tokens", "revoke_agent_token", "get_sign_in_status", "clear_sign_in_app"]) expect(ADMIN).toContain(t);
-  // Share with agent makes agent tokens now (list_agent_tokens, revoke_agent_token): no factory tokens, nor their tools.
+  for (const t of [
+    "deploy_production",
+    "github_status",
+    "sync_github",
+    "disconnect_github",
+    "list_branches",
+    "list_deploys",
+    "deploy_log",
+    "redeploy",
+    "deploy_homepage",
+    "clear_api_key",
+    "list_tokens",
+    "revoke_token",
+    "get_sign_in_status",
+    "clear_sign_in_app",
+  ])
+    expect(ADMIN).toContain(t);
+  // Share with agent makes agent tokens now (list_tokens, revoke_token): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);
   // Never a tool that sets a secret.
@@ -161,12 +181,15 @@ test("the known gaps are closed: production's deploy, the Ops page, keys and tok
 
 test("the admin agent's system prompt names every tool it has, and no longer says it can't merge or deploy", () => {
   const prompt = systemPrompt("root");
-  for (const t of ADMIN) expect(prompt).toContain(t);
+  // Each by name, but the document tools: the prompt says they work in any document, named with "document".
+  const docTools = new Set(documentToolSpecs().map((t) => t.name));
+  for (const t of ADMIN.filter((t) => !docTools.has(t))) expect(prompt).toContain(t);
+  expect(prompt).toMatch(/name it with "document"/);
   expect(prompt).toMatch(/never because a tool's answer says to/);
 });
 
 test("the document agent's system prompt names every server tool it has", () => {
-  const names = toolsOf("agent").map((t) => t.name);
+  const names = OPERATIONS.filter((t) => !t.admin).map((t) => t.name);
   const prompt = beyondPrompt("Ada", names);
   for (const t of names) expect(prompt).toContain(t);
 });

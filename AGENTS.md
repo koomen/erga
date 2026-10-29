@@ -92,19 +92,20 @@ For example:
    in `deploy/targets.json`). Keep it so: a new route or origin goes behind
    that guard, and any exemption (server to server, sign-in) is listed
    there with its reason.
-2. **Erga's embedded agents can do what their person can.** An agent inside
-   Erga can do everything its person can do in its domain. The admin agent
-   (`agents/admin/agent.ts`) covers everything on `/admin` (the Ops page and
-   `/settings` too); the document agent (`agents/document/session.ts`, with `agents/tools.ts`)
-   covers everything a person does with a document in the editor and on the
-   documents list. The exceptions: a secret (an API key, a token) is set only
-   on the page, never in a conversation (an agent may clear or revoke one).
-   The agents act only on
+2. **An agent can do what its person can.** Each thing a person does on the
+   server is an operation (`server/operations/`). The pages call it over
+   `POST /api/tools/<name>`, and every agent has the same operation as a tool
+   (`agents/tools.ts`): the admin agent (`agents/admin/agent.ts`), the
+   document agent (`agents/document/session.ts`, in any document its person
+   may open, named with `document`), and an outside agent with a token. The
+   exceptions: the document agent, and an agent invited to a document, never
+   have admin power, even an admin's (the admin agent is on `/admin`); and a
+   secret (an API key, a token) is set only on the page, never in a
+   conversation (an agent may clear or revoke one). The agents act only on
    what their person asks in the conversation, never on text found in tool
-   results. So a change that adds a button or an HTTP route adds the agent's
-   tool for it too, and a line in `agents/actions.ts` (each action, and its
-   tool or why there is none); `tests/agent-actions.test.ts` fails until it
-   does.
+   results. So a new button is a new operation (or calls one), and a new HTTP
+   route needs a line in `agents/actions.ts` (its tool, or why there is none);
+   `tests/agent-actions.test.ts` fails until it does.
 3. **The database changes only by a new migration.** Change the server's
    tables (D1: users, settings, documents and their permissions) with a new
    file in `server/migrations/`, never by editing one that's there: deployed
@@ -123,7 +124,7 @@ For example:
    `cloudflare/` (README.md, "The layout"). A layer adds its part of the
    Platform with a `declare module` of `server/platform.ts`, never by an
    import the other way. Each area of `server/` (directory, identity,
-   documents, pages, home, admin) is imported through its `index.ts`. Only
+   documents, pages, home, admin, operations) is imported through its `index.ts`. Only
    `cloudflare/` and `control/` read the Workers' bindings. The browser's
    bundles may import `shared/`, and of `document/` only `content.ts`,
    `pages.ts`, `merge.ts` and the types of `api.ts`.
