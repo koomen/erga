@@ -7,14 +7,21 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 const own = () => servers.of("ops-github", { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", ERGA_GITHUB_REPOS: "ada/erga" } });
 await own();
 test("Connect GitHub in a popup, a push on GitHub synced back, Sync now and Disconnect, all on the Ops page", { timeout: 90_000 }, async ({ tab }) => {
   const server = await own(), { page } = tab;
   const text = (sel: string) => page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
-  const shown = (sel: string) => page.evaluate((s) => { const el = document.querySelector<HTMLElement>(s); return !!el && !el.hidden && el.offsetParent != null; }, sel);
-  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(await (await fetch(`${server.root}/tokens/new`, { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ label: "Ops GitHub", scope: "admin" }) })).text())?.[1];
+  const shown = (sel: string) =>
+    page.evaluate((s) => {
+      const el = document.querySelector<HTMLElement>(s);
+      return !!el && !el.hidden && el.offsetParent != null;
+    }, sel);
+  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(
+    (await postForm(server.root, "/tokens/new", { label: "Ops GitHub", scope: "admin" })).page
+  )?.[1];
   expect(token).toBeTruthy();
   const gitIn = (dir: string) => (...args: string[]) => {
     const r = spawnSync("git", ["-c", "user.name=Ada", "-c", "user.email=ada@example.com", ...args], { cwd: dir, encoding: "utf8" });

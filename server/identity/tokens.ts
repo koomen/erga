@@ -225,6 +225,21 @@ export class Tokens {
     return fromRow(row);
   }
 
+  /**
+   * One of `login`'s tokens made in the last two minutes, with the token itself: for the page that shows a new token
+   * once (tokens-page.ts), after the form's POST sends the browser on to it. Null for an older one.
+   */
+  async justMade(login: string, id: string): Promise<{ token: string; info: AgentToken } | null> {
+    const [row] = await this.sql.all<Row>(
+      `SELECT ${COLUMNS} FROM agent_tokens WHERE id = ?1 AND login = ?2 AND created > ?3`,
+      id,
+      login.toLowerCase(),
+      Date.now() - 120_000
+    );
+    const token = row && (await this.ownToken(row.id));
+    return token ? { token, info: fromRow(row) } : null;
+  }
+
   /** Someone's tokens, newest first. */
   async list(login: string): Promise<AgentToken[]> {
     const rows = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE login = ?1 ORDER BY created DESC`, login.toLowerCase());

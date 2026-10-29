@@ -34,6 +34,7 @@ import { call, ctx, Field, form, json, plainJson, redirect, text, type Route } f
 import { esc } from "../../shared/html.ts";
 import { type Directory, label, NotAllowed, type SignInProvider, type Vouched } from "../directory/index.ts";
 import { cookies, withCookie } from "./cookies.ts";
+import { noteOf, readOnce, seeOther } from "./flash.ts";
 import { sign, unsign } from "./session.ts";
 import { clearState, signIn } from "./sign-in.ts";
 
@@ -183,13 +184,22 @@ export const usernameStep: Route = Effect.gen(function* () {
   }
   if (!pending) return page("Sign-in expired", "This sign-in waited too long, or it finished already. <a href=\"/auth/sign-in\">Sign in again</a>.", 400);
   const { v } = pending;
-  if (request.method == "GET") return usernamePage(v, yield* call(() => platform.directory.identities.suggest(v)), null, pending.taken);
+  if (request.method == "GET") {
+    // Who may join is asked again: a rule could have changed while they chose.
+    if (!(yield* call(() => mayJoin(platform, url, v)))) return yield* refusedPage(platform, v);
+    // A POST that didn't make the account came back here (flash.ts): its name, and why not.
+    const note = yield* call(() => noteOf(platform, request));
+    const shown = note?.error
+      ? usernamePage(v, note.value ?? "", note.error, pending.taken)
+      : usernamePage(v, yield* call(() => platform.directory.identities.suggest(v)), null, pending.taken);
+    return readOnce(shown, request);
+  }
   if (request.method != "POST") return text("Not allowed", 405);
   if (request.headers.get("origin") != url.origin) return text("Forbidden", 403);
   const { username } = yield* form(UsernameForm).pipe(Effect.orElseSucceed(() => ({ username: "" })));
   const wanted = username.trim().toLowerCase();
-  // Who may join is asked again: a rule could have changed while they chose.
-  if (!(yield* call(() => mayJoin(platform, url, v)))) return yield* refusedPage(platform, v);
+  // Never a page in answer to the form (flash.ts): the GET above shows the refusal, or the error.
+  if (!(yield* call(() => mayJoin(platform, url, v)))) return redirect("/auth/username", 303);
   // The role an admin added them with (their wait ends), or none (a group's rule let them in), or local
   // development's (everyone may there): write.
   const dir = platform.directory;
@@ -210,7 +220,7 @@ export const usernameStep: Route = Effect.gen(function* () {
     ),
     Effect.orDie
   );
-  if (login instanceof NotAllowed) return usernamePage(v, wanted, login.message, pending.taken);
+  if (login instanceof NotAllowed) return yield* seeOther(platform, request, "/auth/username", { error: login.message, value: wanted });
   return withJoin(yield* signIn(platform, request, sessionFor(login, v), pending.next), request, "", 0);
 });
 

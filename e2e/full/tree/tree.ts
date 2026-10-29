@@ -11,6 +11,7 @@
 
 import type { Page } from "playwright-core";
 import { expect, settle, until, type Server, type Tab } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 /** Evaluates an expression in the tab, its value as any (for expect.poll, whose matchers need a type). */
 export const js = (page: Page, expr: string) => page.evaluate(expr) as Promise<any>;
@@ -55,7 +56,7 @@ export async function multi(server: Server) {
 async function agentToken(server: Server) {
   const owner = await signIn(server, null);
   const page = await until(async () => {
-    const t = await (await fetch(`${server.root}/tokens/new`, { method: "POST", redirect: "manual", headers: { Cookie: owner, Origin: server.root }, body: new URLSearchParams({ label: "Tree test" }) })).text();
+      const t = (await postForm(server.root, "/tokens/new", { label: "Tree test" }, owner)).page;
     return t.includes('class="secret"') ? t : "";
   }, 5000, "an agent token");
   return /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)![1];

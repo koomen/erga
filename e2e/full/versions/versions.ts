@@ -9,6 +9,7 @@ import type * as Y from "yjs";
 import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
 import { until, type Server } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 export { Participant };
 
@@ -43,7 +44,7 @@ export async function person(server: Server, as: string) {
     share: (id: string, login: string, role: string) => get("/docs/share", { method: "POST", body: new URLSearchParams({ id, login, role }), headers: { Origin: origin } }),
     /** An agent token of theirs (/tokens/new). */
     async token(label: string, scope?: string) {
-      const page = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label, ...(scope ? { scope } : {}) }), headers: { Origin: origin } })).text();
+      const { page } = await postForm(server.root, "/tokens/new", { label, ...(scope ? { scope } : {}) }, cookie);
       const t = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1];
       if (!t) throw new Error(`no token: ${page.slice(0, 300)}`);
       return t;

@@ -6,14 +6,21 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 const own = () => servers.of("ops-credential", { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", CLOUDFLARE_OAUTH_CLIENT_ID: "mock-client" } });
 await own();
 test("a dead credential: Connect Cloudflare in a popup, then Retry, on the Ops page itself", { timeout: 90_000 }, async ({ tab }) => {
   const server = await own(), { page } = tab;
   const text = (sel: string) => page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel);
-  const shown = (sel: string) => page.evaluate((s) => { const el = document.querySelector<HTMLElement>(s); return !!el && !el.hidden && el.offsetParent != null; }, sel);
-  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(await (await fetch(`${server.root}/tokens/new`, { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ label: "Ops credential", scope: "admin" }) })).text())?.[1];
+  const shown = (sel: string) =>
+    page.evaluate((s) => {
+      const el = document.querySelector<HTMLElement>(s);
+      return !!el && !el.hidden && el.offsetParent != null;
+    }, sel);
+  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(
+    (await postForm(server.root, "/tokens/new", { label: "Ops credential", scope: "admin" })).page
+  )?.[1];
   expect(token).toBeTruthy();
   const repo = join(server.scratch, `ops-credential-${Date.now()}`);
   mkdirSync(repo);

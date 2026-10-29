@@ -12,6 +12,7 @@ import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
 import { ROOT } from "../../helpers/env";
 import { expect, servers, type Server } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 export { servers };
 
@@ -75,7 +76,7 @@ export async function person(s: Server, login = freshLogin()) {
     row: (id: string, html: string) => html.split("<li>").find((li) => li.includes(`value="${id}"`)) ?? "(not listed)",
     /** An agent token of theirs, made at /tokens (scope: documents, or admin for an admin). */
     async token(label = "Test token", scope = "documents") {
-      const page = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label, scope }), headers: { Origin: origin } })).text();
+      const { page } = await postForm(base, "/tokens/new", { label, scope }, cookie);
       const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
       expect(token, page.slice(0, 300)).toBeTruthy();
       return token;

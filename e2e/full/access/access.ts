@@ -6,6 +6,7 @@
 // a cookie, a token); each test makes its own people, documents and tokens.
 
 import { expect, settle, until, type Page } from "../../helpers/fixtures";
+import { postForm } from "../../helpers/form-post";
 
 /** A request to the server, its redirects not followed. */
 export const getter = (root: string) => (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
@@ -72,7 +73,7 @@ export async function signIn(root: string, as: string | null): Promise<string> {
 
 /** Makes a token at /tokens (with a session cookie, else as DEV_LOGIN): the token, or "" and the page's error. */
 export async function mint(root: string, cookie: string | null, fields: Record<string, string>): Promise<{ token: string; page: string }> {
-  const page = await (await getter(root)("/tokens/new", { method: "POST", headers: { ...(cookie ? { Cookie: cookie } : {}), Origin: root }, body: new URLSearchParams(fields) })).text();
+  const { page } = await postForm(root, "/tokens/new", fields, cookie);
   return { token: /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "", page };
 }
 
