@@ -10,6 +10,7 @@ import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
 import { until, type Server } from "../../helpers/fixtures";
 import { postForm } from "../../helpers/form-post";
+import { runTool } from "../../helpers/tools";
 
 export { Participant };
 
@@ -40,8 +41,13 @@ export async function person(server: Server, as: string) {
     versions: async (id: string, q = "") => (await (await get(`/api/docs/${id}/versions${q}`)).json()) as State,
     home: async (id: string) => (await (await get(`/api/docs/${id}/home`)).json()) as HomeState,
     restore: (id: string, version: string, body?: unknown) =>
-      get(`/api/docs/${id}/versions/${version}/restore`, { method: "POST", headers: { Origin: origin, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined }),
-    share: (id: string, login: string, role: string) => get("/docs/share", { method: "POST", body: new URLSearchParams({ id, login, role }), headers: { Origin: origin } }),
+      get(`/api/docs/${id}/versions/${version}/restore`, {
+        method: "POST",
+        headers: { Origin: origin, ...(body ? { "Content-Type": "application/json" } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      }),
+    share: (id: string, login: string, role: string) =>
+      runTool(server.root, "share_document", { document: id, login, role }, { cookie, origin }),
     /** An agent token of theirs (/tokens/new). */
     async token(label: string, scope?: string) {
       const { page } = await postForm(server.root, "/tokens/new", { label, ...(scope ? { scope } : {}) }, cookie);

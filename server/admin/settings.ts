@@ -45,7 +45,7 @@ function valueInput(e: Shown, never: boolean): string {
       </div>`;
   }
   if (e.kind == "document") {
-    // Find as you type: any of the server's documents and projects, by title, owner or address (GET /admin/documents);
+    // Find as you type: any of the server's documents and projects, by title, owner or address (the operation search_documents);
     // choosing one saves it. The value is its address, kept by id.
     const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
     return `<div class="doc-pick">
@@ -102,13 +102,13 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
     e.locked || control == "switch" || control == "choice"
       ? ""
       : `${control == "document" ? "" : `<button class="pill save" disabled>Save</button>`}${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(e.kind == "document" ? "the repo's demo page" : shown(e.default, e.kind))}">Reset</button>` : ""}`;
-  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}"${control == "document" ? ` data-search="${esc(link("/admin/documents", session))}"` : ""}>
+  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}">
     <div class="about">
       <div class="head"><label class="key${e.label ? " named" : ""}" for="${control == "document" ? "find-" : "set-"}${esc(e.key)}"${e.label ? ` title="${esc(e.key)}"` : ""}>${esc(e.label ?? e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
       <p class="desc">${esc(e.description)}</p>
       ${set}
     </div>
-    <form class="value" method="post" action="${esc(link("/admin/settings", session))}">
+    <form class="value">
       <input type="hidden" name="key" value="${esc(e.key)}">
       ${valueInput(e, never)}
       ${buttons}

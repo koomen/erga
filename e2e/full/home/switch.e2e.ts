@@ -2,6 +2,7 @@
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { events, someone } from "../versions/versions";
 import { adminToken, deployed, fresh, front, get, home, post, publish, resetLanding, setLanding } from "./home";
+import { runTool } from "../../helpers/tools";
 
 await servers.short();
 test.afterEach(async () => { await resetLanding(await servers.short()); });
@@ -99,7 +100,9 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   expect(cookie).toMatch(/SameSite=Lax/i);
   // Someone of this test's own, so making them an admin touches no other test.
   const bo = someone("bo");
-  const share = async (doc: string, login: string, role: string) => (await (await get(server, "/docs/share", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ id: doc, login, role }) })).json()) as { error?: string };
+  const share = async (doc: string, login: string, role: string) => ({
+    error: (await runTool(server.root, "share_document", { document: doc, login, role })).error,
+  });
   expect((await get(server, `/api/docs/${id}/home?user=${bo}`)).status).toBe(404);
   await share(id, bo, "viewer");
   expect(await home(server, id, bo)).toMatchObject({ isHome: true, canDeploy: false });
@@ -114,7 +117,7 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   expect(refused.error).toMatch(/Only admins may edit the homepage/);
   expect(refused.error).toMatch(new RegExp(`${bo} may edit this document`));
   // An admin may be its editor; made a user again, they only view it.
-  const role = (r: string) => get(server, "/admin/users", { method: "POST", headers: { Origin: server.root, Accept: "application/json" }, body: new URLSearchParams({ do: "role", login: bo, role: r }) });
+  const role = (r: string) => runTool(server.root, "set_user_role", { login: bo, role: r });
   await role("admin");
   expect((await share(id, bo, "editor")).error).toBeUndefined();
   const canEdit = async () => ((await (await get(server, `/d/${id}/api/doc?user=${bo}`)).json()) as { canEdit?: boolean }).canEdit;

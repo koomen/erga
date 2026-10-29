@@ -3,12 +3,13 @@
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { setLanding } from "../home/home";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
+import { runTool } from "../../helpers/tools";
 
 await servers.short();
 test.afterEach(async () => {
   closeDrafts();
   const s = await servers.short();
-  await fetch(`${s.root}/admin/settings`, { method: "POST", headers: { Origin: s.root }, body: new URLSearchParams({ key: "landing_document", reset: "1" }) });
+  await runTool(s.root, "reset_setting", { key: "landing_document" });
 });
 
 /** What / serves now: the homepage's deployed page. */

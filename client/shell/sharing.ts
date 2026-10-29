@@ -2,6 +2,7 @@
 
 import { colorFor, type Author } from "../../document/content";
 import { shareWithAgent } from "../agent/share-agent";
+import { runTool } from "../common/tools";
 import { BASE, $, type Shell } from "./shell";
 
 export function mountSharing(shell: Shell) {
@@ -39,21 +40,17 @@ Once you've read the guide, await further instructions.`;
 
   // Share (#btn-share, the Share card): with people, then with an agent (above). With people: who may view or edit the
   // document, and anyone signed in with the link. Only its owner may (the app says where, meta erga-share), so the
-  // card's people half shows for them alone; each change is saved as it's made (/docs/share, as on My Documents' share dialog).
+  // card's people half shows for them alone; each change is saved as it's made (the operation share_document, as on My
+  // Documents' share dialog).
   const sharing = $("sharing");
   const sharingList = $("sharing-list"), sharingAdd = $("sharing-add") as HTMLFormElement;
   const sharingAnyone = $("sharing-anyone") as HTMLSelectElement, sharingStatus = $("sharing-status"), anyoneLabel = document.querySelector<HTMLLabelElement>("label[for=sharing-anyone]")!;
-  const shareAt = document.querySelector<HTMLMetaElement>('meta[name="erga-share"]')?.content ?? "";
+  const shareAt = !!document.querySelector<HTMLMetaElement>('meta[name="erga-share"]');
   $("sharing-people").hidden = !shareAt;
   type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string>; publicSharing?: boolean };
   const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
-  async function shareCall(change?: { login: string; role: string }): Promise<Shared> {
-    const r = await fetch(change ? shareAt : `${shareAt}${shareAt.includes("?") ? "&" : "?"}id=${shell.docId}`,
-      change ? { method: "POST", body: new URLSearchParams({ id: shell.docId, ...change }), headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) } : { signal: AbortSignal.timeout(10_000) }).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
-    if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
-    return body as Shared;
-  }
+  const shareCall = (change?: { login: string; role: string }): Promise<Shared> =>
+    change ? runTool("share_document", { document: shell.docId, ...change }) : runTool("document_access", { document: shell.docId });
   function renderSharing({ permissions, notUsers, avatars, publicSharing }: Shared) {
     sharingList.textContent = "";
     const pending = new Set(notUsers ?? []);

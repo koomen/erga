@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, test } from "../../helpers/fixtures";
 import { ROOT } from "../../helpers/env";
 import { frameOf, get, landingSetting } from "./home";
+import { runTool } from "../../helpers/tools";
 
 // A fresh database, so a server of its own (a few seconds to start; more on a loaded machine).
 const OWN_SERVER = { timeout: 60_000 };
@@ -31,6 +32,7 @@ test("on a fresh server, the first / (eight at once) makes one landing document,
     expect(Buffer.from(await res.arrayBuffer()).equals(readFileSync(join(ROOT, "assets/landing", rel)))).toBe(true);
   }
   expect(await landingSetting(server)).toBe("/tester/landing");
-  const shared = (await (await get(server, `/docs/share?id=${id}`)).json()) as { permissions: { login: string; role: string }[] };
+  const shared = (await runTool<{ permissions: { login: string; role: string }[] }>(server.root, "document_access", { document: id }))
+    .result!;
   expect(shared.permissions.some((p) => p.login == "koomen" && p.role == "editor")).toBe(true);
 });

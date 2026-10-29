@@ -27,7 +27,7 @@ export function expiryOf(v: unknown): number | null | "bad" {
 
 /**
  * /tokens: the signed-in person's tokens (make one with a scope and an
- * optional expiry, revoke one), approving or denying an agent's request
+ * optional expiry; a revoke is the operation revoke_token), approving or denying an agent's request
  * (/tokens/approve?code=), and, where the platform makes them, a test token
  * for running the test suite. /settings is the same page.
  */
@@ -96,10 +96,6 @@ export const tokensRoutes: Route = Effect.gen(function* () {
     const r = yield* scoped(() => platform.tokens.mint(who, f.label || "Agent", { scope, docId: f.doc || null, expires }));
     return yield* back(formPage, "refused" in r ? { error: r.refused } : { made: r.value.info.id });
   }
-  if (path == "/tokens/revoke" && post) {
-    yield* call(() => platform.tokens.revoke(session.login, f.id));
-    return yield* back(formPage, {});
-  }
   if (path != "/tokens" && path != "/settings") return page("Not found", "There's nothing here. <a href=\"/tokens\">Your tokens</a>.", 404);
   if (post) return yield* back(formPage, {});
   const made = note.made ? yield* call(() => platform.tokens.justMade(session.login, note.made)) : null;
@@ -116,7 +112,7 @@ export const tokensRoutes: Route = Effect.gen(function* () {
 });
 
 /** The form of each POST here (a field that's missing is ""). */
-const TokensForm = Schema.Struct({ code: Field, answer: Field, scope: Field, expires: Field, label: Field, doc: Field, id: Field });
+const TokensForm = Schema.Struct({ code: Field, answer: Field, scope: Field, expires: Field, label: Field, doc: Field });
 
 const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin" };
 
@@ -162,7 +158,7 @@ async function tokensPage(
     <div class="what">${await scopeCell(t)}</div>
     ${t.expires ? (t.expires <= Date.now() ? `<span class="never">Expired</span>` : day(t.expires)) : `<span class="never">Never</span>`}
     ${when(t.lastUsed)}
-    <div class="acts"><form method="post" action="/tokens/revoke" data-label="${esc(t.label)}"><input type="hidden" name="id" value="${esc(t.id)}"><button class="act" aria-label="Revoke ${esc(t.label)}" data-tip="Revoke">${ICON.delete}</button></form></div>
+    <div class="acts"><form data-label="${esc(t.label)}"><input type="hidden" name="id" value="${esc(t.id)}"><button class="act" aria-label="Revoke ${esc(t.label)}" data-tip="Revoke">${ICON.delete}</button></form></div>
   </li>`))).join("\n");
   const m = o.made;
   const made = m ? `<section class="card made"><h2>${esc(m.info.label)}</h2>

@@ -1,14 +1,15 @@
-// The rule: an embedded agent can do everything its person can do in its
-// domain, so they can ask for anything there in words.
+// The rule: an agent can do everything its person can do, so they can ask for anything in words. Each thing a person
+// does is an operation (server/operations/), which the front end calls over POST /api/tools/<name> and every agent
+// has as a tool: the entries for those come from the operations themselves (`ui`), at the end of the list.
 //
-//   the admin agent     (agents/admin/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
-//                       sign-in (Authentication), the change log, the users, the Ops page (source and deploys), the
-//                       homepage's deploy, and the admin's own agent tokens (/settings)
-//   the document agent  (agents/document/session.ts, with agents/tools.ts: in the editor) everything a person does with a document in
-//                       the editor and on the documents list (/docs)
+//   the admin agent     (agents/admin/agent.ts: on every /admin page) everything: the admin operations, the Ops page
+//                       (source and deploys), the homepage's deploy, and everything the document agent has
+//   the document agent  (agents/document/session.ts, with agents/tools.ts: in the editor) everything a person does with
+//                       documents (in the editor, any document, and on the documents list, /docs) and their tokens
 //
-// The one exception is a secret: an API key, a GitHub app's secret, a new agent token is pasted
-// or made only on the page, never in a conversation. The agent may clear an API key, or revoke a token.
+// The exceptions: the document agent (and an agent invited to a document) never has admin power, even an admin's:
+// "admin" actions are the admin agent's, on /admin. A secret (an API key, a GitHub app's secret, a new agent token) is
+// pasted or made only on the page, never in a conversation. The agent may clear an API key, or revoke a token.
 // And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
 //
@@ -18,7 +19,12 @@
 // operations, and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 
-/** Who the action belongs to: an agent's domain, or nobody's (a VM's, another server's, the agent panel itself). */
+import { OPERATIONS } from "../server/operations/index.ts";
+
+/**
+ * Who the action belongs to: "admin", the admin agent's only (it needs admin power); "document", every agent's (the
+ * admin agent has these too); or nobody's (a VM's, another server's, the agent panel itself).
+ */
 export type Domain = "admin" | "document" | "none";
 
 export interface AgentAction {
@@ -41,59 +47,17 @@ const SIGN_IN = "signing in: the person in their own browser, before any agent a
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys
   { route: "GET /admin", domain: "admin", action: "Read the settings (Settings)", tool: "list_settings" },
-  { route: "POST /admin/settings", domain: "admin", action: "Change a setting (Settings)", tool: "set_setting" },
-  { route: "POST /admin/settings", domain: "admin", action: "Reset a setting to its default (Settings)", tool: "reset_setting" },
-  {
-    route: "GET /admin/documents",
-    domain: "admin",
-    action: "Find any document or project on the server (Settings: the Homepage Project picker)",
-    tool: "search_documents",
-  },
   { route: "GET /admin/settings", domain: "none", action: "An old address of Settings", exempt: "a redirect" },
   { route: "GET /admin/credentials", domain: "none", action: "An old address of API keys", exempt: "a redirect" },
   { route: "GET /admin/changes", domain: "admin", action: "Read the change log (Change log)", tool: "list_setting_changes" },
   { route: "GET /admin/users", domain: "admin", action: "Read the users (Users)", tool: "list_users" },
-  {
-    route: "POST /admin/users do=add",
-    domain: "admin",
-    action: "Add a user: a GitHub login or Google email, with a role, before their first sign-in too (Users)",
-    tool: "add_user",
-  },
-  {
-    route: "POST /admin/users do=role",
-    domain: "admin",
-    action: "Change a user's role: Admin, Can create and edit content, Can authenticate (Users)",
-    tool: "set_user_role",
-  },
-  { route: "POST /admin/users do=deploy", domain: "admin", action: "Grant or revoke the deploy role (Users)", tool: "set_user_deploy" },
-  { route: "POST /admin/users do=remove", domain: "admin", action: "Remove a user (Users)", tool: "remove_user" },
   {
     route: "GET /admin/access",
     domain: "admin",
     action: "Read the group rules, and whether users can share content publicly (Access)",
     tool: "list_access_rules",
   },
-  {
-    route: "POST /admin/access do=add_rule",
-    domain: "admin",
-    action: "Add a group rule: a Google Workspace or a GitHub organization (Access)",
-    tool: "add_access_rule",
-  },
-  {
-    route: "POST /admin/access do=change_rule",
-    domain: "admin",
-    action: "Change an access rule's access (Access)",
-    tool: "change_access_rule",
-  },
-  { route: "POST /admin/access do=remove_rule", domain: "admin", action: "Remove an access rule (Access)", tool: "remove_access_rule" },
-  {
-    route: "POST /admin/access do=public_sharing",
-    domain: "admin",
-    action: "Turn 'Users can share content publicly' on or off (Access)",
-    tool: "set_public_sharing",
-  },
   { route: "GET /admin/api-keys", domain: "admin", action: "Read the API keys' status (API keys)", tool: "list_api_keys" },
-  { route: "POST /admin/credentials", domain: "admin", action: "Clear an API key (API keys)", tool: "clear_api_key" },
   { route: "POST /admin/credentials", domain: "admin", action: "Set or replace an API key (API keys)", exempt: SECRET },
   {
     route: "GET /admin/auth",
@@ -112,24 +76,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
     domain: "admin",
     action: "Set a GitHub app's or Google client's ID and secret (Authentication)",
     exempt: SECRET,
-  },
-  {
-    route: "POST /admin/auth do=providers",
-    domain: "admin",
-    action: "Turn sign-in with GitHub or Google on or off (Authentication)",
-    tool: "switch_sign_in_provider",
-  },
-  {
-    route: "POST /admin/auth do=discard",
-    domain: "admin",
-    action: "Discard new values that wait for a test sign-in (Authentication)",
-    tool: "clear_sign_in_app",
-  },
-  {
-    route: "POST /admin/auth do=clear",
-    domain: "admin",
-    action: "Clear the values set on the page: back to the deploy's (Authentication)",
-    tool: "clear_sign_in_app",
   },
   {
     route: "POST /admin/share",
@@ -207,8 +153,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/docs/<id>/home/deploy", domain: "admin", action: "Redeploy the homepage (editor's settings, on the homepage)", tool: "deploy_homepage" },
 
   // ------------------------------------------------------------ /settings: the person's agent tokens
-  { route: "GET /settings", domain: "admin", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_agent_tokens" },
-  { route: "POST /tokens/revoke", domain: "admin", action: "Revoke an agent token, Share with agent's too (/settings)", tool: "revoke_agent_token" },
+  { route: "GET /settings", domain: "document", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_tokens" },
   { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (/settings)", exempt: SECRET },
   { route: "POST /tokens/approve", domain: "admin", action: "Approve an agent's request for a token (/settings)", exempt: `${SECRET} (it hands a new token to an outside agent)` },
 
@@ -226,9 +171,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ the documents list (/docs, server/documents/make.ts)
   { route: "GET /docs", domain: "document", action: "Read your documents (Documents)", tool: "list_documents" },
   { route: "GET /new", domain: "document", action: "Make a document: blank, from a template, or a copy (Documents, New; the viewer's Clone)", tool: "create_document" },
-  { route: "POST /docs/delete", domain: "document", action: "Delete a document (Documents)", tool: "delete_document" },
-  { route: "GET /docs/share?id=", domain: "document", action: "See who a document is shared with (Documents, Share)", tool: "document_access" },
-  { route: "POST /docs/share", domain: "document", action: "Share a document, change a role, or stop sharing (Documents and editor, Share)", tool: "share_document" },
   { route: "POST /d/<id>/api/share", domain: "document", action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)", exempt: SECRET },
 
   // ------------------------------------------------------------ the editor
@@ -283,4 +225,21 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ local development
   { route: "POST /__erga/migrate", domain: "none", action: "The dev server brings the local database up to date", exempt: "the dev server's" },
   { route: "POST /__erga/link", domain: "none", action: "The dev server links a file on disk to a document", exempt: "the dev server's" },
+
+  // ------------------------------------------------------------ the operations: the front end's API, and every agent's tools
+  {
+    route: "GET /api/tools",
+    domain: "none",
+    action: "The operations a caller may use (the pages' and agents' API)",
+    exempt: "the API's own list: each operation is below, with its tool",
+  },
+  {
+    route: "POST /api/tools/<name>",
+    domain: "none",
+    action: "A page or an agent runs an operation",
+    exempt: "the API itself: each operation is below, with its tool",
+  },
+  ...OPERATIONS.map(
+    (op): AgentAction => ({ route: `POST /api/tools/${op.name}`, domain: op.admin ? "admin" : "document", action: op.ui, tool: op.name })
+  ),
 ];

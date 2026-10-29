@@ -12,16 +12,8 @@
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   /admin/auth                the Authentication page: how people sign in on this server (GitHub, Google)
 //   GET /admin/auth/status     the same as JSON {here, google, providers} (server/identity/apps.ts, AuthStatus: never a secret), with live checks
-//   POST /admin/auth           provider (github or google), and do=save (clientId, secret), do=discard (the values that wait for a test sign-in), do=clear (force=1: even if sign-in would stop) or do=providers (provider, on: 1 or 0)
-//   GET /admin/documents       q (a part of a title, owner or address), limit: the server's documents and projects, everyone's,
-//                              as JSON {found: [{id, title, owner, address, kind}]}, for the Homepage Project picker
-//   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
-//   POST /admin/users          do=add (provider: github or google, handle: the login or email, role: admin, write or read)
-//   POST /admin/users          do=role (login, or person: one waiting; role: admin, write, read, or none for an account), do=remove (login or person)
-//   POST /admin/users          do=deploy (login, deploy: 1 or 0)
-//   POST /admin/access         do=add_rule (kind, value, access), do=change_rule (id, access), do=remove_rule (id): the group rules
-//   POST /admin/access         do=public_sharing (on: 1 or 0): whether users can share content publicly
-//   POST /admin/credentials    name (anthropic), and value to set or replace its key, or clear=1 to remove it
+//   POST /admin/auth           provider (github or google), and do=save (clientId, secret): an app's values, a secret, set only here
+//   POST /admin/credentials    name (anthropic), and value to set or replace its key: a secret, set only here
 //   POST /admin/share          rotate=1 (optional): Share with agent's admin token, for an outside
 //                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
 //
@@ -40,11 +32,12 @@
 // Every page has the layout every admin page shares: the
 // breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Ops.
 //
-// The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
-// the message the directory gave, for a person to act on) and come only from
-// this site's pages. The directory checks who's asking itself (NotAllowed);
-// this file only shows it. An agent token (Session.agent) never gets in, even
-// an admin's. A setting the deploy locks is shown, read-only,
+// Every other change on these pages (a setting, a user, a rule, a key cleared, a
+// provider switched) is an operation (server/operations/admin.ts): the pages'
+// scripts call it over POST /api/tools/<name>, as the agents do. These POSTs set
+// secrets only, so they answer only the person, in their browser: JSON, or
+// { error } with the message the directory gave, from this site's pages only.
+// An agent token (Session.agent) never gets in, even an admin's. A setting the deploy locks is shown, read-only,
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all.
 import * as Effect from "effect/Effect";
@@ -86,12 +79,6 @@ export const adminRoutes = Effect.gen(function* () {
       return url.pathname == "/admin/auth" ? authPage(session!, status) : json(status);
     }
     if (url.pathname == "/admin/access") return yield* call(() => accessPage(platform, session!));
-    if (url.pathname == "/admin/documents") {
-      const found = yield* call(() =>
-        platform.directory.search(who!, url.searchParams.get("q") ?? "", Number(url.searchParams.get("limit")) || 20)
-      );
-      return json({ found });
-    }
     return yield* call(() => (url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!)));
   }
   if (request.method != "POST") return notFound();
@@ -158,75 +145,15 @@ async function act(platform: Platform, session: Session, who: Who, url: URL, f: 
     return json({ token, id: info.id, label: info.label, expires: info.expires });
   }
   if (url.pathname == "/admin/credentials") {
-    const credentials = platform.directory.credentials;
     // The answer says what the page shows: never the key.
-    return plainJson({ credential: f.clear ? await credentials.clear(who, f.name) : await credentials.set(who, f.name, f.value) });
+    return plainJson({ credential: await platform.directory.credentials.set(who, f.name, f.value) });
   }
-  if (url.pathname == "/admin/auth") {
-    const auth = authOps(platform, url.origin);
+  if (url.pathname == "/admin/auth" && f.do == "save") {
     const provider: Provider = f.provider == "google" ? "google" : "github";
-    // The answers say what the page shows: never the secret.
-    switch (f.do) {
-      case "save":
-        return plainJson({ result: await auth.save(who, { clientId: f.clientId, secret: f.secret }, provider) });
-      case "discard":
-        return plainJson({ result: await auth.discard(who, provider) });
-      case "clear":
-        return plainJson({ result: await auth.clear(who, f.force == "1", provider) });
-      case "providers":
-        return plainJson({ providers: await auth.setProvider(who, provider, f.on == "1") });
-      default:
-        return plainJson({ error: "do= save, discard, clear or providers" }, 400);
-    }
+    // The answer says what the page shows: never the secret.
+    return plainJson({ result: await authOps(platform, url.origin).save(who, { clientId: f.clientId, secret: f.secret }, provider) });
   }
-  if (url.pathname == "/admin/access") {
-    const rules = platform.directory.rules;
-    switch (f.do) {
-      case "add_rule":
-        return plainJson({ rule: await rules.add(who, { kind: f.kind, value: f.value, access: f.access }) });
-      case "change_rule":
-        return plainJson({ rule: await rules.change(who, Number(f.id), f.access) });
-      case "remove_rule":
-        await rules.remove(who, Number(f.id));
-        return plainJson({ ok: true });
-      case "public_sharing":
-        return plainJson({ entry: await platform.directory.config.set(who, "public_sharing", f.on == "1") });
-      default:
-        return plainJson({ error: "do= add_rule, change_rule, remove_rule or public_sharing" }, 400);
-    }
-  }
-  if (url.pathname == "/admin/settings") {
-    const key = f.key;
-    if (f.reset) return plainJson({ entry: await platform.directory.config.reset(who, key) });
-    let value: unknown;
-    try {
-      value = JSON.parse(f.value);
-    } catch {
-      throw new ConfigError({ message: `${key} needs a value as JSON (a number, true or false, "text" in quotes...).` });
-    }
-    return plainJson({ entry: await platform.directory.config.set(who, key, value) });
-  }
-  const dir = platform.directory,
-    users = dir.users,
-    login = f.login,
-    person = Number(f.person);
-  switch (f.do) {
-    case "add":
-      return plainJson(await dir.addUser(who, { provider: f.provider, handle: f.handle }, roleValue(f.role) as UserRole));
-    case "role": {
-      if (person) return plainJson({ person: await dir.people.setRole(who, person, roleValue(f.role) as UserRole) });
-      return plainJson({ user: await users.setUserRole(who, login, roleValue(f.role, { none: true })) });
-    }
-    case "deploy": {
-      if (f.deploy != "1" && f.deploy != "0") throw new NotAllowed({ message: "deploy= 1 to grant the deploy role, or 0 to revoke it." });
-      return plainJson({ user: await users.setDeploy(who, login, f.deploy == "1") });
-    }
-    case "remove":
-      await (person ? dir.people.remove(who, person) : users.remove(who, login));
-      return plainJson({ ok: true });
-    default:
-      return plainJson({ error: "do= add, role, deploy or remove" }, 400);
-  }
+  return plainJson({ error: "Not here: every other change is an operation, POST /api/tools/<name>." }, 404);
 }
 
 const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);

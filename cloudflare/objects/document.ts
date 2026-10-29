@@ -26,7 +26,8 @@ import type { Who } from "../../server/directory/index.ts";
 import type { Role } from "../../document/access";
 import type { NamedRow } from "../../document/names";
 import { documentAgents } from "../../agents/document/session";
-import { agentToolsFor } from "../../agents/tools";
+import { agentToolsFor, elsewhere } from "../../agents/tools";
+import type { Caller } from "../../server/operations/index.ts";
 import { VIA } from "../../shared/attribution";
 import type { RestoreResult, VersionsState } from "../../document/versions";
 import type { DocSnapshot, Page } from "../../document/snapshot";
@@ -95,8 +96,10 @@ export class DocumentObject extends DurableObject<Env> {
       },
       agents: documentAgents({
         settings: () => platform(env).agentSettings(),
-        // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
-        serverTools: (person, here) => agentToolsFor({ dir: directoryOf(env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here, platform: platform(env) }),
+        // Every operation the person may use (agents/tools.ts), as their agent: never with admin power, even an admin's.
+        serverTools: (person, here) => agentToolsFor(this.agentCaller(person, here)),
+        // The agent's own tools in another document the person may open or edit: run there, as their agent.
+        elsewhere: (person, here, ref, name, args) => elsewhere(this.agentCaller(person, here), ref, name, args),
         // Each person's conversation here, kept in their own object (cloudflare/objects/person-agent.ts).
         chats: (person, docId) => {
           const agents = env.AGENTS.getByName(person.id), scope = `doc:${docId}`;
@@ -126,6 +129,17 @@ export class DocumentObject extends DurableObject<Env> {
       pageTemplate: TEMPLATE || undefined,
       // Each person's picture, as the app sent it (their users row: shared/avatars.ts); none: their initial shows.
       avatarOf: (person) => safeAvatar(person.avatar) ?? undefined,
+    };
+  }
+
+  /** The person's editor agent here, as the operations take it: the person, via their agent, with no admin power. */
+  private agentCaller(person: { id: string; name: string }, here: string): Caller {
+    return {
+      dir: directoryOf(this.env),
+      who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent },
+      name: person.name,
+      here,
+      platform: platform(this.env),
     };
   }
 

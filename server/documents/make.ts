@@ -1,5 +1,5 @@
-// New documents, the documents list, deleting and sharing: what /new, /docs, /docs/delete,
-// /docs/share and the share token do. The list's page is pages/docs.ts.
+// New documents, the documents list and the share token: what /new, /docs and <document>/api/share do. The list's
+// page is pages/docs.ts. Deleting and sharing are operations (server/operations/documents.ts).
 
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -183,81 +183,6 @@ export const listDocs = Effect.gen(function* () {
   );
   yield* decideKinds(platform, docs);
   return html(docsPage(session, docs, Date.now(), hours), 200, NO_STORE);
-});
-
-/** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
-export const deleteDoc = Effect.gen(function* () {
-  const { request, url, platform } = yield* ctx;
-  const session = yield* call(() => platform.sessionOf(request));
-  if (!session || session.test) return text("Sign in first", 401);
-  // Only from this site's own pages (the session cookie is SameSite=Lax already).
-  if (request.headers.get("origin") != url.origin) return text("Forbidden", 403);
-  const { id } = yield* form(IdForm).pipe(Effect.orDie);
-  const route = ID.test(id) ? yield* call(() => platform.directory.route(id)) : null;
-  if (!route) return text("No such document", 404);
-  if (!(yield* call(() => platform.directory.may(whoOf(session), "delete", route))))
-    return text("Only its owner can delete a document", 403);
-  // Gone already (or never made): drop a stale entry all the same.
-  if (!(yield* call(() => platform.docs.delete(route)))) yield* call(() => platform.directory.remove(id));
-  return redirect(link("/docs", session), 303);
-});
-
-const IdForm = Schema.Struct({ id: Field });
-const ShareForm = Schema.Struct({ id: Field, login: Field, role: Field });
-
-/**
- * POST /docs/share (id, login, role): gives someone a role on one of your
- * documents ("editor" or "viewer"; login "*" is anyone with the link: refused
- * unless the server lets users share content publicly), or takes it away (role
- * "none" or empty). Only its owner may. Answers JSON: everyone's permissions now,
- * whether the server lets people share publicly (`publicSharing`), which of them can't sign in yet
- * (`notUsers`: not users of this server), each one's picture (`avatars`, by
- * login: their picture, shared/avatars.ts), or the error. GET /docs/share?id=
- * answers the same without changing anything (the list's share dialog).
- */
-export const shareDoc = Effect.gen(function* () {
-  const { request, url, platform } = yield* ctx;
-  const session = yield* call(() => platform.sessionOf(request));
-  if (!session || session.test) return plainJson({ error: "Sign in first" }, 401);
-  const answer = (permissions: Permission[]) =>
-    call(async () => {
-      const notUsers = (
-        await Promise.all(
-          permissions.map(async (p) => (p.login == "*" || (await platform.directory.users.allowed(p.login)) ? null : p.login))
-        )
-      ).filter((l) => l != null);
-    // Whether the server lets users share content publicly: the menus offer anyone with the link only then.
-    const publicSharing = await platform.directory.config.get("public_sharing");
-    return plainJson({
-      permissions,
-      notUsers,
-      avatars: await platform.directory.users.avatars(permissions.map((p) => p.login)),
-      publicSharing,
-    });
-  });
-  if (request.method == "GET") {
-    const id = url.searchParams.get("id") ?? "";
-    const doc = ID.test(id) ? yield* call(() => platform.directory.get(id)) : null;
-    if (!doc) return plainJson({ error: "No such document" }, 404);
-    if (!(yield* call(() => platform.directory.may(whoOf(session), "share", doc))))
-      return plainJson({ error: "Only its owner can share a document." }, 403);
-    return yield* answer(yield* call(() => platform.directory.permissions(id)));
-  }
-  if (request.method != "POST") return plainJson({ error: "GET or POST" }, 405);
-  if (request.headers.get("origin") != url.origin) return plainJson({ error: "Forbidden" }, 403);
-  const { id, login, role } = yield* form(ShareForm).pipe(Effect.orDie);
-  if (!ID.test(id) || !(yield* call(() => platform.directory.get(id)))) return plainJson({ error: "No such document" }, 404);
-  return yield* Effect.tryPromise({
-    try: () => platform.directory.share(whoOf(session), id, login, role == "" || role == "none" ? null : (role as Grant)),
-    catch: (e) => e,
-  }).pipe(
-    Effect.flatMap(answer),
-    Effect.catchIf(
-      (e): e is NotAllowed => e instanceof NotAllowed,
-      (e) => Effect.succeed(plainJson({ error: e.message }, 403))
-    ),
-    Effect.orDie
-  );
 });
 
 /**

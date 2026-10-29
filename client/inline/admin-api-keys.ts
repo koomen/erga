@@ -1,7 +1,7 @@
 // The API keys page's script (/admin/api-keys, server/admin/api-keys.ts): Save sets or replaces the key typed in, Clear
 // removes it. The answer never holds the key; the page reloads to show what it is now.
 
-import { post, reload, say } from "../common/admin-post";
+import { post, reload, runTool, say } from "../common/admin-post";
 
 export default function adminApiKeys(): void {
   for (const li of document.querySelectorAll<HTMLElement>("li.credential")) {
@@ -40,7 +40,7 @@ export default function adminApiKeys(): void {
         return;
       say(hint, "Clearing…");
       try {
-        await post(form.action, { name: li.dataset.name!, clear: "1" });
+        await runTool("clear_api_key", { name: li.dataset.name! });
         reload();
       } catch (err) {
         say(hint, (err as Error).message, true);

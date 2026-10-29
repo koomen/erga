@@ -2,7 +2,7 @@
 // the rest, Save lights up once the value differs from what's saved. Each is checked by the server, which says what's
 // wrong.
 
-import { post, reload, say } from "../common/admin-post";
+import { reload, runTool, say } from "../common/admin-post";
 import { esc } from "../../shared/html";
 
 export interface SettingsConfig {
@@ -10,7 +10,7 @@ export interface SettingsConfig {
   chip: string;
 }
 
-/** A document or project the search found (GET /admin/documents). */
+/** A document or project the search found (search_documents). */
 interface Found {
   title: string;
   address: string;
@@ -52,7 +52,14 @@ export default function adminSettings(c: SettingsConfig): void {
     const submit = async () => {
       say(hint, "Saving…");
       try {
-        await post(form.action, { key: li.dataset.key!, value: asJson() });
+        const key = li.dataset.key!;
+        let value: unknown;
+        try {
+          value = JSON.parse(asJson());
+        } catch {
+          throw new Error(`${key} needs a value as JSON (a number, true or false, "text" in quotes...).`);
+        }
+        await runTool("set_setting", { key, value });
         reload();
       } catch (err) {
         say(hint, (err as Error).message, true);
@@ -165,14 +172,10 @@ export default function adminSettings(c: SettingsConfig): void {
         open(true);
       };
       const search = async () => {
-        const n = ++asked,
-          url = new URL(li.dataset.search!, location.href);
-        url.searchParams.set("q", find.value);
+        const n = ++asked;
         try {
-          const r = await fetch(url, { headers: { Accept: "application/json" } });
-          const body = await r.json();
+          const body = await runTool<{ found: Found[] }>("search_documents", { query: find.value });
           if (n != asked) return;
-          if (!r.ok) throw new Error(body.error || "The search didn't work.");
           found = body.found;
           show();
         } catch (err) {
@@ -236,7 +239,7 @@ export default function adminSettings(c: SettingsConfig): void {
     reset?.addEventListener("click", async () => {
       say(hint, "Saving…");
       try {
-        await post(form.action, { key: li.dataset.key!, reset: "1" });
+        await runTool("reset_setting", { key: li.dataset.key! });
         reload();
       } catch (err) {
         say(hint, (err as Error).message, true);

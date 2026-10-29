@@ -8,9 +8,8 @@
 //   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
 //                              a template; /new?from=landing a copy
 //                              of the homepage's, /new?from=<id> of another you may open (the viewer's Clone)
-//   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
-//                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
-//   /admin                     the server's settings and users, for admins; POST /admin/settings, /admin/users
+//   /docs                      your documents, latest edit first (delete and share are operations: POST /api/tools/<name>)
+//   /admin                     the server's settings and users, for admins (each change an operation: POST /api/tools/<name>)
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with; for people not signed in, a
 //                              document shared with anyone with the link while the server lets people share publicly): its canonical address;
 //                              Clone, and Edit for those who may edit it
@@ -42,11 +41,10 @@
 // Worker.
 
 import * as Effect from "effect/Effect";
-import { VIA } from "../../shared/attribution.ts";
 import { adminRoutes } from "../admin/index.ts";
-import { ID, OWNER, type Route } from "../directory/index.ts";
+import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { deleteDoc, listDocs, newDoc, shareDoc, shareToken } from "./make.ts";
+import { listDocs, newDoc, shareToken } from "./make.ts";
 import { pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
@@ -61,8 +59,6 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   if (path == "/") return yield* viewLanding;
   if (path == "/new") return yield* newDoc;
   if (path == "/docs") return yield* listDocs;
-  if (path == "/docs/delete" && request.method == "POST") return yield* deleteDoc;
-  if (path == "/docs/share") return yield* shareDoc;
   if (
     path == "/admin" ||
     path == "/admin/changes" ||
@@ -178,27 +174,44 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
  * for nobody in particular.
  */
 export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null, checked?: "files"): Request {
+  const person = session && {
+    login: session.login,
+    name: session.name,
+    ...(session.avatar && !session.test ? { avatar: session.avatar } : {}),
+  };
+  return forwardedAs(request, url, rest, base, person, session && whoOf(session), checked);
+}
+
+/**
+ * The same, for a caller the server itself vouches for: a person (and their picture), and who they are
+ * (Who: how they act, `via`, when through one of their agents: an agent token's, or the editor's or admin's agent
+ * reaching another document). An agent's request may call the document's tools (/api/ext/tools), as the person's agent.
+ */
+export function forwardedAs(
+  request: Request,
+  url: URL,
+  rest: string,
+  base: string,
+  person: { login: string; name: string; avatar?: string } | null,
+  who: Who | null,
+  checked?: "files"
+): Request {
   const inner = new URL(rest + url.search, url.origin);
   const headers = new Headers(request.headers);
   for (const h of ["x-erga-person", "x-erga-access", "x-erga-who", "x-erga-checked", "x-erga-view", "x-erga-agent", "x-erga-via", "x-erga-inline", "authorization"]) headers.delete(h);
   headers.set("x-erga-base", base);
-  if (session)
+  if (person)
     headers.set(
       "x-erga-person",
-      ascii(
-        JSON.stringify({
-          id: session.login.toLowerCase(),
-          name: session.name,
-          ...(session.avatar && !session.test ? { avatar: session.avatar } : {}),
-        })
-      )
+      ascii(JSON.stringify({ id: person.login.toLowerCase(), name: person.name, ...(person.avatar ? { avatar: person.avatar } : {}) }))
     );
-  if (session) headers.set("x-erga-who", ascii(JSON.stringify(whoOf(session))));
+  if (who) headers.set("x-erga-who", ascii(JSON.stringify(who)));
   if (checked) headers.set("x-erga-checked", checked);
-  // Only an agent token's request may call a document's external agent tools.
-  if (session?.agent) headers.set("x-erga-agent", session.agent.id);
-  // How the person acts there: through this token's agent, by its label (JSON: a header is ASCII).
-  if (session?.agent) headers.set("x-erga-via", ascii(JSON.stringify(VIA.token(session.agent.label))));
+  // Only an agent's request may call a document's agent tools; with how the person acts through it (JSON: a header is ASCII).
+  if (who?.via) {
+    headers.set("x-erga-agent", "1");
+    headers.set("x-erga-via", ascii(JSON.stringify(who.via)));
+  }
   return new Request(inner, { method: request.method, headers, body: request.body, redirect: "manual" });
 }
 

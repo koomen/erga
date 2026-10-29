@@ -1,14 +1,9 @@
 // The Authentication page's script (/admin/auth, server/admin/auth.ts): each provider's switch, and each app's Save,
 // Discard and Clear.
 
-import { post, reload, say } from "../common/admin-post";
+import { post, reload, runTool, say } from "../common/admin-post";
 
-export interface AuthConfig {
-  /** Where the changes go: POST /admin/auth. */
-  action: string;
-}
-
-export default function adminAuth(c: AuthConfig): void {
+export default function adminAuth(): void {
   // A change shows the page again in place (reload), and its message under the provider's card in the new page: it
   // waits in sessionStorage through the reload (a whole page's too, without the admin shell).
   const SAID = "erga:admin-auth-said";
@@ -55,7 +50,7 @@ export default function adminAuth(c: AuthConfig): void {
       const hint = box.closest("section.provider")!.querySelector(".provider-hint")!;
       say(hint, "Saving…");
       try {
-        await post(c.action, { do: "providers", provider: box.dataset.provider!, on: box.checked ? "1" : "0" });
+        await runTool("switch_sign_in_provider", { provider: box.dataset.provider!, on: box.checked });
         reload();
       } catch (err) {
         box.checked = !box.checked;
@@ -90,7 +85,7 @@ export default function adminAuth(c: AuthConfig): void {
     card.querySelector("button.discard")?.addEventListener("click", async () => {
       if (!confirm("Discard the new values? Sign-in keeps the values in use.")) return;
       try {
-        await post(form!.action, { do: "discard", provider });
+        await runTool("clear_sign_in_app", { provider, what: "pending" });
         await changed(provider, "Discarded: sign-in keeps the values in use.");
       } catch (err) {
         say(hint, (err as Error).message, true);
@@ -100,7 +95,7 @@ export default function adminAuth(c: AuthConfig): void {
       if (!confirm("Clear the values set on this page? Sign-in goes back to the deploy's values.")) return;
       say(hint, "Clearing…");
       try {
-        const { result } = await post(form!.action, { do: "clear", provider });
+        const result = await runTool("clear_sign_in_app", { provider });
         await changed(provider, result.message);
       } catch (err) {
         const message = (err as Error).message;
@@ -109,7 +104,7 @@ export default function adminAuth(c: AuthConfig): void {
           return;
         }
         try {
-          const { result } = await post(form!.action, { do: "clear", provider, force: "1" });
+          const result = await runTool("clear_sign_in_app", { provider, force: true });
           await changed(provider, result.message);
         } catch (err2) {
           say(hint, (err2 as Error).message, true);

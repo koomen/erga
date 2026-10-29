@@ -6,7 +6,7 @@
 //   /                          the homepage: the homepage served from its last deploy, else the viewer on the
 //                              landing document (a setting), with an Edit button for those who may
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
-//   /docs                      your documents (the directory), latest edit first; POST /docs/delete, /docs/share
+//   /docs                      your documents (the directory), latest edit first
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)

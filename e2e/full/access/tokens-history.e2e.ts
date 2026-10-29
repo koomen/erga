@@ -75,7 +75,8 @@ test("after a token is made or revoked on /settings, Back and Reload send no for
     ]);
     await until(async () => (await rowsOf(page, label)) == 0, 10_000, "the token is gone");
   });
-  expect(revoked).toEqual([`${root}/tokens/revoke`]);
+  // A revoke is the operation revoke_token, then the page again (a reload, not a form's answer).
+  expect(revoked).toEqual([`${root}/api/tools/revoke_token`]);
   expect(await posts(page, () => page.reload())).toEqual([]);
   expect(await posts(page, () => page.goBack())).toEqual([]);
   expect(await rowsOf(page, label)).toBe(0);

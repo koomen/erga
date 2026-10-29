@@ -27,7 +27,8 @@ import { opsTools, sourceTools, type OpsCalls } from "./tools.ts";
 import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
-import { agentTools, SERVER_TOOLS, type ToolWho } from "../tools.ts";
+import { agentTools, allTools } from "../tools.ts";
+import type { Caller } from "../../server/operations/index.ts";
 import { isModelChoice, MODELS } from "../models.ts";
 import { emptyLog, type Log, type Offer } from "../../shared/agent-log.ts";
 import type { CredentialStatus } from "../../control/deploys/credential.ts";
@@ -101,8 +102,16 @@ export class AdminAgents {
       const why = await this.refusal(login);
       if (why) throw new Error(why);
     };
-    // The admin tools act as the admin, with admin power, via their agent: the change log names them, and how.
-    const as = (): ToolWho => ({ dir: this.platform.directory, who: { login, admin: true, via: VIA.admin }, origin: state.origin, auth: authOps(this.platform, state.origin) });
+    // Every tool acts as the admin, with admin power, via their agent: the change log names them, and how. Their
+    // documents too: the agent can do all they can.
+    const as = (): Caller => ({
+      dir: this.platform.directory,
+      who: { login, admin: true, via: VIA.admin },
+      name: login,
+      origin: state.origin,
+      platform: this.platform,
+      auth: authOps(this.platform, state.origin),
+    });
     // The source tools read the server's copy of Erga's repository, read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
       const r = await this.source().read(state.origin, q);
@@ -116,11 +125,7 @@ export class AdminAgents {
     const agent = startAdminAgent({
       cfg,
       owner: login,
-      tools: agentTools(
-        [...SERVER_TOOLS.filter((t) => t.admin), ...sourceTools(readSource), ...opsTools(this.ops(login, state))],
-        as,
-        guard
-      ),
+      tools: agentTools([...allTools(), ...sourceTools(readSource), ...opsTools(this.ops(login, state))], as, guard),
       store,
       stored: this.chats.load(scope),
       meta: { origin },
@@ -241,8 +246,6 @@ export class AdminAgents {
         await forgetHome(this.platform, new URL(state.origin)).catch(() => {});
         return { done: "The homepage deploys now", status };
       },
-      agentTokens: async () => (await this.platform.tokens.list(login)).map((t) => ({ id: t.id, label: t.label, kind: t.kind, scope: t.scope, docId: t.docId, created: t.created, expires: t.expires, lastUsed: t.lastUsed })),
-      revokeAgentToken: (id) => this.platform.tokens.revoke(login, id, VIA.admin),
     };
   }
 

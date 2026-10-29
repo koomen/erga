@@ -149,7 +149,7 @@ test("the share button's token is a server-wide agent token: the same each time,
   expect((await whoami(shared)).status).toBe(401);
 });
 
-test("a token made at /tokens is shown once, with how to use it; list_tokens lists every token; revoke_token turns one off; revoking from /tokens ends the agent's access", async () => {
+test("a token made at /tokens is shown once, with how to use it; list_tokens lists every token; revoke_token turns one off; revoking on /settings (the same operation) ends the agent's access", async () => {
   const p = await person(await servers.script());
   const mine = await p.token("The agent's own"), t = tools(p.base, mine);
   await (await p.get(`/d/${await p.make()}/api/share`, { method: "POST", headers: { "Content-Type": "application/json", Origin: p.origin }, body: "{}" })).json();
@@ -162,6 +162,6 @@ test("a token made at /tokens is shown once, with how to use it; list_tokens lis
   expect((await t.call("revoke_token", { id: listed.find((x) => x.label == "Made by hand")!.id })).status).toBe(200);
   expect((await tools(p.base, handMade).call("whoami")).status).toBe(401);
   const ownId = (await t.call("whoami")).data.token.id as string;
-  expect((await p.get("/tokens/revoke", { method: "POST", body: new URLSearchParams({ id: ownId }), headers: { Origin: p.origin } })).status).toBe(303);
+  expect((await p.tool("revoke_token", { id: ownId })).status).toBe(200);
   expect((await t.call("whoami")).status).toBe(401);
 });

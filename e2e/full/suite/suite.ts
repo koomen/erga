@@ -25,6 +25,7 @@ import { editor } from "../../helpers/editor";
 import { startServer, type Server } from "../../helpers/server";
 import { FIXTURES, makeDoc, readFixture, RemoteTarget, type Capability, type Doc, type Target } from "./target";
 import { rng, type Ctx, type Test } from "./harness";
+import { runTool } from "../../helpers/tools";
 
 // y-websocket's provider listens for the process's exit, one listener each: a crowd of thirty is no leak.
 process.setMaxListeners(0);
@@ -52,8 +53,8 @@ class LocalTarget implements Target {
       writeDisk,
       // As the dev server's own person (DEV_LOGIN), who opened it from disk and owns it.
       async share(user: string, role: "editor" | "viewer" | null) {
-        const r = await fetch(`${s.root}/docs/share`, { method: "POST", headers: { Origin: s.root }, body: new URLSearchParams({ id: info.docName!.id, login: user, role: role ?? "none" }) });
-        if (!r.ok) throw new Error(`sharing with ${user}: ${r.status} ${await r.text()}`);
+        const r = await runTool(s.root, "share_document", { document: info.docName!.id, login: user, role: role ?? "none" });
+        if (!r.ok) throw new Error(`sharing with ${user}: ${r.status} ${r.error}`);
       },
       ...(own ? {
         async restart(how: "graceful" | "kill" | "lose-state", whileDown?: () => Promise<void>) {
@@ -66,7 +67,7 @@ class LocalTarget implements Target {
       } : {}),
       async dispose() {
         if (own) s.dispose();
-        else await fetch(`${s.root}/docs/delete`, { method: "POST", headers: { Origin: s.root }, body: new URLSearchParams({ id: info.docName?.id ?? base.split("/").pop()! }), redirect: "manual" }).catch(() => {});
+        else await runTool(s.root, "delete_document", { document: info.docName?.id ?? base.split("/").pop()! }).catch(() => {});
         rmSync(dir, { recursive: true, force: true });
       },
     });

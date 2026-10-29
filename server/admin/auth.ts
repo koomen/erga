@@ -121,6 +121,6 @@ export function authPage(session: Session, status: Awaited<ReturnType<AuthOps["s
     ${providerSection("github", providers, serverCard(here, { label: label(here), editable: here.canStore, session, on: providers.github }))}
     ${providerSection("google", providers, serverCard(google, { label: label(google), editable: google.canStore, session, on: providers.google }))}
   </section>
-<script>${inlineCall("admin-auth", { action: link("/admin/auth", session) })}</script>`,
+<script>${inlineCall("admin-auth")}</script>`,
   });
 }

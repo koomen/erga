@@ -11,7 +11,8 @@ import type { Session } from "../server/platform.ts";
 import { REQUEST_MINUTES, type AgentToken } from "../server/identity/index.ts";
 import { DOCUMENT_RULES, FILES_PROMPT, PAGES_PROMPT } from "./document/prompt";
 import type { ToolSpec } from "../document/agent";
-import { documentTools, SERVER_TOOLS } from "./tools";
+import { documentTools } from "./tools";
+import { OPERATIONS } from "../server/operations/index.ts";
 
 /** The tools, as a guide lists them: each one's name, what it does, and its arguments as JSON Schema. */
 const toolDocs = (tools: ToolSpec[]) =>
@@ -154,7 +155,7 @@ that file). Do it only when your person asks.
 
 ## The server's tools
 
-${toolDocs(SERVER_TOOLS.filter((t) => t.only != "agent" && !t.admin))}
+${toolDocs(OPERATIONS.filter((t) => !t.admin))}
 
 ## Admin tools
 
@@ -166,7 +167,7 @@ deploy locks shows as \`"locked": true\` and can't be changed here. Users are
 everyone who may sign in; an admin by the deploy (\`"bootstrap": true\`) can't
 be demoted or removed here.
 
-${admin || !session ? toolDocs(SERVER_TOOLS.filter((t) => t.only != "agent" && t.admin)) : "(none for you)"}
+${admin || !session ? toolDocs(OPERATIONS.filter((t) => t.admin)) : "(none for you)"}
 
 ## Document tools
 

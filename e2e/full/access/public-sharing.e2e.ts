@@ -13,9 +13,16 @@ test("on: anyone with the link opens for people signed out; off: not offered, re
   const page = tab.page, root = (await server()).root;
   const port = new URL(root).port;
   // Someone not signed in: locally, a browser that signed out.
-  const signedOut = (path: string) => fetch(root + path, { redirect: "manual", headers: { Cookie: `erga_signed_out_${port}=1`, Accept: "text/html" } });
-  const share = (id: string, role: string) => page.evaluate(async ([id, role]) => {
-    const r = await fetch("/docs/share", { method: "POST", body: new URLSearchParams({ id, login: "*", role }) });
+  const signedOut = (path: string) =>
+    fetch(root + path, { redirect: "manual", headers: { Cookie: `erga_signed_out_${port}=1`, Accept: "text/html" } });
+  const share = (id: string, role: string) =>
+    page.evaluate(
+      async ([id, role]) => {
+        const r = await fetch("/api/tools/share_document", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document: id, login: "*", role }),
+        });
     return { status: r.status, body: await r.json() };
   }, [id, role]);
   const setPublic = async (on: boolean) => {
