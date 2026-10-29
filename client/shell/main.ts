@@ -34,7 +34,7 @@ import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { mountAgent } from "./agent";
 import { mountPause } from "./pause";
-import { addImages } from "./images";
+import { addFiles } from "./uploads";
 import { sleep } from "../../shared/time";
 
 declare global {
@@ -314,7 +314,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => shell.room.needRefresh(),
     onOpen: (path) => openPage(path),
-    onImages: (folder, files) => addImages(api, folder, files),
+    onFiles: (files) => addFiles(api, files),
     flushed: () => collab.flushed(),
     onZoom: (by) => zoomPage(by),
   });

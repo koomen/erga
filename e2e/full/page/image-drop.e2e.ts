@@ -1,7 +1,8 @@
-// Image files dropped on the page in the editor: each goes into the document's files in images/ beside the page, and
-// shows in the text where it was dropped, after a reload too. Other files go nowhere, and the browser opens none of
-// them. An image that can't be added says why, there on the page. (A document the server keeps, as on a deployment:
-// one on disk takes only text files.)
+// Files dropped or pasted on the page in the editor go into the document's files, at its top: an image in images/, which
+// shows in the text where it was dropped (a paragraph of its own at the start or end of a paragraph), another file in
+// files/, as a link to it. After a reload too, and from a page in a folder. The browser opens none of them. A file
+// that can't be added says why, there on the page. (A document the server keeps, as on a deployment: one on disk takes
+// only text files.)
 import { expect, servers, settle, test, type Server, type Tab } from "../../helpers/fixtures";
 import { editor, F, type Editor } from "../../helpers/editor";
 
@@ -13,19 +14,26 @@ const PAGE = `<!doctype html>
 <body>
   <h1>Launch notes</h1>
   <p class="lede">Build <em>cool</em> things and ship them.</p>
+  <p class="empty"><br></p>
+  <p class="tail">We came down before the rain.</p>
 </body>
 </html>
 `;
 
-/** A new document of DEV_LOGIN's with PAGE and `files`, open in the editor in the test's tab. */
-async function open(tab: Tab, server: Server, files: Record<string, string> = {}) {
+/**
+ * A new document of DEV_LOGIN's with PAGE and `files`, open in the editor in the test's tab at `page` (an address under
+ * it; a page in a folder makes it a project).
+ */
+async function open(tab: Tab, server: Server, files: Record<string, string> = {}, page = "") {
   tab.strict = false; // (The browser logs a refused upload as an error.)
-  const at = (await fetch(`${server.root}/new`, { redirect: "manual" })).headers.get("location")!.replace(/[?&]edit$/, "");
+  const at = (await fetch(`${server.root}/new${page ? "?kind=project" : ""}`, { redirect: "manual" })).headers
+    .get("location")!
+    .replace(/[?&]edit$/, "");
   const address = new URL(at, server.root).pathname;
   const { id } = (await (await fetch(`${server.root}${address}/api/name`)).json()) as { id: string };
   for (const [path, body] of Object.entries({ "index.html": PAGE, ...files }))
     expect((await fetch(`${server.root}/d/${id}/api/files/${path}`, { method: "PUT", body })).status).toBe(200);
-  await tab.page.goto(`${server.root}${address}?edit`);
+  await tab.page.goto(`${server.root}${address}${page ? `/${page}` : ""}?edit`);
   const ed = editor(tab.page, { address: `${server.root}${address}`, dir: "", file: "" });
   await ed.loaded();
   await settle(tab.page);
@@ -36,19 +44,25 @@ async function open(tab: Tab, server: Server, files: Record<string, string> = {}
   };
 }
 
-/**
- * Drops files made in the page's frame just before character `i` of the first text of `selector`: a dragover, then the
- * drop. Returns whether the page stopped the browser's own drop (which would open the file) both times, and whether
- * the dragover showed where the drop goes.
- */
-const drop = (ed: Editor, selector: string, i: number, files: { name: string; type: string; png?: boolean }[]) =>
-  ed.frame<{ stopped: boolean; shown: boolean }>(`(async () => {
+type Made = { name: string; type: string; png?: boolean };
+/** Makes the files in the page's frame, in a DataTransfer (`dt`). */
+const make = (files: Made[]) => `
     const png = () => { const c = document.createElement("canvas"); c.width = 40; c.height = 30; const g = c.getContext("2d"); g.fillStyle = "#3a6ff0"; g.fillRect(0, 0, 40, 30); return new Promise((r) => c.toBlob(r, "image/png")); };
     const dt = new DataTransfer();
-    for (const f of ${JSON.stringify(files)}) dt.items.add(new File([f.png ? await png() : "not an image"], f.name, { type: f.type }));
-    const t = ${F}.createTreeWalker(${F}.querySelector(${JSON.stringify(selector)}), 4).nextNode();
-    const rg = ${F}.createRange(); rg.setStart(t, ${i} - 1); rg.setEnd(t, ${i});
-    const r = rg.getBoundingClientRect(), x = r.right - 1, y = r.top + r.height / 2, at = ${F}.elementFromPoint(x, y);
+    for (const f of ${JSON.stringify(files)}) dt.items.add(new File([f.png ? await png() : "some notes"], f.name, { type: f.type }));`;
+
+/**
+ * Drops files made in the page's frame at boundary `i` of the first text of `selector` (0: before its first character; an
+ * element with no text: at its start):
+ * a dragover, then the drop. Returns whether the page stopped the browser's own drop (which would open the file) both
+ * times, and whether the dragover showed where the drop goes.
+ */
+const drop = (ed: Editor, selector: string, i: number, files: Made[]) =>
+  ed.frame<{ stopped: boolean; shown: boolean }>(`(async () => {${make(files)}
+    const el = ${F}.querySelector(${JSON.stringify(selector)}), t = ${F}.createTreeWalker(el, 4).nextNode();
+    const rg = ${F}.createRange(), first = ${i} == 0;
+    if (t) { rg.setStart(t, first ? 0 : ${i} - 1); rg.setEnd(t, first ? 1 : ${i}); } else rg.selectNodeContents(el);
+    const r = t ? rg.getBoundingClientRect() : el.getBoundingClientRect(), x = first ? r.left + 1 : r.right - 1, y = r.top + r.height / 2, at = ${F}.elementFromPoint(x, y);
     const over = new DragEvent("dragover", { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true });
     at.dispatchEvent(over);
     const shown = !!${F}.querySelector("erga-drop-caret");
@@ -57,13 +71,22 @@ const drop = (ed: Editor, selector: string, i: number, files: { name: string; ty
     return { stopped: over.defaultPrevented && dropped.defaultPrevented, shown };
   })()`);
 
-/** The images in the page's text: their src as written, and whether each has loaded. */
+/** Pastes files made in the page's frame (a clipboard with files only, as a screenshot is) where the caret is. */
+const paste = (ed: Editor, files: Made[]) =>
+  ed.frame(`(async () => {${make(files)}
+    ${F}.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    return true;
+  })()`);
+
+/** The images on the page: their src as written, and whether each has loaded. */
 const images = (ed: Editor) =>
   ed.frame<{ src: string; alt: string; loaded: boolean }[]>(
     `[...${F}.querySelectorAll("body img")].map((i) => ({ src: i.getAttribute("src"), alt: i.alt, loaded: i.complete && i.naturalWidth > 0 }))`
   );
 
-test("dropped images go into the document's files and show where they were dropped, after a reload too", async ({ tab }) => {
+const IMG = (path: string) => `<img src="${path}" alt="${path.slice(path.lastIndexOf("/") + 1)}">`;
+
+test("images dropped in the middle of the text go in there, in order, into images/, after a reload too", async ({ tab }) => {
   // A file of that name is there already: the new one gets the next name.
   const { ed, files } = await open(tab, await servers.main(), { "images/dot.png": "old" });
   expect(
@@ -72,16 +95,13 @@ test("dropped images go into the document's files and show where they were dropp
       { name: "two.png", type: "image/png", png: true },
     ])
   ).toEqual({ stopped: true, shown: true });
-  // After "Build ", in order.
   const want = [
     { src: "images/dot-2.png", alt: "dot-2.png", loaded: true },
     { src: "images/two.png", alt: "two.png", loaded: true },
   ];
   await expect.poll(() => images(ed)).toEqual(want);
   expect(await ed.frame<boolean>(`!${F}.querySelector("erga-drop-caret, erga-drop-note")`)).toBe(true);
-  expect(await ed.source()).toContain(
-    `<p class="lede">Build <img src="images/dot-2.png" alt="dot-2.png"><img src="images/two.png" alt="two.png"><em>cool</em>`
-  );
+  expect(await ed.source()).toContain(`<p class="lede">Build ${IMG("images/dot-2.png")}${IMG("images/two.png")}<em>cool</em>`);
   expect(await files()).toEqual(expect.arrayContaining(["images/dot.png", "images/dot-2.png", "images/two.png"]));
 
   await ed.page.reload();
@@ -89,17 +109,47 @@ test("dropped images go into the document's files and show where they were dropp
   await expect.poll(() => images(ed)).toEqual(want);
 });
 
-test("a dropped file that isn't an image goes nowhere, and the browser doesn't open it", async ({ tab }) => {
-  const { ed, files } = await open(tab, await servers.main());
-  const before = await ed.source();
-  expect(await drop(ed, "p.lede", 6, [{ name: "notes.txt", type: "text/plain" }])).toEqual({ stopped: true, shown: false });
-  await ed.settle();
-  expect(await ed.source()).toBe(before);
-  expect(await files()).toEqual(["index.html"]);
-  expect(await ed.frame<boolean>(`!${F}.querySelector("erga-drop-note")`)).toBe(true);
+test("an image dropped at the start or the end of a paragraph is a paragraph of its own; on an empty line, it fills it", async ({
+  tab,
+}) => {
+  const { ed } = await open(tab, await servers.main());
+  const png = (name: string) => [{ name, type: "image/png", png: true }];
+  await drop(ed, "p.lede", 0, png("start.png"));
+  await expect.poll(() => ed.source()).toContain(`<p>${IMG("images/start.png")}</p>\n  <p class="lede">Build`);
+  await drop(ed, "p.tail", "We came down before the rain.".length, png("end.png"));
+  await expect.poll(() => ed.source()).toContain(`before the rain.</p>\n  <p>${IMG("images/end.png")}</p>\n</body>`);
+  await drop(ed, "p.empty", 0, png("empty.png"));
+  await expect.poll(() => ed.source()).toContain(`<p class="empty">${IMG("images/empty.png")}</p>`);
+  await expect.poll(async () => (await images(ed)).map((i) => i.loaded)).toEqual([true, true, true]);
 });
 
-test("an image that can't be added says why where it was dropped, and nothing goes into the text", async ({ tab }) => {
+test("a dropped file that isn't an image goes into files/, as a link to it with its name", async ({ tab }) => {
+  const { ed, files } = await open(tab, await servers.main());
+  expect(await drop(ed, "p.lede", 6, [{ name: "notes.txt", type: "text/plain" }])).toEqual({ stopped: true, shown: true });
+  await expect.poll(() => ed.source()).toContain(`<p class="lede">Build <a href="files/notes.txt">notes.txt</a><em>cool</em>`);
+  expect(await files()).toEqual(expect.arrayContaining(["files/notes.txt"]));
+  // The link opens the file.
+  expect(await ed.frame<string>(`fetch(${F}.querySelector('a[href="files/notes.txt"]').href).then((r) => r.text())`)).toBe("some notes");
+});
+
+test("a pasted screenshot goes in at the caret", async ({ tab }) => {
+  const { ed, files } = await open(tab, await servers.main());
+  const at = await ed.charAt("p.lede", 3);
+  await ed.click(at.x, at.y);
+  await paste(ed, [{ name: "image.png", type: "image/png", png: true }]);
+  await expect.poll(() => images(ed)).toEqual([{ src: "images/image.png", alt: "image.png", loaded: true }]);
+  expect(await ed.source()).toMatch(/<p class="lede">Bu[a-z]*<img src="images\/image.png" alt="image.png">[a-z]* <em>/);
+  expect(await files()).toEqual(expect.arrayContaining(["images/image.png"]));
+});
+
+test("from a page in a folder, the image is in the document's images/, and its src reaches it", async ({ tab }) => {
+  const { ed, files } = await open(tab, await servers.main(), { "blog/post.html": PAGE }, "blog/post");
+  await drop(ed, "p.lede", 6, [{ name: "dot.png", type: "image/png", png: true }]);
+  await expect.poll(() => images(ed)).toEqual([{ src: "../images/dot.png", alt: "dot.png", loaded: true }]);
+  expect(await files()).toEqual(expect.arrayContaining(["images/dot.png"]));
+});
+
+test("a file that can't be added says why where it was dropped, and nothing goes into the text", async ({ tab }) => {
   // A folder has the image's name: the server refuses the file.
   const { ed } = await open(tab, await servers.main(), { "images/clash.png/a.txt": "x" });
   const before = await ed.source();

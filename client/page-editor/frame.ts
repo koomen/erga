@@ -19,7 +19,7 @@ import { catchZoomGestures, clampZoom } from "./zoom";
 import { evaluateIn } from "./evaluate";
 import { LivePage } from "./live-page-tab";
 import { changesBetween } from "../../document/merge";
-import { encodePath } from "../../document/pages";
+import { baseName, encodePath } from "../../document/pages";
 import { sourceDigest } from "../../shared/page-html";
 import { evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../../shared/agent-log";
 import { sleep } from "../../shared/time";
@@ -62,7 +62,7 @@ const SELF = new URL(".", import.meta.url).href;
 const live = new LivePage(BASE, SELF);
 
 let page: PageEditor | null = null;
-/** Images dropped on the page that the shell is adding to the document's files: where they go in (mapped through the edits meanwhile). */
+/** Files dropped or pasted on the page that the shell is adding to the document's files: where they go in (mapped through the edits meanwhile). */
 const drops = new Map<number, { at: number; point: { x: number; y: number } }>();
 let dropSeq = 0;
 let relay: Relay | null = null;
@@ -157,16 +157,18 @@ window.addEventListener("message", (e: MessageEvent) => {
       queueSnapshot();
       return;
     }
-    case "imaged": {
+    case "uploaded": {
       const d = drops.get(m.id);
       if (!d) return;
       drops.delete(m.id);
-      const names = Array.isArray(m.names) ? m.names.filter((n): n is string => typeof n == "string") : [];
-      const images = names.map((name) => ({ src: encodePath(`images/${name}`), alt: name }));
-      if (images.length && !page.insertImages(d.at, images))
+      const paths = Array.isArray(m.paths) ? m.paths.filter((p): p is string => typeof p == "string") : [];
+      // From this page's folder (a page in blog/ reaches images/ as ../images/).
+      const up = "../".repeat(HERE.startsWith(BASE) ? HERE.slice(BASE.length).split("/").filter(Boolean).length : 0);
+      const items = paths.map((p) => ({ href: up + encodePath(p), name: baseName(p), image: p.startsWith("images/") }));
+      if (items.length && !page.insertFiles(d.at, items))
         page.dropError(
           d.point,
-          "The text where the image was dropped changed meanwhile. It's in the document's files, in images/: drop it again."
+          `The text where it was dropped changed meanwhile. It's in the document's files (${paths.join(", ")}): drop it again.`
         );
       else if (m.error) page.dropError(d.point, m.error);
       return;
@@ -259,16 +261,10 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     onNotice: (message, fix) => post({ type: "notice", message, fix }),
     onProblem: (p) => post({ type: "problem", key: p.key, message: p.message, fix: p.fix }),
     onPointer: (e) => post({ type: "pointer", kind: "move", x: z(e.clientX), y: z(e.clientY) }),
-    onDropImages(files, at, point) {
+    onDropFiles(files, at, point) {
       const id = ++dropSeq;
       drops.set(id, { at, point });
-      let folder = HERE.startsWith(BASE) ? HERE.slice(BASE.length) : "";
-      try {
-        folder = decodeURIComponent(folder);
-      } catch {
-        folder = "";
-      }
-      post({ type: "images", id, folder, files });
+      post({ type: "upload", id, files: files.slice(0, 50) });
     },
   });
   if (m.tracking) page.setTracking(true);
