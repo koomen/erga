@@ -38,8 +38,8 @@ test("the model gets images as images and text files as text, after the message"
     { name: "a.csv", kind: "text" as const, mimeType: "text/csv", data: "x,y\n1,2", size: 7 },
     { name: "s.png", kind: "image" as const, mimeType: "image/png", data: "AAAA", size: 3, thumb: "data:image/jpeg;base64,AA" },
   ];
-  const c = messageContent("Look", files) as { type: string; text?: string; data?: string; mimeType?: string }[];
+  const c = messageContent("Look", files) as { type: string; text?: string; data?: string; mediaType?: string }[];
   expect(c[0]).toEqual({ type: "text", text: `Look\n\n<file name="a.csv">\nx,y\n1,2\n</file>\n\n(Attached image: s.png)` });
-  expect(c[1]).toEqual({ type: "image", data: "AAAA", mimeType: "image/png" });
+  expect(c[1]).toEqual({ type: "file", mediaType: "image/png", data: "AAAA" });
   expect(fileRefs(files)).toEqual([{ name: "a.csv", kind: "text", size: 7 }, { name: "s.png", kind: "image", size: 3, thumb: "data:image/jpeg;base64,AA" }]);
 });

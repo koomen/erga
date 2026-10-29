@@ -29,12 +29,11 @@
 // with an admin token (server/identity/tokens.ts; Share with agent on the admin pages makes
 // one that ends within 12 hours), and reads agents/guides.ts `adminGuide` first.
 
-import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentConfig, ModelChoice } from "../models";
 import type { Attachment } from "../../shared/attach";
 import type { Log, LogEvent } from "../../shared/agent-log";
-import type { ChatStore, StoredChat } from "../checkpoint";
-import { startLoop } from "../run";
+import type { ChatMessage, ChatStore, StoredChat } from "../checkpoint";
+import { startLoop, type AgentTool } from "../run";
 import { systemPrompt } from "./prompt";
 import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
 
@@ -46,7 +45,7 @@ export interface AdminAgent {
   configure(cfg: AgentConfig): void;
   log(): Log;
   /** The model's messages so far. */
-  messages(): AgentMessage[];
+  messages(): readonly ChatMessage[];
   /** A message, with any files attached. */
   prompt(text: string, context: string | null, files?: Attachment[]): void;
   abort(): void;
@@ -99,7 +98,7 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
     tag: "page",
     hooks: { about },
   });
-  const agent = loop.start(opts.cfg, systemPrompt(owner), opts.tools);
+  loop.start(opts.cfg, systemPrompt(owner), opts.tools);
   return {
     get model() {
       return loop.model;
@@ -110,7 +109,7 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
     setModel: loop.setModel,
     configure: loop.configure,
     log: () => loop.log,
-    messages: () => agent.state.messages,
+    messages: () => loop.messages,
     prompt: (text, context, files = []) => loop.prompt(text, context, files),
     abort: loop.abort,
     reset: () => loop.reset(),

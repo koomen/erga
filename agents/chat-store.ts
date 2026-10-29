@@ -7,9 +7,8 @@
 // state. A SQLite value is at most 2 MB, so long ones (a screenshot) go in
 // parts.
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { LogItem } from "../shared/agent-log";
-import type { ChatSave, ChatState, ChatStore, StoredChat } from "./checkpoint";
+import type { ChatMessage, ChatSave, ChatState, ChatStore, StoredChat } from "./checkpoint";
 
 /** A Durable Object's SQLite, as the tables need it (bun:sqlite stands in for the tests). */
 export interface ChatSql {
@@ -42,7 +41,7 @@ export class ChatTables {
     };
     const state = whole.get("s:0");
     if (!state) return null;
-    return { messages: list<AgentMessage>("m"), log: list<LogItem>("l"), state: JSON.parse(state) as ChatState };
+    return { messages: list<ChatMessage>("m"), log: list<LogItem>("l"), state: JSON.parse(state) as ChatState };
   }
 
   save(scope: string, c: ChatSave): void {

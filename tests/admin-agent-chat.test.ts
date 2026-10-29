@@ -10,8 +10,8 @@ import { panelPrefs } from "../agents/admin/panel";
 import { startAdminAgent } from "../agents/admin/agent";
 import { ChatTables, tableStore } from "../agents/chat-store";
 import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } from "../agents/checkpoint";
-import { Type } from "typebox";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import * as Schema from "effect/Schema";
+import type { AgentTool } from "../agents/run";
 
 const script = { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" as const };
 
@@ -48,8 +48,18 @@ test("a conversation stored and restored goes on where it was: the transcript an
 });
 
 test("the admin agent, killed while a tool call ran, goes on after the restart without running it again", async () => {
-  const t = tables(), runs = { n: 0 };
-  const count: AgentTool = { name: "count", label: "Count", description: "Counts its runs.", parameters: Type.Object({}), execute: async () => { runs.n++; return { content: [{ type: "text", text: `run ${runs.n}` }], details: {} }; } };
+  const t = tables(),
+    runs = { n: 0 };
+  const count: AgentTool = {
+    name: "count",
+    label: "Count",
+    description: "Counts its runs.",
+    parameters: Schema.Struct({}),
+    execute: async () => {
+      runs.n++;
+      return { content: [{ type: "text", text: `run ${runs.n}` }], details: {} };
+    },
+  };
   // The object dies once the tool call began: that save lands, no later one returns.
   let dead = false;
   const dying: ChatStore = {
@@ -69,8 +79,8 @@ test("the admin agent, killed while a tool call ran, goes on after the restart w
   expect(runs.n).toBe(1);
   expect(b.log().items.map((i) => i.kind)).toEqual(["user", "tool", "assistant"]);
   expect(b.log().items[1]).toMatchObject({ status: "error", detail: STOPPED_SHOWN });
-  const result = b.messages().find((m) => (m as { role: string }).role == "toolResult") as unknown as { content: { text: string }[] };
-  expect(result.content[0].text).toBe(STOPPED);
+  const result = b.messages().find((m) => m.role == "tool") as unknown as { content: { result: string }[] };
+  expect(result.content[0].result).toBe(STOPPED);
 });
 
 test("a stored transcript shows text that streamed after the last checkpoint as gone, and a running tool as stopped", () => {
@@ -94,4 +104,80 @@ test("the panel's prefs keep only what's valid", () => {
   expect(panelPrefs({ open: "yes", side: "up", width: "wide" })).toEqual({});
   expect(panelPrefs(null)).toEqual({});
   expect(panelPrefs({ width: 1e9 }).width).toBe(4000);
+});
+
+test("a conversation pi kept (before the agents ran on Effect AI) loads in Effect AI's messages, and goes on", async () => {
+  const t = tables();
+  const pi = [
+    { role: "user", content: "Read a.pdf", timestamp: 1 },
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "Read it.", thinkingSignature: "sig" },
+        { type: "toolCall", id: "c1", name: "read", arguments: { path: "a.pdf" } },
+      ],
+      stopReason: "toolUse",
+      timestamp: 2,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "read",
+      content: [
+        { type: "text", text: "a.pdf: 1 page" },
+        { type: "image", data: "JVBERi0=", mimeType: "application/pdf" },
+      ],
+      isError: false,
+      timestamp: 3,
+    },
+    { role: "assistant", content: [{ type: "text", text: "It says hi." }], stopReason: "stop", timestamp: 4 },
+    { role: "user", content: [{ type: "text", text: "Again" }], timestamp: 5 },
+    { role: "assistant", content: [], stopReason: "error", errorMessage: "Overloaded", timestamp: 6 },
+  ];
+  const state = { running: false, queued: [], calls: {}, model: null, stable: 0, meta: {}, at: 1 };
+  t.save("admin:root", {
+    messages: { from: 0, items: pi as never[] },
+    log: {
+      from: 0,
+      items: [
+        { kind: "user", text: "Read a.pdf" },
+        { kind: "assistant", text: "It says hi." },
+      ],
+    },
+    state,
+  });
+
+  const b = startAdminAgent({ cfg: script, owner: "root", tools: [], store: tableStore(t, "admin:root"), stored: t.load("admin:root") });
+  expect(b.messages()).toEqual([
+    { role: "user", content: [{ type: "text", text: "Read a.pdf" }] },
+    {
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "Read it.", options: { anthropic: { info: { type: "thinking", signature: "sig" } } } },
+        { type: "tool-call", id: "c1", name: "read", params: { path: "a.pdf" }, providerExecuted: false },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          id: "c1",
+          name: "read",
+          isFailure: false,
+          result: "a.pdf: 1 page",
+          modelOutput: [
+            { type: "text", text: "a.pdf: 1 page" },
+            { type: "file", mediaType: "application/pdf", data: "JVBERi0=" },
+          ],
+          providerExecuted: false,
+        },
+      ],
+    },
+    { role: "assistant", content: [{ type: "text", text: "It says hi." }] },
+    { role: "user", content: [{ type: "text", text: "Again" }], timestamp: 5 } as never,
+  ]);
+  await turn(b, `@script [{"text":"Still here."}]`);
+  expect(b.log().items.at(-1)).toEqual({ kind: "assistant", text: "Still here." });
+  expect(b.messages().map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "user", "user", "assistant"]);
 });
