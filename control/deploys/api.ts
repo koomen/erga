@@ -25,13 +25,17 @@
 // admin-scope token; a test person never. The caller (the control Worker's
 // gate, or the app's in local development) has checked that already.
 
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import type { CredentialStatus, TokenAnswer } from "./credential.ts";
 import type { ReleasesView } from "./releases.ts";
 import type { DomainsView } from "./domains.ts";
 import { byLine } from "../../shared/attribution.ts";
 import type { Session } from "../../server/platform.ts";
 import { whoOf } from "../../server/platform.ts";
-import { json } from "../../shared/http";
 
 /** This server's branch deploys, as the admin agent's Ops page tools ask them (the pipeline's object answers, by RPC). */
 export interface OpsDeploys {
@@ -80,45 +84,115 @@ export interface DeploysObject extends OpsDeploys {
 
 export const isDeploysApiPath = (path: string) => path == "/api/deploys" || path.startsWith("/api/deploys/") || path == "/api/events";
 
+/** Who asks and what they act on: given with each request (the routes are made once). */
+class Asking extends Context.Service<Asking, { readonly request: Request; readonly session: Session; readonly deploys: DeploysObject }>()(
+  "erga/control/Asking"
+) {}
+
+/** A JSON answer, as every answer here is: no cache keeps it. */
+const answer = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } });
+const ask = <A>(f: (deploys: DeploysObject) => Promise<A>) => Asking.use(({ deploys }) => Effect.promise(() => f(deploys)));
+const query = Asking.useSync(({ request }) => new URL(request.url).searchParams);
+/** From this site's pages, or an agent's token: never another site's form. */
+const ownForm = Asking.useSync(({ request, session }) => !!session.agent || request.headers.get("origin") == new URL(request.url).origin);
+const forbidden = answer({ error: "Forbidden" }, 403);
+const by = Asking.useSync(({ session }) => byLine(session.login.toLowerCase(), whoOf(session).via));
+const done = (r: { ok: boolean; status?: unknown; error?: string }) =>
+  r.ok ? answer({ ok: true, target: r.status }) : answer({ ok: false, error: r.error }, (r as { status?: number }).status ?? 400);
+
+/** A target's name in a path: lower-case letters (anything else is nothing here). */
+const targetName = HttpRouter.schemaPathParams(Schema.Struct({ name: Schema.String.check(Schema.isPattern(/^[a-z]+$/)) }));
+/** A redeploy's body: { fresh: true } asks for staging with a fresh copy; a body that isn't JSON asks for nothing. */
+const Redeploy = Schema.fromJsonString(Schema.Struct({ fresh: Schema.optionalKey(Schema.Unknown) }));
+
+const nothingHere = Asking.useSync(({ request }) =>
+  answer({ error: `There's nothing at ${request.method} ${new URL(request.url).pathname.replace(/\/+$/, "") || "/"}.` }, 404)
+);
+
+const routes = HttpRouter.addAll(
+  [
+    HttpRouter.route(
+      "GET",
+      "/api/deploys",
+      Effect.gen(function* () {
+        const history = Number((yield* query).get("history") ?? 0) || 0;
+        return answer(yield* ask((d) => d.status(history)));
+      })
+    ),
+    HttpRouter.route(
+      "GET",
+      "/api/deploys/:name/log",
+      Effect.gen(function* () {
+        const { name } = yield* targetName;
+        const deployId = (yield* query).get("deploy") ?? undefined;
+        const log = yield* ask((d) => d.logOf(name, deployId));
+        return log
+          ? answer(log)
+          : answer(
+              { error: deployId ? `${name} has no deploy ${deployId} in its history.` : `There's no deploy target called ${name}.` },
+              404
+            );
+      })
+    ),
+    HttpRouter.route(
+      "GET",
+      "/api/deploys/:name/history",
+      Effect.gen(function* () {
+        const { name } = yield* targetName;
+        const limit = Number((yield* query).get("limit") ?? 20);
+        const list = yield* ask((d) => d.historyOf(name, limit));
+        return list ? answer({ target: name, deploys: list }) : answer({ error: `There's no deploy target called ${name}.` }, 404);
+      })
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/deploys/:name/rollback",
+      Effect.gen(function* () {
+        const { name } = yield* targetName;
+        if (!(yield* ownForm)) return forbidden;
+        const trigger = `rollback by ${yield* by}`;
+        return done(yield* ask((d) => d.rollback(name, trigger)));
+      })
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/deploys/credential/disconnect",
+      Effect.gen(function* () {
+        if (!(yield* ownForm)) return forbidden;
+        yield* ask((d) => d.disconnectCredential());
+        return answer({ ok: true, credential: yield* ask((d) => d.credentialStatus()) });
+      })
+    ),
+    HttpRouter.route(
+      "POST",
+      "/api/deploys/:name",
+      Effect.gen(function* () {
+        const { name } = yield* targetName;
+        if (!(yield* ownForm)) return forbidden;
+        const { request } = yield* Asking;
+        const body = yield* Effect.promise(() => request.text().catch(() => ""));
+        const fresh = Option.getOrUndefined(Schema.decodeUnknownOption(Redeploy)(body))?.fresh === true;
+        const trigger = `redeploy by ${yield* by}`;
+        return done(yield* ask((d) => (fresh ? d.redeployWith(name, trigger, { fresh }) : d.redeploy(name, trigger))));
+      })
+    ),
+    HttpRouter.route("*", "*", nothingHere),
+  ].map((r) =>
+    HttpRouter.route(
+      r.method,
+      r.path,
+      Effect.catchTag(r.handler, "SchemaError", () => nothingHere)
+    )
+  )
+);
+
+const web = HttpRouter.toWebHandler(routes, { disableLogger: true, routerConfig: { ignoreTrailingSlash: true } });
+
 /** The routes above, for `session` (an admin with admin power, checked by the caller). */
 export async function deploysApi(request: Request, session: Session, deploys: DeploysObject): Promise<Response> {
+  // The event stream goes to the object as it came: a WebSocket's upgrade can't go through the router.
   const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/";
-  const method = request.method;
-  const by = byLine(session.login.toLowerCase(), whoOf(session).via);
-
-  if (path == "/api/events" && method == "GET") return deploys.fetch(new Request(url, request));
-  if (path == "/api/deploys" && method == "GET") return json(await deploys.status(Number(url.searchParams.get("history") ?? 0) || 0));
-  const [, logOf] = /^\/api\/deploys\/([a-z]+)\/log$/.exec(path) ?? [];
-  if (logOf && method == "GET") {
-    const deployId = url.searchParams.get("deploy") ?? undefined;
-    const log = await deploys.logOf(logOf, deployId);
-    return log ? json(log) : json({ error: deployId ? `${logOf} has no deploy ${deployId} in its history.` : `There's no deploy target called ${logOf}.` }, 404);
-  }
-  const [, historyOf] = /^\/api\/deploys\/([a-z]+)\/history$/.exec(path) ?? [];
-  if (historyOf && method == "GET") {
-    const list = await deploys.historyOf(historyOf, Number(url.searchParams.get("limit") ?? 20));
-    return list ? json({ target: historyOf, deploys: list }) : json({ error: `There's no deploy target called ${historyOf}.` }, 404);
-  }
-  // From this site's pages, or an agent's token: never another site's form.
-  const ownForm = () => !!session.agent || request.headers.get("origin") == url.origin;
-  const [, rollbackOf] = /^\/api\/deploys\/([a-z]+)\/rollback$/.exec(path) ?? [];
-  if (rollbackOf && method == "POST") {
-    if (!ownForm()) return json({ error: "Forbidden" }, 403);
-    const r = await deploys.rollback(rollbackOf, `rollback by ${by}`);
-    return r.ok ? json({ ok: true, target: r.status }) : json({ ok: false, error: r.error }, (r as { status?: number }).status ?? 400);
-  }
-  if (path == "/api/deploys/credential/disconnect" && method == "POST") {
-    if (!ownForm()) return json({ error: "Forbidden" }, 403);
-    await deploys.disconnectCredential();
-    return json({ ok: true, credential: await deploys.credentialStatus() });
-  }
-  const [, name] = /^\/api\/deploys\/([a-z]+)$/.exec(path) ?? [];
-  if (name && method == "POST") {
-    if (!ownForm()) return json({ error: "Forbidden" }, 403);
-    const fresh = ((await request.json().catch(() => ({}))) as { fresh?: unknown }).fresh === true;
-    const r = fresh ? await deploys.redeployWith(name, `redeploy by ${by}`, { fresh }) : await deploys.redeploy(name, `redeploy by ${by}`);
-    return r.ok ? json({ ok: true, target: r.status }) : json({ ok: false, error: r.error }, (r as { status?: number }).status ?? 400);
-  }
-  return json({ error: `There's nothing at ${method} ${path}.` }, 404);
+  if ((url.pathname.replace(/\/+$/, "") || "/") == "/api/events" && request.method == "GET")
+    return deploys.fetch(new Request(url, request));
+  return web.handler(request, Context.make(Asking, { request, session, deploys }));
 }
