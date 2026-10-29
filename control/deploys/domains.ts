@@ -29,7 +29,7 @@ const REASONS: Record<string, string> = {
 /** Cloudflare Registrar's search: candidate names, each checked for availability and price (search alone isn't the source of truth). */
 export async function searchDomains(cf: Cloudflare, accountId: string, q: string): Promise<DomainOffer[]> {
   const query = q.trim().toLowerCase();
-  if (!/^[a-z0-9.-]{1,63}$/.test(query)) throw new DeployError("Search with letters, digits, dashes and dots only.");
+  if (!/^[a-z0-9.-]{1,63}$/.test(query)) throw new DeployError({ message: "Search with letters, digits, dashes and dots only." });
   const found = (await cf.call<{ domains?: { name: string }[] } | { name: string }[]>("GET", `/accounts/${accountId}/registrar/domain-search?q=${encodeURIComponent(query)}&limit=8`, "search for domains")) ?? [];
   const names = (Array.isArray(found) ? found : found.domains ?? []).map((d) => d.name).slice(0, 8);
   if (query.includes(".") && !names.includes(query)) names.unshift(query);
@@ -55,10 +55,13 @@ interface RawCheck { name: string; registrable?: boolean; reason?: string; tier?
  */
 export async function registerDomain(cf: Cloudflare, accountId: string, name: string, confirmed: { price: string; currency: string }): Promise<{ state: string; completed: boolean; error?: string }> {
   const [offer] = await checkDomains(cf, accountId, [name]);
-  if (!offer?.registrable) throw new DeployError(`${name} can't be registered now${offer?.reason ? `: ${offer.reason}` : ""}.`);
-  if (offer.premium) throw new DeployError(`${name} is a premium domain: register it on Cloudflare's Registrar page instead.`);
+  if (!offer?.registrable)
+    throw new DeployError({ message: `${name} can't be registered now${offer?.reason ? `: ${offer.reason}` : ""}.` });
+  if (offer.premium) throw new DeployError({ message: `${name} is a premium domain: register it on Cloudflare's Registrar page instead.` });
   if (offer.price != confirmed.price || offer.currency != confirmed.currency) {
-    throw new DeployError(`${name} now costs ${offer.price} ${offer.currency}, not the ${confirmed.price} ${confirmed.currency} you confirmed. Nothing was bought: check the new price and confirm again.`);
+    throw new DeployError({
+      message: `${name} now costs ${offer.price} ${offer.currency}, not the ${confirmed.price} ${confirmed.currency} you confirmed. Nothing was bought: check the new price and confirm again.`,
+    });
   }
   // One year, at the price shown (registration_cost is the first year's); auto-renew and WHOIS privacy keep Registrar's defaults (off, redaction).
   const r = await cf.call<Workflow>("POST", `/accounts/${accountId}/registrar/registrations`, `register ${name}`, { domain_name: name, years: 1 });

@@ -45,13 +45,19 @@ export function controlTarget(env: { CLOUDFLARE_ACCOUNT_ID?: string }): Target {
  */
 export function controlMetadata(release: Release, target: Pick<Target, "accountId" | "secrets">, d1: Record<string, string>) {
   const c = release.control;
-  if (!c) throw new DeployError(`This release (${release.version}) has no control Worker in it: it is from before the control Worker deployed itself. Deploy a newer commit, or run bun deploy/setup.ts --control.`);
+  if (!c)
+    throw new DeployError({
+      message: `This release (${release.version}) has no control Worker in it: it is from before the control Worker deployed itself. Deploy a newer commit, or run bun deploy/setup.ts --control.`,
+    });
   const cfg = c.config;
   const bindings: Record<string, unknown>[] = [];
   for (const d of cfg.durableObjects) bindings.push({ type: "durable_object_namespace", name: d.name, class_name: d.className });
   for (const d of cfg.d1) {
     const id = d1[d.name];
-    if (!id) throw new DeployError(`The account has no D1 database called ${d.databaseName} (the control Worker's ${d.name}): deploy again.`);
+    if (!id)
+      throw new DeployError({
+        message: `The account has no D1 database called ${d.databaseName} (the control Worker's ${d.name}): deploy again.`,
+      });
     bindings.push({ type: "d1", name: d.name, database_id: id, id });
   }
   for (const a of cfg.artifacts) bindings.push({ type: "artifacts", name: a.name, namespace: a.namespace });
@@ -86,12 +92,16 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
   const host = targetHost(target);
   const steps: StepId[] = CONTROL_STEPS.map((s) => s.id);
   const start = opts.from ? steps.indexOf(opts.from) : 0;
-  if (start < 0) throw new DeployError(`The control Worker's deploy has no step "${opts.from}".`);
+  if (start < 0) throw new DeployError({ message: `The control Worker's deploy has no step "${opts.from}".` });
   const end = opts.until ? steps.indexOf(opts.until) + 1 : steps.length;
-  if (end < 1) throw new DeployError(`The control Worker's deploy has no step "${opts.until}".`);
+  if (end < 1) throw new DeployError({ message: `The control Worker's deploy has no step "${opts.until}".` });
   const needRelease = () => {
-    if (!release) throw new DeployError("This step needs the build, which is gone (the server restarted part way): deploy again.");
-    if (!release.control) throw new DeployError(`This release (${release.version}) has no control Worker in it: it is from before the control Worker deployed itself. Deploy a newer commit, or run bun deploy/setup.ts --control.`);
+    if (!release)
+      throw new DeployError({ message: "This step needs the build, which is gone (the server restarted part way): deploy again." });
+    if (!release.control)
+      throw new DeployError({
+        message: `This release (${release.version}) has no control Worker in it: it is from before the control Worker deployed itself. Deploy a newer commit, or run bun deploy/setup.ts --control.`,
+      });
     return release;
   };
   if (release) carry.version = release.version;
@@ -100,15 +110,32 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
     // The Worker must be there (wrangler made it, with its container and namespaces), and what it runs now is the restore point.
     async account() {
       const rel = needRelease();
-      const settings = await cf.call<{ tags?: string[]; bindings?: { type: string; class_name?: string; script_name?: string }[] }>("GET", `${acc}/workers/scripts/${target.workerName}/settings`, `read ${target.workerName}'s settings`, undefined, { allow404: true });
-      if (!settings) throw new DeployError(target.install ? `The control Worker (${target.workerName}) isn't in the account: install again from upstream.` : `The control Worker (${target.workerName}) isn't in the account yet: bun deploy/setup.ts --control deploys it the first time (its container image needs Docker). Then it deploys itself.`);
+      const settings = await cf.call<{ tags?: string[]; bindings?: { type: string; class_name?: string; script_name?: string }[] }>(
+        "GET",
+        `${acc}/workers/scripts/${target.workerName}/settings`,
+        `read ${target.workerName}'s settings`,
+        undefined,
+        { allow404: true }
+      );
+      if (!settings)
+        throw new DeployError({
+          message: target.install
+            ? `The control Worker (${target.workerName}) isn't in the account: install again from upstream.`
+            : `The control Worker (${target.workerName}) isn't in the account yet: bun deploy/setup.ts --control deploys it the first time (its container image needs Docker). Then it deploys itself.`,
+        });
       if (target.install) {
         // An install's: made by the install (control/install/install.ts), its objects declared with each upload.
-        if (!settings.tags?.includes(WORKER_TAG)) throw new DeployError(`${target.workerName} isn't the control Worker the install made (it has no erga-deploy tag): stopped.`);
+        if (!settings.tags?.includes(WORKER_TAG))
+          throw new DeployError({
+            message: `${target.workerName} isn't the control Worker the install made (it has no erga-deploy tag): stopped.`,
+          });
       } else {
         const classes = new Set((settings.bindings ?? []).filter((b) => b.type == "durable_object_namespace" && !b.script_name).map((b) => b.class_name));
         const missing = rel.control!.config.durableObjects.map((d) => d.className).filter((c) => !classes.has(c));
-        if (missing.length) throw new DeployError(`The control Worker has no Durable Object namespace for ${missing.join(", ")} yet: a new class needs bun deploy/setup.ts --control (wrangler makes the namespace); after that it deploys itself again.`);
+        if (missing.length)
+          throw new DeployError({
+            message: `The control Worker has no Durable Object namespace for ${missing.join(", ")} yet: a new class needs bun deploy/setup.ts --control (wrangler makes the namespace); after that it deploys itself again.`,
+          });
       }
       carry.existing = true;
       // Its databases, by name (production's: who is an admin, the admin-scope tokens).
@@ -117,7 +144,10 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
         // Erga's own: production's database, by its name; an install's: the app's, by the install's name for it.
         const name = target.install ? target.databaseName : d.databaseName;
         const id = await findDatabase(cf, acc, name);
-        if (!id) throw new DeployError(`The account has no D1 database called ${name} (the control Worker's ${d.name} binding): ${target.install ? "the app's database is gone" : "it is production's, which deploy/setup.ts makes"}.`);
+        if (!id)
+          throw new DeployError({
+            message: `The account has no D1 database called ${name} (the control Worker's ${d.name} binding): ${target.install ? "the app's database is gone" : "it is production's, which deploy/setup.ts makes"}.`,
+          });
         d1[d.name] = id;
       }
       carry.d1 = d1;
@@ -134,7 +164,7 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
     async worker() {
       const rel = needRelease();
       const form = new FormData();
-      if (!carry.d1) throw new DeployError("The account step didn't run first (its databases aren't known): deploy again.");
+      if (!carry.d1) throw new DeployError({ message: "The account step didn't run first (its databases aren't known): deploy again." });
       form.set("metadata", JSON.stringify(target.install ? installControlMetadata(rel, { accountId: target.accountId, dbId: carry.d1.DB, vars: target.install.vars, secrets: target.secrets }) : controlMetadata(rel, target, carry.d1)));
       for (const [name, bytes] of Object.entries(rel.control!.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
       await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the control Worker", form);
@@ -148,7 +178,7 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
     async live() {
       const until = Date.now() + (opts.waitMs ?? 600_000);
       const want = carry.version;
-      if (!want) throw new DeployError("This deploy doesn't know which release it uploaded: deploy again.");
+      if (!want) throw new DeployError({ message: "This deploy doesn't know which release it uploaded: deploy again." });
       let seen = "";
       for (let tries = 0; ; tries++) {
         const r = await site(`https://${host}/api/health?self=1`).catch(() => null);
@@ -163,7 +193,10 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
           return `https://${host}, release ${want}, healthy (${h.summary})`;
         }
         if (body?.version) seen = body.version;
-        if (Date.now() > until) throw new DeployError(`The control Worker is uploaded, but https://${host} hasn't answered with release ${want} yet${seen ? ` (it still says ${seen})` : ""}. Check it in a little while; if it still doesn't answer, deploy again.`);
+        if (Date.now() > until)
+          throw new DeployError({
+            message: `The control Worker is uploaded, but https://${host} hasn't answered with release ${want} yet${seen ? ` (it still says ${seen})` : ""}. Check it in a little while; if it still doesn't answer, deploy again.`,
+          });
         await wait(Math.min(5000, 1000 + tries * 500));
       }
     },
@@ -188,7 +221,7 @@ export async function runControlPipeline(cf: Cloudflare, release: Release | null
  */
 export function installControlMetadata(release: Release, o: { accountId: string; dbId: string; vars: Record<string, string>; secrets: Record<string, string> }) {
   const c = release.control;
-  if (!c) throw new DeployError(`This release (${release.version}) has no control Worker in it: pick a newer one.`);
+  if (!c) throw new DeployError({ message: `This release (${release.version}) has no control Worker in it: pick a newer one.` });
   const cfg = c.config;
   const bindings: Record<string, unknown>[] = [];
   const classes = cfg.durableObjects.filter((d) => d.name != "BUILDS");

@@ -148,7 +148,9 @@ export class Deployer extends DurableObject<HostEnv> {
       const stable = await store.channel("stable");
       const want = version ?? stable.latest ?? undefined;
       if (want) {
-        const r = await store.load(want).catch((e) => { throw new DeployError(`Release ${want} couldn't be read from the store: ${message(e)}`); });
+        const r = await store.load(want).catch((e) => {
+          throw new DeployError({ message: `Release ${want} couldn't be read from the store: ${message(e)}` });
+        });
         if (!r) return { error: `There's no release ${want} in the store.` };
         return { release: r, from: version ? `release ${want}` : `stable's latest, ${want}` };
       }
@@ -196,8 +198,8 @@ export class Deployer extends DurableObject<HostEnv> {
         // control Worker reaches with a secret only it and the hash here know.
         const fork = { id: forkId(), secret: randomToken() };
         const made = await this.env.PIPELINE?.getByName("deploys").makeFork(fork.id, await hashSecret(fork.secret), (await this.commitOf(release)) ?? null, owner.toLowerCase());
-        if (!made) throw new DeployError("This server has no deploys' object to keep the install's fork.");
-        if (!made.ok) throw new DeployError(`The install's repository (a fork of Erga's) couldn't be made: ${made.error}`);
+        if (!made) throw new DeployError({ message: "This server has no deploys' object to keep the install's fork." });
+        if (!made.ok) throw new DeployError({ message: `The install's repository (a fork of Erga's) couldn't be made: ${made.error}` });
         run.result = await runInstall(new Cloudflare(t.token, net), release, plan, {
           sessionSecret: randomToken(),
           controlSecret: randomToken(),

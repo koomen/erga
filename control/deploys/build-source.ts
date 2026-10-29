@@ -18,9 +18,15 @@ export async function sourceFor(cf: Cloudflare, accountId: string, spec: { names
   const base = `/accounts/${accountId}/artifacts/namespaces/${encodeURIComponent(spec.namespace)}`;
   const repo = await cf.call<{ remote?: string; url?: string; git_url?: string; clone_url?: string }>("GET", `${base}/repos/${encodeURIComponent(spec.repo)}`, `find the source repo (${spec.namespace}/${spec.repo} in Artifacts)`);
   const cloneUrl = repo?.remote ?? repo?.clone_url ?? repo?.git_url ?? repo?.url;
-  if (!cloneUrl) throw new DeployError(`Artifacts didn't say where the source repo ${spec.namespace}/${spec.repo} is (no remote).`);
-  const t = await cf.call<{ token?: string; plaintext?: string; value?: string }>("POST", `${base}/tokens`, "make a read-only token for the source repo", { repo: spec.repo, scope: "read", ttl: 900 });
+  if (!cloneUrl)
+    throw new DeployError({ message: `Artifacts didn't say where the source repo ${spec.namespace}/${spec.repo} is (no remote).` });
+  const t = await cf.call<{ token?: string; plaintext?: string; value?: string }>(
+    "POST",
+    `${base}/tokens`,
+    "make a read-only token for the source repo",
+    { repo: spec.repo, scope: "read", ttl: 900 }
+  );
   const token = t?.token ?? t?.plaintext ?? t?.value;
-  if (!token) throw new DeployError("Artifacts didn't give a token to read the source repo.");
+  if (!token) throw new DeployError({ message: "Artifacts didn't give a token to read the source repo." });
   return { cloneUrl, token };
 }

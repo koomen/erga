@@ -45,7 +45,10 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "artifacts") { if (target.artifacts) bindings.push({ type: "artifacts", name, namespace: target.artifacts }); }
     // A bucket of the target's own (documents' files: FILES), made before the upload if it isn't there (ensureBuckets).
     else if (b.type == "r2") bindings.push({ type: "r2_bucket", name, bucket_name: bucketName(target, name) });
-    else throw new DeployError(`This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`);
+    else
+      throw new DeployError({
+        message: `This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`,
+      });
   }
   // Settings and secrets the build doesn't declare (the version, the account, the branch deploys' own secrets), and services.
   for (const [name, value] of Object.entries(text)) if (!named.has(name)) { bindings.push({ type: "plain_text", name, text: value }); named.add(name); }
@@ -211,7 +214,7 @@ export async function findDatabase(cf: Cloudflare, acc: string, name: string): P
 export async function zoneIdOf(cf: Cloudflare, accountId: string, name: string): Promise<string> {
   const zones = (await cf.call<{ id: string; name: string }[]>("GET", `/zones?name=${encodeURIComponent(name)}&account.id=${accountId}`, `find the zone ${name}`)) ?? [];
   const zone = zones.find((z) => z.name == name);
-  if (!zone) throw new DeployError(`The account has no zone called ${name}: add it to Cloudflare first.`);
+  if (!zone) throw new DeployError({ message: `The account has no zone called ${name}: add it to Cloudflare first.` });
   return zone.id;
 }
 
@@ -225,15 +228,23 @@ export async function exportD1(cf: Cloudflare, acc: string, dbId: string, name: 
   let bookmark: string | undefined;
   for (let tries = 0; ; tries++) {
     const r = await cf.call<{ status?: string; at_bookmark?: string; error?: string; result?: { signed_url?: string; filename?: string } }>(
-      "POST", `${acc}/d1/database/${dbId}/export`, `export ${name} (read-only)`, { output_format: "polling", ...(bookmark ? { current_bookmark: bookmark } : {}) });
-    if (r?.error || r?.status == "error") throw new DeployError(`D1 couldn't export ${name}: ${r?.error ?? "it said it failed"}.`);
+      "POST",
+      `${acc}/d1/database/${dbId}/export`,
+      `export ${name} (read-only)`,
+      { output_format: "polling", ...(bookmark ? { current_bookmark: bookmark } : {}) }
+    );
+    if (r?.error || r?.status == "error")
+      throw new DeployError({ message: `D1 couldn't export ${name}: ${r?.error ?? "it said it failed"}.` });
     if (r?.status == "complete" && r.result?.signed_url) {
       const file = await site(r.result.signed_url).catch(() => null);
-      if (!file?.ok) throw new DeployError(`D1 exported ${name}, but its file couldn't be downloaded (${file?.status ?? "no answer"}). Deploy again.`);
+      if (!file?.ok)
+        throw new DeployError({
+          message: `D1 exported ${name}, but its file couldn't be downloaded (${file?.status ?? "no answer"}). Deploy again.`,
+        });
       return await file.text();
     }
     bookmark = r?.at_bookmark ?? bookmark;
-    if (tries >= 300) throw new DeployError(`D1's export of ${name} took too long. Deploy again.`);
+    if (tries >= 300) throw new DeployError({ message: `D1's export of ${name} took too long. Deploy again.` });
     await sleep(1000);
   }
 }
@@ -250,9 +261,11 @@ export async function importD1(cf: Cloudflare, acc: string, dbId: string, name: 
   const init = await cf.call<Answer>("POST", path, `start loading the copy into ${name}`, { action: "init", etag });
   if (init?.upload_url) {
     const put = await site(init.upload_url, { method: "PUT", body: sql }).catch(() => null);
-    if (!put?.ok) throw new DeployError(`The copy couldn't be uploaded for ${name} (${put?.status ?? "no answer"}). Deploy again.`);
+    if (!put?.ok)
+      throw new DeployError({ message: `The copy couldn't be uploaded for ${name} (${put?.status ?? "no answer"}). Deploy again.` });
     const got = put.headers.get("etag")?.replace(/"/g, "");
-    if (got && got != etag) throw new DeployError(`The copy uploaded for ${name} arrived changed (its checksum doesn't match). Deploy again.`);
+    if (got && got != etag)
+      throw new DeployError({ message: `The copy uploaded for ${name} arrived changed (its checksum doesn't match). Deploy again.` });
   }
   const ingest = await cf.call<Answer>("POST", path, `load the copy into ${name}`, { action: "ingest", etag, filename: init?.filename });
   let bookmark = ingest?.at_bookmark;
@@ -260,9 +273,10 @@ export async function importD1(cf: Cloudflare, acc: string, dbId: string, name: 
   for (let tries = 0; ; tries++) {
     const r = await cf.call<Answer>("POST", path, `check on loading the copy into ${name}`, { action: "poll", current_bookmark: bookmark });
     if (r?.status == "complete" || r?.error == "Not currently importing anything.") return;
-    if (r?.status == "error" || (r?.error && r.success === false)) throw new DeployError(`D1 couldn't load the copy into ${name}: ${r?.error ?? "it said it failed"}.`);
+    if (r?.status == "error" || (r?.error && r.success === false))
+      throw new DeployError({ message: `D1 couldn't load the copy into ${name}: ${r?.error ?? "it said it failed"}.` });
     bookmark = r?.at_bookmark ?? bookmark;
-    if (tries >= 300) throw new DeployError(`Loading the copy into ${name} took too long. Deploy again.`);
+    if (tries >= 300) throw new DeployError({ message: `Loading the copy into ${name} took too long. Deploy again.` });
     await sleep(1000);
   }
 }
@@ -292,15 +306,21 @@ export async function uploadAssets(cf: Cloudflare, acc: string, worker: string, 
     manifest[path] = { hash, size: bytes.byteLength };
     byHash.set(hash, path);
   }
-  const session = await cf.call<{ jwt: string; buckets?: string[][] }>("POST", `${acc}/workers/scripts/${worker}/assets-upload-session`, `start uploading ${label}`, { manifest });
-  if (!session?.jwt) throw new DeployError(`Cloudflare didn't start the upload of ${label} (no upload token came back). Deploy again.`);
+  const session = await cf.call<{ jwt: string; buckets?: string[][] }>(
+    "POST",
+    `${acc}/workers/scripts/${worker}/assets-upload-session`,
+    `start uploading ${label}`,
+    { manifest }
+  );
+  if (!session?.jwt)
+    throw new DeployError({ message: `Cloudflare didn't start the upload of ${label} (no upload token came back). Deploy again.` });
   const buckets = (session.buckets ?? []).filter((b) => b.length);
   if (!buckets.length) return session.jwt;
   const single = jwtClaims(session.jwt).wrangler_single_asset_uploads === true;
   let jwt: string | null = null;
   const pathOf = (hash: string) => {
     const path = byHash.get(hash);
-    if (!path) throw new DeployError("Cloudflare asked for a file the release doesn't have. Deploy again.");
+    if (!path) throw new DeployError({ message: "Cloudflare asked for a file the release doesn't have. Deploy again." });
     return path;
   };
   for (const bucket of single ? buckets.flat().map((h) => [h]) : buckets) {
@@ -328,7 +348,10 @@ export async function uploadAssets(cf: Cloudflare, acc: string, worker: string, 
       }
     }
   }
-  if (!jwt) throw new DeployError(`Cloudflare took ${label} but didn't say the upload was complete (no completion token). Deploy again: files already up aren't sent twice.`);
+  if (!jwt)
+    throw new DeployError({
+      message: `Cloudflare took ${label} but didn't say the upload was complete (no completion token). Deploy again: files already up aren't sent twice.`,
+    });
   return jwt;
 }
 

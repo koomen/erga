@@ -3,6 +3,7 @@
 // what it has that we don't, and push ref updates with a pack. Protocol v2
 // for fetching (ls-refs and fetch), v0 for pushing (receive-pack has no v2).
 
+import * as Schema from "effect/Schema";
 import { concat, DELIM, FLUSH, pkt, pktText, readPkts, sideBand, text, ZERO, type Pkt } from "./git.ts";
 
 export interface Remote {
@@ -14,9 +15,10 @@ export interface Remote {
   fetch?: typeof fetch;
 }
 
-export class RemoteError extends Error {
-  constructor(message: string, readonly status?: number) { super(message); }
-}
+export class RemoteError extends Schema.TaggedError<RemoteError>()("RemoteError", {
+  message: Schema.String,
+  status: Schema.optionalKey(Schema.Number),
+}) {}
 
 async function call(remote: Remote, path: string, init: RequestInit & { headers?: Record<string, string> }): Promise<Uint8Array> {
   const f = remote.fetch ?? globalThis.fetch.bind(globalThis);
@@ -24,12 +26,16 @@ async function call(remote: Remote, path: string, init: RequestInit & { headers?
   try {
     r = await f(remote.url.replace(/\/+$/, "") + path, { ...init, headers: { "User-Agent": "git/2.47.0 (erga)", ...remote.headers, ...init.headers } });
   } catch (e) {
-    throw new RemoteError(`couldn't reach ${hostOf(remote.url)}: ${(e as Error).message}`);
+    throw new RemoteError({ message: `couldn't reach ${hostOf(remote.url)}: ${(e as Error).message}` });
   }
   const body = new Uint8Array(await r.arrayBuffer());
   if (!r.ok) {
-    const why = r.status == 401 || r.status == 403 ? "its credentials were refused" : r.status == 404 ? "no such repository" : `HTTP ${r.status}`;
-    throw new RemoteError(`${hostOf(remote.url)} said no (${why})${body.length && body.length < 300 ? `: ${text(body).trim()}` : ""}`, r.status);
+    const why =
+      r.status == 401 || r.status == 403 ? "its credentials were refused" : r.status == 404 ? "no such repository" : `HTTP ${r.status}`;
+    throw new RemoteError({
+      message: `${hostOf(remote.url)} said no (${why})${body.length && body.length < 300 ? `: ${text(body).trim()}` : ""}`,
+      status: r.status,
+    });
   }
   return body;
 }
@@ -104,7 +110,7 @@ async function fetchPackWith(remote: Remote, opts: { wants: string[]; haves?: st
   const at = pkts.findIndex((p) => pktText(p) == "packfile");
   if (at < 0) {
     const err = pkts.map(pktText).find((l) => l?.startsWith("ERR "));
-    throw new RemoteError(err ? err.slice(4) : "the remote sent no pack");
+    throw new RemoteError({ message: err ? err.slice(4) : "the remote sent no pack" });
   }
   return sideBand(pkts.slice(at + 1).filter((p): p is Extract<Pkt, { kind: "data" }> => p.kind == "data")).data;
 }
@@ -131,9 +137,15 @@ export async function receivePack(remote: Remote, updates: RefUpdate[], pack: Ui
     if (!line) continue;
     if (line.startsWith("unpack ")) result.unpack = line.slice(7);
     else if (line.startsWith("ok ")) result.refs.set(line.slice(3), "ok");
-    else if (line.startsWith("ng ")) { const [ref, ...why] = line.slice(3).split(" "); result.refs.set(ref, why.join(" ") || "refused"); }
+    else if (line.startsWith("ng ")) {
+      const [ref, ...why] = line.slice(3).split(" ");
+      result.refs.set(ref, why.join(" ") || "refused");
+    }
   }
-  if (!result.unpack) throw new RemoteError(`${hostOf(remote.url)} sent no report${answer.length && answer.length < 300 ? `: ${text(answer).trim()}` : ""}`);
+  if (!result.unpack)
+    throw new RemoteError({
+      message: `${hostOf(remote.url)} sent no report${answer.length && answer.length < 300 ? `: ${text(answer).trim()}` : ""}`,
+    });
   return result;
 }
 

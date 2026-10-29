@@ -85,8 +85,22 @@ export interface Credential {
 export function fixedCredential(token: string | null | undefined, by = "a fixed token"): Credential {
   const value = token?.trim() ?? "";
   return {
-    async token() { if (!value) throw new DeployError(NONE); return value; },
-    async status() { return { connected: !!value, by: value ? by : null, at: null, refreshedAt: null, expiresAt: null, scopes: [], error: null, problem: value ? null : NONE }; },
+    async token() {
+      if (!value) throw new DeployError({ message: NONE });
+      return value;
+    },
+    async status() {
+      return {
+        connected: !!value,
+        by: value ? by : null,
+        at: null,
+        refreshedAt: null,
+        expiresAt: null,
+        scopes: [],
+        error: null,
+        problem: value ? null : NONE,
+      };
+    },
   };
 }
 
@@ -136,7 +150,10 @@ export class OAuthCredential implements Credential {
 
   /** The grant after a consent: Cloudflare's answer to the code exchange, kept; the access token, for a first check. */
   async connect(answer: TokenAnswer, by: string): Promise<string> {
-    if (!answer.access_token) throw new DeployError(`Cloudflare gave no access token${answer.error ? ` (${answer.error}${answer.error_description ? `: ${answer.error_description}` : ""})` : ""}.`);
+    if (!answer.access_token)
+      throw new DeployError({
+        message: `Cloudflare gave no access token${answer.error ? ` (${answer.error}${answer.error_description ? `: ${answer.error_description}` : ""})` : ""}.`,
+      });
     const grant: StoredGrant = {
       access: await seal(answer.access_token, await this.deps.sealKey),
       refresh: answer.refresh_token ? await seal(answer.refresh_token, await this.deps.sealKey) : null,
@@ -175,8 +192,8 @@ export class OAuthCredential implements Credential {
   async token(): Promise<string> {
     const g = await this.stored();
     const w = this.words;
-    if (!g) throw new DeployError(w.none);
-    if (g.error) throw new DeployError(`${w.subject} stopped working (${g.error}): ${w.fix}.`);
+    if (!g) throw new DeployError({ message: w.none });
+    if (g.error) throw new DeployError({ message: `${w.subject} stopped working (${g.error}): ${w.fix}.` });
     if (g.expiresAt - this.now() > REFRESH_BEFORE_MS && !g.refusedAt) return open(g.access, await this.deps.sealKey);
     // One refresh at a time: a second caller waits for the first's token.
     this.refreshing ??= this.refresh(g).finally(() => { this.refreshing = null; });
@@ -194,12 +211,24 @@ export class OAuthCredential implements Credential {
 
   private async refresh(g: StoredGrant): Promise<string> {
     const w = this.words;
-    if (!g.refresh) throw new DeployError(`${w.subject} expired and had no refresh token: ${w.fix}.`);
+    if (!g.refresh) throw new DeployError({ message: `${w.subject} expired and had no refresh token: ${w.fix}.` });
     const refresh = await open(g.refresh, await this.deps.sealKey);
-    const r = await this.deps.net(OAUTH.token, {
-      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refresh, client_id: this.deps.client.id, ...(this.deps.client.secret ? { client_secret: this.deps.client.secret } : {}) }),
-    }).catch((e: Error) => { throw new DeployError(`Couldn't reach Cloudflare to refresh ${w.subject.replace(/^The /, "the ")} (${e.message}): try again in a moment.`); });
+    const r = await this.deps
+      .net(OAUTH.token, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refresh,
+          client_id: this.deps.client.id,
+          ...(this.deps.client.secret ? { client_secret: this.deps.client.secret } : {}),
+        }),
+      })
+      .catch((e: Error) => {
+        throw new DeployError({
+          message: `Couldn't reach Cloudflare to refresh ${w.subject.replace(/^The /, "the ")} (${e.message}): try again in a moment.`,
+        });
+      });
     const answer = (await r.json().catch(() => null)) as TokenAnswer | null;
     if (!r.ok || !answer?.access_token) {
       const why = `${r.status}${answer?.error ? ` ${answer.error}` : ""}${answer?.error_description ? `: ${answer.error_description}` : ""}`;
@@ -208,9 +237,17 @@ export class OAuthCredential implements Credential {
       if (now && !now.error && now.refreshedAt != g.refreshedAt && now.expiresAt - this.now() > REFRESH_BEFORE_MS) return open(now.access, await this.deps.sealKey);
       // A refusal is final (revoked, spent, or the client changed): said once, kept, until an admin connects again.
       // Anything else (429, 5xx) is a moment's: nothing is kept, and the next use refreshes again.
-      if (refusal(r.status)) { await this.deps.storage.put(KEY, { ...g, error: why }); this.deps.log?.(`Cloudflare credential refresh refused: ${why}`); }
-      else this.deps.log?.(`Cloudflare credential refresh failed for now: ${why}`);
-      throw new DeployError(refusal(r.status) ? `${w.subject} stopped working (${why}): ${w.fix}.` : r.status == 429 ? `Cloudflare asked Erga to slow down while it refreshed ${w.subject.replace(/^The /, "the ")} (${why}): try again in a minute.` : `Cloudflare couldn't refresh ${w.subject.replace(/^The /, "the ")} (${why}): try again in a few minutes.`);
+      if (refusal(r.status)) {
+        await this.deps.storage.put(KEY, { ...g, error: why });
+        this.deps.log?.(`Cloudflare credential refresh refused: ${why}`);
+      } else this.deps.log?.(`Cloudflare credential refresh failed for now: ${why}`);
+      throw new DeployError({
+        message: refusal(r.status)
+          ? `${w.subject} stopped working (${why}): ${w.fix}.`
+          : r.status == 429
+            ? `Cloudflare asked Erga to slow down while it refreshed ${w.subject.replace(/^The /, "the ")} (${why}): try again in a minute.`
+            : `Cloudflare couldn't refresh ${w.subject.replace(/^The /, "the ")} (${why}): try again in a few minutes.`,
+      });
     }
     const next: StoredGrant = {
       ...g,
@@ -245,11 +282,21 @@ export function authorizeUrl(o: { authorize?: string; clientId: string; redirect
 /** The code, exchanged for the grant. */
 export async function exchangeCode(net: Fetch, o: { code: string; redirect: string; verifier: string; client: { id: string; secret?: string } }): Promise<TokenAnswer> {
   const r = await net(OAUTH.token, {
-    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body: new URLSearchParams({ grant_type: "authorization_code", code: o.code, redirect_uri: o.redirect, client_id: o.client.id, code_verifier: o.verifier, ...(o.client.secret ? { client_secret: o.client.secret } : {}) }),
-  }).catch((e: Error) => { throw new DeployError(`Couldn't reach Cloudflare to finish the consent (${e.message}).`); });
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code: o.code,
+      redirect_uri: o.redirect,
+      client_id: o.client.id,
+      code_verifier: o.verifier,
+      ...(o.client.secret ? { client_secret: o.client.secret } : {}),
+    }),
+  }).catch((e: Error) => {
+    throw new DeployError({ message: `Couldn't reach Cloudflare to finish the consent (${e.message}).` });
+  });
   const answer = (await r.json().catch(() => null)) as TokenAnswer | null;
-  if (!answer) throw new DeployError(`Cloudflare's token endpoint answered ${r.status} and no JSON.`);
+  if (!answer) throw new DeployError({ message: `Cloudflare's token endpoint answered ${r.status} and no JSON.` });
   return answer;
 }
 

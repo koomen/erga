@@ -13,8 +13,13 @@ export interface Bundle { index: ReleaseIndex; files: Record<string, string> }
 /** A bundle's bytes as a release, stamped with `version` (the commit) if given. */
 export async function unpackRelease(bytes: Uint8Array | string, version?: string): Promise<Release> {
   let bundle: Bundle;
-  try { bundle = JSON.parse(typeof bytes == "string" ? bytes : new TextDecoder().decode(bytes)) as Bundle; bytes = ""; } catch { throw new DeployError("The build's release isn't readable (not a release bundle)."); }
-  if (!bundle?.index || !bundle.files) throw new DeployError("The build's release isn't readable (no release.json in it).");
+  try {
+    bundle = JSON.parse(typeof bytes == "string" ? bytes : new TextDecoder().decode(bytes)) as Bundle;
+    bytes = "";
+  } catch {
+    throw new DeployError({ message: "The build's release isn't readable (not a release bundle)." });
+  }
+  if (!bundle?.index || !bundle.files) throw new DeployError({ message: "The build's release isn't readable (no release.json in it)." });
   const release = await loadRelease(async (p) => {
     if (p == "release.json") return new TextEncoder().encode(JSON.stringify(bundle.index));
     const f = bundle.files[p];
@@ -23,7 +28,7 @@ export async function unpackRelease(bytes: Uint8Array | string, version?: string
     delete bundle.files[p];
     return fromBase64(f);
   });
-  if (!release) throw new DeployError("The build's release is empty.");
+  if (!release) throw new DeployError({ message: "The build's release is empty." });
   return version ? { ...release, version } : release;
 }
 

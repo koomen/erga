@@ -88,9 +88,16 @@ export class Conflicts {
     const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
     if (base) await receivePack(remote, [{ ref: scratch, old: ZERO, new: base }], await emptyPack());
     let objects: Map<string, GitObject>;
-    try { objects = await readPack(await fetchPack(remote, { wants: [ours, theirs, ...(base ? [base] : [])], deepen: 1 })); }
-    finally { if (base) await receivePack(remote, [{ ref: scratch, old: base, new: ZERO }], null).catch(() => {}); }
-    const treeOf = (sha: string) => { const x = objects.get(sha); if (!x || x.type != "commit") throw new SourceError(`Artifacts didn't send commit ${sha.slice(0, 7)}`, 502); return parseCommit(x.data).tree; };
+    try {
+      objects = await readPack(await fetchPack(remote, { wants: [ours, theirs, ...(base ? [base] : [])], deepen: 1 }));
+    } finally {
+      if (base) await receivePack(remote, [{ ref: scratch, old: base, new: ZERO }], null).catch(() => {});
+    }
+    const treeOf = (sha: string) => {
+      const x = objects.get(sha);
+      if (!x || x.type != "commit") throw new SourceError({ message: `Artifacts didn't send commit ${sha.slice(0, 7)}`, status: 502 });
+      return parseCommit(x.data).tree;
+    };
     const merged = await mergeTrees({ get: (sha) => objects.get(sha) }, base ? treeOf(base) : null, treeOf(ours), treeOf(theirs), o.labels);
     const files = merged.conflicts;
     const message = files.length
@@ -109,7 +116,7 @@ export class Conflicts {
     const drop: RefUpdate[] = [...refs].filter(([r]) => isMergeBranch(r) && r != o.branch).map(([ref, s]) => ({ ref, old: s, new: ZERO }));
     const r = await receivePack(remote, [{ ref: o.branch, old, new: sha }, ...drop], pack);
     const said = r.unpack != "ok" ? r.unpack : r.refs.get(o.branch) ?? "no answer";
-    if (said != "ok") throw new SourceError(`Artifacts refused the merge branch: ${said}`, 502);
+    if (said != "ok") throw new SourceError({ message: `Artifacts refused the merge branch: ${said}`, status: 502 });
     const conflict: MergeConflict = {
       kind: o.kind,
       branch: o.branch.slice("refs/heads/".length),
@@ -142,15 +149,15 @@ export class Conflicts {
   /** The conflict branch's head and its files, for resolving: the conflict, the head, and the objects of its tree. */
   private async conflictHead(remote: Remote): Promise<{ conflict: MergeConflict; head: string; objects: Map<string, GitObject> }> {
     const conflict = this.repo.state<MergeConflict>("conflict");
-    if (!conflict) throw new SourceError("No merge is waiting on conflicts.", 409);
+    if (!conflict) throw new SourceError({ message: "No merge is waiting on conflicts.", status: 409 });
     const { refs } = await lsRefs(remote);
     const head = refs.get(`refs/heads/${conflict.branch}`);
     if (!head) {
       this.repo.setState("conflict", null);
-      throw new SourceError(
-        `The branch ${conflict.branch} is gone: ${conflict.kind == "upstream" ? "run Update again" : "Sync now runs the merge again"}.`,
-        409
-      );
+      throw new SourceError({
+        message: `The branch ${conflict.branch} is gone: ${conflict.kind == "upstream" ? "run Update again" : "Sync now runs the merge again"}.`,
+        status: 409,
+      });
     }
     const objects = await readPack(await fetchPack(remote, { wants: [head], deepen: 1 }));
     return { conflict, head, objects };
@@ -167,7 +174,7 @@ export class Conflicts {
    */
   async resolveUpdate(who: Actor, path: string, content: string | null): Promise<{ branch: string; path: string; remaining: string[] }> {
     const clean = cleanPath(path);
-    if (!clean) throw new SourceError("Which file? Give its path, as the conflict lists it.");
+    if (!clean) throw new SourceError({ message: "Which file? Give its path, as the conflict lists it." });
     return this.repo.locked(async () => {
       const remote = await this.repo.deps.artifacts();
       const { conflict, head, objects } = await this.conflictHead(remote);
@@ -179,7 +186,7 @@ export class Conflicts {
       const sha = await hashObject(commit);
       const r = await receivePack(remote, [{ ref: `refs/heads/${conflict.branch}`, old: head, new: sha }], await writePack([...edit.objects, commit]));
       const said = r.unpack != "ok" ? r.unpack : r.refs.get(`refs/heads/${conflict.branch}`) ?? "no answer";
-      if (said != "ok") throw new SourceError(`Artifacts refused it: ${said}`, 502);
+      if (said != "ok") throw new SourceError({ message: `Artifacts refused it: ${said}`, status: 502 });
       for (const o of edit.objects) objects.set(await hashObject(o), o);
       return { branch: conflict.branch, path: clean, remaining: this.unresolved(conflict, objects, edit.tree) };
     });
@@ -195,14 +202,18 @@ export class Conflicts {
       const { conflict, head, objects } = await this.conflictHead(remote);
       const { refs } = await lsRefs(remote);
       const staging = refs.get(REF("staging"));
-      if (staging != conflict.ours) throw new SourceError(`staging moved since this merge started (it was at ${conflict.ours.slice(0, 7)}): ${conflict.kind == "upstream" ? "run Update again" : "Sync now runs the merge again"}.`, 409);
+      if (staging != conflict.ours)
+        throw new SourceError({
+          message: `staging moved since this merge started (it was at ${conflict.ours.slice(0, 7)}): ${conflict.kind == "upstream" ? "run Update again" : "Sync now runs the merge again"}.`,
+          status: 409,
+        });
       const tree = parseCommit(objects.get(head)!.data).tree;
       const left = this.unresolved(conflict, objects, tree);
       if (left.length)
-        throw new SourceError(
-          `${left.length} file${left.length == 1 ? " still carries" : "s still carry"} conflict markers: ${left.join(", ")}.`,
-          409
-        );
+        throw new SourceError({
+          message: `${left.length} file${left.length == 1 ? " still carries" : "s still carry"} conflict markers: ${left.join(", ")}.`,
+          status: 409,
+        });
       const what =
         conflict.kind == "upstream"
           ? `Update from ${this.repo.deps.upstream?.()?.origin.replace(/^https?:\/\//, "") ?? "upstream"} ${conflict.version}`

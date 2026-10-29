@@ -29,12 +29,12 @@ export async function copyDocuments(o: {
     const r = await o
       .fetch(`${o.to}/api/snapshot/docs/import`, { method: "POST", headers, body: JSON.stringify({ docs, wipe }) })
       .catch((e) => {
-        throw new DeployError(`Couldn't reach ${o.to} to copy documents in: ${(e as Error).message}`);
+        throw new DeployError({ message: `Couldn't reach ${o.to} to copy documents in: ${(e as Error).message}` });
       });
     if (!r.ok)
-      throw new DeployError(
-        `${o.to} didn't take the documents' copy (it answered ${r.status}${r.status == 404 ? ": it needs SNAPSHOT_IMPORT=1 and SNAPSHOT_TOKEN" : ""}).`
-      );
+      throw new DeployError({
+        message: `${o.to} didn't take the documents' copy (it answered ${r.status}${r.status == 404 ? ": it needs SNAPSHOT_IMPORT=1 and SNAPSHOT_TOKEN" : ""}).`,
+      });
   };
   // Documents with a part copied, those that failed, and those the source didn't have.
   const started = new Set<string>(),
@@ -48,7 +48,7 @@ export async function copyDocuments(o: {
     const r = await o
       .fetch(`${o.from}/api/snapshot/docs`, { method: "POST", headers, body: JSON.stringify(after == null ? { ids } : { ids, after }) })
       .catch((e) => {
-        throw new DeployError(`Couldn't reach ${o.from} to read its documents: ${(e as Error).message}`);
+        throw new DeployError({ message: `Couldn't reach ${o.from} to read its documents: ${(e as Error).message}` });
       });
     if (r.status == 404 && first) {
       if (o.wipe.length) await put([], o.wipe);
@@ -56,9 +56,9 @@ export async function copyDocuments(o: {
     }
     first = false;
     if (!r.ok)
-      throw new DeployError(
-        `${o.from} didn't give its documents' snapshot (it answered ${r.status}${r.status == 403 ? ": the two servers' SNAPSHOT_TOKEN differ" : ""}).`
-      );
+      throw new DeployError({
+        message: `${o.from} didn't give its documents' snapshot (it answered ${r.status}${r.status == 403 ? ": the two servers' SNAPSHOT_TOKEN differ" : ""}).`,
+      });
     const answer = (await r.json()) as { docs: DocSnapshot[]; done?: number; failed?: { id: string; error: string }[] };
     // An older source sends each document whole, and no `done`.
     const done = answer.done ?? ids.length;
@@ -70,8 +70,8 @@ export async function copyDocuments(o: {
     const last = answer.docs.at(-1);
     const next = last?.more ?? null;
     if (next != null && (last!.id != ids[done] || next === after))
-      throw new DeployError(`${o.from} gave a part of ${last!.id} it can't continue from.`);
-    if (done == 0 && next == null) throw new DeployError(`${o.from} gave nothing of ${ids[0]}.`);
+      throw new DeployError({ message: `${o.from} gave a part of ${last!.id} it can't continue from.` });
+    if (done == 0 && next == null) throw new DeployError({ message: `${o.from} gave nothing of ${ids[0]}.` });
     after = next;
     queue = queue.slice(done);
   }

@@ -128,7 +128,7 @@ export class ReleaseStore {
    * again as it is (the same bytes: a build is a function of its commit). Returns the manifest.
    */
   async publish(release: Release, commit: string): Promise<Manifest> {
-    if (!VERSION.test(release.version)) throw new DeployError(`Not a release version: ${release.version}`);
+    if (!VERSION.test(release.version)) throw new DeployError({ message: `Not a release version: ${release.version}` });
     const files = releaseFiles(release);
     const manifest: Manifest = { version: release.version, commit, built: release.built, published: this.now(), files: {} };
     for (const [path, bytes] of Object.entries(files)) {
@@ -142,7 +142,10 @@ export class ReleaseStore {
   /** Puts a published release at the head of a channel (edge after a healthy production deploy; stable when a release tag is cut). */
   async addTo(c: Channel, version: string, by?: string, tag?: string): Promise<ChannelFile> {
     const m = await this.manifest(version);
-    if (!m) throw new DeployError(`There's no release ${version} in the store${VERSION.test(version) ? ": it was never published (a healthy production deploy publishes its release)" : ""}.`);
+    if (!m)
+      throw new DeployError({
+        message: `There's no release ${version} in the store${VERSION.test(version) ? ": it was never published (a healthy production deploy publishes its release)" : ""}.`,
+      });
     const file = await this.channel(c);
     const entry: ChannelEntry = { version, commit: m.commit, built: m.built, at: this.now(), ...(by ? { by } : {}), ...(tag ? { tag } : {}) };
     file.releases = [entry, ...file.releases.filter((r) => r.version != version)].slice(0, CHANNEL_KEEP);
@@ -154,7 +157,7 @@ export class ReleaseStore {
   /** Takes a release off a channel: the channel's latest is the newest that stays. The files stay (a rollback may want them). */
   async withdraw(c: Channel, version: string): Promise<ChannelFile> {
     const file = await this.channel(c);
-    if (!file.releases.some((r) => r.version == version)) throw new DeployError(`${version} isn't on ${c}.`);
+    if (!file.releases.some((r) => r.version == version)) throw new DeployError({ message: `${version} isn't on ${c}.` });
     file.releases = file.releases.filter((r) => r.version != version);
     file.latest = file.releases[0]?.version ?? null;
     await this.blobs.put(channelKey(c), json(file), releaseType("x.json"));
@@ -169,9 +172,11 @@ export class ReleaseStore {
       const bytes = await this.blobs.get(releaseKey(version, path));
       if (!bytes) return null;
       const want = m.files[path];
-      if (!want) throw new DeployError(`Release ${version} has a file its manifest doesn't list: ${path}.`);
+      if (!want) throw new DeployError({ message: `Release ${version} has a file its manifest doesn't list: ${path}.` });
       if (bytes.byteLength != want.size || (await sha256Hex(bytes)) != want.sha256)
-        throw new DeployError(`Release ${version}'s ${path} doesn't match its manifest: the store is damaged, or someone changed it.`);
+        throw new DeployError({
+          message: `Release ${version}'s ${path} doesn't match its manifest: the store is damaged, or someone changed it.`,
+        });
       return bytes;
     });
   }
@@ -189,17 +194,23 @@ export function httpBlobs(origin: string, net: (input: string, init?: RequestIni
     if (chan) return `${base}/releases/${chan[1]}.json`;
     const rel = /^releases\/([0-9a-f]{12})\/(.+)$/.exec(key);
     if (rel) return `${base}/releases/${rel[1]}/${rel[2].split("/").map(encodeURIComponent).join("/")}`;
-    throw new DeployError(`Not a key of the release store: ${key}`);
+    throw new DeployError({ message: `Not a key of the release store: ${key}` });
   };
   return {
     get: async (key) => {
-      const r = await net(urlOf(key), { headers: { Accept: "application/octet-stream, application/json" } }).catch((e: Error) => { throw new DeployError(`Couldn't reach the release store at ${base}: ${e.message}`); });
+      const r = await net(urlOf(key), { headers: { Accept: "application/octet-stream, application/json" } }).catch((e: Error) => {
+        throw new DeployError({ message: `Couldn't reach the release store at ${base}: ${e.message}` });
+      });
       if (r.status == 404) return null;
-      if (!r.ok) throw new DeployError(`The release store at ${base} answered ${r.status} for ${key}.`);
+      if (!r.ok) throw new DeployError({ message: `The release store at ${base} answered ${r.status} for ${key}.` });
       return new Uint8Array(await r.arrayBuffer());
     },
-    put: async () => { throw new DeployError("An upstream's release store is read-only here."); },
-    delete: async () => { throw new DeployError("An upstream's release store is read-only here."); },
+    put: async () => {
+      throw new DeployError({ message: "An upstream's release store is read-only here." });
+    },
+    delete: async () => {
+      throw new DeployError({ message: "An upstream's release store is read-only here." });
+    },
   };
 }
 
@@ -216,7 +227,7 @@ export function storeBuilder(store: ReleaseStore): { build(o: { commit: string }
       log(`fetching release ${commit} from the release store`);
       const release = await store.load(commit);
       signal?.throwIfAborted();
-      if (!release) throw new DeployError(`The release store has no release ${commit}.`);
+      if (!release) throw new DeployError({ message: `The release store has no release ${commit}.` });
       log(`release ${commit}: ${Object.keys(release.modules).length} modules, ${Object.keys(release.assets).length} files, ${Object.keys(release.migrations).length} migrations${release.control ? ", the control Worker" : ""}; every file matches its manifest`);
       return release;
     },

@@ -6,6 +6,7 @@
 //
 // Platform-neutral and synchronous: a snapshot is a commit's files in memory.
 
+import * as Schema from "effect/Schema";
 import { isTreeMode, parseCommit, parseTree, text, type GitObject } from "./git.ts";
 import { isBinary } from "./merge.ts";
 
@@ -52,7 +53,7 @@ export type SourceView =
   | { kind: "folder"; path: string; entries: { name: string; folder: boolean; size: number }[] }
   | { kind: "file"; path: string; size: number; text: string | null; link?: string; cut?: boolean };
 
-export class BrowseError extends Error {}
+export class BrowseError extends Schema.TaggedError<BrowseError>()("BrowseError", { message: Schema.String }) {}
 
 /** At most this many entries in a listing, lines in one read, and matches in a search. */
 export const MAX_LIST = 1000, MAX_LINES = 2000, MAX_MATCHES = 500;
@@ -68,7 +69,7 @@ export function cleanPath(p: string | undefined): string {
     .split("/")
     .filter((s) => s && s != ".");
   if (parts.includes(".."))
-    throw new BrowseError("A path can't go up (..): give it from the repository's root, e.g. client/shell/main.ts.");
+    throw new BrowseError({ message: "A path can't go up (..): give it from the repository's root, e.g. client/shell/main.ts." });
   return parts.join("/");
 }
 
@@ -76,8 +77,8 @@ const kib = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`)
 
 /** A folder's entries ("name/" for a folder, then each file and its size), or every file under it with `recursive`. */
 export function list(s: Snapshot, path: string, recursive = false): string {
-  if (s.files.has(path)) throw new BrowseError(`${path} is a file: read_source reads it.`);
-  if (!s.dirs.has(path)) throw new BrowseError(`There's no folder ${path}.${hint(s, path)}`);
+  if (s.files.has(path)) throw new BrowseError({ message: `${path} is a file: read_source reads it.` });
+  if (!s.dirs.has(path)) throw new BrowseError({ message: `There's no folder ${path}.${hint(s, path)}` });
   const prefix = path ? `${path}/` : "";
   const out: string[] = [];
   if (recursive) {
@@ -96,9 +97,12 @@ export function list(s: Snapshot, path: string, recursive = false): string {
 
 /** A file's lines, numbered, `from` to `to` (1-based, both included; the whole file, up to MAX_LINES, by default). */
 export function read(s: Snapshot, path: string, from?: number, to?: number): string {
-  if (!path) throw new BrowseError("Which file? Give its path, e.g. README.md.");
+  if (!path) throw new BrowseError({ message: "Which file? Give its path, e.g. README.md." });
   const f = s.files.get(path);
-  if (!f) throw new BrowseError(s.dirs.has(path) ? `${path} is a folder: list_source lists it.` : `There's no file ${path}.${hint(s, path)}`);
+  if (!f)
+    throw new BrowseError({
+      message: s.dirs.has(path) ? `${path} is a folder: list_source lists it.` : `There's no file ${path}.${hint(s, path)}`,
+    });
   if (f.mode == "120000") return `${path} is a link to ${text(f.data)}.`;
   if (isBinary(f.data)) return `${path} is a binary file (${kib(f.size)}): it can't be shown as text.`;
   const lines = text(f.data).split("\n");
@@ -106,9 +110,9 @@ export function read(s: Snapshot, path: string, from?: number, to?: number): str
   const total = lines.length;
   if (!total) return `${path} is empty.`;
   const start = Math.max(1, Math.floor(from ?? 1));
-  if (start > total) throw new BrowseError(`${path} has ${total} lines: from must be 1 to ${total}.`);
+  if (start > total) throw new BrowseError({ message: `${path} has ${total} lines: from must be 1 to ${total}.` });
   let end = Math.min(total, Math.floor(to ?? total), start + MAX_LINES - 1);
-  if (end < start) throw new BrowseError("to must be at or after from.");
+  if (end < start) throw new BrowseError({ message: "to must be at or after from." });
   const width = String(end).length;
   const out: string[] = [];
   let size = 0;
@@ -134,7 +138,7 @@ export function view(s: Snapshot, path: string): SourceView {
     if (isBinary(f.data)) return { kind: "file", path, size: f.size, text: null };
     return { kind: "file", path, size: f.size, text: text(f.data.subarray(0, MAX_VIEW)), ...(f.size > MAX_VIEW ? { cut: true } : {}) };
   }
-  if (!s.dirs.has(path)) throw new BrowseError(`There's no file or folder ${path}.`);
+  if (!s.dirs.has(path)) throw new BrowseError({ message: `There's no file or folder ${path}.` });
   const prefix = path ? `${path}/` : "";
   const folders = [...s.dirs].filter((d) => d.startsWith(prefix) && d != path && !d.slice(prefix.length).includes("/")).map((d) => ({ name: d.slice(prefix.length), folder: true, size: 0 }));
   const files = [...s.files].filter(([p]) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/")).map(([p, f]) => ({ name: p.slice(prefix.length), folder: false, size: f.size }));
@@ -150,12 +154,16 @@ function globRe(glob: string): RegExp {
 
 /** The lines that match `query` (as text, or as a regular expression), in every text file under `path` that `glob` takes: "path:line: text". */
 export function search(s: Snapshot, o: { query: string; regex?: boolean; ignoreCase?: boolean; path?: string; glob?: string; limit?: number }): string {
-  if (!o.query) throw new BrowseError("What to search for? Give a query.");
+  if (!o.query) throw new BrowseError({ message: "What to search for? Give a query." });
   let re: RegExp;
-  try { re = new RegExp(o.regex ? o.query : o.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), o.ignoreCase ? "i" : ""); }
-  catch (e) { throw new BrowseError(`That isn't a regular expression JavaScript takes: ${(e as Error).message}`); }
+  try {
+    re = new RegExp(o.regex ? o.query : o.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), o.ignoreCase ? "i" : "");
+  } catch (e) {
+    throw new BrowseError({ message: `That isn't a regular expression JavaScript takes: ${(e as Error).message}` });
+  }
   const path = cleanPath(o.path);
-  if (path && !s.dirs.has(path) && !s.files.has(path)) throw new BrowseError(`There's no file or folder ${path}.${hint(s, path)}`);
+  if (path && !s.dirs.has(path) && !s.files.has(path))
+    throw new BrowseError({ message: `There's no file or folder ${path}.${hint(s, path)}` });
   const glob = o.glob ? globRe(o.glob) : null;
   const limit = Math.max(1, Math.min(MAX_MATCHES, Math.floor(o.limit ?? 100)));
   const out: string[] = [];

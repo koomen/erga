@@ -126,22 +126,28 @@ export class Upstream {
    */
   async update(who: Actor): Promise<UpdateResult> {
     const up = this.repo.deps.upstream?.();
-    if (!up) throw new SourceError("This repository has no upstream to update from: it is not an install's fork.", 409);
+    if (!up)
+      throw new SourceError({ message: "This repository has no upstream to update from: it is not an install's fork.", status: 409 });
     return this.repo.locked(async () => {
       const remote = await this.repo.deps.artifacts();
       const { refs } = await lsRefs(remote);
       const staging = refs.get(REF("staging")), main = refs.get(REF("main"));
-      if (!staging) throw new SourceError("staging has no commits yet.", 409);
+      if (!staging) throw new SourceError({ message: "staging has no commits yet.", status: 409 });
       await this.repo.sync(remote, [staging, ...(main ? [main] : [])]);
       const read = await this.syncUpstream();
-      if (read.error) throw new SourceError(`${up.origin} didn't answer: ${read.error}`, 502);
+      if (read.error) throw new SourceError({ message: `${up.origin} didn't answer: ${read.error}`, status: 502 });
       const { target, version } = this.upstreamTarget(read);
-      if (!target || !version || !this.repo.known(target)) throw new SourceError(`${up.origin} has no release on ${up.channel} yet.`, 409);
+      if (!target || !version || !this.repo.known(target))
+        throw new SourceError({ message: `${up.origin} has no release on ${up.channel} yet.`, status: 409 });
       // Upstream was read again: the page's position may have changed even when nothing moves here.
       this.repo.deps.changed();
       if (this.repo.isAncestor(target, staging)) return { result: "up-to-date", commit: staging };
       const waiting = this.repo.state<MergeConflict>("conflict");
-      if (waiting) throw new SourceError(`A merge already waits on conflicts (${waiting.branch}): resolve or drop it first.`, 409);
+      if (waiting)
+        throw new SourceError({
+          message: `A merge already waits on conflicts (${waiting.branch}): resolve or drop it first.`,
+          status: 409,
+        });
       const base = this.repo.conflicts.mergeBase(staging, target);
       // Upstream's objects into this repository, under the tracking branch: what it has past what we had of it.
       const tracked = refs.get(TRACK) ?? null;
@@ -150,7 +156,7 @@ export class Upstream {
         const pack = await fetchPack(up.remote, { wants: [target], haves });
         const r = await receivePack(remote, [{ ref: TRACK, old: tracked ?? ZERO, new: target }], pack);
         const said = r.unpack != "ok" ? r.unpack : r.refs.get(TRACK) ?? "no answer";
-        if (said != "ok") throw new SourceError(`Artifacts didn't take upstream's objects: ${said}`, 502);
+        if (said != "ok") throw new SourceError({ message: `Artifacts didn't take upstream's objects: ${said}`, status: 502 });
       }
       const brought = [...this.repo.ancestors(target)].filter((s) => !this.repo.isAncestor(s, staging)).length;
       if (this.repo.isAncestor(staging, target)) {
@@ -177,7 +183,7 @@ export class Upstream {
    * staging. The pack goes through as Artifacts sends it: nothing is unpacked here (the whole history is some 20MB).
    */
   async seedFork(fork: Remote, commit: string): Promise<void> {
-    if (!isSha(commit)) throw new SourceError("Name the commit by its full id (40 hex digits).");
+    if (!isSha(commit)) throw new SourceError({ message: "Name the commit by its full id (40 hex digits)." });
     await this.repo.locked(async () => {
       const remote = await this.repo.deps.artifacts();
       const { refs } = await lsRefs(remote);
@@ -185,9 +191,11 @@ export class Upstream {
         remote,
         [commit].filter(() => [...refs.values()].includes(commit))
       );
-      if (!this.repo.known(commit)) throw new SourceError(`${commit.slice(0, 7)} isn't one of this repository's commits.`, 409);
+      if (!this.repo.known(commit))
+        throw new SourceError({ message: `${commit.slice(0, 7)} isn't one of this repository's commits.`, status: 409 });
       const { refs: theirs } = await lsRefs(fork);
-      if (theirs.has(REF("main")) || theirs.has(REF("staging"))) throw new SourceError("That fork already has branches.", 409);
+      if (theirs.has(REF("main")) || theirs.has(REF("staging")))
+        throw new SourceError({ message: "That fork already has branches.", status: 409 });
       // A commit that isn't a branch's head can't be asked for: a scratch ref on it, for the fetch.
       const head = [...refs.values()].includes(commit);
       const scratch = `${SCRATCH}${crypto.randomUUID().slice(0, 8)}`;
@@ -196,7 +204,7 @@ export class Upstream {
         const pack = await fetchPack(remote, { wants: [commit] });
         const r = await receivePack(fork, [{ ref: REF("main"), old: ZERO, new: commit }, { ref: REF("staging"), old: ZERO, new: commit }], pack);
         const said = r.unpack != "ok" ? r.unpack : [REF("main"), REF("staging")].map((ref) => r.refs.get(ref) ?? "no answer").find((s) => s != "ok") ?? "ok";
-        if (said != "ok") throw new SourceError(`The fork's repository refused the seed: ${said}`, 502);
+        if (said != "ok") throw new SourceError({ message: `The fork's repository refused the seed: ${said}`, status: 502 });
       } finally { if (!head) await receivePack(remote, [{ ref: scratch, old: commit, new: ZERO }], null).catch(() => {}); }
     });
   }

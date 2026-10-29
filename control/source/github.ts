@@ -21,6 +21,7 @@
 // a `net` to reach GitHub (the tests' and local development's pretend GitHub,
 // dev/github-mock.ts, answers the same routes).
 
+import * as Schema from "effect/Schema";
 import { base64url, fromBase64url, hex, sha256 } from "../../shared/bytes";
 
 export interface GithubApp {
@@ -46,9 +47,7 @@ export interface GithubLink {
 export interface GithubRepo { id: number; full_name: string; clone_url: string; html_url: string; private: boolean; default_branch: string; owner?: { login: string; type: string } }
 
 /** What GitHub answers for an error: its message. */
-export class GithubError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
-}
+export class GithubError extends Schema.TaggedError<GithubError>()("GithubError", { message: Schema.String, status: Schema.Number }) {}
 
 type Net = (input: string, init?: RequestInit) => Promise<Response>;
 const enc = new TextEncoder();
@@ -66,10 +65,11 @@ export function githubOrigins(standIn?: string | null): { www: string; api: stri
 export async function appJwt(appId: string, privateKey: string, now = Date.now()): Promise<string> {
   const pem = privateKey.trim();
   if (!pem.includes("BEGIN PRIVATE KEY"))
-    throw new GithubError(
-      "The App's private key must be PKCS#8 (-----BEGIN PRIVATE KEY-----): convert GitHub's .pem with openssl pkcs8 -topk8 -nocrypt.",
-      500
-    );
+    throw new GithubError({
+      message:
+        "The App's private key must be PKCS#8 (-----BEGIN PRIVATE KEY-----): convert GitHub's .pem with openssl pkcs8 -topk8 -nocrypt.",
+      status: 500,
+    });
   const der = fromBase64url(
     pem
       .replace(/-----[^-]+-----/g, "")
@@ -86,12 +86,24 @@ export async function appJwt(appId: string, privateKey: string, now = Date.now()
 }
 
 /** An installation token: an hour's access to the installation's repositories (Contents read and write). */
-export async function installationToken(app: GithubApp, installationId: number, net: Net = fetch): Promise<{ token: string; expiresAt: number }> {
-  if (!app.privateKey) throw new GithubError("This Worker has no private key for the GitHub App (GITHUB_APP_PRIVATE_KEY).", 500);
+export async function installationToken(
+  app: GithubApp,
+  installationId: number,
+  net: Net = fetch
+): Promise<{ token: string; expiresAt: number }> {
+  if (!app.privateKey)
+    throw new GithubError({ message: "This Worker has no private key for the GitHub App (GITHUB_APP_PRIVATE_KEY).", status: 500 });
   const jwt = await appJwt(app.appId, app.privateKey);
   const r = await net(`${app.api}/app/installations/${installationId}/access_tokens`, { method: "POST", headers: { Authorization: `Bearer ${jwt}`, Accept: "application/vnd.github+json", "User-Agent": UA } });
   const body = (await r.json().catch(() => ({}))) as { token?: string; expires_at?: string; message?: string };
-  if (!r.ok || !body.token) throw new GithubError(r.status == 404 ? "GitHub says the App is no longer installed there (the installation is gone): connect GitHub again." : `GitHub gave no installation token (${r.status}${body.message ? `: ${body.message}` : ""}).`, r.status);
+  if (!r.ok || !body.token)
+    throw new GithubError({
+      message:
+        r.status == 404
+          ? "GitHub says the App is no longer installed there (the installation is gone): connect GitHub again."
+          : `GitHub gave no installation token (${r.status}${body.message ? `: ${body.message}` : ""}).`,
+      status: r.status,
+    });
   return { token: body.token, expiresAt: Date.parse(body.expires_at ?? "") || Date.now() + 3600_000 };
 }
 
@@ -143,8 +155,15 @@ export async function exchangeUserCode(app: GithubApp, o: { code: string; redire
   const r = await net(`${app.www}/login/oauth/access_token`, {
     method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": UA },
     body: JSON.stringify({ client_id: app.clientId, client_secret: app.clientSecret, code: o.code, redirect_uri: o.redirect }),
-  }).catch((e: Error) => { throw new GithubError(`Couldn't reach GitHub to finish the sign-in (${e.message}).`, 502); });
-  return ((await r.json().catch(() => null)) as UserToken | null) ?? { error: `http_${r.status}`, error_description: "GitHub's token endpoint answered no JSON." };
+  }).catch((e: Error) => {
+    throw new GithubError({ message: `Couldn't reach GitHub to finish the sign-in (${e.message}).`, status: 502 });
+  });
+  return (
+    ((await r.json().catch(() => null)) as UserToken | null) ?? {
+      error: `http_${r.status}`,
+      error_description: "GitHub's token endpoint answered no JSON.",
+    }
+  );
 }
 
 /** GitHub's REST API with a token (a user's, an installation's): the JSON answer, or a GithubError with GitHub's message. */
@@ -152,10 +171,23 @@ export async function api<T>(app: Pick<GithubApp, "api">, token: string, method:
   const r = await net(`${app.api}${path}`, {
     method, headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": UA, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  }).catch((e: Error) => { throw new GithubError(`Couldn't reach GitHub (${e.message}).`, 502); });
+  }).catch((e: Error) => {
+    throw new GithubError({ message: `Couldn't reach GitHub (${e.message}).`, status: 502 });
+  });
   if (r.status == 204) return undefined as T;
   const answer = (await r.json().catch(() => null)) as (T & { message?: string; errors?: { message?: string }[] }) | null;
-  if (!r.ok) throw new GithubError(`GitHub answered ${r.status}${answer?.message ? `: ${answer.message}` : ""}${answer?.errors?.length ? ` (${answer.errors.map((e) => e.message).filter(Boolean).join("; ")})` : ""}`, r.status);
+  if (!r.ok)
+    throw new GithubError({
+      message: `GitHub answered ${r.status}${answer?.message ? `: ${answer.message}` : ""}${
+        answer?.errors?.length
+          ? ` (${answer.errors
+              .map((e) => e.message)
+              .filter(Boolean)
+              .join("; ")})`
+          : ""
+      }`,
+      status: r.status,
+    });
   return answer as T;
 }
 
@@ -178,17 +210,32 @@ export const installationRepos = (app: GithubApp, token: string, id: number, net
  */
 export async function createRepo(app: GithubApp, token: string, o: { owner: { login: string; type: string }; me: string; name: string; isPrivate: boolean; installationId: number; selection: string }, net?: Net): Promise<GithubRepo> {
   const name = o.name.trim();
-  if (!/^[A-Za-z0-9._-]{1,100}$/.test(name)) throw new GithubError("A repository's name is letters, digits, dots, dashes and underscores.", 400);
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(name))
+    throw new GithubError({ message: "A repository's name is letters, digits, dots, dashes and underscores.", status: 400 });
   const body = { name, private: o.isPrivate, description: "Erga's source (synced from Erga)", auto_init: false };
   const path = o.owner.type == "Organization" || o.owner.login.toLowerCase() != o.me.toLowerCase() ? `/orgs/${o.owner.login}/repos` : "/user/repos";
   let repo: GithubRepo;
-  try { repo = await api<GithubRepo>(app, token, "POST", path, body, net); } catch (e) {
-    if (e instanceof GithubError && (e.status == 403 || e.status == 404)) throw new GithubError(`GitHub didn't let Erga make the repository (${e.message}). The App needs the Administration permission on repositories for that; or make ${o.owner.login}/${name} on GitHub yourself, then Connect GitHub again and pick it.`, e.status);
+  try {
+    repo = await api<GithubRepo>(app, token, "POST", path, body, net);
+  } catch (e) {
+    if (e instanceof GithubError && (e.status == 403 || e.status == 404))
+      throw new GithubError({
+        message: `GitHub didn't let Erga make the repository (${e.message}). The App needs the Administration permission on repositories for that; or make ${o.owner.login}/${name} on GitHub yourself, then Connect GitHub again and pick it.`,
+        status: e.status,
+      });
     throw e;
   }
   if (o.selection != "all") {
     // Added to the installation (204; 304 when it's there already).
-    await api(app, token, "PUT", `/user/installations/${o.installationId}/repositories/${repo.id}`, undefined, net).catch((e: GithubError) => { if (e.status != 304) throw new GithubError(`The repository is made, but couldn't be added to the App's installation (${e.message}): add it on GitHub (the App's settings), then Connect GitHub again.`, e.status); });
+    await api(app, token, "PUT", `/user/installations/${o.installationId}/repositories/${repo.id}`, undefined, net).catch(
+      (e: GithubError) => {
+        if (e.status != 304)
+          throw new GithubError({
+            message: `The repository is made, but couldn't be added to the App's installation (${e.message}): add it on GitHub (the App's settings), then Connect GitHub again.`,
+            status: e.status,
+          });
+      }
+    );
   }
   return repo;
 }
