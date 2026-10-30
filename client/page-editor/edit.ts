@@ -144,8 +144,11 @@ export abstract class EditorEdit extends EditorRender {
     const sel = this.currentSelection();
     // The browser's target range is a DOM caret; if it's the same spot as the model's, the model's wins (see sameSpot).
     if (range && range.from == range.to && this.sameSpot(EditorSelection.cursor(range.from), sel)) range = null;
-    const from = range ? range.from : sel.from,
-      to = range ? range.to : sel.to;
+    const from = range ? range.from : sel.from;
+    let to = range ? range.to : sel.to;
+    // A selection that ends at the start of a block's text (a triple-click's) holds none of that block: it stays.
+    const b = from < to ? M.unitAt(this.units, to) : null;
+    if (b && b.id > 0 && from < M.textStart(b) && to <= M.textStart(b)) to = Math.max(from, M.textEnd(this.units[b.id - 1]));
     const done =
       (from == to && userEvent == "input.type" && this.typeStored(from, text)) ||
       (from == to && (userEvent == "input.type" || userEvent == "input.paste") && this.typeAtLinkEdge(from, text, userEvent)) ||
