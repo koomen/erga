@@ -518,6 +518,16 @@ function watchBackdrop() {
 // text rendered in, so a fallback font shows as one.
 const CATCH_ERRORS = `<script>window.__ergaErrors=[];addEventListener("error",function(e){__ergaErrors.push(String(e.message))});addEventListener("unhandledrejection",function(e){__ergaErrors.push("Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason))});(function(){var ce=console.error;console.error=function(){__ergaErrors.push("console.error: "+[].map.call(arguments,String).join(" "));return ce.apply(console,arguments)}})()</script>`;
 /**
+ * The hidden frame is about:srcdoc, its <base> the page's real address: a
+ * hash-only address ("#3", rule 14 of the agents' guide) would resolve
+ * against the base, another address, and replaceState would throw. Here a
+ * hash-only address is the frame's own, in replaceState, pushState and a
+ * link, as it is for the page anywhere else. The frame opens at the page's
+ * hash, so a deck renders at the slide the person sees.
+ */
+const ownHash = (hash: string) =>
+  `<script>(function(){var h=history,own=function(u){return typeof u=="string"&&u.charAt(0)=="#"?location.href.split("#")[0]+u:u};["pushState","replaceState"].forEach(function(m){var f=h[m];h[m]=function(s,t,u){return arguments.length>2?f.call(h,s,t,own(u)):f.call(h,s,t)}});${hash ? `h.replaceState(null,"",${JSON.stringify(hash)});` : ""}addEventListener("click",function(e){var a=!e.defaultPrevented&&e.target.closest&&e.target.closest("a[href^='#']");if(a&&!a.target&&!a.hasAttribute("download")){e.preventDefault();location.hash=a.getAttribute("href")}})})()</script>`;
+/**
  * Light or dark mode for the hidden frame, when the agent asks for the one
  * the browser doesn't prefer (a frame can't be given its own preference):
  * every prefers-color-scheme query the page can reach, in its stylesheets,
@@ -561,7 +571,7 @@ async function captureView(req: ViewRequest, text?: string): Promise<ViewResult>
   shot.setAttribute("data-erga", "");
   shot.style.cssText = `position:fixed;left:-100000px;top:0;width:${width}px;height:${viewport}px;border:0;`;
   const html = page!.renderedHtml(text);
-  const head = CATCH_ERRORS + (forced ? forceSchemeScript(scheme) : "");
+  const head = CATCH_ERRORS + ownHash(location.hash) + (forced ? forceSchemeScript(scheme) : "");
   shot.srcdoc = /<head(\s[^>]*)?>/i.test(html) ? html.replace(/<head(\s[^>]*)?>/i, (m) => m + head) : head + html;
   document.body.append(shot);
   try {
