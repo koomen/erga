@@ -2,7 +2,7 @@
 // checked by what the page shows (ed.shows), each expected snapshot checked by eye first on `bun run look` screenshots.
 // Where Google Docs, Notion, Typora and Bear agree, the editor should do the same. Keys a Mac turns into its own editing
 // commands (Cmd+arrows, Option+arrows) go through page.keyboard, as a real keyboard sends them.
-import { expect, knownBug, servers, test, type Tab } from "../../helpers/fixtures";
+import { expect, servers, test, type Tab } from "../../helpers/fixtures";
 import { F, openEditor } from "../../helpers/editor";
 
 await servers.main();
@@ -18,10 +18,8 @@ const open = async (tab: Tab, selector: string) => {
   return ed;
 };
 
-// ArrowDown out of the big title skips the first line of the wrapped paragraph under it, and lands on its second line.
-test(
-  "ArrowDown from the title's start goes to the first line of the paragraph under it",
-  knownBug(async ({ tab }) => {
+// Was a bug: ArrowDown out of the big title skips the first line of the wrapped paragraph under it, and lands on its second line.
+test("ArrowDown from the title's start goes to the first line of the paragraph under it", async ({ tab }) => {
     const ed = await open(tab, "h1");
     await ed.press("Home");
     await ed.press("ArrowDown");
@@ -42,13 +40,10 @@ test(
 
     Last paragraph.
   `);
-  })
-);
+});
 
-// The column is lost once the caret passes a short block: back on the long line, it is at the short block's column.
-test(
-  "ArrowDown then ArrowUp across short blocks comes back to the same column",
-  knownBug(async ({ tab }) => {
+// Was a bug: The column is lost once the caret passes a short block: back on the long line, it is at the short block's column.
+test("ArrowDown then ArrowUp across short blocks comes back to the same column", async ({ tab }) => {
     const ed = await open(tab, "#first");
     // The click lands in "this" at the end of the second line.
     await ed.press("ArrowLeft");
@@ -86,13 +81,10 @@ test(
 
     Last paragraph.
   `);
-  })
-);
+});
 
-// Shift+ArrowDown on a one-line block selects to the block's end and stops there; a second press goes on.
-test(
-  "Shift+ArrowDown from the start of a heading selects down to the start of the next line",
-  knownBug(async ({ tab }) => {
+// Was a bug: Shift+ArrowDown on a one-line block selects to the block's end and stops there; a second press goes on.
+test("Shift+ArrowDown from the start of a heading selects down to the start of the next line", async ({ tab }) => {
     const ed = await open(tab, "h2");
     await ed.press("Home");
     await ed.press("Shift+ArrowDown");
@@ -112,13 +104,10 @@ test(
 
     Last paragraph.
   `);
-  })
-);
+});
 
-// Cmd+ArrowDown goes only to the end of the block the caret is in, not to the end of the page (Cmd+Shift+ArrowDown does).
-test(
-  "Cmd+ArrowDown goes to the end of the page",
-  knownBug(async ({ tab }) => {
+// Was a bug: Cmd+ArrowDown goes only to the end of the block the caret is in, not to the end of the page (Cmd+Shift+ArrowDown does).
+test("Cmd+ArrowDown goes to the end of the page", async ({ tab }) => {
     const ed = await open(tab, "h2");
     await ed.page.keyboard.press("Meta+ArrowDown");
     await ed.shows(`
@@ -137,13 +126,10 @@ test(
 
     Last paragraph.|
   `);
-  })
-);
+});
 
-// Option+ArrowRight at the end of a block stays there: it never goes on to the next block's first word.
-test(
-  "Option+ArrowRight at the end of a heading goes to the end of the next block's first word",
-  knownBug(async ({ tab }) => {
+// Was a bug: Option+ArrowRight at the end of a block stays there: it never goes on to the next block's first word.
+test("Option+ArrowRight at the end of a heading goes to the end of the next block's first word", async ({ tab }) => {
     const ed = await open(tab, "h2");
     await ed.page.keyboard.press("Alt+ArrowRight");
     await ed.shows(`
@@ -162,13 +148,10 @@ test(
 
     Last paragraph.
   `);
-  })
-);
+});
 
-// Cmd+ArrowRight (and End) on a wrapped line draws the caret at the start of the next line, not at the end of this one.
-test(
-  "Cmd+ArrowRight on a wrapped line draws the caret at the end of that line",
-  knownBug(async ({ tab }) => {
+// Was a bug: Cmd+ArrowRight (and End) on a wrapped line draws the caret at the start of the next line, not at the end of this one.
+test("Cmd+ArrowRight on a wrapped line draws the caret at the end of that line", async ({ tab }) => {
     const ed = await open(tab, "h2");
     await ed.press("ArrowUp");
     await ed.press("ArrowUp");
@@ -189,5 +172,4 @@ test(
         { timeout: 3000 }
       )
       .toBe(true);
-  })
-);
+});

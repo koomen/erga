@@ -26,6 +26,9 @@ const CHECKBOX = /<input\b[^>]*\btype\s*=\s*["']?checkbox\b[^>]*>/gi;
 const EMACS: Record<string, string> = { n: "ArrowDown", p: "ArrowUp", f: "ArrowRight", b: "ArrowLeft" };
 
 export abstract class EditorInput extends EditorClipboard {
+  /** The column ArrowUp and ArrowDown keep (its x on the page), while the caret is where the last of them put it. */
+  protected goal: { x: number; pos: number } | null = null;
+
   protected bind(): void {
     const doc = this.doc!;
     const on = <K extends keyof DocumentEventMap>(type: K, f: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions) => {
@@ -495,7 +498,10 @@ export abstract class EditorInput extends EditorClipboard {
             ? "word"
             : "character";
     const { anchorNode, anchorOffset, focusNode, focusOffset } = sel;
-    if (gran != "documentboundary") {
+    // On a unit's first or last line, the browser would stop at the line's end: one press goes on to the next line.
+    const head = gran == "line" && !this.spanning ? this.posFromDOM(focusNode, focusOffset) : null;
+    const edge = head != null && this.lineEdge(head, dir == "forward")?.onEdge;
+    if (gran != "documentboundary" && !edge) {
       sel.modify("extend", dir, gran);
       if (sel.focusNode != focusNode || sel.focusOffset != focusOffset) return true;
     }
@@ -508,9 +514,14 @@ export abstract class EditorInput extends EditorClipboard {
   /** Arrow keys at a unit's edge move the caret into the neighbouring unit, keeping the column. */
   protected arrow(e: KeyboardEvent): boolean {
     if (e.shiftKey) return this.extendKey(e);
-    if (e.altKey || e.metaKey || e.ctrlKey) return false;
+    const horizontal = e.key == "ArrowRight" || e.key == "ArrowLeft";
+    // Cmd+ArrowUp and Cmd+ArrowDown (a Mac's): the start or the end of the page. Option+ArrowLeft and Option+ArrowRight
+    // (Control elsewhere): a word, on into the next unit at a unit's edge.
+    const page = isMac && e.metaKey && !e.altKey && !e.ctrlKey && !horizontal;
+    const word = horizontal && !e.metaKey && (isMac ? e.altKey && !e.ctrlKey : e.ctrlKey && !e.altKey);
+    if ((e.altKey || e.metaKey || e.ctrlKey) && !page && !word) return false;
     const sel = this.currentSelection();
-    if (!sel.empty) return false;
+    if (!sel.empty && !page) return false;
     const u = M.unitAt(this.units, sel.head);
     if (!u) return false;
     const src = this.src;
@@ -521,7 +532,12 @@ export abstract class EditorInput extends EditorClipboard {
       this.dispatch({ selection: { anchor: pos }, userEvent: "select", scrollIntoView: true });
       return true;
     };
-    if (e.key == "ArrowRight" || e.key == "ArrowLeft") {
+    if (page) {
+      const open = this.units.filter((x) => this.els[x.id] && !this.els[x.id]!.classList.contains("erga-locked"));
+      if (!open.length) return false;
+      return go(e.key == "ArrowDown" ? last(open.at(-1)!) : first(open[0]));
+    }
+    if (horizontal) {
       const forward = e.key == "ArrowRight";
       const edge = forward
         ? sel.head >= last(u) && !STOPS.test(src.slice(sel.head, u.contentTo))
@@ -529,29 +545,68 @@ export abstract class EditorInput extends EditorClipboard {
       if (!edge) return false;
       const next = this.units[u.id + (forward ? 1 : -1)];
       if (!next) return false;
-      return go(forward ? first(next) : last(next));
+      go(forward ? first(next) : last(next));
+      if (!word) return true;
+      // The word in the next unit, as the browser moves by words there.
+      const dom = this.doc!.getSelection();
+      dom?.modify("move", forward ? "forward" : "backward", "word");
+      const pos = dom?.focusNode ? this.posFromDOM(dom.focusNode, dom.focusOffset) : null;
+      if (pos != null) go(pos);
+      return true;
     }
     const down = e.key == "ArrowDown";
-    const caret = this.coordsAtPos(sel.head),
-      el = this.els[u.id];
-    if (!caret || !el) return false;
+    const at = this.lineEdge(sel.head, down);
+    if (!at) return false;
+    // The column the caret keeps across lines and short blocks: where it was before the first of these moves.
+    const x = this.goal?.pos == sel.head ? this.goal.x : at.caret.left;
+    const doc = this.doc!;
+    const keep = (pos: number | null) => {
+      if (pos == null) return false;
+      go(pos);
+      this.goal = { x, pos: this.state.selection.main.head };
+      return true;
+    };
+    const hit = (y: number, host: Element) => {
+      const range = doc.caretRangeFromPoint?.(x, y);
+      return range && host.contains(range.startContainer) ? this.posFromDOM(range.startContainer, range.startOffset) : null;
+    };
+    if (!at.onEdge) {
+      // Within the unit: the browser's move to the next line, then the column on that line.
+      const dom = doc.getSelection();
+      if (!dom) return false;
+      dom.modify("move", down ? "forward" : "backward", "line");
+      const r = dom.rangeCount ? dom.getRangeAt(0).getClientRects()[0] : null;
+      const moved = dom.focusNode ? this.posFromDOM(dom.focusNode, dom.focusOffset) : null;
+      return keep((r?.height ? hit(r.top + r.height / 2, at.el) : null) ?? moved);
+    }
+    const next = this.units[u.id + (down ? 1 : -1)],
+      nel = next && this.els[next.id];
+    if (!next || !nel) return false;
+    // The middle of the next unit's first line (going down) or its last line (going up), whatever the size of its text.
+    const nr = nel.getBoundingClientRect();
+    const line = this.coordsAtPos(down ? first(next) : last(next), down ? 1 : -1);
+    const y =
+      line?.height && line.top >= nr.top - 1 && line.bottom <= nr.bottom + 1
+        ? line.top + line.height / 2
+        : down
+          ? nr.top + Math.min(nr.height / 2, 8)
+          : nr.bottom - Math.min(nr.height / 2, 8);
+    return keep(hit(y, nel) ?? (down ? first(next) : last(next)));
+  }
+
+  /** The caret's box at `pos`, its unit's element, and whether the caret is on the unit's first line (`down`: its last). */
+  protected lineEdge(pos: number, down: boolean): { caret: DOMRect; el: Element; onEdge: boolean } | null {
+    const u = M.unitAt(this.units, pos);
+    const caret = this.coordsAtPos(pos),
+      el = u && this.els[u.id];
+    if (!caret || !el) return null;
     const r = el.getBoundingClientRect(),
       cs = this.doc!.defaultView!.getComputedStyle(el);
     const h = caret.height || 16;
     const onEdge = down
       ? caret.bottom + h * 0.6 >= r.bottom - parseFloat(cs.paddingBottom)
       : caret.top - h * 0.6 <= r.top + parseFloat(cs.paddingTop);
-    if (!onEdge) return false;
-    const next = this.units[u.id + (down ? 1 : -1)],
-      nel = next && this.els[next.id];
-    if (!next || !nel) return false;
-    const nr = nel.getBoundingClientRect(),
-      ncs = this.doc!.defaultView!.getComputedStyle(nel);
-    const y = down ? nr.top + parseFloat(ncs.paddingTop) + h / 2 : nr.bottom - parseFloat(ncs.paddingBottom) - h / 2;
-    const range = this.doc!.caretRangeFromPoint?.(caret.left, y);
-    let pos: number | null = null;
-    if (range && nel.contains(range.startContainer)) pos = this.posFromDOM(range.startContainer, range.startOffset);
-    return go(pos ?? (down ? first(next) : last(next)));
+    return { caret, el, onEdge };
   }
 
   protected beforeinput(e: InputEvent): void {

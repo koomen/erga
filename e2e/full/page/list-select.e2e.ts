@@ -1,7 +1,7 @@
 // Selections in lists made with keys, as a person makes them: Shift and the arrows, then typing over them; and
 // Backspace where items meet. From an empty page, checked by what the page shows. Each expected snapshot was checked
 // by eye first, on `bun run look` screenshots with the same keys.
-import { knownBug, servers, test, type Tab } from "../../helpers/fixtures";
+import { servers, test, type Tab } from "../../helpers/fixtures";
 import { openEditor } from "../../helpers/editor";
 
 await servers.main();
@@ -25,11 +25,9 @@ const three = async (tab: Tab) => {
   return ed;
 };
 
-// Bug: the first Shift+ArrowUp in an item (or a paragraph) of one line selects only to the start of that line; a
+// Was a bug: the first Shift+ArrowUp in an item (or a paragraph) of one line selects only to the start of that line; a
 // second press is needed to reach the line above. In Google Docs and Notion one press goes up one line.
-test(
-  "Shift+ArrowUp at the end of the last item selects up to the end of the item above, in one press",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Shift+ArrowUp at the end of the last item selects up to the end of the item above, in one press", async ({ tab }: { tab: Tab }) => {
     const ed = await three(tab);
     await ed.press("Shift+ArrowUp");
     await ed.shows(`
@@ -37,13 +35,10 @@ test(
       • Two[
       • Three]
     `);
-  })
-);
+});
 
-// Bug: the same going down: the first Shift+ArrowDown selects only to the end of the line.
-test(
-  "Shift+ArrowDown at the start of an item selects down to the start of the next item, in one press",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+// Was a bug: the same going down: the first Shift+ArrowDown selects only to the end of the line.
+test("Shift+ArrowDown at the start of an item selects down to the start of the next item, in one press", async ({ tab }: { tab: Tab }) => {
     const ed = await three(tab);
     await ed.press("ArrowUp");
     await ed.press("ArrowUp");
@@ -54,8 +49,7 @@ test(
       • ]Two
       • Three
     `);
-  })
-);
+});
 
 test("A key typed over a selection of whole items replaces them with one item", async ({ tab }) => {
   const ed = await three(tab);

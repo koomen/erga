@@ -55,6 +55,12 @@ function attach(doc: Document, win: Window & typeof globalThis, zoomOf: () => nu
   /** The native caret's colour for each element (the page's caret-color, else its text colour). */
   let colors = new WeakMap<Element, string>();
   let last = "", queued = false, moved = false, stopped = false;
+  /**
+   * Where a caret at a line's soft wrap shows: at the end of the line above after End or Cmd+ArrowRight, or a click
+   * on that line; else at the start of the line below, as the browser draws it. A DOM range can't say which.
+   */
+  let lineEnd = false,
+    clickY: number | null = null;
 
   const queue = (restart = false) => {
     moved ||= restart;
@@ -136,6 +142,9 @@ function attach(doc: Document, win: Window & typeof globalThis, zoomOf: () => nu
   function caretBox(range: Range, el: Element, scale: number): { left: number; top: number; height: number } | null {
     const rects = range.getClientRects();
     const r = rects[rects.length - 1];
+    const before = r && r.height > 0 && (lineEnd || clickY != null) ? lineAbove(range, r) : null;
+    if (before && (lineEnd || (clickY! >= before.top && clickY! < before.bottom)))
+      return { left: Math.min(before.right, el.getBoundingClientRect().right), top: before.top, height: before.height };
     if (r && r.height > 0) return r;
     // An empty line: a <br> holds it open, and its box is where the line is.
     const c = range.startContainer;
@@ -159,6 +168,18 @@ function attach(doc: Document, win: Window & typeof globalThis, zoomOf: () => nu
     return { left, top, height };
   }
 
+  /** The box of the character before a caret at the start of a line, if it is on the line above (a soft wrap). */
+  function lineAbove(range: Range, r: DOMRect): DOMRect | null {
+    const c = range.startContainer,
+      k = range.startOffset;
+    if (c.nodeType != 3 || k == 0) return null;
+    const ch = doc.createRange();
+    ch.setStart(c, k - 1);
+    ch.setEnd(c, k);
+    // (A space at the wrap has a box on each line.)
+    return [...ch.getClientRects()].find((b) => b.height > 0 && b.bottom <= r.top + r.height / 2) ?? null;
+  }
+
   /** The colour the native caret would have here: what the page sets, else the text's colour. */
   function colorOf(el: Element): string {
     let color = colors.get(el);
@@ -178,6 +199,21 @@ function attach(doc: Document, win: Window & typeof globalThis, zoomOf: () => nu
     else { target.addEventListener(type, f, opts); off.push(() => target.removeEventListener(type, f, opts)); }
   };
   on(doc, "selectionchange");
+  const keyed = (e: Event) => {
+    const k = e as KeyboardEvent,
+      mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    if (["Shift", "Meta", "Control", "Alt"].includes(k.key)) return;
+    lineEnd = k.key == "End" || (mac && k.metaKey && k.key == "ArrowRight") || (mac && k.ctrlKey && k.key == "e");
+    clickY = null;
+  };
+  const clicked = (e: Event) => {
+    lineEnd = false;
+    clickY = (e as MouseEvent).clientY;
+  };
+  off.push(
+    listenAsEditor(doc, "keydown", keyed, { capture: true, passive: true }),
+    listenAsEditor(doc, "mousedown", clicked, { capture: true, passive: true })
+  );
   for (const type of ["keydown", "input", "compositionstart", "compositionupdate", "compositionend", "mousedown"]) on(doc, type, true);
   for (const type of ["mouseup", "focusin", "focusout"]) on(doc, type);
   for (const type of ["focus", "blur", "resize"]) on(win, type);
