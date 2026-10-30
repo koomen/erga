@@ -430,7 +430,7 @@ function queueSnapshot(rendered = false) {
       fmt: {
         rect: rect && { left: z(rect.left), top: z(rect.top), width: z(rect.width), bottom: z(rect.bottom) },
         blocker: page.styleBlocker(),
-        has: { strong: page.hasStyle("strong"), em: page.hasStyle("em"), code: page.hasStyle("code") },
+        has: { strong: page.hasStyle("strong"), em: page.hasStyle("em"), code: page.hasStyle("code"), u: page.hasStyle("u") },
         text: rect ? page.selectedText().slice(0, 500) : "",
         link: linkIn(page.linkAt()),
       },

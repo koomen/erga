@@ -1,6 +1,6 @@
 // Markdown at the start of a line, typed with real keys from an empty page, as a person does in a writing app: what the
 // page shows, and how a person takes it back. Google Docs, Notion, Typora and Bear agree on each behavior here.
-import { expect, knownBug, servers, test, type Tab } from "../../helpers/fixtures";
+import { expect, servers, test, type Tab } from "../../helpers/fixtures";
 import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();

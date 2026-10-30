@@ -87,6 +87,7 @@ class Keys extends EditorInput {
       Delete: () => this.deleteChar(true),
       Tab: () => this.indentItem(false),
       "Shift+Tab": () => this.indentItem(true),
+      "Mod+b": () => this.styleKey("strong"),
       Undo: () => this.undo(),
       Redo: () => this.redo(),
     };

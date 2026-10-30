@@ -6,7 +6,7 @@ import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
 import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked } from "./source";
 import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
-import { isMac } from "./core";
+import { isMac, pageOwnBox } from "./core";
 import { leaveCode } from "./blocks";
 import { EditorClipboard } from "./clipboard";
 
@@ -214,9 +214,9 @@ export abstract class EditorInput extends EditorClipboard {
     return !!fe && this.host.contains(fe) && !this.inIsland(fe);
   }
 
-  /** Whether an element is in an island of the editing host, or is a control of its own. */
+  /** Whether an element is in an island of the editing host, or is a control of its own, or a box the page edits itself. */
   protected inIsland(el: Element): boolean {
-    return !!el.closest('[contenteditable="false"], input, textarea, select');
+    return !!el.closest('[contenteditable="false"], input, textarea, select') || pageOwnBox(el);
   }
 
   /**
@@ -253,7 +253,7 @@ export abstract class EditorInput extends EditorClipboard {
     }
     // A locked unit takes no caret; say why instead of doing nothing.
     // (A page's own editable box is its own; the editing host is the editor's.)
-    const ownBox = (e.target as Element).closest?.('[contenteditable="true"]');
+    const ownBox = (e.target as Element).closest?.('[contenteditable]:not([contenteditable="false"])');
     const pageOwn = !!ownBox && ownBox != this.host;
     const locked = (e.target as Element).closest?.(".erga-locked");
     if (locked && !pageOwn && !(e.target as Element).closest("button, a[href], input, textarea, select")) {
@@ -399,6 +399,7 @@ export abstract class EditorInput extends EditorClipboard {
     else if (mod && !e.altKey && !e.shiftKey && key == "b") handled = this.styleKey("strong");
     else if (mod && !e.altKey && !e.shiftKey && key == "i") handled = this.styleKey("em");
     else if (mod && !e.altKey && !e.shiftKey && key == "e") handled = this.styleKey("code");
+    else if (mod && !e.altKey && !e.shiftKey && key == "u") handled = this.styleKey("u");
     else if (mod && !e.altKey && !e.shiftKey && key == "\\") {
       const why = this.clearStyles();
       if (why) this.config.onNotice?.(why);

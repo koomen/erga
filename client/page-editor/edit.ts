@@ -16,6 +16,7 @@ export abstract class EditorEdit extends EditorRender {
   protected abstract linkRule(pos: number): void;
   protected abstract enterRule(u: M.Unit, pos: number): boolean;
   protected abstract typeAtLinkEdge(pos: number, text: string, userEvent: string): boolean;
+  protected abstract typeStored(pos: number, text: string): boolean;
 
   /**
    * The selection an edit applies to: the DOM's, which is ahead of the model
@@ -146,6 +147,7 @@ export abstract class EditorEdit extends EditorRender {
     const from = range ? range.from : sel.from,
       to = range ? range.to : sel.to;
     const done =
+      (from == to && userEvent == "input.type" && this.typeStored(from, text)) ||
       (from == to && (userEvent == "input.type" || userEvent == "input.paste") && this.typeAtLinkEdge(from, text, userEvent)) ||
       this.replaceRange(from, to, text, userEvent);
     if (done && userEvent == "input.type" && /^[*_`~)]$/.test(text)) this.inputRule(this.state.selection.main.head);
@@ -527,7 +529,7 @@ export abstract class EditorEdit extends EditorRender {
 }
 
 /** The inline elements of a unit that hold `pos`, outermost first. */
-function inlineAt(u: M.Unit, pos: number): M.ElementNode[] {
+export function inlineAt(u: M.Unit, pos: number): M.ElementNode[] {
   const out: M.ElementNode[] = [];
   for (let node: M.ElementNode | undefined = u.node; node; ) {
     node = node.children.find((c): c is M.ElementNode => c.kind == "element" && !c.selfClosing && c.openTo <= pos && pos <= c.closeFrom);

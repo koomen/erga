@@ -67,7 +67,12 @@ export interface SourceState { extensions: Extension; history: StateField<unknow
 /** The messages about the text: a frame that comes has it from its init instead. */
 const TEXT = new Set<ToFrame["type"]>(["external", "authorship", "ack", "reject", "attach"]);
 
-const EMPTY: Snapshot = { title: "", canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, text: "", link: null } };
+const EMPTY: Snapshot = {
+  title: "",
+  canPause: false,
+  paused: false,
+  fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false, u: false }, text: "", link: null },
+};
 
 export class RemotePage {
   /** The text and the page's selection, as the shell (and the room) has them. */

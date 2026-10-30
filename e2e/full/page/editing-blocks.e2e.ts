@@ -2,7 +2,7 @@
 // keys, undo and typing over a selection, as a writer does them, fast. Checked by what the page shows (ed.shows), each
 // expected snapshot checked by eye first on `bun run look` screenshots. Where Google Docs, Notion, Typora and Bear
 // agree, the editor should do the same.
-import { expect, knownBug, servers, test, type Tab } from "../../helpers/fixtures";
+import { expect, servers, test, type Tab } from "../../helpers/fixtures";
 import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
@@ -135,10 +135,9 @@ test("Backspace at the start of a list's first item takes its bullet off; the ne
   await ed.shows(PAGE.replace("## Section\n\n• Apple\n• Banana", "## Section|Apple\n\n• Banana"));
 });
 
-// Cmd+B, Cmd+I and Cmd+U with no selection only say "Select some text to style first."; the text typed next is plain.
-test(
-  "Cmd+B with no selection makes the text typed next bold, and Cmd+B again ends it",
-  knownBug(async ({ tab }) => {
+// Cmd+B, Cmd+I and Cmd+E with no selection style the text typed next (a stored mark), and the key again ends it (they
+// only said "Select some text to style first.").
+test("Cmd+B with no selection makes the text typed next bold, and Cmd+B again ends it", async ({ tab }) => {
     const ed = await open(tab, "#last");
     await ed.type(" ");
     await ed.press("ControlOrMeta+b");
@@ -152,8 +151,36 @@ test(
       );
     expect(await weight("bold")).toBeGreaterThanOrEqual(600);
     expect(await weight("plain")).toBeLessThan(600);
-  })
-);
+    expect(await ed.source()).toContain(`<p id="last">Last paragraph. <strong>bold</strong> plain</p>`);
+});
+
+// Pete: with the caret at the end of bold text, Cmd+B ends the bold, and the text typed next is not bold: it goes after
+// the </b>, not in it. Cmd+B again turns bold back on. The same for Cmd+I and Cmd+U.
+test("with the caret clicked at the end of bold text, Cmd+B makes the text typed next plain; Cmd+B again, bold", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
+  await ed.clickEnd("li strong");
+  await ed.press("ControlOrMeta+b");
+  await ed.type(" plain");
+  await ed.press("ControlOrMeta+b");
+  await ed.type("B");
+  await expect.poll(() => ed.source()).toContain("<li>A <strong>new</strong> plain<strong>B</strong> editor</li>");
+});
+
+test("Cmd+I and Cmd+U with no selection style the text typed next, and end it again", async ({ tab }) => {
+  const ed = await open(tab, "#last");
+  for (const [key, tag] of [
+    ["i", "em"],
+    ["u", "u"],
+  ]) {
+    await ed.type(" ");
+    await ed.press(`ControlOrMeta+${key}`);
+    await ed.type(tag);
+    await ed.press(`ControlOrMeta+${key}`);
+    await ed.type("!");
+  }
+  await expect.poll(() => ed.source()).toContain(`<p id="last">Last paragraph. <em>em</em>! <u>u</u>!</p>`);
+  await ed.shows(PAGE.replace("Last paragraph.", "Last paragraph. em! u!|"));
+});
 
 test("one undo after Enter over a selection gives back the selected text", async ({ tab }) => {
     const ed = await open(tab, "#last");

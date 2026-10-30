@@ -4,7 +4,7 @@ import type { ChangeSet } from "@codemirror/state";
 import * as M from "../../shared/manuscript";
 import type { InlineStyle } from "./types";
 
-export const STYLE_TAGS: Record<InlineStyle, string[]> = { strong: ["strong", "b"], em: ["em", "i"], code: ["code"] };
+export const STYLE_TAGS: Record<InlineStyle, string[]> = { strong: ["strong", "b"], em: ["em", "i"], code: ["code"], u: ["u"] };
 
 /** Inline elements that only style text, which clearing formatting takes off. */
 export const FORMAT_TAGS = new Set(["strong", "b", "em", "i", "code", "a", "u", "s", "strike", "del", "ins", "mark", "small", "sub", "sup", "kbd"]);

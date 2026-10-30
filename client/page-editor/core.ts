@@ -20,6 +20,16 @@ export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.user
 
 export const noHistory = () => Transaction.addToHistory.of(false);
 
+/**
+ * A part the page edits itself: `contenteditable` (not "false") in a part marked `data-erga-noedit`. The browser edits
+ * it as the page wrote it, and the editor never saves it (agents/document/PROMPT.md, rule 4). Without the mark, the
+ * page's own editable box is text like any other, and the editor saves it.
+ */
+export const pageOwnBox = (el: Element): boolean =>
+  !!el.closest(`[${M.NO_EDIT_ATTR}]`) &&
+  !!el.closest('[contenteditable]:not([contenteditable="false"])') &&
+  el.closest('[contenteditable]:not([contenteditable="false"])') != el.ownerDocument.body;
+
 export abstract class EditorCore {
   constructor(readonly config: PageEditorConfig) {
     this.state = config.state;
@@ -233,7 +243,7 @@ export abstract class EditorCore {
 
   /** One element for islands: an island, or text, whose children are looked at in turn. */
   protected markIsland(c: Element, inUnit: boolean): void {
-    if (c.localName.startsWith("erga-") || c.hasAttribute("data-erga")) return;
+    if (c.localName.startsWith("erga-") || c.hasAttribute("data-erga") || pageOwnBox(c)) return;
     if (this.unitByEl.has(c) || c.querySelector("[data-erga-id]")) this.islands(c);
     else if (!(inUnit && (M.INLINE.has(c.localName) || M.ATOMIC.has(c.localName) || c.localName == "br"))) {
       this.keepOwn(c);
@@ -289,7 +299,11 @@ export abstract class EditorCore {
     const el = this.els[unit.id];
     if (!el || el.classList.contains("erga-locked")) return false;
     const nodes = this.textNodes(el);
-    const ok = nodes.length == unit.runs.length && nodes.every((n, i) => same(n.nodeValue!, unit.runs[i].text));
+    let ok = nodes.length == unit.runs.length && nodes.every((n, i) => same(n.nodeValue!, unit.runs[i].text));
+    // Others split the text into other nodes (an extension's <span> around a word): the same text, so the unit is drawn
+    // again from its HTML, and their element goes with it (docs/design/view.md, "Ownership").
+    if (!ok && unit.contentTo == unit.node.closeFrom && same(nodes.map((n) => n.nodeValue).join(""), unit.runs.map((r) => r.text).join("")))
+      ok = this.redraw(unit, el);
     if (!ok) {
       el.classList.add("erga-locked");
       this.keepOwn(el);
@@ -298,6 +312,9 @@ export abstract class EditorCore {
     }
     return ok;
   }
+
+  /** Draws a unit's content again from its HTML (render.ts); whether its text then matches. */
+  protected abstract redraw(unit: M.Unit, el: Element): boolean;
 
   /**
    * Why a unit's text can't be mapped to the source, in words someone can
@@ -346,8 +363,11 @@ export abstract class EditorCore {
     if (!u) return null;
     const el = this.els[u.id]!;
     const nodes = this.textNodes(el);
-    if (nodes.length != u.runs.length) return null;
-    if (node.nodeType == 3) {
+    // Others split the text into other nodes (an extension's <span> around a word): the same text, read by its length
+    // (verify draws the unit again before an edit).
+    const split = nodes.length != u.runs.length;
+    if (split && !same(nodes.map((n) => n.nodeValue).join(""), u.runs.map((r) => r.text).join(""))) return null;
+    if (node.nodeType == 3 && !split) {
       const i = nodes.indexOf(node as Text);
       if (i < 0) return null;
       return M.runPos(u.runs[i], offset);
@@ -368,8 +388,8 @@ export abstract class EditorCore {
       return u.contentFrom;
     }
     let len = range.toString().length;
-    for (let i = 0; i < nodes.length; i++) {
-      const l = nodes[i].nodeValue!.length;
+    for (let i = 0; i < u.runs.length; i++) {
+      const l = (split ? u.runs[i].text : nodes[i].nodeValue!).length;
       if (len <= l) return M.runPos(u.runs[i], len);
       len -= l;
     }
