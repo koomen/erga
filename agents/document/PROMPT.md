@@ -94,6 +94,8 @@ rendered page:
     when they resume. While paused, ignore that input and stop anything that
     changes the page on its own (timers, autoplay); animation may keep
     running. Outside the editor nothing calls it, so the page works as usual.
+    A page with `ergaPause` opens in the editor with the keys going to the
+    page (a deck's arrows work at once); a click on text starts editing.
 
     ```js
     let paused = false;
