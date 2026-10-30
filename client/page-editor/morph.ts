@@ -96,8 +96,18 @@ function attrs(live: Element, a: Element, b: Element, ops: Op[]): boolean {
   return true;
 }
 
+/**
+ * An element the browser put in the page, not the page's source: a custom element (a name with a "-") where the
+ * rendered HTML has none of that name. Extensions add these (Grammarly's <grammarly-desktop-integration>, password
+ * managers' buttons) at the end of the body; counted, they made every morph of the body fail.
+ */
+const foreign = (n: Node, a: Node) =>
+  n.nodeType == 1 && (n as Element).localName.includes("-") && ![...a.childNodes].some((c) => c.nodeName == n.nodeName);
+
 function children(live: Node, a: Node, b: Node, ops: Op[]): boolean {
-  const lc = [...live.childNodes].filter((n) => !editors(n)), ac = [...a.childNodes], bc = [...b.childNodes];
+  const lc = [...live.childNodes].filter((n) => !editors(n) && !foreign(n, a)),
+    ac = [...a.childNodes],
+    bc = [...b.childNodes];
   // The page must still be what it was rendered from here, node for node.
   if (lc.length != ac.length || lc.some((n, i) => n.nodeName != ac[i].nodeName)) return false;
   const matches = lineUpNodes(ac, bc);

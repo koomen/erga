@@ -132,3 +132,33 @@ test(
     `);
   })
 );
+
+// A browser extension (Grammarly, a password manager) adds its own element to the page's body. Before, that made the
+// editor's patch of the page fail, and Tab then Shift+Tab left the item's old place as a blank bullet until a reload.
+// A custom element is left out of the patch; any other element the page didn't have makes the page load again after
+// the Tab, so that test waits for it, as a person's next key would.
+for (const [what, tag] of [
+  ["a custom element", "grammarly-desktop-integration"],
+  ["a plain element", "div"],
+])
+  test(`Tab then Shift+Tab leaves no blank bullet when an extension has put ${what} in the page`, async ({ tab }) => {
+    const ed = await empty(tab);
+    await ed.type("- One");
+    await ed.press("Enter");
+    await ed.type("Two");
+    await ed.press("Enter");
+    await ed.type("Three");
+    await ed.press("ArrowUp");
+    await ed.press("End");
+    await ed.frame(`(document.body.appendChild(document.createElement("${tag}")), true)`);
+    await ed.press("Tab");
+    if (tag == "div") await ed.idle();
+    await ed.press("Shift+Tab");
+    if (tag == "div") await ed.idle();
+    await ed.type("X");
+    await ed.shows(`
+      • One
+      • TwoX|
+      • Three
+    `);
+  });
