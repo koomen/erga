@@ -75,6 +75,8 @@ export interface PageEditorConfig {
   self?: MarkAuthor;
   /** The page is paused (it loaded again while it was: setPaused). */
   paused?: boolean;
+  /** Checks after each change that the page shows its HTML, and logs a difference as an error (the tests: check.ts). */
+  check?: boolean;
   /** Keys and input that came while the page loaded again (the shell held them), to apply first, in order. */
   held?: HeldInput[];
   /**

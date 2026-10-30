@@ -129,6 +129,7 @@ test(
 test(
   "- [ ] makes a to-do item that shows a checkbox and no bullet",
   knownBug(async ({ tab }: { tab: Tab }) => {
+    tab.knownDrift = "the to-do item's list-style";
     const ed = await empty(tab);
     await keys(ed, "- [ ] Walk");
     await ed.shows(`

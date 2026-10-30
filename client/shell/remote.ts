@@ -175,7 +175,7 @@ export class RemotePage {
         if (this.ready) return;
         this.ready = true;
         this.authority.reset();
-        const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
+        const { __ergaTimescale: timescale, __ergaCheck: check } = globalThis as { __ergaTimescale?: number; __ergaCheck?: boolean };
         this.post({
           type: "init",
           state: this.state.toJSON(),
@@ -183,6 +183,7 @@ export class RemotePage {
           self: c.self,
           tracking: this.tracking,
           ...(timescale ? { timescale } : {}),
+          ...(check ? { check } : {}),
           ...(c.scroll ? { scroll: c.scroll } : {}),
           ...(this.zoom != 1 ? { zoom: this.zoom } : {}),
           ...(this.carry ? { carry: this.carry, ...(this.carryDrops?.length ? { drops: this.carryDrops } : {}) } : {}),

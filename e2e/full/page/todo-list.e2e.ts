@@ -39,6 +39,8 @@ test("[ ] in a paragraph makes a to-do list; Enter makes the next item; a click 
 });
 
 test("- [x] makes a ticked item; Backspace at its text's start takes the checkbox off", async ({ tab }) => {
+  // The <li>'s style="list-style: none" does not reach the page: it still draws the bullet (as "- [ ] " below).
+  tab.knownDrift = "the to-do item's list-style";
   const ed = await openEditor(tab, await servers.main(), "todo-list");
   await ed.clickEnd("p");
   await ed.press("Enter");

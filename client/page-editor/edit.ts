@@ -66,6 +66,7 @@ export abstract class EditorEdit extends EditorRender {
       else this.paintMarks();
     }
     this.syncDOMSelection(true);
+    if (tr.docChanged) this.changed();
     if (tr.docChanged || tr.scrollIntoView) this.scrollCaretIntoView();
     this.notify({
       docChanged: tr.docChanged,

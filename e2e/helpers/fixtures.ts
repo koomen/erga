@@ -120,9 +120,17 @@ export interface Tab {
   errors: string[];
   /** Fail the test at its end if the page had errors (openEditor sets it, unless told the page has some). */
   strict: boolean;
+  /**
+   * The page is known not to show its HTML at some point (the page editor's check logs it: client/page-editor/check.ts):
+   * what is wrong. The test fails if the check finds nothing, so the fix takes the mark off (as knownBug).
+   */
+  knownDrift?: string;
   /** A server for this test alone, disposed of after it. */
   own(opts?: ServerOptions): Promise<Server>;
 }
+
+/** What the page editor's check logs when the page does not show its HTML (client/page-editor/render.ts, report). */
+const DRIFT = "the page does not show its HTML";
 
 const extended = web.extend<{ tab: Tab }>({
   tab: async ({ browser }, use) => {
@@ -138,6 +146,11 @@ const extended = web.extend<{ tab: Tab }>({
       async own(opts) { const s = await startServer(opts); owned.push(s); return s; },
     };
     try { await use(tab); } finally { for (const s of owned) s.dispose(); }
+    if (tab.knownDrift) {
+      const drift = errors.filter((e) => e.includes(DRIFT));
+      if (!drift.length) throw new Error(`the page shows its HTML now: take off the knownDrift mark (${tab.knownDrift})`);
+      errors.splice(0, errors.length, ...errors.filter((e) => !e.includes(DRIFT)));
+    }
     if (tab.strict && errors.length) throw new Error(`the page had errors:\n${errors.join("\n")}`);
   },
 });

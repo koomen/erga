@@ -13,6 +13,7 @@ import { PAGE_STYLE } from "./page-style";
 import { describeProblem, type RawProblem } from "./problems";
 import { noHistory } from "./core";
 import { EditorMarks } from "./marks";
+import { differ, Ownership } from "./check";
 
 /** How long after the person's click or key the page may make a custom edit: as long as a browser's user activation lasts. */
 const GESTURE_MS = 5000;
@@ -100,7 +101,52 @@ export abstract class EditorRender extends EditorMarks {
     // The text can move with no change of size: a scroll in an element, a pan of the page's own (moves.ts).
     watchMoves(doc, win, () => this.queuePaint());
     this.paintMarks();
+    if (this.config.check) {
+      this.ownership?.stop();
+      this.ownership = new Ownership(doc);
+      this.checkView(true);
+    }
     this.release();
+  }
+
+  /** Who made each element of the page, for the check (config.check only). */
+  protected ownership: Ownership | null = null;
+  /** The differences the check reported, each once. */
+  private reported = new Set<string>();
+
+  /** After a change the editor made to the page: the check runs once it is done (config.check only). */
+  protected changed(): void {
+    if (!this.ownership) return;
+    this.ownership.mine();
+    queueMicrotask(() => this.checkView());
+  }
+
+  /**
+   * Checks that the page shows its HTML (check.ts), and logs each difference as an error. At the start (`start`), a
+   * part that differs is the page's own (its script built it), and is not checked again.
+   */
+  protected checkView(start = false): void {
+    const doc = this.doc,
+      own = this.ownership;
+    if (!doc?.body || !own || this.rendering || this.stopped) return;
+    const want = new DOMParser().parseFromString(this.analyze(this.src).html, "text/html").body;
+    const skip = (e: Element) => own.owned.has(e) || e.classList.contains("erga-locked");
+    for (let i = 0; i < 100; i++) {
+      const d = differ(doc.body, want, skip, own.foreign, own.theirs);
+      if (!d) return;
+      if (d.at == doc.body) {
+        if (!start) this.report(d.message);
+        return;
+      }
+      own.owned.add(d.at);
+      if (!start) this.report(d.message);
+    }
+  }
+
+  private report(message: string): void {
+    if (this.reported.has(message)) return;
+    this.reported.add(message);
+    console.error(`page editor: the page does not show its HTML: ${message}`);
   }
 
   /** After the page was made afresh: the text at `view.pos` where it was, `view.top` down the window (see onReload). */
@@ -120,6 +166,8 @@ export abstract class EditorRender extends EditorMarks {
     this.unbind();
     this.markObserver?.disconnect();
     this.markObserver = null;
+    this.ownership?.stop();
+    this.ownership = null;
     clearTimeout(this.fadeTimer);
     const doc = this.doc;
     if (!doc) return;
