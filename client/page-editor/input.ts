@@ -44,6 +44,9 @@ export abstract class EditorInput extends EditorClipboard {
       if (this.ours(e)) this.compositionend();
     });
     on("selectionchange", () => this.selectionchange());
+    on("focusin", (e) => {
+      if ((e.target as Element).hasAttribute?.("data-erga-id")) this.leftText = false;
+    });
     on("paste", (e) => {
       if (this.ours(e) || this.spanning) this.paste(e);
     });

@@ -142,10 +142,22 @@ window.addEventListener("message", (e: MessageEvent) => {
     // The shell focuses this frame as it asks (Remote.focus): if this frame lost the focus since, something that opened
     // after the ask has it (the pages card, the agent's box), and keeps it.
     // (The shell's focus can reach this window a moment after its word: then, as it does.)
-    case "focus": if (document.hasFocus()) page.focus(); else addEventListener("focus", () => page?.focus(), { once: true }); return;
-    case "reveal": page.reveal(m.pos); return;
-    case "peers": page.setPeers(m.peers); return;
-    case "detach": detach(m.id); return;
+    case "focus":
+      if (document.hasFocus()) page.focus();
+      else addEventListener("focus", () => page?.focus(), { once: true });
+      return;
+    case "leave":
+      page.leaveText();
+      return;
+    case "reveal":
+      page.reveal(m.pos);
+      return;
+    case "peers":
+      page.setPeers(m.peers);
+      return;
+    case "detach":
+      detach(m.id);
+      return;
     case "attach":
       relay.reset(m.version);
       detached = false;
@@ -434,7 +446,7 @@ function watchPage() {
   // The shell's shortcuts, from anywhere on the page.
   on(win, "keydown", (e) => {
     const k = e as KeyboardEvent;
-    if (k.defaultPrevented || !isAppShortcut(k, isMac)) return;
+    if (k.defaultPrevented || k.isComposing || !isAppShortcut(k, isMac)) return;
     k.preventDefault();
     post({ type: "key", keys: { key: k.key, metaKey: k.metaKey, ctrlKey: k.ctrlKey, shiftKey: k.shiftKey, altKey: k.altKey } });
   });
