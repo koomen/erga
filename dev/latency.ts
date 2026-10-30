@@ -17,12 +17,23 @@ export function latencyOf(setting: string | undefined): [number, number] | null 
   return max > 0 && min <= max ? [min, max] : null;
 }
 
-/** Runs each call `range` ms later, in the order of the calls. */
+/**
+ * Runs each call `range` ms later, in the order of the calls: one queue and one timer (timers of their own, due at the
+ * same moment, can run out of order, and a WebSocket frame's header and its data are two writes).
+ */
 function line([min, max]: [number, number]) {
-  let last = 0;
+  const queue: { at: number; f: () => void }[] = [];
+  let last = 0,
+    timer: ReturnType<typeof setTimeout> | null = null;
+  const run = () => {
+    timer = null;
+    while (queue.length && queue[0].at <= Date.now()) queue.shift()!.f();
+    if (queue.length) timer = setTimeout(run, queue[0].at - Date.now());
+  };
   return (f: () => void) => {
     last = Math.max(last, Date.now() + min + Math.random() * (max - min));
-    setTimeout(f, last - Date.now());
+    queue.push({ at: last, f });
+    timer ??= setTimeout(run, last - Date.now());
   };
 }
 
