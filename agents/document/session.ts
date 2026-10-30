@@ -133,18 +133,10 @@ const ELSEWHERE = Schema.optionalKey(
 export type ServerAgentTool = AgentTool;
 
 const TOOL_ACTIVITY: Record<string, string> = {
-  new_page: "making a page",
-  make_project: "making it a project",
-  make_document: "making it a document",
-  list_pages: "looking at the pages",
   open_page: "opening a page",
-  mkdir: "making a folder",
-  mv: "moving",
-  rm: "deleting",
   read: "reading",
   edit: "editing",
   write: "writing",
-  ls: "looking around",
   find: "looking for files",
   grep: "searching",
   view_page: "looking at the page",
@@ -155,12 +147,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   page_inspect: "inspecting the live page",
   page_click: "clicking on the page",
   page_key: "pressing a key on the page",
-  get_title: "reading the title",
-  set_title: "renaming the document",
-  list_versions: "looking at versions",
-  read_version: "reading an old version",
   diff_versions: "comparing versions",
-  restore_version: "restoring a version",
 };
 
 export async function startSession(opts: AgentSessionOptions): Promise<AgentSession> {
@@ -258,20 +245,13 @@ export async function startSession(opts: AgentSessionOptions): Promise<AgentSess
   const tools = makeTools(ws, {
     view: (req) => opts.view({ ...req, after: stateVector(doc) }),
     readAsset: opts.readAsset,
-    naming: opts.naming,
     versions: opts.versions,
     lastTurn: () => lastTurn,
     canEdit: opts.canEdit,
     by: () => byLine(owner.id, acting.via),
     caughtUp,
-    pages: opts.pages,
     open: opts.open,
     files: opts.files,
-    tree: opts.tree && (async (op) => {
-      if (!opts.canEdit()) throw new Error("Your user can only view this document, so you can't change it.");
-      await opts.tree!(op);
-      await caughtUp();
-    }),
     edited: (path, at) => {
       // One undo step per tool call, and the agent's cursor where it last wrote.
       undo.stopCapturing();

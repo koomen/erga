@@ -6,15 +6,26 @@ await servers.short();
 
 test("ls, mkdir, new_page, read, mv, find, grep and rm over the API; rm refuses the document's own page", async () => {
   const s = await site(await servers.short(), { pages: true });
-  const ls = await s.tool("ls", {});
-  expect(ls.ok).toBe(true);
-  // Each line: its kind (text, a file kept whole, dir), size and time, then its name.
-  expect(ls.text.split("\n").map((l) => l.trim().split(/\s{2,}/).pop()).join(" ")).toBe("about.html blog/ index.html style.css");
-  expect(ls.text).toMatch(/^text\s+\d+ B\s+.*about\.html$/m);
-  expect(ls.text).toMatch(/^dir\s+blog\/$/m);
+  /** ls's answer (JSON): every file under a folder, with its kind, type, size and time, and the folders. */
+  const ls = async (path?: string) =>
+    JSON.parse((await s.tool("ls", path ? { path } : {})).text) as {
+      files: { path: string; kind: string; size: number }[];
+      folders: string[];
+    };
+  const all = await ls();
+  expect(all.files.map((f) => f.path).sort()).toEqual([
+    "about.html",
+    "blog/blog.css",
+    "blog/index.html",
+    "blog/post.html",
+    "index.html",
+    "style.css",
+  ]);
+  expect(all.files.find((f) => f.path == "about.html")).toMatchObject({ kind: "text" });
+  expect(all.folders).toContain("blog");
   let r = await s.tool("mkdir", { path: "notes/2026" });
   expect(r.ok).toBe(true);
-  expect((await s.tool("ls", { path: "notes/2026" })).text).toContain("empty folder");
+  expect((await ls("notes/2026")).files).toEqual([]);
   r = await s.tool("new_page", { path: "notes/2026/first" });
   expect(r.ok).toBe(true);
   expect((await s.tool("read", { path: "notes/2026/first.html" })).text).toContain("<h1>Untitled</h1>");
@@ -24,20 +35,32 @@ test("ls, mkdir, new_page, read, mv, find, grep and rm over the API; rm refuses 
   expect((await s.tool("grep", { pattern: "two folders down" })).text.startsWith("blog/post.html:")).toBe(true);
   r = await s.tool("rm", { path: "journal" });
   expect(r.ok).toBe(true);
-  expect((await s.tool("ls", {})).text).not.toContain("journal");
+  expect(JSON.stringify(await ls())).not.toContain("journal");
   r = await s.tool("rm", { path: "index.html" });
   expect(r.ok).toBe(false);
   expect(r.text).toMatch(/own page/);
 });
 
-test("list_pages: every page with its title and address, folders, and the shared assets counted; open_page with no editor open says so", async () => {
+test("list_pages: every page with its title and address, the folders and the other files; open_page with no editor open says so", async () => {
   const s = await site(await servers.short(), { pages: true });
   const a = s.address;
   const lp = await s.tool("list_pages", {});
   expect(lp.ok).toBe(true);
-  for (const line of [`index.html  "Home"  ${a}  (home page)`, `about.html  "About"  ${a}/about`, `blog/`, `  blog/index.html  "Blog"  ${a}/blog`, `  blog/post.html  "A post"  ${a}/blog/post`]) expect(lp.text.split("\n")).toContain(line);
-  expect(lp.text).not.toContain("style.css");
-  expect(lp.text).toMatch(/\d+ page\(s\) and 2 other file\(s\) \(shared assets\)/);
+  const entries = (JSON.parse(lp.text) as { entries: { path: string; type: string; title?: string; address?: string }[] }).entries;
+  const pages = entries.filter((e) => e.type == "page").map((e) => `${e.path} "${e.title}" ${e.address}`);
+  for (const line of [
+    `index.html "Home" ${a}`,
+    `about.html "About" ${a}/about`,
+    `blog/index.html "Blog" ${a}/blog`,
+    `blog/post.html "A post" ${a}/blog/post`,
+  ])
+    expect(pages).toContain(line);
+  expect(
+    entries
+      .filter((e) => e.type != "page")
+      .map((e) => `${e.path} ${e.type}`)
+      .sort()
+  ).toEqual(["blog folder", "blog/blog.css file", "style.css file"]);
   const none = await s.tool("open_page", { path: "about" });
   expect(none.ok).toBe(true);
   expect(none.text).toContain("no editor open");

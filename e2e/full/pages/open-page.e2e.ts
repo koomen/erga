@@ -26,9 +26,9 @@ test("an agent in blog/post.html's editor sees one file system: every page, the 
   ], "The user has the page blog/post.html open.");
   expect(calls.map((c) => c.status)).toEqual(Array(7).fill("done"));
   // The same tools, as the same person's agent from outside, with their answers.
-  // (Each line: its kind, size and time, then its name.)
-  const ls = (await s.tool("ls", {})).text.split("\n").map((l) => l.trim().split(/\s{2,}/).pop());
-  for (const f of ["about.html", "blog/", "index.html", "style.css"]) expect(ls).toContain(f);
+  const ls = JSON.parse((await s.tool("ls", {})).text) as { files: { path: string }[]; folders: string[] };
+  for (const f of ["about.html", "blog/post.html", "index.html", "style.css"]) expect(ls.files.map((x) => x.path)).toContain(f);
+  expect(ls.folders).toContain("blog");
   expect((await s.tool("read", { path: "index.html" })).text).toContain("<h1>Home</h1>");
   expect((await s.tool("read", { path: "style.css" })).text).toContain("rgb(250, 246, 236)");
   expect((await s.tool("read", { path: "about.html" })).text).toContain("Who made this");
@@ -48,12 +48,12 @@ test("open_page, from the document agent and from an external one, switches the 
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/post?edit true`);
 });
 
-test("new_page with open: true, and new_page then open_page, take the editor to the new page; its page deleted, the editor goes home", async ({ tab }) => {
+test("new_page then open_page take the editor to the new page; its page deleted, the editor goes home", async ({ tab }) => {
   const { s, p } = await onPost(tab);
-  const made = await s.tool("new_page", { path: "blog/second", open: true });
+  const made = await s.tool("new_page", { path: "blog/second" });
   expect(made.ok).toBe(true);
-  expect(made.text).toContain("Made blog/second.html");
-  expect(made.text).toContain("Opened blog/second.html");
+  expect(JSON.parse(made.text).entries.map((e: { path: string }) => e.path)).toContain("blog/second.html");
+  expect((await s.tool("open_page", { path: "blog/second" })).text).toContain("Opened blog/second.html");
   await expect.poll(async () => `${await where(p)} ${await ready(p)}`).toBe(`${s.address}/blog/second?edit true`);
   await expect.poll(() => inFrames<string>(p, `document.querySelector("h1")?.textContent ?? null`)).toBe("Untitled");
   await s.tool("new_page", { path: "blog/third" });

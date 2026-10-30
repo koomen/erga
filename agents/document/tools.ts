@@ -1,5 +1,6 @@
-// The document agent's tools: the files (read, edit, write and the rest), the live page, versions, the viewers'
-// agent, the document's tree, its pages and its name.
+// The document agent's tools: the files' text (read, edit, write, find, grep), the live page, and diff_versions.
+// What a person does with the document as a whole (its name, pages, folders, files' list and versions) is an
+// operation (server/operations/editor.ts), which the agent has as a tool too.
 
 import * as Effect from "effect/Effect";
 import { Base64 } from "effect/encoding";
@@ -19,14 +20,11 @@ import {
   type LiveRequest,
   type LiveResult,
 } from "../../shared/live-page";
-import { pageAddress, type TreeEntry, type TreeOp } from "../../document/pages";
 import { readableSize } from "../../shared/bytes";
-import type { DocName } from "../../document/api";
-import type { Naming } from "../../document/names";
-import { unifiedDiff, type RestoreResult, type Version, type VersionsState } from "../../document/versions";
+import { unifiedDiff } from "../../document/versions";
 import { WorkspaceError, globToRegExp, modelPath, type Workspace } from "./workspace";
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
-import type { FilesAccess, OpenResult, PageTree, VersionsAccess } from "../../document/agent";
+import type { FilesAccess, OpenResult, VersionsAccess } from "../../document/agent";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -37,20 +35,8 @@ const IMAGE_READ_MAX = 3_750_000;
 const WRITE_BYTES_MAX = 25_000_000;
 
 /** The tools that change the document: someone who may only view it (and their agent, and their token) has none of them. */
-export const CHANGES = new Set([
-  "edit",
-  "write",
-  "mv",
-  "rm",
-  "mkdir",
-  "new_page",
-  "make_project",
-  "make_document",
-  "set_title",
-  "restore_version",
-]);
+export const CHANGES = new Set(["edit", "write"]);
 
-const stamp16 = (at: number | null) => at ? new Date(at).toISOString().slice(0, 16).replace("T", " ") : "";
 
 /** The agent's tools, over a workspace. */
 export function makeTools(
@@ -59,7 +45,6 @@ export function makeTools(
     view: (req: ViewRequest) => Promise<ViewResult>;
     readAsset: (path: string) => Promise<Uint8Array | null>;
     edited: (path: string, at: number) => void;
-    naming?: Naming;
     versions?: VersionsAccess;
     /** The version the document was at when this agent's last turn ended (diff_versions' "last_turn"); null before its first turn ends. */
     lastTurn?: () => Promise<string | null>;
@@ -68,10 +53,6 @@ export function makeTools(
     by?: () => string;
     /** Resolves once the agent's replica has everything the room has (after a restore, say). */
     caughtUp?: () => Promise<void>;
-    /** The document's file tree: new pages and folders, moves, deletes; resolves once the agent's replica has the result. */
-    tree?: (op: TreeOp) => Promise<void>;
-    /** The document's pages, with titles, and its address (list_pages). */
-    pages?: () => Promise<PageTree>;
     /** Switches the person's open editor tabs to a page (open_page). */
     open?: (path: string) => Promise<OpenResult>;
     /** Every file's size, time and kind, PDFs' text, writes of bytes; without it, ls lists names, grep text files, and write takes text only. */
@@ -209,37 +190,6 @@ export function makeTools(
       },
     },
     {
-      name: "ls",
-      label: "List",
-      description: "List the files and folders directly inside a folder of the document (default: its root, which holds every page's files and the shared assets): each file's kind (text, or a file kept whole, with its type), size and time (UTC). Folders end in /.",
-      parameters: Schema.Struct({ path: Schema.optionalKey(Schema.String.annotate({ description: "Folder to list" })) }),
-      execute: async (_id, p: { path?: string }) => {
-        const dir = p.path && p.path.replace(/^[./]+$/, "") ? run(modelPath(p.path!)) + "/" : "";
-        const entries = new Set<string>();
-        for (const f of [...ws.paths(), ...ws.folders().map((d) => d + "/")]) if (f.startsWith(dir) && f != dir) { const rest = f.slice(dir.length); entries.add(rest.includes("/") ? rest.slice(0, rest.indexOf("/") + 1) : rest); }
-        if (!entries.size) {
-          if (dir && ws.folders().includes(dir.slice(0, -1))) return text(`${dir} is an empty folder.`);
-          throw new Error(`${p.path} is empty or doesn't exist`);
-        }
-        const names = [...entries].sort();
-        const stats = await opts.files?.stats().catch(() => null);
-        if (!stats) return text(names.join("\n"));
-        const rows = names.map((name) => {
-          if (name.endsWith("/")) return ["dir", "", "", name];
-          const s = stats.get(dir + name);
-          return [
-            s?.kind == "file" ? "file" : "text",
-            s?.size == null ? "?" : readableSize(s.size),
-            stamp16(s?.at ?? null),
-            s?.kind == "file" ? `${name}  (${s.type})` : name,
-          ];
-        });
-        const width = [0, 1, 2].map((i) => Math.max(...rows.map((r) => r[i].length)));
-        const files = names.filter((n) => !n.endsWith("/")).length;
-        return text(rows.map((r) => r.map((c, i) => (i < 3 ? c.padEnd(width[i]) : c)).join("  ")).join("\n") + (rows.length > 20 ? `\n${files} file${files == 1 ? "" : "s"}, ${rows.length - files} folder${rows.length - files == 1 ? "" : "s"}` : ""));
-      },
-    },
-    {
       name: "find",
       label: "Find files",
       description: "Find files anywhere in the document by glob pattern, e.g. \"**/*.css\", \"*.html\" (top level) or \"posts/**/*.html\".",
@@ -340,10 +290,8 @@ export function makeTools(
       },
     },
     ...liveTools(opts.view),
-    ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
-    ...(opts.tree ? treeTools(opts.tree, opts.open) : []),
-    ...(opts.naming ? namingTools(opts.naming) : []),
-    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? (() => "agent"), opts.lastTurn ?? (async () => null), ws, opts.caughtUp ?? (async () => {})) : []),
+    ...(opts.open ? [openPage(opts.open)] : []),
+    ...(opts.versions ? [diffVersions(opts.versions, opts.lastTurn ?? (async () => null))] : []),
   ] as AgentTool[];
 }
 
@@ -496,61 +444,13 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
   ] as AgentTool[];
 }
 
-/** list_versions, read_version, diff_versions and restore_version: what the person can do with versions, their agent can (and diff them). */
-function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () => string, lastTurn: () => Promise<string | null>, ws: Workspace, caughtUp: () => Promise<void>): AgentTool[] {
+/**
+ * diff_versions: what changed between two versions, or since the agent's last turn (which only it knows). Listing,
+ * reading and restoring versions are operations (server/operations/editor.ts), as a person does them.
+ */
+function diffVersions(versions: VersionsAccess, lastTurn: () => Promise<string | null>): AgentTool {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
-  const line = (v: Version) => `${v.id}  ${v.at}  ${v.authors.join(", ") || "(unknown)"}  ${v.description ?? "(description coming)"}`;
-  return [
-    {
-      name: "list_versions",
-      label: "List versions",
-      description: "List the document's versions, newest first: each one's id (v1, v2...), when it was cut, who edited, and a short description. A version is a snapshot of every file, cut after a burst of edits (when edits pause, when an agent's turn ends, when the last editor leaves). Viewers always see the document as it is now.",
-      parameters: Schema.Struct({
-        before: Schema.optionalKey(
-          Schema.String.annotate({ description: 'Only versions older than this one (its id, e.g. "v12"), to page back' })
-        ),
-        limit: Schema.optionalKey(Schema.Finite.annotate({ description: "How many (default 10, at most 100)" })),
-      }),
-      execute: async (_id, p: { before?: string; limit?: number }) => {
-        const s = await versions.state({ before: p.before ?? null, limit: p.limit });
-        const more = s.versions.length && s.versions[s.versions.length - 1].n > 1 ? `\n[Older versions: before=${s.versions[s.versions.length - 1].id}]` : "";
-        return text(`Current: ${s.current.id}${s.pending ? " (with edits since, not yet a version)" : ""}; ${s.total} version(s).\n\n${s.versions.map(line).join("\n")}${more}`);
-      },
-    },
-    {
-      name: "read_version",
-      label: "Read a version",
-      description: `Read an old version of the document. Without path: its files and details. With path: that file's text as it was in that version (cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; use offset/limit), or the picture for an image. To bring an old version, or one file of it, back, use restore_version.`,
-      parameters: Schema.Struct({
-        version: Schema.String.annotate({ description: 'The version\'s id ("v3") or number' }),
-        path: Schema.optionalKey(Schema.String.annotate({ description: "A file in it, relative to the document's folder" })),
-        offset: Schema.optionalKey(Schema.Finite.annotate({ description: "Line number to start reading from (1-indexed)" })),
-        limit: Schema.optionalKey(Schema.Finite.annotate({ description: "Maximum number of lines to read" })),
-      }),
-      execute: async (_id, p: { version: string; path?: string; offset?: number; limit?: number }) => {
-        const v = await versions.version(p.version);
-        if (!v) throw new Error(`There's no version "${p.version}": list_versions shows them.`);
-        if (!p.path) return text(`${line(v)}\nPage: ${v.index}\nFiles:\n${v.files.join("\n")}`);
-        const path = p.path.replace(/^\.?\//, "");
-        const bytes = await versions.file(v.id, path);
-        if (!bytes) throw new Error(`${v.id} has no file ${path}. Its files: ${v.files.slice(0, 50).join(", ")}`);
-        if (IMAGE.test(path))
-          return {
-            content: [{ type: "image" as const, data: Base64.encode(bytes), mimeType: MIME[path.split(".").pop()!.toLowerCase()] }],
-            details: {},
-          };
-        let body: string;
-        try { body = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); } catch { return text(`${path} in ${v.id} is a binary file of ${bytes.length} bytes.`); }
-        const lines = body.split("\n");
-        const start = Math.max(0, (p.offset ?? 1) - 1);
-        let end = Math.min(lines.length, start + (p.limit ?? MAX_LINES));
-        let out = lines.slice(start, end).join("\n");
-        while (out.length > MAX_BYTES && end > start + 1) { end = start + Math.max(1, Math.floor((end - start) / 2)); out = lines.slice(start, end).join("\n"); }
-        if (end < lines.length) out += `\n\n[Showing lines ${start + 1}-${end} of ${lines.length}. Use offset=${end + 1} to continue.]`;
-        return text(out);
-      },
-    },
-    {
+  return {
       name: "diff_versions",
       label: "Diff versions",
       description: `See what changed in the document between two versions, as a unified diff for each file (files added, deleted and changed; binary files only say they changed). from: a version's id ("v3"), or "last_turn", the document as it was when your last turn ended (the default), to see what others changed since (and what you changed in this turn). to: a version's id, or "current", the document as it is now, up to the keystroke (the default). path: only that file, or the files in that folder. Cut at about ${MAX_BYTES / 1024}KB: pass path for more. Use it instead of reading whole files to compare them.`,
@@ -588,189 +488,26 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
         if (!d.files.length) return text(`No changes${what} from ${from.name} to ${to.name}.`);
         return text(`From ${from.name} to ${to.name}${what}: ${d.files.length} file(s) differ.\n\n${d.diff}`);
       },
-    },
-    {
-      name: "restore_version",
-      label: "Restore a version",
-      description: `Bring an old version back: its files are written over the document as it is now (files it didn't have are deleted), which everyone editing sees at once, and that becomes a new version, the current one. With path, only that file comes back, and the other files stay as they are: prefer this when only one file needs it, as others may be editing other pages. Nothing is lost: edits not yet in a version become one first, and every version stays. What's published in "manual" mode stays as it is. Answers the new current version's id and the restored text (up to ${MAX_BYTES / 1024}KB in all), so you can edit against it at once. Only someone who may edit the document may; only do it when asked.`,
-      parameters: Schema.Struct({
-        version: Schema.String.annotate({ description: 'The version\'s id ("v3") or number' }),
-        path: Schema.optionalKey(
-          Schema.String.annotate({ description: "Only this file, relative to the document's folder (it must be in that version)" })
-        ),
-      }),
-      execute: async (_id, p: { version: string; path?: string }) => {
-        if (!canEdit()) throw new Error("You may only view this document, so you can't restore a version.");
-        const r = await versions.restore(
-          p.version,
-          by(),
-          p.path ? Effect.runSync(Effect.mapError(modelPath(p.path), (e) => new Error(e.message))) : null
-        );
-        if (!r.ok) throw new Error(r.error);
-        // The agent edits its own replica: it has the restored text once it has caught up with the room.
-        await caughtUp();
-        const head = `Restored ${p.path ? `${r.files[0]} from ${r.from}` : `${r.from} (${r.files.length} file${r.files.length == 1 ? "" : "s"})`}. The current version is now ${r.current.id} ("${r.current.description}").`;
-        // Each restored text file as it is now, until the budget runs out; the agent's edits are based on what it's shown.
-        let budget = MAX_BYTES;
-        const shown: string[] = [], rest: string[] = [];
-        for (const path of r.files) {
-          if (!ws.isText(path)) { rest.push(`${path} (not text)`); continue; }
-          if (budget <= 0) { rest.push(path); continue; }
-          let body = Effect.runSync(Effect.orElseSucceed(ws.read(path), () => ""));
-          if (body.length > budget) {
-            const lines = body.split("\n");
-            let end = lines.length;
-            while (end > 1 && lines.slice(0, end).join("\n").length > budget) end = Math.max(1, Math.floor(end / 2));
-            body = `${lines.slice(0, end).join("\n")}\n[Showing lines 1-${end} of ${lines.length}: read ${path} for the rest.]`;
-          }
-          budget -= body.length;
-          shown.push(`=== ${path} ===\n${body}`);
-        }
-        const tail = rest.length ? `\n\n[Not shown: ${rest.join(", ")}. Read them before you edit them.]` : "";
-        return text(`${head}${shown.length ? ` Its text now, to edit against:\n\n${shown.join("\n\n")}` : ""}${tail}`);
-      },
-    },
-  ] as AgentTool[];
+  } as AgentTool;
 }
 
-/**
- * new_page, mkdir, mv and rm: the document's file tree, with the same powers
- * a person has in the editor's file tree (document/host.ts, runTreeOp, checks each).
- */
-function treeTools(tree: (op: TreeOp) => Promise<void>, open?: (path: string) => Promise<OpenResult>): AgentTool[] {
-  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
-  return [
-    {
-      name: "new_page",
-      label: "New page",
-      description: `Make a new page from the new-page template, at a path like "blog/post.html" (folders it's in are made too; without an extension it's .html). Each page has its own address: blog/post.html is /<owner>/<slug>/blog/post, blog/index.html is /<owner>/<slug>/blog. Then edit it like any file. (write also makes a page, from your own text.)${open ? " open: true also switches the user's editor to it (as open_page)." : ""}`,
-      parameters: Schema.Struct({
-        path: Schema.String.annotate({ description: 'Path of the new page, e.g. "about.html" or "blog/index.html"' }),
-        ...(open ? { open: Schema.optionalKey(Schema.Boolean.annotate({ description: "Also open it in the user's editor" })) } : {}),
+/** open_page: moves the person's open editor to another page of the document (the pages themselves: list_pages, an operation). */
+function openPage(open: (path: string) => Promise<OpenResult>): AgentTool {
+  return {
+    name: "open_page",
+    label: "Open a page",
+    description:
+      'Switch the user\'s open editor to another page of this document, by its file ("blog/post.html") or its address under the document ("blog/post", "" for the home page). Every editor tab the user has open on this document goes there. With none open, nothing happens, and the answer says so and gives the page\'s address. Use it when the user asks to go to a page, or to show them a page you made (new_page, then open_page).',
+    parameters: Schema.Struct({
+      path: Schema.String.annotate({
+        description: 'The page\'s file, e.g. "about.html", or its address under the document, e.g. "blog"',
       }),
-      execute: async (_id, p: { path: string; open?: boolean }) => {
-        await tree({ op: "new_page", path: p.path });
-        const file = /\.html$/i.test(p.path) ? p.path : `${p.path}.html`;
-        const made = `Made ${file} from the template.`;
-        if (!p.open || !open) return text(made);
-        return text(`${made} ${(await open(file)).message}`);
-      },
-    },
-    {
-      name: "mkdir",
-      label: "New folder",
-      description: "Make a folder (and any it's in). Empty folders stay until deleted.",
-      parameters: Schema.Struct({ path: Schema.String.annotate({ description: 'Path of the folder, e.g. "blog/drafts"' }) }),
-      execute: async (_id, p: { path: string }) => {
-        await tree({ op: "new_folder", path: p.path });
-        return text(`Made the folder ${p.path}.`);
-      },
-    },
-    {
-      name: "mv",
-      label: "Move",
-      description: "Move or rename a file or a folder (with everything in it). Nothing may be at the destination already. The document's own page (index.html at its root) can't be moved. Moving a page changes its address: fix links to it in other pages.",
-      parameters: Schema.Struct({
-        from: Schema.String.annotate({ description: "Path of the file or folder now" }),
-        to: Schema.String.annotate({ description: "Its new path" }),
-      }),
-      execute: async (_id, p: { from: string; to: string }) => { await tree({ op: "move", from: p.from, to: p.to }); return text(`Moved ${p.from} to ${p.to}.`); },
-    },
-    {
-      name: "rm",
-      label: "Delete",
-      description: "Delete a file, or a folder with everything in it. The document's own page (index.html at its root) can't be deleted. Only delete what you were asked to.",
-      parameters: Schema.Struct({ path: Schema.String.annotate({ description: "Path of the file or folder" }) }),
-      execute: async (_id, p: { path: string }) => { await tree({ op: "delete", path: p.path }); return text(`Deleted ${p.path}.`); },
-    },
-    {
-      name: "make_project",
-      label: "Make a project",
-      description: "Make this document a project: a folder of pages, each with its own address, instead of one page with files beside it. Only a project can have more than one page (new_page, or a new .html file). make_document turns it back while it has one page. Do it only when the user asks for it, or agrees to it (the Document/Project switch in the document's settings does the same).",
-      parameters: Schema.Struct({}),
-      execute: async () => { await tree({ op: "make_project" }); return text("It's a project now: new_page makes more pages, each with its own address."); },
-    },
-    {
-      name: "make_document",
-      label: "Make a document",
-      description: "Make this project a document again: one page (index.html) and any other files beside it. Only a project with one page, its index.html, can: delete its other pages first (rm), and only when the user asks. Other files (images, styles) stay. Do it only when the user asks for it, or agrees to it (the Document/Project switch in the document's settings does the same).",
-      parameters: Schema.Struct({}),
-      execute: async () => { await tree({ op: "make_document" }); return text("It's a document now: one page, index.html, and the files beside it."); },
-    },
-  ] as AgentTool[];
-}
-
-/** list_pages and open_page: the document as its users see it (pages), and moving the person's editor between them. */
-function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Promise<OpenResult>): AgentTool[] {
-  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
-  return [
-    {
-      name: "list_pages",
-      label: "List pages",
-      description: "List the document's pages: each page's file, title and address, by folder (folders end in /). Pages are the .html files; index.html is the home page. The other files (CSS, JS, images, PDFs...) are counted here: ls and find list them.",
-      parameters: Schema.Struct({}),
-      execute: async () => {
-        const t = await pages();
-        const lines = t.entries.filter((e) => e.type != "file").map((e) => {
-          const depth = e.path.split("/").length - 1, pad = "  ".repeat(depth);
-          if (e.type == "folder") return `${pad}${e.path}/`;
-          const rest = pageAddress(e.path);
-          return `${pad}${e.path}  "${e.title ?? "(untitled)"}"  ${t.address}${rest ? `/${rest}` : ""}${e.path == "index.html" ? "  (home page)" : ""}`;
-        });
-        const n = t.entries.filter((e) => e.type == "page").length, assets = t.entries.filter((e) => e.type == "file").length;
-        return text(`${n} page(s) and ${assets} other file(s) (shared assets).\n\n${lines.join("\n")}`);
-      },
-    },
-    ...(open ? [{
-      name: "open_page",
-      label: "Open a page",
-      description:
-        'Switch the user\'s open editor to another page of this document, by its file ("blog/post.html") or its address under the document ("blog/post", "" for the home page). Every editor tab the user has open on this document goes there. With none open, nothing happens, and the answer says so and gives the page\'s address. Use it when the user asks to go to a page, or to show them a page you made.',
-      parameters: Schema.Struct({
-        path: Schema.String.annotate({
-          description: 'The page\'s file, e.g. "about.html", or its address under the document, e.g. "blog"',
-        }),
-      }),
-      execute: async (_id: string, p: { path: string }) => text((await open(p.path)).message),
-    }] : []),
-  ] as AgentTool[];
-}
-
-/** get_title and set_title: the document's title and its address, kept in the directory, not in a file. */
-function namingTools(naming: Naming): AgentTool[] {
-  const describe = (n: DocName) =>
-    [
-    `Title: ${n.title}${n.titleSet ? " (set by someone)" : " (follows the page's first heading)"}`,
-    `Address: ${n.address} (slug "${n.slug}"${n.slugSet ? ", set by someone" : ", follows the title"})`,
-    `Always reachable at /d/${n.id}.`,
-  ].join("\n");
-  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
-  return [
-    {
-      name: "get_title",
-      label: "Read the title",
-      description: "Read the document's title (shown in the document list and the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title follows the page's first heading and the slug follows the title.",
-      parameters: Schema.Struct({}),
-      execute: async () => text(describe(await Effect.runPromise(naming.get()))),
-    },
-    {
-      name: "set_title",
-      label: "Rename the document",
-      description: "Set the document's title, its address slug (the last part of /<owner>/<slug>), or both. The slug is made from what you give (\"Q3 plan\" becomes \"q3-plan\"); one already used by another of the owner's documents is refused. An empty string goes back to following: the title the page's first heading, the slug the title. Old addresses keep redirecting to the new one, and everyone's open editor moves to it. Only rename when asked to; this doesn't change the page's text (edit its heading for that).",
-      parameters: Schema.Struct({
-        title: Schema.optionalKey(
-          Schema.String.annotate({ description: 'The new title, or "" to follow the page\'s first heading again' })
-        ),
-        slug: Schema.optionalKey(
-          Schema.String.annotate({ description: 'The new slug (lowercase letters, digits, dashes), or "" to follow the title again' })
-        ),
-      }),
-      execute: async (_id, p: { title?: string; slug?: string }) => {
-        if (p.title === undefined && p.slug === undefined) throw new Error("Give a title, a slug, or both.");
-        return text(`Renamed.\n${describe(await Effect.runPromise(naming.set(p)))}`);
-      },
-    },
-  ] as AgentTool[];
+    }),
+    execute: async (_id: string, p: { path: string }) => ({
+      content: [{ type: "text" as const, text: (await open(p.path)).message }],
+      details: {},
+    }),
+  } as AgentTool;
 }
 
 /**
@@ -781,16 +518,12 @@ function namingTools(naming: Naming): AgentTool[] {
  */
 export function documentToolSpecs(): { name: string; description: string; parameters: Schema.Struct<Schema.Struct.Fields> }[] {
   const none = () => { throw new Error("no document"); };
-  const naming = { get: none, set: none } as unknown as Naming;
-  const versions = { state: none, version: none, file: none, files: none, current: none, restore: none } as unknown as VersionsAccess;
+  const versions = { state: none, version: none, files: none, current: none } as unknown as VersionsAccess;
   return makeTools(null as unknown as Workspace, {
     view: none,
     readAsset: none,
     edited: none,
-    naming,
-    tree: none,
     versions,
-    pages: none,
     open: none,
   }).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters as Schema.Struct<Schema.Struct.Fields> }));
 }

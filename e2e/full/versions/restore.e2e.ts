@@ -46,7 +46,7 @@ test("restore_version, by the agent, is attributed to the person via their agent
   } finally { ada.disconnect(); }
 });
 
-test("restoring one file: the others stay, the answer has its text and the new version, and an edit lands right after", async () => {
+test("restoring one file: the others stay, the answer has the new version, and an edit lands right after", async () => {
   const { owner, id, ada, tool } = await setup();
   try {
     const before = (await owner.versions(id)).total;
@@ -61,9 +61,10 @@ test("restoring one file: the others stay, the answer has its text and the new v
     const s = await owner.versions(id);
     expect(t.status).toBe(200);
     expect(s.current.description).toBe(`Restored notes.md from version ${withNotes.n}`);
-    expect(t.text).toContain(`current version is now ${s.current.id}`);
-    expect(t.text).toContain("notes-one");
-    expect(t.text).not.toContain("notes-two");
+    expect(JSON.parse(t.text)).toMatchObject({ current: { id: s.current.id }, files: ["notes.md"] });
+    const read = (await tool("read", { path: "notes.md" })).text;
+    expect(read).toContain("notes-one");
+    expect(read).not.toContain("notes-two");
     // The restore of notes.md has reached the room by now (its answer comes after): index.html kept the edit.
     expect((await tool("read", { path: "index.html" })).text).toContain("keeps");
     expect(ada.str()).toContain("keeps");

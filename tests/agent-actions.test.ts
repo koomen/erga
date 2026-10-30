@@ -1,6 +1,6 @@
 // The rule: an embedded agent can do everything its person
 // can do in its domain. Every route in the files' own route tables, every
-// operation of the document API and of the page tree, and
+// endpoint of the document API, every operation, and
 // every route a page's script calls must be in the audit, AGENT_ACTIONS; each
 // one is the admin agent's or the document agent's with a tool that agent has,
 // or says why there's none (a secret, or not a person's action). A new route
@@ -79,10 +79,7 @@ function tableRoutes(file: string): string[] {
 
 /** The document API's endpoints, under a document's address. */
 const apiRoutes = () => [...read("document/api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map((m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`);
-/** The page tree's operations: each a POST to the tree. */
-const treeRoutes = () => [...read("document/pages.ts").matchAll(/\{ op: "(\w+)"/g)].map((m) => `POST /api/docs/<id>/tree op=${m[1]}`);
-
-const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRoutes(), ...treeRoutes()])];
+const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRoutes()])];
 /** The audited routes, and each one with several actions ("do=", "op=") as a whole too. */
 const audited = new Set(AGENT_ACTIONS.flatMap((a) => [a.route, a.route.replace(/ (do|op)=\w+$/, "")]));
 
@@ -96,16 +93,15 @@ test("the route tables are read: the known routes are found", () => {
     "POST /api/admin/agent/model",
     "GET /git/tree/<ref>/<path>",
     "POST /admin/auth do=save",
-    "POST /d/<id>/api/name",
-    "POST /api/docs/<id>/tree op=move",
-    "POST /api/docs/<id>/versions/<versionId>/restore",
+    "GET /d/<id>/api/doc",
+    "PUT /api/files/<path>",
     "POST /api/tools/<name>",
   ])
     expect(found).toContain(r);
-  expect(found.length).toBeGreaterThan(70);
+  expect(found.length).toBeGreaterThan(40);
 });
 
-test("every route in the route tables, the document API and the page tree is in the audit", () => {
+test("every route in the route tables and the document API is in the audit", () => {
   const missing = every().filter((r) => !audited.has(r));
   if (missing.length) console.log(`Not in agents/actions.ts (add each, with the agent's tool, or why there's none):\n${missing.join("\n")}`);
   expect(missing).toEqual([]);

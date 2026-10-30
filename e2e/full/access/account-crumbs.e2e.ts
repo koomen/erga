@@ -4,6 +4,7 @@
 // ink from where its box starts.)
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { getter, newDoc, unique } from "./access";
+import { runTool } from "../../helpers/tools";
 
 await servers.main();
 
@@ -27,8 +28,8 @@ test("Documents and the title share a baseline, the title's descenders whole, th
   const { id } = await newDoc(root);
   const slug = unique("gyp");
   const retitle = async (title: string) => {
-    const r = await get(`/d/${id}/api/name`, { method: "POST", headers: { "Content-Type": "application/json", Origin: root }, body: JSON.stringify({ title, slug }) });
-    expect(r.ok, await r.text()).toBe(true);
+    const r = await runTool(root, "rename_document", { document: id, title, slug });
+    expect(r.ok, r.error).toBe(true);
   };
   await retitle("Gyp jogging plan");
   await page.setViewportSize({ width: 1100, height: 720 });

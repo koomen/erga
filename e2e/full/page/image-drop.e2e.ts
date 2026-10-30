@@ -5,6 +5,7 @@
 // only text files.)
 import { expect, servers, settle, test, until, type Server, type Tab } from "../../helpers/fixtures";
 import { editor, F, type Editor } from "../../helpers/editor";
+import { idOf, runTool } from "../../helpers/tools";
 
 await servers.main();
 
@@ -30,7 +31,7 @@ async function open(tab: Tab, server: Server, files: Record<string, string> = {}
     .get("location")!
     .replace(/[?&]edit$/, "");
   const address = new URL(at, server.root).pathname;
-  const { id } = (await (await fetch(`${server.root}${address}/api/name`)).json()) as { id: string };
+  const id = await idOf(`${server.root}${address}`);
   for (const [path, body] of Object.entries({ "index.html": PAGE, ...files }))
     expect((await fetch(`${server.root}/d/${id}/api/files/${path}`, { method: "PUT", body })).status).toBe(200);
   await tab.page.goto(`${server.root}${address}${page ? `/${page}` : ""}?edit`);
@@ -40,7 +41,7 @@ async function open(tab: Tab, server: Server, files: Record<string, string> = {}
   return {
     ed,
     files: async () =>
-      ((await (await fetch(`${server.root}/d/${id}/api/files`)).json()) as { files: { path: string }[] }).files.map((f) => f.path),
+      ((await runTool(server.root, "ls", { document: id })).result as { files: { path: string }[] }).files.map((f) => f.path),
   };
 }
 

@@ -8,9 +8,11 @@
 // is from (the person the app vouched for), and the WebSockets, which
 // it accepts its own way and hands to `room.connect`, `addTab` and `hello`.
 //
-//   GET  /api/files          anyone who may view: every file (its kind, size and time) and the folders: the files view
 //   PUT  /api/files/<path>   editors: one file, its bytes the body (any kind, any size up to the limits: a text file is
 //                            text, anything else a blob in R2), replacing one at that path (document.ts, upload)
+//
+// The document's tree, its files' list and its name are the operations' (server/operations/editor.ts), which reach
+// them through the Durable Object's calls (tree, treeOp, files, rename), not over HTTP.
 
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -21,7 +23,7 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
-import type { AgentSession, DocumentAgents, FilesAccess, OpenResult, PageTree, VersionsAccess } from "./agent";
+import type { AgentSession, DocumentAgents, FilesAccess, OpenResult, VersionsAccess } from "./agent";
 import {
   AgentOff,
   Api,
@@ -29,7 +31,6 @@ import {
   BadRequest,
   ExplainBadRequests,
   ModelFixed,
-  NameRefused,
   NoSuchModel,
   NoSuchTool,
   Person,
@@ -202,7 +203,7 @@ export function makeHost(opts: HostOptions) {
   };
   // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
   room.onTree(() => sendAll({ type: "tree" }));
-  /** The latest moves, for a tab that missed one while it was loading (GET /api/tree). */
+  /** The latest moves, for a tab that missed one while it was loading (its hello, list_pages). */
   const moves: { from: string; to: string }[] = [];
   /** Does a tree operation, as a person or their agent; open tabs hear what moved or went, to follow a page that did. */
   const tree = async (op: unknown) => {
@@ -231,7 +232,6 @@ export function makeHost(opts: HostOptions) {
     const n = namingAs(user);
     return n ? Effect.orElseSucceed(n.get(), () => undefined) : Effect.succeed(undefined);
   };
-  const nameError = (e: unknown) => new NameRefused({ ok: false, error: e instanceof Error ? e.message : String(e) });
 
   // view_page: ask the owner's tabs; the first to answer wins. With none of
   // their tabs open there's nothing to look with (no server-side browser
@@ -271,11 +271,6 @@ export function makeHost(opts: HostOptions) {
     return Effect.runPromise(waited);
   };
 
-  /** The document's pages with their titles, and its address as the person sees it (list_pages). */
-  const pagesFor = (user: { id: string; name: string }) => async (): Promise<PageTree> => {
-    const name = await Effect.runPromise(nameFor(user));
-    return { address: name?.address ?? "/<owner>/<slug>", entries: entries() };
-  };
   // open_page: the person's open tabs on this document go to another of its
   // pages (main.ts, { type: "open" }). With none open, nothing can: the tool
   // says so, and gives the page's address to pass on.
@@ -341,12 +336,9 @@ export function makeHost(opts: HostOptions) {
         kind: opts.kind,
         canEdit: () => opts.canEdit?.(user) ?? true,
         view: view(user.id),
-        naming: namingAs(user),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
         turnEnded: opts.turnEnded,
         versions: opts.versions,
-        tree: async (op) => { await tree(op); },
-        pages: pagesFor(user),
         open: openFor(user),
         files: filesAccess,
         blobs: opts.blobs,
@@ -409,16 +401,7 @@ export function makeHost(opts: HostOptions) {
     Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
   ));
 
-  const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
-    .handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user))))
-    .handle("name", () => Person.use((user) => {
-      const n = namingAs(user);
-      return n ? Effect.mapError(n.get(), nameError) : Effect.fail(nameError("This document has no name to read."));
-    }))
-    .handle("rename", ({ payload }) => Person.use((user) => {
-      const n = namingAs(user);
-      return n ? Effect.mapError(n.set(payload), nameError) : Effect.fail(nameError("This document can't be renamed."));
-    })));
+  const docApi = HttpApiBuilder.group(Api, "doc", (h) => h.handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user)))));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
     .handle("state", () => Person.use((user) => Effect.promise(() => agentStateFor(user).then((state) => offForViewer(user, state)))))
@@ -510,38 +493,39 @@ export function makeHost(opts: HostOptions) {
     tree: { entries: entries(), canEdit: canEdit && opts.only == null, moved: moves, kind: kindNow() },
     epoch: room.epoch,
   });
+  /** What the operations call (server/operations/editor.ts, through the Durable Object): the person checked already. */
+  const calls: EditorCalls = {
+    tree: () => ({ entries: entries(), moved: [...moves], kind: kindNow(), single: opts.only != null }),
+    treeOp: async (op) => {
+      const r = await tree(op).then(
+        () => null,
+        (e: unknown) => e
+      );
+      if (r) return { ok: false, status: r instanceof TreeError ? r.status : 500, error: r instanceof Error ? r.message : String(r) };
+      return { ok: true, entries: entries(), kind: kindNow() };
+    },
+    files: async () => ({
+      files: [...(await fileStats())].map(([path, s]) => ({ path, kind: s.kind, size: s.size, at: s.at, type: s.type })),
+      folders: room.folderPaths(),
+      index: doc.path,
+      kind: kindNow(),
+      single: opts.only != null,
+    }),
+    rename: async (user, patch) => {
+      const n = namingAs(user);
+      if (!n) return { ok: false, error: "This document can't be renamed." };
+      const r = await Effect.runPromise(Effect.result(n.set(patch)));
+      return r._tag == "Success"
+        ? { ok: true, name: r.success }
+        : { ok: false, error: r.failure instanceof Error ? r.failure.message : String(r.failure) };
+    },
+  };
   const routes: Array<HttpRouter.Route<unknown>> = [
     // An editor's start, in one answer: its hello and the room's whole state (shared/room-socket.ts).
     HttpRouter.route("GET", "/api/start", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
       const hello = yield* Effect.promise(() => helloFor(opts.personOf(req), opts.mayPublish?.(req) ?? true));
       return HttpServerResponse.uint8Array(encodeStart(hello, Y.encodeStateAsUpdate(room.doc)), { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store" } });
-    })),
-    // Every file, with its kind (text, or a file kept whole: a blob), its size and its time, and the folders: the files
-    // view's list (client/pages/files.ts).
-    HttpRouter.route("GET", "/api/files", Effect.gen(function* () {
-      const req = yield* HttpServerRequest.HttpServerRequest;
-      const list = [...(yield* Effect.promise(fileStats))].map(([path, s]) => ({ path, kind: s.kind, size: s.size, at: s.at, type: s.type }));
-      const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
-      return yield* HttpServerResponse.json({ files: list, folders: room.folderPaths(), index: doc.path, canEdit, kind: kindNow() }, { headers: { "Cache-Control": "no-store" } });
-    })),
-    // The document's file tree: its pages, other files and folders.
-    HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {
-      const req = yield* HttpServerRequest.HttpServerRequest;
-      const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
-      return yield* HttpServerResponse.json({ entries: entries(), canEdit, moved: moves, kind: kindNow() }, { headers: { "Cache-Control": "no-store" } });
-    })),
-    // A tree operation: a new page or folder, a move (or rename), a delete. Editors only.
-    HttpRouter.route("POST", "/api/tree", Effect.gen(function* () {
-      const req = yield* HttpServerRequest.HttpServerRequest;
-      if (opts.mayPublish && !opts.mayPublish(req)) return yield* HttpServerResponse.json({ error: "You can only view this document." }, { status: 403 });
-      const body = yield* Effect.orElseSucceed(req.json, () => null);
-      const r = yield* Effect.promise(() => tree(body).then(() => null, (e: unknown) => e));
-      if (r) {
-        const status = r instanceof TreeError ? r.status : 500;
-        return yield* HttpServerResponse.json({ error: r instanceof Error ? r.message : String(r) }, { status });
-      }
-      return yield* HttpServerResponse.json({ entries: entries(), kind: kindNow() }, { headers: { "Cache-Control": "no-store" } });
     })),
     // What storage holds (not the room): lets a test see the room's writes
     // land, and send an edit that arrives as a file (a publish, a git pull)
@@ -633,7 +617,40 @@ export function makeHost(opts: HostOptions) {
     notify: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** A person's agent session, started if it isn't: a run a restart cut off goes on (the person's object asks, cloudflare/objects/person-agent.ts). */
     resumeAgent: async (user: { id: string; name: string }) => { await sessionFor(user); },
+    calls,
   };
+}
+
+/** A document's file tree, as list_pages answers it. */
+export interface TreeState {
+  entries: { path: string; type: string; title?: string }[];
+  moved: { from: string; to: string }[];
+  kind: DocKind;
+  single: boolean;
+}
+/** A tree operation's answer: the tree after it, or why it wasn't done (`status`: the HTTP status it means). */
+export type TreeAnswer = { ok: true; entries: TreeState["entries"]; kind: DocKind } | { ok: false; status: number; error: string };
+/** Every file of a document, as the files view lists them. */
+export interface FileList {
+  files: { path: string; kind: "text" | "file"; size: number | null; at: number | null; type: string }[];
+  folders: string[];
+  index: string;
+  kind: DocKind;
+  single: boolean;
+}
+/** A rename's answer: the new name, or why not (the address is taken or reserved, or it isn't theirs to rename). */
+export type NameAnswer = { ok: true; name: DocName } | { ok: false; error: string };
+
+/** What the operations inside a document call on its host (server/operations/editor.ts, through the Durable Object). */
+export interface EditorCalls {
+  /** Its file tree: pages (with titles), other files and folders, the latest moves, its kind; `single`: one file from disk. */
+  tree(): TreeState;
+  /** A tree operation (a new page or folder, a move, a delete, a change of kind): the tree after it, or what's wrong. */
+  treeOp(op: TreeOp): Promise<TreeAnswer>;
+  /** Every file, its kind (text, or a file kept whole), type, size and time, and the folders (ls, the files view). */
+  files(): Promise<FileList>;
+  /** Renames it as a person (their agent's rename too): every open tab hears of it. */
+  rename(user: { id: string; name: string }, patch: { title?: string | null; slug?: string | null }): Promise<NameAnswer>;
 }
 
 /** A plain route's failure: a request that doesn't parse is the client's mistake (400); anything else is ours. */

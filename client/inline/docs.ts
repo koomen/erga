@@ -196,30 +196,27 @@ export default function docs(c: DocsConfig): void {
   (window.requestIdleCallback ?? setTimeout)(() => loadTree().catch(() => {}));
   const treeQuery = c.query;
   // A tree read ahead of the click, handed to the tree for its first read (once), if it's still fresh.
-  const ahead = new Map<string, { at: number; answer: Promise<Response> }>();
+  const ahead = new Map<string, { at: number; answer: Promise<unknown> }>();
   const readAhead = (id: string) => {
     const a = ahead.get(id);
     if (a && Date.now() - a.at < 10000) return;
-    const answer = fetch("/api/docs/" + encodeURIComponent(id) + "/tree" + treeQuery, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(15000),
-    });
+    const answer = runTool("list_pages", { document: id });
     answer.catch(() => {});
     ahead.set(id, { at: Date.now(), answer });
   };
-  const fetchFor =
+  const runFor =
     (id: string) =>
-    (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    <T>(name: string, args: Record<string, unknown>): Promise<T> => {
       const a = ahead.get(id);
-      if (a && (!init || !init.method || init.method == "GET")) {
+      if (a && name == "list_pages") {
         ahead.delete(id);
         if (Date.now() - a.at < 10000)
           return a.answer.then(
-            (r) => r.clone(),
-            () => fetch(url, init)
+            (r) => r as T,
+            () => runTool<T>(name, args)
           );
       }
-      return fetch(url, init);
+      return runTool<T>(name, args);
     };
   const keptKey = (id: string) => "erga:docs-tree:" + id;
   const kept = (id: string) => {
@@ -285,7 +282,7 @@ export default function docs(c: DocsConfig): void {
           rootTitle: b.dataset.title,
           label: "Pages of " + b.dataset.title,
           initial: kept(id),
-          fetch: fetchFor(id) as typeof fetch,
+          run: runFor(id),
           onChange: (a) => {
             readAt.set(id, Date.now());
             keep(id, a);

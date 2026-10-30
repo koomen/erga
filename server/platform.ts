@@ -8,10 +8,11 @@ import type { AgentToken, AppValues, AuthStorage, Tokens } from "./identity/inde
 import type { HomeObject } from "./home/index.ts";
 import { type Directory, type Route, type Who } from "./directory/index.ts";
 import type { Role } from "../document/access.ts";
-import type { RestoreResult, VersionsState } from "../document/versions.ts";
+import type { RestoreResult, Version, VersionsState } from "../document/versions.ts";
+import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../document/host.ts";
 import type { FileData } from "../document/document.ts";
 import type { ViewAnswer } from "../document/view.ts";
-import type { DocKind } from "../document/pages.ts";
+import type { DocKind, TreeOp } from "../document/pages.ts";
 import { VIA } from "../shared/attribution.ts";
 
 /** Who's signed in. */
@@ -180,6 +181,18 @@ export interface Platform {
     versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
     /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */
     restore(doc: Route, ref: string, by: string, path?: string | null): Promise<RestoreResult>;
+    /** One version (by id or number) with its files' paths; null if there's none. */
+    version(doc: Route, ref: string): Promise<(Version & { files: string[]; index: string }) | null>;
+    /** One file of a version; null if there's no such version or file. */
+    versionFile(doc: Route, ref: string, path: string): Promise<Uint8Array | null>;
+    /** Its file tree (pages with titles, files, folders), its latest moves and its kind; null if it has no host. */
+    tree(doc: Route): Promise<TreeState | null>;
+    /** A tree operation: the tree after it, or why not. The caller checks the person may edit. */
+    treeOp(doc: Route, op: TreeOp): Promise<TreeAnswer>;
+    /** Every file (its kind, size, time) and folder; null if it has no host. */
+    files(doc: Route): Promise<FileList | null>;
+    /** Renames it as `person` (title and/or slug; "" or null goes back to following): its open tabs follow. The caller checks they may. */
+    rename(doc: Route, person: { id: string; name: string }, patch: { title?: string | null; slug?: string | null }): Promise<NameAnswer>;
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;

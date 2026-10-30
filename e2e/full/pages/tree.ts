@@ -5,6 +5,7 @@
 
 import { until, type Server } from "../../helpers/fixtures";
 import { person, tools } from "../versions/versions";
+import { runTool, treeOp } from "../../helpers/tools";
 
 export const PAGE = (title: string, body: string, up = "") => `<!doctype html>
 <html lang="en">
@@ -40,14 +41,18 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
   } });
   if (!made.ok) throw new Error(`create_document: ${made.text}`);
   const doc = JSON.parse(made.text) as { id: string; address: string };
-  const treeUrl = `/api/docs/${doc.id}/tree`;
   const tool = tools(server, token, doc.id);
   const s = {
     ...doc, owner, token, auth, slug, get: owner.get, tool, anyTool,
-    async readTree(get = owner.get, init: RequestInit = {}) { const r = await get(treeUrl, init); return { status: r.status, body: (await r.json()) as { entries?: Entry[]; canEdit?: boolean; error?: string } }; },
-    async treeOp(op: unknown, get = owner.get, headers: Record<string, string> = {}) {
-      const r = await get(treeUrl, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(op) });
-      return { status: r.status, body: (await r.json()) as { entries?: Entry[]; error?: string } };
+    /** The page tree, as `who` reads it (list_pages). */
+    async readTree(who: { cookie: string } = owner) {
+      const r = await runTool(server.root, "list_pages", { document: doc.id }, { cookie: who.cookie });
+      return { status: r.status, body: (r.ok ? r.result : { error: r.error }) as { entries?: Entry[]; canEdit?: boolean; error?: string } };
+    },
+    /** A change to the page tree, as `who` makes it in the tree (from `origin`: the site's own, unless given). */
+    async treeOp(op: Record<string, unknown>, who: { cookie: string } = owner, origin?: string) {
+      const r = await treeOp(server.root, doc.id, op, { cookie: who.cookie, ...(origin ? { origin } : {}) });
+      return { status: r.status, body: (r.ok ? r.result : { error: r.error }) as { entries?: Entry[]; error?: string } };
     },
     async write(path: string, content: string) { const w = await tool("write", { path, content }); if (!w.ok) throw new Error(`write ${path}: ${w.text}`); },
     /** The document agent's log (GET /d/<id>/api/agent). */

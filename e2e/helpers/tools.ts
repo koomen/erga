@@ -8,6 +8,33 @@ export interface ToolAnswer<T = any> {
   error?: string;
 }
 
+/** Each of the page tree's changes ({ op, ... }, document/pages.ts's TreeOp), as its operation (server/operations/editor.ts). */
+export const TREE_TOOLS: Record<string, string> = {
+  new_page: "new_page",
+  new_folder: "mkdir",
+  move: "mv",
+  delete: "rm",
+  make_project: "make_project",
+  make_document: "make_document",
+};
+
+/** A page tree's change, as the tree makes it: { op: "new_page", path } runs new_page, and so on. */
+export function treeOp(
+  root: string,
+  document: string,
+  op: Record<string, unknown>,
+  as: { cookie?: string; user?: string; origin?: string | null } = {}
+) {
+  const { op: name, ...args } = op;
+  return runTool(root, TREE_TOOLS[String(name)] ?? String(name), { document, ...args }, as);
+}
+
+/** A document's id, from its address (/<owner>/<slug>, with or without ?edit), as the editor reads it (GET <address>/api/doc). */
+export async function idOf(address: string, init: RequestInit = {}): Promise<string> {
+  const r = await fetch(`${address.replace(/[?&]edit=?$/, "")}/api/doc`, init);
+  return ((await r.json()) as { docName: { id: string } }).docName.id;
+}
+
 /** Runs operation `name` with `args` on the server at `root`, as `as.cookie` or `as.user` (neither: the dev server's own person). */
 export async function runTool<T = any>(
   root: string,

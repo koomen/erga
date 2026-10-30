@@ -51,7 +51,7 @@ test("on staging an admin's document token reads and edits its document (API, MC
   expect((await mcp(root, token, "write", { document: one.id, path: "notes.md", content: "Over MCP" })).isError).toBe(false);
   const auth = { headers: { Authorization: `Bearer ${token}` } };
   expect(await until(async () => (await (await get(`/d/${one.id}/doc/notes.md`, auth)).text()).includes("Over MCP"), 5000, "the note on the document's route")).toBe(true);
-  expect((await get(`/api/docs/${one.id}/versions`, auth)).status).toBe(200);
+  expect((await tool(root, token, "list_versions", { document: one.id })).status).toBe(200);
 
   // Its scope, as on production: not the other document, no list.
   expect((await tool(root, token, "read", { document: two.id, path: "index.html" })).status).toBe(403);

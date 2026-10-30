@@ -165,23 +165,39 @@ export const AGENT_ACTIONS: AgentAction[] = [
 
   // ------------------------------------------------------------ the editor
 
-  { route: "WS /d/<id>/api/room", domain: "document", action: "Edit the text, and hear the document's and your agent's events (editor: its one socket)", tool: "edit" },
-  { route: "GET /d/<id>/api/start", domain: "document", action: "Open the editor: the document's name, pages and text in one answer (editor)", tool: "read" },
-  { route: "GET /d/<id>/api/doc", domain: "document", action: "Read the document's name and address (editor)", tool: "get_title" },
-  { route: "GET /d/<id>/api/name", domain: "document", action: "Read the title and address (editor)", tool: "get_title" },
-  { route: "POST /d/<id>/api/name", domain: "document", action: "Rename the document, or change its address (editor)", tool: "set_title" },
-  { route: "GET /api/docs/<id>/tree", domain: "document", action: "Read the page tree (editor, Documents)", tool: "list_pages" },
-  { route: "POST /api/docs/<id>/tree op=new_page", domain: "document", action: "New page (page tree)", tool: "new_page" },
-  { route: "POST /api/docs/<id>/tree op=new_folder", domain: "document", action: "New folder (page tree)", tool: "mkdir" },
-  { route: "POST /api/docs/<id>/tree op=move", domain: "document", action: "Rename or move a page or folder (page tree)", tool: "mv" },
-  { route: "POST /api/docs/<id>/tree op=delete", domain: "document", action: "Delete a page or folder (page tree)", tool: "rm" },
-  { route: "POST /api/docs/<id>/tree op=make_project", domain: "document", action: "Make a document a project, which can have more pages (editor's settings, Document/Project)", tool: "make_project" },
-  { route: "POST /api/docs/<id>/tree op=make_document", domain: "document", action: "Make a project with one page a document (editor's settings, Document/Project)", tool: "make_document" },
-  { route: "GET /api/files", domain: "document", action: "See every file, its kind, size and time (the files view)", tool: "ls" },
-  { route: "PUT /api/files/<path>", domain: "document", action: "Add or replace a file of any kind (a drop on the files view, an HTTP client)", tool: "write" },
-  { route: "GET /api/docs/<id>/versions", domain: "document", action: "Read the versions (editor's settings)", tool: "list_versions" },
-  { route: "POST /api/docs/<id>/versions/<versionId>/restore", domain: "document", action: "Restore a version, or one file of it (editor's settings)", tool: "restore_version" },
-  { route: "POST /api/publish", domain: "document", action: "Publish a folder of files as a document", tool: "create_document" },
+  {
+    route: "WS /d/<id>/api/room",
+    domain: "document",
+    action: "Edit the text, and hear the document's and your agent's events (editor: its one socket)",
+    tool: "edit",
+  },
+  {
+    route: "GET /d/<id>/api/start",
+    domain: "document",
+    action: "Open the editor: the document's name, pages and text in one answer (editor)",
+    tool: "read",
+  },
+  {
+    route: "GET /d/<id>/api/doc",
+    domain: "none",
+    action: "The editor wakes the document as the pointer nears Edit (its name and who you are)",
+    exempt: "the page's own warm-up, not a person's action (the name: get_title)",
+  },
+  // The document's name, pages, files' list and versions are operations (server/operations/editor.ts: rename_document,
+  // list_pages, new_page, mkdir, mv, rm, make_project, make_document, ls, list_versions, read_version, restore_version).
+  // A route still: its body is the file's bytes (up to the upload limits, streamed to storage), not an operation's JSON.
+  {
+    route: "PUT /api/files/<path>",
+    domain: "document",
+    action: "Add or replace a file of any kind, its bytes the body (a drop on the files view or the page, an HTTP client)",
+    tool: "write",
+  },
+  {
+    route: "POST /api/publish",
+    domain: "document",
+    action: "Publish a folder of files as a document, or into one, from an HTTP client (curl -F): multipart, so not an operation's JSON",
+    tool: "create_document",
+  },
   { route: "GET /d/<id>/api/agent", domain: "none", action: "The document agent panel", exempt: PANEL },
   { route: "POST /d/<id>/api/agent", domain: "none", action: "A message to the document agent", exempt: PANEL },
   { route: "POST /d/<id>/api/agent/model", domain: "none", action: "Switch the document agent's model", exempt: PANEL },

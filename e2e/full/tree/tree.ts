@@ -12,6 +12,7 @@
 import type { Page } from "playwright-core";
 import { expect, settle, until, type Server, type Tab } from "../../helpers/fixtures";
 import { postForm } from "../../helpers/form-post";
+import { runTool } from "../../helpers/tools";
 
 /** Evaluates an expression in the tab, its value as any (for expect.poll, whose matchers need a type). */
 export const js = (page: Page, expr: string) => page.evaluate(expr) as Promise<any>;
@@ -39,7 +40,10 @@ export async function multi(server: Server) {
     /** The document's address (http://.../<owner>/<id>), and its path alone. */
     base, address,
     /** Every file and folder the server lists for it (agents see them all), sorted. */
-    tree: async () => ((await (await fetch(`${server.root}/api/docs/${id}/tree`)).json()) as { entries: { path: string }[] }).entries.map((e) => e.path).sort(),
+    tree: async () =>
+      ((await runTool(server.root, "list_pages", { document: id })).result as { entries: { path: string }[] }).entries
+        .map((e) => e.path)
+        .sort(),
     /** One of the agents' tools, over the token API, on this document, as its owner. */
     async agentTool(name: string, args: Record<string, unknown> = {}) {
       if (!token) token = await agentToken(server);

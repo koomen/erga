@@ -2,6 +2,7 @@
 import { expect, servers, test } from "../../helpers/fixtures";
 import { events } from "../versions/versions";
 import { paths, site } from "./tree";
+import { runTool } from "../../helpers/tools";
 
 await servers.short();
 
@@ -35,7 +36,7 @@ test("tree operations refuse what they can't do, saying why", async () => {
   await s.treeOp({ op: "new_folder", path: "blog" });
   await s.treeOp({ op: "new_page", path: "blog/post" });
   await s.treeOp({ op: "new_page", path: "about.html" });
-  const refusals: [unknown, number, RegExp][] = [
+  const refusals: [Record<string, unknown>, number, RegExp][] = [
     [{ op: "new_page", path: "../up.html" }, 400, /leaves the document/],
     [{ op: "new_page", path: "blog/post.html" }, 409, /already a file/],
     [{ op: "new_folder", path: "blog" }, 409, /already a folder/],
@@ -47,7 +48,6 @@ test("tree operations refuse what they can't do, saying why", async () => {
     [{ op: "move", from: "blog", to: "blog/inside" }, 400, /inside itself/],
     [{ op: "move", from: "about.html", to: "style.css" }, 409, /already a file/],
     [{ op: "delete", path: "ghost.html" }, 404, /nothing at/],
-    [{ op: "explode" }, 400, /no operation/],
   ];
   for (const [op, status, why] of refusals) {
     const x = await s.treeOp(op);
@@ -81,7 +81,9 @@ test("a single-page document (/new) works as before: its tree is its one page", 
   const at = blank.headers.get("location") ?? "";
   expect(blank.status).toBe(302);
   expect(at.endsWith("?edit")).toBe(true);
-  const id = ((await (await s.get(`${at.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
-  expect(paths(((await (await s.get(`/api/docs/${id}/tree`)).json()) as { entries: [] }).entries)).toBe("index.html");
+  const id = ((await (await s.get(`${at.replace(/[?&]edit=?$/, "")}/api/doc`)).json()) as { docName: { id: string } }).docName.id;
+  expect(
+    paths(((await runTool(server.root, "list_pages", { document: id }, { cookie: s.owner.cookie })).result as { entries: [] }).entries)
+  ).toBe("index.html");
   expect((await s.get(at.replace(/[?&]edit=?$/, ""))).status).toBe(200);
 });

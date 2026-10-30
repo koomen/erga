@@ -19,7 +19,8 @@ import * as Effect from "effect/Effect";
 import { DurableObject } from "cloudflare:workers";
 import { Document, personOf, type DocumentDeps, type FileData, type OnDisk } from "../../document/document";
 import type { ViewAnswer } from "../../document/view";
-import type { DocKind } from "../../document/pages";
+import type { DocKind, TreeOp } from "../../document/pages";
+import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document/host";
 import { Tabs, type Tab } from "../../document/tabs";
 import { PING, PONG } from "../../shared/room-socket";
 import type { Who } from "../../server/directory/index.ts";
@@ -220,6 +221,37 @@ export class DocumentObject extends DurableObject<Env> {
   }
   currentFiles() {
     return run(this.document.hold(this.document.currentFiles()));
+  }
+  /** One version, with its files' paths (read_version); null if there's none. */
+  version(ref: string | number) {
+    return run(this.document.hold(this.document.version(ref)));
+  }
+  versionFile(ref: string | number, path: string): Promise<Uint8Array | null> {
+    return run(this.document.hold(this.document.versionFile(ref, path)));
+  }
+  // The operations on what's inside a document (server/operations/editor.ts): the caller checked what the person may do.
+  tree(): Promise<TreeState | null> {
+    return run(this.document.hold(this.document.call((c) => c.tree())));
+  }
+  async treeOp(op: TreeOp): Promise<TreeAnswer> {
+    return (
+      (await run(this.document.hold(this.document.call((c) => c.treeOp(op))))) ?? {
+        ok: false,
+        status: 404,
+        error: "There's no such document.",
+      }
+    );
+  }
+  fileList(): Promise<FileList | null> {
+    return run(this.document.hold(this.document.call((c) => c.files())));
+  }
+  async rename(person: { id: string; name: string }, patch: { title?: string | null; slug?: string | null }): Promise<NameAnswer> {
+    return (
+      (await run(this.document.hold(this.document.call((c) => c.rename(person, patch))))) ?? {
+        ok: false,
+        error: "There's no such document.",
+      }
+    );
   }
   /** The directory's permissions for this document now (Directory.share pushes each change): the document's copy. */
   setPermissions(list: { login: string; role: Role }[]): Promise<void> {

@@ -26,7 +26,7 @@ test("a project's tree shows every file, as the server and an agent (ls, find) d
   const all = await doc.tree();
   for (const f of ["style.css", "assets", "assets/owl.svg", "fonts", "fonts/field.woff2"]) expect(all).toContain(f);
   const ls = await doc.agentTool("ls"), found = await doc.agentTool("find", { pattern: "**/*" });
-  for (const f of ["style.css", "assets/", "fonts/"]) expect(ls).toContain(f);
+  for (const f of ['"style.css"', '"assets/owl.svg"', '"fonts"']) expect(ls).toContain(f);
   for (const f of ["assets/owl.svg", "fonts/field.woff2"]) expect(found).toContain(f);
   await openTreeEditor(tab, doc.base);
   await openCard(page);

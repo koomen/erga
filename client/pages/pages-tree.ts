@@ -1,6 +1,6 @@
 // A document's pages, as a small tree: its folders, pages and
-// other files, from GET /api/docs/<id>/tree, changed through POST to the same
-// address (new_page, new_folder, move, delete). One component, in two places:
+// other files, from the operation list_pages, changed through new_page, mkdir,
+// mv and rm (server/operations/editor.ts, over POST /api/tools/<name>). One component, in two places:
 // the editor (a card under the document's title, top left: main.ts) and
 // Documents (beneath a document's row: server/pages/docs.ts). It's built on its own
 // and loaded only when someone opens it, so it costs the
@@ -25,6 +25,7 @@
 // Delete deletes, and Shift-F10 (or the context-menu key) opens a row's menu.
 
 import { baseName, joinPath, pageUrl, parentOf, slugify } from "../../document/pages";
+import { runTool } from "../common/tools";
 
 export type EntryType = "page" | "folder" | "file";
 export interface Entry { path: string; type: EntryType; title?: string }
@@ -32,7 +33,7 @@ export type DocKind = "document" | "project";
 export interface TreeAnswer { entries: Entry[]; canEdit?: boolean; kind?: DocKind }
 
 export interface TreeOptions {
-  /** The document's id: its tree is /api/docs/<id>/tree. */
+  /** The document's id: what the operations name it by. */
   id: string;
   /** Its address, /<owner>/<slug>: where its pages are (pageUrl). */
   base: string;
@@ -58,8 +59,8 @@ export interface TreeOptions {
   onChange?: (answer: { entries: Entry[]; canEdit: boolean; kind: DocKind }) => void;
   /** The tree as the caller last saw it (Documents keeps each one's last answer): shown at once, then read again. */
   initial?: { entries: Entry[]; canEdit: boolean; kind?: DocKind } | null;
-  /** Where to fetch from (tests stub it); default window.fetch. */
-  fetch?: typeof fetch;
+  /** Runs an operation (Documents answers list_pages from what it read ahead); default runTool. */
+  run?: <T>(name: string, args: Record<string, unknown>) => Promise<T>;
   /** The label for the tree, for screen readers. */
   label?: string;
 }
@@ -263,6 +264,9 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string,
 type Node_ = globalThis.Node;
 const svg = (html: string) => { const t = document.createElement("template"); t.innerHTML = html; return t.content.firstElementChild!; };
 
+/** Each change's operation (server/operations/editor.ts). */
+const TOOLS: Record<string, string> = { new_page: "new_page", new_folder: "mkdir", move: "mv", delete: "rm" };
+
 /** Plain words for whatever went wrong talking to the server. */
 const plain = (e: unknown) => {
   if (e instanceof Error && e.name == "TimeoutError") return "The server didn't answer. Try again in a moment.";
@@ -272,9 +276,8 @@ const plain = (e: unknown) => {
 
 export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle {
   injectStyle();
-  const doFetch = opts.fetch ?? window.fetch.bind(window);
+  const run = opts.run ?? runTool;
   const query = opts.query ?? "";
-  const api = () => `/api/docs/${encodeURIComponent(opts.id)}/tree${query}`;
   const showRoot = opts.showRoot ?? false;
   let base = opts.base, rootTitle = opts.rootTitle ?? "", current = opts.current ?? null;
   let entries: Entry[] | null = null, canEdit = false, loadError: string | null = null, banner: string | null = null;
@@ -354,9 +357,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   async function load() {
     try {
-      const r = await doFetch(api(), { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
-      const body = (await r.json().catch(() => ({}))) as Partial<TreeAnswer> & { error?: string };
-      if (!r.ok) throw new Error(body.error || (r.status == 404 ? "This document's pages couldn't be found." : r.status == 403 ? "You can't see this document's pages." : `The server couldn't list the pages (${r.status}).`));
+      const body = await run<TreeAnswer>("list_pages", { document: opts.id });
       set(body.entries ?? [], !!body.canEdit, body.kind);
       loadError = null;
     } catch (e) {
@@ -383,10 +384,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   /** A change, sent: the tree it answers, or the server's own words for why not (thrown). */
   async function send(op: Record<string, string>): Promise<void> {
-    const r = await doFetch(api(), { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(op), signal: AbortSignal.timeout(15_000) })
-      .catch((e) => { throw new Error(plain(e)); });
-    const body = (await r.json().catch(() => ({}))) as Partial<TreeAnswer> & { error?: string };
-    if (!r.ok) throw new Error(body.error || (r.status == 403 ? "You can't change this document's pages." : `That didn't work (the server answered ${r.status}).`));
+    const { op: name, ...args } = op;
+    const body = await run<Partial<TreeAnswer>>(TOOLS[name] ?? name, { document: opts.id, ...args });
     let next = body.entries ?? entries ?? [];
     // A moved document keeps its title while the server catches up with its text at the new path.
     if (op.op == "move" && entries) {

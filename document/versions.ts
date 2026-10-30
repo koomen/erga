@@ -44,7 +44,7 @@ export interface Version {
   description: string | null;
 }
 
-/** What GET /api/docs/<id>/versions answers, but canEdit (the app adds it); `pending`: edits since the current version. */
+/** What list_versions answers, but canEdit (the operation adds it); `pending`: edits since the current version. */
 export interface VersionsState { current: Version; versions: Version[]; total: number; pending: boolean }
 
 /** A restore: the new current version, the version it came from, and the files it brought back. */

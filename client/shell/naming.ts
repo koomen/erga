@@ -4,6 +4,7 @@ import type { DocName } from "../../document/api";
 import { files } from "../../document/content";
 import { pageUrl, slugify } from "../../document/pages";
 import { live } from "../live/client";
+import { runTool } from "../common/tools";
 import type { mountTree, TreeHandle } from "../pages/pages-tree";
 import { BASE, $, editing, type Shell } from "./shell";
 
@@ -105,9 +106,10 @@ export function mountNaming(shell: Shell) {
     if (slugTouched && slugIn.value.trim() != shell.docName.slug) patch.slug = slugIn.value.trim();
     if (!("title" in patch) && !("slug" in patch)) return toggleNaming(false);
     sayNaming("Saving…");
-    const r = await fetch(shell.api("/api/name"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch), signal: AbortSignal.timeout(10_000) })
-      .then(async (res) => (res.ok ? { name: (await res.json()) as DocName } : { error: ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `the host answered ${res.status}` }))
-      .catch((err: Error) => ({ error: err.name == "TimeoutError" ? "the editor's host didn't answer" : err.message }));
+    const r = await runTool<DocName>("rename_document", { document: shell.docName.id, ...patch }).then(
+      (name) => ({ name }),
+      (err: Error) => ({ error: err.message })
+    );
     if ("error" in r) return sayNaming(r.error ?? "Couldn't rename it.", true);
     showName(r.name);
     toggleNaming(false);

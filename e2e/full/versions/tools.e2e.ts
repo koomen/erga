@@ -49,11 +49,13 @@ test("list_versions and read_version; there's no publish_version", async () => {
     const tool = tools(server, token, id);
     let t = await tool("list_versions", {});
     expect(t.status).toBe(200);
-    for (const s of ["Current: v3", "v2", "Edited index.html"]) expect(t.text).toContain(s);
+    const listing = JSON.parse(t.text) as { current: { id: string }; versions: { id: string; description: string }[] };
+    expect(listing.current.id).toBe("v3");
+    expect(listing.versions.find((v) => v.id == "v2")?.description).toBe("Edited index.html");
     expect(t.text).not.toContain("Published");
     t = await tool("read_version", { version: "v1" });
     expect(t.status).toBe(200);
-    expect(t.text).toContain("index.html");
+    expect(JSON.parse(t.text).files).toContain("index.html");
     t = await tool("read_version", { version: "v2", path: "index.html" });
     expect(t.text).toContain("alpha");
     expect(t.text).not.toContain("beta");

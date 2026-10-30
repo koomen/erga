@@ -81,7 +81,7 @@ test("a landing document an admin chose is the homepage, and nothing more is mad
   const landings = async () => ((await (await get(server, "/docs")).text()).match(/href="\/tester\/landing(-\d+)?\?edit"/g) ?? []).length;
   const before = await landings();
   const mine = (await get(server, "/new")).headers.get("location")!.replace(/[?&]edit=?$/, "");
-  const mineId = ((await (await get(server, `${mine}/api/name`)).json()) as { id: string }).id;
+  const mineId = ((await (await get(server, `${mine}/api/doc`)).json()) as { docName: { id: string } }).docName.id;
   const set = await runTool(server.root, "set_setting", { key: "landing_document", value: mine });
   expect(set.ok).toBe(true);
   expect(docOf((await front(server)).html)).toBe(mineId);
