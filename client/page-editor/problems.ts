@@ -2,7 +2,21 @@
 
 import type { PageProblem } from "./types";
 
-export type RawProblem = { kind: "resource"; tag: string; url: string } | { kind: "script"; message: string; file: string; line: number };
+export type RawProblem =
+  | { kind: "resource"; tag: string; url: string }
+  | { kind: "script"; message: string; file: string; line: number; stack?: string };
+
+/** Where the editor's own scripts are (this module and its chunks, in the app's /_erga/). */
+const OWN = new URL(".", import.meta.url).href;
+
+/**
+ * An error thrown in the editor's own code (its file, or the first file in its stack, is one of the editor's): Erga's
+ * bug, not the page's. The agent can't fix it; the page's console log keeps it for Erga's maintainers.
+ */
+export function isOwnError(raw: Extract<RawProblem, { kind: "script" }>): boolean {
+  const file = raw.file || raw.stack?.match(/(?:https?|file):\/\/[^\s)]+/)?.[0] || "";
+  return file.startsWith(OWN);
+}
 
 /** A page that lets the editor pause it (agents/document/PROMPT.md, rule 10). */
 export type PausableWindow = Window & { ergaPause?: unknown };
@@ -20,6 +34,7 @@ export function describeProblem(raw: RawProblem, base: string): PageProblem | nu
     };
   }
   if (/^Script error\.?$/.test(raw.message) && !raw.file) return null; // cross-origin, nothing to go on
+  if (isOwnError(raw)) return null;
   const where = raw.file && !/srcdoc/.test(raw.file) ? ` (${local(raw.file)}${raw.line ? `, line ${raw.line}` : ""})` : raw.line ? ` (the page's inline script, line ${raw.line})` : "";
   return {
     key: `script:${raw.message}`,
