@@ -3,7 +3,7 @@
 // screenshot and prints the visible snapshot (e2e/helpers/visible.ts). The way to see a change as a person does.
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { chromium } from "playwright-core";
@@ -17,7 +17,7 @@ Opens a copy of the document in the editor, clicks at the end of its first text 
 then saves a screenshot and prints the page as a person sees it: "|" is the caret, "[" "]" a selection.
 
   --doc     a folder of e2e/fixtures (default: empty, one empty paragraph), or an HTML file or folder
-  --out     where the screenshot goes (default: a new folder in the system's temporary folder)
+  --out     where the screenshot goes (default: a new folder in .e2e/shots/ of this checkout)
   --source  print the page's body as HTML too
   --keep    leave the dev server running, for the next look (a new server takes about 10 s)
   --stop    stop the server that --keep left running
@@ -86,7 +86,10 @@ if (flag("--stop")) {
 }
 
 const docArg = option("--doc") ?? "empty";
-const out = resolve(option("--out") ?? join(mkdtempSync(join(tmpdir(), "erga-look-")), "page.png"));
+// In the checkout, not the system's temporary folder: an agent may read only its own worktree.
+const shots = join(ROOT, ".e2e", "shots");
+mkdirSync(shots, { recursive: true });
+const out = resolve(option("--out") ?? join(mkdtempSync(join(shots, "look-")), "page.png"));
 const keep = flag("--keep"),
   source = flag("--source");
 const unknown = args.find((a) => a.startsWith("--"));

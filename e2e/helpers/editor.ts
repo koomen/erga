@@ -7,10 +7,10 @@
 // in the page itself (frame.ts: its window has `ergaFrame`). Expressions for the
 // page are strings evaluated in the page's frame.
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
+import { ROOT } from "./env";
 import { expect, settle, until, type Server, type Tab } from "./fixtures";
 import { VISIBLE } from "./visible";
 
@@ -249,7 +249,10 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       const end = Date.now() + ms;
       while ((got = await ed.visible()) != want && Date.now() < end) await new Promise((r) => setTimeout(r, 30));
       if (got == want) return;
-      const shot = join(mkdtempSync(join(tmpdir(), "erga-visible-")), "page.png");
+      // In the checkout (.e2e/shots/), where an agent working in it may read it.
+      const shots = join(ROOT, ".e2e", "shots");
+      mkdirSync(shots, { recursive: true });
+      const shot = join(mkdtempSync(join(shots, "visible-")), "page.png");
       await page.screenshot({ path: shot });
       try {
         expect(got).toBe(want);
