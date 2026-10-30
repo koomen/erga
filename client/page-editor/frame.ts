@@ -277,6 +277,9 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
         if (restoreScroll != null) { scrollTo(0, restoreScroll); restoreScroll = null; }
         // Made afresh: the line the reader was on, where it was (the viewer's script had it near there: ?erga-y).
         if (view) { window.__ergaReader?.placed?.(); page.restoreView(view); view = null; }
+        // A live page that reacts to input (it defines ergaPause) opens with its keys its own, as after Escape: a click on
+        // text starts editing. Not when it loads again, nor paused: the caret stays where it was.
+        if (!m.carry && !page.isPaused && page.canPause) page.leaveText();
         // The page had the focus as it loaded again: it has it again, for the keys held meanwhile.
         if (m.focus) { m.focus = false; page.focus(); page.hold(false); }
       });

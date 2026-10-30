@@ -15,14 +15,15 @@
   <section class="slide"><h1>Third slide</h1><p>The last one.</p></section>
   <script>
     const slides = [...document.querySelectorAll(".slide")];
-    let at = 0;
+    let at = 0, paused = false;
+    window.ergaPause = (p) => { paused = p; };
     function show(i) {
       at = Math.max(0, Math.min(slides.length - 1, i));
       slides.forEach((s, j) => s.classList.toggle("current", j == at));
     }
     // Keys typed in text (a field, or text being edited) are the text's, not the deck's.
     document.addEventListener("keydown", (e) => {
-      if (e.target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])")) return;
+      if (paused || e.target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])")) return;
       if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key)) { e.preventDefault(); show(at + 1); }
       else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key)) { e.preventDefault(); show(at - 1); }
     });
