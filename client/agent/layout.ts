@@ -8,7 +8,7 @@
  * this browser (localStorage, KEY).
  *
  * The first half is the layout's state and geometry, pure;
- * mountLayout puts it on the page, as CSS variables client/editor.html's rules read.
+ * mountLayout puts it on the page, as CSS variables client/styles/editor.css's rules read.
  *
  * The admin pages' agent panel has the same grip and drag (mountGrip,
  * dragToDock), in a grid of two: mountPaneLayout, PaneLayout.

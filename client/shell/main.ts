@@ -412,6 +412,16 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     if (appShortcut(e)) { e.preventDefault(); e.stopPropagation(); }
   }, true);
 
+  // Full screen (client/inline/viewer-full.ts) is for showing the page, not editing it: the page, not its source, and the
+  // focus off the text, as after Escape, so the page's own keys work (a deck's arrows). It stays off after: a click on
+  // text puts the caret back.
+  addEventListener("erga-full", (e) => {
+    if (!editing() || !(e as CustomEvent<{ on: boolean }>).detail.on) return;
+    if (shell.mode != "text") shell.views.setMode("text");
+    shell.fmt.hideFmt();
+    page.leaveText();
+  });
+
   // Track changes: keep every change marked, as a growing diff, instead of
   // letting the agent's edits fade once seen.
   function setTracking(on: boolean) {

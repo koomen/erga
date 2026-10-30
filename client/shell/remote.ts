@@ -408,7 +408,7 @@ export class RemotePage {
   render(): void { this.post({ type: "render" }); }
   get zoomLevel(): number { return this.zoom; }
   /**
-   * Draws the page at `level` (1 is 100%): its frame scaled (client/editor.html, html.erga-zoomed), and the editor in
+   * Draws the page at `level` (1 is 100%): its frame scaled (client/styles/editor.css, html.erga-zoomed), and the editor in
    * it told, for what it says in the shell's terms (a frame not up yet starts at it: its init).
    */
   setZoom(level: number): void {

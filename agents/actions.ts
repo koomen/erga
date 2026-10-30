@@ -207,6 +207,14 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "UI /d/<id>#page-key", domain: "document", action: "Press a key on the page as it runs (editor)", tool: "page_key" },
   { route: "UI /d/<id>#devtools", domain: "document", action: "Read the page's console, requests and state, as the browser's developer tools show them (editor)", tool: "page_console" },
 
+  // Full screen (client/inline/viewer-full.ts): no route, and nothing an agent could do with it.
+  {
+    route: "UI /d/<id>#fullscreen",
+    domain: "none",
+    action: "Show the page full screen, as a presentation (the Full screen button, viewing and editing)",
+    exempt: "the person's own screen: a browser goes full screen only on the person's click, and an agent has no screen to show it on",
+  },
+
   // ------------------------------------------------------------ the guide, MCP, and asking for a token
   {
     route: "GET /llms.txt",

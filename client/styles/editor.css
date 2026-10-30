@@ -1,0 +1,407 @@
+/* The editor's own styles (client/editor.html's controls, and the page's frame and the source view under them), after
+   client/style.css's. The build puts them into the editor's page (client/build.ts), and so into the shell's one sheet. */
+
+/* The page fills the window below the top controls' band, as in the
+   viewer (the editor's controls are added to the viewer's page, server/pages/viewer.ts,
+   and the document mustn't move), and the chrome floats over it. The source view starts below a strip kept
+   clear for the top controls (their 34px row, its offset and a gap). The
+   page stops at the on-screen keyboard (--kb, set by main.ts where the
+   browser lays the keyboard over the page rather than resizing it), and
+   keeps out of a phone's notch held sideways (--safe-l, --safe-r). */
+:root {
+  --top-clear: calc(max(12px, env(safe-area-inset-top)) + 34px + 14px);
+  --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+}
+body { overflow: hidden; }
+/* The page starts below the band the top controls sit on (--band-h, server/pages/viewer.ts's BAND_STYLE), as in the viewer. */
+:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
+#frame { position: fixed; top: var(--band-h); left: 0; width: 100%; height: calc(100% - var(--band-h) - var(--kb, 0px)); border: 0; background: transparent; }
+/* The page's gradient or image, painted out from the frame's box over the band and beside the page: it has the frame's box. */
+.erga-canvas { top: var(--band-h); height: calc(100% - var(--band-h) - var(--kb, 0px)); }
+
+/* The shell's canvas is the page's own background (main.ts reads it from
+   the page; its gradient or image, .erga-canvas, above), so the band and
+   the space the agent opens up are the same surface as the page, with no
+   seam. In the source view it's the editor's again. */
+html { background: var(--page-bg, var(--band, var(--bg))); }
+body { background: transparent; }
+html:has(body.source) { background: var(--bg); }
+
+/* The floating cards (the agent, its button, the style bar, the pages
+   list and the rest) are the editor's own: its light cards, or on a dark
+   page its dark ones (style.css's dark theme). No colour of the page's
+   reaches them. Only the controls on the band (the header: breadcrumbs
+   and icons) sit on the page itself, so their text and icons are dark
+   or light to suit its colour; they have no background of their own. */
+html.page-dark body:not(.source) :is(.agent, .agent-fab, .fmt, .refresh-pill, .ds, .ds-menu, .help.pages) {
+  --bg: #18181b; --fg: #cacad2; --fg-strong: #ececf1; --mark: #55555e; --list-mark: #6c6c75; --soft: #8f8f99;
+  --chrome: #6c6c75; --chrome-hover: #d4d4da; --rule: #2c2c31; --code-bg: #232327; --caret: #6aa1ff; --link: #7aa9ff;
+  --selection: rgba(106, 161, 255, 0.24); --panel-bg: rgba(32, 32, 36, 0.94); --panel-border: #2f2f35;
+  --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+html.page-light body:not(.source) .chrome {
+  --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46; --caret: #3b7cf0;
+}
+html.page-dark body:not(.source) .chrome {
+  --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2; --caret: #6aa1ff;
+}
+/* (Your avatar's ring, which parts it from the others', is the page's colour.) */
+html:is(.page-light, .page-dark) body:not(.source) .chrome { --bg: var(--page-bg, var(--band)); }
+body.source :is(#frame, .erga-canvas) { visibility: hidden; }
+#source { position: fixed; top: var(--top-clear); bottom: var(--kb, 0px); left: var(--safe-l); right: var(--safe-r); }
+#source[hidden] { display: none; }
+#welcome {
+  position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
+  color: var(--soft); font-size: 15px; line-height: 1.6; padding: 24px;
+}
+#welcome code { font-family: var(--font-mono); font-size: 0.9em; background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.35em; }
+#welcome[hidden] { display: none; }
+#welcome.blocking { z-index: 100; background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--fg); }
+#welcome button { font: 600 14px var(--font-text); padding: 8px 16px; border-radius: 10px; border: 0; background: var(--fg-strong); color: var(--bg); cursor: pointer; }
+.refresh-pill {
+  position: fixed; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 12;
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--panel-border); border-radius: 999px; padding: 6px 14px 6px 10px;
+  background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font: 12.5px/1.3 var(--font-text); cursor: pointer;
+}
+.refresh-pill[hidden] { display: none; }
+/* The agent's use of the live page: each page_inspect, page_click or page_key, for a moment.
+   Under the controls, over the page and the agent panel (wherever it's docked), in sight. */
+.agent-live {
+  position: fixed; left: 50%; top: var(--top-clear); transform: translateX(-50%); z-index: 22; max-width: min(520px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 10px; border: 1px solid var(--panel-border); border-radius: 999px; padding: 6px 8px 6px 14px;
+  background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font: 12.5px/1.3 var(--font-text);
+}
+.agent-live[hidden] { display: none; }
+.agent-live span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.refresh-pill svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; animation: agent-spin 1.6s linear infinite; }
+.refresh-pill b { font-weight: 600; color: var(--caret); }
+/* Pausing the page: the button shows what clicking it does (pause, or play to resume). */
+#btn-pause[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+#btn-pause[aria-disabled="true"]:hover { background: transparent; color: var(--chrome); }
+/* The breadcrumbs, top left: Erga › Documents › the title, as on every page (server/pages/chrome.ts, crumbs; the viewer's, VIEW_STYLE,
+   sit just here). Documents is hidden for test people, who have none. */
+.chrome-nav { top: max(12px, env(safe-area-inset-top)); left: max(14px, var(--safe-l), calc(var(--frame-l) + 6px)); transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
+.chrome-nav[hidden] { display: none; }
+/* Documents, its arrow and the title sit on one baseline: each text fills its 34px box as its line, so descenders (g, y) aren't clipped. */
+.chrome-nav, .nav-brand, .nav-back, .nav-title { align-items: baseline; }
+:is(.nav-brand, .nav-back, .nav-title) span { line-height: 34px; }
+.nav-brand {
+  display: flex; flex: none; height: 34px; padding: 0 6px; border-radius: 8px; text-decoration: none;
+  color: var(--fg-strong, var(--fg)); font: 650 15px/1 var(--font-text); letter-spacing: -0.02em; transition: opacity 150ms ease;
+}
+.nav-brand:hover { opacity: 0.7; }
+.nav-brand:has(~ :not([hidden]))::after { content: "›"; margin: 0 -6px 0 10px; color: var(--chrome); opacity: 0.55; font: 400 13.5px/1 var(--font-text); letter-spacing: normal; }
+.nav-back {
+  display: flex; flex: none; align-items: center; height: 34px; padding: 0 10px; border-radius: 8px;
+  color: var(--soft); font: 500 13.5px/1 var(--font-text); text-decoration: none;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+.nav-back:hover { color: var(--fg-strong, var(--fg)); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+:is(.nav-brand, .nav-back):focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+.nav-back svg { display: none; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+/* A paused page stays in sight (its button) while the rest of the controls hide. Track changes hides with them. */
+body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) { opacity: 1; }
+body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) > :not(.edit-group),
+body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-inner > :not(#btn-pause) { opacity: 0; pointer-events: none; }
+.pause-card { width: min(340px, calc(100vw - 32px)); }
+.pause-card h2 { margin: 0 0 6px; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
+.pause-card p { margin: 0; color: var(--soft); }
+.pause-card .toast-fix { margin-top: 12px; }
+
+/* The agent floats beside the page as a rounded card. Collapsed, it is a round
+   button in the lower corner on its side; expanding grows the card out of that
+   button (a clip-path from the button's circle to the full card), and the
+   page slides over to make room, on the same curve. Which side, and how wide,
+   is the user's (layout.ts sets --agent-x, --agent-w, --fab-x, the frame's
+   --frame-l and --frame-r, the steps list's --picker-x and --picker-w, and
+   the bottom row's --cb-l and --cb-r); these defaults are its usual place. */
+:root {
+  --agent-w: min(380px, calc(100vw - 32px));
+  --agent-inset: 16px;
+  --agent-left: max(var(--agent-inset), var(--safe-l));
+  --agent-fab: 44px;
+  --agent-ease: cubic-bezier(0.45, 0, 0.15, 1);
+  --agent-ms: 560ms;
+  --agent-x: var(--agent-left); --fab-x: var(--agent-left);
+  --frame-l: var(--safe-l); --frame-r: var(--safe-r);
+  --cb-l: calc(var(--agent-left) + var(--agent-fab) + 14px); --cb-r: 22px;
+}
+:is(#frame, .erga-canvas) { left: var(--frame-l); width: calc(100% - var(--frame-l) - var(--frame-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
+/* The editor's zoom (zoom.ts): the page's frame drawn larger, with a viewport that much smaller, as the browser's own
+   zoom would (remote.ts, setZoom; from the first frame, server/pages/viewer.ts, LAYOUT_EARLY). */
+html.erga-zoomed #frame { width: calc((100% - var(--frame-l) - var(--frame-r)) / var(--erga-zoom)); height: calc((100% - var(--band-h) - var(--kb, 0px)) / var(--erga-zoom)); transform: scale(var(--erga-zoom)); transform-origin: 0 0; }
+#source { left: var(--frame-l); right: var(--frame-r); transition: left var(--agent-ms) var(--agent-ease), right var(--agent-ms) var(--agent-ease); }
+.chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding var(--agent-ms) var(--agent-ease); padding-left: var(--cb-l); padding-right: var(--cb-r); }
+/* The top row and its cards keep clear of a panel on the right. */
+.chrome-top { right: max(14px, var(--safe-r), calc(var(--frame-r) + 6px)); transition: opacity var(--show-ms) var(--ease), right var(--agent-ms) var(--agent-ease); }
+/* Narrower, the agent covers the page instead, and the style bar with it. */
+@media (max-width: 759.98px) { body.agent-open .fmt { display: none; } }
+.agent-fab {
+  position: fixed; left: var(--fab-x); bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset))); z-index: 21;
+  width: var(--agent-fab); height: var(--agent-fab); border-radius: 50%; border: 1px solid var(--panel-border);
+  display: grid; place-items: center; padding: 0; cursor: pointer;
+  background: var(--panel-bg); color: var(--chrome-hover); box-shadow: var(--shadow);
+  transition: transform var(--agent-ms) var(--agent-ease), opacity 200ms ease 160ms, box-shadow 200ms ease, left var(--agent-ms) var(--agent-ease);
+}
+.agent-fab:hover { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.06); }
+.agent-fab svg { width: 22px; height: 22px; }
+.agent-fab.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
+@keyframes agent-spin { to { transform: rotate(360deg); } }
+body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
+/* The wrapper carries the shadow as a filter, so it follows the clipped,
+   rounded card mid-animation instead of being cut off by the clip. */
+.agent {
+  position: fixed; z-index: 20;
+  left: var(--agent-x); top: max(var(--agent-inset), env(safe-area-inset-top));
+  bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
+  width: var(--agent-w);
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.11)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.06));
+  visibility: hidden;
+  transition: visibility 0s linear var(--agent-ms), left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease);
+}
+body.agent-open .agent { visibility: visible; transition: visibility 0s, left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
+.agent-card {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 18px;
+  font: 14px/1.55 var(--font-text); color: var(--fg);
+  clip-path: inset(calc(100% - var(--agent-fab)) calc(100% - var(--agent-fab)) 0 0 round calc(var(--agent-fab) / 2));
+  opacity: 0;
+  transition: clip-path var(--agent-ms) var(--agent-ease), opacity 180ms ease 140ms;
+}
+/* Right of the page, it grows out of the lower-right corner. */
+body.agent-right:not(.agent-open) .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) 0 0 calc(100% - var(--agent-fab)) round calc(var(--agent-fab) / 2)); }
+body.agent-open .agent-card {
+  clip-path: inset(0 0 0 0 round 18px);
+  opacity: 1;
+  transition: clip-path var(--agent-ms) var(--agent-ease), opacity 0s;
+}
+.agent-card > * { opacity: 0; transform: translateY(6px); transition: opacity 160ms ease, transform var(--agent-ms) var(--agent-ease); }
+body.agent-open .agent-card > * { opacity: 1; transform: none; transition: opacity 280ms ease 220ms, transform var(--agent-ms) var(--agent-ease) 120ms; }
+body.no-motion, body.no-motion * { transition: none !important; }
+
+/* Resizing and docking (layout.ts; the grip, the ghost and the drag's look are style.css's): the editor's parts. */
+body.layout-narrow .agent-resize { display: none; }
+body.layout-resizing :is(#frame, .erga-canvas, #source, .agent, .agent-fab, .chrome-nav, .chrome-top, .chrome-bottom, .erga-steps-panel) { transition: none !important; }
+body.layout-resizing #frame, body.layout-dragging #frame { pointer-events: none; }
+
+/* Docking: a panel dragged by its head (the agent's, the steps list's) follows the pointer, lifted; the ghost shows the slot
+   it will land in, and the page and the other panel slide aside to make room. Let go, it eases into the ghost's place. */
+body:not(.layout-narrow) .agent-head, body.erga-editing .erga-steps-panel.erga-docked .erga-steps-head { cursor: grab; user-select: none; touch-action: none; }
+.agent.layout-dragged { filter: drop-shadow(0 24px 48px rgba(0, 0, 0, 0.2)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.08)); }
+.agent.layout-dragged .agent-card { transform: scale(0.985); transition: transform 200ms var(--agent-ease) !important; }
+.erga-steps-panel.layout-dragged { box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 24px 48px rgba(0, 0, 0, .2); }
+.dock-ghost {
+  top: max(var(--agent-inset), env(safe-area-inset-top));
+  bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
+}
+
+/* The steps list, docked beside the page as a column while editing, on the side the user put it. */
+body.erga-editing .erga-steps-panel.erga-docked {
+  left: var(--picker-x); right: auto; width: var(--picker-w); max-height: none;
+  top: max(var(--agent-inset), env(safe-area-inset-top));
+  bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
+  border-radius: 18px; transition: left var(--agent-ms) var(--agent-ease), opacity 280ms ease, transform var(--agent-ms) var(--agent-ease);
+}
+@starting-style { body.erga-editing .erga-steps-panel.erga-docked { opacity: 0; transform: translateX(12px); } }
+@starting-style { body.erga-editing .erga-steps-panel.erga-docked:not(.erga-docked-right) { opacity: 0; transform: translateX(-12px); } }
+body.erga-editing .erga-steps-panel.erga-docked .erga-steps-head { padding: 13px 16px 4px; font-size: 13px; }
+
+/* The style bar floats over a selection in the page. */
+.fmt {
+  position: fixed; z-index: 30; padding: 4px;
+  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 10px; box-shadow: var(--shadow);
+  transform: translate(-50%, calc(-100% - 8px)); transition: opacity 120ms ease;
+  font: 13px/1 var(--font-text); color: var(--fg);
+}
+.fmt.below { transform: translate(-50%, 8px); }
+.fmt[hidden] { display: none; }
+.fmt button {
+  width: 30px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--chrome-hover);
+  display: grid; place-items: center; cursor: pointer; font: inherit; padding: 0;
+}
+.fmt button:hover { background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+.fmt button[aria-pressed="true"] { background: color-mix(in srgb, var(--caret) 16%, transparent); color: var(--caret); }
+.fmt button[aria-disabled="true"] { opacity: 0.35; cursor: not-allowed; }
+.fmt button b { font-weight: 700; font-size: 14px; }
+.fmt button i { font-family: Georgia, serif; font-size: 15px; }
+.fmt svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.fmt .sep { width: 1px; height: 16px; background: var(--rule); margin: 0 2px; flex: none; }
+.fmt button { flex: none; }
+.fmt button[hidden] { display: none; }
+.fmt button:focus-visible { outline: 2px solid var(--caret); outline-offset: -2px; }
+/* Two panes, the style buttons and the link's: one shows. Between them both float, centred on the edge next to
+   the text, while the bar's box grows or shrinks around them; the link icon goes from its button to its row. */
+.fmt-panes { position: relative; }
+.fmt-pane { display: flex; align-items: center; gap: 2px; }
+.fmt-pane[hidden] { display: none; }
+.fmt.morphing .fmt-panes { overflow: hidden; transition: width var(--morph-ms) var(--ease), height var(--morph-ms) var(--ease); }
+.fmt.morphing .fmt-pane { display: flex; position: absolute; left: 50%; bottom: 0; translate: -50% 0; }
+.fmt.morphing.below .fmt-pane { bottom: auto; top: 0; }
+.fmt.morphing .fmt-pane.out { opacity: 0; scale: 0.96; transition: opacity calc(var(--morph-ms) * 0.5) ease, scale var(--morph-ms) var(--ease); pointer-events: none; }
+.fmt.morphing .fmt-pane.in { animation: fmt-pane-in var(--morph-ms) var(--ease) both; animation-delay: calc(var(--morph-ms) * 0.25); }
+@keyframes fmt-pane-in { from { opacity: 0; scale: 0.97; } }
+.fmt.appear { animation: fmt-appear 140ms ease both; }
+@keyframes fmt-appear { from { opacity: 0; } }
+:root { --morph-ms: 240ms; }
+/* The link pane: its text and close; its address, open and remove; where it opens. */
+.fmt-link { flex-direction: column; align-items: stretch; gap: 0; width: 300px; }
+.fmt-row { display: flex; align-items: center; gap: 2px; height: 32px; }
+.fmt-row + .fmt-row { border-top: 1px solid var(--rule); }
+.fmt-lead { width: 30px; height: 28px; display: grid; place-items: center; color: var(--chrome); flex: none; }
+.fmt-lead.t { font: 600 13px var(--font-text); letter-spacing: -0.02em; }
+.fmt-row input { flex: 1; min-width: 0; height: 28px; border: 0; outline: none; background: transparent; color: var(--fg); font: 13px var(--font-text); padding: 0 6px 0 2px; }
+.fmt-row input::placeholder { color: var(--chrome); }
+.fmt-row input[type=url] { color: var(--link); }
+.fmt button.fmt-x { color: var(--chrome); }
+.fmt button.fmt-x:hover { color: var(--chrome-hover); }
+.fmt button.fmt-tab { width: 100%; height: 28px; display: flex; align-items: center; justify-content: flex-start; gap: 2px; padding: 0 6px 0 0; }
+.fmt-tab .fmt-label { flex: 1; text-align: left; color: var(--soft); }
+.fmt-switch { width: 28px; height: 16px; border-radius: 999px; background: var(--rule); position: relative; flex: none; transition: background 140ms ease; }
+.fmt-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: translate 160ms var(--ease); }
+.fmt-tab[aria-checked="true"] .fmt-switch { background: var(--caret); }
+.fmt-tab[aria-checked="true"] .fmt-switch::after { translate: 12px 0; }
+@media (prefers-reduced-motion: reduce) {
+  :root { --agent-ms: 1ms; }
+  .fmt.morphing .fmt-panes { transition: none; }
+  .fmt.morphing .fmt-pane.in { animation: fmt-appear 120ms ease both; }
+}
+/* The agent panel's insides (its head, the conversation, the box) are style.css's: the admin pages' panel has them too. */
+
+/* The editor's own page actions, between Clone and the pencil. While editing (and the editor is up), the group's column is
+   its full width; else nothing. It eases between the two, and its actions keep to its left edge: as it narrows they all
+   slide right into the pencil, New document and Clone with them, and each fades over its last 14px at the pencil's edge,
+   a line it vanishes at; as it widens they come out of the pencil. Leaving the editor, editBoot holds the
+   editor's row up while they go (erga-closing). Moving, it clips sideways only, so tooltips below still show; open and
+   at rest (settled), nothing clips. The others here fade in and out with it, at the far left. */
+.edit-group { display: grid; grid-template-columns: 0fr; margin-left: -2px; transition: grid-template-columns 420ms var(--agent-ease), margin 420ms var(--agent-ease); }
+body.erga-editing.erga-editor-ready:not(.erga-closing) .edit-group { grid-template-columns: 1fr; margin-left: 0; }
+.edit-group-inner { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.edit-group-inner > * { flex-shrink: 0; }
+.edit-group:not(.settled) .edit-group-inner { overflow-x: clip; -webkit-mask-image: linear-gradient(to left, transparent, #000 14px); mask-image: linear-gradient(to left, transparent, #000 14px); }
+.chrome-top .people { transition: opacity 420ms var(--agent-ease); }
+body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .people, body:not(.erga-editor-ready) .chrome-top .people { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .edit-group, .chrome-top .people { transition: none; } }
+
+/* Who's here: you, then everyone else and their agents, in their colours. */
+.people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
+.people:empty { display: none; }
+/* You, at the far right, apart from the others. */
+.me-slot { display: flex; align-items: center; margin-left: 8px; margin-right: 2px; }
+/* Your avatar is the size and place it is on every other page, so the eye here and the viewer's pencil swap in place. */
+.me-slot .avatar { width: 30px; height: 30px; font-size: 13px; }
+.me-slot:empty { display: none; }
+.avatar {
+  position: relative; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  display: grid; place-items: center; font: 600 12px/1 var(--font-text); color: #fff; background: var(--c);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.avatar.away { opacity: 0.45; }
+/* Your avatar's menu: who you are, your documents, the admin page (admins), sign out. */
+.help.account { width: auto; min-width: 190px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px; }
+.help.account .account-who { margin: 0; padding: 6px 10px 8px; color: var(--soft); font-size: 12.5px; }
+.account-who b { display: block; color: var(--fg-strong, var(--fg)); font-weight: 600; font-size: 13.5px; }
+.account-who span:empty { display: none; }
+.account a { display: block; padding: 6px 10px; border-radius: 7px; color: var(--fg); text-decoration: none; white-space: nowrap; }
+.account a[hidden] { display: none; }
+.account a:hover, .account a:focus-visible { background: color-mix(in srgb, var(--chrome) 14%, transparent); outline: none; }
+@media (pointer: coarse) { .account a { padding: 10px 12px; } }
+.avatar.me[aria-expanded="true"]::before { display: none; }
+.msg-tool .via { font-weight: 600; }
+/* A person's agent: a small badge on their avatar's lower right, spinning while it works. */
+.person { position: relative; display: grid; }
+.agent-badge {
+  position: absolute; right: -5px; bottom: -5px; width: 15px; height: 15px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  display: grid; place-items: center; font: 600 9px/1 var(--font-text); color: var(--c);
+  background: color-mix(in srgb, var(--c) 16%, var(--bg)); box-shadow: 0 0 0 1.5px var(--bg);
+}
+.agent-badge span { display: block; }
+.agent-badge.busy span { animation: agent-spin 1.2s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .agent-badge.busy span { animation-duration: 4s; } }
+:is(.avatar, .agent-badge)[aria-disabled="true"] { cursor: default; }
+
+/* The cards under the top row start below it (it moves down for a notch),
+   and scroll inside themselves when the window is too short for them. */
+.help {
+  top: calc(var(--top-clear) - 2px); right: max(16px, var(--safe-r), calc(var(--frame-r) + 8px));
+  max-height: calc(100% - var(--top-clear) - var(--kb, 0px) - max(16px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain;
+}
+
+/* The document's title, after Documents as a breadcrumb (the arrow is Documents', inside its
+   box); click it for the document's pages (the card below it), whose first row, the document
+   itself, has the pencil that renames it or changes its address (the naming card). */
+/* The arrow sits midway between the two words' ink: the right side has the title's padding too, so its margins differ. */
+.nav-back:has(+ .nav-title:not([hidden]))::after { content: "›"; margin: 0 -6px 0 12px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
+.nav-title {
+  display: flex; align-items: center; height: 34px; min-width: 0; max-width: min(42vw, 420px, var(--room, 420px)); padding: 0 8px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--fg); font: 500 13.5px/1 var(--font-text); cursor: pointer;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+:is(.nav-back, .nav-title)[hidden] { display: none; }
+.nav-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-title:hover, .nav-title[aria-expanded="true"] { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+.nav-title:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+/* The title's caret: it opens the document's pages (the tree, document/pages.ts), where the document is renamed too. */
+.nav-title .nav-caret { flex: none; align-self: center; width: 14px; height: 14px; margin: 1px -2px 0 3px; fill: none; stroke: var(--chrome); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
+.nav-title[aria-expanded="true"] .nav-caret { transform: rotate(180deg); }
+/* A document (one page) has no pages to open: its title has no caret, and opens its name (main.ts, applyKind). */
+.nav-title:not(.project) .nav-caret { display: none; }
+.help.pages { width: min(320px, calc(100vw - 28px)); padding: 8px; }
+.help.naming { right: auto; left: max(14px, var(--safe-l), calc(var(--frame-l) + 6px)); width: min(340px, calc(100vw - 28px)); transition: left var(--agent-ms) var(--agent-ease); }
+.naming label { display: block; margin: 0 0 4px; font-size: 12px; color: var(--soft); }
+.naming-input, .naming-addr {
+  display: flex; align-items: center; width: 100%; box-sizing: border-box; margin: 0 0 12px; border: 1px solid var(--panel-border);
+  border-radius: 8px; background: var(--code-bg); font: 13.5px/1.3 var(--font-text); color: var(--fg-strong, var(--fg));
+}
+.naming-input { padding: 7px 9px; }
+.naming-addr { padding: 0 9px; }
+.naming-addr span { color: var(--soft); white-space: nowrap; }
+.naming-addr input { flex: 1; min-width: 0; padding: 7px 0; border: 0; outline: 0; background: transparent; font: inherit; color: inherit; }
+.naming-input:focus, .naming-addr:focus-within { outline: 0; border-color: var(--caret); }
+.naming-status { margin: -4px 0 0; min-height: 1.4em; font-size: 12px; color: var(--soft); }
+.naming-status:empty { display: none; }
+.naming-status.error { color: #c2410c; }
+.naming .share-actions { margin-top: 6px; }
+
+/* Phones. The top row keeps to what fits beside the controls: the breadcrumbs shrink to an arrow back to
+   Documents and the title (no wordmark: the controls leave no room for it), avatars overlap, and notes
+   that would cover the row sit under it. */
+@media (max-width: 520px) {
+  .nav-brand { display: none; }
+  .nav-back { padding: 0 8px 0 4px; }
+  .chrome-nav, .nav-back { align-items: center; } /* only the arrow left of Documents: no text to share a baseline with */
+  .nav-back svg { display: block; }
+  .nav-back span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .nav-back::after { display: none; }
+  .nav-back + .nav-title { margin-left: -6px; }
+  .nav-title { padding: 0 6px; }
+  .people { gap: 0; }
+  .people > * + * { margin-left: -5px; }
+  .refresh-pill { top: calc(var(--top-clear) - 6px); left: 16px; right: 16px; width: fit-content; max-width: none; margin: 0 auto; transform: none; }
+  .toast { bottom: calc(max(var(--agent-inset), env(safe-area-inset-bottom)) + var(--agent-fab) + 12px); }
+  #source .cm-scroller { padding-top: 24px; padding-left: 16px; }
+}
+/* Touch. A finger needs more room than the controls are drawn with, so
+   their hit areas reach past it; and fields are 16px, so Safari doesn't
+   zoom the page in when one is focused. */
+@media (pointer: coarse) {
+  .nav-brand, .nav-back, .nav-title { position: relative; }
+  :is(.icon-btn, .nav-back, .nav-brand)::before, .nav-title::after { content: ""; position: absolute; inset: -5px -1px; }
+  .naming-input, .naming-addr { font-size: 16px; }
+  .avatar::after { content: ""; position: absolute; inset: -8px -3px; }
+  .fmt button { width: 38px; height: 36px; }
+  .fmt-row { height: 40px; }
+  .fmt button.fmt-tab { height: 36px; }
+  .fmt-link { width: min(340px, calc(100vw - 48px)); }
+  .fmt-row input, .agent-compose textarea { font-size: 16px; }
+}
+
+/* Other people's carets in the source view. */
+.cm-peer { position: relative; border-left: 2px solid var(--c); margin-left: -1px; margin-right: -1px; }
+.cm-peer.agent { border-left-style: dashed; }
+.cm-peer-name {
+  position: absolute; left: -2px; bottom: 100%; white-space: nowrap; pointer-events: none;
+  font: 600 10.5px/1.5 var(--font-text); color: #fff; background: var(--c); border-radius: 3px 3px 3px 0; padding: 0 5px;
+}

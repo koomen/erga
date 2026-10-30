@@ -72,7 +72,7 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     clearTimeout(closing);
     body.classList.remove("erga-closing");
     if (!edit && ready && body.classList.contains("erga-editing") && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      // Out of the editor: its own actions close back into the pencil first (client/editor.html, .edit-group, 420ms), with the editor's
+      // Out of the editor: its own actions close back into the pencil first (client/styles/editor.css, .edit-group, 420ms), with the editor's
       // row still up; then the viewer's, the same buttons in the same places, takes over.
       body.classList.add("erga-closing");
       closing = window.setTimeout(() => {
