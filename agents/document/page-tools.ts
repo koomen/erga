@@ -267,7 +267,7 @@ const PREVIEW = {
 type PreviewArgs = { edits?: readonly TextEdit[]; path?: string };
 function previewReq(p: PreviewArgs): { preview?: { path?: string; edits: TextEdit[] } } {
   if (p.path != null && !p.edits) throw new Error("path goes with edits: the file a preview's edits are for.");
-  return p.edits ? { preview: { ...(p.path != null ? { path: p.path } : {}), edits: p.edits.map((e) => ({ oldText: e.oldText, newText: e.newText })) } } : {};
+  return p.edits ? { preview: { ...(p.path != null ? { path: p.path } : {}), edits: p.edits.map((e) => ({ ...e })) } } : {};
 }
 const describePreview = (p: { path: string; edits: number }) =>
   `A preview: ${p.edits} edit${p.edits == 1 ? "" : "s"} applied to a copy of ${p.path}, for this render only. The document is unchanged: apply them with edit.`;

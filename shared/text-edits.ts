@@ -2,8 +2,13 @@
 // (agents/document/workspace.ts) applies them to the document; view_page's and evaluate_page's preview
 // (client/shell/page-requests.ts) to a copy, for the render only. Pure: it runs on the server and in the browser.
 
+import { findInSource } from "./source-select";
+
+/** One edit: the text it replaces, by its exact text (oldText), an element's CSS selector, or a CSS rule's selector (cssRule). */
 export interface TextEdit {
-  oldText: string;
+  oldText?: string;
+  selector?: string;
+  cssRule?: string;
   newText: string;
 }
 export interface Span {
@@ -17,10 +22,18 @@ export function aimEdits(
   current: string,
   edits: readonly TextEdit[],
   path: string
-): { spans: Span[] } | { reason: "noEdits" | "emptyEdit" | "notFound" | "ambiguous" | "overlap"; index: number; label: string; message: string } {
+): { spans: Span[] } | { reason: "noEdits" | "emptyEdit" | "notFound" | "ambiguous" | "overlap" | "selector"; index: number; label: string; message: string } {
   if (!edits.length) return { reason: "noEdits", index: -1, label: "edits", message: "no edits given" };
   const spans: Span[] = [];
   for (const [i, e] of edits.entries()) {
+    if (e.selector != null || e.cssRule != null) {
+      const label = edits.length > 1 ? `edits[${i}]` : e.selector != null ? "selector" : "cssRule";
+      if (e.oldText != null) return { reason: "selector", index: i, label, message: `${label}: give oldText, selector or cssRule, one of them` };
+      const found = findInSource(current, path, e);
+      if (typeof found == "string") return { reason: "selector", index: i, label, message: `${label}: ${found}` };
+      spans.push({ from: found.from, to: found.to, insert: e.newText });
+      continue;
+    }
     const label = edits.length > 1 ? `edits[${i}]` : "oldText";
     if (!e.oldText) return { reason: "emptyEdit", index: i, label, message: `${label} is empty` };
     const at = current.indexOf(e.oldText);

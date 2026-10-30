@@ -83,6 +83,10 @@ ${PAGES_PROMPT}`}
   at that moment; if it fails because the text changed, read the file again and retry.
   Read a file right before editing it (with read, not grep: search output cuts long
   lines, so text copied from it won't match), and keep edits scoped to what was asked.
+- In a big page, read and edit one part by its selector: read with selector
+  ("section.legible", "svg g#logo") or css_rule (".legible h2") gives that part and its
+  lines; an edit with selector or cssRule instead of oldText replaces it whole. It must
+  name exactly one, in the source as written.
 - Messages may begin with an <editor> block saying which page ${owner} has open, and
   where their caret or selection is. "This page", "this", "here" and "the selection"
   refer to it. ${owner} may move to another page between messages: trust the latest block.

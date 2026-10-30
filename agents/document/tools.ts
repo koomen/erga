@@ -14,6 +14,8 @@ import { EDITS, WorkspaceError, globToRegExp, modelPath, type Workspace } from "
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 import type { FilesAccess, OpenResult, VersionsAccess } from "../../document/agent";
 import { pageTools } from "./page-tools";
+import type { TextEdit } from "../../shared/text-edits";
+import { findInSource } from "../../shared/source-select";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -114,7 +116,7 @@ export function makeTools(
     {
       name: "read",
       label: "Read",
-      description: `Read a file: a text file's current text, an image (png, jpg, gif, webp) as a picture, or a PDF as a document you see (its text, tables, layout and scans), ${PAGES_PER_READ} pages at a time (pages: "21-40" for more). For another kind of file, its size and type. Text is cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; use offset/limit for more.`,
+      description: `Read a file: a text file's current text, an image (png, jpg, gif, webp) as a picture, or a PDF as a document you see (its text, tables, layout and scans), ${PAGES_PER_READ} pages at a time (pages: "21-40" for more). For another kind of file, its size and type. Text is cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; use offset/limit for more. For one part of a big page, give selector (one element's source, found in the source as written, e.g. "section.legible") or css_rule (one CSS rule, e.g. ".legible h2"): the answer is that part and its lines, and edit takes the same selector or cssRule to replace it.`,
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: "Path of the file, relative to the document's folder" }),
         offset: Schema.optionalKey(Schema.Finite.annotate({ description: "Line number to start reading from (1-indexed)" })),
@@ -124,11 +126,20 @@ export function makeTools(
             description: `A PDF's pages to read: one ("3") or a range ("21-40"), at most ${PAGES_PER_READ}. Default: the first ${PAGES_PER_READ}.`,
           })
         ),
+        selector: Schema.optionalKey(Schema.String.annotate({ description: 'Only the one element this CSS selector matches, e.g. "section.legible" or "svg g#logo".' })),
+        css_rule: Schema.optionalKey(Schema.String.annotate({ description: 'Only the one CSS rule with this selector (in a stylesheet, or the page\'s <style>), e.g. ".legible h2".' })),
       }),
-      execute: async (_id, p: { path: string; offset?: number; limit?: number; pages?: string }) => {
+      execute: async (_id, p: { path: string; offset?: number; limit?: number; pages?: string; selector?: string; css_rule?: string }) => {
         const path = run(modelPath(p.path));
         if (!ws.isText(path) && ws.paths().includes(path)) return readFile(path, p.pages);
-        const lines = run(ws.read(path)).split("\n");
+        const all = run(ws.read(path));
+        if (p.selector != null || p.css_rule != null) {
+          const found = findInSource(all, path, { selector: p.selector, cssRule: p.css_rule });
+          if (typeof found == "string") throw new Error(found);
+          const [a, b] = found.lines;
+          return text(`[${path}, ${a == b ? `line ${a}` : `lines ${a}-${b}`}: the ${p.selector != null ? `element "${p.selector}"` : `CSS rule "${p.css_rule}"`}]\n${all.slice(found.from, found.to)}`);
+        }
+        const lines = all.split("\n");
         const start = Math.max(0, (p.offset ?? 1) - 1);
         if (start >= lines.length && lines.length > 1) throw new Error(`Offset ${p.offset} is beyond the end of the file (${lines.length} lines)`);
         let end = Math.min(lines.length, start + (p.limit ?? MAX_LINES));
@@ -141,12 +152,12 @@ export function makeTools(
     {
       name: "edit",
       label: "Edit",
-      description: "Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn't found, the file changed since you read it: read it again.",
+      description: 'Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn\'t found, the file changed since you read it: read it again. To replace a whole element, give its CSS selector instead of oldText ({"selector": "svg g#logo", "newText": "<g id=\\"logo\\">...</g>"}); to replace a whole CSS rule (in a stylesheet or a <style>), its selector as cssRule ({"cssRule": ".legible h2", "newText": ".legible h2 { color: navy; }"}). Either must name exactly one, in the source as written; read with selector or css_rule shows it first. Each call is one step to undo.',
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: "Path of the file to edit" }),
         edits: EDITS.annotate({ description: "One or more targeted replacements, each matched against the current file" }),
       }),
-      execute: async (_id, p: { path: string; edits: { oldText: string; newText: string }[] }) => {
+      execute: async (_id, p: { path: string; edits: readonly TextEdit[] }) => {
         const r = await Effect.runPromise(Effect.match(ws.edit(p.path, p.edits), { onFailure: (e) => e, onSuccess: (r) => r }));
         if (r instanceof WorkspaceError)
           throw new Error(r.reason == "changed" ? await changedSince(r.message, run(modelPath(p.path))) : r.message);
