@@ -15,7 +15,9 @@ export interface Found {
 // ------------------------------------------------------------------ selectors
 
 type Attr = { name: string; op?: "=" | "~=" | "^=" | "$=" | "*=" | "|="; value?: string };
-type Pseudo = { kind: "first-child" | "last-child" | "only-child" | "first-of-type" | "last-of-type" | "only-of-type" } | { kind: "nth-child" | "nth-of-type"; a: number; b: number };
+type Pseudo =
+  | { kind: "first-child" | "last-child" | "only-child" | "first-of-type" | "last-of-type" | "only-of-type" }
+  | { kind: "nth-child" | "nth-of-type"; a: number; b: number };
 type Compound = { tag?: string; id?: string; classes: string[]; attrs: Attr[]; pseudos: Pseudo[] };
 type Part = { compound: Compound; combinator: " " | ">" | "+" | "~" | null };
 
@@ -39,15 +41,24 @@ export function parseSelector(selector: string): Part[] | string {
   while (i < s.length) {
     const c: Compound = { classes: [], attrs: [], pseudos: [] };
     let any = false;
-    if (s[i] == "*") { i++; any = true; }
-    else { const t = ident(); if (t) { c.tag = t.toLowerCase(); any = true; } }
+    if (s[i] == "*") {
+      i++;
+      any = true;
+    } else {
+      const t = ident();
+      if (t) {
+        c.tag = t.toLowerCase();
+        any = true;
+      }
+    }
     for (;;) {
       const ch = s[i];
       if (ch == "#" || ch == ".") {
         i++;
         const name = ident();
         if (!name) return bad(`"${ch}" has no name after it`);
-        if (ch == "#") c.id = name; else c.classes.push(name);
+        if (ch == "#") c.id = name;
+        else c.classes.push(name);
       } else if (ch == "[") {
         const m = /^\[\s*([^\s~|^$*=\]]+)\s*(?:([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\s\]]+))\s*(i)?\s*)?\]/.exec(s.slice(i));
         if (!m) return bad("an attribute selector doesn't parse");
@@ -62,7 +73,10 @@ export function parseSelector(selector: string): Part[] | string {
           const ab = nth(m[2] ?? "");
           if (!ab) return bad(`:${kind}(${m[2] ?? ""}) takes a number, odd, even or an+b`);
           c.pseudos.push({ kind, ...ab });
-        } else if (["first-child", "last-child", "only-child", "first-of-type", "last-of-type", "only-of-type"].includes(kind) && m[2] == null)
+        } else if (
+          ["first-child", "last-child", "only-child", "first-of-type", "last-of-type", "only-of-type"].includes(kind) &&
+          m[2] == null
+        )
           c.pseudos.push({ kind } as Pseudo);
         else return bad(`it has :${m[1]}${m[2] != null ? `(${m[2]})` : ""}`);
       } else break;
@@ -73,8 +87,11 @@ export function parseSelector(selector: string): Part[] | string {
     const ws = /^\s*/.exec(s.slice(i))![0];
     i += ws.length;
     if (i >= s.length) break;
-    if (">+~".includes(s[i])) { combinator = s[i] as Part["combinator"]; i++; i += /^\s*/.exec(s.slice(i))![0].length; }
-    else if (ws) combinator = " ";
+    if (">+~".includes(s[i])) {
+      combinator = s[i] as Part["combinator"];
+      i++;
+      i += /^\s*/.exec(s.slice(i))![0].length;
+    } else if (ws) combinator = " ";
     else return bad(s[i] == "," ? "it is a list (a, b): name one element" : `it has "${s[i]}"`);
   }
   return parts;
@@ -132,13 +149,20 @@ function compoundMatches(src: string, el: ElementNode, c: Compound): boolean {
     const k = siblings.indexOf(el) + 1,
       kt = same.indexOf(el) + 1;
     for (const p of c.pseudos) {
-      const ok = "a" in p ? nthMatches(p.a, p.b, p.kind == "nth-child" ? k : kt)
-        : p.kind == "first-child" ? k == 1
-        : p.kind == "last-child" ? k == siblings.length
-        : p.kind == "only-child" ? siblings.length == 1
-        : p.kind == "first-of-type" ? kt == 1
-        : p.kind == "last-of-type" ? kt == same.length
-        : same.length == 1;
+      const ok =
+        "a" in p
+          ? nthMatches(p.a, p.b, p.kind == "nth-child" ? k : kt)
+          : p.kind == "first-child"
+            ? k == 1
+            : p.kind == "last-child"
+              ? k == siblings.length
+              : p.kind == "only-child"
+                ? siblings.length == 1
+                : p.kind == "first-of-type"
+                  ? kt == 1
+                  : p.kind == "last-of-type"
+                    ? kt == same.length
+                    : same.length == 1;
       if (!ok) return false;
     }
   }
@@ -178,7 +202,11 @@ export function selectInSource(src: string, selector: string): ElementNode[] | s
 
 /** A selector or an at-rule's prelude, compared without its spacing: ".a  >  b" is ".a>b", "(max-width: 6px)" "(max-width:6px)". */
 const normal = (s: string) => {
-  const t = s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ").replace(/\s*([>+~,{}()])\s*/g, "$1").trim();
+  const t = s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*([>+~,{}()])\s*/g, "$1")
+    .trim();
   return t.startsWith("@") ? t.replace(/\s*:\s*/g, ":") : t; // (in a selector, a space before ":" is a combinator)
 };
 
@@ -194,21 +222,38 @@ function rulesIn(css: string, base: number, prelude: string): { from: number; to
   let start = 0;
   for (let i = 0; i < css.length; i++) {
     const ch = css[i];
-    if (ch == "/" && css[i + 1] == "*") { const e = css.indexOf("*/", i + 2); i = e < 0 ? css.length : e + 1; continue; }
-    if (ch == '"' || ch == "'") { let j = i + 1; while (j < css.length && css[j] != ch && css[j] != "\n") j += css[j] == "\\" ? 2 : 1; i = j; continue; }
+    if (ch == "/" && css[i + 1] == "*") {
+      const e = css.indexOf("*/", i + 2);
+      i = e < 0 ? css.length : e + 1;
+      continue;
+    }
+    if (ch == '"' || ch == "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] != ch && css[j] != "\n") j += css[j] == "\\" ? 2 : 1;
+      i = j;
+      continue;
+    }
     if (ch == ";") start = i + 1;
     else if (ch == "{") {
       // The prelude's first character: after spaces and comments.
       let from = start;
       for (;;) {
         from += /^\s*/.exec(css.slice(from))![0].length;
-        if (css.startsWith("/*", from)) { const e = css.indexOf("*/", from + 2); from = e < 0 ? i : e + 2; } else break;
+        if (css.startsWith("/*", from)) {
+          const e = css.indexOf("*/", from + 2);
+          from = e < 0 ? i : e + 2;
+        } else break;
       }
       open.push({ from, prelude: css.slice(from, i) });
       start = i + 1;
     } else if (ch == "}") {
       const r = open.pop();
-      if (r && normal(r.prelude) == want) out.push({ from: base + r.from, to: base + i + 1, ...(open.length ? { within: open[open.length - 1].prelude.replace(/\s+/g, " ").trim() } : {}) });
+      if (r && normal(r.prelude) == want)
+        out.push({
+          from: base + r.from,
+          to: base + i + 1,
+          ...(open.length ? { within: open[open.length - 1].prelude.replace(/\s+/g, " ").trim() } : {}),
+        });
       start = i + 1;
     }
   }
@@ -232,8 +277,14 @@ export function cssRulesInSource(src: string, path: string, prelude: string): { 
 // ------------------------------------------------------------------ either
 
 const lineAt = (src: string, pos: number) => src.slice(0, pos).split("\n").length;
-const lines = (src: string, r: { from: number; to: number }): [number, number] => [lineAt(src, r.from), lineAt(src, Math.max(r.from, r.to - 1))];
-const where = (src: string, r: { from: number; to: number }) => { const [a, b] = lines(src, r); return a == b ? `line ${a}` : `lines ${a}-${b}`; };
+const lines = (src: string, r: { from: number; to: number }): [number, number] => [
+  lineAt(src, r.from),
+  lineAt(src, Math.max(r.from, r.to - 1)),
+];
+const where = (src: string, r: { from: number; to: number }) => {
+  const [a, b] = lines(src, r);
+  return a == b ? `line ${a}` : `lines ${a}-${b}`;
+};
 
 /**
  * The one part of `src` (the file at `path`) that `selector` (an element) or `cssRule` (a CSS rule's selector) names;
@@ -246,7 +297,14 @@ export function findInSource(src: string, path: string, at: { selector?: string;
     const els = selectInSource(src, at.selector);
     if (typeof els == "string") return els;
     if (els.length != 1)
-      return `"${at.selector}" matches ${els.length} elements in ${path}${els.length ? ` (at ${els.slice(0, 10).map((e) => where(src, e)).join(", ")}${els.length > 10 ? ", ..." : ""})` : ""}, as written in the source (not as the page's scripts change it). Make it match one: add a class, an id, :nth-of-type(n) or a parent.`;
+      return `"${at.selector}" matches ${els.length} elements in ${path}${
+        els.length
+          ? ` (at ${els
+              .slice(0, 10)
+              .map((e) => where(src, e))
+              .join(", ")}${els.length > 10 ? ", ..." : ""})`
+          : ""
+      }, as written in the source (not as the page's scripts change it). Make it match one: add a class, an id, :nth-of-type(n) or a parent.`;
     return { from: els[0].from, to: els[0].to, lines: lines(src, els[0]) };
   }
   const rules = cssRulesInSource(src, path, at.cssRule!);

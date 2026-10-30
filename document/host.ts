@@ -422,9 +422,17 @@ export function makeHost(opts: HostOptions) {
       const state = modelState(s);
       sendTo((yield* Person).id, { type: "model", ...state });
       return { ok: true as const, ...state };
-    }))
-    .handle("view", ({ payload: { id, errors, fonts, pending, shots, ...result } }) => Effect.sync(() => {
-      views.get(id)?.({ ...result, errors: [...errors], ...(fonts ? { fonts: fonts.map((f) => ({ ...f, tags: [...f.tags] })) } : {}), ...(pending ? { pending: [...pending] } : {}), ...(shots ? { shots: [...shots] } : {}) });
+      })
+    )
+    .handle("view", ({ payload: { id, errors, fonts, pending, shots, ...result } }) =>
+      Effect.sync(() => {
+        views.get(id)?.({
+          ...result,
+          errors: [...errors],
+          ...(fonts ? { fonts: fonts.map((f) => ({ ...f, tags: [...f.tags] })) } : {}),
+          ...(pending ? { pending: [...pending] } : {}),
+          ...(shots ? { shots: [...shots] } : {}),
+        });
       return { ok: true as const };
     }))
     .handle("abort", () => Person.use((user) => session(user).pipe(

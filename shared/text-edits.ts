@@ -22,13 +22,16 @@ export function aimEdits(
   current: string,
   edits: readonly TextEdit[],
   path: string
-): { spans: Span[] } | { reason: "noEdits" | "emptyEdit" | "notFound" | "ambiguous" | "overlap" | "selector"; index: number; label: string; message: string } {
+):
+  | { spans: Span[] }
+  | { reason: "noEdits" | "emptyEdit" | "notFound" | "ambiguous" | "overlap" | "selector"; index: number; label: string; message: string } {
   if (!edits.length) return { reason: "noEdits", index: -1, label: "edits", message: "no edits given" };
   const spans: Span[] = [];
   for (const [i, e] of edits.entries()) {
     if (e.selector != null || e.cssRule != null) {
       const label = edits.length > 1 ? `edits[${i}]` : e.selector != null ? "selector" : "cssRule";
-      if (e.oldText != null) return { reason: "selector", index: i, label, message: `${label}: give oldText, selector or cssRule, one of them` };
+      if (e.oldText != null)
+        return { reason: "selector", index: i, label, message: `${label}: give oldText, selector or cssRule, one of them` };
       const found = findInSource(current, path, e);
       if (typeof found == "string") return { reason: "selector", index: i, label, message: `${label}: ${found}` };
       spans.push({ from: found.from, to: found.to, insert: e.newText });
@@ -37,13 +40,26 @@ export function aimEdits(
     const label = edits.length > 1 ? `edits[${i}]` : "oldText";
     if (!e.oldText) return { reason: "emptyEdit", index: i, label, message: `${label} is empty` };
     const at = current.indexOf(e.oldText);
-    if (at < 0) return { reason: "notFound", index: i, label, message: `${label} isn't in the current text of ${path}. Read the file again and retry.` };
+    if (at < 0)
+      return {
+        reason: "notFound",
+        index: i,
+        label,
+        message: `${label} isn't in the current text of ${path}. Read the file again and retry.`,
+      };
     if (current.indexOf(e.oldText, at + 1) >= 0)
-      return { reason: "ambiguous", index: i, label, message: `${label} matches more than once in ${path}; include more surrounding text to make it unique.` };
+      return {
+        reason: "ambiguous",
+        index: i,
+        label,
+        message: `${label} matches more than once in ${path}; include more surrounding text to make it unique.`,
+      };
     spans.push({ from: at, to: at + e.oldText.length, insert: e.newText });
   }
   spans.sort((a, b) => a.from - b.from);
-  for (let i = 1; i < spans.length; i++) if (spans[i].from < spans[i - 1].to) return { reason: "overlap", index: -1, label: "edits", message: "two edits overlap; merge them into one" };
+  for (let i = 1; i < spans.length; i++)
+    if (spans[i].from < spans[i - 1].to)
+      return { reason: "overlap", index: -1, label: "edits", message: "two edits overlap; merge them into one" };
   return { spans };
 }
 

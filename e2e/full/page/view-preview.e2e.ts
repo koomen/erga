@@ -6,9 +6,11 @@ import { deck, differ } from "./view-page";
 
 await servers.main();
 
-const BLUE = { oldText: "<p class=\"build\">Blue.</p>", newText: "<p class=\"build\">Purple, in the preview.</p>" };
+const BLUE = { oldText: '<p class="build">Blue.</p>', newText: '<p class="build">Purple, in the preview.</p>' };
 
-test("a preview shows the edit at its step; the file, the person's page and the next render are unchanged", { timeout: 30_000 }, async ({ tab }) => {
+test("a preview shows the edit at its step; the file, the person's page and the next render are unchanged", { timeout: 30_000 }, async ({
+  tab,
+}) => {
   const { ed, tool } = await deck(tab);
   const before = ed.disk();
   const text = `document.querySelector(".slide.current").innerText.replace(/\\s+/g, " ").trim()`;
@@ -26,10 +28,18 @@ test("a preview shows the edit at its step; the file, the person's page and the 
   expect(await ed.source()).toBe(before);
 });
 
-test("an edit that doesn't apply, edits for another file, or a path without edits: nothing renders, and the answer says why", async ({ tab }) => {
+test("an edit that doesn't apply, edits for another file, or a path without edits: nothing renders, and the answer says why", async ({
+  tab,
+}) => {
   const { fails } = await deck(tab);
-  expect(await fails("view_page", { edits: [{ oldText: "Mauve.", newText: "x" }] })).toMatch(/^Nothing was rendered: oldText isn't in the current text of index\.html/);
-  expect(await fails("view_page", { edits: [{ oldText: "<p class=\"build\">", newText: "<p>" }] })).toMatch(/oldText matches more than once in index\.html/);
-  expect(await fails("evaluate_page", { expression: "1", edits: [BLUE], path: "style.css" })).toMatch(/a preview shows the open page, index\.html, and the edits are for style\.css/);
+  expect(await fails("view_page", { edits: [{ oldText: "Mauve.", newText: "x" }] })).toMatch(
+    /^Nothing was rendered: oldText isn't in the current text of index\.html/
+  );
+  expect(await fails("view_page", { edits: [{ oldText: '<p class="build">', newText: "<p>" }] })).toMatch(
+    /oldText matches more than once in index\.html/
+  );
+  expect(await fails("evaluate_page", { expression: "1", edits: [BLUE], path: "style.css" })).toMatch(
+    /a preview shows the open page, index\.html, and the edits are for style\.css/
+  );
   expect(await fails("view_page", { path: "index.html" })).toMatch(/path goes with edits/);
 });
