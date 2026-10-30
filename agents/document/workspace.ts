@@ -21,6 +21,7 @@ import { changesBetween, rebase } from "../../document/merge";
 import { applyChanges, assets, files, folders, stamp, type Author } from "../../document/content";
 import { cleanPath } from "../../document/pages";
 import { aligned, pieces, type Piece } from "./typing";
+import { aimEdits } from "../../shared/text-edits";
 
 export interface Workspace {
   read(path: string): Effect.Effect<string, WorkspaceError>;
@@ -34,6 +35,14 @@ export interface Workspace {
   /** When the agent last saw the file (read or wrote it), as a timestamp; null if it hasn't. */
   seenAt(path: string): number | null;
 }
+
+/** The edits' form, as the edit tool takes them, and view_page's and evaluate_page's preview. */
+export const EDITS = Schema.Array(
+  Schema.Struct({
+    oldText: Schema.String.annotate({ description: "Exact text to replace; must be unique in the file" }),
+    newText: Schema.String.annotate({ description: "Replacement text" }),
+  })
+);
 
 /** Where an edit landed: the first changed position, for the agent's cursor. */
 export interface EditResult { path: string; at: number; summary: string }
@@ -143,24 +152,15 @@ export class YjsWorkspace implements Workspace {
       yield* self.mayEdit();
       const t = yield* self.text(path);
       const current = t.toString();
-      if (!edits.length) return yield* fail("noEdits", "no edits given");
-      // Aim every edit at the current text first; apply only if all of them land.
-      const spans: { from: number; to: number; insert: string }[] = [];
-      for (const [i, e] of edits.entries()) {
-        const label = edits.length > 1 ? `edits[${i}]` : "oldText";
-        if (!e.oldText) return yield* fail("emptyEdit", `${label} is empty`);
-        const at = current.indexOf(e.oldText);
-        if (at < 0) {
-          // In the text the agent last saw, but not in the text now: the file changed under it (a restore, someone typing).
-          const seen = self.seen.get(path);
-          if (seen != null && seen != current && seen.includes(e.oldText)) return yield* fail("changed", `${label} isn't in the current text of ${path}: the file changed since the text your edit was based on (what you last read or wrote of it). Read ${path} again and retry.`);
-          return yield* fail("notFound", `${label} isn't in the current text of ${path}${seen == current ? ", which is the same as when you last read it: check oldText against it" : ""}. Read the file again and retry.`);
-        }
-        if (current.indexOf(e.oldText, at + 1) >= 0) return yield* fail("ambiguous", `${label} matches more than once in ${path}; include more surrounding text to make it unique.`);
-        spans.push({ from: at, to: at + e.oldText.length, insert: e.newText });
+      const aimed = aimEdits(current, edits, path);
+      if ("reason" in aimed) {
+        if (aimed.reason != "notFound") return yield* fail(aimed.reason, aimed.message);
+        // In the text the agent last saw, but not in the text now: the file changed under it (a restore, someone typing).
+        const seen = self.seen.get(path), e = edits[aimed.index];
+        if (seen != null && seen != current && seen.includes(e.oldText)) return yield* fail("changed", `${aimed.label} isn't in the current text of ${path}: the file changed since the text your edit was based on (what you last read or wrote of it). Read ${path} again and retry.`);
+        return yield* fail("notFound", `${aimed.label} isn't in the current text of ${path}${seen == current ? ", which is the same as when you last read it: check oldText against it" : ""}. Read the file again and retry.`);
       }
-      spans.sort((a, b) => a.from - b.from);
-      for (let i = 1; i < spans.length; i++) if (spans[i].from < spans[i - 1].to) return yield* fail("overlap", "two edits overlap; merge them into one");
+      const spans = aimed.spans;
       // Each as the smallest change that leaves tags whole: trim what old and new share at both ends.
       const minimal = aligned(current, spans);
       if (!minimal.length) return { path, at: spans[0].from, summary: `No change: the new text is the same as the old.` };

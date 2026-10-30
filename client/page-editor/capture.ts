@@ -193,11 +193,14 @@ async function goToStep(win: Window, spec: number | string, deadline: number): P
 }
 
 /**
- * Time since the step, for the frames: each is taken at its time, with the page's CSS transitions and animations
- * (all of document.getAnimations()) held still while it is taken, and that time left out of the clock, so a frame at
- * 600 ms shows them as they are 600 ms in. Animation by script (requestAnimationFrame, timers) keeps running.
+ * Time since the step, for the frames. The CSS transitions and animations the step started (all of
+ * document.getAnimations() then) are set to each frame's time while it is taken, and the others held still: a frame
+ * at 600 ms shows them 600 ms in, however slowly the browser draws the hidden frame. The time a picture takes is left
+ * out of the clock. Animation by script (requestAnimationFrame, timers) keeps running on its own time.
  */
 function animationClock(d: Document) {
+  const begun = new Map<Animation, number>();
+  for (const a of d.getAnimations()) begun.set(a, Number(a.currentTime ?? 0));
   const start = performance.now();
   let held = 0;
   const now = () => performance.now() - start - held;
@@ -206,7 +209,7 @@ function animationClock(d: Document) {
       if (t > now()) await sleep(t - now());
       const at = Math.round(now());
       const running = d.getAnimations().filter((a) => a.playState == "running");
-      for (const a of running) a.pause();
+      for (const a of running) { a.pause(); if (begun.has(a)) a.currentTime = begun.get(a)! + t; }
       const from = performance.now();
       try {
         return { at, value: await take() };

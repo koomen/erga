@@ -4,6 +4,8 @@
 
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
+import type { TextEdit } from "../../shared/text-edits";
+import { EDITS } from "./workspace";
 import { EVAL_MAX_JSON, EVAL_TIMEOUT, FRAMES, type ColorScheme, type StepShown, type ViewRequest, type ViewResult } from "../../shared/agent-log";
 import {
   CONSOLE_LEVELS,
@@ -25,7 +27,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
     {
       name: "view_page",
       label: "Look at the page",
-      description: `See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw, the fonts its text rendered in, and the size and light or dark mode it rendered at. By default one screenful from the top, at the user's own window size and mode; full_page for the whole page (up to 4000px tall); selector for one element; width, height and color_scheme to see it as someone else would. ${AT_STEP} It renders in a hidden copy: the user's own view doesn't move.`,
+      description: `See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw, the fonts its text rendered in, and the size and light or dark mode it rendered at. By default one screenful from the top, at the user's own window size and mode; full_page for the whole page (up to 4000px tall); selector for one element; width, height and color_scheme to see it as someone else would. ${AT_STEP} ${PREVIEW_WORDS} It renders in a hidden copy: the user's own view doesn't move.`,
       parameters: Schema.Struct({
         selector: Schema.optionalKey(
           Schema.String.annotate({ description: 'CSS selector of an element to capture, e.g. "#chart" or "figure:nth-of-type(2)".' })
@@ -33,9 +35,10 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
         full_page: Schema.optionalKey(Schema.Boolean.annotate({ description: "Capture the whole page rather than the first screenful." })),
         ...RENDER,
         ...STEP_FIELDS("picture is taken"),
+        ...PREVIEW,
       }),
-      execute: async (_id, p: { selector?: string; full_page?: boolean } & RenderArgs & StepArgs) => {
-        const v = await view({ selector: p.selector, fullPage: p.full_page, ...renderReq(p), ...stepReq(p) });
+      execute: async (_id, p: { selector?: string; full_page?: boolean } & RenderArgs & StepArgs & PreviewArgs) => {
+        const v = await view({ selector: p.selector, fullPage: p.full_page, ...renderReq(p), ...stepReq(p), ...previewReq(p) });
         if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
         const words = { type: "text" as const, text: describeView(v, p.selector, p.full_page) };
         if (!v.shots?.length) return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, words], details: {} };
@@ -45,7 +48,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
     {
       name: "evaluate_page",
       label: "Inspect the page",
-      description: `Run a JavaScript expression in the page the user has open, rendered as view_page renders it (the latest version, in the user's browser), and get its result as JSON. For what a picture can't measure: computed styles, the fonts in use, element sizes and positions. E.g. getComputedStyle(document.querySelector("h1")).fontFamily, [...document.fonts].filter((f) => f.status == "loaded").map((f) => f.family), or document.querySelector("#chart").getBoundingClientRect(). It may be async (await works); statements need their own return. Read-only: it runs in a throwaway copy, so nothing it changes reaches the document (edit the files for that), and it can reach nothing the page's own scripts can't. It runs once the page loaded (its scripts ran) and its fonts and images loaded, or says what still loaded. ${AT_STEP} With frames, the result is a list: [{"at_ms": 300, "value": ...}, ...]. Waits ${EVAL_TIMEOUT.default / 1000}s for the result by default (timeout, at most ${EVAL_TIMEOUT.max / 1000}s); the JSON is cut to ${EVAL_MAX_JSON / 1000}K characters, so return only what you need.`,
+      description: `Run a JavaScript expression in the page the user has open, rendered as view_page renders it (the latest version, in the user's browser), and get its result as JSON. For what a picture can't measure: computed styles, the fonts in use, element sizes and positions. E.g. getComputedStyle(document.querySelector("h1")).fontFamily, [...document.fonts].filter((f) => f.status == "loaded").map((f) => f.family), or document.querySelector("#chart").getBoundingClientRect(). It may be async (await works); statements need their own return. Read-only: it runs in a throwaway copy, so nothing it changes reaches the document (edit the files for that), and it can reach nothing the page's own scripts can't. It runs once the page loaded (its scripts ran) and its fonts and images loaded, or says what still loaded. ${AT_STEP} ${PREVIEW_WORDS} With frames, the result is a list: [{"at_ms": 300, "value": ...}, ...]. Waits ${EVAL_TIMEOUT.default / 1000}s for the result by default (timeout, at most ${EVAL_TIMEOUT.max / 1000}s); the JSON is cut to ${EVAL_MAX_JSON / 1000}K characters, so return only what you need.`,
       parameters: Schema.Struct({
         expression: Schema.String.annotate({ description: "JavaScript to run in the page, e.g. getComputedStyle(document.body).fontSize" }),
         ...RENDER,
@@ -55,14 +58,15 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
           })
         ),
         ...STEP_FIELDS("expression runs"),
+        ...PREVIEW,
       }),
-      execute: async (_id, p: { expression: string; timeout?: number } & RenderArgs & StepArgs) => {
+      execute: async (_id, p: { expression: string; timeout?: number } & RenderArgs & StepArgs & PreviewArgs) => {
         if (!p.expression?.trim()) throw new Error("Give an expression to run.");
-        const v = await view({ evaluate: p.expression, timeout: p.timeout, ...renderReq(p), ...stepReq(p) });
+        const v = await view({ evaluate: p.expression, timeout: p.timeout, ...renderReq(p), ...stepReq(p), ...previewReq(p) });
         const errors = v.errors.length ? `\nThe page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "";
         if (v.error || v.value == null) throw new Error((v.error ?? "The page couldn't be inspected.") + errors);
         const where = [v.page ? `Rendered ${v.page}` : "", v.step ? `at ${describeStep(v.step)}` : ""].filter(Boolean).join(" ");
-        return text(`${v.value}${v.note ? `\n\n[${v.note}]` : ""}${where ? `\n\n[${where}.]` : ""}${errors}`);
+        return text(`${v.value}${v.note ? `\n\n[${v.note}]` : ""}${where ? `\n\n[${where}.]` : ""}${v.preview ? `\n\n[${describePreview(v.preview)}]` : ""}${errors}`);
       },
     },
     ...liveTools(view),
@@ -230,6 +234,7 @@ type RenderArgs = { width?: number; height?: number; color_scheme?: ColorScheme 
 const renderReq = (p: RenderArgs) => ({ width: p.width, height: p.height, colorScheme: p.color_scheme });
 
 const AT_STEP = `For a presentation (window.ergaSteps), step shows one step first: "3.2" (slide 3, its second part, as the steps' list numbers it), an index from 0, or a hash ("#3.2") to open the page at. at_ms waits that long after the step before the picture or the run (default ${FRAMES.afterStep} ms after a step, ${FRAMES.afterLoad} ms after the load); frames takes several at once, at these times after the step (e.g. [300, 900, 2500]), to check a transition in one call.`;
+const PREVIEW_WORDS = "To see edits before you make them, give edits (as the edit tool takes them): they go to a copy of the open page, for this render only.";
 /** step, at_ms and frames: a presentation's step, and when. */
 const STEP_FIELDS = (what: string) => ({
   step: Schema.optionalKey(
@@ -242,7 +247,7 @@ const STEP_FIELDS = (what: string) => ({
   ),
   frames: Schema.optionalKey(
     Schema.Array(Schema.Finite).annotate({
-      description: `Several times after the step, in ms (at most ${FRAMES.count}, each up to ${FRAMES.max}): the ${what} at each. CSS transitions and animations hold still while each is taken.`,
+      description: `Several times after the step, in ms (at most ${FRAMES.count}, each up to ${FRAMES.max}): the ${what} at each. The step's CSS transitions and animations show as they are at each time; animation by script runs on its own.`,
     })
   ),
 });
@@ -251,6 +256,21 @@ function stepReq(p: StepArgs): { step?: string | number; atMs?: number; frames?:
   if (p.at_ms != null && p.frames?.length) throw new Error("Give at_ms or frames, not both.");
   return { step: p.step, atMs: p.at_ms, ...(p.frames?.length ? { frames: [...p.frames] } : {}) };
 }
+const PREVIEW = {
+  edits: Schema.optionalKey(
+    EDITS.annotate({
+      description: "A preview: edits as the edit tool takes them, applied to a copy of the open page's text for this render only, never to the document. If one doesn't apply, nothing renders and the answer says why.",
+    })
+  ),
+  path: Schema.optionalKey(Schema.String.annotate({ description: "The file the edits are for: the page open (the default)." })),
+};
+type PreviewArgs = { edits?: readonly TextEdit[]; path?: string };
+function previewReq(p: PreviewArgs): { preview?: { path?: string; edits: TextEdit[] } } {
+  if (p.path != null && !p.edits) throw new Error("path goes with edits: the file a preview's edits are for.");
+  return p.edits ? { preview: { ...(p.path != null ? { path: p.path } : {}), edits: p.edits.map((e) => ({ oldText: e.oldText, newText: e.newText })) } } : {};
+}
+const describePreview = (p: { path: string; edits: number }) =>
+  `A preview: ${p.edits} edit${p.edits == 1 ? "" : "s"} applied to a copy of ${p.path}, for this render only. The document is unchanged: apply them with edit.`;
 const describeStep = (s: StepShown) => `step ${s.number} (index ${s.index} of ${s.count}${s.label ? `: ${s.label}` : ""})`;
 
 /** view_page's words beside its picture: what it shows, how it rendered (size, mode, fonts), and the page's errors. */
@@ -263,6 +283,7 @@ export function describeView(v: ViewResult, selector?: string, fullPage?: boolea
   }
   if (v.pending?.length) lines.push(`Still loading when the picture was taken: ${v.pending.join(", ")}.`);
   if (v.note) lines.push(v.note);
+  if (v.preview) lines.push(describePreview(v.preview));
   lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
   return lines.join("\n");
 }

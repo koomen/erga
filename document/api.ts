@@ -167,6 +167,7 @@ export const Api = HttpApi.make("erga")
         error: Schema.optional(Schema.String),
         value: Schema.optional(Schema.String),
         page: Schema.optional(Schema.String),
+        preview: Schema.optional(Schema.Struct({ path: Schema.String, edits: Schema.Number })),
         step: Schema.optional(Schema.Struct({ index: Schema.Number, number: Schema.String, count: Schema.Number, label: Schema.optional(Schema.String) })),
         shots: Schema.optional(Schema.Array(Schema.Struct({ at: Schema.Number, png: Schema.String }))),
         declined: Schema.optional(Schema.Boolean),

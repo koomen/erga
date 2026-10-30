@@ -152,6 +152,10 @@ make_document, list_versions, read_version, restore_version and open_page.
   or a hash ("#3.2"). at_ms waits that long after the step (default 1000 ms);
   frames ([300, 900, 2500]) gives a picture or a result at each time, in one call,
   to check a transition: \`view_page {"document": "...", "step": "3.2", "frames": [300, 900]}\`.
+- To see an edit before you make it, give view_page or evaluate_page edits (as
+  edit takes them, with path: the open page): they go to a copy of the page, for
+  that render only, and the document stays as it is. Look, adjust, then apply
+  them with edit: \`view_page {"document": "...", "step": "3.3", "edits": [{"oldText": "Blue.", "newText": "Purple."}]}\`.
 - page_console, page_network, page_events, page_inspect, page_click and page_key
   reach the page as it runs now in your person's open editor: its errors, its
   requests, who consumed each click or key, its media's state; and they click

@@ -8,6 +8,7 @@
 
 import type { FileRef } from "./attach";
 import type { LiveRequest } from "./live-page";
+import type { TextEdit } from "./text-edits";
 
 export type LogItem =
   /** `files`: what was attached, as the log shows it. */
@@ -110,6 +111,11 @@ export interface ViewRequest {
   /** Several pictures (or runs of the expression), at these times after the step, in ms, in one render (FRAMES). */
   frames?: number[];
   /**
+   * A preview: these edits (as the edit tool takes them) applied to a copy of the open page's text, for this render
+   * only, never to the document. `path`, if given, must be the open page.
+   */
+  preview?: { path?: string; edits: TextEdit[] };
+  /**
    * The live page instead (shared/live-page.ts): every one of the person's tabs answers, its result as JSON in
    * `value`, and the host takes the focused tab's (else a visible one's) answer.
    */
@@ -151,6 +157,8 @@ export interface ViewResult {
   page?: string;
   /** The step shown (`step`): its index, its number as the steps' list shows it, how many there are, and its label. */
   step?: StepShown;
+  /** `preview`: the page the edits went to, in the copy, and how many there were. */
+  preview?: { path: string; edits: number };
   /** `frames`: a picture at each time (ms after the step); `png` is the first. */
   shots?: { at: number; png: string }[];
   /** A live request: this tab couldn't (no editor yet), so another tab's answer comes first. */
