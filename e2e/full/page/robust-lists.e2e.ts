@@ -1,0 +1,51 @@
+// Lists under real use (the robustness hunt): keys only, from an empty page, checked by what the page shows.
+import { knownBug, servers, test, until, type Tab } from "../../helpers/fixtures";
+import { openEditor } from "../../helpers/editor";
+
+await servers.main();
+
+/** An empty page in the editor, the caret in its one paragraph. */
+const empty = async (tab: Tab) => {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  await ed.clickEnd("p");
+  await ed.idle();
+  return ed;
+};
+
+// Known bug: Tab puts the item above in a <p>, and the page's margin for a <p> shows a gap between that item and the
+// nested one. The items below have no gap, so the list's spacing is uneven. Google Docs and Notion keep it even.
+test(
+  "Tab nests an item with no gap between it and the item above",
+  knownBug(async ({ tab }) => {
+    const ed = await empty(tab);
+    await ed.type("- One");
+    await ed.press("Enter");
+    await ed.type("Two");
+    await ed.press("Enter");
+    await ed.type("Three");
+    await ed.press("ArrowUp");
+    await ed.press("Tab");
+    await ed.shows(`
+      • One
+          ◦ Two|
+      • Three
+    `);
+  })
+);
+
+// Known bug: with an element that an extension added to the page's body (a plain <div>), Tab loads the page again,
+// and the key typed while it loads is lost. A person types right after Tab and does not wait.
+test(
+  "a key right after Tab is kept when an extension has put a <div> in the page",
+  knownBug(async ({ tab }) => {
+    const ed = await empty(tab);
+    await ed.type("- One");
+    await ed.press("Enter");
+    await ed.type("Two");
+    await ed.frame(`(document.body.appendChild(document.createElement("div")), true)`);
+    await ed.press("Tab");
+    await ed.type("x");
+    await ed.idle();
+    await until(async () => (await ed.textOf("li li")) == "Twox", 3000, "the nested item shows the key");
+  })
+);
