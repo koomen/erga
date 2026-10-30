@@ -35,7 +35,10 @@ test("Shift-click extends a caret into another unit; a copy is the units' text a
   const m = await ed.selection();
   expect(m.text.startsWith("unch notes") && m.text.endsWith("Faster")).toBe(true);
   const copied = await ed.frame<{ text: string; html: string }>(`(() => { const d = new DataTransfer(); ${F}.body.dispatchEvent(new ClipboardEvent("copy", { clipboardData: d, bubbles: true, cancelable: true })); return { text: d.getData("text/plain"), html: d.getData("text/html") }; })()`);
-  expect(copied.text).toBe("unch notes\n\nBuild cool things & ship them. This paragraph has a link and code.\n\n0clicks\n\nWhat changed\n\n- Faster");
+  // The plain text is Markdown (client/page-editor/clipboard-html.ts).
+  expect(copied.text).toBe(
+    "# unch notes\n\nBuild *cool* things & ship them. This paragraph has [a link](https://example.com/) and `code`.\n\n**0**clicks\n\n## What changed\n\n- Faster"
+  );
   expect(copied.text + copied.html).not.toContain("Bump");
   expect(copied.html).toBe(`<h1>unch notes</h1><p>Build <em>cool</em> things &amp; ship them. This paragraph has <a href="https://example.com/">a link</a> and <code>code</code>.</p><p><strong>0</strong>clicks</p><h2>What changed</h2><ul><li>Faster</li></ul>`);
   const cut = await ed.frame<string>(`(() => { const d = new DataTransfer(); ${F}.body.dispatchEvent(new ClipboardEvent("cut", { clipboardData: d, bubbles: true, cancelable: true })); return d.getData("text/plain"); })()`);
