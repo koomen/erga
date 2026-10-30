@@ -4,7 +4,7 @@
 // step too, pressed here or in the page, except in text. The list shows each step's picture where the page draws them
 // (erga-step-image), kept until the page changes (another rev: an edit, another page), else its number and label.
 
-type Steps = { count: number; current: number; labels: string[]; images: boolean; rev: number };
+type Steps = { count: number; current: number; labels: string[]; images: boolean; hasNext: boolean; hasBack: boolean; rev: number };
 
 export default function viewerSteps(): void {
   const svg = (d: string) => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>';
@@ -130,8 +130,8 @@ export default function viewerSteps(): void {
     }
     at.textContent = steps.current + 1 + " / " + steps.count;
     bar.title = steps.labels[steps.current] || "";
-    back.disabled = steps.current <= 0;
-    next.disabled = steps.current >= steps.count - 1;
+    back.disabled = !steps.hasBack;
+    next.disabled = !steps.hasNext;
     current();
     if (!was || was.rev != steps.rev) ask();
     place();
@@ -184,7 +184,17 @@ export default function viewerSteps(): void {
           s.labels.length == s.count &&
           s.labels.every((l: unknown) => typeof l == "string" && l.length <= 200);
       update(
-        ok ? { count: s.count, current: Math.min(s.current, s.count - 1), labels: s.labels, images: s.images === true, rev: s.rev } : null
+        ok
+          ? {
+              count: s.count,
+              current: Math.min(s.current, s.count - 1),
+              labels: s.labels,
+              images: s.images === true,
+              hasNext: s.hasNext === true,
+              hasBack: s.hasBack === true,
+              rev: s.rev,
+            }
+          : null
       );
     } else if (m.type == "erga-step-image" && steps && m.rev == steps.rev && Number.isInteger(m.step) && m.step < steps.count) {
       const old = pics.get(m.step);
