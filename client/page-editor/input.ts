@@ -250,6 +250,19 @@ export abstract class EditorInput extends EditorClipboard {
     const t = e.target as Element;
     if (!t?.querySelectorAll || t.closest(`a[href], button, input, textarea, select, label, [contenteditable], [${M.NO_EDIT_ATTR}]`))
       return null;
+    // Only empty space in the text's flow: not a box the page draws or pans (a widget's border, a board with a grab
+    // cursor).
+    const c = this.doc!.defaultView!.getComputedStyle(t);
+    if (!["auto", "default", "text"].includes(c.cursor)) return null;
+    const root = t == this.doc!.documentElement || t == this.doc!.body;
+    if (
+      !root &&
+      (!["static", "relative"].includes(c.position) ||
+        c.borderStyle != "none" ||
+        c.backgroundImage != "none" ||
+        c.backgroundColor != "rgba(0, 0, 0, 0)")
+    )
+      return null;
     let best: { el: Element; r: DOMRect } | null = null,
       bd = Infinity;
     for (const el of t.querySelectorAll("[data-erga-id]")) {
