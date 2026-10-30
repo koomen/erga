@@ -140,10 +140,9 @@ test("one undo after Enter over a selection gives back the selected text", async
     await expect.poll(async () => (await ed.visible()).replace(/[[\]|]/g, ""), { timeout: 3000 }).toBe(PAGE);
 });
 
-// Text that comes as input with no key (an IME, the emoji picker, dictation) over a selection across blocks is dropped.
-test(
-  "composed text over a selection across blocks replaces it",
-  knownBug(async ({ tab }) => {
+// Text that comes as input with no key (an IME, the emoji picker, dictation) over a selection across blocks replaces it
+// (it was dropped): the editor deletes the selection as the composition starts.
+test("composed text over a selection across blocks replaces it", async ({ tab }) => {
     const ed = await open(tab, "h2");
     const a = await ed.charAt("h2", 3),
       b = await ed.charAt("#q", 3);
@@ -160,8 +159,7 @@ test(
 
     Last paragraph.
   `);
-  })
-);
+  });
 
 // With one more element in the page's body (as browser extensions add), fast typing after ⌘A ⌘A Backspace keeps every
 // letter: the page is patched around the element (it was loaded again, and the keys typed meanwhile were lost).

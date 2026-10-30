@@ -5,12 +5,11 @@ import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 
-/** The page's frame has the focus in the tab, in a text block (or on the page, for a selection across blocks). */
+/** The page's frame has the focus in the tab, with the caret in a text block. */
 const focused = async (ed: Editor) =>
   (await ed.eval<boolean>(`document.activeElement?.id == "frame"`)) &&
-  (await ed.frame<boolean>(
-    `document.hasFocus() && (!!${F}.activeElement?.closest("[data-erga-id]") || (${F}.activeElement == ${F}.body && ${F}.documentElement.classList.contains("erga-span")))`
-  ));
+  (await ed.frame<boolean>(`document.hasFocus()`)) &&
+  (await ed.caretIn("[data-erga-id]"));
 /** Puts the caret `at` characters into an element's text. */
 const caret = async (ed: Editor, selector: string, at: number) => {
   await ed.rectOf(selector);

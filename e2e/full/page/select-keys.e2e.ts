@@ -5,7 +5,8 @@ import { F, openEditor, type Editor } from "../../helpers/editor";
 await servers.main();
 
 const domText = (ed: Editor) => ed.frame<string>(`${F}.getSelection().toString()`);
-const hosts = (ed: Editor) => ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.getAttribute("contenteditable") == "true")`);
+const hosts = (ed: Editor) =>
+  ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.isContentEditable)`);
 async function fromHeading(ed: Editor, keys: string[]) {
   const h = await ed.charAt("h1", 2);
   await ed.click(h.x, h.y);
@@ -35,7 +36,7 @@ test("Shift+ArrowUp comes back; typing replaces a selection across units, the ca
   await ed.press("Shift+X");
   await expect.poll(() => ed.textOf("h1")).toMatch(/^LaXd cool/);
   expect(await hosts(ed)).toBe(true);
-  expect(await ed.frame<boolean>(`${F}.activeElement.matches("h1")`)).toBe(true);
+  expect(await ed.caretIn("h1")).toBe(true);
   await ed.type("y");
   await expect.poll(() => ed.textOf("h1")).toMatch(/^LaXy/);
 });
@@ -48,7 +49,7 @@ test("ArrowRight collapses a selection across units at its end", async ({ tab })
   await ed.press("ArrowRight");
   await expect.poll(async () => { const m = await ed.selection(); return m.from == m.to; }).toBe(true);
   expect(await hosts(ed)).toBe(true);
-  expect(await ed.frame<boolean>(`${F}.activeElement.matches("p.lede")`)).toBe(true);
+  expect(await ed.caretIn("p.lede")).toBe(true);
 });
 
 test("⌘A twice selects every unit, on the page too", async ({ tab }) => {

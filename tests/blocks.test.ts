@@ -73,6 +73,14 @@ const CASES: [string, string, string[], string][] = [
     ["Tab"],
     '<p style="margin-left: 40px">[A</p>\n<p style="margin-left: 40px">B]</p>',
   ],
+  // (Not a block rule, but the edit under each: a range replaced keeps the inline tags it opens or closes.)
+  ["Typing over a selection that ends in bold", "<p>Bu[ild <em>co]ol</em></p>", ["x"], "<p>Bux|<em>ol</em></p>"],
+  [
+    "Typing over a selection from a paragraph into a widget's text",
+    '<p>A[bc</p>\n<section>\n  <div><b id="n">0</b><span>cl]icks</span></div>\n</section>',
+    ["x"],
+    '<p>Ax|</p>\n<section>\n  <div><b id="n"></b><span>icks</span></div>\n</section>',
+  ],
 ];
 
 for (const [name, src, ks, after] of CASES)

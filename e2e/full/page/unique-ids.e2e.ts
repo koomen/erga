@@ -24,7 +24,7 @@ test("Enter at the start of a block with an id: the id stays with the text, and 
   await expect.poll(() => ed.source()).toContain(`<p class="lead"><br></p>\n  <p id="target" class="lead">A block with an id.</p>`);
   await ed.type("X");
   await expect.poll(() => ed.source()).toContain(`<p id="target" class="lead">XA block with an id.</p>`);
-  expect(await ed.frame<boolean>(`${F}.activeElement.matches("#target")`)).toBe(true);
+  expect(await ed.caretIn("#target")).toBe(true);
 });
 
 test("Enter inside a link with an id and a name: the second half of the link keeps its href, not its id or name", async ({ tab }) => {

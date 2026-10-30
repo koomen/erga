@@ -62,7 +62,7 @@ test("edits on disk above and below the view, to the text, the structure and the
   await ed.settle();
   still(await reading(), false);
   // The new blocks are the editor's like any other.
-  expect(await ed.frame<boolean>(`${F}.querySelector("#added li").getAttribute("contenteditable") == "true"`)).toBe(true);
+  expect(await ed.frame<boolean>(`${F}.querySelector("#added li").isContentEditable`)).toBe(true);
   expect(await ed.count(".erga-locked"), "every block still edits").toBe(0);
 });
 

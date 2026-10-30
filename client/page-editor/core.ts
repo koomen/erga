@@ -34,10 +34,12 @@ export abstract class EditorCore {
   protected cleanup: (() => void)[] = [];
   protected composing = false;
   protected writingSelection = false;
-  /** A selection spans units: none of them is an editing host meanwhile (see setSpanning). */
-  protected spanning = false;
-  /** Where a drag that started in a unit started, while the button is down. */
-  protected dragFrom: { node: Node; offset: number; el: Element } | null = null;
+  /**
+   * The one editing host: the page's <body>. The browser moves the caret and the selection through all of it, as in any
+   * document; every change still goes through the editor (input.ts). What isn't text in it is an island
+   * (`contenteditable="false"`, see islands).
+   */
+  protected host: HTMLElement | null = null;
   /** The selection the listeners last heard of. */
   protected told: SelectionRange | null = null;
   protected renderToken = 0;
@@ -197,12 +199,52 @@ export abstract class EditorCore {
     this.nextMark = this.units.length;
   }
 
-  /** A unit element is its own editing host; anything atomic inside it stays a normal widget. */
+  /** Makes the page's <body> the one editing host, with the parts that aren't text as islands. */
+  protected makeHost(): void {
+    const body = this.doc!.body;
+    this.host = body;
+    if (!body) return;
+    this.keepOwn(body);
+    if (!this.leftText) body.setAttribute("contenteditable", "true");
+    // No spellcheck: these are technical documents, full of names a dictionary flags.
+    body.setAttribute("spellcheck", "false");
+    this.islands(body);
+  }
+
+  /**
+   * Whether the editing host is editable. Not while the text has no focus (leaveText): a page's own keys (a deck's
+   * arrows) skip what is editable, and the whole <body> would be.
+   */
+  protected editable(on: boolean): void {
+    if (!this.host) return;
+    if (on) this.host.setAttribute("contenteditable", "true");
+    else this.host.removeAttribute("contenteditable");
+  }
+
+  /**
+   * Marks each element under `root` that holds no text block, and isn't in one, as an island the browser keeps the
+   * caret out of (`contenteditable="false"`): a widget, a picture, a script's part. A text block's own inline elements
+   * stay text; its atoms are islands (prepareUnit).
+   */
+  protected islands(root: Element): void {
+    const inUnit = this.unitByEl.has(root);
+    for (const c of root.children) this.markIsland(c, inUnit);
+  }
+
+  /** One element for islands: an island, or text, whose children are looked at in turn. */
+  protected markIsland(c: Element, inUnit: boolean): void {
+    if (c.localName.startsWith("erga-") || c.hasAttribute("data-erga")) return;
+    if (this.unitByEl.has(c) || c.querySelector("[data-erga-id]")) this.islands(c);
+    else if (!(inUnit && (M.INLINE.has(c.localName) || M.ATOMIC.has(c.localName) || c.localName == "br"))) {
+      this.keepOwn(c);
+      c.setAttribute("contenteditable", "false");
+    }
+  }
+
+  /** A unit element's parts: anything atomic inside it stays a normal widget, an island in the text. */
   protected prepareUnit(el: Element): void {
     this.keepOwn(el);
-    if (!el.classList.contains("erga-locked") && !this.spanning) el.setAttribute("contenteditable", "true");
-    // No spellcheck: these are technical documents, full of names a dictionary flags.
-    el.setAttribute("spellcheck", "false");
+    if (el.getAttribute("contenteditable") == "false" && !el.classList.contains("erga-locked")) el.removeAttribute("contenteditable");
     for (const atom of el.querySelectorAll("*"))
       if (M.ATOMIC.has(atom.localName)) {
         this.keepOwn(atom);
@@ -250,6 +292,7 @@ export abstract class EditorCore {
     const ok = nodes.length == unit.runs.length && nodes.every((n, i) => same(n.nodeValue!, unit.runs[i].text));
     if (!ok) {
       el.classList.add("erga-locked");
+      this.keepOwn(el);
       el.setAttribute("contenteditable", "false");
       this.lockReasons.set(el, this.whyLocked(unit));
     }
@@ -416,7 +459,7 @@ export abstract class EditorCore {
     if (!sel || !sel.anchorNode || !sel.focusNode) return null;
     let anchor = this.posFromDOM(sel.anchorNode, sel.anchorOffset);
     let head = this.posFromDOM(sel.focusNode, sel.focusOffset);
-    if (this.spanning && (anchor == null || head == null)) {
+    if (anchor == null || head == null) {
       const r = this.doc!.createRange();
       r.setStart(sel.anchorNode, sel.anchorOffset);
       const forward = r.comparePoint(sel.focusNode, sel.focusOffset) >= 0;
@@ -428,87 +471,36 @@ export abstract class EditorCore {
     return EditorSelection.single(anchor, head);
   }
 
-  /**
-   * The browser keeps a selection inside one editing host, and each unit is
-   * one. So while a selection spans units, none is a host: the page is plain
-   * text to the browser, which selects across it (by mouse, Shift-click and
-   * Shift with the arrow keys), and keydown turns typing, Backspace and Enter
-   * into edits of the whole range (spanKey). A selection back inside one unit
-   * makes the units hosts again.
-   */
-  protected setSpanning(on: boolean): void {
-    if (on == this.spanning || !this.doc) return;
-    this.spanning = on;
-    this.doc.documentElement.classList.toggle("erga-span", on);
-    for (const el of this.els) {
-      if (!el || el.classList.contains("erga-locked")) continue;
-      if (on) el.removeAttribute("contenteditable");
-      else el.setAttribute("contenteditable", "true");
-    }
-  }
-
   /** Whether the model's selection runs from one unit into another. */
   protected get across(): boolean {
     const main = this.state.selection.main;
     return !main.empty && M.unitAt(this.units, main.anchor) != M.unitAt(this.units, main.head);
   }
 
-  /** Extends the DOM selection from `from` (the model's anchor if not given) to a point on the page, across units. */
-  protected extendTo(x: number, y: number, from?: { node: Node; offset: number } | null): boolean {
-    const doc = this.doc!,
-      sel = doc.getSelection();
-    const hit = doc.caretRangeFromPoint?.(x, y);
-    from ??= this.domAtPos(this.state.selection.main.anchor);
-    if (!sel || !hit || !from) return false;
-    this.setSpanning(true);
-    try {
-      sel.setBaseAndExtent(from.node, from.offset, hit.startContainer, hit.startOffset);
-    } catch {
-      return false;
-    }
-    return true;
+  /** Whether the editing host has the focus (the caret is in the text). */
+  protected get inText(): boolean {
+    return !!this.host?.hasAttribute("contenteditable") && this.doc?.activeElement == this.host;
   }
 
-  /** The DOM selection into the model, and out of spanning when it's back inside one unit. */
-  protected settleSpan(): void {
-    if (!this.spanning) return;
-    const sel = this.readSelection();
-    if (
-      sel &&
-      !(sel.main.anchor == this.state.selection.main.anchor && sel.main.head == this.state.selection.main.head && this.told?.eq(sel.main))
-    ) {
-      this.state = this.state.update({ selection: sel, userEvent: "select" }).state;
-      this.notify({ docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
-    }
-    if (!this.across) this.syncDOMSelection(true);
-  }
-
-  /** The unit element that has focus, if any. */
-  protected get activeUnit(): Element | null {
-    const el = this.doc?.activeElement;
-    return el && el.hasAttribute("data-erga-id") ? el : null;
-  }
-
-  /** Makes the DOM selection match the model's, focusing the unit that holds it. */
+  /** Makes the DOM selection match the model's, focusing the editing host. */
   syncDOMSelection(force = false): void {
     const doc = this.doc;
     // Not into a page on its way out: the render puts the caret in the new one (focusing the old one would take the keys the render holds).
     if (!doc || this.composing || this.rendering || this.leftText) return;
-    if (!force && !this.activeUnit && !this.spanning) return;
+    if (!force && !this.inText) return;
     const main = this.state.selection.main;
-    const across = this.across;
-    this.setSpanning(across);
     const anchor = this.domAtPos(main.anchor, main.empty ? main.assoc || 1 : main.anchor < main.head ? 1 : -1);
     if (!anchor) return;
     const head = main.empty ? anchor : (this.domAtPos(main.head, main.head > main.anchor ? -1 : 1) ?? anchor);
     const sel = doc.getSelection();
     if (!sel) return;
-    const host = (anchor.node.nodeType == 1 ? (anchor.node as Element) : anchor.node.parentElement)?.closest(
-      "[data-erga-id]"
-    ) as HTMLElement | null;
+    const host = this.host;
     this.writingSelection = true;
     try {
-      if (!across && host && host != doc.activeElement) host.focus({ preventScroll: true });
+      if (host && host != doc.activeElement) {
+        this.editable(true);
+        host.focus({ preventScroll: true });
+      }
       sel.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
     } catch {
       /* ignore */
@@ -519,23 +511,32 @@ export abstract class EditorCore {
   focus(): void {
     if (this.rendering || !this.doc) return;
     this.win.focus();
+    // The host keeps its caret while the frame has no focus; a key may have moved it since the model last heard
+    // (selectionchange comes later): the model takes it first.
+    const own = this.inText && !this.leftText ? this.readSelection() : null;
+    if (own) this.state = this.state.update({ selection: own, userEvent: "select" }).state;
+    // (The <body> is the active element also when the frame has no focus: it is focused here all the same.)
+    if (this.host && !this.leftText && !this.composing) {
+      this.editable(true);
+      this.host.focus({ preventScroll: true });
+    }
     this.syncDOMSelection(true);
   }
 
   /**
    * Takes the focus off the text, but keeps it in the page: no caret, no selection, and the keys go to the page's own
-   * listeners (a deck's arrows). A click on text, or Tab to it, puts the caret back (a unit's focusin: input.ts).
+   * listeners (a deck's arrows). A click on text puts the caret back (input.ts, mousedown).
    */
   leaveText(): void {
     if (!this.doc) return;
     this.leftText = true;
-    this.setSpanning(false);
+    this.editable(false);
     (this.doc.activeElement as HTMLElement | null)?.blur?.();
     this.doc.getSelection()?.removeAllRanges();
   }
 
   get hasFocus(): boolean {
-    return !!this.doc && this.doc.hasFocus() && (!!this.activeUnit || this.spanning);
+    return !!this.doc && this.doc.hasFocus() && this.inText && !this.leftText;
   }
 
   /** Screen rectangle (in the frame's coordinates) of the caret at a position. */
