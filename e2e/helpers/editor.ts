@@ -7,10 +7,23 @@
 // in the page itself (frame.ts: its window has `ergaFrame`). Expressions for the
 // page are strings evaluated in the page's frame.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Frame, Page } from "playwright-core";
-import { settle, until, type Server, type Tab } from "./fixtures";
+import { expect, settle, until, type Server, type Tab } from "./fixtures";
+import { VISIBLE } from "./visible";
+
+/** A template literal's text without its first newline and its common indent. */
+const dedent = (s: string) => {
+  const lines = s
+    .replace(/^\n/, "")
+    .replace(/\n[ \t]*$/, "")
+    .split("\n");
+  const cut = Math.min(Infinity, ...lines.filter((l) => l.trim()).map((l) => l.match(/^ */)![0].length));
+  if (cut == Infinity) return lines.join("\n");
+  return lines.map((l) => l.slice(cut)).join("\n");
+};
 
 /** The page's document and window, as expressions in the page's frame (where the editor runs). */
 export const F = `document`;
@@ -224,6 +237,27 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     toast: () => page.evaluate(() => { const t = document.getElementById("toast")!; return { text: t.textContent ?? "", shown: t.classList.contains("show") }; }),
     /** The editor's selection, and the text it covers. */
     selection: () => page.evaluate(`(() => { const m = ergaPage.state.selection.main; return { from: m.from, to: m.to, head: m.head, text: ergaPage.state.doc.sliceString(m.from, m.to) }; })()`) as Promise<{ from: number; to: number; head: number; text: string }>,
+    /** The page as a person sees it, as text (visible.ts): markers, indents, the caret. */
+    visible: () => ed.frame<string>(VISIBLE),
+    /**
+     * Waits until the page shows `expected` (a visible snapshot; a leading newline and the common indent of a template
+     * literal are taken off). On a mismatch: a screenshot, its path in the failure, and the diff.
+     */
+    async shows(expected: string, ms = 3000) {
+      const want = dedent(expected);
+      let got = "";
+      const end = Date.now() + ms;
+      while ((got = await ed.visible()) != want && Date.now() < end) await new Promise((r) => setTimeout(r, 30));
+      if (got == want) return;
+      const shot = join(mkdtempSync(join(tmpdir(), "erga-visible-")), "page.png");
+      await page.screenshot({ path: shot });
+      try {
+        expect(got).toBe(want);
+      } catch (e) {
+        (e as Error).message += `\n--- the page shows:\n${got}\n--- expected:\n${want}\n--- screenshot: ${shot}`;
+        throw e;
+      }
+    },
     /** The agent pane open, its input focused (it may open by itself first). */
     async openAgent() {
       // Someone who keeps it closed finds it closed; anyone else, opening by itself as the editor comes up.

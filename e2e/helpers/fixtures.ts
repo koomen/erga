@@ -156,6 +156,21 @@ export const test = new Proxy(extended, {
 }) as typeof extended;
 
 /**
+ * A test of a known bug, with the right expectations (Playwright's test.fail): it passes while its body fails, and fails
+ * once the bug is fixed, so the fix takes the mark off. Say what the bug is in a comment above it.
+ */
+export const knownBug =
+  <A>(body: (a: A) => Promise<void>) =>
+  async (a: A) => {
+    try {
+      await body(a);
+    } catch {
+      return;
+    }
+    throw new Error("this test of a known bug passes now: the bug is fixed, so take off its knownBug mark");
+  };
+
+/**
  * Takes out of `errors` (in place) what the browser logs for requests that failed because the server was down
  * ("Failed to load resource: net::ERR_CONNECTION_REFUSED", "WebSocket connection to ... failed"), which Playwright reports as console errors: a restart
  * (a server of the test's own, halted) means some. What's left is the page's own errors.

@@ -10,7 +10,7 @@
 // need the documents flushed to disk on the way out.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +32,8 @@ export interface ServerOptions {
   port?: number;
   /** The local state (ERGA_STATE_DIR) of a server stopped before, to start again on: a restart. Its owner disposes of it. */
   state?: string;
+  /** It runs on after this process exits (bun run look --keep): its output goes to server.log in the scratch folder, and its owner stops it by its PID. */
+  keep?: boolean;
 }
 
 export interface Server {
@@ -63,6 +65,8 @@ export interface Server {
   /** Kills it at once (as a deploy cuts a Durable Object off) and starts it again, on the same port and state. */
   restart(): Promise<void>;
   dispose(): void;
+  /** Its process's PID. */
+  pid(): number | undefined;
 }
 
 /** A port nothing listens on right now (dev/start.ts refuses a taken one, and we try again). */
@@ -76,7 +80,7 @@ export function freePort(): Promise<number> {
 }
 
 /** Every process under `pid`. */
-function descendants(pid: number): number[] {
+export function descendants(pid: number): number[] {
   const out: number[] = [];
   for (const line of spawnSync("pgrep", ["-P", String(pid)], { encoding: "utf8", timeout: 30_000 }).stdout?.split("\n") ?? []) {
     const child = Number(line);
@@ -108,10 +112,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   });
   let proc: ChildProcess | null = null;
   let output = "";
+  const log = opts.keep ? openSync(join(scratch, "server.log"), "a") : "pipe";
   let port = 0;
   const server: Server = {
     root: "", port: 0, base: "", state, scratch,
-    output: () => output,
+    output: () => (opts.keep ? readFileSync(join(scratch, "server.log"), "utf8").slice(-20_000) : output),
     alive: () => !!proc && proc.exitCode == null && proc.signalCode == null,
     async open(path) {
       const r = await fetch(`${server.root}/__erga/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), redirect: "manual" });
@@ -152,6 +157,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       server.stop();
       await launch(server.port, true);
     },
+    pid: () => proc?.pid,
     dispose() {
       server.stop();
       // Anything a test started detached runs from a folder in the scratch one.
@@ -161,7 +167,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       rmSync(scratch, { recursive: true, force: true });
     },
   };
-  live.add(server);
+  if (!opts.keep) live.add(server);
   /** Starts dev/start.ts on a free port (or on `fixed`) and waits until it answers; `again`: a restart, which waits for its own port. */
   async function launch(fixed?: number, again = false) {
     const until = Date.now() + (opts.startMs ?? 90_000);
@@ -169,10 +175,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       const at = fixed ?? await freePort();
       const root = `http://127.0.0.1:${at}`;
       output = "";
-      const p = proc = spawn("bun", [join(ROOT, "dev/start.ts"), ...(opts.open ? [opts.open] : []), "--port", String(at), "--no-open"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-      const take = (c: Buffer) => { output = (output + c.toString()).slice(-20_000); };
-      p.stdout!.on("data", take);
-      p.stderr!.on("data", take);
+      const p = (proc = spawn("bun", [join(ROOT, "dev/start.ts"), ...(opts.open ? [opts.open] : []), "--port", String(at), "--no-open"], {
+        cwd: ROOT,
+        env,
+        stdio: opts.keep ? ["ignore", log, log] : ["ignore", "pipe", "pipe"],
+        detached: true,
+      }));
+      const take = (c: Buffer) => {
+        output = (output + c.toString()).slice(-20_000);
+      };
+      p.stdout?.on("data", take);
+      p.stderr?.on("data", take);
+      if (opts.keep) p.unref();
       let exited: number | null = null, up = false;
       p.on("exit", (code, signal) => {
         exited = code ?? 1;
@@ -188,7 +202,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       }
       // Another server took the port between freePort and dev/start.ts: once more, on another. (A restart keeps its port: the
       // killed one's socket may linger a moment, so it tries that port again.)
-      if (exited != null && /port \d+ is taken/.test(output) && !(fixed && !again) && attempt < (again ? 40 : 3)) {
+      if (exited != null && /port \d+ is taken/.test(server.output()) && !(fixed && !again) && attempt < (again ? 40 : 3)) {
         if (again) await new Promise((r) => setTimeout(r, 250));
         continue;
       }
