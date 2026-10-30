@@ -84,8 +84,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
     exempt: SECRET,
   },
 
-  // ------------------------------------------------------------ the admin agent's panel, and the outside agents' guide
-  { route: "GET /api/admin/guide", domain: "none", action: "What an outside agent with an admin token reads first (Share with agent)", exempt: "an outside agent's guide, not a person's action" },
+  // ------------------------------------------------------------ the admin agent's panel
   { route: "GET /api/admin/agent", domain: "none", action: "The admin agent's panel", exempt: PANEL },
   { route: "POST /api/admin/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
   { route: "POST /api/admin/agent/abort|reset", domain: "none", action: "Stop the admin agent, or start a new conversation", exempt: PANEL },
@@ -208,16 +207,26 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "UI /d/<id>#page-key", domain: "document", action: "Press a key on the page as it runs (editor)", tool: "page_key" },
   { route: "UI /d/<id>#devtools", domain: "document", action: "Read the page's console, requests and state, as the browser's developer tools show them (editor)", tool: "page_console" },
 
-  // ------------------------------------------------------------ the API for outside agents
-  { route: "GET /llms.txt", domain: "none", action: "The guide for outside agents", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "GET /api", domain: "none", action: "The guide, with a token", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "GET /api/ext", domain: "none", action: "The guide, with a token", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "GET /api/ext/tools", domain: "none", action: "An outside agent's tools", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "POST /api/ext/tools/<name>", domain: "none", action: "An outside agent runs a tool", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "POST /mcp", domain: "none", action: "The tools over MCP", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "GET /d/<id>/api/ext", domain: "none", action: "A document's guide for outside agents", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "GET /d/<id>/api/ext/tools", domain: "none", action: "A document's tools for outside agents", exempt: "the outside agents' API: its tools are theirs" },
-  { route: "POST /d/<id>/api/ext/tools/:name", domain: "none", action: "An outside agent runs a document's tool", exempt: "the outside agents' API: its tools are theirs" },
+  // ------------------------------------------------------------ the guide, MCP, and asking for a token
+  {
+    route: "GET /llms.txt",
+    domain: "none",
+    action: "The guide to the API, made from the operations (with a token, for that token)",
+    exempt: "the API's own guide: each operation is below, with its tool",
+  },
+  {
+    route: "POST /mcp",
+    domain: "none",
+    action: "The same tools over MCP, for an outside agent with a token",
+    exempt: "the API itself, over MCP: each operation is below, with its tool",
+  },
+  {
+    route: "POST /d/<id>/api/tools/:name",
+    domain: "none",
+    action:
+      "The server runs a document tool in the document's host, as the person's agent (outside agents call POST /api/tools/<name> with \"document\")",
+    exempt: "the server's own call: the document tools are every agent's already",
+  },
   { route: "POST /api/auth/request", domain: "none", action: "An outside agent asks for a token", exempt: "an outside agent's sign-in" },
   { route: "POST /api/auth/poll", domain: "none", action: "An outside agent collects its token", exempt: "an outside agent's sign-in" },
 

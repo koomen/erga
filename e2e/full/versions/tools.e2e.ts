@@ -61,7 +61,9 @@ test("list_versions and read_version; there's no publish_version", async () => {
     expect(t.text).not.toContain("beta");
     t = await tool("publish_version", { mode: "manual", version: "v3" });
     expect(t.status).not.toBe(200);
-    const listed = (await (await fetch(`${server.root}/api/ext/tools`, { headers: { Authorization: `Bearer ${token}` } })).json()) as { tools: { name: string }[] };
+    const listed = (await (await fetch(`${server.root}/api/tools`, { headers: { Authorization: `Bearer ${token}` } })).json()) as {
+      tools: { name: string }[];
+    };
     expect(listed.tools.map((x) => x.name)).toContain("restore_version");
     expect(listed.tools.map((x) => x.name)).not.toContain("publish_version");
   } finally { ada.disconnect(); }

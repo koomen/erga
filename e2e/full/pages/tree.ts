@@ -5,7 +5,7 @@
 
 import { until, type Server } from "../../helpers/fixtures";
 import { person, tools } from "../versions/versions";
-import { runTool, treeOp } from "../../helpers/tools";
+import { runTool, textOf, treeOp } from "../../helpers/tools";
 
 export const PAGE = (title: string, body: string, up = "") => `<!doctype html>
 <html lang="en">
@@ -30,10 +30,9 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
   const token = await owner.token("Pages test");
   const auth = { Authorization: `Bearer ${token}` };
   const slug = `site-${crypto.randomUUID().slice(0, 8)}`;
-  const anyTool = async (name: string, args: unknown) => {
-    const r = await fetch(`${server.root}/api/ext/tools/${name}`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(args) });
-    const body = (await r.json()) as { ok: boolean; content?: { text?: string }[]; error?: string };
-    return { status: r.status, ok: body.ok, text: body.content?.map((c) => c.text ?? "").join("\n") ?? body.error ?? "" };
+  const anyTool = async (name: string, args: Record<string, unknown>) => {
+    const r = await runTool(server.root, name, args, { token });
+    return { status: r.status, ok: r.ok, text: r.ok ? textOf(r.result) : (r.error ?? "") };
   };
   const made = await anyTool("create_document", { title: "Pages test", slug, kind: "project", files: {
     "index.html": PAGE("Home", `<nav data-erga-noedit><a href="blog">Blog</a> · <a href="about.html">About</a></nav>\n<h1>Home</h1>\n<p>The first page of a document with several.</p>`),

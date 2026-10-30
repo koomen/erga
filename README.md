@@ -135,7 +135,7 @@ health checks and rollbacks work.
       app.ts          the one route table, and what every page of the site's own gets
       platform.ts     Platform, what the app needs from where it runs, and Session, who is asking
       http.ts         the routes' HTTP in Effect (effect/http): a route is an Effect, the Platform a service, the answers they share
-      api.ts          the HTTP API: /api/tools (the operations, for the pages and every agent), tokens, /api, /mcp
+      api.ts          the HTTP API: /api/tools (the operations, for the pages and every agent), tokens, /mcp, /llms.txt
                       (the tools: agents/tools.ts)
       health.ts       the health check, GET /api/health
       security.ts     the security headers on every answer of the app

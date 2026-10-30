@@ -1,5 +1,5 @@
-// The agent's tools on every file (agents/document/session.ts, through the document's /api/ext, as an external agent calls
-// them): read gives a PDF (a range of its pages) and an image, write takes bytes, ls says each file's kind, size and
+// The agent's tools on every file (agents/document/session.ts, through the document's /api/tools/<name>, as the server
+// runs them for an agent): read gives a PDF (a range of its pages) and an image, write takes bytes, ls says each file's kind, size and
 // time, grep searches PDFs through their text (extracted once, kept by the PDF's hash), edit refuses a file kept whole,
 // and someone who may only view has the tools that change nothing.
 
@@ -21,12 +21,26 @@ async function withTools() {
   await s.doc.setPermissions([{ login: "ada", role: "owner" }, { login: "bob", role: "viewer" }]);
   const as = (who: string) => ({ "x-erga-person": JSON.stringify({ id: who, name: who }), "x-erga-who": JSON.stringify({ login: who }), "x-erga-agent": "token-1" });
   const tool = async (name: string, args: object, who = "ada") => {
-    const r = await s.doc.handle(new Request(`http://doc/api/ext/tools/${name}`, { method: "POST", body: JSON.stringify(args), headers: { "content-type": "application/json", ...as(who) } }));
+    const r = await s.doc.handle(
+      new Request(`http://doc/api/tools/${name}`, {
+        method: "POST",
+        body: JSON.stringify(args),
+        headers: { "content-type": "application/json", ...as(who) },
+      })
+    );
     const body = (await r.json()) as { ok: boolean; content?: Content[]; error?: string };
-    return { status: r.status, ok: body.ok, content: body.content ?? [], text: (body.content ?? []).filter((c) => c.type == "text").map((c) => c.text).join("\n"), error: body.error ?? "" };
+    return {
+      status: r.status,
+      ok: body.ok,
+      content: body.content ?? [],
+      text: (body.content ?? [])
+        .filter((c) => c.type == "text")
+        .map((c) => c.text)
+        .join("\n"),
+      error: body.error ?? "",
+    };
   };
-  const tools = async (who = "ada") => ((await (await s.doc.handle(new Request("http://doc/api/ext/tools", { headers: as(who) }))).json()) as { tools: { name: string }[] }).tools.map((t) => t.name);
-  return { ...s, tool, tools };
+  return { ...s, tool };
 }
 
 test("read gives a PDF as a document, a range of pages at a time, and an image as a picture", async () => {
@@ -112,12 +126,8 @@ test("grep searches PDFs through their text, page by page, extracted once and ke
 });
 
 test("someone who may only view has the tools that change nothing: read, find and grep work; write is refused", async () => {
-  const { tool, tools, put } = await withTools();
+  const { tool, put } = await withTools();
   await put("a.pdf", pdf("Shared"));
-  const mine = await tools("bob");
-  for (const t of ["read", "find", "grep"]) expect(mine).toContain(t);
-  for (const t of ["edit", "write"]) expect(mine).not.toContain(t);
-  expect((await tools("ada"))).toContain("write");
   expect((await tool("grep", { pattern: "Shared" }, "bob")).text).toBe("a.pdf:1: Shared");
   const w = await tool("write", { path: "x.md", content: "x" }, "bob");
   expect(w.ok).toBe(false);

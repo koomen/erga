@@ -193,12 +193,12 @@ export function described(doc: DocRow, { origin }: Caller) {
 
 /**
  * A request to a document's own host, as the caller: their person, what they may do there, and how they act
- * (an agent's request says so, and may then call the document's tools: /api/ext/tools).
+ * (an agent's request says so, and may then run the document's tools there: /api/tools/<name>).
  */
 export async function callDocument(caller: Caller, doc: Route, path: string, init: RequestInit): Promise<Response> {
   const platform = platformOf(caller),
     origin = caller.origin ?? "https://erga.invalid";
   const url = new URL(path, origin);
   const person = { login: caller.who.login, name: caller.name ?? caller.who.login };
-  return platform.docs.fetch(doc, forwardedAs(new Request(url, init), url, path, `${origin}/d/${doc.id}`, person, caller.who));
+  return platform.docs.fetch(doc, forwardedAs(new Request(url, init), url, path, person, caller.who));
 }

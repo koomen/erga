@@ -17,7 +17,7 @@
 // their room connection is then read-only, and so are their agent and
 // the files they send whole). A read of a file with a key the app checked (the
 // viewer's files, the editor's pages origin) says so in x-erga-checked. A request that came with an agent token also has x-erga-agent:
-// only those may call the external agent's tools (/api/ext), as the person
+// only those may run the agent's tools (/api/tools/<name>, which the server calls), as the person
 // the token stands for, who may do what they last could.
 //
 // Storage keys: `info` (what the document is, read once and kept in
@@ -1526,7 +1526,6 @@ export class Document {
       // Their agent edits only if they may (and only while they may).
       canEdit: (person) => this.editors.get(person.id) ?? false,
       mayPublish: (req) => req.headers["x-erga-access"] == "edit",
-      baseUrl: (req) => req.headers["x-erga-base"] ?? "",
       avatarOf: this.deps.avatarOf,
       // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),

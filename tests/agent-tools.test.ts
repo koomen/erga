@@ -303,7 +303,7 @@ test("the editor's agent works in another document: run in its host as the perso
   const out = await elsewhere(agent, "/ada/notes", "edit", { path: "index.html", edits: [] });
   expect(out).toEqual([{ type: "text", text: "Edited notes.html" }]);
   const r = sent[0];
-  expect(new URL(r.url).pathname).toBe("/api/ext/tools/edit");
+  expect(new URL(r.url).pathname).toBe("/api/tools/edit");
   expect(JSON.parse(await r.text())).toEqual({ path: "index.html", edits: [] });
   expect(r.headers.get("x-erga-agent")).toBeTruthy();
   // Its edits are Ada's, via her agent ("ada, via their agent"), and it has no admin power there.

@@ -129,8 +129,6 @@ export interface AgentSession {
 export interface DocumentAgents {
   /** A person's session, with the agent's settings as they are now (off, with no key: its tools still work for an outside agent). */
   start(opts: SessionOptions): Promise<AgentSession>;
-  /** The guide an outside agent reads first (GET /api/ext): the document's tools, and how to call them. */
-  guide(o: { docName: string; owner: string; base: string; tools: ToolSpec[] }): string;
   /** The models a person may switch between. */
   models: readonly { id: string; label: string }[];
   /** The tools that change the document: someone who may only view it has none of them. */

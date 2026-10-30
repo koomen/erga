@@ -6,7 +6,7 @@
 //   their agent                 the document agent, in one of their documents
 //   their admin agent           the agent on the admin pages
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
-//                               API, MCP, /api/ext, Git pushes, the admin APIs
+//                               API (/api/tools), MCP, Git pushes
 //   the factory (task #<n>)     a factory VM, working on a task they added
 //
 // Shown together: "koomen, via their agent". Nothing is attributed to an

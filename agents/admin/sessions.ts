@@ -17,12 +17,9 @@
 //
 // The panel is the admin's, in a browser: no token reaches it. An outside agent with an admin token
 // ("Authorization: Bearer erga_...", server/identity, scope admin; Share with agent on the admin pages makes one)
-// calls the same APIs the agent's tools do, and reads this first:
-//
-//   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits
+// calls the same tools itself (POST /api/tools/<name>, server/api.ts), and reads the guide first (/llms.txt).
 
 import { startAdminAgent, type AdminAgent } from "./agent.ts";
-import { adminGuide } from "../guides.ts";
 import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
@@ -32,14 +29,12 @@ import { isModelChoice, MODELS } from "../models.ts";
 import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { VIA } from "../../shared/attribution.ts";
-import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
-import { LOCKED } from "../../server/directory/index.ts";
+import { authOps } from "../../server/identity/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
-import { HttpServerResponse } from "effect/http";
-import { call, ctx, fromWeb, json, NO_STORE, type Route } from "../../server/http.ts";
+import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
 
 const enc = new TextEncoder();
 
@@ -272,46 +267,6 @@ const adminOf = (platform: Platform, request: Request) =>
     return { login: session.login.toLowerCase(), name: session.name };
   });
 
-/** An admin, or an outside agent acting as one: with `token`, it came with an admin token. */
-type GuideReader = { login: string; name: string; token?: { id: string; label: string; expires: number | null } };
-
-/** Why someone may not read the admin guide: the answer they get. */
-class NotAReader extends Schema.TaggedError<NotAReader>()("NotAReader", {
-  body: Schema.Record(Schema.String, Schema.Unknown),
-  status: Schema.Number,
-}) {}
-
-/** Who asks for the admin guide: an admin signed in in a browser, or an outside agent with an admin token. */
-const guideReaderOf = Effect.fnUntraced(function* (platform: Platform, request: Request, url: URL) {
-  const no = (body: Record<string, unknown>, status: number) => Effect.fail(new NotAReader({ body, status }));
-  const raw = /^Bearer\s+(erga_\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
-  if (raw) {
-    const again = `Ask an admin for a new one (Share with agent, on any page under ${url.origin}/admin), or make an admin token at ${url.origin}/tokens.`;
-    const t = yield* call(() => platform.tokens.verify(raw).catch(() => null));
-    if (!t) return yield* no({ error: `That token doesn't work: it expired, or was revoked. ${again}` }, 401);
-    if (t.testBy || !(yield* call(() => platform.directory.users.isAdmin(t.login))))
-      return yield* no({ error: `Only admins can do that, and ${t.login} isn't one.` }, 403);
-    if (t.scope != "admin") return yield* no({ error: LOCKED, locked: true }, 403);
-    return { login: t.login, name: t.name, token: { id: t.id, label: t.label, expires: t.expires } } satisfies GuideReader as GuideReader;
-  }
-  const admin = yield* adminOf(platform, request);
-  if (admin) return admin as GuideReader;
-  const signedIn = yield* call(() => platform.sessionOf(request));
-  return yield* no(
-    { error: `Only admins can do that: sign in, or send an admin token as "Authorization: Bearer <token>".` },
-    signedIn ? 403 : 401
-  );
-});
-
-/** GET /api/admin/guide: the admin guide, for an admin or their agent with an admin token. */
-export const adminGuideApi: Route = Effect.gen(function* () {
-  const { request, url, platform } = yield* ctx;
-  const reader = yield* guideReaderOf(platform, request, url);
-  if (request.method != "GET") return json({ error: "Not found" }, 404);
-  const body = adminGuide({ origin: url.origin, owner: reader.login, label: reader.token?.label ?? "(your token's label)", expires: reader.token ? reader.token.expires : Date.now() + SHARE_ADMIN_HOURS * 3600_000 });
-  return HttpServerResponse.text(body, { contentType: "text/markdown; charset=utf-8", headers: NO_STORE });
-}).pipe(Effect.catchTag("NotAReader", (e) => Effect.succeed(json(e.body, e.status))));
-
 export const isAdminAgentPath = (path: string) => path == "/api/admin/agent" || path.startsWith("/api/admin/agent/");
 
 /** The bodies the panel sends: a message, a model, its preferences (panel.ts checks those). */
@@ -332,7 +287,13 @@ const body = <S extends Schema.Top>(request: Request, schema: S, fallback: S["Ty
 /** /api/admin/agent...: the admin's own agent panel. */
 export const adminAgentApi: Route = Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
-  if (/^Bearer\s/i.test(request.headers.get("authorization") ?? "")) return json({ error: `The admin's agent panel is theirs, in a browser: an outside agent calls the same APIs itself (GET ${url.origin}/api/admin/guide).` }, 403);
+  if (/^Bearer\s/i.test(request.headers.get("authorization") ?? ""))
+    return json(
+      {
+        error: `The admin's agent panel is theirs, in a browser: an outside agent calls the same tools itself, with an admin token (GET ${url.origin}/llms.txt).`,
+      },
+      403
+    );
   const admin = yield* adminOf(platform, request);
   if (!admin) return json({ error: "Only admins have an admin agent." }, (yield* call(() => platform.sessionOf(request))) ? 403 : 401);
   if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);

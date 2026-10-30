@@ -46,7 +46,7 @@ async function server() {
   } as unknown as Platform;
   /** Calls one of the server API's tools with a token: its status and body. */
   const call = async (token: string, tool: string, args: Record<string, unknown> = {}) => {
-    const url = `${ORIGIN}/api/ext/tools/${tool}`;
+    const url = `${ORIGIN}/api/tools/${tool}`;
     const r = await respond(
       serverApi,
       new Request(url, {
@@ -56,7 +56,7 @@ async function server() {
       }),
       platform
     );
-    return { status: r.status, body: (await r.json()) as { ok: boolean; error?: string; content?: { text: string }[] } };
+    return { status: r.status, body: (await r.json()) as { ok: boolean; error?: string; result?: any } };
   };
   return { sql, dir, tokens, platform, call, root };
 }
@@ -80,7 +80,7 @@ test("who may make each scope: admin for admins only, document for a document th
 test("a document token: its one document, with the person's rights there, and nothing else", async () => {
   const { tokens, call } = await server();
   const { token } = await tokens.mint(ada, "One", { scope: "document", docId: "oneoneon" });
-  expect((await call(token, "whoami")).body.content![0].text).toContain('"scope": "document"');
+  expect((await call(token, "whoami")).body.result.token.scope).toBe("document");
   // Its own document: the document's own tools reach it (sharing is the owner's right there).
   expect((await call(token, "document_access", { document: "oneoneon" })).status).toBe(200);
   // Another of the same person's documents: refused.
@@ -100,7 +100,7 @@ test("a documents token: every document, but not the admin tools, even an admin'
   const { token } = await tokens.mint(ada, "Docs", { scope: "documents" });
   const list = await call(token, "list_documents");
   expect(list.status).toBe(200);
-  expect(JSON.parse(list.body.content![0].text).map((d: { id: string }) => d.id).sort()).toEqual(["oneoneon", "twotwotw"]);
+  expect(list.body.result.map((d: { id: string }) => d.id).sort()).toEqual(["oneoneon", "twotwotw"]);
   expect((await call(token, "document_access", { document: "twotwotw" })).status).toBe(200);
   const users = await call(token, "list_users");
   expect(users.status).toBe(403);
@@ -192,4 +192,41 @@ test("Share with agent's admin token: admins only, ends within 12 hours, shown a
   expect((await tokens.list("ada")).filter((t) => t.kind == "share").map((t) => t.scope).sort()).toEqual(["admin", "admin", "documents"]);
   expect(await tokens.revoke("ada", third.info.id)).toBe(true);
   expect(await tokens.verify(third.token)).toBeNull();
+});
+
+test("one API for every token: GET /api/tools and MCP's tools/list give the same tools, and MCP's tools/call keeps the same scope", async () => {
+  const { tokens, platform } = await server();
+  const send = async (token: string, path: string, init: RequestInit = {}) => {
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    return (await respond(serverApi, new Request(`${ORIGIN}${path}`, { ...init, headers }), platform)).json() as Promise<any>;
+  };
+  const rpc = (token: string, method: string, params?: object) =>
+    send(token, "/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+  const one = (await tokens.mint(ada, "One", { scope: "document", docId: "oneoneon" })).token;
+  const docs = (await tokens.mint(ada, "Docs", { scope: "documents" })).token;
+  const admin = (await tokens.mint(ada, "Admin", { scope: "admin" })).token;
+  const names = async (token: string) => {
+    const rest = ((await send(token, "/api/tools")).tools as { name: string }[]).map((t) => t.name);
+    expect(((await rpc(token, "tools/list")).result.tools as { name: string }[]).map((t) => t.name)).toEqual(rest);
+    return rest;
+  };
+  const [o, d, a] = [await names(one), await names(docs), await names(admin)];
+  // The document tools for each; list_documents not for a document token; the admin tools only for an admin token.
+  for (const list of [o, d, a]) expect(list).toEqual(expect.arrayContaining(["read", "edit", "whoami"]));
+  expect([o.includes("list_documents"), d.includes("list_documents"), a.includes("list_documents")]).toEqual([false, true, true]);
+  expect([o.includes("list_users"), d.includes("list_users"), a.includes("list_users")]).toEqual([false, false, true]);
+  // MCP's calls are the same calls: refused as /api/tools refuses them, as isError.
+  const call = async (token: string, name: string, args: object = {}) => (await rpc(token, "tools/call", { name, arguments: args })).result;
+  const refused = (why: RegExp) => ({ isError: true, content: [{ text: expect.stringMatching(why) }] });
+  expect(await call(one, "list_documents")).toMatchObject(refused(/one document only/));
+  expect(await call(one, "read", { document: "twotwotw", path: "index.html" })).toMatchObject(refused(/one document only/));
+  expect(await call(docs, "list_users")).toMatchObject(refused(/admin token/));
+  expect(JSON.parse((await call(admin, "list_users")).content[0].text).map((u: { login: string }) => u.login)).toContain("bo");
+  expect(await call(admin, "nope")).toMatchObject(refused(/no tool named "nope"/));
+  // The guide is written for the token: a document token's has no list_documents, only an admin token's the admin tools.
+  const guide = async (token: string) =>
+    (await respond(serverApi, new Request(`${ORIGIN}/llms.txt`, { headers: { Authorization: `Bearer ${token}` } }), platform)).text();
+  expect(await guide(one)).not.toContain("### list_documents");
+  expect(await guide(docs)).not.toContain("### list_users");
+  expect(await guide(admin)).toContain("### list_users");
 });

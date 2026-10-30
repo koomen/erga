@@ -174,7 +174,7 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   const inner = new Request(request.url, { method: request.method, headers: asked });
   const [route, answer] = await Promise.all([
     platform.directory.route(doc.id),
-    platform.docs.fetch(at, forwarded(inner, url, `/doc${rest}`, `${shell}/d/${doc.id}`, null, "files")),
+    platform.docs.fetch(at, forwarded(inner, url, `/doc${rest}`, null, "files")),
   ]);
   if (!route || route.owner != at.owner) { await answer.body?.cancel(); return notFound(); }
   const type = answer.headers.get("content-type") ?? "";

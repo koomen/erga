@@ -75,7 +75,7 @@ Read it before you push to a deployment's repository. On Erga's own:
    "for safety": Pete is the only user.
 8. **Keep the agents' manual current.** A change to an operation or a tool
    (`server/operations/`, `agents/tools.ts`) updates the guide agents read
-   (`agents/guides.ts`: `/api/ext`, `/llms.txt`) in the same change.
+   (`agents/guides.ts`: `/llms.txt`) in the same change.
 9. **Source files stay under about 32 KB; 48 KB is the cap**, because read
    tools stop near 50 KB. When you touch a file over the cap, split it along
    a real seam and take it off the list in `tests/file-size.test.ts`.

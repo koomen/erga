@@ -28,7 +28,7 @@ async function withTree() {
     const r = (await Effect.runPromise(s.doc.self.call((c) => c.treeOp(op))))!;
     return { status: r.ok ? 200 : r.status, body: r.ok ? { kind: r.kind } : { error: r.error } };
   };
-  const tool = (name: string, args: object) => post(`/api/ext/tools/${name}`, args, { "x-erga-agent": "token-1" });
+  const tool = (name: string, args: object) => post(`/api/tools/${name}`, args, { "x-erga-agent": "token-1" });
   const kind = async () => (await Effect.runPromise(s.doc.self.call((c) => c.tree())))!.kind;
   return { ...s, treeOp, tool, kind };
 }

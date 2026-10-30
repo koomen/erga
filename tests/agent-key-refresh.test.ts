@@ -64,7 +64,6 @@ async function openDocument(settings: () => Promise<AgentSettings>) {
     doc: { name: "index.html", path: "index.html", dir: "ada" },
     personOf: () => ({ id: "ada", name: "Ada" }),
     agentOf: () => null,
-    baseUrl: () => "",
   });
   const call = async (method: "GET" | "POST", body?: unknown) => {
     const r = await host.handler(new Request("http://doc.test/api/agent", { method, ...(body ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } } : {}) }));

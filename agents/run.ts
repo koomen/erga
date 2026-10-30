@@ -141,7 +141,7 @@ export const resultText = (out: ToolOutput) =>
     .trim();
 
 /**
- * A tool's arguments as JSON Schema, as every list of tools gives them (the model's, REST's /api/ext/tools, MCP's
+ * A tool's arguments as JSON Schema, as every list of tools gives them (the model's, GET /api/tools, MCP's
  * tools/list): always an object's schema, as Anthropic and MCP require. Effect writes an empty Struct (a tool with
  * no arguments) as {"not": {"type": "null"}}: that one is an object with none.
  */

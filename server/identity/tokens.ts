@@ -17,7 +17,7 @@
 // never can, whatever its scope. The app
 // treats "Authorization: Bearer erga_..." as signing
 // the person in, within the token's scope, for the server's API
-// (server/api.ts, /api/ext and /mcp) and every document's own (/api/ext).
+// (server/api.ts: /api/tools and /mcp).
 //
 // Kept in SQL behind the directory's `Sql`, so
 // D1 holds them on erga.dev and locally, and the tests run them on

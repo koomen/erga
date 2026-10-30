@@ -8,7 +8,7 @@
 //                        its own document tools, which take a `document` too: another document's run there
 //   the admin agent      (agents/admin/sessions.ts) every operation, with admin power (the Ops page's too), the
 //                        document tools for any document
-//   an outside agent     (server/api.ts: REST, /mcp and the guide) every operation its token's person may use (the admin
+//   an outside agent     (server/api.ts: /api/tools, /mcp, /llms.txt) every operation its token's person may use (the admin
 //                        ones only with an admin token; none that reach beyond one document with a document token),
 //                        and the document tools for any document
 //
@@ -37,7 +37,7 @@ import { CONTROL_OPERATIONS } from "../control/operations.ts";
 /**
  * Every operation: the server's (server/operations/), and the Ops page's (control/operations.ts), which work the
  * control Worker's repository and deploys and so live in control/, above server/. Add one to either list and the
- * front end's API, every agent, REST, MCP and the guides have it.
+ * front end's API, every agent, MCP and the guide have it.
  */
 export const ALL_OPERATIONS: Operation[] = [...OPERATIONS, ...CONTROL_OPERATIONS];
 
@@ -80,9 +80,9 @@ export async function elsewhere(caller: Caller, ref: string, name: string, args:
   return runInDocument(caller, doc, name, args);
 }
 
-/** A document tool, run in the document's host as the caller's agent (POST /api/ext/tools/<name> there). */
+/** A document tool, run in the document's host as the caller's agent (POST /api/tools/<name> there, which only the server reaches). */
 async function runInDocument(caller: Caller, doc: Route, name: string, args: Record<string, unknown>): Promise<ToolContent[]> {
-  const r = await callDocument(caller, doc, `/api/ext/tools/${encodeURIComponent(name)}`, {
+  const r = await callDocument(caller, doc, `/api/tools/${encodeURIComponent(name)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args),
@@ -97,7 +97,7 @@ async function runInDocument(caller: Caller, doc: Route, name: string, args: Rec
   return body.content ?? [];
 }
 
-/** A tool's arguments as JSON Schema, as outside agents read them (REST, MCP, the guides). */
+/** A tool's arguments as JSON Schema, as outside agents read them (GET /api/tools, MCP, the guide). */
 const schemas = new WeakMap<Tool, { required?: string[] }>();
 export const jsonSchemaOf = (t: Tool): { type: "object"; required?: string[] } => {
   let s = schemas.get(t);

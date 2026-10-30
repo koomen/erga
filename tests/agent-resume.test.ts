@@ -79,7 +79,6 @@ async function openDocument(data: Map<string, Uint8Array>, store: ChatStore, run
     doc: { name: "index.html", path: "index.html", dir: "ada" },
     personOf: () => ({ id: "ada", name: "Ada" }),
     agentOf: () => null,
-    baseUrl: () => "",
   });
   const call = async (method: "GET" | "POST", body?: unknown) =>
     (

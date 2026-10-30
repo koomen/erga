@@ -96,20 +96,17 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
         : null
       : yield* call(() => documentRoute(platform, first, second));
   if (!route) return text("No such document", 404);
-  // An external agent brings its token (Session.agent); everyone else signs in.
-  if (!session) {
-    return rest.startsWith("/api/ext")
-      ? plainJson(
-          {
-            ok: false,
-            error:
-              'Missing or unknown token: send the one you were given as "Authorization: Bearer <token>". If it stopped working it was revoked: ask for a new one.',
-          },
-          401,
-          { "WWW-Authenticate": 'Bearer realm="erga"' }
-        )
-      : text("Sign in first", 401);
-  }
+  // A document's tools are the server's one API's (POST /api/tools/<name>, with "document"): the host's own route for
+  // them is the server's to call (forwardedAs), never reached from outside.
+  if (/^\/api\/tools(\/|$)/.test(rest))
+    return plainJson(
+      {
+        ok: false,
+        error: `A document's tools are at POST ${url.origin}/api/tools/<name>, with the document as "document". The guide: ${url.origin}/llms.txt`,
+      },
+      404
+    );
+  if (!session) return text("Sign in first", 401);
   // The share button's token is the app's, not the document's: for whoever may open the document.
   if (rest == "/api/share" && request.method == "POST") {
     const doc = yield* call(() => platform.directory.route(route.id));
@@ -122,7 +119,7 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   if (request.headers.get("upgrade")?.toLowerCase() == "websocket" && origin && origin != url.origin)
     return text("Not from this site", 403);
   // Who's asking: the document decides what they may do (document/document.ts, authorize), and refuses the rest.
-  const answer = yield* call(() => platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session)));
+  const answer = yield* call(() => platform.docs.fetch(route, forwarded(request, url, rest, session)));
   if (answer.status == 101) return fromWeb(answer);
   // A document's files (an HTML page, an SVG) are its authors' code. Here, on this site's own origin, they run in a
   // sandbox of their own (an opaque origin, no scripts): opened at this address, a page's script would otherwise act as
@@ -166,32 +163,31 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
 // hands it out to whoever may open the document.
 
 /**
- * A request for the document's host: the path inside the document, its
- * public address, who's asking (x-erga-who: the document decides what they
+ * A request for the document's host: the path inside the document, who's asking (x-erga-who: the document decides what they
  * may do), and whether it's an agent with a token; never what the browser
  * claimed: those headers are replaced. `checked`: a file read with a key the
  * app checked itself (the document's pages origin),
  * for nobody in particular.
  */
-export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null, checked?: "files"): Request {
+export function forwarded(request: Request, url: URL, rest: string, session: Session | null, checked?: "files"): Request {
   const person = session && {
     login: session.login,
     name: session.name,
     ...(session.avatar && !session.test ? { avatar: session.avatar } : {}),
   };
-  return forwardedAs(request, url, rest, base, person, session && whoOf(session), checked);
+  return forwardedAs(request, url, rest, person, session && whoOf(session), checked);
 }
 
 /**
  * The same, for a caller the server itself vouches for: a person (and their picture), and who they are
  * (Who: how they act, `via`, when through one of their agents: an agent token's, or the editor's or admin's agent
- * reaching another document). An agent's request may call the document's tools (/api/ext/tools), as the person's agent.
+ * reaching another document). Only such a request, from the server itself, may run a document tool in the document's
+ * host (/api/tools/<name> there: agents/tools.ts, runInDocument), as the person's agent.
  */
 export function forwardedAs(
   request: Request,
   url: URL,
   rest: string,
-  base: string,
   person: { login: string; name: string; avatar?: string } | null,
   who: Who | null,
   checked?: "files"
@@ -199,7 +195,6 @@ export function forwardedAs(
   const inner = new URL(rest + url.search, url.origin);
   const headers = new Headers(request.headers);
   for (const h of ["x-erga-person", "x-erga-access", "x-erga-who", "x-erga-checked", "x-erga-view", "x-erga-agent", "x-erga-via", "x-erga-inline", "authorization"]) headers.delete(h);
-  headers.set("x-erga-base", base);
   if (person)
     headers.set(
       "x-erga-person",
