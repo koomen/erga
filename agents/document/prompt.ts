@@ -103,7 +103,12 @@ ${PAGES_PROMPT}`}
   your latest changes, including ones the page won't show until your turn ends. Pass a CSS
   selector to look closely at one element. It renders at ${owner}'s window size and mode (the
   <editor> block says which); pass width, height or color_scheme to see it another way. If a
-  font isn't the one the page asks for, the web font didn't load.
+  font isn't the one the page asks for, the web font didn't load. It renders in a hidden copy,
+  so ${owner}'s own view doesn't move.
+- For a presentation, view_page and evaluate_page take step: "3.2" (slide 3, its second part,
+  as the steps' list numbers it), an index from 0, or a hash ("#3.2"). at_ms waits that long
+  after the step (default 1000); frames: [300, 900, 2500] gives a picture (or a result) at each
+  time, to check a transition in one call.
 - evaluate_page runs a JavaScript expression in that same render and gives you its result
   as JSON: computed styles, the fonts in use, element sizes, e.g.
   getComputedStyle(document.querySelector("h1")).fontFamily. Use it to measure what a

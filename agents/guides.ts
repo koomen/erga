@@ -145,7 +145,13 @@ make_document, list_versions, read_version, restore_version and open_page.
   (so it needs their editor open): a screenshot, any script errors, and the fonts
   its text rendered in. Use it to check visual work before you say it's done.
   evaluate_page runs a JavaScript expression in that same render and answers its
-  result as JSON. Neither changes the document.
+  result as JSON. Neither changes the document, nor moves your person's view: they
+  render a hidden copy, once the page loaded and its scripts ran.
+- For a presentation (window.ergaSteps), view_page and evaluate_page take step:
+  "3.2" (slide 3, its second part, as the steps' list numbers it), an index from 0,
+  or a hash ("#3.2"). at_ms waits that long after the step (default 1000 ms);
+  frames ([300, 900, 2500]) gives a picture or a result at each time, in one call,
+  to check a transition: \`view_page {"document": "...", "step": "3.2", "frames": [300, 900]}\`.
 - page_console, page_network, page_events, page_inspect, page_click and page_key
   reach the page as it runs now in your person's open editor: its errors, its
   requests, who consumed each click or key, its media's state; and they click
