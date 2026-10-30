@@ -27,6 +27,8 @@ const CHECKBOX = /<input\b[^>]*\btype\s*=\s*["']?checkbox\b[^>]*>/gi;
 const EMACS: Record<string, string> = { n: "ArrowDown", p: "ArrowUp", f: "ArrowRight", b: "ArrowLeft" };
 
 export abstract class EditorInput extends EditorClipboard {
+  /** The text the last Ctrl+K deleted, for Ctrl+Y: the browser keeps none, as the editor makes every delete itself. */
+  private killed = "";
 
   protected bind(): void {
     const doc = this.doc!;
@@ -556,7 +558,7 @@ export abstract class EditorInput extends EditorClipboard {
       case "insertReplacementText":
       case "insertFromYank": {
         e.preventDefault();
-        const text = e.data ?? e.dataTransfer?.getData("text/plain") ?? "";
+        const text = (type == "insertFromYank" ? this.killed : e.data) ?? e.dataTransfer?.getData("text/plain") ?? "";
         this.insertText(text, this.targetRange(e));
         return;
       }
@@ -586,7 +588,20 @@ export abstract class EditorInput extends EditorClipboard {
       case "deleteContent":
       case "deleteByCut": {
         e.preventDefault();
-        const r = this.targetRange(e);
+        const r = this.targetRange(e),
+          sel = this.currentSelection();
+        // A delete from a caret (a word, the rest of the line: Ctrl+K) stays in the caret's block. Chrome's range can
+        // reach into the next block's text: it counts the offset in the whitespace between the two.
+        const u = r && sel.empty ? M.unitAt(this.units, sel.head) : null;
+        if (r && u) {
+          r.from = Math.max(r.from, M.textStart(u));
+          r.to = Math.min(r.to, M.textEnd(u));
+        }
+        if (r && r.from < r.to && type == "deleteHardLineForward") {
+          const t = this.doc!.createElement("template");
+          t.innerHTML = this.src.slice(r.from, r.to);
+          this.killed = t.content.textContent ?? "";
+        }
         if (r && r.from < r.to) this.replaceRange(r.from, r.to, "", /Forward/.test(type) ? "delete.forward" : "delete.backward");
         else this.deleteChar(/Forward/.test(type));
         return;
