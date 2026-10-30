@@ -33,8 +33,18 @@ type Steps = {
   image?(i: number, size: { width: number; height: number }): unknown;
   next?(): void;
   back?(): void;
+  hasNext?(): unknown;
+  hasBack?(): unknown;
 };
-type StepsMessage = { count: number; current: number; labels: string[]; images: boolean; rev?: number };
+type StepsMessage = {
+  count: number;
+  current: number;
+  labels: string[];
+  images: boolean;
+  hasNext: boolean;
+  hasBack: boolean;
+  rev?: number;
+};
 
 export default function reader(C: ReaderConfig): void {
   // Only as the viewer's document: not opened by itself, nor in a frame inside the page.
@@ -349,7 +359,16 @@ export default function reader(C: ReaderConfig): void {
           const l = typeof p.label == "function" ? p.label(i) : "";
           labels.push(typeof l == "string" ? l.replace(/\s+/g, " ").trim().slice(0, 200) : "");
         }
-        m = { count, current: whole(p.current(), Math.max(0, count - 1)), labels, images: typeof p.image == "function" };
+        const current = whole(p.current(), Math.max(0, count - 1));
+        // More to show either way: the page says (a slide that builds up in parts), else a step after or before.
+        m = {
+          count,
+          current,
+          labels,
+          images: typeof p.image == "function",
+          hasNext: typeof p.hasNext == "function" ? !!p.hasNext() : current < count - 1,
+          hasBack: typeof p.hasBack == "function" ? !!p.hasBack() : current > 0,
+        };
       } catch {
         m = null;
       }
@@ -371,11 +390,12 @@ export default function reader(C: ReaderConfig): void {
     try {
       const count = whole(p.count(), STEP_MAX),
         at = whole(p.current(), STEP_MAX);
-      const n = to.by ? at + (to.by > 0 ? 1 : -1) : whole(to.to, STEP_MAX);
-      if (n >= 0 && n < count && n != at) {
-        if (to.by! > 0 && typeof p.next == "function") p.next();
-        else if (to.by! < 0 && typeof p.back == "function") p.back();
-        else p.go(n);
+      // next() and back() whatever the step: the page knows when it has nothing more to show (the last slide's parts).
+      if (to.by! > 0 && typeof p.next == "function") p.next();
+      else if (to.by! < 0 && typeof p.back == "function") p.back();
+      else {
+        const n = to.by ? at + (to.by > 0 ? 1 : -1) : whole(to.to, STEP_MAX);
+        if (n >= 0 && n < count && n != at) p.go(n);
       }
     } catch {}
     tellSteps();

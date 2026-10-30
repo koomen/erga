@@ -159,7 +159,8 @@ members. Steps are numbered from 0.
 | `current()` | yes | Answers the step shown now. |
 | `go(i)` | yes | Shows step `i`. |
 | `label(i)` | no | Answers a short name for step `i` (its title, say). Without it, the list says "Step 3". |
-| `next()`, `back()` | no | Step forward or back, for a page whose steps go further than `go` (a slide that builds up in parts). Without them, Erga calls `go` with the step after or before. |
+| `next()`, `back()` | no | Step forward or back, for a page whose steps go further than `go` (a slide that builds up in parts). Erga calls them for ← and →, and for the forward and back buttons, on every step, the first and the last too. Without them, Erga calls `go` with the step after or before. |
+| `hasNext()`, `hasBack()` | no | Answer `true` while `next()` or `back()` has more to show. Erga turns the forward or back button off when they answer `false`. Without them, the forward button is off on the last step and the back button on the first. |
 | `image(i, {width, height})` | no | Answers a small picture of step `i`, about `width` × `height` pixels: a `canvas`, a `Blob`, or an image's address (a `data:` URL, or one of the document's files). It may answer a Promise of one. Without it, or when it answers nothing, the list shows the step's number and label. |
 
 Whenever the step changes (by the page's own controls, a timer, anything) or
@@ -172,7 +173,12 @@ Rules:
 - Erga handles ← and → (without modifier keys): don't handle them yourself,
   or call `preventDefault()` on the ones you do handle, so a key moves one
   step and not two.
-- Keep `count()`, `current()` and `label()` quick: Erga calls them often.
+- A slide that builds up in parts: `next()` shows its next part, and
+  `hasNext()` answers `true` until the last part of the last slide shows;
+  `back()` and `hasBack()` go the other way. `current()` stays the slide,
+  and the hash names the part too (`#3.2`, rule 14).
+- Keep `count()`, `current()`, `label()`, `hasNext()` and `hasBack()`
+  quick: Erga calls them often.
 - Erga keeps the pictures `image()` draws until the document changes (an edit,
   a reload, other steps), so draw the step as it is, not from a cache of your
   own.
@@ -215,7 +221,8 @@ A minimal presentation: each `section` is a step.
 </script>
 ```
 
-`e2e/fixtures/steps/index.html` is a fuller example.
+`e2e/fixtures/steps/index.html` is a fuller example, and
+`e2e/fixtures/builds/index.html` a deck whose slides build up in parts.
 
 ## Custom edits
 
