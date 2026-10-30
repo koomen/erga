@@ -1,5 +1,12 @@
 # Lists in the page editor
 
+Update (2026-10-30, docs/design/view.md, step 4): an item's text beside its nested list is a unit of its own
+(`<li>text<ul>…</ul></li>`, `shared/manuscript.ts`, `headOf`), so Tab no longer puts the text in a `<p>`, whose
+margins showed as a gap. Tab and Shift+Tab change only tags and the spaces that indent the lines, so another tab that
+types in the item keeps its text. Paste writes an item with a nested list the same way. A page whose items have
+their text in a `<p>` keeps it. Two lists of the same kind side by side join when the edit put one of them there
+(items pasted right above a list). What follows is the design as it was decided first.
+
 Decision (2026-10-28): **refactor, but not as a rewrite.** All list edits now go
 through one module, `client/page-editor/lists.ts`. It has one model of a list
 item, the list operations as pure functions of the source, and one cleanup

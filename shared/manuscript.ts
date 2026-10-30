@@ -93,7 +93,7 @@ export const INLINE = new Set(["a", "abbr", "b", "bdi", "bdo", "br", "cite", "co
 export const ATOMIC = new Set(["script", "style", "template", "svg", "math", "textarea", "select", "option", "optgroup", "button", "input",
   "iframe", "canvas", "video", "audio", "object", "noscript", "embed", "img", "picture", "progress", "meter", "xmp", "noembed", "noframes"]);
 /** Ignored when deciding whether an element is a leaf block. */
-const TRANSPARENT = new Set(["script", "style", "template", "noscript"]);
+export const TRANSPARENT = new Set(["script", "style", "template", "noscript"]);
 /** Never units, whatever their content. */
 const NEVER_UNIT = new Set(["html", "head", "body", "title", "meta", "link", "base", "table", "thead", "tbody", "tfoot", "tr", "colgroup", "col",
   "ul", "ol", "dl", "menu", "source", "track", "area", "map", "datalist", "hr", "br", ...ATOMIC]);
@@ -364,20 +364,53 @@ export function unitsIn(src: string, el: ElementNode, decode: EntityDecoder = ba
   let excluded = false;
   for (let a: ElementNode | null = el; a; a = a.parent) if (ATOMIC.has(a.tag) || (a.tag != "#root" && noEdit(src, a))) excluded = true;
   const isUnit = (e: ElementNode, out: boolean) => !out && !NEVER_UNIT.has(e.tag) && e.tag != "#root" && classify(src, e) == "unit";
-  const visit = (e: ElementNode, out: boolean) => {
+  const visit = (e: ElementNode, out: boolean, from = 0) => {
     for (const child of e.children) {
-      if (child.kind != "element") continue;
+      if (child.kind != "element" || child.from < from) continue;
       const childExcluded = out || ATOMIC.has(child.tag) || noEdit(src, child);
       if (isUnit(child, childExcluded)) {
         units.push(makeUnit(src, child, first + units.length, decode));
+        continue;
+      }
+      const head = childExcluded ? null : headOf(src, child);
+      if (head) {
+        units.push(makeUnit(src, child, first + units.length, decode, head.from));
+        visit(child, childExcluded, head.from);
         continue;
       }
       if (!NO_DOM_CONTENT.has(child.tag)) visit(child, childExcluded);
     }
   };
   if (isUnit(el, excluded)) return [makeUnit(src, el, first, decode)];
+  const head = excluded ? null : headOf(src, el);
+  if (head) {
+    units.push(makeUnit(src, el, first, decode, head.from));
+    visit(el, excluded, head.from);
+    return units;
+  }
   if (!NO_DOM_CONTENT.has(el.tag)) visit(el, excluded);
   return units;
+}
+
+/**
+ * A list item's text before the list nested in it (`<li>Two<ul>…</ul></li>`) is a unit of its own: it ends where the
+ * first block in the item starts. Returns that block, or null if the item has no such text (or isn't an item).
+ */
+function headOf(src: string, el: ElementNode): ElementNode | null {
+  if (el.tag != "li") return null;
+  let text = false;
+  for (const c of el.children) {
+    if (c.kind == "text") {
+      if (/\S/.test(src.slice(c.from, c.to))) text = true;
+      continue;
+    }
+    if (INLINE.has(c.tag) || ATOMIC.has(c.tag) || TRANSPARENT.has(c.tag)) {
+      if (!TRANSPARENT.has(c.tag)) text = true;
+      continue;
+    }
+    return text ? c : null;
+  }
+  return null;
 }
 
 type Kind = "unit" | "container" | "none";
@@ -409,10 +442,12 @@ function classify(src: string, el: ElementNode): Kind {
   return hasBlock ? "container" : hasText || hasBr || TEXT_TAGS.has(el.tag) ? "unit" : "none";
 }
 
-function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecoder): Unit {
+/** A unit of the element `el`, to its end, or to `end` (a list item's text before its nested list: see headOf). */
+function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecoder, end?: number): Unit {
   const runs: TextRun[] = [];
   const walk = (node: ElementNode, editable: boolean) => {
     for (const child of node.children) {
+      if (end != null && child.from >= end) break;
       if (child.kind == "text") {
         const dropNl = (node.tag == "pre" || node.tag == "textarea" || node.tag == "listing") && child.from == node.openTo;
         const { text, map } = decodeText(src, child.from, child.to, child.raw, decode, dropNl);
@@ -425,8 +460,16 @@ function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecode
   };
   walk(el, true);
   return {
-    id, tag: el.tag, from: el.from, to: el.to, openFrom: el.from, openTo: el.openTo,
-    contentFrom: el.openTo, contentTo: el.closeFrom, runs, node: el,
+    id,
+    tag: el.tag,
+    from: el.from,
+    to: end ?? el.to,
+    openFrom: el.from,
+    openTo: el.openTo,
+    contentFrom: el.openTo,
+    contentTo: end ?? el.closeFrom,
+    runs,
+    node: el,
   };
 }
 

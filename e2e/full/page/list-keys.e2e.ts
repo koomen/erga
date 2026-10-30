@@ -82,11 +82,11 @@ test("Enter in an item's text splits it; Backspace at an item's start joins it t
   `);
 });
 
-// Bug: Tab puts the parent item's text in a <p> (<li><p>Two</p><ul>…</ul></li>), and the page draws the <p>'s margins:
-// a gap of a line above and below the parent item, so the list's lines are no longer evenly spaced.
-test(
-  "Tab nests an item under the one above and Shift+Tab brings the next out again; the numbers follow, and the lines stay evenly spaced",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Tab nests an item under the one above and Shift+Tab brings the next out again; the numbers follow, and the lines stay evenly spaced", async ({
+  tab,
+}: {
+  tab: Tab;
+}) => {
     const ed = await empty(tab);
     await ed.type("1. One");
     await ed.press("Enter");
@@ -108,14 +108,10 @@ test(
           1. Sub
       3. Three|
     `);
-  })
+  }
 );
 
-// Bug: one undo after Tab and typing takes back both: the indent goes with the text typed after it. A person expects
-// the text to go first, then the indent, as each is a step of its own.
-test(
-  "Undo after Tab and typing takes back the typing first, then the indent",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Undo after Tab and typing takes back the typing first, then the indent", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await ed.type("- One");
     await ed.press("Enter");
@@ -130,7 +126,7 @@ test(
       • One
       • |
     `);
-  })
+  }
 );
 
 // A browser extension (Grammarly, a password manager) adds its own element to the page's body. Before, that made the

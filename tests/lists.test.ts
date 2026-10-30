@@ -154,7 +154,7 @@ const CASES: [string, string, string[], string][] = [
     "Tab in the second item",
     "<ul>\n  <li>One</li>\n  <li>Tw|o</li>\n  <li>Three</li>\n</ul>",
     ["Tab"],
-    "<ul>\n  <li><p>One</p>\n    <ul>\n      <li>Tw|o</li>\n    </ul>\n  </li>\n  <li>Three</li>\n</ul>",
+    "<ul>\n  <li>One\n    <ul>\n      <li>Tw|o</li>\n    </ul>\n  </li>\n  <li>Three</li>\n</ul>",
   ],
   ["Tab in the first item", "<ul>\n  <li>On|e</li>\n  <li>Two</li>\n</ul>", ["Tab"], "<ul>\n  <li>On|e</li>\n  <li>Two</li>\n</ul>"],
   [
@@ -167,19 +167,19 @@ const CASES: [string, string, string[], string][] = [
     "Tab in a numbered list",
     "<ol>\n  <li>One</li>\n  <li>Tw|o</li>\n</ol>",
     ["Tab"],
-    "<ol>\n  <li><p>One</p>\n    <ol>\n      <li>Tw|o</li>\n    </ol>\n  </li>\n</ol>",
+    "<ol>\n  <li>One\n    <ol>\n      <li>Tw|o</li>\n    </ol>\n  </li>\n</ol>",
   ],
   [
     "Tab with a selection over two items",
     "<ul>\n  <li>One</li>\n  <li>T[wo</li>\n  <li>Thr]ee</li>\n</ul>",
     ["Tab"],
-    "<ul>\n  <li><p>One</p>\n    <ul>\n      <li>T[wo</li>\n      <li>Thr]ee</li>\n    </ul>\n  </li>\n</ul>",
+    "<ul>\n  <li>One\n    <ul>\n      <li>T[wo</li>\n      <li>Thr]ee</li>\n    </ul>\n  </li>\n</ul>",
   ],
   [
     "Shift+Tab in a nested item",
     "<ul>\n  <li><p>One</p>\n    <ul>\n      <li>A|</li>\n      <li>B</li>\n    </ul>\n  </li>\n  <li>Two</li>\n</ul>",
     ["Shift+Tab"],
-    "<ul>\n  <li>One</li>\n  <li><p>A|</p>\n    <ul>\n      <li>B</li>\n    </ul>\n  </li>\n  <li>Two</li>\n</ul>",
+    "<ul>\n  <li>One</li>\n  <li>A|\n    <ul>\n      <li>B</li>\n    </ul>\n  </li>\n  <li>Two</li>\n</ul>",
   ],
   [
     "Shift+Tab in the last nested item",
@@ -253,6 +253,8 @@ const CASES: [string, string, string[], string][] = [
 
 const P = (t: string) => ({ tag: "p" as const, html: t, text: t, md: t });
 const NESTED = "<ul>\n  <li><p>One</p>\n    <ul>\n      <li>A</li>\n    </ul>\n  </li>\n</ul>";
+/** An item's text beside its nested list, with no <p>: as Tab writes it (the text is a unit of its own: manuscript.ts, headOf). */
+const BARE = "<ul>\n  <li>One\n    <ul>\n      <li>A</li>\n    </ul>\n  </li>\n  <li>Two</li>\n</ul>";
 /** A paste of blocks: the source, the blocks, the source after. */
 const PASTES: [string, string, Parameters<ReturnType<typeof keys>["pasteIn"]>[0], string][] = [
   [
@@ -298,6 +300,12 @@ const ROUNDS: [string, string[]][] = [
   [NESTED.replace("One", "O|ne"), ["Enter", "Backspace"]],
   [NESTED.replace("One", "One|"), ["Enter", "Backspace"]],
   [NESTED.replace("One", "|One"), ["Enter", "Backspace"]],
+  // An item's text beside its nested list, with no <p> (as Tab writes it now).
+  [BARE.replace("One", "O|ne"), ["Enter", "Backspace"]],
+  [BARE.replace("One", "One|"), ["Enter", "Backspace"]],
+  [BARE.replace("One", "|One"), ["Enter", "Backspace"]],
+  [BARE.replace("Two", "Tw|o"), ["Tab", "Shift+Tab"]],
+  [BARE.replace(">A<", ">A|<"), ["Shift+Tab", "Tab"]],
   ['<ul>\n  <li style="list-style: none"><input type="checkbox" checked> One|</li>\n</ul>', ["Enter", "Backspace", "Backspace"]],
   ["<ul>\n  <li>One|</li>\n  <li>Two</li>\n</ul>", ["Shift+Enter", "Backspace"]],
   ["<ul>\n  <li>One</li>\n  <li>Tw|o</li>\n  <li>Three</li>\n</ul>", ["Tab", "Shift+Tab"]],

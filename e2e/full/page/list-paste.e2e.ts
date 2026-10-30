@@ -62,11 +62,7 @@ test("Deleting the paragraph between two bulleted lists makes them one list", as
   `);
 });
 
-// Bug: items pasted in an empty paragraph right above a bulleted list make a second list, with a gap between the two:
-// the bullets no longer look like one list. In Google Docs and Notion the four bullets are evenly spaced.
-test(
-  "Items pasted in the empty paragraph right above a bulleted list join that list",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Items pasted in the empty paragraph right above a bulleted list join that list", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await ed.type("Intro");
     await ed.press("Enter");
@@ -89,5 +85,5 @@ test(
       • One
       • Two
     `);
-  })
+  }
 );

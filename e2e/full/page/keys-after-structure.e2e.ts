@@ -42,7 +42,7 @@ test("HTML: Tab nests a list item, and typing at once goes at the start of its t
   await ed.clickEnd("li:last-child");
   await ed.press("Home");
   await burst(ed, "Tab", "X");
-  await expect.poll(() => ed.source()).toMatch(/<ul>\s*<li>\s*<p>Faster builds<\/p>\s*<ul>\s*<li>XA <strong>new<\/strong> editor<\/li>/);
+  await expect.poll(() => ed.source()).toMatch(/<ul>\s*<li>Faster builds\s*<ul>\s*<li>XA <strong>new<\/strong> editor<\/li>/);
 });
 
 test("HTML: Shift+Tab takes a nested item out, and typing at once goes at the start of its text", async ({ tab }) => {

@@ -228,10 +228,17 @@ export abstract class EditorCore {
     }
   }
 
+  /** A unit's text nodes: those in its element, up to a block in it (a list item's text stops at its nested list). */
   protected textNodes(el: Element): Text[] {
     const out: Text[] = [];
-    const w = this.doc!.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) out.push(n as Text);
+    const block = (e: Element) => !M.INLINE.has(e.localName) && !M.ATOMIC.has(e.localName) && !M.TRANSPARENT.has(e.localName);
+    const w = this.doc!.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (n) => (n.nodeType == 3 || block(n as Element) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP),
+    });
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      if (n.nodeType == 1) break;
+      out.push(n as Text);
+    }
     return out;
   }
 

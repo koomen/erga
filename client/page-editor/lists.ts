@@ -1,6 +1,7 @@
 // The page editor's lists (see docs/design/lists.md). A list item is an <li> in a <ul> or <ol>: its text, and the lists
-// nested in it. The text is the <li>'s own, or, when a list is nested in it, a <p> first in it
-// (`<li><p>text</p><ul>…</ul></li>`): text beside a list isn't a unit, and couldn't be edited. Every edit that changes a
+// nested in it. The text is the <li>'s own, beside its nested lists (`<li>text<ul>…</ul></li>`: the text is a unit of its
+// own, manuscript.ts, headOf), or, in a page that has it so, a <p> first in it (`<li><p>text</p><ul>…</ul></li>`).
+// Tab and Shift+Tab change only tags, and the spaces that indent the lines. Every edit that changes a
 // list's structure is here, as a function of the source: Enter, Tab and Shift+Tab, Backspace at a to-do's checkbox,
 // the join of an item with lists in it, and the tidy-up after any edit. Each gives the changes that make it, in one
 // transaction (one undo step), and changes only the items it moves, so another person typing in other items keeps
@@ -107,16 +108,26 @@ export function enterItem(src: string, units: M.Unit[], u: M.Unit, pos: number):
   }
   const box = todoBox(src, u);
   const textFrom = box?.to ?? u.contentFrom;
-  if ((item.text != li || box) && pos <= Math.max(textFrom, M.textStart(u)) && !emptyIn(src, u, pos, u.contentTo)) {
+  if ((item.text != li || box || item.lists.length) && pos <= Math.max(textFrom, M.textStart(u)) && !emptyIn(src, u, pos, u.contentTo)) {
     // At the start of the text: a blank item before (a to-do's with its checkbox, not done), and the text stays.
     const insert = copyOpen(src.slice(li.from, li.openTo)) + (box ? TODO_BOX : "<br>") + `</li>\n${indent}`;
     return { changes: [{ from: li.from, insert }], selection: { anchor: pos + insert.length }, userEvent: "input" };
   }
-  if (item.text == li) return null;
-  // The text is in a <p>: the item splits, not the <p>.
+  if (item.text == li && !item.lists.length) return null;
   const stack = M.inlineStackAt(src, u, pos);
   const head = !emptyIn(src, u, u.contentFrom, pos),
     tail = !emptyIn(src, u, pos, u.contentTo);
+  if (item.text == li) {
+    // The text is beside the lists nested in the item: the item splits there, and the second half keeps the lists.
+    const insert =
+      (head ? "" : "<br>") + M.closeTags(stack) + `</li>\n${indent}` + copyOpen(src.slice(li.from, li.openTo)) + M.openTags(stack);
+    return {
+      changes: [{ from: pos, insert: insert + (tail ? "" : "<br>") }],
+      selection: { anchor: pos + insert.length },
+      userEvent: "input",
+    };
+  }
+  // The text is in a <p>: the item splits, not the <p>.
   const pOpen = src.slice(u.openFrom, u.openTo);
   // The first half has no list after its text: it needs no <p> (unless the author's has attributes).
   const bare = item.lists.length > 0 && pOpen == "<p>";
@@ -207,10 +218,15 @@ export function carryLists(src: string, prev: M.Unit, next: M.Unit): { gone: M.E
   }
   const last = elements(before).at(-1);
   if (prev.node == before || (prev.node.parent == before && !isList(last))) {
-    // The item before has no list: the lists go after its text, which goes in a <p> if it isn't in one.
+    // The item before has no list: the lists go after its text (in a <p>, if the item that goes had its text in one).
     const at = indentOf(src, before);
-    const lists = reindent(src.slice(item.text.to, li.closeFrom), indentOf(src, li), at);
+    const lists = reindent(
+      src.slice(item.text == li ? src.slice(0, next.contentTo).replace(/\s*$/, "").length : item.text.to, li.closeFrom),
+      indentOf(src, li),
+      at
+    );
     if (prev.node != before) return { gone: li, after: "", changes: [{ from: prev.to, insert: lists }] };
+    if (item.text == li) return { gone: li, after: lists, changes: [] };
     return { gone: li, after: "</p>" + lists, changes: [{ from: prev.contentFrom, insert: "<p>" }] };
   }
   // Into the item before's last list, after its items (one of another kind goes after it).
@@ -240,9 +256,9 @@ export function carryLists(src: string, prev: M.Unit, next: M.Unit): { gone: M.E
  * meet), and stays as it was. Null outside a list item: Tab is the browser's.
  * In one, the editor always takes the key, so the focus never leaves the
  * page: an item that can't move (the first in its list, one at the top
- * level, one whose HTML isn't closed) stays put ("stay"). An item with a
- * list nested in it keeps its own text in a <p> (see itemOf). Taking the
- * last item out of a nested list takes the <p> off again.
+ * level, one whose HTML isn't closed) stays put ("stay"). An item's text
+ * stays beside the list nested in it; in a page whose item has its text in
+ * a <p>, taking the last item out of its list takes the <p> off.
  */
 export function indentItems(
   src: string,
@@ -285,107 +301,77 @@ export function indentItems(
     const prev = siblings[i - 1];
     if (!prev || prev.tag != "li" || !isClosed(prev) || src.slice(prev.to, first.from).trim()) return "stay";
   } else if (list.parent?.tag != "li" || !isClosed(list.parent)) return "stay";
-  // The new text is built from source slices, with a mark where each end of the selection is, to find them again.
-  // A mark goes in the slice that starts at it; one at the very end of the slices it is in (the end of an item's
-  // text) goes at that end, on a second build.
-  const ANCHOR = "\u0000",
-    HEAD = "\u0001";
-  const { anchor, head } = sel;
-  const build = (ends: boolean) => {
-    const cut = (a: number, b: number) => {
-      let text = "",
-        at = a;
-      const marks = [
-        [anchor, ANCHOR],
-        [head, HEAD],
-      ] as const;
-      for (const [p, m] of [...marks].sort((x, y) => x[0] - y[0]))
-        if (a <= p && (p < b || (ends && p == b))) {
-          text += src.slice(at, p) + m;
-          at = p;
-        }
-      return text + src.slice(at, b);
-    };
-    const block = (e: M.ElementNode, to: string) => reindent(cut(e.from, e.to), indentOf(src, e), to);
-    // An item with more items nested at its end: into its last list, or a new one after its text.
-    const nest = (li: M.ElementNode, items: M.ElementNode[], tag: string) => {
-      const open = cut(li.from, li.openTo),
-        close = src.slice(li.closeFrom, li.to),
-        last = elements(li).at(-1);
-      if (isList(last) && isClosed(last)) {
-        const inner = indentOf(src, last) + "  ";
-        return (
-          cut(li.from, last.closeFrom).trimEnd() +
-          items.map((e) => "\n" + inner + block(e, inner)).join("") +
-          "\n" +
-          indentOf(src, last) +
-          cut(last.closeFrom, li.to)
-        );
-      }
-      const at = indentOf(src, li) + "  ",
-        inner = at + "  ";
-      const content = cut(li.openTo, li.closeFrom).trim();
-      const text = elements(li).some((e) => !M.INLINE.has(e.tag)) ? content : `<p>${content}</p>`;
-      return (
-        open +
-        text +
-        `\n${at}<${tag}>` +
-        items.map((e) => "\n" + inner + block(e, inner)).join("") +
-        `\n${at}</${tag}>\n${indentOf(src, li)}` +
-        close
-      );
-    };
-    if (!out) {
-      const prev = siblings[i - 1];
-      return { from: prev.from, to: last!.to, insert: nest(prev, items, list!.tag) };
+  // Only tags, and the spaces that indent the lines, change: the items' text stays where it is, so a caret in it, a key
+  // typed in it in another tab, and undo's history keep their place (docs/design/view.md, rule 6).
+  const changes: Change[] = [];
+  /** The lines in [from, to) after the first, `by` spaces more (or fewer) indented. */
+  const indent = (from: number, to: number, by: number) => {
+    for (let n = src.indexOf("\n", from); n >= 0 && n < to; n = src.indexOf("\n", n + 1)) {
+      const w = /^[ \t]*/.exec(src.slice(n + 1))![0].length;
+      if (by > 0) changes.push({ from: n + 1, insert: " ".repeat(by) });
+      else if (by < 0 && w) changes.push({ from: n + 1, to: n + 1 + Math.min(w, -by) });
     }
-    const parent = list!.parent!;
-    // What goes between two items of the parent's list: as its items are now (a list on one line stays so).
-    const itemGap = (li: M.ElementNode) => {
-      const outer = li.parent ? elements(li.parent) : [],
-        k = outer.indexOf(li);
-      const gap = k > 0 ? src.slice(outer[k - 1].to, li.from) : k >= 0 && k + 1 < outer.length ? src.slice(li.to, outer[k + 1].from) : null;
-      return gap != null && !gap.trim()
-        ? gap
-        : li.parent &&
-            !src.slice(li.parent.openTo, outer[0]?.from ?? li.from).trim() &&
-            !src.slice(li.parent.openTo, li.from).includes("\n")
-          ? ""
-          : "\n" + indentOf(src, li);
-    };
-    // The items after them go with the last, nested in it, so the order stays.
-    const after = siblings.slice(k + 1);
-    const own = items.slice(0, -1).map((e) => cut(e.from, e.to) + "\n" + indentOf(src, e));
-    const moved = reindent(
-      own.join("") + (after.length ? nest(last!, after, list!.tag) : cut(last!.from, last!.to)),
-      indentOf(src, first!),
-      indentOf(src, parent)
-    );
-    const gone = (p: number) => p - src.slice(0, p).replace(/\s+$/, "").length;
-    const [a, b] = i == 0 ? [list!.from - gone(list!.from), list!.to] : [first!.from - gone(first!.from), siblings.at(-1)!.to];
-    let content = cut(parent.openTo, a) + cut(b, parent.closeFrom);
-    const lone = i == 0 && /^\s*<p>((?:(?!<\/?p[\s>])[\s\S])*)<\/p>\s*$/.exec(content);
-    content = lone ? lone[1] : content.trimEnd() + "\n" + indentOf(src, parent);
-    return {
-      from: parent.from,
-      to: parent.to,
-      insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + itemGap(parent) + moved,
-    };
   };
-  let change = build(false);
-  if (!change.insert.includes(ANCHOR) || !change.insert.includes(HEAD)) change = build(true);
-  const { from, to } = change;
-  // Where the marks are in the new text, once both are out of it.
-  const place = (m: string, other: string) => {
-    const at = change.insert.indexOf(m);
-    return at < 0 ? -1 : at - (change.insert.slice(0, at).includes(other) ? 1 : 0);
-  };
-  const na = place(ANCHOR, HEAD),
-    nh = place(HEAD, ANCHOR);
-  const insert = change.insert.replace(ANCHOR, "").replace(HEAD, "");
+  /** The end of an element's content before the spaces and line breaks at its end. */
+  const textEnd = (e: M.ElementNode, before = e.closeFrom) => src.slice(0, before).replace(/\s*$/, "").length;
+  // A list written on one line stays on one line.
+  const top = out ? (list.parent!.parent ?? list) : list;
+  const flat = !src.slice(top.from, top.to).includes("\n");
+  const at = (e: M.ElementNode) => indentOf(src, e);
+  /** A line break with this indent, or nothing in a list on one line. */
+  const nl = (indent: string) => (flat ? "" : "\n" + indent);
+  const tag = list.tag;
+  if (!out) {
+    // Into the item before: into its last list, if it ends with one, else into a new list after its text.
+    const prev = siblings[i - 1],
+      inner = elements(prev).at(-1);
+    if (isList(inner) && isClosed(inner)) {
+      const end = textEnd(inner);
+      const to = at(elements(inner).at(-1) ?? inner) || at(inner) + "  ";
+      changes.push({ from: end, to: first.from, insert: nl(to) }, { from: last.to, insert: src.slice(end, prev.to) });
+      indent(first.from, last.to, to.length - at(first).length);
+    } else {
+      const open = at(prev) + "  ";
+      changes.push(
+        { from: textEnd(prev), to: first.from, insert: `${nl(open)}${copyOpen(src.slice(list.from, list.openTo))}${nl(open + "  ")}` },
+        { from: last.to, insert: `${nl(open)}</${tag}>${nl(at(prev))}</li>` }
+      );
+      indent(first.from, last.to, open.length + 2 - at(first).length);
+    }
+  } else {
+    // Out of the list, after the item it is in: the items before stay in the list, the items after go with the last.
+    const parent = list.parent!;
+    if (src.slice(list.to, parent.closeFrom).trim()) return "stay";
+    const before = siblings.slice(0, i),
+      after = siblings.slice(k + 1);
+    const p = at(parent);
+    if (before.length) changes.push({ from: before.at(-1)!.to, to: first.from, insert: `${nl(at(list))}</${tag}>${nl(p)}</li>${nl(p)}` });
+    else {
+      changes.push({ from: textEnd(parent, list.from), to: first.from, insert: `</li>${nl(p)}` });
+      // The item's text needed a <p> beside its list (an older page's): with the list gone, it goes.
+      const own = elements(parent).filter((e) => e.from < list.from);
+      if (own.length == 1 && own[0].tag == "p" && src.slice(own[0].from, own[0].openTo) == "<p>" && closed(src, own[0]))
+        changes.push({ from: own[0].from, to: own[0].openTo }, { from: own[0].closeFrom, to: own[0].to });
+    }
+    indent(first.from, last.to, p.length - at(first).length);
+    if (after.length) {
+      const open = p + "  ";
+      changes.push({
+        from: textEnd(last),
+        to: after[0].from,
+        insert: `${nl(open)}${copyOpen(src.slice(list.from, list.openTo))}${nl(open + "  ")}`,
+      });
+      indent(after[0].from, after.at(-1)!.to, open.length + 2 - at(after[0]).length);
+      // The list's own end tag ends the new list, and the item's ends the last one moved.
+      changes.push({ from: after.at(-1)!.to, to: list.closeFrom, insert: nl(open) });
+      changes.push({ from: list.to, to: parent.closeFrom, insert: nl(p) });
+    } else changes.push({ from: last.to, to: parent.to });
+  }
+  changes.sort((a, b) => a.from - b.from || (a.to ?? a.from) - (b.to ?? b.from));
+  const set = ChangeSet.of(changes, src.length);
   return {
-    changes: [{ from, to, insert }],
-    selection: { anchor: from + Math.max(0, na), head: from + Math.max(0, nh) },
+    changes,
+    selection: { anchor: set.mapPos(sel.anchor, 1), head: set.mapPos(sel.head, 1) },
     userEvent: out ? "delete.dedent" : "input.indent",
   };
 }
@@ -394,8 +380,8 @@ export function indentItems(
  * The tidy-up after an edit that changed a list's tags (`tr`): changes in rounds, each on the source after the round
  * before. Only what the edit did is tidied; the page's own lists stay as they are (its script may fill an empty one).
  * 1. A list the edit took the last item out of goes: it shows nothing, and nothing can go in it.
- * 2. Two lists of the same kind that the edit brought together (it took out what was between) are one list again
- *    (the first keeps its attributes).
+ * 2. Two lists of the same kind that the edit brought together (it took out what was between, or it put one of them
+ *    there) are one list again (the first keeps its attributes).
  * 3. An item whose last nested list the edit (or round 1) took out has its text out of the <p> it needed beside it.
  */
 export function tidy(tr: Transaction): Change[][] {
@@ -420,6 +406,7 @@ export function tidy(tr: Transaction): Change[][] {
   let unlisted = ranges.filter((r) => /<(ul|ol)\b/i.test(r.gone)).map((r) => r.from);
   const apply = (changes: Change[]) => {
     if (!changes.length) return;
+    changes.sort((a, b) => a.from - b.from);
     const set = ChangeSet.of(changes, src.length);
     src = set.apply(Text.of(src.split("\n"))).toString();
     ranges = ranges.map((r) => ({ ...r, from: set.mapPos(r.from, -1), to: set.mapPos(r.to, 1) }));
@@ -450,11 +437,15 @@ export function tidy(tr: Transaction): Change[][] {
   for (const a of lists) {
     const b = a.parent && elements(a.parent)[elements(a.parent).indexOf(a) + 1];
     if (!b || b.tag != a.tag || src.slice(a.to, b.from).trim() || !closed(src, a)) continue;
-    if (!ranges.some((r) => r.gone.includes("<") && a.closeFrom <= r.from && r.to <= b.from)) continue;
+    // (Or the edit put one of the two there: items pasted right before a list, "- " right after one.)
+    const made = (e: M.ElementNode) => ranges.some((r) => r.from <= e.from && e.to <= r.to);
+    if (!ranges.some((r) => r.gone.includes("<") && a.closeFrom <= r.from && r.to <= b.from) && !made(a) && !made(b)) continue;
     // (The second half of a list that Enter split has no id, and a number to start at: see enterItem.)
     const open = (e: M.ElementNode) => setAttr(setAttr(src.slice(e.from, e.openTo), "start", null), "id", null);
     if (open(a) != open(b)) continue;
     joins.push({ from: src.slice(0, a.closeFrom).replace(/\s*$/, "").length, to: b.openTo });
+    // A list the edit put before the page's own takes its open tag: the author's list keeps its id and attributes.
+    if (made(a) && !made(b)) joins.unshift({ from: a.from, to: a.openTo, insert: src.slice(b.from, b.openTo) });
   }
   apply(joins);
   // 3. An item with nothing in it but one plain <p>, where the edit took a list out of it.
