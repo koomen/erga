@@ -320,6 +320,11 @@ kbd {
   font: 600 13px var(--font-text); background: var(--fg-strong); color: var(--bg);
 }
 .toast-fix[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+.toast-close {
+  flex: none; border: 0; background: none; color: var(--soft); cursor: pointer;
+  font: 400 20px/1 var(--font-text); width: 28px; height: 28px; border-radius: 8px; margin-left: -4px;
+}
+.toast-close:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
 
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
 
