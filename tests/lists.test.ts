@@ -95,9 +95,9 @@ const CASES: [string, string, string[], string][] = [
   ],
   ["Backspace at the start of an item", "<ul>\n  <li>One</li>\n  <li>|Two</li>\n</ul>", ["Backspace"], "<ul>\n  <li>One|Two</li>\n</ul>"],
   [
-    "Backspace at the start of the first item",
+    "Backspace twice at the start of the first item: the bullet goes, then the join",
     "<p>A</p>\n<ul>\n  <li>|One</li>\n  <li>Two</li>\n</ul>",
-    ["Backspace"],
+    ["Backspace", "Backspace"],
     "<p>A|One</p>\n<ul>\n  <li>Two</li>\n</ul>",
   ],
   [

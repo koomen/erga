@@ -65,10 +65,14 @@ test("Enter in the empty only item of a list leaves no empty list, at the top le
   expect(await ed.source()).toBe(start);
 });
 
-test("Backspace at the start of a list's only item joins it to the paragraph before, and the list goes", async ({ tab }) => {
+test("Backspace at the start of a list's only item takes the bullet off, and the list goes; the next joins it to the paragraph before", async ({
+  tab,
+}) => {
   const ed = await openEditor(tab, await servers.main(), "one-item-list");
   await ed.clickEnd("ul > li");
   await ed.press("Home");
+  await ed.press("Backspace");
+  await expect.poll(() => body(ed)).toContain("<p>Before.</p> <p>Only</p> <section>");
   await ed.press("Backspace");
   await expect.poll(() => body(ed)).toContain("<p>Before.Only</p> <section>");
   expect(await body(ed)).not.toMatch(EMPTY);
