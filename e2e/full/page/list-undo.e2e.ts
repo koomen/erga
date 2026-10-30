@@ -81,10 +81,7 @@ test("Redo of a Tab nests the item again, the caret stays in it, and typing goes
   }
 );
 
-// Bug: Tab and then Shift+Tab are one step for undo: one undo takes back both, and the item never shows nested again.
-test(
-  "Undo after Tab and Shift+Tab takes back the Shift+Tab only: the item is nested again",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Undo after Tab and Shift+Tab takes back the Shift+Tab only: the item is nested again", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await ed.type("- One");
     await ed.press("Enter");
@@ -98,5 +95,4 @@ test(
     `);
     await ed.press("ControlOrMeta+z");
     await ed.shows(nested);
-  })
-);
+});

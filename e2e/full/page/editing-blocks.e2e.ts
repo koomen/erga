@@ -134,17 +134,13 @@ test(
   })
 );
 
-// Enter over a selection takes two undos: the first gives back the split, but the selected text stays gone.
-test(
-  "one undo after Enter over a selection gives back the selected text",
-  knownBug(async ({ tab }) => {
+test("one undo after Enter over a selection gives back the selected text", async ({ tab }) => {
     const ed = await open(tab, "#last");
     for (let i = 0; i < 3; i++) await ed.press("Shift+ArrowLeft");
     await ed.press("Enter");
     await ed.press("ControlOrMeta+z");
     await expect.poll(async () => (await ed.visible()).replace(/[[\]|]/g, ""), { timeout: 3000 }).toBe(PAGE);
-  })
-);
+});
 
 // Text that comes as input with no key (an IME, the emoji picker, dictation) over a selection across blocks is dropped.
 test(
