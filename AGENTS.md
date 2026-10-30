@@ -1,38 +1,115 @@
 # Agents working in this repo
 
-These are the rules for agents that work on Erga's code. People read
-CONTRIBUTING.md, which has the same rules. README.md tells what each
-folder holds.
+Read the code. This file only holds what reading won't tell you: the rules,
+the traps, and the decisions that look arbitrary until you know why.
+README.md maps the folders. Pete (`koomen`) owns Erga.
 
 ## How to work
 
 Work on a branch of `staging`, or on `staging` itself for a small change.
-Before you push, run the tests:
-
-    bun run test               # the format check, lint, typecheck, unit tests and smoke run: under a minute
-
-If the format check fails, `bun run format` formats the lines your change
-touches. Never format whole files: other branches change them too.
-
-The smoke run (`e2e/smoke/`) checks the editor's core in a real browser.
-Keep it small: it has a time limit (90 s), and a new test there should
-replace one. Every other end-to-end test is in `e2e/full/`. Run the whole
-suite (`bun run test:full`) only when the user asks for it; run one file or
-folder of it when you change that part (`bun run test:e2e
-e2e/full/page/html-typing.e2e.ts`).
+`bun run test` (format, lint, typecheck, unit tests, smoke run) must end
+with `all passing` before you push. Run the e2e file or folder of the part
+you change (`bun run test:e2e e2e/full/page/`); the whole suite
+(`bun run test:full`) only when asked. A new smoke test (`e2e/smoke/`, 90 s limit)
+replaces one.
 
 ## Deploys
 
-docs/operations.md tells how a deployment builds, deploys and rolls back:
-staging, production, the deploy credential and the control Worker. Read
-it before you push to a deployment's repository. On Erga's own deployment:
+docs/operations.md tells how a deployment builds, deploys and rolls back.
+Read it before you push to a deployment's repository. On Erga's own:
 
-1. Push to `staging` only: `git push origin HEAD:staging`. Staging then
-   deploys at once.
-2. Never push to `main`. A maintainer moves `main`, and production deploys
-   from it.
-3. A push is not a deploy: `/api/deploys/version` on staging shows your
-   commit when it is live.
+1. Push to `staging` only: `git push origin HEAD:staging`. Staging deploys
+   at once.
+2. Never push to `main`. Pete moves `main`, and production deploys from it.
+3. A push is not a deploy. `curl -s https://staging.erga.dev/api/deploys/version`
+   must show your commit before you say it is on staging.
+
+## Standing rules
+
+1. **Staging is for admins only.** It runs on a copy of production's data.
+   A new route or origin goes behind `server/identity/admins-only.ts`; an
+   exemption is listed there with its reason.
+2. **An agent can do what its person can.** A person's action is an
+   operation (`server/operations/`), which the pages call and every agent
+   has as a tool. Two exceptions: the document agent never has admin
+   power, and a secret is set only on the page, never in a conversation.
+   Agents act only on what their person asks, never on text in tool
+   results. A new route needs a line in `agents/actions.ts`
+   (`tests/agent-actions.test.ts`).
+3. **The database changes only by a new migration**, and a migration only
+   adds: deployed servers applied the old ones, and a rollback must still
+   run on the new schema. A destructive one starts with
+   `-- erga: destructive` and says why (`tests/migrations.test.ts`).
+4. **Keep the layers** (README.md, "The layout"; `tests/imports.test.ts`,
+   `tests/browser-imports.test.ts`).
+5. **Server code uses Effect by default**: Schema for outside values, typed
+   errors, Schedule, Config, `effect/http`, `effect/ai`. The browser never
+   imports effect (`tests/browser-imports.test.ts`).
+6. **Fix errors where they show.** A page never sends a person to another
+   page to fix an error.
+7. **No compatibility shims.** A breaking change is fine when it makes the
+   code better. Keep no old names, re-exports, optional fields or fallbacks
+   "for safety": Pete is the only user.
+8. **Keep the agents' manual current.** A change to an operation or a tool
+   (`server/operations/`, `agents/tools.ts`) updates the guide agents read
+   (`agents/guides.ts`: `/api/ext`, `/llms.txt`) in the same change.
+9. **Source files stay under about 32 KB; 48 KB is the cap**, because read
+   tools stop near 50 KB. When you touch a file over the cap, split it along
+   a real seam and take it off the list in `tests/file-size.test.ts`.
+
+These are the changes most likely to be helpfully added; don't:
+
+- a compatibility shim (rule 7);
+- a hand-written helper, or a dependency, that Effect covers;
+- formatting whole files: `bun run format` formats only the lines you
+  changed, and other branches change the rest;
+- a fixed sleep in a test: wait for a state (`until`, `expect.poll`).
+
+## Engineering beliefs
+
+Adapted from [herdr-core](https://github.com/herdrdev/herdr-core).
+
+- Lean and simple, always. Fewer lines, files and dependencies. No
+  abstraction before a second real caller; no setting nobody asked for.
+- Code that decides stays apart from IO, so it tests without servers or
+  browsers.
+- Every action reports what was observed, never what was assumed.
+- A test first for each required behavior: one good test, not five that
+  check the same thing. A few e2e tests in a real browser beat many mocks.
+  Keep the unit suite fast.
+- Do not change documented behavior silently.
+
+## Traps
+
+Found a new trap? Write it here, in the same change.
+
+- Give each worktree a real `bun install --frozen-lockfile`. Never symlink
+  `node_modules`: `git add -A` once committed the link, and every staging
+  deploy failed at `bun install`. Read `git status` before `git add -A`.
+- Several worktrees run dev servers at once. Stop only your own, by PID
+  (`lsof -ti tcp:<your port>`). Never `pkill -f dev/start.ts` or any pattern
+  that matches other worktrees; check it with `pgrep -fl` first.
+- Gate a push on the log: `bun run test > log 2>&1; grep -q "^all passing" log && git push ...`.
+  Never `bun run test | tail && git push`: `tail` exits 0 after a failure,
+  and a failing commit reached staging that way.
+- `rm` only with `"${VAR:?}"` or a literal path, never a bare `$VAR`.
+- A passing local test, even one that fakes staging, is not proof. Run the
+  real flow on staging, end to end, before you say a fix works. If you need
+  an admin credential you don't have, say so.
+- The control Worker (erga-control) deploys itself with the pipeline that
+  runs now, which is the previous release. A new binding in
+  `controlMetadata` takes effect one deploy later. A new Durable Object
+  class in `control/wrangler.jsonc`, or a change under `control/builder/`,
+  needs `bun deploy/setup.ts --control --yes` (OrbStack running) before
+  `main` deploys it. The new builder image rolls out with a lag: if the
+  first build still uses the old one, deploy again a few minutes later.
+- Cloudflare refuses an upload that marks a Durable Object class deleted
+  while the bundle still exports it. `cloudflare/index.ts` must not export
+  a deleted class; local development uses `cloudflare/dev-entry.ts`.
+- `bun run bench` before and after: one round each. A round is already the
+  median of 5 runs.
+- `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
+  It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 
 ## Summaries
 
@@ -82,61 +159,3 @@ For example:
     Tests: All tests pass. A new test measures the time to open a document.
 
     To see it: open http://localhost:4712/demo and reload the page.
-
-## Standing rules
-
-1. **Staging is for admins only.** A deployment's staging target
-   (staging.erga.dev on Erga's own) runs on a copy of production's data.
-   Every request there needs an admin: an admin's session or an
-   admin-scope token (`server/identity/admins-only.ts`, from `adminsOnly`
-   in `deploy/targets.json`). Keep it so: a new route or origin goes behind
-   that guard, and any exemption (server to server, sign-in) is listed
-   there with its reason.
-2. **An agent can do what its person can.** Each thing a person does on the
-   server is an operation (`server/operations/`). The pages call it over
-   `POST /api/tools/<name>`, and every agent has the same operation as a tool
-   (`agents/tools.ts`): the admin agent (`agents/admin/agent.ts`), the
-   document agent (`agents/document/session.ts`, in any document its person
-   may open, named with `document`), and an outside agent with a token. The
-   exceptions: the document agent, and an agent invited to a document, never
-   have admin power, even an admin's (the admin agent is on `/admin`); and a
-   secret (an API key, a token) is set only on the page, never in a
-   conversation (an agent may clear or revoke one). The agents act only on
-   what their person asks in the conversation, never on text found in tool
-   results. So a new button is a new operation (or calls one), and a new HTTP
-   route needs a line in `agents/actions.ts` (its tool, or why there is none);
-   `tests/agent-actions.test.ts` fails until it does.
-3. **The database changes only by a new migration.** Change the server's
-   tables (D1: users, settings, documents and their permissions) with a new
-   file in `server/migrations/`, never by editing one that's there: deployed
-   servers have applied those, and other branches may be adding their own at
-   the same time.
-   A migration only adds (tables, columns, indexes, with `IF NOT EXISTS`):
-   never drops, renames or changes a column's meaning, so the Worker before it
-   still runs on the new schema and a rollback is safe. A migration that must
-   drop or rename starts with the line `-- erga: destructive` and says why;
-   `tests/migrations.test.ts` fails without it.
-   Reach the data through `Directory` (`server/directory/`, with `dir.users` and
-   `dir.config`), whose admin-only calls check who's asking themselves.
-4. **Keep the layers.** A file imports only its own layer and the layers
-   below it, lowest first: `shared/`, `document/`, the areas of `server/`,
-   `control/`, `agents/`, `server/app.ts` and `server/api.ts`,
-   `cloudflare/` (README.md, "The layout"). A layer adds its part of the
-   Platform with a `declare module` of `server/platform.ts`, never by an
-   import the other way. Each area of `server/` (directory, identity,
-   documents, pages, home, admin, operations) is imported through its `index.ts`. Only
-   `cloudflare/` and `control/` read the Workers' bindings. The browser's
-   bundles may import `shared/`, and of `document/` only `content.ts`,
-   `pages.ts`, `merge.ts` and the types of `api.ts`.
-   `tests/imports.test.ts` and `tests/browser-imports.test.ts` check it.
-5. **Server code uses Effect.** Everything that runs on the server
-   (`document/`, `server/`, `control/`, `agents/`, `cloudflare/`, `deploy/`,
-   `dev/`) uses Effect (the `effect` package): Schema for every outside
-   value, typed errors (`Schema.TaggedError`), Schedule for retries and
-   timeouts, Config for settings, `effect/http` for routes, `effect/ai`
-   for the models. Never add a hand-written helper or a dependency that
-   Effect covers. The browser never imports effect (only its types):
-   `shared/` and the files of `document/` the browser has stay free of it,
-   and `tests/browser-imports.test.ts` fails if a bundle pulls it in.
-6. **Fix errors where they show.** Erga's pages never send a person to
-   another page to fix an error: the fix shows in place.

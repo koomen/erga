@@ -1,5 +1,5 @@
-// Live reload for local development (`bun start --reload`: AGENTS.md, working
-// locally): every page the server sends a browser tab gets a small
+// Live reload for local development (`bun start --reload`: README.md, Quick
+// start): every page the server sends a browser tab gets a small
 // script that listens on /__erga/reload and reloads the tab when
 //
 //   - the editor's own files are rebuilt,
