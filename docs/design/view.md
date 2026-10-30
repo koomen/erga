@@ -64,6 +64,9 @@ Two more decisions come with it:
   `<title>` sets its text, in place. A caret that a change leaves outside every text block (undo's history maps it
   there) goes into the nearest block (`caretInText`). A join of two blocks of one kind side by side deletes only
   the tags between their texts (design rule 6).
+- Step 4 (lists): done. An item's text beside its nested list is a unit (`headOf` in `shared/manuscript.ts`), so
+  Tab writes no `<p>`. Tab and Shift+Tab change only tags and indent spaces (`indentItems` in `lists.ts`). Paste
+  writes items the same way, and a list pasted right above a list of the same kind joins it.
 - The one-host prototype (step 7) works in Chromium, WebKit and Firefox, with two additions: a caret that lands
   outside the text (in an `<svg>`, or past the last block in Firefox) goes to the nearest block before the paint,
   and Enter and Shift+Enter stay in `keydown` (WebKit sends Shift+Enter as `insertParagraph`).

@@ -49,13 +49,11 @@ test("Enter in an empty nested item moves it one level out", async ({ tab }) => 
   const ed = await openEditor(tab, await servers.main(), "page");
   await ed.clickEnd("li:last-child");
   await ed.press("Tab");
-  await expect.poll(() => list(ed)).toBe("<ul><li><p>Faster builds</p><ul><li>A <strong>new</strong> editor</li></ul></li></ul>");
+  await expect.poll(() => list(ed)).toBe("<ul><li>Faster builds<ul><li>A <strong>new</strong> editor</li></ul></li></ul>");
   await ed.idle();
   await ed.clickEnd("li li");
   await ed.press("Enter");
   await ed.press("Enter");
   await ed.type("Out");
-  await expect
-    .poll(() => list(ed))
-    .toBe("<ul><li><p>Faster builds</p><ul><li>A <strong>new</strong> editor</li></ul></li><li>Out</li></ul>");
+  await expect.poll(() => list(ed)).toBe("<ul><li>Faster builds<ul><li>A <strong>new</strong> editor</li></ul></li><li>Out</li></ul>");
 });

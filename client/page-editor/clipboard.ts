@@ -202,9 +202,14 @@ export abstract class EditorClipboard extends EditorMarkdown {
     for (const u of this.units) {
       const el = this.els[u.id];
       if (!el?.isConnected || !range.intersectsNode(el) || taken.some((t) => t.contains(el))) continue;
-      taken.push(el);
+      // A list item's text beside its nested list (manuscript.ts, headOf) ends where the list starts; the list's items
+      // are units of their own.
+      const block =
+        u.contentTo < u.node.closeFrom ? [...el.children].find((c) => !M.INLINE.has(c.localName) && !M.ATOMIC.has(c.localName)) : null;
+      if (!block) taken.push(el);
       const r = doc.createRange();
       r.selectNodeContents(el);
+      if (block) r.setEndBefore(block);
       if (r.comparePoint(range.startContainer, range.startOffset) == 0) r.setStart(range.startContainer, range.startOffset);
       if (r.comparePoint(range.endContainer, range.endOffset) == 0) r.setEnd(range.endContainer, range.endOffset);
       const pre = u.tag == "pre";

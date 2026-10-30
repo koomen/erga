@@ -55,11 +55,7 @@ test("the other tab joins your paragraph to the one above: your next keys are ke
   }
 );
 
-// Known bug: tab B types in a list item while tab A presses Tab in it. A key goes outside the item, as loose text in
-// the <ul>, and the keys after it are lost.
-test(
-  "the other tab indents the list item you type in: your keys stay in it",
-  knownBug(async ({ tab }) => {
+test("the other tab indents the list item you type in: your keys stay in it", async ({ tab }) => {
     const [a, b] = await twoTabs(tab);
     await a.clickEnd("#i2");
     await b.clickEnd("#i2");
@@ -68,5 +64,5 @@ test(
     await until(async () => (await a.count("li li")) == 1 && (await b.count("li li")) == 1, 5000, "both tabs show the item nested");
     await b.type("cd");
     await bothShow(a, b, "#i2", "Twoabcd");
-  })
+  }
 );

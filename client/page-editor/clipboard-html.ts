@@ -849,8 +849,8 @@ export function flatHtml(blocks: Block[]): string[] {
 /**
  * Blocks as page source, starting at a line indented by `indent`: one block
  * on each line, lists with one item on each line. An item with a list in it
- * keeps its text in a <p>, as the editor writes it (text beside a list is
- * not a unit, and can't be edited).
+ * has its text beside the list, as Tab writes it (that text is a unit of its
+ * own: shared/manuscript.ts, headOf).
  */
 export function toSource(blocks: Block[], indent: string): string {
   const sep = "\n" + indent;
@@ -880,8 +880,7 @@ function tableSource(rows: string[][], sep: string, step: string): string {
 /** One list item as page source (see toSource). */
 export function itemSource(i: Item, indent: string): string {
   if (!i.lists.length) return `<li>${i.html}</li>`;
-  const text = i.html ? `<p>${i.html}</p>` : "";
-  return `<li>${text}${i.lists.map((l) => `\n${indent}  ${toSource([l], indent + "  ")}`).join("")}\n${indent}</li>`;
+  return `<li>${i.html}${i.lists.map((l) => `\n${indent}  ${toSource([l], indent + "  ")}`).join("")}\n${indent}</li>`;
 }
 
 // ------------------------------------------------------------------ copying

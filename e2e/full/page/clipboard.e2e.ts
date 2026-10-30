@@ -22,13 +22,14 @@ const copy = (ed: Editor, from: string, to: string, how = "copy") => ed.frame<P.
 const between = (src: string, a: string, b: string) => src.slice(src.indexOf(a) + a.length, src.indexOf(b)).replace(/\n\s*/g, "");
 
 const pasted: Record<string, string> = {
-  googleDocs: `<h2>Project plan</h2><p>We ship <strong>on Friday</strong><em>, not before</em>. See <a href="https://docs.example.com/spec?id=7&amp;v=2">the spec</a>.</p><p>First line<br>second line</p><ul><li><p>Milk</p><ul><li><strong>Oat</strong> milk</li></ul></li><li>Eggs</li></ul><ol><li>Wake up</li><li>Code</li></ol>`,
-  word: `<h1>Quarterly review</h1><p>Revenue grew <strong>12%</strong> and churn fell <em>slightly</em>. Details in <a href="https://example.com/q3">the report</a>.</p><ul><li><p>Hire two engineers</p><ul><li>Backend</li></ul></li><li>Open the <strong>Berlin</strong> office</li></ul><ol><li>Plan</li><li>Build</li></ol><p id="empty">Kind regards,<br>Ann</p>`,
-  pages: `<p id="empty">Notes from <strong>Monday</strong>, with <em>care</em> and colour.</p><p>Second paragraph<br>with a break</p><ul><li>Apples</li><li>Pears</li></ul>`,
-  notion: `<h2>Meeting notes</h2><p>We agreed on <strong>three</strong> things and one <em>maybe</em>. <a href="https://www.notion.so/team/abc123">Link</a> and <code>npm test</code>.</p><ul><li><p>Ship it</p><ul><li>tonight</li></ul></li><li>Tell people</li></ul><ol><li>One</li><li>Two</li></ol><blockquote><p>Keep it simple.</p></blockquote>`,
-  slack: `<p id="empty">Hey <strong>team</strong>, the deploy is <em>done</em>. Logs: <a href="https://logs.example.com/x">https://logs.example.com/x</a><br>Second line</p><ul><li><p>step one</p><ul><li>sub step</li></ul></li><li>step two</li></ul><ol><li>first</li></ol><pre>npm run buildnpm test</pre><blockquote><p>quoted text</p></blockquote>`,
-  web: `<h2>Release notes</h2><p>Version 2 is <strong>much</strong> faster and <em>quieter</em>. Read <a href="https://example.com/blog?a=1&amp;b=2">the blog</a>.</p><ul><li>Builds in <strong>half</strong> the time</li><li><p>Nested:</p><ul><li>one</li><li>two</li></ul></li></ul><ol><li>First</li><li>Second</li></ol><p id="empty">Line one<br>Line two</p>`,
-  plain: `<p id="empty">Dear team,<br>the launch moved to May.</p><p>What to do:</p><ul><li><p>tell sales</p><ul><li>today</li></ul></li><li>update the page</li></ul><ol><li>one</li><li>two</li></ol><p>Thanks,<br>Ann</p>`,
+  googleDocs: `<h2>Project plan</h2><p>We ship <strong>on Friday</strong><em>, not before</em>. See <a href="https://docs.example.com/spec?id=7&amp;v=2">the spec</a>.</p><p>First line<br>second line</p><ul><li>Milk<ul><li><strong>Oat</strong> milk</li></ul></li><li>Eggs</li></ul><ol><li>Wake up</li><li>Code</li></ol>`,
+  word: `<h1>Quarterly review</h1><p>Revenue grew <strong>12%</strong> and churn fell <em>slightly</em>. Details in <a href="https://example.com/q3">the report</a>.</p><ul><li>Hire two engineers<ul><li>Backend</li></ul></li><li>Open the <strong>Berlin</strong> office</li></ul><ol><li>Plan</li><li>Build</li></ol><p id="empty">Kind regards,<br>Ann</p>`,
+  // (A list pasted right before the page's list joins it: lists.ts, tidy.)
+  pages: `<p id="empty">Notes from <strong>Monday</strong>, with <em>care</em> and colour.</p><p>Second paragraph<br>with a break</p><ul id="list"><li>Apples</li><li>Pears</li>`,
+  notion: `<h2>Meeting notes</h2><p>We agreed on <strong>three</strong> things and one <em>maybe</em>. <a href="https://www.notion.so/team/abc123">Link</a> and <code>npm test</code>.</p><ul><li>Ship it<ul><li>tonight</li></ul></li><li>Tell people</li></ul><ol><li>One</li><li>Two</li></ol><blockquote><p>Keep it simple.</p></blockquote>`,
+  slack: `<p id="empty">Hey <strong>team</strong>, the deploy is <em>done</em>. Logs: <a href="https://logs.example.com/x">https://logs.example.com/x</a><br>Second line</p><ul><li>step one<ul><li>sub step</li></ul></li><li>step two</li></ul><ol><li>first</li></ol><pre>npm run buildnpm test</pre><blockquote><p>quoted text</p></blockquote>`,
+  web: `<h2>Release notes</h2><p>Version 2 is <strong>much</strong> faster and <em>quieter</em>. Read <a href="https://example.com/blog?a=1&amp;b=2">the blog</a>.</p><ul><li>Builds in <strong>half</strong> the time</li><li>Nested:<ul><li>one</li><li>two</li></ul></li></ul><ol><li>First</li><li>Second</li></ol><p id="empty">Line one<br>Line two</p>`,
+  plain: `<p id="empty">Dear team,<br>the launch moved to May.</p><p>What to do:</p><ul><li>tell sales<ul><li>today</li></ul></li><li>update the page</li></ul><ol><li>one</li><li>two</li></ol><p>Thanks,<br>Ann</p>`,
 };
 
 test("a paste from Google Docs, Word, Pages, Notion, Slack, a web page or plain text keeps the formatting, not the styles; one undo takes it back", async ({ tab }) => {
@@ -39,7 +40,9 @@ test("a paste from Google Docs, Word, Pages, Notion, Slack, a web page or plain 
     await paste(ed, P[name as keyof typeof P] as P.Payload);
     await ed.idle();
     const src = await ed.source();
-    expect(between(src, `<p id="target">Before after.</p>`, `<ul id="list">`), name).toBe(want);
+    expect(between(src, `<p id="target">Before after.</p>`, `<li>Alpha</li>`), name).toBe(
+      want.includes(`<ul id="list">`) ? want : want + `<ul id="list">`
+    );
     expect(await ed.textOf("main"), name).not.toMatch(/font|mso| /i);
     await ed.press("ControlOrMeta+z");
     await expect.poll(() => ed.source()).toBe(original);
@@ -62,7 +65,9 @@ test("paragraphs pasted in the middle of a paragraph split it; into a list they 
   // At the end of "Alpha": plain text paragraphs and a list's items join the list.
   await ed.clickEnd("#list li");
   await paste(ed, { text: "Beta\n\nGamma\n- Delta\n  - Epsilon" });
-  await expect.poll(async () => between(await ed.source(), `<ul id="list">`, `<p id="rich"`)).toBe(`<li>AlphaBeta</li><li>Gamma</li><li><p>Delta</p><ul><li>Epsilon</li></ul></li><li>Omega</li></ul>`);
+  await expect
+    .poll(async () => between(await ed.source(), `<ul id="list">`, `<p id="rich"`))
+    .toBe(`<li>AlphaBeta</li><li>Gamma</li><li>Delta<ul><li>Epsilon</li></ul></li><li>Omega</li></ul>`);
   await ed.press("ControlOrMeta+z");
   await expect.poll(() => ed.source()).toBe(original);
   // A table cell can't split: the paragraphs are lines in it.
@@ -95,7 +100,7 @@ test("a copy writes clean HTML and Markdown; pasted back, either gives the same 
   await paste(ed, out);
   await ed.idle();
   expect(between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(
-    `<p id="empty">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li><p>Top</p><ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
+    `<p id="empty">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li>Top<ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
   );
   expect(await copy(ed, "#empty", "main > ol:first-of-type li:last-child")).toEqual(out);
   // The Markdown alone gives the same blocks too.
@@ -104,7 +109,7 @@ test("a copy writes clean HTML and Markdown; pasted back, either gives the same 
   await paste(ed, { text: out.text });
   await ed.idle();
   expect(between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(
-    `<p id="empty">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li><p>Top</p><ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
+    `<p id="empty">Some <strong>bold</strong>, <em>italic</em> and <a href="https://example.com/x">a link</a>.<br>A second line.</p><ul><li>Top<ul><li>Inner</li></ul></li><li>Last</li></ul><ol><li>One</li><li>Two</li></ol>`
   );
 });
 
@@ -255,5 +260,8 @@ test("Cmd+C and Cmd+V in the browser: the copy pastes back as the same blocks", 
   await ed.press("ControlOrMeta+c");
   await ed.clickEnd("#empty");
   await ed.press("ControlOrMeta+v");
-  await expect.poll(async () => between(await ed.source(), `<p id="target">Before after.</p>`, `<ul id="list">`)).toBe(`<ul><li><p>Top</p><ul><li>Inner</li></ul></li><li>Last</li></ul>`);
+  // (The items join the page's list right after them: lists.ts, tidy.)
+  await expect
+    .poll(async () => between(await ed.source(), `<p id="target">Before after.</p>`, `<li>Alpha</li>`))
+    .toBe(`<ul id="list"><li>Top<ul><li>Inner</li></ul></li><li>Last</li>`);
 });

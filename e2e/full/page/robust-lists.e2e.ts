@@ -12,11 +12,7 @@ const empty = async (tab: Tab) => {
   return ed;
 };
 
-// Known bug: Tab puts the item above in a <p>, and the page's margin for a <p> shows a gap between that item and the
-// nested one. The items below have no gap, so the list's spacing is uneven. Google Docs and Notion keep it even.
-test(
-  "Tab nests an item with no gap between it and the item above",
-  knownBug(async ({ tab }) => {
+test("Tab nests an item with no gap between it and the item above", async ({ tab }) => {
     const ed = await empty(tab);
     await ed.type("- One");
     await ed.press("Enter");
@@ -30,7 +26,7 @@ test(
           ◦ Two|
       • Three
     `);
-  })
+  }
 );
 
 // With an element that an extension added to the page's body (a plain <div>), Tab patches the page around it. (It

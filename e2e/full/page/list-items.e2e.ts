@@ -37,9 +37,9 @@ test("Shift+Tab with the caret at the end of the first item of a nested list kee
   await ed.clickEnd("ul.nested li li:nth-child(1)");
   await ed.idle();
   await ed.press("Shift+Tab");
-  await expect.poll(() => body(ed)).toContain("<li>Beta</li> <li><p>Beta one</p>");
+  await expect.poll(() => body(ed)).toContain("<li>Beta</li> <li>Beta one <ul>");
   await ed.type("X");
-  await expect.poll(() => body(ed)).toContain("<li><p>Beta oneX</p> <ul> <li>Beta two</li>");
+  await expect.poll(() => body(ed)).toContain("<li>Beta oneX <ul> <li>Beta two</li>");
 });
 
 test("A selection from a list's last item into the paragraph after it, deleted, joins the two in the item", async ({ tab }) => {
