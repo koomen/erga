@@ -48,6 +48,26 @@ Two more decisions come with it:
    still go through `beforeinput`. This is the riskiest step; a prototype
    comes first.
 
+## Status (2026-10-30)
+
+- Step 1 (the check in the tests): done.
+- Steps 2 and 3 (the binding, and reconcile): done together, in `client/page-editor/mirror.ts`. Two changes to the
+  plan below:
+  1. `data-erga-id` stays on a unit's element as a mark, but its value never changes: an element gets one when it
+     becomes a unit, and keeps it. The editor finds a unit from its element through a `WeakMap`, not by the number.
+     So a block added near the top changes nothing below it, and the page's styles and the tests that select
+     `[data-erga-id]` stay as they are.
+  2. A region is parsed with its own tags around it (risk 1, section 11, was real: Enter in a paragraph makes
+     `</p><p>` in it, and a parse of its content alone made a `<p>` in a `<p>`). If the element is no longer one
+     element in that parse, its parent is the region.
+  Also: a change in one element's open tag sets the attributes that changed, and a change in a `<style>` or the
+  `<title>` sets its text, in place. A caret that a change leaves outside every text block (undo's history maps it
+  there) goes into the nearest block (`caretInText`). A join of two blocks of one kind side by side deletes only
+  the tags between their texts (design rule 6).
+- The one-host prototype (step 7) works in Chromium, WebKit and Firefox, with two additions: a caret that lands
+  outside the text (in an `<svg>`, or past the last block in Firefox) goes to the nearest block before the paint,
+  and Enter and Shift+Enter stay in `keydown` (WebKit sends Shift+Enter as `insertParagraph`).
+
 ## 2. What is wrong today (the evidence)
 
 ### 2.1 How the view works now

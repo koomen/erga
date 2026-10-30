@@ -57,17 +57,18 @@ function where(n: Node): string {
 
 /**
  * The first difference between the live element `live` and the parsed element `want`, or null if the page shows it.
- * `skip(liveEl)`: a part not to check. `foreign(liveEl)`: an element the editor never drew, passed over.
+ * `skip(liveNode)`: a part not to check. `foreign(liveEl)`: an element the editor never drew, passed over. A difference
+ * is `at` the node the page has and the HTML doesn't, else at the element whose content differs.
  */
 export function differ(
   live: Element,
   want: Element,
-  skip: (e: Element) => boolean,
-  foreign: (e: Element) => boolean,
+  skip: (n: Node) => boolean,
+  foreign: (n: Node) => boolean,
   theirs: Theirs
-): { at: Element; message: string } | null {
+): { at: Node; message: string } | null {
   if (skip(live)) return null;
-  const at = (message: string, n: Node = live) => ({ at: n.nodeType == 1 ? (n as Element) : (n.parentElement ?? live), message });
+  const at = (message: string, n: Node = live) => ({ at: n, message });
   if (live.localName != want.localName) return at(`<${live.localName}> where the HTML has <${want.localName}>: ${where(live)}`);
   if (live.localName != "body") {
     const a = attrs(live, theirs, live),
@@ -75,13 +76,16 @@ export function differ(
     if (a != b) return at(`attributes [${a}] where the HTML has [${b}]: ${where(live)}`);
   }
   if (OPAQUE.has(live.localName)) return null;
-  const lc = [...live.childNodes].filter(shown),
+  // (Text that others added, as the page's script does, is passed over; their elements, where they are.)
+  const lc = [...live.childNodes].filter((n) => shown(n) && !(n.nodeType == 3 && foreign(n))),
     wc = [...want.childNodes].filter(shown);
   let i = 0;
   for (const w of wc) {
     // Elements of others before it are passed over.
     while (i < lc.length && lc[i].nodeType == 1 && lc[i].nodeName != w.nodeName && foreign(lc[i] as Element)) i++;
     const l = lc[i++];
+    // A part the page owns keeps its place; what is in it is not checked.
+    if (l && skip(l)) continue;
     if (!l)
       return at(
         `missing ${w.nodeType == 1 ? `<${(w as Element).localName}>` : `text “${w.nodeValue!.trim().slice(0, 40)}”`} at the end of ${where(live)}`
@@ -100,46 +104,40 @@ export function differ(
     }
   }
   for (; i < lc.length; i++)
-    if (lc[i].nodeType != 1 || !foreign(lc[i] as Element))
+    if (!skip(lc[i]) && (lc[i].nodeType != 1 || !foreign(lc[i])))
       return at(
         `${lc[i].nodeType == 1 ? `<${(lc[i] as Element).localName}>` : `text “${lc[i].nodeValue!.trim().slice(0, 40)}”`} that the HTML does not have: ${where(lc[i])}`,
-        live
+        lc[i]
       );
   return null;
 }
 
 /**
- * Watches a page for the check: the elements the editor made (`mine`, taken as it makes them) and those that came
- * from others since the editor started (an extension's). An element in the page when the editor started is the page's.
+ * Watches a page for the check: the elements others added since the editor started (an extension's, the page
+ * script's), and the attributes they changed. The editor takes the records of its own changes at once (`mine`), so
+ * the records delivered later are others'. An element in the page when the editor started is the page's.
  */
 export class Ownership {
-  private ours = new WeakSet<Node>();
+  private added = new WeakSet<Node>();
   private changedBy = new WeakMap<Element, Set<string>>();
   private observer: MutationObserver;
   /** Parts of the page that differed from the HTML when the editor started (the page's script built them). */
-  readonly owned = new WeakSet<Element>();
+  readonly owned = new WeakSet<Node>();
 
   constructor(doc: Document) {
-    for (const e of doc.body.querySelectorAll("*")) this.ours.add(e);
-    // Delivered later, so made by others (the editor takes its own at once: mine): their attributes are theirs.
     this.observer = new (doc.defaultView as Window & typeof globalThis).MutationObserver((records) => this.others(records));
     this.observer.observe(doc.body, { childList: true, subtree: true, attributes: true });
   }
 
-  /** The nodes added since the last call were the editor's own. */
+  /** The changes since the last call were the editor's own (it moves others' nodes, and they stay theirs). */
   mine(): void {
-    for (const r of this.observer.takeRecords())
-      for (const n of r.addedNodes)
-        if (n.nodeType == 1) {
-          this.ours.add(n);
-          for (const e of (n as Element).querySelectorAll("*")) this.ours.add(e);
-        }
+    this.observer.takeRecords();
   }
 
-  /** What others changed: the elements they added stay foreign (not ours), and the attributes they set are theirs. */
   private others(records: MutationRecord[]): void {
     for (const r of records)
-      if (r.type == "attributes" && r.attributeName) {
+      if (r.type == "childList") for (const n of r.addedNodes) this.added.add(n);
+      else if (r.attributeName) {
         const t = r.target as Element;
         const set = this.changedBy.get(t) ?? new Set<string>();
         set.add(r.attributeName);
@@ -147,7 +145,7 @@ export class Ownership {
       }
   }
 
-  foreign = (e: Element) => !this.ours.has(e);
+  foreign = (n: Node) => this.added.has(n);
   theirs: Theirs = (e, name) => !!this.changedBy.get(e)?.has(name);
 
   stop(): void {

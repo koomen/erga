@@ -26,11 +26,7 @@ test("Undo right after - makes a list gives back the - typed, as text", async ({
   `);
 });
 
-// Bug: after the redo, the caret is gone (the snapshot shows it above the list), the editor's bar goes for a moment,
-// and the letters typed next are lost. The same happens after the redo of any change to the blocks: a join, a Tab.
-test(
-  "Redo after - and undo makes the list again, the caret in its item, and typing goes on there",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Redo after - and undo makes the list again, the caret in its item, and typing goes on there", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await ed.type("- ");
     await ed.press("ControlOrMeta+z");
@@ -42,14 +38,10 @@ test(
     await ed.shows(`
       • One|
     `);
-  })
+  }
 );
 
-// Bug: after the redo of a Backspace that joins two items, the page loads again, the caret is gone (the editor's bar
-// goes too, for a moment), and the letters typed next are lost. The same happens in paragraphs.
-test(
-  "Redo of a Backspace that joins two items puts the caret at the join, and typing goes on there",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Redo of a Backspace that joins two items puts the caret at the join, and typing goes on there", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await ed.type("- One");
     await ed.press("Enter");
@@ -66,14 +58,10 @@ test(
     await ed.shows(`
       • OneX|Two
     `);
-  })
+  }
 );
 
-// Bug: after the redo of a Tab, the caret is gone (the snapshot shows it on a line of its own below the list), and the
-// letters typed next are lost. The same happens after the redo of a Shift+Tab.
-test(
-  "Redo of a Tab nests the item again, the caret stays in it, and typing goes on there",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+test("Redo of a Tab nests the item again, the caret stays in it, and typing goes on there", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await ed.type("- One");
     await ed.press("Enter");
@@ -90,7 +78,7 @@ test(
     await ed.shows(nested);
     await ed.type("X");
     await ed.shows(nested.replace("Two|", "TwoX|"));
-  })
+  }
 );
 
 // Bug: Tab and then Shift+Tab are one step for undo: one undo takes back both, and the item never shows nested again.

@@ -4,16 +4,16 @@
 import * as M from "../../shared/manuscript";
 import { Transaction, MapMode, type ChangeSet, type TransactionSpec } from "@codemirror/state";
 import { sourceDigest } from "../../shared/page-html";
-import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
 import { watchMoves } from "./moves";
 import { ms } from "./timescale";
-import { balanceWhitespace, same, skeletonOfSource } from "./source";
+import { balanceWhitespace, same } from "./source";
 import { PAGE_STYLE } from "./page-style";
 import { describeProblem, type RawProblem } from "./problems";
 import { noHistory } from "./core";
 import { EditorMarks } from "./marks";
 import { differ, Ownership } from "./check";
+import { Mirror } from "./mirror";
 
 /** How long after the person's click or key the page may make a custom edit: as long as a browser's user activation lasts. */
 const GESTURE_MS = 5000;
@@ -51,8 +51,8 @@ export abstract class EditorRender extends EditorMarks {
     }
     const a = this.analyze(src);
     this.units = a.units;
-    this.domFrom = a.html;
     this.unshown = false;
+    this.tree = a.tree;
     this.attach(src);
   }
 
@@ -68,6 +68,7 @@ export abstract class EditorRender extends EditorMarks {
     this.watchProblems();
     this.takeCustomEdits();
     this.collectEls();
+    this.mirror = this.tree ? Mirror.bind(doc, this.tree, src) : null;
     this.bind();
     // A page starts live: tell it it's paused again, if it still can be.
     if (this.paused) {
@@ -109,6 +110,10 @@ export abstract class EditorRender extends EditorMarks {
     this.release();
   }
 
+  /** The parse the units are in, and its binding to the page (mirror.ts). */
+  protected tree: M.ElementNode | null = null;
+  protected mirror: Mirror | null = null;
+
   /** Who made each element of the page, for the check (config.check only). */
   protected ownership: Ownership | null = null;
   /** The differences the check reported, each once. */
@@ -130,7 +135,7 @@ export abstract class EditorRender extends EditorMarks {
       own = this.ownership;
     if (!doc?.body || !own || this.rendering || this.stopped) return;
     const want = new DOMParser().parseFromString(this.analyze(this.src).html, "text/html").body;
-    const skip = (e: Element) => own.owned.has(e) || e.classList.contains("erga-locked");
+    const skip = (n: Node) => own.owned.has(n) || (n.nodeType == 1 && (n as Element).classList.contains("erga-locked"));
     for (let i = 0; i < 100; i++) {
       const d = differ(doc.body, want, skip, own.foreign, own.theirs);
       if (!d) return;
@@ -331,20 +336,23 @@ export abstract class EditorRender extends EditorMarks {
       return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
     if (win != this.win || this.rendering) return refuse("the page is being rendered again; try once more");
     if (!Array.isArray(ops)) return refuse("apply takes a list of custom edits");
-    // A fresh analysis: its units match the page's data-erga-id numbers, and their elements are in one parse of the source as it is.
-    const src = this.src,
-      fresh = M.analyzeHtml(src, this.decoder);
-    let root = fresh.units[0]?.node ?? M.parseHtml(src);
-    while (root.parent) root = root.parent;
+    const mirror = this.mirror;
+    if (!mirror) return refuse("the page is being rendered again; try once more");
+    // The page's elements in the parse of the source the binding has (mirror.ts): an element the page's script made is in none.
+    const src = this.src;
     const isEl = (x: unknown): x is Element => !!x && (x as Node).nodeType == 1;
+    const sourceOf = (el: Element) => {
+      const n = mirror.sourceOf(el);
+      return n?.kind == "element" ? n : null;
+    };
     const resolved = ops.map((op) => {
       if (!op || typeof op != "object") return op;
       const out: Record<string, unknown> = { ...op };
       for (const k of ["el", "before", "after", "into", "prepend"])
-        if (k in out) out[k] = isEl(out[k]) ? this.sourceOf(out[k] as Element, fresh.units) : null;
+        if (k in out) out[k] = isEl(out[k]) ? sourceOf(out[k] as Element) : null;
       return out;
     }) as CustomEdit<M.ElementNode | null>[];
-    const plan = planCustomEdits(src, root, resolved);
+    const plan = planCustomEdits(src, mirror.root, resolved);
     if ("error" in plan) return refuse(plan.error);
     if (!plan.changes.length) return { ok: true };
     const set = this.state.changes(plan.changes);
@@ -354,46 +362,12 @@ export abstract class EditorRender extends EditorMarks {
     // The caret goes where the change is, so typing and undo go on from there: new text selected, to type over it.
     const u = this.units.find((x) => x.to > at && x.runs.some((r) => r.editable)) ?? this.units.at(-1);
     if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
-    // The page's controls are usually in what changed, so the page no longer matches what it was rendered from and the
-    // change can't be morphed in: the page is then made afresh (it loads again, at the same text), its script drawing them again.
-    if (this.stale || !this.domFrom) this.render();
+    // (The page's script draws its controls on the new elements: agents/document/PROMPT.md, custom edits.)
+    if (this.stale || this.unshown) this.render();
     this.focus();
     return { ok: true };
   }
 
-  /**
-   * The source element (in the parse `units` come from) a rendered
-   * element comes from: up from a text block inside it, level by level, or
-   * else by its place among its parent's elements, past those the page's
-   * script added. Null if it isn't from the source.
-   */
-  protected sourceOf(el: Element, units: M.Unit[]): M.ElementNode | null {
-    const host = el.matches("[data-erga-id]") ? el : el.querySelector("[data-erga-id]");
-    const unit = host && units[Number(host.getAttribute("data-erga-id"))];
-    if (host && unit?.node && unit.tag == host.localName) {
-      let d: Element | null = host,
-        n: M.ElementNode | null = unit.node;
-      while (d && n && d != el) {
-        if (d.localName != n.tag) return null;
-        d = d.parentElement;
-        n = n.parent;
-      }
-      return d == el && n && n.tag == el.localName ? n : null;
-    }
-    const parentEl = el.parentElement;
-    const parent = parentEl && this.sourceOf(parentEl, units);
-    if (!parent) return null;
-    const kids = parent.children.filter((c): c is M.ElementNode => c.kind == "element");
-    let j = 0;
-    for (const d of parentEl.children) {
-      if (d.localName.startsWith("erga-")) continue;
-      if (j < kids.length && kids[j].tag == d.localName) {
-        if (d == el) return kids[j];
-        j++;
-      } else if (d == el) return null;
-    }
-    return null;
-  }
 
   /** Whether the page shows an older version of something outside the text blocks; render() fixes it. */
   get stale(): boolean {
@@ -402,19 +376,9 @@ export abstract class EditorRender extends EditorMarks {
 
   /** The page shows the text exactly (nothing patching couldn't show: a page made from it would be this one). */
   get upToDate(): boolean {
-    return !this.stale && !this.unshown && !!this.domFrom && !this.rendering;
+    return !this.stale && !this.unshown && !this.rendering;
   }
 
-  protected shape(u: M.Unit, src: string): string {
-    // Markup only: text between (or outside) tags removed.
-    let out = "",
-      pos = u.contentFrom;
-    for (const r of u.runs) {
-      out += src.slice(pos, r.from);
-      pos = r.to;
-    }
-    return u.tag + "|" + out + src.slice(pos, u.contentTo);
-  }
 
   protected applyChanges(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): void {
     if (!this.doc || this.rendering) return;
@@ -457,120 +421,99 @@ export abstract class EditorRender extends EditorMarks {
     }
   }
 
-  /** Patches the DOM to the new source; false if it had to render the page afresh instead. */
+  /**
+   * Brings the page to the new source in place: the text of the blocks it changed (patchText), else the element that
+   * holds the change (reconcile). False, with the page as it was, if neither can show the change (a script or a style
+   * changed): only a render shows it (unshown).
+   */
   protected patch(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): boolean {
     if (!this.doc) return false;
     const src = this.src;
     if (oldUnits == this.units && this.patchText(tr.changes, oldSrc, src)) return true;
-    const a = this.analyze(src);
-    const newUnits = a.units;
-    const byStart = new Map<number, M.Unit>();
-    for (const u of newUnits) byStart.set(u.openFrom, u);
-    const matched = new Map<number, { el: Element; old: M.Unit }>();
-    const oldEls = this.els;
-    for (const old of oldUnits) {
-      const el = oldEls[old.id];
-      if (!el) continue;
-      const p = tr.changes.mapPos(old.openFrom, -1, MapMode.TrackDel);
-      if (p == null) continue;
-      const nu = byStart.get(p);
-      if (nu && nu.tag == old.tag && !matched.has(nu.id)) matched.set(nu.id, { el, old });
-    }
-    this.units = newUnits;
-    const structural = matched.size != newUnits.length || matched.size != oldUnits.length;
-    // Something outside the text blocks changed (a list, a diagram, a style): patching the blocks doesn't show it.
-    const outside = skeletonOfSource(oldSrc, oldUnits) != skeletonOfSource(src, newUnits);
-    const fromHtml = this.domHtml();
-    this.domFrom = a.html;
-    this.unshown = false;
-    const changed = new Set<number>();
-    try {
-      // Whatever changed, in place where it can be: the elements that changed, and only those.
-      if ((outside || structural) && this.morph(fromHtml, a.html, src)) return true;
-      this.unshown = outside;
-      // The page is what a.html says only where the blocks are, after a structural patch (it inserts no whitespace) or
-      // a change outside them it couldn't show: no morph starts from it until a render.
-      if (outside || structural) this.domFrom = "";
-      if (!structural) {
-        this.els = [];
-        for (const u of newUnits) {
-          const { el, old } = matched.get(u.id)!;
-          this.els[u.id] = el;
-          if (this.patchUnit(el, old, oldSrc, u, src)) changed.add(u.id);
-        }
-        this.updateEmpty(changed);
-        return true;
-      }
-      // Patch matched units, build the new ones, drop the rest. A new
-      // unit is built with the largest new element around it (a paragraph
-      // turned into a list brings its <ul>), placed next to its nearest
-      // sibling already on the page.
-      const els: (Element | undefined)[] = [];
-      for (const u of newUnits) {
-        const m = matched.get(u.id);
-        if (m) {
-          els[u.id] = m.el;
-          this.patchUnit(m.el, m.old, oldSrc, u, src);
-        }
-      }
-      const inserted: [number, number][] = [];
-      tr.changes.iterChangedRanges((_fa, _ta, fromB, toB) => inserted.push([fromB, toB]));
-      const isNew = (n: M.ElementNode) => inserted.some(([f, t]) => f <= n.from && n.to <= t);
-      const unitOfNode = new Map<M.ElementNode, M.Unit>();
-      for (const u of newUnits) unitOfNode.set(u.node, u);
-      for (const u of newUnits) {
-        if (els[u.id]) continue;
-        let top = u.node;
-        if (isNew(top)) while (top.parent && top.parent.parent && isNew(top.parent)) top = top.parent;
-        const group = newUnits.filter((w) => !els[w.id] && w.from >= top.from && w.to <= top.to);
-        const tpl = this.doc.createElement("template");
-        tpl.innerHTML = M.stamp(
-          src.slice(top.from, top.to),
-          group.map((w) => ({ ...w, openTo: w.openTo - top.from }))
-        );
-        const root = tpl.content.firstElementChild;
-        if (!root) throw new Error("unit did not render");
-        for (const w of group) {
-          const el = root.matches(`[data-erga-id="${w.id}"]`) ? root : root.querySelector(`[data-erga-id="${w.id}"]`);
-          if (!el) throw new Error("unit did not render");
-          this.prepareUnit(el);
-          els[w.id] = el;
-        }
-        // Next to the nearest sibling that's a unit already on the page.
-        const sibs = (top.parent?.children ?? []).filter((c): c is M.ElementNode => c.kind == "element");
-        const i = sibs.indexOf(top);
-        const placedEl = (n: M.ElementNode | undefined) => {
-          const w = n && unitOfNode.get(n);
-          return w && els[w.id] && !group.includes(w) ? els[w.id] : undefined;
-        };
-        let done = false;
-        for (let j = i - 1; j >= 0 && !done; j--) {
-          const el = placedEl(sibs[j]);
-          if (el) {
-            el.after(root);
-            done = true;
-          }
-        }
-        for (let j = i + 1; j < sibs.length && !done; j++) {
-          const el = placedEl(sibs[j]);
-          if (el) {
-            el.before(root);
-            done = true;
-          }
-        }
-        if (!done) throw new Error("no place for the new unit");
-      }
-      const keep = new Set(els);
-      for (const el of oldEls) if (el && !keep.has(el)) el.remove();
-      this.els = els;
-      for (const u of newUnits) els[u.id]!.setAttribute("data-erga-id", String(u.id));
-      for (const u of newUnits) this.showSpaces(u, src);
-      this.updateEmpty();
-      return true;
-    } catch {
-      this.render();
+    if (this.mirror && oldUnits == this.units && this.reconcile(tr.changes, oldSrc, src)) return true;
+    this.unshown = true;
+    return false;
+  }
+
+  /**
+   * Brings the page to the new source in place through the binding (mirror.ts): the smallest element that holds the
+   * change gets its new content, and the units in it are found again; the others move through the change. False, with
+   * nothing changed, if the change can't be made in place.
+   */
+  protected reconcile(changes: ChangeSet, oldSrc: string, src: string): boolean {
+    const mirror = this.mirror!;
+    const oldUnits = this.units,
+      oldEls = this.els;
+    // The units in the element the change is in (or the unit that holds it), found by the old tree's shape.
+    const e = mirror.reconcile(changes, oldSrc, src, this.decoder);
+    if (!e) return false;
+    let region = e;
+    const unitNodes = new Set(oldUnits.map((u) => u.node));
+    for (let a: M.ElementNode | null = e; a; a = a.parent) if (unitNodes.has(a)) region = a;
+    const inRegion = (n: M.ElementNode) => {
+      for (let a: M.ElementNode | null = n; a; a = a.parent) if (a == region) return true;
       return false;
+    };
+    const fresh = M.unitsIn(src, region, this.decoder);
+    const before: M.Unit[] = [],
+      after: M.Unit[] = [];
+    for (const u of oldUnits) {
+      if (inRegion(u.node)) continue;
+      // Before the region or after it, by where it starts now.
+      (changes.mapPos(u.from, 1) < region.from ? before : after).push(u);
     }
+    const map = (u: M.Unit) => {
+      u.from = changes.mapPos(u.from, 1);
+      u.openFrom = changes.mapPos(u.openFrom, 1);
+      u.openTo = changes.mapPos(u.openTo, -1);
+      u.contentFrom = changes.mapPos(u.contentFrom, -1);
+      u.contentTo = changes.mapPos(u.contentTo, 1);
+      u.to = changes.mapPos(u.to, -1);
+      for (const r of u.runs) {
+        r.from = changes.mapPos(r.from, 1);
+        r.to = changes.mapPos(r.to, -1);
+      }
+    };
+    after.forEach(map);
+    const units = [...before, ...fresh, ...after];
+    const els: (Element | undefined)[] = [];
+    const isNew = new Set(fresh);
+    // A unit's element keeps the mark it has (data-erga-id: its value never changes, so a block added near the top
+    // changes nothing below it); a new unit's element gets one.
+    units.forEach((u, i) => {
+      const el = isNew.has(u) ? (mirror.nodeOf(u.node) as Element | undefined) : oldEls[u.id];
+      u.id = i;
+      els[i] = el;
+      if (!el) return;
+      this.unitByEl.set(el, u);
+      if (!el.hasAttribute("data-erga-id")) el.setAttribute("data-erga-id", String(this.nextMark++));
+    });
+    // An element that is no longer a text block (a list item whose text went into a <p>) stops being an editing host.
+    const now = new Set(els);
+    for (const el of oldEls) {
+      if (!el || now.has(el) || !el.isConnected) continue;
+      el.removeAttribute("contenteditable");
+      el.removeAttribute("spellcheck");
+      el.removeAttribute("data-erga-id");
+      this.unitByEl.delete(el);
+      el.classList.remove("erga-empty", "erga-locked", "erga-flash");
+      if (!el.classList.length) el.removeAttribute("class");
+    }
+    this.units = units;
+    this.els = els;
+    this.unshown = false;
+    const ids = new Set<number>();
+    for (const u of fresh) {
+      const el = els[u.id];
+      if (!el) continue;
+      ids.add(u.id);
+      el.classList.remove("erga-locked");
+      this.lockReasons.delete(el);
+      this.prepareUnit(el);
+      if (this.verify(u)) this.showSpaces(u, src);
+    }
+    this.updateEmpty(ids);
+    return true;
   }
 
   /**
@@ -590,61 +533,11 @@ export abstract class EditorRender extends EditorMarks {
     const changed = M.editRuns(this.units, oldSrc, src, splices, this.decoder);
     if (!changed) return false;
     this.unshown = false;
-    // The page is what the source renders to again; its HTML is worked out if a morph needs it.
-    this.domFrom = this.state.doc;
     for (const id of changed) this.patchRuns(this.els[id]!, this.units[id], src);
     this.updateEmpty(changed);
     return true;
   }
 
-  /** Brings the page to `to` (the HTML of the source `src`) in place; false if it can't (a script changed, or the page's own script built that part). */
-  protected morph(from: string, to: string, src: string): boolean {
-    const doc = this.doc;
-    if (!doc || !from) return false;
-    let ops: ReturnType<typeof planMorph>;
-    try {
-      ops = planMorph(doc, from, to);
-    } catch {
-      return false;
-    }
-    if (!ops) return false;
-    const was = this.els;
-    const changed = applyMorph(doc, ops);
-    this.collectEls();
-    // An element that is no longer a text block (a list item whose text went into a <p>) stops being an editing host.
-    const now = new Set(this.els);
-    for (const el of was) {
-      if (!el || now.has(el) || !el.isConnected) continue;
-      el.removeAttribute("contenteditable");
-      el.removeAttribute("spellcheck");
-      el.classList.remove("erga-empty", "erga-locked", "erga-flash");
-      if (!el.classList.length) el.removeAttribute("class");
-    }
-    // Only the text blocks the morph touched, or that are new on the page, are made ready again: the rest are as they
-    // were (a list item indented in a long document touches its list alone).
-    const before = new Set(was);
-    const touched = new Set<Element>();
-    for (const n of [...changed.at, ...changed.whole]) {
-      const unit = (n.nodeType == 1 ? (n as Element) : n.parentElement)?.closest("[data-erga-id]");
-      if (unit) touched.add(unit);
-    }
-    for (const n of changed.whole)
-      if (n.nodeType == 1) for (const inner of (n as Element).querySelectorAll("[data-erga-id]")) touched.add(inner);
-    const ids = new Set<number>();
-    for (const u of this.units) {
-      const el = this.els[u.id];
-      if (!el || (before.has(el) && !touched.has(el))) continue;
-      ids.add(u.id);
-      if (el.classList.contains("erga-locked")) {
-        el.classList.remove("erga-locked");
-        this.lockReasons.delete(el);
-      }
-      this.prepareUnit(el);
-      if (this.verify(u)) this.showSpaces(u, src);
-    }
-    this.updateEmpty(ids);
-    return true;
-  }
 
   /**
    * Makes a change to the page with the reader's view held still: the text
@@ -743,11 +636,6 @@ export abstract class EditorRender extends EditorMarks {
       });
   }
 
-  /** Patches one unit's element; returns true if anything changed. */
-  protected patchUnit(el: Element, old: M.Unit, oldSrc: string, u: M.Unit, src: string): boolean {
-    if (this.shape(old, oldSrc) == this.shape(u, src)) return this.patchRuns(el, u, src);
-    return this.rebuildUnit(el, u, src);
-  }
 
   /** Patches the text of a unit's element whose markup is as it was; returns true if anything changed. */
   protected patchRuns(el: Element, u: M.Unit, src: string): boolean {

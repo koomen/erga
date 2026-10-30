@@ -124,18 +124,13 @@ test(
   })
 );
 
-// Bug: "- [ ] " makes a to-do item in the source (list-style: none), but the page still draws the bullet beside the
-// checkbox, until a reload. "[ ] " alone shows the checkbox only, as it should.
-test(
-  "- [ ] makes a to-do item that shows a checkbox and no bullet",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    tab.knownDrift = "the to-do item's list-style";
+test("- [ ] makes a to-do item that shows a checkbox and no bullet", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "- [ ] Walk");
     await ed.shows(`
       ☐ Walk|
     `);
-  })
+  }
 );
 
 test("``` and Enter make a code block, with the language as a class; undo gives back the typed marks", async ({ tab }) => {

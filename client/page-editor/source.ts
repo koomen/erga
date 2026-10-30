@@ -67,18 +67,6 @@ export function balanceWhitespace(text: string): string {
   return out;
 }
 
-/**
- * The source with every text block cut out and whitespace collapsed: what
- * patching the text blocks can't update. Two versions of a document with the
- * same skeleton differ only in their text, which the page can show in place.
- */
-export function skeletonOfSource(src: string, units: M.Unit[]): string {
-  let out = "", pos = 0;
-  for (const u of units) { out += src.slice(pos, u.from) + "\u0000"; pos = u.to; }
-  // Runs of blocks count as one, so adding a paragraph among paragraphs (which patching handles) isn't a change.
-  return (out + src.slice(pos)).replace(/\s+/g, " ").replace(/\u0000( ?\u0000)+/g, "\u0000");
-}
-
 /** A unit's positions and text as they are now (patching moves the live ones: see M.editRuns). */
 export const copyUnit = (u: M.Unit): M.Unit => ({ ...u, runs: u.runs.map((r) => ({ ...r })) });
 

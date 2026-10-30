@@ -43,11 +43,7 @@ test("two tabs type at once in nearby paragraphs, with Enter: both show all the 
   await bothShow(a, b, "#b", "Bravoabc");
 });
 
-// Known bug: tab A joins Bravo to Alpha (Backspace at its start) while tab B has the caret at the end of Bravo.
-// B's next keys are lost: B shows an empty line with the caret, and neither tab nor the file gets "xyz".
-test(
-  "the other tab joins your paragraph to the one above: your next keys are kept",
-  knownBug(async ({ tab }) => {
+test("the other tab joins your paragraph to the one above: your next keys are kept", async ({ tab }) => {
     const [a, b] = await twoTabs(tab);
     const start = await a.charAt("#b", 0);
     await a.click(start.x, start.y);
@@ -56,7 +52,7 @@ test(
     await bothShow(a, b, "#a", "AlphaBravo");
     await b.type("xyz");
     await bothShow(a, b, "#a", "AlphaBravoxyz");
-  })
+  }
 );
 
 // Known bug: tab B types in a list item while tab A presses Tab in it. A key goes outside the item, as loose text in
