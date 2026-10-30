@@ -3,8 +3,21 @@
 // forward under the page, the step it's at, and a list of the steps that opens over its right side. The arrow keys
 // step too, pressed here or in the page, except in text. The list shows each step's picture where the page draws them
 // (erga-step-image), kept until the page changes (another rev: an edit, another page), else its number and label.
+// A slide that builds up in parts has a step for each part, which the page groups by slide: those are numbered 3.1, 3.2.
 
-type Steps = { count: number; current: number; labels: string[]; images: boolean; hasNext: boolean; hasBack: boolean; rev: number };
+type Steps = { count: number; current: number; labels: string[]; images: boolean; slides: number[] | null; rev: number };
+
+/** Step i's number ("3.2": slide 3, its second part; "4" for a slide in one step), and how many slides there are. */
+function number(s: Steps, i: number) {
+  const k = s.slides;
+  if (!k) return String(i + 1);
+  let first = i,
+    last = i;
+  while (first > 0 && k[first - 1] == k[i]) first--;
+  while (last < s.count - 1 && k[last + 1] == k[i]) last++;
+  return k[i] + 1 + (last > first ? "." + (i - first + 1) : "");
+}
+const slides = (s: Steps) => (s.slides ? s.slides[s.count - 1] + 1 : s.count);
 
 export default function viewerSteps(): void {
   const svg = (d: string) => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>';
@@ -59,7 +72,7 @@ export default function viewerSteps(): void {
         img.alt = "";
       }
       if (img.src != p.url) img.src = p.url;
-    } else if (box.querySelector("img") || !box.textContent) box.textContent = String(i + 1);
+    } else if ((box.querySelector("img") || !box.textContent) && steps) box.textContent = number(steps, i);
   }
   // The pictures of the steps in sight in the list, of this rev, that it hasn't yet: asked for once the page has stopped changing.
   function ask() {
@@ -87,17 +100,19 @@ export default function viewerSteps(): void {
     panel.classList.toggle("erga-steps-plain", !s.images);
     s.labels.forEach((label, i) => {
       const li = list.appendChild(document.createElement("li")),
-        b = li.appendChild(document.createElement("button"));
+        b = li.appendChild(document.createElement("button")),
+        n = number(s, i);
+      // A line between slides, where the page groups its steps by slide.
+      if (s.slides && i && s.slides[i] != s.slides[i - 1]) li.className = "erga-step-slide";
       b.type = "button";
       b.className = "erga-step";
       b.dataset.step = String(i);
-      b.setAttribute("aria-label", (label ? label + ", " : "") + "step " + (i + 1) + " of " + s.count);
+      b.setAttribute("aria-label", (label ? label + ", " : "") + "step " + n + " of " + slides(s));
       b.appendChild(document.createElement("span")).className = "erga-step-pic";
-      const name = b.appendChild(document.createElement("span")),
-        n = name.appendChild(document.createElement("b"));
+      const name = b.appendChild(document.createElement("span"));
       name.className = "erga-step-name";
-      n.textContent = String(i + 1);
-      name.appendChild(document.createElement("span")).textContent = label || "Step " + (i + 1);
+      name.appendChild(document.createElement("b")).textContent = n;
+      name.appendChild(document.createElement("span")).textContent = label || "Step " + n;
       picture(i);
     });
   }
@@ -122,16 +137,16 @@ export default function viewerSteps(): void {
       return;
     }
     // Other steps: the old pictures may be of other steps. Otherwise they stay up until the new ones come.
-    const now = steps.count + "\n" + steps.labels.join("\n") + "\n" + steps.images;
+    const now = steps.count + "\n" + steps.labels.join("\n") + "\n" + steps.images + "\n" + steps.slides;
     if (now != shape) {
       shape = now;
       drop();
       build(steps);
     }
-    at.textContent = steps.current + 1 + " / " + steps.count;
+    at.textContent = number(steps, steps.current) + " / " + slides(steps);
     bar.title = steps.labels[steps.current] || "";
-    back.disabled = !steps.hasBack;
-    next.disabled = !steps.hasNext;
+    back.disabled = steps.current == 0;
+    next.disabled = steps.current == steps.count - 1;
     current();
     if (!was || was.rev != steps.rev) ask();
     place();
@@ -182,7 +197,11 @@ export default function viewerSteps(): void {
           Number.isInteger(s.rev) &&
           Array.isArray(s.labels) &&
           s.labels.length == s.count &&
-          s.labels.every((l: unknown) => typeof l == "string" && l.length <= 200);
+          s.labels.every((l: unknown) => typeof l == "string" && l.length <= 200) &&
+          (s.slides === null ||
+            (Array.isArray(s.slides) &&
+              s.slides.length == s.count &&
+              s.slides.every((k: unknown, i: number) => Number.isInteger(k) && (k as number) >= (i ? s.slides[i - 1] : 0))));
       update(
         ok
           ? {
@@ -190,8 +209,7 @@ export default function viewerSteps(): void {
               current: Math.min(s.current, s.count - 1),
               labels: s.labels,
               images: s.images === true,
-              hasNext: s.hasNext === true,
-              hasBack: s.hasBack === true,
+              slides: s.slides,
               rev: s.rev,
             }
           : null

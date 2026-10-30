@@ -57,7 +57,7 @@ export async function inPage<T = any>(page: Page, expr: string): Promise<T> {
 
 export type Bar = {
   shown: boolean; at: string; back: boolean; next: boolean; open: boolean;
-  items: { label: string; current: boolean; img: string; drawn: number }[];
+  items: { n: string; label: string; current: boolean; img: string; drawn: number; first: boolean }[];
 };
 
 /** The step controls: shown, the step they say, back and forward disabled, the list open, and its steps. */
@@ -65,7 +65,7 @@ export const bar = (page: Page) => page.evaluate(`(() => {
   const b = document.querySelector(".erga-steps"), panel = document.querySelector(".erga-steps-panel");
   return { shown: !!b && !b.hidden && getComputedStyle(b).visibility != "hidden", at: b?.querySelector(".erga-steps-at").textContent ?? "",
     back: !!b?.querySelector(".erga-steps-back")?.disabled, next: !!b?.querySelector(".erga-steps-next")?.disabled, open: !!panel && !panel.hidden,
-    items: [...(panel?.querySelectorAll(".erga-step") ?? [])].map((el) => { const img = el.querySelector("img"); return { label: el.querySelector(".erga-step-name span").textContent,
+    items: [...(panel?.querySelectorAll(".erga-step") ?? [])].map((el) => { const img = el.querySelector("img"); return { n: el.querySelector(".erga-step-name b").textContent, label: el.querySelector(".erga-step-name span").textContent, first: el.parentElement.classList.contains("erga-step-slide"),
       current: el.getAttribute("aria-current") == "step", img: img?.src ?? "", drawn: img?.complete ? img.naturalWidth : 0 }; }) };
 })()`) as Promise<Bar>;
 

@@ -31,18 +31,14 @@ type Steps = {
   current(): unknown;
   label?(i: number): unknown;
   image?(i: number, size: { width: number; height: number }): unknown;
-  next?(): void;
-  back?(): void;
-  hasNext?(): unknown;
-  hasBack?(): unknown;
+  slide?(i: number): unknown;
 };
 type StepsMessage = {
   count: number;
   current: number;
   labels: string[];
   images: boolean;
-  hasNext: boolean;
-  hasBack: boolean;
+  slides: number[] | null;
   rev?: number;
 };
 
@@ -354,25 +350,19 @@ export default function reader(C: ReaderConfig): void {
     if (p)
       try {
         const count = whole(p.count(), STEP_MAX),
-          labels: string[] = [];
+          labels: string[] = [],
+          slides: number[] | null = typeof p.slide == "function" ? [] : null;
         for (let i = 0; i < count; i++) {
           const l = typeof p.label == "function" ? p.label(i) : "";
           labels.push(typeof l == "string" ? l.replace(/\s+/g, " ").trim().slice(0, 200) : "");
+          // The slide each step is on (the parts of a slide that builds up), never one before the step before's.
+          if (slides) slides.push(Math.max(i ? slides[i - 1] : 0, whole(p.slide!(i), STEP_MAX)));
         }
-        const current = whole(p.current(), Math.max(0, count - 1));
-        // More to show either way: the page says (a slide that builds up in parts), else a step after or before.
-        m = {
-          count,
-          current,
-          labels,
-          images: typeof p.image == "function",
-          hasNext: typeof p.hasNext == "function" ? !!p.hasNext() : current < count - 1,
-          hasBack: typeof p.hasBack == "function" ? !!p.hasBack() : current > 0,
-        };
+        m = { count, current: whole(p.current(), Math.max(0, count - 1)), labels, images: typeof p.image == "function", slides };
       } catch {
         m = null;
       }
-    const now = m ? m.count + "\n" + m.labels.join("\n") : "";
+    const now = m ? m.count + "\n" + m.labels.join("\n") + "\n" + m.slides : "";
     if (now != shape) {
       shape = now;
       rev++;
@@ -390,13 +380,8 @@ export default function reader(C: ReaderConfig): void {
     try {
       const count = whole(p.count(), STEP_MAX),
         at = whole(p.current(), STEP_MAX);
-      // next() and back() whatever the step: the page knows when it has nothing more to show (the last slide's parts).
-      if (to.by! > 0 && typeof p.next == "function") p.next();
-      else if (to.by! < 0 && typeof p.back == "function") p.back();
-      else {
-        const n = to.by ? at + (to.by > 0 ? 1 : -1) : whole(to.to, STEP_MAX);
-        if (n >= 0 && n < count && n != at) p.go(n);
-      }
+      const n = to.by ? at + (to.by > 0 ? 1 : -1) : whole(to.to, STEP_MAX);
+      if (n >= 0 && n < count && n != at) p.go(n);
     } catch {}
     tellSteps();
   }

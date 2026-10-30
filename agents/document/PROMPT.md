@@ -112,7 +112,8 @@ rendered page:
     `window.ergaSteps`. Erga then shows back and forward buttons under the
     page, the step it is at ("3 / 12"), and a list of the steps that people
     can open beside it, viewing and editing alike. The ← and → keys step too,
-    except while someone types in the page's text. See "Presentations" below.
+    except while someone types in the page's text. A slide that builds up in
+    parts has a step for each part ("3.2 / 12"). See "Presentations" below.
 
 12. **Give a page custom edits.** A document can define its own custom
     edits: changes people make by more than typing (add a card, delete a
@@ -148,10 +149,14 @@ rendered page:
     show(location.hash.slice(1) - 1 || 0);
     ```
 
+    A slide that builds up in parts names the part too: `#3.2` is the second
+    part of slide 3, and `#3` its first.
+
 ## Presentations
 
 A page is a presentation when `window.ergaSteps` is an object with these
-members. Steps are numbered from 0.
+members. A step is what people see at one moment: a slide, or one part of a
+slide that builds up in parts. Steps are numbered from 0.
 
 | Member | Required | What it does |
 |---|---|---|
@@ -159,8 +164,7 @@ members. Steps are numbered from 0.
 | `current()` | yes | Answers the step shown now. |
 | `go(i)` | yes | Shows step `i`. |
 | `label(i)` | no | Answers a short name for step `i` (its title, say). Without it, the list says "Step 3". |
-| `next()`, `back()` | no | Step forward or back, for a page whose steps go further than `go` (a slide that builds up in parts). Erga calls them for ← and →, and for the forward and back buttons, on every step, the first and the last too. Without them, Erga calls `go` with the step after or before. |
-| `hasNext()`, `hasBack()` | no | Answer `true` while `next()` or `back()` has more to show. Erga turns the forward or back button off when they answer `false`. Without them, the forward button is off on the last step and the back button on the first. |
+| `slide(i)` | no | Answers the slide that step `i` is on, numbered from 0, for a deck whose slides build up in parts: the steps of one slide answer the same number. Erga then numbers the steps by slide and part ("3.2" is the second part of slide 3), counts the slides ("3.2 / 12"), and draws a line between slides in the list. Without it, each step is a slide of its own ("5 / 12"). |
 | `image(i, {width, height})` | no | Answers a small picture of step `i`, about `width` × `height` pixels: a `canvas`, a `Blob`, or an image's address (a `data:` URL, or one of the document's files). It may answer a Promise of one. Without it, or when it answers nothing, the list shows the step's number and label. |
 
 Whenever the step changes (by the page's own controls, a timer, anything) or
@@ -173,12 +177,15 @@ Rules:
 - Erga handles ← and → (without modifier keys): don't handle them yourself,
   or call `preventDefault()` on the ones you do handle, so a key moves one
   step and not two.
-- A slide that builds up in parts: `next()` shows its next part, and
-  `hasNext()` answers `true` until the last part of the last slide shows;
-  `back()` and `hasBack()` go the other way. `current()` stays the slide,
-  and the hash names the part too (`#3.2`, rule 14).
-- Keep `count()`, `current()`, `label()`, `hasNext()` and `hasBack()`
-  quick: Erga calls them often.
+- Erga steps with `go`: → and the forward button show the step after,
+  ← and back the step before. Forward is off on the last step, back on the
+  first.
+- A slide that builds up in parts: give each part a step of its own, with
+  its own picture, and say its slide with `slide(i)`. `go(i)` shows the
+  slide with its parts up to step `i`, and `current()` answers the part
+  shown. The hash names the part (`#3.2`, rule 14).
+- Keep `count()`, `current()`, `label()` and `slide()` quick: Erga calls
+  them often.
 - Erga keeps the pictures `image()` draws until the document changes (an edit,
   a reload, other steps), so draw the step as it is, not from a cache of your
   own.
