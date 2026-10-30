@@ -25,11 +25,11 @@ test("Shift+ArrowDown selects past the end of the heading, and the editor's sele
 
 test("Shift+ArrowUp comes back; typing replaces a selection across units, the caret after it in a unit that edits, and typing goes on there", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
-  await fromHeading(ed, ["Shift+ArrowDown", "Shift+ArrowDown", "Shift+ArrowRight", "Shift+ArrowLeft"]);
+  // (One Shift+ArrowDown on the heading's one line goes on to the next line, as in Google Docs.)
+  await fromHeading(ed, ["Shift+ArrowDown", "Shift+ArrowRight", "Shift+ArrowLeft"]);
   await expect.poll(async () => (await ed.selection()).text).toContain("</h1>");
   await ed.press("Shift+ArrowUp");
   await expect.poll(async () => (await ed.selection()).text.includes("</h1>")).toBe(false);
-  await ed.press("Shift+ArrowDown");
   await ed.press("Shift+ArrowDown");
   await expect.poll(async () => (await ed.selection()).text).toContain("</h1>");
   await ed.press("Shift+X");
