@@ -20,6 +20,8 @@ node_modules
 *.key
 
 .claude/worktrees/
+# Agents' worktrees inside the checkout: Biome and the tests must not read their files as this checkout's.
+/worktrees/
 
 # The builder image's dependency cache, staged by deploy/setup.ts for its build only
 deploy/builder/deps/
