@@ -12,6 +12,7 @@ import { EditorRender } from "./render";
 export abstract class EditorEdit extends EditorRender {
   protected abstract blockRule(pos: number): void;
   protected abstract inputRule(pos: number): void;
+  protected abstract linkRule(pos: number): void;
   protected abstract typeAtLinkEdge(pos: number, text: string, userEvent: string): boolean;
 
   /**
@@ -98,8 +99,11 @@ export abstract class EditorEdit extends EditorRender {
     const done =
       (from == to && (userEvent == "input.type" || userEvent == "input.paste") && this.typeAtLinkEdge(from, text, userEvent)) ||
       this.replaceRange(from, to, text, userEvent);
-    if (done && userEvent == "input.type" && (text == "*" || text == "_" || text == "`")) this.inputRule(this.state.selection.main.head);
-    if (done && userEvent == "input.type" && text == " ") this.blockRule(this.state.selection.main.head);
+    if (done && userEvent == "input.type" && /^[*_`~)]$/.test(text)) this.inputRule(this.state.selection.main.head);
+    if (done && userEvent == "input.type" && text == " ") {
+      this.linkRule(this.state.selection.main.head);
+      this.blockRule(this.state.selection.main.head);
+    }
     return done;
   }
 

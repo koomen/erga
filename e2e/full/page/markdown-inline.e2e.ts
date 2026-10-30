@@ -1,7 +1,7 @@
 // Markdown inside a line, typed with real keys, and Markdown pasted as plain text: what the page shows. Google Docs,
 // Notion, Typora and Bear agree on each behavior here. The visible snapshot shows no links, rules or struck text, so
 // these tests read the page's elements for them.
-import { expect, knownBug, servers, test, type Tab } from "../../helpers/fixtures";
+import { expect, servers, test, type Tab } from "../../helpers/fixtures";
 import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
@@ -39,68 +39,54 @@ test("**bold**, *italic* and `code` lose their marks; a word with underscores st
     .toBe("STRONG:b EM:i CODE:c");
 });
 
-// Bug: ~~text~~ stays as typed. Google Docs, Notion, Typora and Bear strike the text through and take the marks off.
-test(
-  "~~text~~ strikes the text through",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await keys(ed, "a ~~old~~ b");
-    await ed.shows(`
-      a old b|
-    `);
-    await expect.poll(() => struck(ed)).toBe("old");
-  })
-);
+test("~~text~~ strikes the text through", async ({ tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "a ~~old~~ b");
+  await ed.shows(`
+    a old b|
+  `);
+  await expect.poll(() => struck(ed)).toBe("old");
+});
 
-// Bug: ***text*** stays as typed, with all six asterisks. Notion, Typora and Bear make it bold and italic.
-test(
-  "***text*** makes the text bold and italic",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await keys(ed, "a ***both*** b");
-    await ed.shows(`
-      a both b|
-    `);
-  })
-);
+test("***text*** makes the text bold and italic", async ({ tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "a ***both***");
+  await ed.shows(`
+    a both|
+  `);
+  await expect.poll(() => ed.frame(`${F}.querySelector("strong > em")?.textContent`)).toBe("both");
+  // One undo gives back the typed marks.
+  await ed.press("ControlOrMeta+z");
+  await ed.shows(`
+    a ***both***|
+  `);
+});
 
-// Bug: the italic inside converts, then the closing ** of the bold does nothing: "**bold it x**" stays with its marks.
-test(
-  "**bold with *italic* inside** makes all of it bold",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await keys(ed, "**bold *it* x**");
-    await ed.shows(`
-      bold it x|
-    `);
-  })
-);
+test("**bold with *italic* inside** makes all of it bold", async ({ tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "**bold *it* x**");
+  await ed.shows(`
+    bold it x|
+  `);
+});
 
-// Bug: [text](url) stays as typed. Google Docs, Notion, Typora and Bear make a link with the text.
-test(
-  "[text](url) makes a link",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await keys(ed, "see [the site](https://example.com) ok");
-    await ed.shows(`
-      see the site ok|
-    `);
-    await expect.poll(() => ed.frame(`${F}.querySelector("a")?.getAttribute("href")`)).toBe("https://example.com");
-  })
-);
+test("[text](url) makes a link", async ({ tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "see [the site](https://example.com) ok");
+  await ed.shows(`
+    see the site ok|
+  `);
+  await expect.poll(() => ed.frame(`${F}.querySelector("a")?.getAttribute("href")`)).toBe("https://example.com");
+});
 
-// Bug: an address typed and then a space, or pasted, stays plain text. Google Docs, Notion, Typora and Bear make it a link.
-test(
-  "an address typed with a space after it, or pasted, becomes a link",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await keys(ed, "see https://example.com ok ");
-    await paste(ed, "https://erga.dev");
-    await expect
-      .poll(() => ed.frame(`[...${F}.querySelectorAll("a")].map((a) => a.getAttribute("href")).join(" ")`))
-      .toBe("https://example.com https://erga.dev");
-  })
-);
+test("an address typed with a space after it, or pasted, becomes a link", async ({ tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "see https://example.com ok ");
+  await paste(ed, "https://erga.dev");
+  await expect
+    .poll(() => ed.frame(`[...${F}.querySelectorAll("a")].map((a) => a.getAttribute("href")).join(" ")`))
+    .toBe("https://example.com https://erga.dev");
+});
 
 test("a Markdown document pasted as plain text becomes headings, lists, a quote and code", async ({ tab }) => {
   const ed = await empty(tab);
@@ -124,25 +110,16 @@ test("a Markdown document pasted as plain text becomes headings, lists, a quote 
   await expect.poll(() => ed.count("pre")).toBe(1);
 });
 
-// Bug: a pasted Markdown table stays as its lines of text, with the pipes, in one paragraph. Notion, Typora and Bear
-// make a table; Google Docs makes one from a paste too.
-test(
-  "a Markdown table pasted as plain text becomes a table",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await paste(ed, "| Name | Age |\n| --- | --- |\n| Ann | 30 |\n");
-    await expect.poll(() => ed.count("table td")).toBe(2);
-    await expect.poll(() => ed.textOf("body")).not.toContain("|");
-  })
-);
+test("a Markdown table pasted as plain text becomes a table", async ({ tab }) => {
+  const ed = await empty(tab);
+  await paste(ed, "| Name | Age |\n| --- | --- |\n| Ann | 30 |\n");
+  await expect.poll(() => ed.count("table td")).toBe(2);
+  await expect.poll(() => ed.textOf("body")).not.toContain("|");
+});
 
-// Bug: in a pasted Markdown document, --- stays as text and ~~text~~ keeps its marks, though the rest converts.
-test(
-  "--- and ~~text~~ in pasted Markdown become a rule and struck text",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await paste(ed, "Above\n\n---\n\nBelow ~~old~~\n");
-    await expect.poll(() => ed.count("hr")).toBe(1);
-    await expect.poll(() => struck(ed)).toBe("old");
-  })
-);
+test("--- and ~~text~~ in pasted Markdown become a rule and struck text", async ({ tab }) => {
+  const ed = await empty(tab);
+  await paste(ed, "Above\n\n---\n\nBelow ~~old~~\n");
+  await expect.poll(() => ed.count("hr")).toBe(1);
+  await expect.poll(() => struck(ed)).toBe("old");
+});
