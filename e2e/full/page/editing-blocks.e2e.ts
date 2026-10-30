@@ -35,17 +35,27 @@ const open = async (tab: Tab, selector: string) => {
 /** Whether the caret is in a quote. */
 const inQuote = (ed: Editor) => ed.frame<boolean>(`!!${F}.getSelection().anchorNode?.parentElement?.closest("blockquote")`);
 
-// A click in the empty part of the page under the last block puts no caret anywhere, and the keys typed after it are lost.
-test(
-  "a click under the last block puts the caret at the end of the last block",
-  knownBug(async ({ tab }) => {
+// A click in the empty part of the page under the last block puts the caret at its end (it put no caret anywhere,
+// and the keys typed after it were lost).
+test("a click under the last block puts the caret at the end of the last block", async ({ tab }) => {
     const ed = await open(tab, "h1");
     const last = await ed.rectOf("#last", 0.3);
     await ed.click(last.x, last.y + 200);
     await ed.press("X");
     await ed.shows(PAGE.replace("Last paragraph.", "Last paragraph.X|"));
-  })
-);
+});
+
+// A click in the margin next to a block puts the caret at the start or the end of the line beside the click.
+test("a click in the margin puts the caret at the start or end of the line beside it", async ({ tab }) => {
+  const ed = await open(tab, "h1");
+  const left = await ed.rectOf("h2", 0);
+  await ed.click(left.x - 10, left.y);
+  await ed.press("X");
+  const right = await ed.rectOf("#last", 1);
+  await ed.click(right.x + 100, right.y);
+  await ed.press("Y");
+  await ed.shows(PAGE.replace("## Section", "## XSection").replace("Last paragraph.", "Last paragraph.Y|"));
+});
 
 // Tab in a paragraph, heading or quote keeps the caret where it is (the browser moved the focus to the next block, and
 // the text typed next went there or was lost). Google Docs indents the paragraph; that needs new markup here.
