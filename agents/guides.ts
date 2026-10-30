@@ -141,6 +141,12 @@ make_document, list_versions, read_version, restore_version and open_page.
   it is at that moment: read a file right before editing it (with read, not grep:
   search output cuts long lines), and read again if an edit fails because the
   text changed. Keep edits scoped to what was asked.
+- In a big page, read and edit one part by its selector, not the whole file:
+  read with selector (an element, e.g. "section.legible") or css_rule (a CSS rule
+  in a stylesheet or the page's <style>, e.g. ".legible h2") gives that part and
+  its lines; an edit with selector or cssRule instead of oldText replaces it
+  whole: \`edit {"document": "...", "path": "index.html", "edits": [{"selector": "svg g#logo", "newText": "<g id=\\"logo\\">...</g>"}]}\`.
+  It must name exactly one, in the source as written.
 - view_page shows you the page your person has open, rendered in their browser
   (so it needs their editor open): a screenshot, any script errors, and the fonts
   its text rendered in. Use it to check visual work before you say it's done.
