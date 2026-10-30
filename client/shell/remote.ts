@@ -277,6 +277,17 @@ export class RemotePage {
         this.ready = false;
         return;
       }
+      case "held": {
+        if (!this.sink || !Array.isArray(m.held)) return;
+        const keys = m.held.filter(
+          (h): h is HeldInput =>
+            typeof h == "object" &&
+            h != null &&
+            (typeof (h as { key?: unknown }).key == "string" || typeof (h as { input?: unknown }).input == "string")
+        );
+        this.held.unshift(...keys.slice(0, 1000));
+        return;
+      }
       case "detached": case "styled": case "captured": case "lived": case "stopped":
         this.waiting.get(m.id)?.(m);
         this.waiting.delete(m.id);

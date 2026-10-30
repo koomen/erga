@@ -157,6 +157,8 @@ export type FromFrame =
       focus: boolean;
       drops?: { id: number; at: number; point: { x: number; y: number } }[];
     }
+  /** Keys typed on the page as it was about to load again (after `reloading`): before the ones the shell held since. */
+  | { type: "held"; held: HeldInput[] }
   | { type: "styled"; id: number; why: string | null }
   | { type: "captured"; id: number; result: ViewResult }
   | { type: "lived"; id: number; result: LiveResult }
