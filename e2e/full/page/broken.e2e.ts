@@ -1,5 +1,5 @@
 // A page with problems nobody asked about: each explained in turn, with a button to have the agent fix it ("Broken page").
-import { expect, servers, test } from "../../helpers/fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
@@ -33,4 +33,24 @@ test("the other problem comes next: between them they name the missing styleshee
   const both = first.text + " " + second.text;
   expect(both).toMatch(/stylesheet “missing\.css”/);
   expect(both).toMatch(/drawTheChart is not defined/);
+});
+
+test("a problem closes with its × button and with Escape, and doesn't come back when the page loads again", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "broken", { allowErrors: true });
+  await expect.poll(async () => (await toast(ed)).shown).toBe(true);
+  const first = (await toast(ed)).text;
+  await ed.eval(`document.querySelector("#toast .toast-close").click()`);
+  await expect.poll(async () => { const t = await toast(ed); return t.shown && t.text != first; }).toBe(true);
+  const second = (await toast(ed)).text;
+  // The caret in the text: Escape goes to the shell (the frame passes it on), which closes the problem first.
+  await ed.clickEnd("h1");
+  await ed.press("Escape");
+  await expect.poll(async () => (await toast(ed)).shown).toBe(false);
+  // The page made afresh: its script throws again, and its stylesheet fails again. Neither shows again.
+  await ed.eval(`window.ergaPage.page.render()`);
+  await ed.loaded();
+  // The new page's editor has taken its problems (client/inline/page-problems.ts), and the tab has heard them.
+  await until(() => ed.frame<boolean>(`!!window.__ergaReport && document.readyState == "complete"`), 5000, "the page reports its problems");
+  await ed.settle();
+  expect((await toast(ed)).shown, `${first} / ${second}`).toBe(false);
 });

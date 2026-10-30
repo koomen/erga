@@ -383,6 +383,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     if (zoom) { if (zoom == "reset") { if (page.zoomsItself) page.zoomItself(0); else setZoomLevel(1); } else zoomPage({ step: zoom }); return true; }
     if (mod && !e.shiftKey && key == "s") { shell.toast.flash(shell.room.connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape" && shell.fmt.linking) { shell.fmt.closeLink(); return true; }
+    if (e.key == "Escape" && shell.toast.closeProblem()) return true;
     if (e.key == "Escape") {
       // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs to cancel.
       if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;

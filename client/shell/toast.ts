@@ -41,6 +41,17 @@ export function mountToast(shell: Shell) {
       toast.append(b);
       syncFix();
     }
+    // A problem nobody asked about closes at once (× or Escape), and doesn't come back in this page view (main.ts: shownProblems).
+    if (key) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "toast-close";
+      x.textContent = "×";
+      x.title = "Close (Escape)";
+      x.setAttribute("aria-label", "Close");
+      x.addEventListener("click", () => hideExplanation());
+      toast.append(x);
+    }
     toast.classList.add("show");
     explaining = performance.now();
   }
@@ -68,11 +79,18 @@ export function mountToast(shell: Shell) {
     if (next) toastTimer = window.setTimeout(() => explain(next.text, next.fix, next.key), 250);
   }
   function dismissExplanation(e: Event | null) {
-    if (!explaining || (e && toast.contains(e.target as Node))) return;
+    // (Escape closes a problem at once: closeProblem.)
+    if (!explaining || (e && toast.contains(e.target as Node)) || (e as KeyboardEvent | null)?.key == "Escape") return;
     const left = EXPLAIN_MS - (performance.now() - explaining);
     clearTimeout(toastTimer);
     if (left > 0) { const shownAt = explaining; toastTimer = window.setTimeout(() => { if (explaining == shownAt) hideExplanation(); }, left); }
     else hideExplanation();
+  }
+  /** Closes the problem that's up, if one is (Escape); false if none is. */
+  function closeProblem(): boolean {
+    if (!explaining || !toast.querySelector(".toast-close")) return false;
+    hideExplanation();
+    return true;
   }
   /** Something wrong with the page that nobody asked about: shown in turn, never on top of another. */
   function reportProblem(text: string, fix: string, key: string) {
@@ -83,8 +101,16 @@ export function mountToast(shell: Shell) {
   for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, dismissExplanation, true);
   return {
     syncFix,
-    flash, explain, hideExplanation, dismissExplanation, reportProblem,
-    clearProblems() { problemQueue.length = 0; if (explaining) hideExplanation(); },
+    flash,
+    explain,
+    hideExplanation,
+    dismissExplanation,
+    reportProblem,
+    closeProblem,
+    clearProblems() {
+      problemQueue.length = 0;
+      if (explaining) hideExplanation();
+    },
   };
 }
 
