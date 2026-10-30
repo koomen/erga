@@ -39,6 +39,7 @@ import { gitServers } from "./git-server.ts";
 import { mockGithub } from "./github-mock.ts";
 import type { FromDisk, ToDisk } from "../document/disk.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
+import { delayRooms, latencyOf } from "./latency.ts";
 import { sleep } from "../shared/time.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -78,6 +79,12 @@ export function ergaDev(opts: DevOptions): Plugin {
       const log = (line: string) => server.config.logger.info(line, { timestamp: true });
       // First, so it sees every page the Worker sends.
       live = opts.reload ? liveReload(server, log) : undefined;
+      // A network's delay on the rooms' sockets (latency.ts), when asked for.
+      const latency = latencyOf(process.env.ERGA_DEV_LATENCY_MS);
+      if (latency && server.httpServer) {
+        delayRooms(server.httpServer as import("node:http").Server, latency);
+        log(`rooms' sockets delayed ${latency.join("-")} ms each way (ERGA_DEV_LATENCY_MS)`);
+      }
       // A change Vite restarts the server for (its config, or a file the config imports): the restarted server reloads the tabs.
       if (live) server.watcher.on("change", (file) => { if (server.config.configFileDependencies.includes(file)) live?.restarting(); });
       const linksFile = join(opts.stateDir, "erga-links.json");
