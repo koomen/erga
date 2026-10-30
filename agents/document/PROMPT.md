@@ -136,6 +136,18 @@ rendered page:
     window.ergaZoom = (k) => { if (k > 0) zoomBy(k); else showStart(); };
     ```
 
+14. **Keep a page's place in its address.** A page that shows one part at a
+    time (a slide, a tab, a step) writes the part to its own `location.hash`
+    and opens at the part the hash names. Erga keeps the hash in the tab's
+    address, so a reload, the editor's own reload of the page, and a link
+    all open at that part. It works the same outside Erga. Use
+    `history.replaceState`, so each step adds no entry to the history.
+
+    ```js
+    function show(i) { /* show part i */ history.replaceState(null, "", "#" + (i + 1)); }
+    show(location.hash.slice(1) - 1 || 0);
+    ```
+
 ## Presentations
 
 A page is a presentation when `window.ergaSteps` is an object with these
@@ -180,6 +192,7 @@ A minimal presentation: each `section` is a step.
   function show(i) {
     at = Math.max(0, Math.min(steps.length - 1, i));
     steps.forEach((s, k) => (s.hidden = k != at));
+    history.replaceState(null, "", "#" + (at + 1)); // the step, in the address (rule 14)
     dispatchEvent(new Event("ergastep"));
   }
   window.ergaSteps = {
@@ -198,7 +211,7 @@ A minimal presentation: each `section` is a step.
       return c;
     },
   };
-  show(0);
+  show(location.hash.slice(1) - 1 || 0);
 </script>
 ```
 

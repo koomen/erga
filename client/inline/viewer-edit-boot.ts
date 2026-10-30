@@ -62,11 +62,12 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     // The editor already running on another page (the viewer went to it since): that page's editor, loaded afresh.
     const page = editor()?.pagePath;
     if (edit && page != null && page != (document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || page)) {
-      history.replaceState(null, "", ergaWithEdit(ergaPageAddress(), true));
+      history.replaceState(null, "", ergaWithEdit(ergaPageAddress(), true) + location.hash);
       location.reload();
       return;
     }
-    if (push) history.pushState(null, "", ergaWithEdit(location.pathname == "/" ? "/" : ergaPageAddress(), edit));
+    // (The page's place in its address, #3, stays: it is the same page.)
+    if (push) history.pushState(null, "", ergaWithEdit(location.pathname == "/" ? "/" : ergaPageAddress(), edit) + location.hash);
     if (edit == editing() && push !== null) return;
     clearTimeout(closing);
     body.classList.remove("erga-closing");

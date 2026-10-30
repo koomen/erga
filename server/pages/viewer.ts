@@ -43,8 +43,8 @@ export const LAYOUT_EARLY = inlineCall("viewer-layout-early");
 /** ... and as its body starts: editing from the first frame, with the editor's controls and layout (client/inline/viewer-editing-body.ts). */
 export const EDITING_BODY = inlineCall("viewer-editing-body");
 
-/** The frame's address, opened with ?edit (client/inline/viewer-frame-src.ts). */
-export const FRAME_SRC = inlineCall("viewer-frame-src");
+/** The frame's address, with the page's place (#3), and opened with ?edit the editor's half (client/inline/viewer-frame-src.ts). */
+export const frameSrc = (editing: boolean) => inlineCall("viewer-frame-src", editing);
 
 /** The document's frame and the address with ?edit or without, for every script on the page (client/inline/viewer-frames.ts). */
 export const framesScript = (pages: string) => inlineCall("viewer-frames", pages);
@@ -95,12 +95,12 @@ export const VIEW_STYLE = `<style>${inlineStyle("viewer")}</style>`;
  */
 export function viewerPage(o: { title: string; docId: string; pages: string; src: string; meta: string; session: Session | null; editable: boolean; editing: boolean; landing: boolean; clone: string; edit: string; files?: string }): { before: string; after: string } {
   // Opened with ?edit, for whoever may edit: the page is the editor's from its first moment (editingHead, EDITING_BODY),
-  // the page in the frame starts on its half of the editor at once (FRAME_SRC), and the editor's files are fetched as the
+  // the page in the frame starts on its half of the editor at once (frameSrc), and the editor's files are fetched as the
   // page parses, rather than one after another once its script runs (editBoot).
   const opening = o.editable ? `${shellTemplate()}<script>${editingHead()}</script>` : "";
   // The page on its own origin, connected to from the start; it may play media only on the editor's say (EDITOR_ALLOW).
   const editing = o.editable && o.editing;
-  const frame = `<iframe id="frame" class="erga-view" ${editing ? `data-src="${esc(o.src)}"` : `src="${esc(o.src)}"`} title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
+  const frame = `<iframe id="frame" class="erga-view" data-src="${esc(o.src)}" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
   // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
   // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT). With none remembered, the
   // page waits for its own (BAND_WAIT).
@@ -116,7 +116,7 @@ ${FAVICON_LINK}
 <meta name="erga-doc" content="${esc(o.docId)}">
 ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session)}<style>${BAND_STYLE}</style>${opening}
 <body>${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
-<div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}${editing ? `<script>${FRAME_SRC}</script>` : ""}`;
+<div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const after = `
 ${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${o.files ?? ""}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}
 `;

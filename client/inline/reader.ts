@@ -282,7 +282,8 @@ export default function reader(C: ReaderConfig): void {
     shape = "",
     rev = 0,
     polled = 0,
-    listening = false;
+    listening = false,
+    hash: string | null = null;
   (function watch() {
     try {
       if (startY) place();
@@ -301,6 +302,11 @@ export default function reader(C: ReaderConfig): void {
         tell({ type: "erga-band", color: c });
       }
       if (c != null) report();
+      // The page's place in its own address (#3: agents/document/PROMPT.md, rule 14), for the tab's address.
+      if (location.hash != hash) {
+        hash = location.hash;
+        tell({ type: "erga-hash", hash });
+      }
       const now = Date.now();
       if (now - polled > 300) {
         polled = now;
