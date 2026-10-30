@@ -1,7 +1,7 @@
 // Markdown at the start of a line, typed with real keys from an empty page, as a person does in a writing app: what the
 // page shows, and how a person takes it back. Google Docs, Notion, Typora and Bear agree on each behavior here.
 import { expect, knownBug, servers, test, type Tab } from "../../helpers/fixtures";
-import { openEditor, type Editor } from "../../helpers/editor";
+import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 
@@ -137,10 +137,25 @@ test(
   })
 );
 
-// Bug: ``` and Enter stay as text, and the lines after it are paragraphs. Google Docs, Notion, Typora and Bear make a
-// code block.
+test("``` and Enter make a code block, with the language as a class; undo gives back the typed marks", async ({ tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "```js\nlet a = 1");
+  await ed.shows(`
+    let a = 1|
+  `);
+  await expect.poll(() => ed.frame(`${F}.querySelector("pre > code")?.className`)).toBe("language-js");
+  await ed.press("ControlOrMeta+z");
+  await ed.press("ControlOrMeta+z");
+  await ed.shows(`
+    \`\`\`js|
+  `);
+  await expect.poll(() => ed.count("pre")).toBe(0);
+});
+
+// Bug: Enter at the end of a code line adds a "\n" that the page does not show (a <pre> hides its last line break), so
+// the caret stays on the line and the next text joins it. Left for the editor's redesign (one table of block rules).
 test(
-  "``` and Enter make a code block; Enter in it adds a line in it",
+  "Enter in a code block adds a line in it",
   knownBug(async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "```js\nlet a = 1\nlet b");
@@ -152,13 +167,27 @@ test(
   })
 );
 
-// Bug: --- on a line of its own stays as text. Google Docs, Notion, Typora and Bear draw a horizontal rule.
+// Bug: there is no way out of a code block with keys. Notion leaves it with Enter at the end of an empty last line, or
+// ArrowDown at its end, into a paragraph after it. Left for the editor's redesign (one table of block rules).
 test(
-  "--- on its own line makes a horizontal rule",
+  "ArrowDown at the end of a code block goes to a paragraph after it",
   knownBug(async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
-    await keys(ed, "Above\n---\nBelow");
-    await expect.poll(() => ed.count("hr")).toBe(1);
-    await expect.poll(() => ed.textOf("body")).not.toContain("---");
+    await keys(ed, "```\ncode");
+    await ed.press("ArrowDown");
+    await keys(ed, "After");
+    await expect.poll(() => ed.textOf("pre")).toBe("code");
+    await expect.poll(() => ed.textOf("body > p")).toBe("After");
   })
 );
+
+test("---, *** or ___ on its own line, then Enter, makes a horizontal rule; undo gives back the typed marks", async ({ tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "Above\n---\nBelow\n***\n");
+  await expect.poll(() => ed.count("hr")).toBe(2);
+  await expect.poll(() => ed.textOf("body")).not.toContain("---");
+  // One undo takes back the last rule only, and gives back its marks with the caret after them.
+  await ed.press("ControlOrMeta+z");
+  await expect.poll(() => ed.count("hr")).toBe(1);
+  await expect.poll(async () => (await ed.visible()).endsWith("Below\n\n***|")).toBe(true);
+});

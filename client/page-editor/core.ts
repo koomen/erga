@@ -5,7 +5,7 @@ import * as M from "../../shared/manuscript";
 import { EditorState, EditorSelection, type SelectionRange, Transaction, type ChangeSet, type Text as Source } from "@codemirror/state";
 import { insertHead } from "../../shared/page-html";
 import type { HeldInput, PageEditorConfig, PageUpdate } from "./types";
-import { HEADING, same, textIn } from "./source";
+import { HEADING, placeholderBr, same, textIn } from "./source";
 import type { PausableWindow, RawProblem } from "./problems";
 
 /** The analysis of a source: its units, and its HTML with their marks (data-erga-id). */
@@ -325,7 +325,10 @@ export abstract class EditorCore {
       if (len <= l) return M.runPos(u.runs[i], len);
       len -= l;
     }
-    return u.runs.length ? u.runs[u.runs.length - 1].to : u.contentTo;
+    if (u.runs.length) return u.runs[u.runs.length - 1].to;
+    // An empty block whose placeholder <br> is in an inline element (`<pre><code><br></code></pre>`): there, in it.
+    const br = placeholderBr(this.src, u);
+    return br && /</.test(this.src.slice(u.contentFrom, br.from)) ? br.from : u.contentTo;
   }
 
   /**
