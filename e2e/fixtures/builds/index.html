@@ -11,36 +11,45 @@
 </style>
 </head>
 <body>
-  <section class="slide"><h1>First slide</h1><p class="build shown">One.</p><p class="build">Two.</p><p class="build">Three.</p></section>
-  <section class="slide"><h1>Second slide</h1><p class="build shown">No parts here.</p></section>
-  <section class="slide"><h1>Third slide</h1><p class="build shown">Red.</p><p class="build">Green.</p><p class="build">Blue.</p></section>
+  <section class="slide"><h1>First slide</h1><p class="build">One.</p><p class="build">Two.</p><p class="build">Three.</p></section>
+  <section class="slide"><h1>Second slide</h1><p class="build">No parts here.</p></section>
+  <section class="slide"><h1>Third slide</h1><p class="build">Red.</p><p class="build">Green.</p><p class="build">Blue.</p></section>
   <script>
-    // A deck whose slides build up in parts (agents/document/PROMPT.md, "Presentations"): → shows a slide's next part,
-    // then the next slide; ← hides the last part shown, then goes to the slide before, all its parts shown. The
-    // address names the slide and the part: #3.2 (rule 14).
+    // A deck whose slides build up in parts (agents/document/PROMPT.md, "Presentations"): each part is a step, and
+    // slide(n) says which slide step n is on. The address names the slide and the part: #3.2 (rule 14).
     const slides = [...document.querySelectorAll(".slide")];
-    const parts = (i) => slides[i].querySelectorAll(".build").length;
-    let at = 0, part = 1;
-    function show(i, k) {
-      at = Math.max(0, Math.min(slides.length - 1, i));
-      part = Math.max(1, Math.min(parts(at), k));
-      slides.forEach((s, j) => s.classList.toggle("current", j == at));
-      slides[at].querySelectorAll(".build").forEach((b, j) => b.classList.toggle("shown", j < part));
-      history.replaceState(null, "", "#" + (at + 1) + (part > 1 ? "." + part : ""));
+    const steps = slides.flatMap((s, i) => [...s.querySelectorAll(".build")].map((_, k) => [i, k + 1])); // [slide, part]
+    const shown = (n) => [...slides[steps[n][0]].querySelectorAll(".build")].slice(0, steps[n][1]);
+    let at = 0;
+    function show(n) {
+      at = Math.max(0, Math.min(steps.length - 1, n));
+      const [i, k] = steps[at];
+      slides.forEach((s, j) => s.classList.toggle("current", j == i));
+      slides[i].querySelectorAll(".build").forEach((b, j) => b.classList.toggle("shown", j < k));
+      history.replaceState(null, "", "#" + (i + 1) + (k > 1 ? "." + k : ""));
       dispatchEvent(new Event("ergastep"));
     }
     window.ergaSteps = {
-      count: () => slides.length,
+      count: () => steps.length,
       current: () => at,
-      label: (i) => slides[i].querySelector("h1").textContent,
-      go: (i) => show(i, 1),
-      next: () => (part < parts(at) ? show(at, part + 1) : at < slides.length - 1 && show(at + 1, 1)),
-      back: () => (part > 1 ? show(at, part - 1) : at > 0 && show(at - 1, Infinity)),
-      hasNext: () => at < slides.length - 1 || part < parts(at),
-      hasBack: () => at > 0 || part > 1,
+      go: show,
+      slide: (n) => steps[n][0],
+      label: (n) => slides[steps[n][0]].querySelector("h1").textContent,
+      // A picture of step n: the slide's title and the parts shown so far.
+      image(n, { width, height }) {
+        const c = document.createElement("canvas");
+        c.width = width; c.height = height;
+        const g = c.getContext("2d");
+        g.fillStyle = "#fff"; g.fillRect(0, 0, width, height);
+        g.fillStyle = "#000"; g.font = `bold ${height / 7}px sans-serif`;
+        g.fillText(slides[steps[n][0]].querySelector("h1").textContent, width / 10, height / 4);
+        g.font = `${height / 9}px sans-serif`;
+        shown(n).forEach((p, j) => g.fillText(p.textContent, width / 10, height / 4 + (j + 1) * height / 6));
+        return c;
+      },
     };
     const [i, k] = location.hash.slice(1).split(".");
-    show((i || 1) - 1, k || 1);
+    show(Math.max(0, steps.findIndex(([s, p]) => s == (i || 1) - 1 && p == (k || 1))));
   </script>
 </body>
 </html>
