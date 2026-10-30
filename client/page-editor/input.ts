@@ -219,6 +219,15 @@ export abstract class EditorInput extends EditorClipboard {
       }
       // A plain click puts a caret in one unit: the units are hosts again.
       if (this.spanning) this.setSpanning(false);
+      // A click next to the text (in the margin, under the last block) puts the caret in the nearest unit, as a document
+      // does: the browser would put it nowhere, and the keys typed next would be lost.
+      const beside = !e.shiftKey && e.detail <= 1 && !this.ours(e) ? this.caretBeside(e) : null;
+      if (beside != null) {
+        e.preventDefault();
+        this.leftText = false;
+        this.dispatch({ selection: { anchor: beside }, userEvent: "select" });
+        return;
+      }
       const hit = this.ours(e) && e.detail <= 1 ? this.doc!.caretRangeFromPoint?.(e.clientX, e.clientY) : null;
       const host = hit && (e.target as Element).closest?.("[data-erga-id]");
       if (hit && host) this.dragFrom = { node: hit.startContainer, offset: hit.startOffset, el: host };
@@ -230,6 +239,37 @@ export abstract class EditorInput extends EditorClipboard {
       e.preventDefault();
       window.open(a.href, "_blank", "noopener");
     }
+  }
+
+  /**
+   * Where a click on the page next to its text puts the caret: in the unit nearest the click (up and down first), at
+   * the start or end of the line beside the click, or of the unit if the click is above or below it. Null for a click
+   * on anything else (a button, a link, the page's own editable box), or with no unit to take it.
+   */
+  protected caretBeside(e: MouseEvent): number | null {
+    const t = e.target as Element;
+    if (!t?.querySelectorAll || t.closest(`a[href], button, input, textarea, select, label, [contenteditable], [${M.NO_EDIT_ATTR}]`))
+      return null;
+    let best: { el: Element; r: DOMRect } | null = null,
+      bd = Infinity;
+    for (const el of t.querySelectorAll("[data-erga-id]")) {
+      if (!(el as HTMLElement).isContentEditable) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      const off = (v: number, lo: number, hi: number) => (v < lo ? lo - v : v > hi ? v - hi : 0);
+      // (A tie goes to the later unit: a nested list's item over the item that holds it.)
+      const d = off(e.clientY, r.top, r.bottom) * 1e4 + off(e.clientX, r.left, r.right);
+      if (d <= bd) [best, bd] = [{ el, r }, d];
+    }
+    const u = best && this.unitOf(best.el);
+    if (!best || !u || !this.verify(u)) return null;
+    const { r } = best;
+    if (e.clientY < r.top) return M.textStart(u);
+    if (e.clientY > r.bottom) return M.textEnd(u);
+    const x = Math.min(Math.max(e.clientX, r.left + 1), r.right - 1);
+    const hit = this.doc!.caretRangeFromPoint?.(x, e.clientY);
+    const pos = hit && best.el.contains(hit.startContainer) ? this.posFromDOM(hit.startContainer, hit.startOffset) : null;
+    return pos ?? (e.clientX < r.left ? M.textStart(u) : M.textEnd(u));
   }
 
   /**
