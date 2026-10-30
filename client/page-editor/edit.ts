@@ -139,8 +139,9 @@ export abstract class EditorEdit extends EditorRender {
         /<br\s*\/?>\s*$/i.test(src.slice(a.contentFrom, from))
       )
         drops.push(holder);
+      // Deleting all of a last line's text after a line break: a <br> holds the line open, with the caret on it.
       return {
-        changes: [{ from, to, insert }, ...drops],
+        changes: [{ from, to, insert: insert || (holdsLine(src, a, from, to) ? "<br>" : "") }, ...drops],
         selection: { anchor: from + insert.length - dropped(drops, from) },
         userEvent,
         scrollIntoView: true,
@@ -273,7 +274,7 @@ export abstract class EditorEdit extends EditorRender {
       to = M.runPos(run, Math.max(k, other));
     if (from == to) return false;
     this.dispatch({
-      changes: { from, to },
+      changes: { from, to, insert: holdsLine(src, u, from, to) ? "<br>" : "" },
       selection: { anchor: from },
       userEvent: forward ? "delete.forward" : "delete.backward",
       scrollIntoView: true,
@@ -420,6 +421,18 @@ export abstract class EditorEdit extends EditorRender {
   protected target() {
     return { state: this.state, dispatch: (tr: Transaction) => this.dispatch(tr) };
   }
+}
+
+/**
+ * Whether deleting [from, to) of `u` takes all the text of the block's last line after a line break
+ * (`text<br><br>s`, Backspace): then a <br> must take its place, or the line goes too (lineHolder).
+ */
+function holdsLine(src: string, u: M.Unit, from: number, to: number): boolean {
+  return (
+    !emptyIn(src, u, from, to) &&
+    /<br\s*\/?>\s*$/i.test(src.slice(u.contentFrom, from)) &&
+    /^(?:\s|<\/[a-z][^>]*>)*$/i.test(src.slice(to, u.contentTo))
+  );
 }
 
 /**
