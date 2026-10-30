@@ -10,9 +10,9 @@ test("typing updates the page, the source and the file; the arrows cross into th
   await ed.type(" v2");
   await expect.poll(() => ed.textOf("h1")).toBe("Launch notes v2");
   await ed.press("ArrowRight");
-  await expect.poll(() => ed.frame<boolean>(`${F}.activeElement.matches("p.lede")`)).toBe(true);
+  await expect.poll(() => ed.caretIn("p.lede")).toBe(true);
   await ed.press("ArrowUp");
-  await expect.poll(() => ed.frame<boolean>(`${F}.activeElement.matches("h1")`)).toBe(true);
+  await expect.poll(() => ed.caretIn("h1")).toBe(true);
   expect(await ed.source()).toContain("<h1>Launch notes v2</h1>");
   await expect.poll(() => ed.disk()).toContain("<h1>Launch notes v2</h1>");
 });

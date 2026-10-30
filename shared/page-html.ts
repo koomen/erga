@@ -58,7 +58,7 @@ export const GUARD_TEXT = "[data-erga-id]";
 export const GUARD_NOT_TEXT = '.erga-locked, [data-erga-noedit], [contenteditable="false"], input, textarea, select, button';
 /** What keeps the browser's own press (a link, a form field, an editable part the page made itself, a video's controls). */
 export const GUARD_INTERACTIVE =
-  'a[href], button, input, textarea, select, label, summary, video, audio, iframe, [tabindex], [draggable="true"], [contenteditable]:not([contenteditable="false"])';
+  'a[href], button, input, textarea, select, label, summary, video, audio, iframe, [tabindex], [draggable="true"], [contenteditable]:not([contenteditable="false"]):not(body)';
 /** The cursors that say a drag here moves the page. */
 export const GUARD_GRAB = "^(grab|grabbing|move|all-scroll)$";
 /** The press, its moves and its release, for the mouse, a pen and a touch. */

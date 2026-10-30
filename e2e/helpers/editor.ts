@@ -130,12 +130,26 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       }
     },
     /** After a (re)load: the shell is up, the editor on the page (its text blocks editable), the agent's status in. */
-    loaded: () => until(async () => await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`) && await ed.frame<boolean>(`!!window.ergaFrame?.page && !!${F}.querySelector("[data-erga-id][contenteditable]")`), 10_000, "the editor loads"),
+    loaded: () =>
+      until(
+        async () =>
+          (await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`)) &&
+          (await ed.frame<boolean>(
+            `!!window.ergaFrame?.page && !!${F}.querySelector("[data-erga-id]") && ${F}.documentElement.hasAttribute("data-erga-editing")`
+          )),
+        10_000,
+        "the editor loads"
+      ),
     /** The tab has drawn what's done, and the editor in the page is up (a page that loads again, made afresh, has come). */
     settle: async () => {
       await settle(page);
       await until(() => page.evaluate(`!window.ergaPage?.page?.loading`), 10_000, "the page's editor is up");
     },
+    /** Whether the page's text has the focus, with the caret (the selection's focus) in an element that matches `sel`. */
+    caretIn: (sel: string) =>
+      ed.frame<boolean>(
+        `(() => { const n = ${F}.getSelection().focusNode, e = n && (n.nodeType == 1 ? n : n.parentElement); return ${F}.hasFocus() && ${F}.activeElement == ${F}.body && ${F}.body.isContentEditable && !!e?.closest(${JSON.stringify(sel)}); })()`
+      ),
     /**
      * The page is rendered and has the caret in a unit. Keys never need it (the editor holds keys that come while it
      * renders the page afresh, and applies them after); a click does, after a change that renders the page afresh (an
@@ -143,7 +157,14 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
      */
     async idle() {
       await settle(page);
-      await until(() => ed.frame<boolean>(`!!window.ergaFrame?.page && !ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && !!${F}.activeElement?.closest("[data-erga-id]")`), 5000, "the editor to settle");
+      await until(
+        () =>
+          ed.frame<boolean>(
+            `!!window.ergaFrame?.page && !ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && ${F}.activeElement == ${F}.body && (() => { const n = ${F}.getSelection().focusNode; return !!(n && (n.nodeType == 1 ? n : n.parentElement)?.closest("[data-erga-id]")); })()`
+          ),
+        5000,
+        "the editor to settle"
+      );
     },
     /** The file on disk. */
     disk: () => readFileSync(doc.file, "utf8"),

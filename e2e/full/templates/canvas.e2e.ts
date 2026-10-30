@@ -68,7 +68,12 @@ test("editing: the controls show, forward flies the same way, and the frames' te
   await editorReady(page);
   await expect.poll(async () => (await bar(page)).shown && (await camera(page))?.at == 0).toBe(true);
   await flies(page, 0);
-  expect(await inPage<boolean>(page, `(() => { const h = document.querySelector(".frame.current h2"); return h ? h.isContentEditable : null; })()`)).toBe(true);
+  expect(
+    await inPage<boolean>(
+      page,
+      `(() => { const h = document.querySelector(".frame.current h2"); return h ? !!h.closest("[data-erga-id]") && !h.closest('[contenteditable="false"], .erga-locked') : null; })()`
+    )
+  ).toBe(true);
 });
 
 test("editing: the camera zooms past the editor's limits, by ctrl and the wheel and by the zoom keys, and a drag pans; a press on the text places the caret and doesn't pan", async ({ tab }) => {

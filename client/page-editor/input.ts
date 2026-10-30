@@ -4,7 +4,7 @@
 import * as M from "../../shared/manuscript";
 import { listenAsEditor } from "./text-guard";
 import type { HeldInput } from "./types";
-import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
+import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked } from "./source";
 import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
 import { isMac } from "./core";
 import { leaveCode } from "./blocks";
@@ -27,8 +27,6 @@ const CHECKBOX = /<input\b[^>]*\btype\s*=\s*["']?checkbox\b[^>]*>/gi;
 const EMACS: Record<string, string> = { n: "ArrowDown", p: "ArrowUp", f: "ArrowRight", b: "ArrowLeft" };
 
 export abstract class EditorInput extends EditorClipboard {
-  /** The column ArrowUp and ArrowDown keep (its x on the page), while the caret is where the last of them put it. */
-  protected goal: { x: number; pos: number } | null = null;
 
   protected bind(): void {
     const doc = this.doc!;
@@ -42,23 +40,47 @@ export abstract class EditorInput extends EditorClipboard {
       if (!this.holdKey(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey })) this.keydown(e);
     });
     on("compositionstart", (e) => {
-      if (this.ours(e)) this.composing = true;
+      if (!this.ours(e)) return;
+      // A selection across blocks that the composed text replaces goes first, by the editor: the browser would
+      // delete it itself, and join the blocks in the page alone.
+      const sel = this.currentSelection();
+      if (M.unitAt(this.units, sel.from) != M.unitAt(this.units, sel.to)) this.replaceRange(sel.from, sel.to, "", "delete");
+      this.composing = true;
     });
     on("compositionend", (e) => {
       if (this.ours(e)) this.compositionend();
     });
     on("selectionchange", () => this.selectionchange());
+    // The page's window has the focus again (the shell closed a card): the text that had it takes it at once, before
+    // the shell's word comes, or a key meanwhile would find a <body> the browser does not edit in.
+    const back = () => {
+      if (!this.leftText && this.inText) this.focus();
+    };
+    this.win.addEventListener("focus", back);
+    this.cleanup.push(() => this.win.removeEventListener("focus", back));
+    let focused = false;
     on("focusin", (e) => {
-      if ((e.target as Element).hasAttribute?.("data-erga-id")) this.leftText = false;
+      if (e.target != this.host) return;
+      focused = true;
+      this.leftText = false;
+    });
+    // The text lost the focus to something else in the page (a script's blur(), a button): the <body> is not editable
+    // until a click on text, so the page's own keys work there. Not when the window lost it (a card in the shell).
+    on("focusout", (e) => {
+      if (e.target != this.host) return;
+      focused = false;
+      setTimeout(() => {
+        if (!focused && this.doc?.hasFocus()) this.editable(false);
+      });
     });
     on("paste", (e) => {
-      if (this.ours(e) || this.spanning) this.paste(e);
+      if (this.ours(e)) this.paste(e);
     });
     on("cut", (e) => {
-      if (this.ours(e) || this.spanning) this.cut(e);
+      if (this.ours(e)) this.cut(e);
     });
     on("copy", (e) => {
-      if (this.ours(e) || this.spanning) this.copy(e);
+      if (this.ours(e)) this.copy(e);
     });
     on("dragstart", (e) => {
       if (this.ours(e)) e.preventDefault();
@@ -98,16 +120,10 @@ export abstract class EditorInput extends EditorClipboard {
       },
       { capture: true }
     );
-    on("mousemove", (e) => {
-      this.drag(e);
-      this.config.onPointer?.(e);
-    });
-    on("mouseup", () => {
-      if (this.dragFrom) {
-        this.dragFrom = null;
-        this.settleSpan();
-      }
-    });
+    on("mousemove", (e) => this.config.onPointer?.(e));
+    // A caret the browser put outside the text goes into it before the next paint (see snapCaret).
+    on("mouseup", () => this.win.requestAnimationFrame(() => this.snapCaret(true)));
+    on("keydown", () => this.win.requestAnimationFrame(() => this.snapCaret(false)));
   }
 
   protected unbind(): void {
@@ -182,21 +198,65 @@ export abstract class EditorInput extends EditorClipboard {
     if (this.doc) showDropNote(this.doc, point, message);
   }
 
-  /** Whether an event comes from manuscript rather than from a widget, input or plain page. */
+  /**
+   * Whether an event comes from manuscript rather than from a widget, input or plain page. Keys, input and the
+   * clipboard go to the editing host itself: there, the selection says whether they are the text's.
+   */
   protected ours(e: Event): boolean {
     const t = e.target as Node | null;
     if (!t) return false;
     const el = t.nodeType == 1 ? (t as Element) : t.parentElement;
-    if (!el) return false;
-    if (el.closest('[contenteditable="false"], input, textarea, select')) return false;
-    return !!el.closest("[data-erga-id]");
+    if (!el || this.inIsland(el)) return false;
+    if (el.closest("[data-erga-id]")) return true;
+    if (el != this.host || /^(mouse|pointer|click|drag|drop)/.test(e.type)) return false;
+    const at = this.doc?.getSelection()?.focusNode;
+    const fe = at && (at.nodeType == 1 ? (at as Element) : at.parentElement);
+    return !!fe && this.host.contains(fe) && !this.inIsland(fe);
+  }
+
+  /** Whether an element is in an island of the editing host, or is a control of its own. */
+  protected inIsland(el: Element): boolean {
+    return !!el.closest('[contenteditable="false"], input, textarea, select');
+  }
+
+  /**
+   * A caret the browser put outside the text (between blocks, in an island it does not skip, as an <svg>, or after the
+   * last block in Firefox) goes into the nearest text block, the way it moved: none that way, the other way. A click in
+   * an island (`click`) leaves it there: the click was the island's (a widget's).
+   */
+  protected snapCaret(click: boolean): void {
+    const sel = this.doc?.getSelection();
+    if (!sel?.focusNode || !sel.isCollapsed || !this.inText || this.composing || this.rendering) return;
+    if (this.posFromDOM(sel.focusNode, sel.focusOffset) != null) return;
+    const at = sel.focusNode.nodeType == 1 ? (sel.focusNode as Element) : sel.focusNode.parentElement;
+    if (click && at && this.inIsland(at)) return;
+    const last = this.state.selection.main.head;
+    const was = this.domAtPos(last);
+    let forward = true;
+    if (was) {
+      const r = this.doc!.createRange();
+      r.setStart(sel.focusNode, sel.focusOffset);
+      forward = r.comparePoint(was.node, was.offset) <= 0;
+    }
+    const pos = this.posNear(sel.focusNode, sel.focusOffset, forward) ?? this.posNear(sel.focusNode, sel.focusOffset, !forward);
+    if (pos == null) return;
+    this.dispatch({ selection: { anchor: pos }, userEvent: "select" });
   }
 
   protected mousedown(e: MouseEvent): void {
     if (e.button == 0) this.pointerSeq++;
+    // A click on the text after Escape (leaveText), or after the text lost the focus: the page's text is editable again,
+    // before the browser puts the caret.
+    if ((this.leftText || !this.host?.hasAttribute("contenteditable")) && e.button == 0 && this.ours(e)) {
+      this.leftText = false;
+      this.editable(true);
+    }
     // A locked unit takes no caret; say why instead of doing nothing.
+    // (A page's own editable box is its own; the editing host is the editor's.)
+    const ownBox = (e.target as Element).closest?.('[contenteditable="true"]');
+    const pageOwn = !!ownBox && ownBox != this.host;
     const locked = (e.target as Element).closest?.(".erga-locked");
-    if (locked && !(e.target as Element).closest('button, a[href], input, textarea, select, [contenteditable="true"]')) {
+    if (locked && !pageOwn && !(e.target as Element).closest("button, a[href], input, textarea, select")) {
       const why = this.lockReasons.get(locked);
       if (why) this.config.onNotice?.(why.message, why.fix);
     }
@@ -204,25 +264,15 @@ export abstract class EditorInput extends EditorClipboard {
     const fixed = (e.target as Element).closest?.(`[${M.NO_EDIT_ATTR}]`);
     if (
       fixed &&
-      !(e.target as Element).closest(
-        'button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe, [contenteditable="true"]'
-      )
+      !pageOwn &&
+      !(e.target as Element).closest("button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe")
     ) {
       this.config.onNotice?.("This part of the page is marked as not editable by hand. Ask the agent to change it.");
     }
-    this.dragFrom = null;
     if (e.button == 0) {
-      // Shift-click extends the selection, into other units too.
-      if (e.shiftKey && (this.spanning || this.ours(e))) {
-        const u = this.unitOf(this.doc!.caretRangeFromPoint?.(e.clientX, e.clientY)?.startContainer ?? (e.target as Node));
-        if (this.spanning || (u && u != M.unitAt(this.units, this.currentSelection().anchor))) {
-          e.preventDefault();
-          this.extendTo(e.clientX, e.clientY);
-          return;
-        }
-      }
-      // A plain click puts a caret in one unit: the units are hosts again.
-      if (this.spanning) this.setSpanning(false);
+      // A press in the selection would drag its text, which the editor doesn't do (dragstart): it starts a new one.
+      const sel = this.doc!.getSelection();
+      if (!e.shiftKey && sel && !sel.isCollapsed && this.ours(e)) sel.removeAllRanges();
       // A click next to the text (in the margin, under the last block) puts the caret in the nearest unit, as a document
       // does: the browser would put it nowhere, and the keys typed next would be lost.
       const beside = !e.shiftKey && e.detail <= 1 && !this.ours(e) ? this.caretBeside(e) : null;
@@ -232,9 +282,6 @@ export abstract class EditorInput extends EditorClipboard {
         this.dispatch({ selection: { anchor: beside }, userEvent: "select" });
         return;
       }
-      const hit = this.ours(e) && e.detail <= 1 ? this.doc!.caretRangeFromPoint?.(e.clientX, e.clientY) : null;
-      const host = hit && (e.target as Element).closest?.("[data-erga-id]");
-      if (hit && host) this.dragFrom = { node: hit.startContainer, offset: hit.startOffset, el: host };
     }
     // Inside manuscript the browser doesn't follow links; Cmd-click does.
     if (!this.ours(e)) return;
@@ -252,8 +299,9 @@ export abstract class EditorInput extends EditorClipboard {
    */
   protected caretBeside(e: MouseEvent): number | null {
     const t = e.target as Element;
-    if (!t?.querySelectorAll || t.closest(`a[href], button, input, textarea, select, label, [contenteditable], [${M.NO_EDIT_ATTR}]`))
-      return null;
+    if (!t?.querySelectorAll || t.closest(`a[href], button, input, textarea, select, label, [${M.NO_EDIT_ATTR}]`)) return null;
+    const own = t.closest("[contenteditable]");
+    if (own && own != this.host) return null;
     // Only empty space in the text's flow: not a box the page draws or pans (a widget's border, a board with a grab
     // cursor).
     const c = this.doc!.defaultView!.getComputedStyle(t);
@@ -313,22 +361,8 @@ export abstract class EditorInput extends EditorClipboard {
     setTimeout(() => this.showChecks());
   }
 
-  /** A drag that leaves the unit it started in selects across units. */
-  protected drag(e: MouseEvent): void {
-    const from = this.dragFrom;
-    if (!from || !(e.buttons & 1)) return;
-    const hit = this.doc!.caretRangeFromPoint?.(e.clientX, e.clientY);
-    if (!hit || (!this.spanning && from.el.contains(hit.startContainer))) return;
-    e.preventDefault();
-    this.extendTo(e.clientX, e.clientY, from);
-  }
-
   protected selectionchange(): void {
     if (this.writingSelection || this.composing || !this.doc) return;
-    if (this.spanning && !this.dragFrom) {
-      this.settleSpan();
-      return;
-    }
     const sel = this.readSelection();
     if (!sel) return;
     const main = this.state.selection.main;
@@ -351,12 +385,7 @@ export abstract class EditorInput extends EditorClipboard {
       e.stopPropagation();
       return true;
     }
-    if (this.spanning && this.spanKey(e)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return true;
-    }
-    if (!this.spanning && (!this.activeUnit || !this.ours(e))) return false;
+    if (!this.inText || !this.ours(e)) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
     let handled = false;
@@ -387,7 +416,7 @@ export abstract class EditorInput extends EditorClipboard {
    * again (render: the page that comes applies them, takeHeld); returns whether it did.
    */
   protected holdKey(e: KeyboardEvent | InputEvent, h: HeldInput): boolean {
-    if (!(this.holding || (this.rendering && this.doc)) || e.isComposing || !(this.ours(e) || this.spanning)) return false;
+    if (!(this.holding || (this.rendering && this.doc)) || e.isComposing || !this.ours(e)) return false;
     e.preventDefault();
     e.stopPropagation();
     this.held.push(h);
@@ -420,7 +449,7 @@ export abstract class EditorInput extends EditorClipboard {
 
   /** Applies a held key or input as if it came now, in the unit with the caret: the editor's own keys, else what the browser does with it. */
   protected replay(h: HeldInput): void {
-    const base = () => ({ target: this.activeUnit ?? this.doc!.body, isComposing: false, preventDefault() {}, stopPropagation() {} });
+    const base = () => ({ target: this.host ?? this.doc!.body, isComposing: false, preventDefault() {}, stopPropagation() {} });
     const input = (inputType: string, data: string | null) =>
       this.beforeinput({ ...base(), inputType, data, dataTransfer: null, getTargetRanges: () => [] } as unknown as InputEvent);
     if ("input" in h) {
@@ -447,157 +476,35 @@ export abstract class EditorInput extends EditorClipboard {
   }
 
   /**
-   * Keys while a selection spans units, where the browser edits nothing
-   * itself (see setSpanning): typing, Backspace, Delete and Enter replace the
-   * selection; an arrow without Shift collapses it. Shift and an arrow is the
-   * browser's, and so are shortcuts, which keydown handles as usual.
+   * The arrow keys are the browser's: in the one editing host it moves the caret and the selection through the blocks
+   * as in any document. The editor takes two: ArrowDown on the last line of a code block that ends the page, which
+   * makes a paragraph after it (blocks.ts, leaveCode); and Option+ArrowRight or Left (Control elsewhere) at a block's
+   * edge, which goes on to the next block's word, as a Mac does (Chromium stops at the block's edge).
    */
-  protected spanKey(e: KeyboardEvent): boolean {
-    if (e.key.startsWith("Arrow")) {
-      if (e.shiftKey) return false;
-      const sel = this.currentSelection();
-      const back = e.key == "ArrowLeft" || e.key == "ArrowUp";
-      this.dispatch({ selection: { anchor: back ? sel.from : sel.to }, userEvent: "select", scrollIntoView: true });
-      return true;
-    }
-    if (e.ctrlKey || e.metaKey) return false;
-    if (e.key == "Backspace" || e.key == "Delete") {
-      this.deleteChar(e.key == "Delete");
-      return true;
-    }
-    if (e.key == "Enter") {
-      this.enter(e.shiftKey);
-      return true;
-    }
-    if ([...e.key].length == 1) {
-      this.insertText(e.key, null);
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Shift and an arrow key: inside a unit the browser extends the selection;
-   * at its edge, where the browser stops, the selection carries on across
-   * units (setSpanning), and the browser extends it there.
-   */
-  protected extendKey(e: KeyboardEvent): boolean {
-    const sel = this.doc!.getSelection();
-    if (!sel?.anchorNode || !sel.focusNode || (!isMac && e.metaKey) || (isMac && e.ctrlKey)) return false;
-    const vertical = e.key == "ArrowUp" || e.key == "ArrowDown";
-    const dir = e.key == "ArrowLeft" || e.key == "ArrowUp" ? "backward" : "forward";
-    const gran =
-      isMac && e.metaKey
-        ? vertical
-          ? "documentboundary"
-          : "lineboundary"
-        : vertical
-          ? e.ctrlKey || e.altKey
-            ? "paragraphboundary"
-            : "line"
-          : (isMac ? e.altKey : e.ctrlKey)
-            ? "word"
-            : "character";
-    const { anchorNode, anchorOffset, focusNode, focusOffset } = sel;
-    // On a unit's first or last line, the browser would stop at the line's end: one press goes on to the next line.
-    const head = gran == "line" && !this.spanning ? this.posFromDOM(focusNode, focusOffset) : null;
-    const edge = head != null && this.lineEdge(head, dir == "forward")?.onEdge;
-    if (gran != "documentboundary" && !edge) {
-      sel.modify("extend", dir, gran);
-      if (sel.focusNode != focusNode || sel.focusOffset != focusOffset) return true;
-    }
-    this.setSpanning(true);
-    sel.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
-    sel.modify("extend", dir, gran);
-    return true;
-  }
-
-  /** Arrow keys at a unit's edge move the caret into the neighbouring unit, keeping the column. */
   protected arrow(e: KeyboardEvent): boolean {
-    if (e.shiftKey) return this.extendKey(e);
-    const horizontal = e.key == "ArrowRight" || e.key == "ArrowLeft";
-    // Cmd+ArrowUp and Cmd+ArrowDown (a Mac's): the start or the end of the page. Option+ArrowLeft and Option+ArrowRight
-    // (Control elsewhere): a word, on into the next unit at a unit's edge.
-    const page = isMac && e.metaKey && !e.altKey && !e.ctrlKey && !horizontal;
-    const word = horizontal && !e.metaKey && (isMac ? e.altKey && !e.ctrlKey : e.ctrlKey && !e.altKey);
-    if ((e.altKey || e.metaKey || e.ctrlKey) && !page && !word) return false;
+    const forward = e.key == "ArrowRight" || e.key == "ArrowDown";
+    const word =
+      (e.key == "ArrowRight" || e.key == "ArrowLeft") &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      (isMac ? e.altKey && !e.ctrlKey : e.ctrlKey && !e.altKey);
+    if (!word && (e.key != "ArrowDown" || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey)) return false;
     const sel = this.currentSelection();
-    if (!sel.empty && !page) return false;
-    const u = M.unitAt(this.units, sel.head);
+    const u = sel.empty ? M.unitAt(this.units, sel.head) : null;
     if (!u) return false;
-    const src = this.src;
-    // The caret positions of a unit's text are the browser's; it stops at the ends of the text the page shows (M.textEnd).
-    const first = (x: M.Unit) => M.textStart(x),
-      last = (x: M.Unit) => M.textEnd(x);
-    const go = (pos: number) => {
-      this.dispatch({ selection: { anchor: pos }, userEvent: "select", scrollIntoView: true });
-      return true;
-    };
-    if (page) {
-      const open = this.units.filter((x) => this.els[x.id] && !this.els[x.id]!.classList.contains("erga-locked"));
-      if (!open.length) return false;
-      return go(e.key == "ArrowDown" ? last(open.at(-1)!) : first(open[0]));
-    }
-    if (horizontal) {
-      const forward = e.key == "ArrowRight";
-      const edge = forward
-        ? sel.head >= last(u) && !STOPS.test(src.slice(sel.head, u.contentTo))
-        : sel.head <= first(u) && !STOPS.test(src.slice(u.contentFrom, sel.head));
-      if (!edge) return false;
-      const next = this.units[u.id + (forward ? 1 : -1)];
+    if (word) {
+      const next = (forward ? sel.head >= M.textEnd(u) : sel.head <= M.textStart(u)) && this.units[u.id + (forward ? 1 : -1)];
       if (!next) return false;
-      go(forward ? first(next) : last(next));
-      if (!word) return true;
-      // The word in the next unit, as the browser moves by words there.
+      this.dispatch({ selection: { anchor: forward ? M.textStart(next) : M.textEnd(next) }, userEvent: "select", scrollIntoView: true });
       const dom = this.doc!.getSelection();
       dom?.modify("move", forward ? "forward" : "backward", "word");
       const pos = dom?.focusNode ? this.posFromDOM(dom.focusNode, dom.focusOffset) : null;
-      if (pos != null) go(pos);
+      if (pos != null) this.dispatch({ selection: { anchor: pos }, userEvent: "select" });
       return true;
     }
-    const down = e.key == "ArrowDown";
-    const at = this.lineEdge(sel.head, down);
-    if (!at) return false;
-    // The column the caret keeps across lines and short blocks: where it was before the first of these moves.
-    const x = this.goal?.pos == sel.head ? this.goal.x : at.caret.left;
-    const doc = this.doc!;
-    const keep = (pos: number | null) => {
-      if (pos == null) return false;
-      go(pos);
-      this.goal = { x, pos: this.state.selection.main.head };
-      return true;
-    };
-    const hit = (y: number, host: Element) => {
-      const range = doc.caretRangeFromPoint?.(x, y);
-      return range && host.contains(range.startContainer) ? this.posFromDOM(range.startContainer, range.startOffset) : null;
-    };
-    if (!at.onEdge) {
-      // Within the unit: the browser's move to the next line, then the column on that line.
-      const dom = doc.getSelection();
-      if (!dom) return false;
-      dom.modify("move", down ? "forward" : "backward", "line");
-      const r = dom.rangeCount ? dom.getRangeAt(0).getClientRects()[0] : null;
-      const moved = dom.focusNode ? this.posFromDOM(dom.focusNode, dom.focusOffset) : null;
-      return keep((r?.height ? hit(r.top + r.height / 2, at.el) : null) ?? moved);
-    }
-    const next = this.units[u.id + (down ? 1 : -1)],
-      nel = next && this.els[next.id];
-    if (!next && down) {
-      // A code block that ends the page: a paragraph after it, as there is no other way out of it.
-      const out = leaveCode(src, this.units, u);
-      if (out && this.verify(u)) return this.listEdit(out);
-    }
-    if (!next || !nel) return false;
-    // The middle of the next unit's first line (going down) or its last line (going up), whatever the size of its text.
-    const nr = nel.getBoundingClientRect();
-    const line = this.coordsAtPos(down ? first(next) : last(next), down ? 1 : -1);
-    const y =
-      line?.height && line.top >= nr.top - 1 && line.bottom <= nr.bottom + 1
-        ? line.top + line.height / 2
-        : down
-          ? nr.top + Math.min(nr.height / 2, 8)
-          : nr.bottom - Math.min(nr.height / 2, 8);
-    return keep(hit(y, nel) ?? (down ? first(next) : last(next)));
+    const out = leaveCode(this.src, this.units, u);
+    if (!out || !this.verify(u) || !this.lineEdge(sel.head, true)?.onEdge) return false;
+    return this.listEdit(out);
   }
 
   /** The caret's box at `pos`, its unit's element, and whether the caret is on the unit's first line (`down`: its last). */

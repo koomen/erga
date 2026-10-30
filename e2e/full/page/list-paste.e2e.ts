@@ -27,7 +27,7 @@ test("Two bulleted items, copied into a new item of a numbered list, become its 
   await ed.press("Shift+Home");
   await ed.press("Shift+ArrowUp");
   await ed.press("ControlOrMeta+c");
-  await ed.press("ArrowUp");
+  // (ArrowUp with a selection goes up a line from its start, as on a Mac.)
   await ed.press("ArrowUp");
   await ed.press("End");
   await ed.press("Enter");

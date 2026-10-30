@@ -31,7 +31,7 @@ async function caretAt(ed: Editor, text: string, end: boolean) {
     const e = ${block(text)}, w = ${F}.createTreeWalker(e, 4, { acceptNode: (n) => /\\S/.test(n.nodeValue) ? 1 : 3 });
     const nodes = []; for (let n = w.nextNode(); n; n = w.nextNode()) nodes.push(n);
     const t = ${end} ? nodes[nodes.length - 1] : nodes[0];
-    e.focus();
+    (e.closest("[contenteditable]") ?? e).focus();
     if (!t) ${F}.getSelection().collapse(e, 0);
     else ${F}.getSelection().collapse(t, ${end} ? t.nodeValue.replace(/\\s+$/, "").length : t.nodeValue.length - t.nodeValue.replace(/^\\s+/, "").length);
   })()`);
@@ -107,7 +107,10 @@ for (const [what, a, b] of HTML) {
       // An empty block before: it takes the text, so the block with it is the one that starts with the text.
       const original = await ed.source();
       await caretAt(ed, key == "Backspace" ? b : "After an empty", false);
-      if (key == "Delete") await ed.frame(`(() => { const e = ${block(b)}.previousElementSibling; e.focus(); ${F}.getSelection().collapse(e, 0); })()`);
+      if (key == "Delete")
+        await ed.frame(
+          `(() => { const e = ${block(b)}.previousElementSibling; (e.closest("[contenteditable]") ?? e).focus(); ${F}.getSelection().collapse(e, 0); })()`
+        );
       await ed.press(key);
       await expect.poll(() => ed.count("#empty-a, #empty-b")).toBe(1);
       expect(await textOf(ed, b)).toBe(b);

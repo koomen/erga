@@ -4,11 +4,15 @@ import { F, openEditor } from "../../helpers/editor";
 
 await servers.main();
 
-test("the page renders as units; a widget's button is a plain button; the units are the editing hosts; svg text isn't editable", async ({ tab }) => {
+test("the page renders as units; a widget's button is a plain button; the body is the one editing host; svg text isn't editable", async ({
+  tab,
+}) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   expect(await ed.count("[data-erga-id]")).toBeGreaterThanOrEqual(9);
-  expect(await ed.frame<boolean>(`!${F}.getElementById("bump").closest("[contenteditable]")`)).toBe(true);
-  expect(await ed.frame<boolean>(`${F}.body.getAttribute("contenteditable") == null && ${F}.querySelector("h1").getAttribute("contenteditable") == "true"`)).toBe(true);
+  expect(await ed.frame<boolean>(`!${F}.getElementById("bump").isContentEditable`)).toBe(true);
+  expect(await ed.frame<boolean>(`${F}.body.getAttribute("contenteditable") == "true" && ${F}.querySelector("h1").isContentEditable`)).toBe(
+    true
+  );
   expect(await ed.frame<boolean>(`!${F}.querySelector("svg text").closest("[data-erga-id]")`)).toBe(true);
 });
 

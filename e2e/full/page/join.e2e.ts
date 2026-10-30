@@ -35,7 +35,7 @@ for (const [what, sel, joined, prevSel, prevText] of CASES) {
     expect(src).not.toContain(`id="${sel.slice(1)}"`);
     await expect.poll(async () => (await ed.count(sel)) == 0 && (await ed.textOf(prevSel)) == prevText).toBe(true);
     expect((await ed.selection()).head).toBe(src.indexOf(plain) + joined.indexOf("|"));
-    expect(await ed.frame<boolean>(`${F}.activeElement.matches(${JSON.stringify(prevSel)})`)).toBe(true);
+    expect(await ed.caretIn(prevSel)).toBe(true);
     await ed.press("ControlOrMeta+z");
     await expect.poll(async () => (await ed.source()) == original && (await ed.count(sel)) == 1).toBe(true);
   });

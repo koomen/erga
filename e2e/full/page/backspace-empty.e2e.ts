@@ -23,7 +23,7 @@ for (const [sel, text] of CASES) {
     await ed.press("Backspace");
     await expect.poll(() => ed.source()).toBe(original);
     expect((await ed.selection()).head).toBe(original.indexOf(text, original.indexOf("<body>")) + text.length);
-    expect(await ed.frame<boolean>(`${F}.activeElement.matches(${JSON.stringify(sel)})`)).toBe(true);
+    expect(await ed.caretIn(sel)).toBe(true);
     // Typing goes in at the end of the block before.
     await ed.type("!");
     await expect.poll(() => ed.source()).toContain(text + "!<");

@@ -194,7 +194,7 @@ export abstract class EditorEdit extends EditorRender {
         drops.push(holder);
       // Deleting all of a last line's text after a line break: a <br> holds the line open, with the caret on it.
       return {
-        changes: [{ from, to, insert: insert || (holdsLine(src, a, from, to) ? "<br>" : "") }, ...drops],
+        changes: [cut(src, a, from, to, insert || (holdsLine(src, a, from, to) ? "<br>" : "")), ...drops],
         selection: { anchor: from + insert.length - dropped(drops, from) },
         userEvent,
         scrollIntoView: true,
@@ -207,7 +207,7 @@ export abstract class EditorEdit extends EditorRender {
       // The text inside the two end units goes, and so do the paragraphs,
       // headings and list items in between; other units (a table's cells, a
       // widget's label) only lose their text, so the page keeps its shape.
-      const changes = [{ from, to: M.textEnd(a), insert }];
+      const changes = [cut(src, a, from, M.textEnd(a), insert)];
       let last = M.textEnd(a);
       for (const u of between.slice(1, -1)) {
         if (u.from < last || u.to > M.textStart(b)) continue;
@@ -221,7 +221,7 @@ export abstract class EditorEdit extends EditorRender {
         changes.push({ from: indent ? u.from - indent[0].length : u.from, to: u.to, insert: "" });
         last = u.to;
       }
-      changes.push({ from: M.textStart(b), to, insert: "" });
+      changes.push(cut(src, b, M.textStart(b), to, ""));
       const spec = { changes, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true };
       // Text blocks at both ends, and only whole ones between: the two join, as Backspace would join them then (a
       // paragraph and a list item, two items of two lists).
@@ -524,6 +524,29 @@ export abstract class EditorEdit extends EditorRender {
   protected target() {
     return { state: this.state, dispatch: (tr: Transaction) => this.dispatch(tr) };
   }
+}
+
+/** The inline elements of a unit that hold `pos`, outermost first. */
+function inlineAt(u: M.Unit, pos: number): M.ElementNode[] {
+  const out: M.ElementNode[] = [];
+  for (let node: M.ElementNode | undefined = u.node; node; ) {
+    node = node.children.find((c): c is M.ElementNode => c.kind == "element" && !c.selfClosing && c.openTo <= pos && pos <= c.closeFrom);
+    if (node) out.push(node);
+  }
+  return out;
+}
+
+/**
+ * [from, to) of one unit replaced by `insert`, with the inline tags the range opens or closes kept, so the HTML stays
+ * well-formed: `Bu[ild <em>co]ol</em>` and "x" give `Bux<em>ol</em>`.
+ */
+function cut(src: string, u: M.Unit, from: number, to: number, insert: string): { from: number; to: number; insert: string } {
+  const a = inlineAt(u, from),
+    b = inlineAt(u, to);
+  let k = 0;
+  while (k < a.length && k < b.length && a[k] == b[k]) k++;
+  const tags = (l: M.ElementNode[]) => l.map((e) => ({ tag: e.tag, open: src.slice(e.from, e.openTo) }));
+  return { from, to, insert: insert + M.closeTags(tags(a.slice(k))) + M.openTags(tags(b.slice(k))) };
 }
 
 /**

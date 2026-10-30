@@ -79,6 +79,24 @@ Two more decisions come with it:
   decision); Shift+Tab takes a step back. A code block's empty last line has a `<br>` after its `\n` (a `<pre>` shows
   no last line break), as a paragraph's has `<br><br>`. Enter at the end of a summary makes a paragraph in its
   details if they are open on the page, else after them.
+- Step 7 (one editing host): done. The page's `<body>` is the one editing host (`makeHost` in `core.ts`); each element
+  that holds no text block, and isn't in one, is an island (`contenteditable="false"`, `islands`), at attach and for
+  the new parts of a reconciled region. The spanning mode is gone (`setSpanning`, `spanKey`, `extendKey`, `extendTo`,
+  the drag code): the browser moves the caret and the selection across blocks, with and without Shift. The arrow
+  code that is left: ArrowDown out of a last code block (step 6), and Option+ArrowRight or Left at a block's edge
+  (Chromium stops there; a Mac goes on to the next block's word). Changes to the plan:
+  1. `<body>` is editable only while the text has the focus. After Escape (`leaveText`), after a script's `blur()`,
+     or on a page that opens paused, it is not: a page's own key handlers skip editable targets (a deck's arrows,
+     PROMPT.md rule 14), and the whole `<body>` would be one. A click on text makes it editable again.
+  2. When the frame's window gets the focus back, the editor focuses `<body>` at once (the `<body>` is the active
+     element also when the frame has no focus, and the browser does not move a caret in it then).
+  3. A caret that lands outside the text (between blocks, in an `<svg>`) goes into the nearest block before the next
+     paint, after a key or a mouse up; not after a click in an island (a widget keeps its click).
+  4. A composition (IME) over a selection across blocks: the editor deletes the selection when the composition starts.
+  5. A press in a selection starts a new selection: the editor does not drag text.
+  6. A range that an edit replaces keeps the inline tags it opens or closes (`cut` in `edit.ts`). Before, a delete
+     across `<em>` left `</em>` alone in the HTML. One host made this easy to reach.
+  Cost: a typed letter takes 0.6 ms at 200 KB and 1.9 ms at 1 MB, before 0.5 ms and 1.7 ms.
 - The one-host prototype (step 7) works in Chromium, WebKit and Firefox, with two additions: a caret that lands
   outside the text (in an `<svg>`, or past the last block in Firefox) goes to the nearest block before the paint,
   and Enter and Shift+Enter stay in `keydown` (WebKit sends Shift+Enter as `insertParagraph`).

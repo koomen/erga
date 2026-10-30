@@ -5,7 +5,8 @@ import { F, openEditor, type Editor } from "../../helpers/editor";
 await servers.main();
 
 const domText = (ed: Editor) => ed.frame<string>(`${F}.getSelection().toString()`);
-const hosts = (ed: Editor) => ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.getAttribute("contenteditable") == "true")`);
+const hosts = (ed: Editor) =>
+  ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.isContentEditable)`);
 
 test("a drag from the heading into the paragraph selects across both; Backspace deletes it and joins them as valid HTML; undo brings both back", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
@@ -19,7 +20,7 @@ test("a drag from the heading into the paragraph selects across both; Backspace 
   await expect.poll(() => ed.textOf("h1")).toMatch(/^Lald /);
   expect(await ed.source()).toContain(`<h1>Lald <em>cool</em>`);
   expect(await hosts(ed)).toBe(true);
-  expect(await ed.frame<boolean>(`${F}.activeElement.matches("h1")`)).toBe(true);
+  expect(await ed.caretIn("h1")).toBe(true);
   await ed.press("ControlOrMeta+z");
   await expect.poll(async () => [await ed.textOf("h1"), await ed.count("p.lede")]).toEqual(["Launch notes", 1]);
 });

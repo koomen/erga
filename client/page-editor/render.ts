@@ -76,8 +76,8 @@ export abstract class EditorRender extends EditorMarks {
       else this.paused = false;
     }
     this.rendering = false;
-    this.spanning = false;
     for (const el of this.els) if (el) this.prepareUnit(el);
+    this.makeHost();
     // Verified, never guessed: a unit whose DOM text doesn't match the
     // source is locked now, not when someone tries to type into it.
     for (const u of this.units) if (this.verify(u)) this.showSpaces(u, src);
@@ -192,7 +192,6 @@ export abstract class EditorRender extends EditorMarks {
     this.own.clear();
     for (const el of doc.querySelectorAll(".erga-locked, .erga-empty, .erga-flash"))
       el.classList.remove("erga-locked", "erga-empty", "erga-flash");
-    doc.documentElement.classList.remove("erga-span");
     doc.documentElement.removeAttribute("data-erga-editing");
     this.win.dispatchEvent(new Event("erga-editing"));
     const w = this.win as Window & { __ergaReport?: unknown; __ergaApply?: unknown };
@@ -488,12 +487,11 @@ export abstract class EditorRender extends EditorMarks {
       this.unitByEl.set(el, u);
       if (!el.hasAttribute("data-erga-id")) el.setAttribute("data-erga-id", String(this.nextMark++));
     });
-    // An element that is no longer a text block (a list item whose text went into a <p>) stops being an editing host.
+    // An element that is no longer a text block (a list item whose text went into a <p>) loses the unit's marks.
     const now = new Set(els);
     for (const el of oldEls) {
       if (!el || now.has(el) || !el.isConnected) continue;
-      el.removeAttribute("contenteditable");
-      el.removeAttribute("spellcheck");
+      if (el.classList.contains("erga-locked")) el.removeAttribute("contenteditable");
       el.removeAttribute("data-erga-id");
       this.unitByEl.delete(el);
       el.classList.remove("erga-empty", "erga-locked", "erga-flash");
@@ -513,6 +511,17 @@ export abstract class EditorRender extends EditorMarks {
       if (this.verify(u)) this.showSpaces(u, src);
     }
     this.updateEmpty(ids);
+    // The region's new parts that hold no text are islands (core.ts): only those the change touched.
+    const regionEl = mirror.nodeOf(region) as Element | undefined;
+    if (regionEl) {
+      const inUnit = this.unitByEl.has(regionEl);
+      changes.iterChangedRanges((_fa, _ta, f, t) => {
+        for (const c of region.children) {
+          const el = c.kind == "element" && c.from <= t && f <= c.to ? mirror.nodeOf(c) : null;
+          if (el?.nodeType == 1) this.markIsland(el as Element, inUnit);
+        }
+      });
+    }
     return true;
   }
 

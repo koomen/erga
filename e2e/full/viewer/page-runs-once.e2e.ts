@@ -27,8 +27,11 @@ function counting(page: Page) {
 /** The document's page in the tab's frame. */
 const docFrame = (page: Page) => page.frames().find((f) => f.parentFrame() == page.mainFrame() && /\/t\//.test(f.url())) as Frame;
 /** Whether the editor is on the page: editing, ready, and the page's text blocks editable. */
-const editing = async (page: Page) => await page.evaluate(() => document.body.classList.contains("erga-editing") && document.body.classList.contains("erga-editor-ready"))
-  && !!(await docFrame(page)?.evaluate(() => !!(window as any).ergaFrame?.page && !!document.querySelector("[data-erga-id][contenteditable]")).catch(() => false));
+const editing = async (page: Page) =>
+  (await page.evaluate(() => document.body.classList.contains("erga-editing") && document.body.classList.contains("erga-editor-ready"))) &&
+  !!(await docFrame(page)
+    ?.evaluate(() => !!(window as any).ergaFrame?.page && !!document.querySelector("[data-erga-id]:not(.erga-locked)"))
+    .catch(() => false));
 /** Whether the viewer shows the page alone: the page in the frame with nothing of the editor's on it. */
 const viewing = async (page: Page) => await page.evaluate(() => !document.body.classList.contains("erga-editing"))
   && !!(await docFrame(page)?.evaluate(() => !(window as any).ergaFrame && !document.querySelector("[contenteditable], [data-erga-editing]") && !document.querySelector('style[data-erga="page"]')).catch(() => false));

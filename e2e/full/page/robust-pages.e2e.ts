@@ -5,11 +5,9 @@ import { openEditor } from "../../helpers/editor";
 
 await servers.main();
 
-// Known bug: the page's own contenteditable box shows what the person types, but the editor does not save it.
-// After a reload the text is gone.
-test(
-  "text typed in the page's own contenteditable box is still there after a reload",
-  knownBug(async ({ tab }) => {
+// The page's own contenteditable box is text like any other: the editor saves what the person types in it (the text
+// was gone after a reload).
+test("text typed in the page's own contenteditable box is still there after a reload", async ({ tab }) => {
     const ed = await openEditor(tab, await servers.main(), "robust-page");
     await ed.clickEnd("#own");
     await ed.type(" XY");
@@ -17,8 +15,7 @@ test(
     await tab.page.reload();
     await ed.loaded();
     expect(await ed.textOf("#own")).toBe("Own editable XY");
-  })
-);
+  });
 
 // Enter at the end of a <summary> keeps one summary (a browser uses only the first): the new paragraph goes into the
 // <details> if they are open, else after them, and the next key goes there.
