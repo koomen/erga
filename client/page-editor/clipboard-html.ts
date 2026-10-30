@@ -2,8 +2,8 @@
 // basic formatting, and nothing of the page or the app it came from.
 //
 // One allow-list both ways. Blocks: paragraphs, headings, bulleted and
-// numbered lists (nested), quotes and code blocks. Inline: bold, italic,
-// code, links (http, https, mailto and #id only) and line breaks; a copy adds
+// numbered lists (nested), quotes, code blocks, rules and (from Markdown) tables. Inline: bold, italic,
+// struck text, code, links (http, https, mailto and #id only) and line breaks; a copy adds
 // pictures. Everything else goes: fonts, sizes, colours, classes, styles,
 // spans, widgets.
 //
@@ -31,18 +31,25 @@ const escapeHtmlText = (text: string) => text.replace(/&/g, "&amp;").replace(/</
 const escapeAttr = (text: string) => escapeHtmlText(text).replace(/"/g, "&quot;");
 
 /** An inline piece of text: what it is, and the formatting it has. */
-interface Marks { strong: boolean; em: boolean; code: boolean; href: string | null }
+interface Marks {
+  strong: boolean;
+  em: boolean;
+  strike: boolean;
+  code: boolean;
+  href: string | null;
+}
 type Run = { text: string; marks: Marks } | { br: true } | { img: string; alt: string };
 
 /**
- * A paragraph, heading or code block; `html` holds only the inline allow-list, `text` is the same as plain text, `md`
- * as Markdown.
+ * A paragraph, heading, code block, rule or table; `html` holds only the inline allow-list, `text` is the same as plain
+ * text, `md` as Markdown. A table has its cells' HTML in `rows`, the first row its header.
  */
 export interface Leaf {
-  tag: "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "pre";
+  tag: "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "pre" | "hr" | "table";
   html: string;
   text: string;
   md: string;
+  rows?: string[][];
 }
 export interface List {
   tag: "ul" | "ol";
@@ -70,12 +77,13 @@ export interface Line {
   html: string;
   text: string;
   md: string;
+  rows?: string[][];
 }
 
 /** How a link reads: its address as the result has it, or null for none (its text stays). */
 type LinkOf = (a: Element) => string | null;
 
-const NONE: Marks = { strong: false, em: false, code: false, href: null };
+const NONE: Marks = { strong: false, em: false, strike: false, code: false, href: null };
 const BLOCK = /^(p|div|h[1-6]|li|ul|ol|dl|dt|dd|blockquote|pre|table|thead|tbody|tfoot|tr|td|th|caption|section|article|header|footer|main|nav|aside|figure|figcaption|hr|address|details|summary|center|form|fieldset|legend|body|html)$/;
 /** Elements that give no text: what isn't text, the document's head, and Word's own elements (<o:p>, <v:shape>). */
 const DROP = /^(script|style|template|head|title|meta|link|svg|math|canvas|img|picture|video|audio|iframe|object|embed|button|input|select|textarea|noscript|xml|o:p|v:.*|w:.*)$/;
@@ -107,6 +115,7 @@ function marksOf(el: Element, outer: Marks, rules: Map<string, string>, link?: L
   const name = el.localName, m = { ...outer };
   if (name == "b" || name == "strong") m.strong = true;
   if (name == "i" || name == "em") m.em = true;
+  if (name == "s" || name == "del" || name == "strike") m.strike = true;
   if (name == "code" || name == "kbd" || name == "samp" || name == "tt") m.code = true;
   if (name == "a") {
     const href = link ? link(el) : (el.getAttribute("href")?.trim() ?? "");
@@ -122,7 +131,8 @@ function marksOf(el: Element, outer: Marks, rules: Map<string, string>, link?: L
   return m;
 }
 
-const sameMarks = (a: Marks, b: Marks) => a.strong == b.strong && a.em == b.em && a.code == b.code && a.href == b.href;
+const sameMarks = (a: Marks, b: Marks) =>
+  a.strong == b.strong && a.em == b.em && a.strike == b.strike && a.code == b.code && a.href == b.href;
 
 /**
  * Runs as HTML with only the inline allow-list, and as plain text. Outside a
@@ -168,7 +178,8 @@ function render(runs: Run[], pre: boolean, noBold: boolean): { html: string; tex
   while (out.length && "br" in out[0]) out.shift();
   let html = "", text = "";
   const stack: string[] = [];
-  const tags = (m: Marks) => [m.href ? `a ${m.href}` : "", m.strong ? "strong" : "", m.em ? "em" : "", m.code ? "code" : ""].filter(Boolean);
+  const tags = (m: Marks) =>
+    [m.href ? `a ${m.href}` : "", m.strong ? "strong" : "", m.em ? "em" : "", m.strike ? "s" : "", m.code ? "code" : ""].filter(Boolean);
   const close = (k: string) => `</${k.split(" ")[0]}>`;
   const open = (k: string) => (k.startsWith("a ") ? `<a href="${k.slice(2).replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">` : `<${k}>`);
   let prev: Marks | null = null;
@@ -267,7 +278,8 @@ const markdownUrl = (url: string) => url.replace(/[\s()<>]/g, (c) => "%" + c.cha
 function markdown(runs: Run[]): string {
   let md = "";
   const stack: string[] = [];
-  const delim = (k: string, closing: boolean) => (k == "strong" ? "**" : k == "em" ? "*" : closing ? `](${markdownUrl(k.slice(2))})` : "[");
+  const delim = (k: string, closing: boolean) =>
+    k == "strong" ? "**" : k == "em" ? "*" : k == "s" ? "~~" : closing ? `](${markdownUrl(k.slice(2))})` : "[";
   // A span closes before the spaces at its end, and opens after those at its start.
   const close = () => {
     const space = /\s*$/.exec(md)![0];
@@ -285,7 +297,12 @@ function markdown(runs: Run[]): string {
       continue;
     }
     // The spans open stay open while the text keeps their formatting (Markdown nests them in any order).
-    const want = [r.marks.href ? `a ${r.marks.href}` : "", r.marks.strong ? "strong" : "", r.marks.em ? "em" : ""].filter(Boolean);
+    const want = [
+      r.marks.href ? `a ${r.marks.href}` : "",
+      r.marks.strong ? "strong" : "",
+      r.marks.em ? "em" : "",
+      r.marks.strike ? "s" : "",
+    ].filter(Boolean);
     let k = 0;
     while (k < stack.length && want.includes(stack[k])) k++;
     while (stack.length > k) close();
@@ -420,7 +437,15 @@ export function linesOf(html: string, o: { link?: LinkOf; images?: boolean } = {
       return;
     }
     if (dropped(el, d)) return;
-    if (name == "br" || el.getAttribute("data-stringify-type") == "paragraph-break") { start(ctx).runs.push({ br: true }); return; }
+    if (name == "br" || el.getAttribute("data-stringify-type") == "paragraph-break") {
+      start(ctx).runs.push({ br: true });
+      return;
+    }
+    if (name == "hr" && !ctx.item) {
+      flush();
+      lines.push({ ...RULE, quote: ctx.quote });
+      return;
+    }
     const marks = marksOf(el, ctx.marks, rules, o.link);
     // Word's list paragraphs: <p style="mso-list:l0 level2 lfo1"> with a marker (dropped as mso-list:Ignore) that says the type.
     const word = /level(\d+)/.exec(d["mso-list"] ?? "");
@@ -480,6 +505,18 @@ export function linesOf(html: string, o: { link?: LinkOf; images?: boolean } = {
 // ------------------------------------------------------------------ reading plain text
 
 const BULLET = /^([ \t]*)([-*+•◦▪]|\d{1,3}[.)])[ \t]+(.*)$/;
+/** A horizontal rule, as a line. */
+const RULE: Line = { tag: "hr", list: [], quote: false, html: "", text: "", md: "---" };
+/** The line under a Markdown table's header: "| --- | :---: |". */
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+/** A Markdown table's row as its cells' Markdown: between the pipes, "\|" a pipe in a cell. */
+const cells = (row: string) =>
+  row
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/(^|[^\\])\|$/, "$1")
+    .split(/(?<!\\)\|/)
+    .map((c) => c.replace(/\\\|/g, "|").trim());
 
 /**
  * Where the span that `delim` opened closes (searching from `from`), or -1: a
@@ -502,7 +539,7 @@ function closer(s: string, from: number, delim: string): number {
 
 /**
  * Markdown's inline formatting as runs: **bold** and __bold__, *italic* and
- * _italic_, `code`, [links](url) (to the addresses a paste keeps) and
+ * _italic_, ~~struck~~, `code`, [links](url) (to the addresses a paste keeps) and
  * backslash escapes. Anything else is text as it is.
  */
 function markdownRuns(s: string, marks: Marks, out: Run[]): void {
@@ -560,6 +597,15 @@ function markdownRuns(s: string, marks: Marks, out: Run[]): void {
         continue;
       }
     }
+    if (c == "~" && s[i + 1] == "~" && s[i + 2] != "~" && !/\s/.test(s[i + 2] ?? " ")) {
+      const at = closer(s, i + 3, "~~");
+      if (at >= 0) {
+        flush();
+        markdownRuns(s.slice(i + 2, at), { ...marks, strike: true }, out);
+        i = at + 2;
+        continue;
+      }
+    }
     if (c == "*" || c == "_") {
       const run = (c == "*" ? /^\*+/ : /^_+/).exec(s.slice(i))![0];
       const opens = !/\s/.test(s[i + run.length] ?? " ") && !(c == "_" && WORD.test(s[i - 1] ?? ""));
@@ -600,8 +646,9 @@ function markdownBlock(raw: string[], heading: boolean): { html: string; text: s
  * and a single line break is a line break in it. Lines that start with a
  * bullet ("- ", "* ", "• ") or a number ("1. ") are list items, nested by
  * their indent; an indented line after one goes on in it. "# " starts a
- * heading, "> " a quote, and ``` a code block; inline, **bold**, *italic*,
- * `code` and [links](url) are what they say.
+ * heading, "> " a quote, ``` a code block, "---" a rule, and lines of
+ * "| a | b |" with a "| --- | --- |" line under the first a table; inline,
+ * **bold**, *italic*, ~~struck~~, `code` and [links](url) are what they say.
  */
 export function textLines(text: string, quote = false): Line[] {
   const lines: Line[] = [];
@@ -627,6 +674,33 @@ export function textLines(text: string, quote = false): Line[] {
       for (i++; i < all.length && !new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}\\s*$`).test(all[i]); i++) body.push(all[i]);
       const code = body.join("\n");
       lines.push({ tag: "pre", list: [], quote, html: escapeHtmlText(code), text: code, md: code });
+      continue;
+    }
+    if (/^ {0,3}([-*_])(?:[ \t]*\1){2,}$/.test(line)) {
+      flush();
+      stack = [];
+      lines.push({ ...RULE, quote });
+      continue;
+    }
+    if (line.includes("|") && TABLE_RULE.test(all[i + 1] ?? "")) {
+      flush();
+      stack = [];
+      const rows = [cells(line)];
+      for (i += 2; i < all.length && all[i].includes("|") && all[i].trim(); i++) rows.push(cells(all[i]));
+      i--;
+      const width = rows[0].length;
+      const md = rows.map((r) => r.slice(0, width).concat(Array(Math.max(0, width - r.length)).fill("")));
+      const read = md.map((r) => r.map((c) => markdownBlock([c], false)));
+      const text = read.map((r) => r.map((c) => c.text).join("\t")).join("\n");
+      lines.push({
+        tag: "table",
+        list: [],
+        quote,
+        html: "",
+        text,
+        md: all.slice(i - rows.length, i + 1).join("\n"),
+        rows: read.map((r) => r.map((c) => c.html)),
+      });
       continue;
     }
     if (/^ {0,3}>/.test(line)) {
@@ -688,7 +762,7 @@ export function nest(lines: Line[]): Block[] {
     }
     if (lines[i].tag != "li") {
       const l = lines[i++];
-      blocks.push({ tag: l.tag as Leaf["tag"], html: l.html, text: l.text, md: l.md });
+      blocks.push({ tag: l.tag as Leaf["tag"], html: l.html, text: l.text, md: l.md, ...(l.rows && { rows: l.rows }) });
       continue;
     }
     // A run of list items: one list open at each depth.
@@ -722,6 +796,8 @@ export function toHtml(blocks: Block[]): string {
   return blocks.map((b) => {
     if (b.tag == "blockquote") return `<blockquote>${toHtml(b.blocks)}</blockquote>`;
     if (isList(b)) return `<${b.tag}>${b.items.map((i) => `<li>${i.html}${toHtml(i.lists)}</li>`).join("")}</${b.tag}>`;
+    if (b.tag == "hr") return "<hr>";
+    if (b.rows) return tableSource(b.rows, "", "");
     return `<${b.tag}>${b.html}</${b.tag}>`;
   }).join("");
 }
@@ -745,6 +821,7 @@ export function toMarkdown(blocks: Block[]): string {
       if (b.tag == "blockquote") return toMarkdown(b.blocks).replace(/^/gm, "> ").replace(/^> $/gm, ">");
       if (isList(b)) return list(b, "");
       if (b.tag == "pre") return `${codeFence(b.text)}\n${b.text}\n${codeFence(b.text)}`;
+      if (b.tag == "hr" || b.tag == "table") return b.md;
       if (b.tag != "p" && b.md) return "#".repeat(Number(b.tag[1])) + " " + b.md;
       return b.md;
     })
@@ -757,6 +834,8 @@ export function items(blocks: Block[]): Item[] {
   return blocks.flatMap((b): Item[] => {
     if (b.tag == "blockquote") return items(b.blocks);
     if (isList(b)) return b.items;
+    if (b.tag == "hr") return [];
+    if (b.rows) return b.rows.map((r) => ({ html: r.filter(Boolean).join(" "), text: r.join(" "), md: r.join(" "), lists: [] }));
     return [{ html: b.tag == "pre" ? b.html.replace(/\n/g, "<br>") : b.html, text: b.text, md: b.md, lists: [] }];
   });
 }
@@ -778,8 +857,24 @@ export function toSource(blocks: Block[], indent: string): string {
   return blocks.map((b) => {
     if (b.tag == "blockquote") return `<blockquote>${sep}  ${toSource(b.blocks, indent + "  ")}${sep}</blockquote>`;
     if (isList(b)) return `<${b.tag}>${b.items.map((i) => `${sep}  ${itemSource(i, indent + "  ")}`).join("")}${sep}</${b.tag}>`;
+    if (b.tag == "hr") return "<hr>";
+    if (b.rows) return tableSource(b.rows, sep, "  ");
     return `<${b.tag}>${b.html}</${b.tag}>`;
   }).join(sep);
+}
+
+/** A table's rows (cells' HTML, the first row the header) as source, each row on a line after `sep`, nested by `step`. */
+function tableSource(rows: string[][], sep: string, step: string): string {
+  const row = (r: string[], cell: string) => `${sep}${step}${step}<tr>${r.map((c) => `<${cell}>${c}</${cell}>`).join("")}</tr>`;
+  const head = `${sep}${step}<thead>${row(rows[0], "th")}${sep}${step}</thead>`;
+  const body =
+    rows.length > 1
+      ? `${sep}${step}<tbody>${rows
+          .slice(1)
+          .map((r) => row(r, "td"))
+          .join("")}${sep}${step}</tbody>`
+      : "";
+  return `<table>${head}${body}${sep}</table>`;
 }
 
 /** One list item as page source (see toSource). */

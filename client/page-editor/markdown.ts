@@ -3,8 +3,7 @@
 
 import * as M from "../../shared/manuscript";
 import { isolateHistory } from "@codemirror/commands";
-import type { InlineStyle } from "./types";
-import { attrOf, setChecked, STYLE_TAGS, TODO_BOX, TODO_ITEM, textIn, todoBox } from "./source";
+import { attrOf, escapeAttr, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "./source";
 import { EditorFormat } from "./format";
 
 export abstract class EditorMarkdown extends EditorFormat {
@@ -86,43 +85,84 @@ export abstract class EditorMarkdown extends EditorFormat {
   }
 
   /**
-   * Markdown as you type: closing `**bold**`, `*italic*`, `_italic_` or
-   * `` `code` `` turns the text into that style: the marks become tags in
-   * the HTML. It is its own
-   * undo step, so ⌘Z brings back the literal characters.
+   * Markdown as you type: closing `**bold**`, `*italic*`, `_italic_`, `***both***`, `~~struck~~` or `` `code` `` turns
+   * the text into that style, and `[text](url)` into a link: the marks become tags in the HTML. The text can hold
+   * styles already (`**bold *it* x**`). It is its own undo step, so ⌘Z brings back the literal characters.
    */
   protected inputRule(pos: number): void {
     const u = M.unitAt(this.units, pos);
     if (!u || u.tag == "pre" || !this.verify(u)) return;
-    const i = M.runAt(u, pos, true);
-    if (i < 0 || !u.runs[i].editable) return;
-    const run = u.runs[i],
-      before = run.text.slice(0, M.runOffset(run, pos));
     const src = this.src;
-    if (M.inlineStackAt(src, u, pos).some((t) => t.tag == "code")) return;
-    const rules: [RegExp, InlineStyle, number][] = [
+    const stack = M.inlineStackAt(src, u, pos);
+    if (stack.some((t) => t.tag == "code")) return;
+    const { text, starts, ends } = textBefore(src, u, pos);
+    const rules: [RegExp, string, number][] = [
+      [/(^|[^*\\])\*\*\*(?=[^\s*])([^*]*?[^\s*\\])\*\*\*$/, "strong em", 3],
       [/(^|[^*\\])\*\*(?=\S)([^*]*?\S)\*\*$/, "strong", 2],
       [/(^|[^_\\\p{L}\p{N}])__(?=\S)([^_]*?\S)__$/u, "strong", 2],
+      [/(^|[^~\\])~~(?=[^\s~])([^~]*?[^\s~\\])~~$/, "s", 2],
       [/(^|[^`\\])`([^`]+)`$/, "code", 1],
       [/(^|[^*\\])\*(?=[^\s*])([^*]*?[^\s*\\])\*$/, "em", 1],
       [/(^|[^_\\\p{L}\p{N}])_(?=[^\s_])([^_]*?[^\s_\\])_$/u, "em", 1],
     ];
-    for (const [re, style, n] of rules) {
-      const m = re.exec(before);
+    for (const [re, tags, n] of rules) {
+      const m = re.exec(text);
       if (!m) continue;
-      const open = m.index + m[1].length;
-      const from = M.runPos(run, open);
-      const inner = src.slice(M.runPos(run, open + n), M.runPos(run, open + n + m[2].length));
-      const tag = STYLE_TAGS[style][0];
-      const insert = `<${tag}>${inner}</${tag}>`;
-      this.dispatch({
-        changes: { from, to: pos, insert },
-        selection: { anchor: from + insert.length },
-        annotations: isolateHistory.of("full"),
-        userEvent: "input.format",
-      });
+      const open = m.index + m[1].length,
+        close = text.length - n;
+      const names = tags.split(" "),
+        [before, after] = [
+          names.map((t) => `<${t}>`).join(""),
+          [...names]
+            .reverse()
+            .map((t) => `</${t}>`)
+            .join(""),
+        ];
+      // (Code holds text only.)
+      if (names.includes("code") && src.slice(ends[open + n - 1], starts[close]).includes("<")) continue;
+      this.markdownEdit(starts[open], ends[open + n - 1], starts[close], pos, before, after);
       return;
     }
+    // [text](url), not ![alt](url) (no picture from typed text), nor inside a link.
+    const link = /(^|[^!\\\]])\[([^[\]]*[^[\]\s][^[\]]*)\]\(([^\s()]+)\)$/.exec(text);
+    if (link && safeHref(link[3]) && !stack.some((t) => t.tag == "a")) {
+      const open = link.index + link[1].length,
+        close = open + 1 + link[2].length;
+      this.markdownEdit(starts[open], ends[open], starts[close], pos, `<a href="${escapeAttr(link[3])}">`, "</a>");
+    }
+  }
+
+  /**
+   * A web address typed, then a space: a link (`at` is the caret, after the space). Its own undo step, which gives back
+   * the address as text.
+   */
+  protected linkRule(at: number): void {
+    const u = M.unitAt(this.units, at);
+    if (!u || u.tag == "pre" || !this.verify(u)) return;
+    const src = this.src;
+    if (M.inlineStackAt(src, u, at - 1).some((t) => t.tag == "a" || t.tag == "code")) return;
+    const { text, starts, ends } = textBefore(src, u, at);
+    const m = /(^|[\s(])(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]]) $/.exec(text);
+    if (!m) return;
+    const open = m.index + m[1].length,
+      last = text.length - 2;
+    this.markdownEdit(starts[open], starts[open], ends[last], ends[last], `<a href="${escapeAttr(m[2])}">`, "</a>");
+  }
+
+  /**
+   * A Markdown shortcut's edit: the marks [from, innerFrom) and [innerTo, to) go, and the text between them goes into
+   * `open` and `close`. Not when the text between is not whole elements (`*a <em>b* c</em>`). Its own undo step.
+   */
+  private markdownEdit(from: number, innerFrom: number, innerTo: number, to: number, open: string, close: string): void {
+    const inner = this.src.slice(innerFrom, innerTo);
+    if (!balanced(inner) || /<br\b/i.test(inner)) return;
+    const changes = this.state.changes({ from, to, insert: open + inner + close });
+    this.dispatch({
+      changes,
+      selection: { anchor: changes.mapPos(this.state.selection.main.head, 1) },
+      annotations: isolateHistory.of("full"),
+      userEvent: "input.format",
+    });
   }
 
   protected findInline(u: M.Unit, tag: string, pos: number): M.ElementNode | null {
@@ -142,3 +182,43 @@ export abstract class EditorMarkdown extends EditorFormat {
     return found;
   }
 }
+
+/**
+ * The unit's text before `pos`, back to a line break or text that can't be edited, with the place in the source where
+ * each character starts and ends.
+ */
+function textBefore(src: string, u: M.Unit, pos: number): { text: string; starts: number[]; ends: number[] } {
+  let text = "",
+    starts: number[] = [],
+    ends: number[] = [],
+    last = u.contentFrom;
+  for (const r of u.runs) {
+    if (r.from >= pos && r.from > last) break;
+    if (!r.editable || /<br\b/i.test(src.slice(last, r.from))) [text, starts, ends] = ["", [], []];
+    const n = r.to <= pos ? r.text.length : M.runOffset(r, pos);
+    if (r.editable)
+      for (let k = 0; k < n; k++) {
+        text += r.text[k];
+        starts.push(M.runPos(r, k));
+        ends.push(M.runPos(r, k + 1));
+      }
+    last = r.to;
+    if (r.to >= pos) break;
+  }
+  return { text, starts, ends };
+}
+
+/** Whether HTML holds whole elements only: each tag it opens it closes, and it closes none it didn't open. */
+function balanced(html: string): boolean {
+  const open: string[] = [];
+  for (const m of html.matchAll(/<(\/?)([a-z][\w-]*)[^>]*>/gi)) {
+    const tag = m[2].toLowerCase();
+    if (/^(br|img|input|wbr|hr)$/.test(tag) || m[0].endsWith("/>")) continue;
+    if (!m[1]) open.push(tag);
+    else if (open.pop() != tag) return false;
+  }
+  return !open.length;
+}
+
+/** An address a typed link may have: a web or mail address, or one in the document; never a script. */
+const safeHref = (url: string) => /^(https?:|mailto:|tel:|#|\/|\.)/i.test(url) || !/^[a-z][a-z\d+.-]*:/i.test(url);

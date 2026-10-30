@@ -3,7 +3,7 @@
 import * as M from "../../shared/manuscript";
 import type { ChangeSet } from "@codemirror/state";
 import * as C from "./clipboard-html";
-import { contentIn, HEADING, SPLITS } from "./source";
+import { contentIn, escapeAttr, HEADING, SPLITS } from "./source";
 import { EditorMarkdown } from "./markdown";
 import { itemSplit } from "./lists";
 import { LOADING_AGAIN, showDropNote } from "./drop";
@@ -33,6 +33,15 @@ export abstract class EditorClipboard extends EditorMarkdown {
     }
     // A URL pasted over selected text links the text (as the style bar's link does); where it can't, the URL replaces it.
     if (sel && !sel.empty && u && /^(https?:\/\/|mailto:)\S+$/i.test(text.trim()) && this.setLink({ url: text.trim() }) == null) return;
+    // An address alone, pasted at the caret, is a link (not in a link or in code).
+    const url = text.trim();
+    if (
+      sel?.empty &&
+      u &&
+      /^(https?:\/\/|mailto:)\S+$/i.test(url) &&
+      !M.inlineStackAt(this.src, u, sel.from).some((t) => t.tag == "a" || t.tag == "code")
+    )
+      return this.pasteBlocks([{ tag: "p", html: `<a href="${escapeAttr(url)}">${M.escapeHtmlText(url)}</a>`, text: url, md: url }]);
     // A link to a place in this page, copied from it (as its public address), is #id again.
     const place = this.place(),
       self = place?.address ? pageUrl(place.address, place.page) + "#" : null;
