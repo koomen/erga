@@ -6,7 +6,15 @@ import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
 import type { TextEdit } from "../../shared/text-edits";
 import { EDITS } from "./workspace";
-import { EVAL_MAX_JSON, EVAL_TIMEOUT, FRAMES, type ColorScheme, type StepShown, type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import {
+  EVAL_MAX_JSON,
+  EVAL_TIMEOUT,
+  FRAMES,
+  type ColorScheme,
+  type StepShown,
+  type ViewRequest,
+  type ViewResult,
+} from "../../shared/agent-log";
 import {
   CONSOLE_LEVELS,
   describeAct,
@@ -42,7 +50,16 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
         if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
         const words = { type: "text" as const, text: describeView(v, p.selector, p.full_page) };
         if (!v.shots?.length) return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, words], details: {} };
-        return { content: [...v.shots.flatMap((s) => [{ type: "text" as const, text: `At ${s.at} ms:` }, { type: "image" as const, data: s.png, mimeType: "image/png" }]), words], details: {} };
+        return {
+          content: [
+            ...v.shots.flatMap((s) => [
+              { type: "text" as const, text: `At ${s.at} ms:` },
+              { type: "image" as const, data: s.png, mimeType: "image/png" },
+            ]),
+            words,
+          ],
+          details: {},
+        };
       },
     },
     {
@@ -66,7 +83,9 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
         const errors = v.errors.length ? `\nThe page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "";
         if (v.error || v.value == null) throw new Error((v.error ?? "The page couldn't be inspected.") + errors);
         const where = [v.page ? `Rendered ${v.page}` : "", v.step ? `at ${describeStep(v.step)}` : ""].filter(Boolean).join(" ");
-        return text(`${v.value}${v.note ? `\n\n[${v.note}]` : ""}${where ? `\n\n[${where}.]` : ""}${v.preview ? `\n\n[${describePreview(v.preview)}]` : ""}${errors}`);
+        return text(
+          `${v.value}${v.note ? `\n\n[${v.note}]` : ""}${where ? `\n\n[${where}.]` : ""}${v.preview ? `\n\n[${describePreview(v.preview)}]` : ""}${errors}`
+        );
       },
     },
     ...liveTools(view),
@@ -83,7 +102,11 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
     const v = await view({ live: req });
     if (v.error || v.value == null) throw new Error(v.error ?? "The tab didn't answer.");
     let r: LiveResult;
-    try { r = JSON.parse(v.value) as LiveResult; } catch { throw new Error("The tab's answer didn't parse."); }
+    try {
+      r = JSON.parse(v.value) as LiveResult;
+    } catch {
+      throw new Error("The tab's answer didn't parse.");
+    }
     if (r.error) throw new Error(`${r.error} ${describeTab(r.tab)}`.trim());
     return r;
   };
@@ -213,9 +236,21 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
         meta: Schema.optionalKey(Schema.Boolean),
         frame: FRAME,
       }),
-      execute: async (_id, p: { key: string; selector?: string; shift?: boolean; alt?: boolean; ctrl?: boolean; meta?: boolean; frame?: string }) => {
+      execute: async (
+        _id,
+        p: { key: string; selector?: string; shift?: boolean; alt?: boolean; ctrl?: boolean; meta?: boolean; frame?: string }
+      ) => {
         if (!p.key) throw new Error("Give the key to press.");
-        const r = await ask({ kind: "key", key: p.key, selector: p.selector, shift: p.shift, alt: p.alt, ctrl: p.ctrl, meta: p.meta, frame: p.frame });
+        const r = await ask({
+          kind: "key",
+          key: p.key,
+          selector: p.selector,
+          shift: p.shift,
+          alt: p.alt,
+          ctrl: p.ctrl,
+          meta: p.meta,
+          frame: p.frame,
+        });
         return text(`${describeAct("key", r.act!)}\n${describeTab(r.tab)}`);
       },
     },
@@ -224,22 +259,30 @@ function liveTools(view: (req: ViewRequest) => Promise<ViewResult>): AgentTool[]
 
 /** The render's size and mode, as view_page and evaluate_page take them. */
 const RENDER = {
-  width: Schema.optionalKey(Schema.Finite.annotate({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
-  height: Schema.optionalKey(Schema.Finite.annotate({ description: "Height of the screenful, in CSS pixels (default: as tall as the user's page)." })),
+  width: Schema.optionalKey(
+    Schema.Finite.annotate({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })
+  ),
+  height: Schema.optionalKey(
+    Schema.Finite.annotate({ description: "Height of the screenful, in CSS pixels (default: as tall as the user's page)." })
+  ),
   color_scheme: Schema.optionalKey(
-    Schema.Literals(["light", "dark"]).annotate({ description: "Light or dark mode, for the page's prefers-color-scheme (default: the user's)." })
+    Schema.Literals(["light", "dark"]).annotate({
+      description: "Light or dark mode, for the page's prefers-color-scheme (default: the user's).",
+    })
   ),
 };
 type RenderArgs = { width?: number; height?: number; color_scheme?: ColorScheme };
 const renderReq = (p: RenderArgs) => ({ width: p.width, height: p.height, colorScheme: p.color_scheme });
 
 const AT_STEP = `For a presentation (window.ergaSteps), step shows one step first: "3.2" (slide 3, its second part, as the steps' list numbers it), an index from 0, or a hash ("#3.2") to open the page at. at_ms waits that long after the step before the picture or the run (default ${FRAMES.afterStep} ms after a step, ${FRAMES.afterLoad} ms after the load); frames takes several at once, at these times after the step (e.g. [300, 900, 2500]), to check a transition in one call.`;
-const PREVIEW_WORDS = "To see edits before you make them, give edits (as the edit tool takes them): they go to a copy of the open page, for this render only.";
+const PREVIEW_WORDS =
+  "To see edits before you make them, give edits (as the edit tool takes them): they go to a copy of the open page, for this render only.";
 /** step, at_ms and frames: a presentation's step, and when. */
 const STEP_FIELDS = (what: string) => ({
   step: Schema.optionalKey(
     Schema.Union([Schema.String, Schema.Finite]).annotate({
-      description: 'The step to show first: its number as the steps\' list shows it ("3", "3.2"), its index from 0 (a number), or a hash ("#3.2").',
+      description:
+        'The step to show first: its number as the steps\' list shows it ("3", "3.2"), its index from 0 (a number), or a hash ("#3.2").',
     })
   ),
   at_ms: Schema.optionalKey(
@@ -259,7 +302,8 @@ function stepReq(p: StepArgs): { step?: string | number; atMs?: number; frames?:
 const PREVIEW = {
   edits: Schema.optionalKey(
     EDITS.annotate({
-      description: "A preview: edits as the edit tool takes them, applied to a copy of the open page's text for this render only, never to the document. If one doesn't apply, nothing renders and the answer says why.",
+      description:
+        "A preview: edits as the edit tool takes them, applied to a copy of the open page's text for this render only, never to the document. If one doesn't apply, nothing renders and the answer says why.",
     })
   ),
   path: Schema.optionalKey(Schema.String.annotate({ description: "The file the edits are for: the page open (the default)." })),
@@ -275,11 +319,19 @@ const describeStep = (s: StepShown) => `step ${s.number} (index ${s.index} of ${
 
 /** view_page's words beside its picture: what it shows, how it rendered (size, mode, fonts), and the page's errors. */
 export function describeView(v: ViewResult, selector?: string, fullPage?: boolean): string {
-  const lines = [`Screenshot${v.shots ? `s (${v.shots.length})` : ""}: ${v.width}×${v.height}px${selector ? ` of ${selector}` : fullPage ? ", whole page" : ", top of the page"}${v.page ? `, of ${v.page}` : ""}${v.step ? `, at ${describeStep(v.step)}` : ""}.`];
-  if (v.viewport || v.colorScheme) lines.push(`Rendered${v.viewport ? ` in a ${v.viewport.width}×${v.viewport.height}px window` : ""}${v.colorScheme ? `${v.viewport ? "," : ""} in ${v.colorScheme} mode` : ""}.`);
+  const lines = [
+    `Screenshot${v.shots ? `s (${v.shots.length})` : ""}: ${v.width}×${v.height}px${selector ? ` of ${selector}` : fullPage ? ", whole page" : ", top of the page"}${v.page ? `, of ${v.page}` : ""}${v.step ? `, at ${describeStep(v.step)}` : ""}.`,
+  ];
+  if (v.viewport || v.colorScheme)
+    lines.push(
+      `Rendered${v.viewport ? ` in a ${v.viewport.width}×${v.viewport.height}px window` : ""}${v.colorScheme ? `${v.viewport ? "," : ""} in ${v.colorScheme} mode` : ""}.`
+    );
   if (v.fonts?.length) {
     lines.push("Fonts the text rendered in:");
-    for (const f of v.fonts) lines.push(`- ${f.family}${f.wanted ? ` (the page asked for ${f.wanted}, which didn't load or isn't installed)` : ""}: ${f.elements} element${f.elements == 1 ? "" : "s"} (${f.tags.join(", ")})`);
+    for (const f of v.fonts)
+      lines.push(
+        `- ${f.family}${f.wanted ? ` (the page asked for ${f.wanted}, which didn't load or isn't installed)` : ""}: ${f.elements} element${f.elements == 1 ? "" : "s"} (${f.tags.join(", ")})`
+      );
   }
   if (v.pending?.length) lines.push(`Still loading when the picture was taken: ${v.pending.join(", ")}.`);
   if (v.note) lines.push(v.note);

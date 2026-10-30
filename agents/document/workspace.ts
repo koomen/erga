@@ -41,10 +41,15 @@ export const EDITS = Schema.Array(
   Schema.Struct({
     oldText: Schema.optionalKey(Schema.String.annotate({ description: "Exact text to replace; must be unique in the file" })),
     selector: Schema.optionalKey(
-      Schema.String.annotate({ description: 'Or: a CSS selector of the one element to replace, open tag to close tag, as the source has it (e.g. "svg g#logo")' })
+      Schema.String.annotate({
+        description: 'Or: a CSS selector of the one element to replace, open tag to close tag, as the source has it (e.g. "svg g#logo")',
+      })
     ),
     cssRule: Schema.optionalKey(
-      Schema.String.annotate({ description: 'Or: the selector of the one CSS rule to replace, prelude to closing brace, in a stylesheet or the page\'s <style> (e.g. ".legible h2")' })
+      Schema.String.annotate({
+        description:
+          'Or: the selector of the one CSS rule to replace, prelude to closing brace, in a stylesheet or the page\'s <style> (e.g. ".legible h2")',
+      })
     ),
     newText: Schema.String.annotate({ description: "Replacement text" }),
   })
@@ -81,7 +86,21 @@ export const PACE = {
 };
 
 export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
-  reason: Schema.Literals(["outside", "noPath", "binary", "missing", "noEdits", "emptyEdit", "notFound", "changed", "ambiguous", "overlap", "selector", "readOnly", "single"]),
+  reason: Schema.Literals([
+    "outside",
+    "noPath",
+    "binary",
+    "missing",
+    "noEdits",
+    "emptyEdit",
+    "notFound",
+    "changed",
+    "ambiguous",
+    "overlap",
+    "selector",
+    "readOnly",
+    "single",
+  ]),
   message: Schema.String,
 }) {}
 
@@ -162,9 +181,17 @@ export class YjsWorkspace implements Workspace {
       if ("reason" in aimed) {
         if (aimed.reason != "notFound") return yield* fail(aimed.reason, aimed.message);
         // In the text the agent last saw, but not in the text now: the file changed under it (a restore, someone typing).
-        const seen = self.seen.get(path), e = edits[aimed.index];
-        if (seen != null && seen != current && seen.includes(e.oldText!)) return yield* fail("changed", `${aimed.label} isn't in the current text of ${path}: the file changed since the text your edit was based on (what you last read or wrote of it). Read ${path} again and retry.`);
-        return yield* fail("notFound", `${aimed.label} isn't in the current text of ${path}${seen == current ? ", which is the same as when you last read it: check oldText against it" : ""}. Read the file again and retry.`);
+        const seen = self.seen.get(path),
+          e = edits[aimed.index];
+        if (seen != null && seen != current && seen.includes(e.oldText!))
+          return yield* fail(
+            "changed",
+            `${aimed.label} isn't in the current text of ${path}: the file changed since the text your edit was based on (what you last read or wrote of it). Read ${path} again and retry.`
+          );
+        return yield* fail(
+          "notFound",
+          `${aimed.label} isn't in the current text of ${path}${seen == current ? ", which is the same as when you last read it: check oldText against it" : ""}. Read the file again and retry.`
+        );
       }
       const spans = aimed.spans;
       // Each as the smallest change that leaves tags whole: trim what old and new share at both ends.
@@ -172,7 +199,13 @@ export class YjsWorkspace implements Workspace {
       if (!minimal.length) return { path, at: spans[0].from, summary: `No change: the new text is the same as the old.` };
       const at = self.pacer ? yield* self.paced(path, t, current, minimal, self.pacer) : self.apply(t, minimal);
       // (What each replaced, as text: an edit by selector names it otherwise.)
-      return self.edited(path, t, spans.map((x) => ({ oldText: current.slice(x.from, x.to), newText: x.insert })), minimal, at);
+      return self.edited(
+        path,
+        t,
+        spans.map((x) => ({ oldText: current.slice(x.from, x.to), newText: x.insert })),
+        minimal,
+        at
+      );
     });
   }
 

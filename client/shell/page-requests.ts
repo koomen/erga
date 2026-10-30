@@ -25,9 +25,13 @@ export function mountPageRequests(shell: Shell) {
   const captureView = async (req: ViewRequest): Promise<ViewResult> => {
     if (!req.preview) return shell.page.capture(req);
     // A preview: the edits on a copy of the page's text, for this render only.
-    const path = shell.pagePath, asked = req.preview.path != null ? cleanPath(req.preview.path) : path;
+    const path = shell.pagePath,
+      asked = req.preview.path != null ? cleanPath(req.preview.path) : path;
     const fail = (error: string): ViewResult => ({ width: 0, height: 0, errors: [], error });
-    if (asked != path) return fail(`Nothing was rendered: a preview shows the open page, ${path}, and the edits are for ${req.preview.path}. Preview edits of ${path}, or open_page ${req.preview.path} first.`);
+    if (asked != path)
+      return fail(
+        `Nothing was rendered: a preview shows the open page, ${path}, and the edits are for ${req.preview.path}. Preview edits of ${path}, or open_page ${req.preview.path} first.`
+      );
     const edits = Array.isArray(req.preview.edits) ? req.preview.edits : [];
     const aimed = aimEdits(shell.page.source(), edits, path);
     if ("reason" in aimed) return fail(`Nothing was rendered: ${aimed.message}`);
@@ -39,7 +43,11 @@ export function mountPageRequests(shell: Shell) {
     const result = await captureView(req);
     // With several of the person's tabs open, the host takes the focused one's answer (else a visible one's): the page they look at.
     const rank = document.hasFocus() ? 2 : document.visibilityState == "visible" ? 1 : 0;
-    await fetch(shell.api("/api/agent/view"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...result, page: shell.pagePath, rank, declined: result.error != null }) }).catch(() => {});
+    await fetch(shell.api("/api/agent/view"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, ...result, page: shell.pagePath, rank, declined: result.error != null }),
+    }).catch(() => {});
   }
 
 

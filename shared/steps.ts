@@ -20,15 +20,18 @@ export function stepNumber(i: number, slides: number[] | null): string {
 export function findStep(spec: number | string, count: number, slides: number[] | null): number | string {
   const all = `The page has ${count} step${count == 1 ? "" : "s"}${slides ? ` on ${slides[count - 1] + 1} slides (numbered 1 to ${stepNumber(count - 1, slides)})` : ""}.`;
   if (typeof spec == "number") {
-    if (!Number.isInteger(spec) || spec < 0 || spec >= count) return `There's no step index ${spec}: indexes go from 0 to ${count - 1}. ${all}`;
+    if (!Number.isInteger(spec) || spec < 0 || spec >= count)
+      return `There's no step index ${spec}: indexes go from 0 to ${count - 1}. ${all}`;
     return spec;
   }
   const m = /^\s*(\d+)(?:\.(\d+))?\s*$/.exec(spec);
-  if (!m) return `"${spec}" isn't a step: give a step's number ("3", or "3.2" for the second part of slide 3), its index (a number, from 0), or a hash ("#3.2").`;
+  if (!m)
+    return `"${spec}" isn't a step: give a step's number ("3", or "3.2" for the second part of slide 3), its index (a number, from 0), or a hash ("#3.2").`;
   const slide = Number(m[1]) - 1,
     part = m[2] == null ? 1 : Number(m[2]);
   if (!slides) {
-    if (m[2] != null && part != 1) return `"${spec}" names a part of a slide, but the page's steps have no parts (its ergaSteps has no slide()). ${all}`;
+    if (m[2] != null && part != 1)
+      return `"${spec}" names a part of a slide, but the page's steps have no parts (its ergaSteps has no slide()). ${all}`;
     return slide >= 0 && slide < count ? slide : `There's no step ${m[1]}. ${all}`;
   }
   const first = slides.indexOf(slide);

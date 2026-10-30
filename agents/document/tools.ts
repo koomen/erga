@@ -126,8 +126,14 @@ export function makeTools(
             description: `A PDF's pages to read: one ("3") or a range ("21-40"), at most ${PAGES_PER_READ}. Default: the first ${PAGES_PER_READ}.`,
           })
         ),
-        selector: Schema.optionalKey(Schema.String.annotate({ description: 'Only the one element this CSS selector matches, e.g. "section.legible" or "svg g#logo".' })),
-        css_rule: Schema.optionalKey(Schema.String.annotate({ description: 'Only the one CSS rule with this selector (in a stylesheet, or the page\'s <style>), e.g. ".legible h2".' })),
+        selector: Schema.optionalKey(
+          Schema.String.annotate({ description: 'Only the one element this CSS selector matches, e.g. "section.legible" or "svg g#logo".' })
+        ),
+        css_rule: Schema.optionalKey(
+          Schema.String.annotate({
+            description: 'Only the one CSS rule with this selector (in a stylesheet, or the page\'s <style>), e.g. ".legible h2".',
+          })
+        ),
       }),
       execute: async (_id, p: { path: string; offset?: number; limit?: number; pages?: string; selector?: string; css_rule?: string }) => {
         const path = run(modelPath(p.path));
@@ -137,7 +143,9 @@ export function makeTools(
           const found = findInSource(all, path, { selector: p.selector, cssRule: p.css_rule });
           if (typeof found == "string") throw new Error(found);
           const [a, b] = found.lines;
-          return text(`[${path}, ${a == b ? `line ${a}` : `lines ${a}-${b}`}: the ${p.selector != null ? `element "${p.selector}"` : `CSS rule "${p.css_rule}"`}]\n${all.slice(found.from, found.to)}`);
+          return text(
+            `[${path}, ${a == b ? `line ${a}` : `lines ${a}-${b}`}: the ${p.selector != null ? `element "${p.selector}"` : `CSS rule "${p.css_rule}"`}]\n${all.slice(found.from, found.to)}`
+          );
         }
         const lines = all.split("\n");
         const start = Math.max(0, (p.offset ?? 1) - 1);
@@ -152,7 +160,8 @@ export function makeTools(
     {
       name: "edit",
       label: "Edit",
-      description: 'Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn\'t found, the file changed since you read it: read it again. To replace a whole element, give its CSS selector instead of oldText ({"selector": "svg g#logo", "newText": "<g id=\\"logo\\">...</g>"}); to replace a whole CSS rule (in a stylesheet or a <style>), its selector as cssRule ({"cssRule": ".legible h2", "newText": ".legible h2 { color: navy; }"}). Either must name exactly one, in the source as written; read with selector or css_rule shows it first. Each call is one step to undo.',
+      description:
+        'Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn\'t found, the file changed since you read it: read it again. To replace a whole element, give its CSS selector instead of oldText ({"selector": "svg g#logo", "newText": "<g id=\\"logo\\">...</g>"}); to replace a whole CSS rule (in a stylesheet or a <style>), its selector as cssRule ({"cssRule": ".legible h2", "newText": ".legible h2 { color: navy; }"}). Either must name exactly one, in the source as written; read with selector or css_rule shows it first. Each call is one step to undo.',
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: "Path of the file to edit" }),
         edits: EDITS.annotate({ description: "One or more targeted replacements, each matched against the current file" }),

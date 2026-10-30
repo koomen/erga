@@ -461,11 +461,16 @@ export class RemotePage {
   }
 
   /** The page's text as this tab has it now. */
-  source(): string { return this.state.doc.toString(); }
+  source(): string {
+    return this.state.doc.toString();
+  }
 
   /** The agent's look at the page: the frame renders it, with `text` if given (a preview) or if the source view has newer. */
   async capture(req: ViewRequest, text?: string): Promise<ViewResult> {
-    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>({ type: "capture", id: this.nextId++, req, ...(text != null || this.detached ? { text: text ?? this.state.doc.toString() } : {}) }, viewWait(req));
+    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>(
+      { type: "capture", id: this.nextId++, req, ...(text != null || this.detached ? { text: text ?? this.state.doc.toString() } : {}) },
+      viewWait(req)
+    );
     const r = reply?.result;
     if (!r) return { width: 0, height: 0, errors: [], error: "The page didn't send a picture back in time." };
     return {
@@ -479,8 +484,24 @@ export class RemotePage {
       ...(typeof r.note == "string" ? { note: r.note } : {}),
       ...(typeof r.error == "string" ? { error: r.error } : {}),
       ...(typeof r.value == "string" ? { value: r.value.slice(0, EVAL_MAX_JSON * FRAMES.count + 1000) } : {}),
-      ...(Array.isArray(r.shots) ? { shots: r.shots.filter((x) => x && typeof x.png == "string" && Number.isFinite(x.at)).slice(0, FRAMES.count).map((x) => ({ at: Number(x.at), png: x.png })) } : {}),
-      ...(r.step && Number.isInteger(r.step.index) && typeof r.step.number == "string" ? { step: { index: r.step.index, number: r.step.number.slice(0, 20), count: Number(r.step.count) || 0, ...(typeof r.step.label == "string" ? { label: r.step.label.slice(0, 200) } : {}) } } : {}),
+      ...(Array.isArray(r.shots)
+        ? {
+            shots: r.shots
+              .filter((x) => x && typeof x.png == "string" && Number.isFinite(x.at))
+              .slice(0, FRAMES.count)
+              .map((x) => ({ at: Number(x.at), png: x.png })),
+          }
+        : {}),
+      ...(r.step && Number.isInteger(r.step.index) && typeof r.step.number == "string"
+        ? {
+            step: {
+              index: r.step.index,
+              number: r.step.number.slice(0, 20),
+              count: Number(r.step.count) || 0,
+              ...(typeof r.step.label == "string" ? { label: r.step.label.slice(0, 200) } : {}),
+            },
+          }
+        : {}),
     };
   }
 }

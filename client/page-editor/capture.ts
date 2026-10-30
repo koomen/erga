@@ -2,7 +2,15 @@
 // hidden frame of its own, at a step and a time if asked, and answers with a picture or an expression's result.
 
 import { evaluateIn } from "./evaluate";
-import { evalTimeout, FRAMES, type ColorScheme, type RenderedFont, type StepShown, type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import {
+  evalTimeout,
+  FRAMES,
+  type ColorScheme,
+  type RenderedFont,
+  type StepShown,
+  type ViewRequest,
+  type ViewResult,
+} from "../../shared/agent-log";
 import { findStep, stepNumber } from "../../shared/steps";
 import { sleep } from "../../shared/time";
 
@@ -34,25 +42,40 @@ const ownHash = (hash: string) =>
  * `scheme` instead.
  */
 const schemeQuery = (scheme: ColorScheme, media: string) =>
-  media.replace(/\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)/gi, (_, s: string) => s.toLowerCase() == scheme ? "(min-width: 0px)" : "(min-width: 1000000px)");
+  media.replace(/\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)/gi, (_, s: string) =>
+    s.toLowerCase() == scheme ? "(min-width: 0px)" : "(min-width: 1000000px)"
+  );
 const forceSchemeScript = (scheme: ColorScheme) =>
   `<script>(function(){var mm=window.matchMedia;window.matchMedia=function(q){return mm.call(window,String(q).replace(/\\(\\s*prefers-color-scheme\\s*:\\s*(light|dark)\\s*\\)/gi,function(_,s){return s.toLowerCase()==${JSON.stringify(scheme)}?"(min-width: 0px)":"(min-width: 1000000px)"}))}})()</script>`;
 function forceScheme(d: Document, scheme: ColorScheme) {
   const w = d.defaultView as Window & typeof globalThis; // the page's own classes: instanceof is per window
   const rewrite = (rules: CSSRuleList) => {
     for (const r of rules) {
-      if ((r instanceof w.CSSMediaRule || r instanceof w.CSSImportRule) && /prefers-color-scheme/i.test(r.media.mediaText)) r.media.mediaText = schemeQuery(scheme, r.media.mediaText);
-      if (r instanceof w.CSSImportRule) { try { if (r.styleSheet) rewrite(r.styleSheet.cssRules); } catch { /* another site's */ } }
-      else if ("cssRules" in r) rewrite((r as CSSGroupingRule).cssRules);
+      if ((r instanceof w.CSSMediaRule || r instanceof w.CSSImportRule) && /prefers-color-scheme/i.test(r.media.mediaText))
+        r.media.mediaText = schemeQuery(scheme, r.media.mediaText);
+      if (r instanceof w.CSSImportRule) {
+        try {
+          if (r.styleSheet) rewrite(r.styleSheet.cssRules);
+        } catch {
+          /* another site's */
+        }
+      } else if ("cssRules" in r) rewrite((r as CSSGroupingRule).cssRules);
     }
   };
-  for (const s of d.styleSheets) { try { rewrite(s.cssRules); } catch { /* another site's: out of reach */ } }
+  for (const s of d.styleSheets) {
+    try {
+      rewrite(s.cssRules);
+    } catch {
+      /* another site's: out of reach */
+    }
+  }
   for (const el of d.querySelectorAll<HTMLElement>("[media]")) {
     const m = el.getAttribute("media")!;
     if (/prefers-color-scheme/i.test(m)) el.setAttribute("media", schemeQuery(scheme, m));
   }
   // A page that lets the browser choose (color-scheme: light dark) gets the one asked for.
-  const root = d.documentElement, cs = d.defaultView!.getComputedStyle(root).colorScheme;
+  const root = d.documentElement,
+    cs = d.defaultView!.getComputedStyle(root).colorScheme;
   if (/light/.test(cs) && /dark/.test(cs)) root.style.setProperty("color-scheme", scheme);
 }
 const MAX_SHOT = 4000;
@@ -86,8 +109,12 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
   document.body.append(shot);
   try {
     // The load event comes once the page's scripts ran (inline, deferred, modules) and its images loaded.
-    await new Promise<void>((resolve, reject) => { shot.onload = () => resolve(); setTimeout(() => reject(new Error("the page took more than 10 s to load, so nothing ran in it")), 10_000); });
-    const d = shot.contentDocument!, win = shot.contentWindow as (Window & { __ergaErrors?: string[] }) | null;
+    await new Promise<void>((resolve, reject) => {
+      shot.onload = () => resolve();
+      setTimeout(() => reject(new Error("the page took more than 10 s to load, so nothing ran in it")), 10_000);
+    });
+    const d = shot.contentDocument!,
+      win = shot.contentWindow as (Window & { __ergaErrors?: string[] }) | null;
     const errors = () => [...(win?.__ergaErrors ?? [])];
     if (forced) forceScheme(d, scheme);
     const unread = await embeddableFonts(d);
@@ -104,28 +131,63 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
     const clock = animationClock(d);
     if (req.evaluate != null) {
       const runs: { at: number; r: Awaited<ReturnType<typeof evaluateIn>> }[] = [];
-      for (const t of times) { const { at, value: r } = await clock.at(t, () => evaluateIn(win!, String(req.evaluate), evalTimeout(req))); runs.push({ at, r }); }
+      for (const t of times) {
+        const { at, value: r } = await clock.at(t, () => evaluateIn(win!, String(req.evaluate), evalTimeout(req)));
+        runs.push({ at, r });
+      }
       const failed = runs.find((x) => x.r.error);
-      const value = !req.frames?.length ? runs[0].r.value : failed ? undefined : `[${runs.map((x) => `{"at_ms":${x.at},"value":${x.r.value}}`).join(",")}]`;
+      const value = !req.frames?.length
+        ? runs[0].r.value
+        : failed
+          ? undefined
+          : `[${runs.map((x) => `{"at_ms":${x.at},"value":${x.r.value}}`).join(",")}]`;
       const note = [...notes, ...runs.map((x) => x.r.note).filter((n): n is string => !!n)].join("\n");
-      return { width, height: viewport, errors: errors(), ...(value != null ? { value } : {}), ...(failed ? { error: (req.frames?.length ? `At ${failed.at} ms: ` : "") + failed.r.error } : {}), ...(note ? { note } : {}), ...(step ? { step } : {}) };
+      return {
+        width,
+        height: viewport,
+        errors: errors(),
+        ...(value != null ? { value } : {}),
+        ...(failed ? { error: (req.frames?.length ? `At ${failed.at} ms: ` : "") + failed.r.error } : {}),
+        ...(note ? { note } : {}),
+        ...(step ? { step } : {}),
+      };
     }
-    const root = win!.getComputedStyle(d.documentElement), body = d.body ? win!.getComputedStyle(d.body) : null;
+    const root = win!.getComputedStyle(d.documentElement),
+      body = d.body ? win!.getComputedStyle(d.body) : null;
     const clear = (c: string) => /^(transparent|rgba\([^)]*,\s*0\))$/.test(c);
-    const bg = !clear(root.backgroundColor) ? root.backgroundColor : body && !clear(body.backgroundColor) ? body.backgroundColor : scheme == "dark" && /dark/.test(root.colorScheme) ? "#121212" : "#ffffff";
-    if (unread.length) notes.push(`The picture may show fallback fonts where the page uses fonts from ${unread.join(", ")}: that stylesheet can't be read from the page (no CORS), so its fonts can't go into the picture.`);
+    const bg = !clear(root.backgroundColor)
+      ? root.backgroundColor
+      : body && !clear(body.backgroundColor)
+        ? body.backgroundColor
+        : scheme == "dark" && /dark/.test(root.colorScheme)
+          ? "#121212"
+          : "#ffffff";
+    if (unread.length)
+      notes.push(
+        `The picture may show fallback fonts where the page uses fonts from ${unread.join(", ")}: that stylesheet can't be read from the page (no CORS), so its fonts can't go into the picture.`
+      );
     // (The screenshots' code loads the first time the agent asks for one.)
     const { domToPng } = await import("modern-screenshot");
     /** One picture of the page as it is now: the screenful, the whole page, or one element. */
     const picture = async (): Promise<{ png: string; w: number; h: number; target: Element; note?: string } | string> => {
-      let target: Element = d.documentElement, w = width, h = viewport, note: string | undefined;
+      let target: Element = d.documentElement,
+        w = width,
+        h = viewport,
+        note: string | undefined;
       if (req.selector) {
         let el: Element | null = null;
-        try { el = d.querySelector(req.selector); } catch { return `${req.selector} isn't a valid CSS selector`; }
+        try {
+          el = d.querySelector(req.selector);
+        } catch {
+          return `${req.selector} isn't a valid CSS selector`;
+        }
         if (!el) return `Nothing on the page matches ${req.selector}`;
         const r = el.getBoundingClientRect();
-        if (r.width < 1 || r.height < 1) return `${req.selector} has no size (${Math.round(r.width)}×${Math.round(r.height)}); it may not have rendered`;
-        target = el; w = Math.ceil(r.width); h = Math.min(MAX_SHOT, Math.ceil(r.height));
+        if (r.width < 1 || r.height < 1)
+          return `${req.selector} has no size (${Math.round(r.width)}×${Math.round(r.height)}); it may not have rendered`;
+        target = el;
+        w = Math.ceil(r.width);
+        h = Math.min(MAX_SHOT, Math.ceil(r.height));
         if (r.height > MAX_SHOT) note = `${req.selector} is ${Math.round(r.height)}px tall; this shows the top ${MAX_SHOT}px.`;
       } else if (req.fullPage) {
         const full = Math.max(d.documentElement.scrollHeight, d.body?.scrollHeight ?? 0);
@@ -133,20 +195,31 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
         if (full > MAX_SHOT) note = `The page is ${full}px tall; this shows the top ${MAX_SHOT}px.`;
       }
       // An element is drawn at its own size, without the margins around it (they'd shift it inside the image).
-      const url = await domToPng(target, target == d.documentElement ? { width: w, height: h, backgroundColor: bg, scale: 1 } : { backgroundColor: bg, scale: 1, style: { margin: "0" } });
+      const url = await domToPng(
+        target,
+        target == d.documentElement
+          ? { width: w, height: h, backgroundColor: bg, scale: 1 }
+          : { backgroundColor: bg, scale: 1, style: { margin: "0" } }
+      );
       return { png: url.slice(url.indexOf(",") + 1), w, h, target, ...(note ? { note } : {}) };
     };
     const shots: { at: number; p: Exclude<Awaited<ReturnType<typeof picture>>, string> }[] = [];
     for (const t of times) {
       const { at, value } = await clock.at(t, picture);
-      if (typeof value == "string") return { width: 0, height: 0, errors: errors(), error: req.frames?.length ? `At ${at} ms: ${value}` : value };
+      if (typeof value == "string")
+        return { width: 0, height: 0, errors: errors(), error: req.frames?.length ? `At ${at} ms: ${value}` : value };
       shots.push({ at, p: value });
     }
     const last = shots[shots.length - 1].p;
     if (last.note) notes.push(last.note);
     return {
-      png: shots[0].p.png, width: last.w, height: last.h, errors: errors(),
-      viewport: { width, height: viewport }, colorScheme: scheme, fonts: renderedFonts(d, last.target),
+      png: shots[0].p.png,
+      width: last.w,
+      height: last.h,
+      errors: errors(),
+      viewport: { width, height: viewport },
+      colorScheme: scheme,
+      fonts: renderedFonts(d, last.target),
       ...(req.frames?.length ? { shots: shots.map((s) => ({ at: s.at, png: s.p.png })) } : {}),
       ...(step ? { step } : {}),
       ...(pending.length ? { pending } : {}),
@@ -166,27 +239,41 @@ type Steps = { count(): number; current(): number; go(i: number): void; label?(i
  * a note, or why it can't.
  */
 async function goToStep(win: Window, spec: number | string, deadline: number): Promise<StepShown | { note: string } | string> {
-  const steps = () => { const s = (win as Window & { ergaSteps?: Steps }).ergaSteps; return s && typeof s.go == "function" && typeof s.count == "function" ? s : null; };
+  const steps = () => {
+    const s = (win as Window & { ergaSteps?: Steps }).ergaSteps;
+    return s && typeof s.go == "function" && typeof s.count == "function" ? s : null;
+  };
   const asHash = typeof spec == "string" && spec.startsWith("#");
   while (!steps() && !asHash && Date.now() < deadline) await sleep(50);
   const s = steps();
   try {
     if (!s) {
       if (asHash) return { note: `Opened at ${spec} (the page has no window.ergaSteps).` };
-      if (typeof spec == "number") return `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s), so it has no step ${spec}. Give a hash ("#3") to open it at the part its address names.`;
+      if (typeof spec == "number")
+        return `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s), so it has no step ${spec}. Give a hash ("#3") to open it at the part its address names.`;
       win.location.hash = "#" + spec.trim();
-      return { note: `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s): its address went to #${spec.trim()}, as a link to that part would.` };
+      return {
+        note: `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s): its address went to #${spec.trim()}, as a link to that part would.`,
+      };
     }
     const count = Math.max(0, Math.floor(Number(s.count())) || 0);
     if (!count) return "The page's ergaSteps.count() answered no steps.";
     // The slide each step is on, never one before the step before's (as the steps' list reads it: client/inline/reader.ts).
     let slides: number[] | null = null;
-    if (typeof s.slide == "function") { slides = []; for (let i = 0; i < count; i++) slides.push(Math.max(i ? slides[i - 1] : 0, Math.floor(Number(s.slide(i))) || 0)); }
+    if (typeof s.slide == "function") {
+      slides = [];
+      for (let i = 0; i < count; i++) slides.push(Math.max(i ? slides[i - 1] : 0, Math.floor(Number(s.slide(i))) || 0));
+    }
     const i = asHash ? Math.floor(Number(s.current())) || 0 : findStep(typeof spec == "string" ? spec.trim() : spec, count, slides);
     if (typeof i == "string") return i;
     if (!asHash) s.go(i);
     const label = typeof s.label == "function" ? s.label(i) : undefined;
-    return { index: i, number: stepNumber(i, slides), count, ...(typeof label == "string" && label.trim() ? { label: label.replace(/\s+/g, " ").trim().slice(0, 200) } : {}) };
+    return {
+      index: i,
+      number: stepNumber(i, slides),
+      count,
+      ...(typeof label == "string" && label.trim() ? { label: label.replace(/\s+/g, " ").trim().slice(0, 200) } : {}),
+    };
   } catch (e) {
     return `The page's ergaSteps threw: ${(e as Error)?.message ?? String(e)}`;
   }
@@ -209,7 +296,10 @@ function animationClock(d: Document) {
       if (t > now()) await sleep(t - now());
       const at = Math.round(now());
       const running = d.getAnimations().filter((a) => a.playState == "running");
-      for (const a of running) { a.pause(); if (begun.has(a)) a.currentTime = begun.get(a)! + t; }
+      for (const a of running) {
+        a.pause();
+        if (begun.has(a)) a.currentTime = begun.get(a)! + t;
+      }
       const from = performance.now();
       try {
         return { at, value: await take() };
@@ -221,7 +311,6 @@ function animationClock(d: Document) {
   };
 }
 
-
 /**
  * Stylesheets from other sites (Google Fonts, say) can't be read by the
  * page's scripts, so modern-screenshot can't put their fonts in the picture
@@ -230,26 +319,35 @@ function animationClock(d: Document) {
  * Answers the ones that couldn't be read.
  */
 async function embeddableFonts(d: Document): Promise<string[]> {
-  const sheets = [...d.styleSheets].filter((s) => { try { void s.cssRules; return false; } catch { return !!s.href; } });
-  const unread: string[] = [];
-  await Promise.all(sheets.map(async (s) => {
-    const href = s.href!;
+  const sheets = [...d.styleSheets].filter((s) => {
     try {
-      const res = await fetch(href, { mode: "cors", credentials: "omit", signal: AbortSignal.timeout(LOAD_WAIT) });
-      if (!res.ok) throw new Error(String(res.status));
-      const css = (await res.text()).replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (_, _q, u: string) => `url("${new URL(u, href).href}")`);
-      const sheet = new CSSStyleSheet();
-      sheet.replaceSync(css);
-      const faces = [...sheet.cssRules].filter((r) => r instanceof CSSFontFaceRule).map((r) => r.cssText);
-      if (!faces.length) return;
-      const style = d.createElement("style");
-      style.dataset.ergaFonts = href;
-      style.textContent = faces.join("\n");
-      d.head.append(style);
+      void s.cssRules;
+      return false;
     } catch {
-      unread.push(new URL(href).host);
+      return !!s.href;
     }
-  }));
+  });
+  const unread: string[] = [];
+  await Promise.all(
+    sheets.map(async (s) => {
+      const href = s.href!;
+      try {
+        const res = await fetch(href, { mode: "cors", credentials: "omit", signal: AbortSignal.timeout(LOAD_WAIT) });
+        if (!res.ok) throw new Error(String(res.status));
+        const css = (await res.text()).replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (_, _q, u: string) => `url("${new URL(u, href).href}")`);
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+        const faces = [...sheet.cssRules].filter((r) => r instanceof CSSFontFaceRule).map((r) => r.cssText);
+        if (!faces.length) return;
+        const style = d.createElement("style");
+        style.dataset.ergaFonts = href;
+        style.textContent = faces.join("\n");
+        d.head.append(style);
+      } catch {
+        unread.push(new URL(href).host);
+      }
+    })
+  );
   return [...new Set(unread)];
 }
 
@@ -263,7 +361,15 @@ async function settle(d: Document, deadline: number): Promise<string[]> {
   const imgs = [...d.images];
   for (const img of imgs) if (img.loading == "lazy") img.loading = "eager";
   const loading = () => [
-    ...[...d.fonts].filter((f) => f.status == "loading").map((f) => ({ what: `font ${f.family.replace(/^["']|["']$/g, "")} ${f.weight} ${f.style}`, done: f.loaded.then(() => {}, () => {}) })),
+    ...[...d.fonts]
+      .filter((f) => f.status == "loading")
+      .map((f) => ({
+        what: `font ${f.family.replace(/^["']|["']$/g, "")} ${f.weight} ${f.style}`,
+        done: f.loaded.then(
+          () => {},
+          () => {}
+        ),
+      })),
     ...imgs.filter((i) => i.src && !i.complete).map((i) => ({ what: `image ${i.getAttribute("src")}`, done: i.decode().catch(() => {}) })),
   ];
   // Text laid out in a newly loaded font can need another (a bold or an italic): look again until nothing loads.
@@ -271,7 +377,11 @@ async function settle(d: Document, deadline: number): Promise<string[]> {
     void d.documentElement.getBoundingClientRect();
     await Promise.race([new Promise((r) => requestAnimationFrame(r)), sleep(50)]); // a tab in the background gets no frames
     const now = loading();
-    if (!now.length) { await Promise.race([d.fonts.ready, sleep(deadline - Date.now())]); if (!loading().length) break; continue; }
+    if (!now.length) {
+      await Promise.race([d.fonts.ready, sleep(deadline - Date.now())]);
+      if (!loading().length) break;
+      continue;
+    }
     const left = deadline - Date.now();
     if (left <= 0) break;
     await Promise.race([Promise.all(now.map((l) => l.done)), sleep(left)]);
@@ -279,7 +389,21 @@ async function settle(d: Document, deadline: number): Promise<string[]> {
   return [...new Set(loading().map((l) => l.what))];
 }
 
-const GENERIC = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "emoji", "fangsong", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded"]);
+const GENERIC = new Set([
+  "serif",
+  "sans-serif",
+  "monospace",
+  "cursive",
+  "fantasy",
+  "system-ui",
+  "math",
+  "emoji",
+  "fangsong",
+  "ui-serif",
+  "ui-sans-serif",
+  "ui-monospace",
+  "ui-rounded",
+]);
 
 /**
  * The fonts the text under `root` rendered in: for each element with text of
@@ -289,25 +413,35 @@ const GENERIC = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy
 function renderedFonts(d: Document, root: Element): RenderedFont[] {
   const win = d.defaultView!;
   const faces = new Map<string, FontFace[]>();
-  for (const f of d.fonts) { const k = unquote(f.family).toLowerCase(); faces.set(k, [...(faces.get(k) ?? []), f]); }
+  for (const f of d.fonts) {
+    const k = unquote(f.family).toLowerCase();
+    faces.set(k, [...(faces.get(k) ?? []), f]);
+  }
   const ctx = d.createElement("canvas").getContext("2d");
   const installed = new Map<string, boolean>();
   const isInstalled = (family: string) => {
     if (!installed.has(family)) {
       // A font the computer has changes how wide text is, from at least one of two different fallbacks.
       const probe = "mmmmmmmmmmlli WQ@#0123456789";
-      const width = (font: string) => { ctx!.font = font; return ctx!.measureText(probe).width; };
+      const width = (font: string) => {
+        ctx!.font = font;
+        return ctx!.measureText(probe).width;
+      };
       installed.set(family, !!ctx && ["monospace", "serif"].some((g) => width(`72px "${family}", ${g}`) != width(`72px ${g}`)));
     }
     return installed.get(family)!;
   };
   const resolve = (stack: string): { family: string; wanted?: string } => {
-    const families = stack.split(",").map((f) => unquote(f.trim())).filter(Boolean);
+    const families = stack
+      .split(",")
+      .map((f) => unquote(f.trim()))
+      .filter(Boolean);
     for (const family of families) {
       const key = family.toLowerCase();
       if (GENERIC.has(key)) return { family, ...(family != families[0] ? { wanted: families[0] } : {}) };
       const own = faces.get(key);
-      if (own ? own.some((f) => f.status == "loaded") : isInstalled(family)) return { family, ...(family != families[0] ? { wanted: families[0] } : {}) };
+      if (own ? own.some((f) => f.status == "loaded") : isInstalled(family))
+        return { family, ...(family != families[0] ? { wanted: families[0] } : {}) };
     }
     return { family: "the browser's default font", wanted: families[0] };
   };

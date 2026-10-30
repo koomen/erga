@@ -167,7 +167,12 @@ export interface ViewResult {
   rank?: number;
 }
 
-export interface StepShown { index: number; number: string; count: number; label?: string }
+export interface StepShown {
+  index: number;
+  number: string;
+  count: number;
+  label?: string;
+}
 
 /** The times view_page and evaluate_page wait: after a step by default, at most for one time, and how many frames. */
 export const FRAMES = { afterStep: 1_000, afterLoad: 600, max: 10_000, count: 6 };
@@ -180,5 +185,10 @@ export const EVAL_MAX_JSON = 20_000;
 export const evalTimeout = (req: { timeout?: number }) => Math.max(100, Math.min(EVAL_TIMEOUT.max, Number(req.timeout) || EVAL_TIMEOUT.default));
 /** How long a tab may take to answer a view request: the render, plus evaluate's own wait. */
 export const viewWait = (req: ViewRequest) =>
-  req.live ? 10_000 + (req.live.kind == "inspect" ? evalTimeout(req.live) : 0)
-  : 20_000 + (req.step != null ? 5_000 : 0) + renderWait(req) + (req.evaluate != null ? evalTimeout(req) : 0) * Math.max(1, req.frames?.length ?? 0) + 3_000 * Math.max(0, (req.frames?.length ?? 0) - 1);
+  req.live
+    ? 10_000 + (req.live.kind == "inspect" ? evalTimeout(req.live) : 0)
+    : 20_000 +
+      (req.step != null ? 5_000 : 0) +
+      renderWait(req) +
+      (req.evaluate != null ? evalTimeout(req) : 0) * Math.max(1, req.frames?.length ?? 0) +
+      3_000 * Math.max(0, (req.frames?.length ?? 0) - 1);

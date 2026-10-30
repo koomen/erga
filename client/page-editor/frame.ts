@@ -217,7 +217,8 @@ window.addEventListener("message", (e: MessageEvent) => {
       return;
     }
     case "capture":
-      (async () => captureView(m.req, page!.renderedHtml(m.text), location.hash))().catch((err: Error): ViewResult => ({ width: 0, height: 0, errors: [], error: `Couldn't capture the page: ${err.message}` }))
+      (async () => captureView(m.req, page!.renderedHtml(m.text), location.hash))()
+        .catch((err: Error): ViewResult => ({ width: 0, height: 0, errors: [], error: `Couldn't capture the page: ${err.message}` }))
         .then((result) => post({ type: "captured", id: m.id, result }));
       return;
   }
