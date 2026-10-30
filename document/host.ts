@@ -231,13 +231,13 @@ export function makeHost(opts: HostOptions) {
     return n ? Effect.orElseSucceed(n.get(), () => undefined) : Effect.succeed(undefined);
   };
 
-  // view_page: ask the owner's tabs; the first to answer wins. With none of
-  // their tabs open there's nothing to look with (no server-side browser
-  // yet; Cloudflare Browser Rendering could stand in), and the tool says so.
-  // The live page (req.live, shared/live-page.ts) is one tab's in particular:
-  // every tab answers, and the focused one's answer wins at once; else, once
-  // all have answered, a visible one's, then any. A tab that couldn't (agent
-  // control off there) loses to one that could.
+  // view_page: ask the owner's tabs. With none of their tabs open there's
+  // nothing to look with (no server-side browser yet; Cloudflare Browser
+  // Rendering could stand in), and the tool says so. Every tab answers (each
+  // renders the page it has open), and the focused one's answer wins at once;
+  // else, once all have answered, a visible one's, then any. A tab that
+  // couldn't (an error; agent control off there, for the live page) loses to
+  // one that could.
   const views = new Map<string, (r: ViewResult) => void>();
   const view = (user: string) => (req: ViewRequest): Promise<ViewResult> => {
     const mine = own(user).length;
@@ -254,7 +254,6 @@ export function makeHost(opts: HostOptions) {
     const waited = Effect.gen(function* () {
       const answered = yield* Deferred.make<ViewResult>();
       views.set(id, (r) => {
-        if (!req.live) return void Deferred.doneUnsafe(answered, Effect.succeed(r));
         answers.push(r);
         if ((!r.declined && r.rank == 2) || answers.length >= mine) Deferred.doneUnsafe(answered, Effect.succeed(best()));
       });
@@ -424,8 +423,8 @@ export function makeHost(opts: HostOptions) {
       sendTo((yield* Person).id, { type: "model", ...state });
       return { ok: true as const, ...state };
     }))
-    .handle("view", ({ payload: { id, errors, fonts, pending, ...result } }) => Effect.sync(() => {
-      views.get(id)?.({ ...result, errors: [...errors], ...(fonts ? { fonts: fonts.map((f) => ({ ...f, tags: [...f.tags] })) } : {}), ...(pending ? { pending: [...pending] } : {}) });
+    .handle("view", ({ payload: { id, errors, fonts, pending, shots, ...result } }) => Effect.sync(() => {
+      views.get(id)?.({ ...result, errors: [...errors], ...(fonts ? { fonts: fonts.map((f) => ({ ...f, tags: [...f.tags] })) } : {}), ...(pending ? { pending: [...pending] } : {}), ...(shots ? { shots: [...shots] } : {}) });
       return { ok: true as const };
     }))
     .handle("abort", () => Person.use((user) => session(user).pipe(

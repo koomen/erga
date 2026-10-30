@@ -228,6 +228,10 @@ A minimal presentation: each `section` is a step.
 </script>
 ```
 
+To check a step, give `view_page` or `evaluate_page` the step (`step: "3.2"`),
+and `frames: [300, 900]` to see a transition partway. They render a copy, so
+the person's own view stays where it is.
+
 `e2e/fixtures/steps/index.html` is a fuller example, and
 `e2e/fixtures/builds/index.html` a deck whose slides build up in parts.
 

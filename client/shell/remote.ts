@@ -18,7 +18,7 @@ import {
   type ToFrame,
 } from "../page-editor/bridge";
 import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "../page-editor/editor";
-import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "../../shared/agent-log";
+import { EVAL_MAX_JSON, FRAMES, viewWait, type ViewRequest, type ViewResult } from "../../shared/agent-log";
 import type { LiveRequest, LiveResult } from "../../shared/live-page";
 import { changesBetween } from "../../document/merge";
 import { clampZoom, type ZoomBy } from "../page-editor/zoom";
@@ -475,7 +475,9 @@ export class RemotePage {
       ...(Array.isArray(r.pending) && r.pending.length ? { pending: r.pending.filter((p): p is string => typeof p == "string").slice(0, 20).map((p) => p.slice(0, 200)) } : {}),
       ...(typeof r.note == "string" ? { note: r.note } : {}),
       ...(typeof r.error == "string" ? { error: r.error } : {}),
-      ...(typeof r.value == "string" ? { value: r.value.slice(0, EVAL_MAX_JSON + 100) } : {}),
+      ...(typeof r.value == "string" ? { value: r.value.slice(0, EVAL_MAX_JSON * FRAMES.count + 1000) } : {}),
+      ...(Array.isArray(r.shots) ? { shots: r.shots.filter((x) => x && typeof x.png == "string" && Number.isFinite(x.at)).slice(0, FRAMES.count).map((x) => ({ at: Number(x.at), png: x.png })) } : {}),
+      ...(r.step && Number.isInteger(r.step.index) && typeof r.step.number == "string" ? { step: { index: r.step.index, number: r.step.number.slice(0, 20), count: Number(r.step.count) || 0, ...(typeof r.step.label == "string" ? { label: r.step.label.slice(0, 200) } : {}) } } : {}),
     };
   }
 }

@@ -25,7 +25,9 @@ export function mountPageRequests(shell: Shell) {
     // Render only once this tab has every edit the agent had made when it asked.
     if (req.after) await shell.collab.waitFor(req.after);
     const result = await captureView(req);
-    await fetch(shell.api("/api/agent/view"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...result }) }).catch(() => {});
+    // With several of the person's tabs open, the host takes the focused one's answer (else a visible one's): the page they look at.
+    const rank = document.hasFocus() ? 2 : document.visibilityState == "visible" ? 1 : 0;
+    await fetch(shell.api("/api/agent/view"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...result, page: shell.pagePath, rank, declined: result.error != null }) }).catch(() => {});
   }
 
 

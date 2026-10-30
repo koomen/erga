@@ -8,12 +8,15 @@
   .slide { display: none; padding: 60px; }
   .slide.current { display: block; }
   .build:not(.shown) { display: none; }
+  /* How far into the deck: it grows to each step's place in 1.5 s. */
+  #progress { position: fixed; left: 0; bottom: 0; height: 24px; width: 0; background: rgb(200, 0, 0); transition: width 1.5s linear; }
 </style>
 </head>
 <body>
   <section class="slide"><h1>First slide</h1><p class="build">One.</p><p class="build">Two.</p><p class="build">Three.</p></section>
   <section class="slide"><h1>Second slide</h1><p class="build">No parts here.</p></section>
   <section class="slide"><h1>Third slide</h1><p class="build">Red.</p><p class="build">Green.</p><p class="build">Blue.</p></section>
+  <div id="progress"></div>
   <script>
     // A deck whose slides build up in parts (agents/document/PROMPT.md, "Presentations"): each part is a step, and
     // slide(n) says which slide step n is on. The address names the slide and the part: #3.2 (rule 14).
@@ -26,6 +29,7 @@
       const [i, k] = steps[at];
       slides.forEach((s, j) => s.classList.toggle("current", j == i));
       slides[i].querySelectorAll(".build").forEach((b, j) => b.classList.toggle("shown", j < k));
+      document.getElementById("progress").style.width = (100 * (at + 1) / steps.length) + "%";
       history.replaceState(null, "", "#" + (i + 1) + (k > 1 ? "." + k : ""));
       dispatchEvent(new Event("ergastep"));
     }
