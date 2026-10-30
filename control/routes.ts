@@ -8,8 +8,8 @@
 //
 //   /                           the Ops page (the environments, the Cloudflare credential, the source and deploys);
 //                               /admin/ops too
-//   /api/source/...             its API (control/source/routes.ts)
-//   /api/deploys..., /api/events    the deploys' API and the event stream (control/deploys/api.ts)
+//   POST /api/tools/<name>      the Ops page's operations (control/operations.ts), as the app's /api/tools runs them
+//   /api/events                 the deploys' event stream (control/deploys/api.ts)
 //   /git/erga.git/...           Git smart HTTP: clone and fetch for anyone, pushes with an admin-scope token
 //   /git, /git/tree/...         Erga's source for anyone, read-only: branches, commits, files (control/source/public.ts)
 //   /auth/github[/callback], /auth/logout   signing in (Erga's GitHub App: its user authorization) and out. The callback is the
@@ -35,17 +35,13 @@
 //                               to Erga's own origins, a BroadcastChannel here) and closes; else back to /install. Also the
 //                               deploy page's return (control/install/routes.ts, its cookie says so), and the relay: a
 //                               consent an install's control Worker started comes back here and goes on to it
-//   POST /install/disconnect    the grant revoked and forgotten (the Ops page's card: POST /api/deploys/credential/disconnect)
+//   POST /install/disconnect    the grant revoked and forgotten (the Ops page's card: the operation disconnect_deploy_credential)
 //   GET  /api/install           the credential's status, as JSON
 //   /deploy, /deploy/...        install Erga in your own Cloudflare account (control/install/routes.ts); not on an install's
 //                               control Worker
 //   (the pages here are the app's markup, and name the app's own stylesheet and typeface, at the app's origin: control/index.ts)
 //   GET  /releases, /releases/<channel>.json, /releases/<version>/...
 //                               the release store, for anyone (control/deploys/releases.ts): the channels, and each release's files
-//   GET  /api/releases          admins: both channels (the Ops page marks edge's latest and stable's tag on the log)
-//   GET  /api/domains           admins: each environment's domains (its Worker's custom domains; the first is its own address)
-//   POST /api/domains           admins: { target, hostname }: a domain added to an environment (a hostname on one of the account's zones)
-//   DELETE /api/domains         admins: { target, hostname }: a domain removed (not the environment's own address)
 //   POST /forks/<id>/token      a downstream's control Worker (its FORK_SECRET as the Bearer token): a short-lived token for its
 //                               fork's repository here, and the remote: { remote, token, expiresAt }
 //   POST /forks/<id>/builder/build|cancel   the same: a build of one of the fork's commits in this Worker's build container, its
@@ -79,7 +75,8 @@ import { Cloudflare, type Fetch } from "./deploys/cloudflare-api.ts";
 import { releasesRoutes, type ReleaseStore } from "./deploys/releases.ts";
 import { CONTROL, TARGETS } from "../deploy/targets.ts";
 import { DEPLOY_OAUTH_COOKIE } from "./install/install.ts";
-import { deploysApi, isDeploysApiPath, type DeploysObject } from "./deploys/api.ts";
+import { deploysEvents, isEventsPath, type DeploysObject } from "./deploys/api.ts";
+import { controlTools } from "./operations.ts";
 import {
   actingAdmin,
   cookies,
@@ -114,9 +111,9 @@ import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW
 import { accountHtml, accountOf, appPage, crumbs, webPage as page } from "../server/pages/index.ts";
 import { esc, jsonInScript } from "../shared/html.ts";
 import { randomToken } from "../shared/bytes.ts";
-import { whoOf, type Platform } from "../server/platform.ts";
+import type { Platform } from "../server/platform.ts";
 import { respond } from "../server/http.ts";
-import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceApi, sourceGit } from "./source/index.ts";
+import { adminSourcePage, isPublicSourcePath, publicSourcePage, sourceGit } from "./source/index.ts";
 import { json } from "../shared/http.ts";
 
 /** What the routes run on. */
@@ -175,8 +172,7 @@ export interface Control {
  * The Ops page and its API: erga.dev and staging serve them in place, in the admin layout, on the control Worker's
  * repository and deploys over the app's CONTROL binding. The control Worker serves them too, as the way in when the app is broken.
  */
-export const isSourcePagePath = (path: string) =>
-  OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/api/releases" || path.startsWith("/api/releases/") || path == "/api/domains";
+export const isSourcePagePath = (path: string) => OPS_PATHS.has(path) || isEventsPath(path);
 
 /** The Ops page's addresses: /admin/ops, and / on the control Worker. */
 const OPS_PATHS = new Set(["/admin/ops"]);
@@ -184,10 +180,23 @@ export const isOpsPagePath = (path: string) => OPS_PATHS.has(path);
 
 /** The paths these routes own (the app answers the rest of them, all but isSourcePagePath, with a redirect to the control Worker when it is apart). */
 export const isControlPath = (path: string) =>
-  path == "/" || OPS_PATHS.has(path) || path.startsWith("/api/source/") || isDeploysApiPath(path) || path == "/git/erga.git" || path.startsWith("/git/erga.git/")
-  || isPublicSourcePath(path) || path == "/install" || path.startsWith("/install/") || path == "/api/install"
-  || path == "/releases" || path.startsWith("/releases/") || path == "/api/releases" || path.startsWith("/api/releases/") || path == "/api/domains"
-  || path == "/deploy" || path.startsWith("/deploy/") || path.startsWith("/forks/") || path == "/github/webhook" || path == "/github/connect" || path.startsWith("/github/connect/");
+  path == "/" ||
+  OPS_PATHS.has(path) ||
+  isEventsPath(path) ||
+  path == "/git/erga.git" ||
+  path.startsWith("/git/erga.git/") ||
+  isPublicSourcePath(path) ||
+  path == "/install" ||
+  path.startsWith("/install/") ||
+  path == "/api/install" ||
+  path == "/releases" ||
+  path.startsWith("/releases/") ||
+  path == "/deploy" ||
+  path.startsWith("/deploy/") ||
+  path.startsWith("/forks/") ||
+  path == "/github/webhook" ||
+  path == "/github/connect" ||
+  path.startsWith("/github/connect/");
 
 /**
  * How the app's Worker answers `path`: "here", itself (the Ops page and its API where the control Worker is apart and
@@ -214,7 +223,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   if (path == "/auth/google/callback") return googleRelay(request, url, c);
   if (path == "/auth/logout") return respond(signOut, request, p);
   if (path == "/github/webhook" && method == "POST") return githubWebhook(request, url, c);
-  if (path == "/api/health" && read) return apiAnswer(request, c, null);
+  if (path == "/api/health" && read) return apiAnswer(request, c);
   // The app's favicon, for the page: fetched from the app.
   if (read && path.startsWith("/favicon")) {
     const r = await fetch(`${c.app}${path}`).catch(() => null);
@@ -242,7 +251,7 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
   // Git: reads for anyone, pushes with an admin's token; it checks itself.
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, p, url);
   // A downstream's control Worker, with its fork's secret: its repository's token, and builds of its commits.
-  if (path.startsWith("/forks/")) return isForkBuild(path) ? forkBuild(request, c) : apiAnswer(request, c, null);
+  if (path.startsWith("/forks/")) return isForkBuild(path) ? forkBuild(request, c) : apiAnswer(request, c);
 
   // An admin, from here: signed in here, or an admin-scope token.
   const session = await p.sessionOf(request);
@@ -262,9 +271,8 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
     // The Git address on the page is the control Worker's, wherever the page is.
     return adminSourcePage({ session, admin: true, ready: !!p.source, origin: p.control?.url ?? url.origin, layout: c.layout, ...(c.hosts ? { hosts: c.hosts } : {}), ...(c.upstream ? { upstream: c.upstream } : {}) });
   }
-  if (path.startsWith("/api/source/")) return sourceApi(request, p, url);
-  if (isDeploysApiPath(path)) return deploysApi(request, session, c.deploys);
-  if (path == "/api/domains" || (path == "/api/releases" && read)) return apiAnswer(request, c, session);
+  if (path.startsWith("/api/tools/")) return controlTools(request, p, session);
+  if (isEventsPath(path) && read) return deploysEvents(request, c.deploys);
   if (path == "/install" || path.startsWith("/install/") || path == "/api/install") return installRoutes(request, url, c, session);
   if (path == "/github/connect" || path == "/github/connect/pick") return githubConnectRoutes(request, url, c, session);
   return wantsPage ? page("Not found", `There's nothing here. <a href="${esc(home)}">Ops</a>, or <a href="${esc(c.app)}">Erga</a>.`, 404) : json({ error: "Not found" }, 404);
@@ -272,13 +280,10 @@ export async function controlRoutes(request: Request, c: Control): Promise<Respo
 
 const wantsPageAt = (request: Request, path: string) => !path.startsWith("/api/") && (request.headers.get("accept") ?? "").includes("text/html");
 
-// ---------------------------------------------------------------- the JSON routes: the health check, /api/domains, /api/releases, /forks
+// ---------------------------------------------------------------- the JSON routes: the health check, /forks
 
-/** Who asks and what the routes run on: given with each request (the routes are made once). `session`: an admin, for the admins' routes. */
-class Asking extends Context.Service<
-  Asking,
-  { readonly request: Request; readonly c: Control; readonly session: AdminLayout["session"] | null }
->()("erga/control/Asking") {}
+/** Who asks and what the routes run on: given with each request (the routes are made once). */
+class Asking extends Context.Service<Asking, { readonly request: Request; readonly c: Control }>()("erga/control/Asking") {}
 
 /** A JSON answer: no cache keeps it. */
 const answer = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -307,25 +312,7 @@ const fork = <E, R>(f: (forks: Forks, id: string, secret: string) => Effect.Effe
 const either = (r: object | { error: string; status?: number }, otherwise: number) =>
   "error" in r ? answer({ error: r.error }, (r as { status?: number }).status ?? otherwise) : answer(r);
 
-/** A domain added or removed: { target, hostname }. */
-const DomainChange = Schema.Struct({ target: Schema.optionalKey(Schema.Unknown), hostname: Schema.optionalKey(Schema.Unknown) });
 const Installation = Schema.Struct({ installation: Schema.optionalKey(Schema.Unknown) });
-
-const domainChange = (add: boolean) =>
-  Effect.gen(function* () {
-    const { request, c, session } = yield* Asking;
-    if (!session) return notFound;
-    if (!session.agent && request.headers.get("origin") != new URL(request.url).origin) return answer({ error: "Forbidden" }, 403);
-    const body = yield* bodyOf(DomainChange, {});
-    const target = typeof body.target == "string" ? body.target : "",
-      hostname = typeof body.hostname == "string" ? body.hostname.trim().toLowerCase() : "";
-    if (!target || !hostname) return answer({ error: "Give the environment (target) and the hostname." }, 400);
-    const by = byLine(session.login.toLowerCase(), whoOf(session).via);
-    return either(
-      yield* Effect.promise(() => (add ? c.deploys.addDomain(target, hostname, by) : c.deploys.removeDomain(target, hostname, by))),
-      400
-    );
-  });
 
 const githubFork = (what: "token" | "uninstall") =>
   fork((forks, id, secret) =>
@@ -360,17 +347,8 @@ const health = Effect.gen(function* () {
     })
   );
 });
-const domains = Effect.map(
-  call((c) => c.deploys.domains()),
-  (r) => either(r, 502)
-);
-const releases = Effect.map(
-  call((c) => c.deploys.releases()),
-  (r) => (r ? answer(r) : answer({ error: "This server has no release store." }, 404))
-);
-
 /** The reads answer a HEAD as a GET. */
-const read = (path: HttpRouter.PathInput, handler: typeof domains) => [
+const read = (path: HttpRouter.PathInput, handler: typeof health) => [
   HttpRouter.route("GET", path, handler),
   HttpRouter.route("HEAD", path, handler),
 ];
@@ -378,10 +356,6 @@ const read = (path: HttpRouter.PathInput, handler: typeof domains) => [
 const apiRoutes = HttpRouter.addAll(
   [
     ...read("/api/health", health),
-    ...read("/api/domains", domains),
-    ...read("/api/releases", releases),
-    HttpRouter.route("POST", "/api/domains", domainChange(true)),
-    HttpRouter.route("DELETE", "/api/domains", domainChange(false)),
     HttpRouter.route(
       "POST",
       "/forks/:id/token",
@@ -417,8 +391,7 @@ const apiRoutes = HttpRouter.addAll(
 );
 
 const api = HttpRouter.toWebHandler(apiRoutes, { disableLogger: true, routerConfig: { ignoreTrailingSlash: true } });
-const apiAnswer = (request: Request, c: Control, session: AdminLayout["session"] | null) =>
-  api.handler(request, Context.make(Asking, { request, c, session }));
+const apiAnswer = (request: Request, c: Control) => api.handler(request, Context.make(Asking, { request, c }));
 
 /** A downstream's build here: its output streams back as the container sends it, so it goes past the router. */
 const isForkBuild = (path: string) => /^\/forks\/[a-z0-9-]{4,40}\/builder\/(build|cancel)$/.test(path);

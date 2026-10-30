@@ -1,6 +1,7 @@
-// Where the Ops page answers: erga.dev and staging serve it (and its API) in place at /admin/ops, on the control
-// Worker's objects over the CONTROL binding; the rest of the control Worker's routes go there by a redirect. And the
-// page itself when the app serves it: the Git address on it is the control Worker's.
+// Where the Ops page answers: erga.dev and staging serve it (and its event stream) in place at /admin/ops, on the
+// control Worker's objects over the CONTROL binding; the rest of the control Worker's routes go there by a redirect.
+// Its actions are operations, which the app's own /api/tools answers (tests/ops-operations.test.ts). And the page
+// itself when the app serves it: the Git address on it is the control Worker's.
 import { describe, expect, test } from "bun:test";
 import { appAnswer, controlRoutes, isOpsPagePath, type Control } from "../control/routes";
 import type { Platform } from "../server/platform";
@@ -8,18 +9,11 @@ import type { Session } from "../server/platform";
 
 describe("the app's Worker", () => {
   const apart = { control: true, controlUrl: true, pipeline: false };
-  test("serves the Ops page and its API in place where the control Worker is apart (erga.dev, staging)", () => {
-    for (const path of [
-      "/admin/ops",
-      "/api/source/branches",
-      "/api/source/merge",
-      "/api/deploys",
-      "/api/deploys/staging/log",
-      "/api/events",
-      "/api/releases",
-      "/api/releases/promote",
-    ])
-      expect([path, appAnswer(path, apart)]).toEqual([path, "here"]);
+  test("serves the Ops page and its events in place where the control Worker is apart (erga.dev, staging)", () => {
+    for (const path of ["/admin/ops", "/api/events"]) expect([path, appAnswer(path, apart)]).toEqual([path, "here"]);
+    // Its actions are the app's own /api/tools, and the old routes are gone.
+    for (const path of ["/api/tools/list_deploys", "/api/source/branches", "/api/deploys", "/api/domains", "/api/releases"])
+      expect([path, appAnswer(path, apart)]).toEqual([path, null]);
   });
   test("sends the rest to the control Worker: Git, /install, the release store, the public source", () => {
     for (const path of ["/git/erga.git/info/refs", "/git", "/git/tree/main", "/install", "/install/start", "/api/install", "/releases", "/releases/stable.json"])
@@ -63,12 +57,5 @@ describe("the Ops page, served by the app", () => {
     expect(html).toContain("git remote add erga https://ops.erga.test/git/erga.git");
     for (const id of ["env-production", "env-staging", "env-control", "env-cloudflare"]) expect(html).toContain(`id="${id}"`);
     expect(html.indexOf('id="status"')).toBeLessThan(html.indexOf('id="repo"'));
-  });
-  test("/api/releases answers the channels over the binding, and 404 where there's no store", async () => {
-    const view = { edge: { releases: [] }, stable: { releases: [] } };
-    const ok = await go("/api/releases", control(view));
-    expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual(view);
-    expect((await go("/api/releases", control(null))).status).toBe(404);
   });
 });

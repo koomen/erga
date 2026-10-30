@@ -7,7 +7,7 @@ import type { BranchDeploys, DeployState, Run, Stored } from "./branches";
 import type { RestorePoint, StepId } from "./pipeline";
 import type { DeployName } from "../../deploy/targets";
 
-/** One deploy, as the history keeps it (GET /api/deploys/<name>/history, newest first). */
+/** One deploy, as the history keeps it (list_deploys' history, newest first). */
 export interface DeployRecord {
   id: string;
   target: DeployName;
@@ -39,7 +39,7 @@ export const HISTORY_KEEP = 100;
 
 /** One line of a deploy's log: when (ms since the epoch), what, and which step it belongs to. */
 export interface LogLine { at: number; text: string; step?: StepId | "build" | "rollback" }
-/** A deploy's whole log, as GET /api/deploys/<name>/log answers it (the latest deploy's, or ?deploy=<id>'s), with its record. */
+/** A deploy's whole log, as deploy_log answers it (the latest deploy's, or ?deploy=<id>'s), with its record. */
 export interface DeployLog { deployId: string | null; commit: string | null; state: DeployState; lines: LogLine[]; trigger?: string; started?: number; ended?: number | null; error?: string | null; live?: boolean; restore?: DeployRecord["restore"]; rollbackOf?: string; rolledBackBy?: string }
 interface StoredLog { deployId: string; commit: string; lines: LogLine[] }
 /** At most this many lines are kept of one deploy's log (the first and the latest, with a line saying how many went between). */
@@ -105,7 +105,7 @@ export class DeployHistory {
     this.deploys.deps.logged?.({ type: "deploy-log", target: name, deployId: id, lines: [line] });
   }
 
-  /** A target's history (GET /api/deploys/<name>/history). */
+  /** A target's history (list_deploys). */
   async historyOf(name: string, limit = 20): Promise<DeployRecord[] | null> {
     if (!this.deploys.fleet.has(name)) return null;
     return this.localHistory(name, Math.max(1, Math.min(HISTORY_KEEP, Math.floor(limit) || 20)));
@@ -142,7 +142,7 @@ export class DeployHistory {
   }
 
   /**
-   * A deploy's whole log, with its record (GET /api/deploys/<name>/log): the
+   * A deploy's whole log, with its record (deploy_log): the
    * latest deploy's, or `deployId`'s (null if the history has no such deploy).
    */
   async logOf(name: string, deployId?: string): Promise<DeployLog | null> {

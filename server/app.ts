@@ -22,7 +22,7 @@
 //   /api/docs/<id>/home        whether a document is the homepage, and its deploys (/admin chooses it)
 //   /_home/<gen>/<path>        the homepage's files, as deployed
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
-//                              and /api/source/...; `outside` answers them (a redirect to the control Worker, or itself in local development)
+//                              and /api/events; `outside` answers them (a redirect to the control Worker, or itself in local development)
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout

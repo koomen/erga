@@ -145,8 +145,8 @@ describe("what stays shut", () => {
       expect(`${p}: ${r.status}`).toBe(`${p}: 302`);
       expect(r.headers.get("location")).toStartWith("/auth/github?next=");
     }
-    for (const p of ["/api/source/branches", "/api/deploys", "/api/install"]) expect(`${p}: ${(await fetch(`${origin}${p}`)).status}`).toBe(`${p}: 401`);
-    const merge = await fetch(`${origin}/api/source/merge`, { method: "POST", headers: { origin } });
+    for (const p of ["/api/events", "/api/install"]) expect(`${p}: ${(await fetch(`${origin}${p}`)).status}`).toBe(`${p}: 401`);
+    const merge = await fetch(`${origin}/api/tools/deploy_production`, { method: "POST", headers: { origin } });
     expect(merge.status).toBe(401);
   });
 

@@ -20,11 +20,10 @@ const OVER: Record<string, number> = {
   "document/document.ts": 83687,
   "client/editor.html": 74366,
   "dev/mock-cloudflare.ts": 63809,
-  "control/routes.ts": 59671,
+  "control/routes.ts": 57202,
   "client/pages/pages-tree.ts": 57709,
   "agents/document/tools.ts": 55382,
   "control/deploys/branches.ts": 54145,
-  "client/inline/ops.ts": 51276,
 };
 
 /** The repo's tracked source files. */

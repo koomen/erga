@@ -7,7 +7,7 @@
 // A push or merge that moves a branch, and a release tag cut, go to the
 // deploys' object (control/deploys/pipeline-object.ts), which deploys the
 // branch where it goes, and answers at once: the deploy runs on in the
-// background, its progress on GET /api/deploys and {type: "deploys"} on
+// background, its progress on list_deploys and {type: "deploys"} on
 // /api/events. Only the control Worker has the deploys (its PIPELINE binding).
 //
 // Calls name the address the request came to (`origin`), which local
@@ -132,7 +132,7 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
     }
   }
 
-  /** A release cut, as POST /api/source/release asks: the tag, or { error, status }. */
+  /** A release cut, as cut_release asks: the tag, or { error, status }. */
   async release(origin: string, who: Actor, o: { version?: string; notes?: string; commit?: string } = {}): Promise<Released | { error: string; status: number }> {
     try { return await this.at(origin).release(who, o); } catch (e) {
       if (e instanceof SourceError) return { error: e.message, status: e.status };
@@ -140,7 +140,7 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
     }
   }
 
-  // A downstream's Update from upstream, and the ways out of one that conflicted (POST /api/source/update[/resolve|/finish|/abandon]).
+  // A downstream's Update from upstream, and the ways out of one that conflicted (update_from_upstream, resolve_conflict_file, finish_waiting_merge, drop_waiting_merge).
   async update(origin: string, who: Actor): Promise<UpdateResult | { error: string; status: number }> {
     try { return await this.at(origin).update(who); } catch (e) { return SourceHost.failed(e, "The update"); }
   }
@@ -160,7 +160,6 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
     try { await this.at(origin).seedFork(fork, commit); return { ok: true }; } catch (e) { return SourceHost.failed(e, "Seeding the fork"); }
   }
 
-  /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
   async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
     try { return await this.at(origin).merge(who, commit); } catch (e) {
       if (e instanceof SourceError) return { error: e.message, status: e.status };

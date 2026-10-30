@@ -14,7 +14,7 @@ import { serverApi } from "../server/api";
 import { respond } from "../server/http";
 import { Tokens } from "../server/identity/tokens";
 import { agentTools, allTools, jsonSchemaOf } from "../agents/tools";
-import { opsTools, sourceTools, type OpsCalls } from "../agents/admin/tools";
+import { homeTools } from "../agents/admin/tools";
 import { argumentsSchema } from "../agents/run";
 import { setup } from "./helpers/files-fixture";
 
@@ -83,9 +83,7 @@ test("REST's /api/ext/tools and MCP's tools/list: every tool's inputSchema is an
 
 test("every tool of the registry, the admin agent's own and the model's: an object's schema", () => {
   expect(notObjects(allTools().map((t) => ({ name: t.name, schema: jsonSchemaOf(t) })))).toEqual([]);
-  const none = (() => Promise.resolve({})) as never;
-  const ops = new Proxy({}, { get: () => none }) as OpsCalls;
-  const admin = agentTools([...allTools(), ...opsTools(ops), ...sourceTools(none)], null);
+  const admin = agentTools([...allTools(), ...homeTools(() => Promise.resolve({}))], null);
   expect(notObjects(admin.map((t) => ({ name: t.name, schema: argumentsSchema(t.parameters) })))).toEqual([]);
   expect(argumentsSchema(Schema.Struct({}))).toEqual({ type: "object", properties: {} });
 });

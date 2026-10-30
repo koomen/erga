@@ -19,7 +19,7 @@
 // operations, and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 
-import { OPERATIONS } from "../server/operations/index.ts";
+import { ALL_OPERATIONS } from "./tools.ts";
 
 /**
  * Who the action belongs to: "admin", the admin agent's only (it needs admin power); "document", every agent's (the
@@ -28,7 +28,7 @@ import { OPERATIONS } from "../server/operations/index.ts";
 export type Domain = "admin" | "document" | "none";
 
 export interface AgentAction {
-  /** The route, as its file's route table writes it ("POST /api/source/merge"); "op=", "do=" for one of several. */
+  /** The route, as its file's route table writes it ("POST /api/tools/<name>"); "op=", "do=" for one of several. */
   readonly route: string;
   readonly domain: Domain;
   /** What the person does, on which page. */
@@ -96,35 +96,15 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/admin/agent/prefs", domain: "none", action: "The admin agent's panel, as the admin left it", exempt: PANEL },
   { route: "PUT /api/admin/agent/prefs", domain: "none", action: "Keep the admin agent's panel layout", exempt: PANEL },
 
-  // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys
+  // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys. Its actions are
+  // operations (control/operations.ts), at the end with the others; these are the routes that stay routes.
   { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "list_source" },
   { route: "GET /git/tree/<ref>/<path>", domain: "admin", action: "Read a folder or a file of Erga's source (the public page, for anyone)", tool: "read_source" },
-  { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main, GitHub's status and any merge waiting on conflicts (Ops)", tool: "list_branches" },
-  { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Ops)", tool: "deploy_production" },
   // GitHub (control/source/github.ts; control/routes.ts): Erga's GitHub App, connected to one repository. Connect is a consent on
   // GitHub's install page, in a popup; the agent reads the state, syncs, disconnects, and offers the button.
-  { route: "GET /api/source/github", domain: "admin", action: "Read the GitHub connection: the repository, the sync's state and its error (Ops, the GitHub card)", tool: "github_status" },
-  { route: "POST /api/source/github/sync", domain: "admin", action: "Sync with GitHub now (Ops, the GitHub card)", tool: "sync_github" },
-  { route: "POST /api/source/github/disconnect", domain: "admin", action: "Disconnect GitHub: forget the repository, uninstall the App (Ops, the GitHub card)", tool: "disconnect_github" },
   { route: "GET /github/connect", domain: "none", action: "Connect GitHub: the App's install page on GitHub, in a popup (Ops, the GitHub card; the button under the agent's github_status)", exempt: "a secret: the consent gives Erga's GitHub App access to the person's repositories, only on GitHub's own page in their browser, never in a conversation (the agent offers the button)" },
   { route: "POST /github/connect/pick", domain: "none", action: "Pick the repository, or have Erga make one, in the popup after GitHub's install page", exempt: "the consent's own pages: it acts with the person's GitHub token, which only the popup holds" },
   { route: "POST /github/webhook", domain: "none", action: "GitHub tells Erga of a push (the App's webhook): the repository syncs in", exempt: "server to server: GitHub's, signed with the webhook secret (or relayed from upstream, signed with the fork's secret)" },
-  { route: "POST /api/source/release", domain: "admin", action: "Cut a release: a version tag on main's head (Ops)", tool: "cut_release" },
-  // A downstream (an Erga on its own domain): its position against upstream, and Update from upstream (control/source/repo.ts).
-  { route: "POST /api/source/update", domain: "admin", action: "Update from upstream: upstream's release merged into staging (Ops)", tool: "update_from_upstream" },
-  { route: "POST /api/source/update/resolve", domain: "admin", action: "Resolve one conflicted file of the merge waiting on conflicts, from upstream or from GitHub (the agent's way out of a conflict)", tool: "resolve_conflict_file" },
-  { route: "POST /api/source/update/finish", domain: "admin", action: "Finish the resolved merge: staging moves (Ops)", tool: "finish_waiting_merge" },
-  { route: "POST /api/source/update/abandon", domain: "admin", action: "Drop the waiting merge and its branch (Ops)", tool: "drop_waiting_merge" },
-  { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Ops)", tool: "list_deploys" },
-  { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Ops)", tool: "list_deploys" },
-  { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Ops)", tool: "deploy_log" },
-  { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target, or Retry a failed deploy (Ops)", tool: "redeploy" },
-  { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
-  { route: "POST /api/deploys/<name>/rollback", domain: "admin", action: "Roll a target back to the version before its live deploy (Ops)", tool: "rollback" },
-  // Each environment's domains (control/routes.ts, control/deploys/branches.ts): its Worker's custom domains.
-  { route: "GET /api/domains", domain: "admin", action: "Read each environment's domains (Ops)", tool: "list_domains" },
-  { route: "POST /api/domains", domain: "admin", action: "Add a domain to an environment (Ops)", tool: "add_domain" },
-  { route: "DELETE /api/domains", domain: "admin", action: "Remove a domain from an environment (Ops)", tool: "remove_domain" },
   // A downstream's control Worker, with its fork's secret (control/routes.ts): its repository's token, and builds of its commits.
   { route: "POST /forks/<id>/token", domain: "none", action: "A downstream's control Worker gets a token for its fork's repository", exempt: "server to server, with the fork's secret" },
   { route: "POST /forks/<id>/builder/build|cancel", domain: "none", action: "A downstream's control Worker has one of its commits built here", exempt: "server to server, with the fork's secret" },
@@ -132,14 +112,24 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /forks/<id>/hosts", domain: "none", action: "A downstream's control Worker tells upstream its hosts (its domains changed)", exempt: "server to server, with the fork's secret" },
   // The release store (control/routes.ts, control/deploys/releases.ts): the channels edge and stable.
   { route: "GET /releases", domain: "admin", action: "Read the release store's channels (public; the Ops page marks them on the log)", tool: "list_releases" },
-  { route: "GET /api/releases", domain: "admin", action: "Read both channels (Ops)", tool: "list_releases" },
   // The control Worker's Cloudflare credential (control/routes.ts): a consent in the browser, from the Ops page's
   // Cloudflare card (a popup). The admin agent reads it and offers the button; the consent is the admin's own.
-  { route: "GET /api/install", domain: "admin", action: "Read whether the control Worker's Cloudflare credential is connected (GET /api/deploys says it too)", tool: "deploy_credential" },
-  { route: "GET|POST /install/start", domain: "none", action: "Connect Cloudflare: consent on Cloudflare's own page, in a popup (the Ops page's Cloudflare card, or the button under the agent's deploy_credential)", exempt: "a secret: the consent gives Erga a grant, on Cloudflare's consent screen, never in a conversation (the agent offers the button)" },
+  {
+    route: "GET /api/install",
+    domain: "admin",
+    action: "Read whether the control Worker's Cloudflare credential is connected (list_deploys says it too)",
+    tool: "deploy_credential",
+  },
+  {
+    route: "GET|POST /install/start",
+    domain: "none",
+    action:
+      "Connect Cloudflare: consent on Cloudflare's own page, in a popup (the Ops page's Cloudflare card, or the button under the agent's deploy_credential)",
+    exempt:
+      "a secret: the consent gives Erga a grant, on Cloudflare's consent screen, never in a conversation (the agent offers the button)",
+  },
   { route: "GET /install/callback", domain: "none", action: "Back from Cloudflare's consent page", exempt: "the consent's own return" },
   { route: "POST /install/disconnect", domain: "admin", action: "Disconnect: revoke and forget the control Worker's Cloudflare credential (/install)", tool: "disconnect_deploy_credential" },
-  { route: "POST /api/deploys/credential/disconnect", domain: "admin", action: "Disconnect the control Worker's Cloudflare credential (the Ops page's Cloudflare card)", tool: "disconnect_deploy_credential" },
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
   { route: "GET /api/events", domain: "none", action: "The Ops page's live updates", exempt: STREAM },
   { route: "GET /api/release", domain: "none", action: "An open page asks whether its code is still the server's (after a redeploy)", exempt: "the page's own check, not a person's action" },
@@ -239,7 +229,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
     action: "A page or an agent runs an operation",
     exempt: "the API itself: each operation is below, with its tool",
   },
-  ...OPERATIONS.map(
+  ...ALL_OPERATIONS.map(
     (op): AgentAction => ({ route: `POST /api/tools/${op.name}`, domain: op.admin ? "admin" : "document", action: op.ui, tool: op.name })
   ),
 ];

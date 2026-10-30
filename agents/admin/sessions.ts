@@ -23,22 +23,20 @@
 
 import { startAdminAgent, type AdminAgent } from "./agent.ts";
 import { adminGuide } from "../guides.ts";
-import { opsTools, sourceTools, type OpsCalls } from "./tools.ts";
+import { homeTools } from "./tools.ts";
 import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
 import { agentTools, allTools } from "../tools.ts";
 import type { Caller } from "../../server/operations/index.ts";
 import { isModelChoice, MODELS } from "../models.ts";
-import { emptyLog, type Log, type Offer } from "../../shared/agent-log.ts";
-import type { CredentialStatus } from "../../control/deploys/credential.ts";
+import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { byLine, VIA } from "../../shared/attribution.ts";
 import { forgetHome } from "../../server/home/index.ts";
 import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
 import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
-import { NOT_SET_UP, type GithubStatus, type SourceAnswer, type SourceRead } from "../../control/source/index.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
@@ -75,13 +73,6 @@ export class AdminAgents {
 
   private get platform() { return this.deps.platform; }
 
-  /** Erga's repository, where this server has one. */
-  private source() {
-    const source = this.platform.source;
-    if (!source) throw new Error(NOT_SET_UP);
-    return source.object;
-  }
-
   /** Why the admin may not act now, or null: they must still be an admin. Every tool call asks. */
   private async refusal(login: string): Promise<string | null> {
     if (!(await this.platform.directory.users.isAdmin(login))) return "Only admins have an admin agent.";
@@ -112,12 +103,6 @@ export class AdminAgents {
       platform: this.platform,
       auth: authOps(this.platform, state.origin),
     });
-    // The source tools read the server's copy of Erga's repository, read-only.
-    const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
-      const r = await this.source().read(state.origin, q);
-      if ("error" in r) throw new Error(r.error);
-      return r;
-    };
     const scope = `admin:${login}`;
     const store = tableStore(this.chats, scope, (running) => {
       if (running) this.deps.watch?.();
@@ -125,7 +110,7 @@ export class AdminAgents {
     const agent = startAdminAgent({
       cfg,
       owner: login,
-      tools: agentTools([...allTools(), ...sourceTools(readSource), ...opsTools(this.ops(login, state))], as, guard),
+      tools: agentTools([...allTools(), ...homeTools(() => this.deployHome(login, state.origin))], as, guard),
       store,
       stored: this.chats.load(scope),
       meta: { origin },
@@ -138,115 +123,12 @@ export class AdminAgents {
     return s;
   }
 
-  /**
-   * The Ops page tools' work, as the admin: the same calls the Ops page's API
-   * makes, and /settings' tokens, so the change log and a deploy's trigger name the admin, as when they click.
-   */
-  private ops(login: string, state: { origin: string }): OpsCalls {
-    const source = () => this.source();
-    const pipeline = () => this.platform.deploys;
-    const withOffer = <T extends { credential?: CredentialStatus }>(o: T): T | (T & { offer: Offer; connect: string }) => !o.credential || o.credential.connected ? o : {
-      ...o,
-      offer: { kind: "connect-cloudflare", label: o.credential.by ? "Connect Cloudflare again" : "Connect Cloudflare", url: `${this.platform.control?.url ?? state.origin}/install/start?popup=1` },
-      connect: "Nothing deploys until the admin connects Cloudflare. A Connect Cloudflare button shows under this call in their panel: it opens Cloudflare's consent in a popup, on this page. Tell them so, with Cloudflare's own words (credential.error, else credential.problem). You can't consent for them.",
-    };
-    const actor = async () => ({ login, name: (await this.platform.directory.users.get(login))?.name || login, via: VIA.admin });
-    // Not connected (or the sync is refused): the answer carries Connect GitHub, a button under the call in the admin's panel
-    // (the App's install page, in a popup, on the control Worker's origin). The consent is the admin's own.
-    const withGithubOffer = <T extends { github: GithubStatus }>(o: T): T | (T & { offer: Offer; connect: string }) => o.github.connected && !o.github.error ? o : {
-      ...o,
-      offer: { kind: "connect-github", label: o.github.link ? "Connect GitHub again" : "Connect GitHub", url: `${this.platform.control?.url ?? state.origin}/github/connect?popup=1` },
-      connect: o.github.connected ? "The sync with GitHub stopped (github.error says why). If GitHub refused the App's access, a Connect GitHub button shows under this call in the admin's panel: tell them to click it. You can't consent for them." : "Nothing syncs with GitHub until the admin connects a repository. A Connect GitHub button shows under this call in their panel: it opens the App's install page on GitHub in a popup, where they pick the account and the repository. Tell them so. You can't consent for them, and there's no token to ask for.",
-    };
-    return {
-      branches: async () => source().branches(state.origin),
-      release: async (commit) => {
-        const r = await source().merge(state.origin, await actor(), commit);
-        if ("error" in r) throw new Error(r.error);
-        return { ...r, done: r.upToDate ? "main was at staging already: nothing to deploy" : `main moved to ${r.commit.slice(0, 10)}: production deploys it now (list_deploys follows it)` };
-      },
-      // GitHub: the status (with Connect GitHub, a button in the panel, when nothing is connected), a sync now, Disconnect.
-      githubStatus: async () => withGithubOffer({ github: await source().githubStatus(state.origin), conflict: (await source().branches(state.origin)).conflict ?? null }),
-      syncGithub: async () => {
-        const github = await source().syncGithub(state.origin, byLine(login, VIA.admin));
-        return withGithubOffer({ github, done: github.error ? `the sync stopped: ${github.error}` : "in sync: what GitHub had came in, what it lacked went out" });
-      },
-      disconnectGithub: async () => {
-        const r = await source().disconnectGithub(state.origin);
-        if ("error" in r) throw new Error(r.error);
-        return withGithubOffer({ github: await source().githubStatus(state.origin), done: "GitHub is disconnected: the repository there stays, the App is uninstalled from the account, and nothing syncs until the admin connects GitHub again" });
-      },
-      // Not connected: the answer carries Connect Cloudflare, a button under the call in the admin's panel (a consent in a
-      // popup, on the control Worker's origin). The consent is the admin's own: the agent only offers it.
-      deploys: async (history) => withOffer(await pipeline().status(history) as { credential?: CredentialStatus }),
-      // (From the deploys' status: a control Worker a release behind has no credentialStatus over its binding yet.)
-      credential: async () => withOffer({ credential: ((await pipeline().status(0)) as { credential?: CredentialStatus }).credential }),
-      disconnectCredential: async () => {
-        await pipeline().disconnectCredential();
-        return { done: "The control Worker's Cloudflare grant is revoked: nothing deploys until the admin connects Cloudflare again (a consent of their own)", credential: await pipeline().credentialStatus() };
-      },
-      deployLog: (target, deploy) => pipeline().logOf(target, deploy),
-      redeploy: async (target, fresh) => {
-        const r = fresh ? await pipeline().redeployWith(target, `redeploy by ${byLine(login, VIA.admin)}`, { fresh: true }) : await pipeline().redeploy(target, `redeploy by ${byLine(login, VIA.admin)}`);
-        if (!r.ok) throw new Error(r.error ?? "refused");
-        return { done: `${target} redeploys now${fresh ? ", with a fresh copy of production's data" : ""}`, target: r.status };
-      },
-      rollback: async (target) => {
-        const r = await pipeline().rollback(target, `rollback by ${byLine(login, VIA.admin)}`);
-        if (!r.ok) throw new Error(r.error ?? "refused");
-        return { done: `${target} is rolled back`, target: r.status };
-      },
-      releases: async () => (await pipeline().releases()) ?? { error: "This server has no release store." },
-      cutRelease: async (version, notes) => {
-        const r = await source().release(state.origin, await actor(), { ...(version ? { version } : {}), ...(notes ? { notes } : {}) });
-        if ("error" in r) throw new Error(r.error);
-        return { ...r, done: `release ${r.tag} cut at ${r.commit.slice(0, 10)}: it goes on stable once its build is in the store, and installs that follow stable upgrade to it` };
-      },
-      domains: async () => {
-        const r = await pipeline().domains() as { error?: string };
-        if (r.error) throw new Error(r.error);
-        return r;
-      },
-      addDomain: async (target, hostname) => {
-        const r = await pipeline().addDomain(target, hostname, byLine(login, VIA.admin)) as { error?: string };
-        if (r.error) throw new Error(r.error);
-        return { ...r, done: `${hostname} added to ${target}: Cloudflare makes its DNS record and certificate in a minute or two` };
-      },
-      removeDomain: async (target, hostname) => {
-        const r = await pipeline().removeDomain(target, hostname, byLine(login, VIA.admin)) as { error?: string };
-        if (r.error) throw new Error(r.error);
-        return { ...r, done: `${hostname} removed from ${target}` };
-      },
-      updateFromUpstream: async () => {
-        const r = await source().update(state.origin, await actor());
-        if ("error" in r) throw new Error(r.error);
-        const done = r.result == "up-to-date" ? "staging has everything upstream's channel has: nothing to update"
-          : r.result == "conflicts" ? `the merge of ${r.conflict.version} waits on the branch ${r.conflict.branch}: ${r.conflict.files.length} file${r.conflict.files.length == 1 ? "" : "s"} conflict (${r.conflict.files.map((f) => f.path).join(", ")}). Read each at that branch, resolve it with resolve_conflict_file, then finish_waiting_merge`
-          : `staging is at ${r.commit.slice(0, 10)} (${r.result}, ${r.version}, ${r.brought} commit${r.brought == 1 ? "" : "s"} brought in): staging deploys it; production follows through deploy_production`;
-        return { ...r, done };
-      },
-      resolveConflictFile: async (path, content) => {
-        const r = await source().resolveUpdate(state.origin, await actor(), path, content);
-        if ("error" in r) throw new Error(r.error);
-        return { ...r, done: r.remaining.length ? `${r.path} written; still carrying markers: ${r.remaining.join(", ")}` : `${r.path} written; no file carries markers: finish_waiting_merge finishes the merge` };
-      },
-      finishWaitingMerge: async () => {
-        const r = await source().finishUpdate(state.origin, await actor());
-        if ("error" in r) throw new Error(r.error);
-        return { ...r, done: `merged ${r.version}: staging is at ${r.commit.slice(0, 10)} and deploys it; production follows through deploy_production` };
-      },
-      dropWaitingMerge: async () => {
-        const r = await source().abandonUpdate(state.origin);
-        if ("error" in r) throw new Error(r.error);
-        return { done: "the waiting merge and its branch are gone; staging is as it was" };
-      },
-      deployHome: async () => {
-        if (!(await this.platform.directory.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");
-        const status = await this.platform.home.deploy(byLine(login, VIA.admin));
-        await forgetHome(this.platform, new URL(state.origin)).catch(() => {});
-        return { done: "The homepage deploys now", status };
-      },
-    };
+  /** The homepage (the landing_document setting) deployed again, as the admin. */
+  private async deployHome(login: string, origin: string): Promise<object> {
+    if (!(await this.platform.directory.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");
+    const status = await this.platform.home.deploy(byLine(login, VIA.admin));
+    await forgetHome(this.platform, new URL(origin)).catch(() => {});
+    return { done: "The homepage deploys now", status };
   }
 
   async agentState(login: string, origin: string) {

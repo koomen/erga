@@ -1,7 +1,7 @@
 // Releases are tags: an annotated tag vX.Y.Z (a semantic version) on a
 // commit of main. The tag is the release; the newest one is stable
-// (control/deploys/releases.ts). Cut release on the Ops page (POST
-// /api/source/release) makes one here; `git push erga vX.Y.Z` does the same
+// (control/deploys/releases.ts). Cut release on the Ops page (the
+// cut_release) makes one here; `git push erga vX.Y.Z` does the same
 // (control/source/receive.ts). A release tag is never moved or deleted, each
 // is newer than the last, and nothing but release tags is taken.
 

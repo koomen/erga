@@ -63,7 +63,7 @@ export interface StoredGrant {
   refusedAt?: number | null;
 }
 
-/** What /install and GET /api/deploys show of it. */
+/** What /install and list_deploys show of it. */
 export interface CredentialStatus {
   connected: boolean;
   by: string | null;

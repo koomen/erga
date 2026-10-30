@@ -35,7 +35,11 @@ test("the Ops page shows the log and statuses in a second, with five connections
   await other.evaluate(() => Promise.all(Array.from({ length: 5 }, () => new Promise((ok) => { new EventSource("/api/events").onopen = ok; }))));
   // The events never come, and two of the page's requests are slow: the first render waits on none of them.
   await page.routeWebSocket("**/api/events", () => {});
-  for (const slow of ["**/api/releases", "**/api/domains"]) await page.route(slow, async (route) => { await new Promise((ok) => setTimeout(ok, 10_000)); await route.continue().catch(() => {}); });
+  for (const slow of ["**/api/tools/list_releases", "**/api/tools/list_domains"])
+    await page.route(slow, async (route) => {
+      await new Promise((ok) => setTimeout(ok, 10_000));
+      await route.continue().catch(() => {});
+    });
 
   await page.setViewportSize({ width: 1200, height: 700 });
   const started = Date.now();
@@ -51,7 +55,7 @@ test("the Ops page shows the log and statuses in a second, with five connections
 
   // The open Ops page (and its agent panel) holds no connection: the sixth is still free for the other tab.
   const answer = await other.evaluate(async () => {
-    const r = await fetch("/api/deploys", { signal: AbortSignal.timeout(3_000) }).catch(() => null);
+    const r = await fetch("/api/tools/list_deploys", { method: "POST", body: "{}", signal: AbortSignal.timeout(3_000) }).catch(() => null);
     return r?.status ?? "no answer in 3 s";
   });
   expect(answer).toBe(200);

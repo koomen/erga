@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
 import { beyondPrompt } from "../agents/document/prompt";
 import { documentToolSpecs } from "../agents/document/tools";
-import { opsTools, sourceTools, type OpsCalls } from "../agents/admin/tools";
+import { homeTools } from "../agents/admin/tools";
 import { systemPrompt } from "../agents/admin/prompt";
 import { allTools } from "../agents/tools";
 import { OPERATIONS } from "../server/operations/index.ts";
@@ -87,20 +87,14 @@ const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRou
 const audited = new Set(AGENT_ACTIONS.flatMap((a) => [a.route, a.route.replace(/ (do|op)=\w+$/, "")]));
 
 /** The agents' tools, as they're made (no ops behind them: only their names matter here). The admin agent has every one. */
-const ADMIN = [
-  ...allTools(),
-  ...sourceTools(async () => {
-    throw new Error("not here");
-  }),
-  ...opsTools({} as OpsCalls),
-].map((t) => t.name);
+const ADMIN = [...allTools(), ...homeTools(async () => ({}))].map((t) => t.name);
 const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...OPERATIONS.filter((t) => !t.admin).map((t) => t.name)];
 
 test("the route tables are read: the known routes are found", () => {
   const found = every();
   for (const r of [
     "POST /api/admin/agent/model",
-    "POST /api/source/merge",
+    "GET /git/tree/<ref>/<path>",
     "POST /admin/auth do=save",
     "POST /d/<id>/api/name",
     "POST /api/docs/<id>/tree op=move",
@@ -108,7 +102,7 @@ test("the route tables are read: the known routes are found", () => {
     "POST /api/tools/<name>",
   ])
     expect(found).toContain(r);
-  expect(found.length).toBeGreaterThan(80);
+  expect(found.length).toBeGreaterThan(70);
 });
 
 test("every route in the route tables, the document API and the page tree is in the audit", () => {
@@ -133,7 +127,7 @@ test("every route a page's script calls is in the audit", () => {
       if (!covered(p)) calls.push(`${file}: ${p}`);
     }
   }
-  expect(seen).toBeGreaterThan(20);
+  expect(seen).toBeGreaterThan(15);
   if (calls.length) console.log(`Called by a page, but not in agents/actions.ts:\n${calls.join("\n")}`);
   expect(calls).toEqual([]);
 });

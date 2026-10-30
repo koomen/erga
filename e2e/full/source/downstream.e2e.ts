@@ -49,7 +49,7 @@ test("the position against upstream, Update with a merge, a conflict and its way
   writeFileSync(join(u, "b.txt"), "bee\n"); ug("add", "."); ug("commit", "-qm", "Second");
   writeFileSync(join(u, "a.txt"), "one\ntwo\nthree\nfour\nfive\n"); ug("add", "."); ug("commit", "-qm", "Third");
   ug("push", "-q", upAdmin.remote, "HEAD:staging", "HEAD:main");
-  expect((await upAdmin.api("/api/source/release", { version: "v0.1.0", notes: "First" })).status).toBe(200);
+  expect((await upAdmin.api("/api/tools/cut_release", { version: "v0.1.0", notes: "First" })).status).toBe(200);
   // The downstream: a fork at that point.
   const d = join(server.scratch, `down-${Date.now()}`); mkdirSync(d);
   const dg = gitIn(d);
@@ -71,7 +71,7 @@ test("the position against upstream, Update with a merge, a conflict and its way
   writeFileSync(join(u, "c.txt"), "sea\n"); ug("add", "."); ug("commit", "-qm", "Fourth, upstream");
   writeFileSync(join(u, "b.txt"), "bee\nwasp\n"); ug("add", "."); ug("commit", "-qm", "Fifth, upstream");
   ug("push", "-q", upAdmin.remote, "HEAD:staging", "HEAD:main");
-  expect((await upAdmin.api("/api/source/release", { version: "v0.2.0" })).status).toBe(200);
+  expect((await upAdmin.api("/api/tools/cut_release", { version: "v0.2.0" })).status).toBe(200);
   // The downstream's own commit: "yours".
   writeFileSync(join(d, "o.txt"), "our own\n"); dg("add", "."); dg("commit", "-qm", "Our own change"); dg("push", "-q", downAdmin.remote, "HEAD:staging");
   await expect.poll(() => text("#upstream-count"), { timeout: 15_000 }).toBe(`${upName}: 2 commits (v0.2.0) that you do not have · 1 commit of your own`);
@@ -101,7 +101,7 @@ test("the position against upstream, Update with a merge, a conflict and its way
   dg("reset", "-q", "--hard", "FETCH_HEAD");
   writeFileSync(join(d, "a.txt"), "ONE\ntwo\nthree\nfour\nfive\n"); dg("add", "."); dg("commit", "-qm", "Our edit"); dg("push", "-q", downAdmin.remote, "HEAD:staging");
   writeFileSync(join(u, "a.txt"), "uno\ntwo\nthree\nfour\nfive\n"); ug("add", "."); ug("commit", "-qm", "Sixth, upstream, conflicting"); ug("push", "-q", upAdmin.remote, "HEAD:staging", "HEAD:main");
-  expect((await upAdmin.api("/api/source/release", { version: "v0.3.0" })).status).toBe(200);
+  expect((await upAdmin.api("/api/tools/cut_release", { version: "v0.3.0" })).status).toBe(200);
   // Upstream moved with no event here: the page reads its position again every 30 s; a reload does it now.
   await page.reload();
   await expect.poll(() => text("#upstream-count"), { timeout: 15_000 }).toContain("1 commit (v0.3.0) that you do not have");
