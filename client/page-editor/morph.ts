@@ -97,19 +97,36 @@ function attrs(live: Element, a: Element, b: Element, ops: Op[]): boolean {
 }
 
 /**
- * An element the browser put in the page, not the page's source: a custom element (a name with a "-") where the
- * rendered HTML has none of that name. Extensions add these (Grammarly's <grammarly-desktop-integration>, password
- * managers' buttons) at the end of the body; counted, they made every morph of the body fail.
+ * The live nodes that are `a`'s children, in order; null if the page no longer has them all. An element the page has
+ * and its HTML doesn't (an extension's <div> or <grammarly-desktop-integration>, a password manager's button) is
+ * passed over and left be: counted, it made every morph of its parent fail. An element of `a` is the live one of its
+ * name that holds as many text blocks.
  */
-const foreign = (n: Node, a: Node) =>
-  n.nodeType == 1 && (n as Element).localName.includes("-") && ![...a.childNodes].some((c) => c.nodeName == n.nodeName);
+function liveOf(live: Node, a: Node): Node[] | null {
+  const lc = [...live.childNodes].filter((n) => !editors(n)),
+    out: Node[] = [];
+  let k = 0;
+  for (const n of a.childNodes) {
+    const fits = (l: Node) => l.nodeName == n.nodeName && (n.nodeType != 1 || ids(l as Element).length == ids(n as Element).length);
+    while (k < lc.length && !fits(lc[k])) {
+      if (lc[k].nodeType != 1) return null;
+      k++;
+    }
+    if (k == lc.length) return null;
+    out.push(lc[k++]);
+  }
+  for (; k < lc.length; k++) if (lc[k].nodeType != 1) return null;
+  return out;
+}
 
 function children(live: Node, a: Node, b: Node, ops: Op[]): boolean {
-  const lc = [...live.childNodes].filter((n) => !editors(n) && !foreign(n, a)),
-    ac = [...a.childNodes],
+  const ac = [...a.childNodes],
     bc = [...b.childNodes];
-  // The page must still be what it was rendered from here, node for node.
-  if (lc.length != ac.length || lc.some((n, i) => n.nodeName != ac[i].nodeName)) return false;
+  // The page must still be what it was rendered from here, node for node (but for elements of its own, see liveOf).
+  const lc = liveOf(live, a);
+  if (!lc) return false;
+  // What goes in at the end goes after the last of them, not after an extension's element.
+  const end = lc.length ? lc[lc.length - 1].nextSibling : live.firstChild;
   const matches = lineUpNodes(ac, bc);
   matches.push([ac.length, bc.length]);
   let i = 0, j = 0;
@@ -118,7 +135,7 @@ function children(live: Node, a: Node, b: Node, ops: Op[]): boolean {
     const pairs = lineUp(ac.slice(i, mi).map(shape), bc.slice(j, mj).map(shape)).map(([x, y]) => [x + i, y + j] as [number, number]);
     pairs.push([mi, mj]);
     for (const [pi, pj] of pairs) {
-      const before = pi < lc.length ? lc[pi] : null;
+      const before = pi < lc.length ? lc[pi] : end;
       for (; i < pi; i++) { if (isScript(ac[i])) return false; ops.push({ kind: "remove", live: lc[i] }); }
       for (; j < pj; j++) { if (isScript(bc[j])) return false; ops.push({ kind: "insert", parent: live, before, node: bc[j] }); }
       if (pi == mi) break;

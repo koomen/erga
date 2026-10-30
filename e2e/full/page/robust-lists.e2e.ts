@@ -33,11 +33,9 @@ test(
   })
 );
 
-// Known bug: with an element that an extension added to the page's body (a plain <div>), Tab loads the page again,
-// and the key typed while it loads is lost. A person types right after Tab and does not wait.
-test(
-  "a key right after Tab is kept when an extension has put a <div> in the page",
-  knownBug(async ({ tab }) => {
+// With an element that an extension added to the page's body (a plain <div>), Tab patches the page around it. (It
+// loaded the page again, and the key typed while it loaded was lost.) A person types right after Tab and does not wait.
+test("a key right after Tab is kept when an extension has put a <div> in the page", async ({ tab }) => {
     const ed = await empty(tab);
     await ed.type("- One");
     await ed.press("Enter");
@@ -47,5 +45,22 @@ test(
     await ed.type("x");
     await ed.idle();
     await until(async () => (await ed.textOf("li li")) == "Twox", 3000, "the nested item shows the key");
-  })
-);
+});
+
+// When the page's own script has changed the body (here, a text node that its HTML doesn't have), Tab loads the page
+// again: the keys typed while it loads are held, and the page that comes types them.
+test("keys typed while Tab loads the page again are kept", async ({ tab }) => {
+  const ed = await empty(tab);
+  await ed.type("- One");
+  await ed.press("Enter");
+  await ed.type("Two");
+  await ed.frame(`(document.body.append(document.createTextNode("made by the page")), true)`);
+  await ed.press("Tab");
+  await ed.type("xyz");
+  await until(
+    async () => (await ed.textOf("li li")) == "Twoxyz",
+    8000,
+    "the nested item shows the keys",
+    () => ed.textOf("li li")
+  );
+});

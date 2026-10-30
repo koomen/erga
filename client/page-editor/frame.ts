@@ -326,6 +326,9 @@ function reload(view: { pos: number; top: number } | null) {
     // The shell says when (reload: once the room has the edits), or after a while all the same.
     goAgain = () => {
       goAgain = null;
+      // The keys typed since go to the shell, which holds the ones after them too: the page that comes applies them all.
+      const held = page?.takeHeld() ?? [];
+      if (held.length) post({ type: "held", held });
       const y = Math.round(scrollY);
       location.replace(location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : ""));
     };

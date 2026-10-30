@@ -159,10 +159,9 @@ test(
   })
 );
 
-// With one more element in the page's body (as browser extensions add), fast typing after ⌘A ⌘A Backspace keeps only the first letter.
-test(
-  "with an extension's element in the page, typing after Cmd+A twice and Backspace keeps every letter",
-  knownBug(async ({ tab }) => {
+// With one more element in the page's body (as browser extensions add), fast typing after ⌘A ⌘A Backspace keeps every
+// letter: the page is patched around the element (it was loaded again, and the keys typed meanwhile were lost).
+test("with an extension's element in the page, typing after Cmd+A twice and Backspace keeps every letter", async ({ tab }) => {
     const ed = await openEditor(tab, await servers.main(), "editing");
     await ed.frame(`(${F}.body.appendChild(${F}.createElement("div")), true)`);
     await ed.clickEnd("#last");
@@ -172,8 +171,7 @@ test(
     await ed.press("Backspace");
     for (const k of "fresh") await ed.press(k);
     await ed.shows(`# fresh|`);
-  })
-);
+});
 
 // Works: undo all the way back after mixed edits gives back the page exactly, and redo all the way gives the edits again.
 test("undo all the way back gives the start exactly; redo all the way gives the edits", async ({ tab }) => {

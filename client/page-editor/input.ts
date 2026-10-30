@@ -325,9 +325,12 @@ export abstract class EditorInput extends EditorClipboard {
     return handled;
   }
 
-  /** Holds a key or input on the page while the shell has the document (see hold); returns whether it did. */
+  /**
+   * Holds a key or input on the page while the shell has the document (see hold), or while the page is about to load
+   * again (render: the page that comes applies them, takeHeld); returns whether it did.
+   */
   protected holdKey(e: KeyboardEvent | InputEvent, h: HeldInput): boolean {
-    if (!this.holding || e.isComposing || !(this.ours(e) || this.spanning)) return false;
+    if (!(this.holding || (this.rendering && this.doc)) || e.isComposing || !(this.ours(e) || this.spanning)) return false;
     e.preventDefault();
     e.stopPropagation();
     this.held.push(h);
@@ -351,6 +354,11 @@ export abstract class EditorInput extends EditorClipboard {
     this.holding = on;
     if (on) this.heldPointer = this.pointerSeq;
     else this.release();
+  }
+
+  /** The keys held while the page was about to load again (holdKey), for the page that comes; none are left here. */
+  takeHeld(): HeldInput[] {
+    return this.held.splice(0);
   }
 
   /** Applies a held key or input as if it came now, in the unit with the caret: the editor's own keys, else what the browser does with it. */
