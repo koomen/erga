@@ -6,7 +6,19 @@ import { keys } from "./helpers/page-keys";
 /** Each key in a place: the source, the keys, the source after them. */
 const CASES: [string, string, string[], string][] = [
   ["Backspace at the start of a heading first in the page", '<h1 id="t">|Title</h1>', ["Backspace"], '<p id="t">|Title</p>'],
-  ["Backspace at the start of a heading after a paragraph joins", "<p>A</p>\n<h2>|B</h2>", ["Backspace"], "<p>A|B</p>"],
+  ["Backspace twice at the start of a heading after a paragraph", "<p>A</p>\n<h2>|B</h2>", ["Backspace", "Backspace"], "<p>A|B</p>"],
+  [
+    "Backspace at the start of a list's first item after a paragraph",
+    "<p>A</p>\n<ul>\n  <li>|One</li>\n</ul>",
+    ["Backspace"],
+    "<p>A</p>\n<p>|One</p>",
+  ],
+  [
+    "Backspace at the start of a list's second item joins",
+    "<ul>\n  <li>One</li>\n  <li>|Two</li>\n</ul>",
+    ["Backspace"],
+    "<ul>\n  <li>One|Two</li>\n</ul>",
+  ],
   [
     "Backspace at the start of a list's first item, first in the page",
     "<ul>\n  <li>|One</li>\n  <li>Two</li>\n</ul>",

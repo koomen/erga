@@ -112,6 +112,29 @@ test("Backspace at the start of a quote turns it into a paragraph", async ({ tab
     expect(await inQuote(ed)).toBe(false);
 });
 
+// Backspace at the start of a heading in the middle of the page makes it a paragraph, as Notion and Typora do; the next
+// Backspace joins it to the paragraph above. (Pete's decision: it joined at once.)
+test("Backspace at the start of a heading makes it a paragraph; the next joins it to the block above", async ({ tab }) => {
+  const ed = await open(tab, "h2");
+  await ed.press("Home");
+  await ed.press("Backspace");
+  await ed.shows(PAGE.replace("## Section", "|Section"));
+  expect(await ed.source()).toContain("<p>Section</p>");
+  await ed.press("Backspace");
+  await ed.shows(PAGE.replace(`${FIRST}\n\n## Section`, `${FIRST}|Section`));
+});
+
+// Backspace at the start of a list's first item takes the bullet off, wherever the list is; the next Backspace joins
+// it to the block above. Later items join the item above (list-keys.e2e.ts).
+test("Backspace at the start of a list's first item takes its bullet off; the next joins it to the block above", async ({ tab }) => {
+  const ed = await open(tab, "li");
+  await ed.press("Home");
+  await ed.press("Backspace");
+  await ed.shows(PAGE.replace("• Apple\n• Banana", "|Apple\n\n• Banana"));
+  await ed.press("Backspace");
+  await ed.shows(PAGE.replace("## Section\n\n• Apple\n• Banana", "## Section|Apple\n\n• Banana"));
+});
+
 // Cmd+B, Cmd+I and Cmd+U with no selection only say "Select some text to style first."; the text typed next is plain.
 test(
   "Cmd+B with no selection makes the text typed next bold, and Cmd+B again ends it",

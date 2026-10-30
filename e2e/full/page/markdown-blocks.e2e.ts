@@ -79,8 +79,8 @@ test("Tab in a paragraph indents it, Shift+Tab takes it back, and the next key t
   await expect.poll(() => ed.source()).toContain(`<p style="margin-left: 40px">Planx</p>`);
 });
 
-// Backspace at the start of a heading first in the page makes it a paragraph, as Notion, Typora and Bear do. (After
-// another block, it joins the heading to that block: join.e2e.ts.)
+// Backspace at the start of a heading makes it a paragraph, as Notion, Typora and Bear do (editing-blocks.e2e.ts: in the
+// middle of a page).
 test("Backspace at the start of a heading makes it a paragraph", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "# Title");
@@ -91,8 +91,8 @@ test("Backspace at the start of a heading makes it a paragraph", async ({ tab }:
     `);
 });
 
-// Backspace at the start of a list's first item, first in the page, takes the bullet off, as Google Docs, Notion, Typora
-// and Bear do. (After another block, it joins the item to that block: list-keys.e2e.ts.)
+// Backspace at the start of a list's first item takes the bullet off, as Google Docs, Notion, Typora and Bear do. (A
+// later item joins the item above: list-keys.e2e.ts.)
 test("Backspace at the start of a list item takes the bullet off", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "- Milk");

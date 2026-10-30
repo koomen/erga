@@ -6,8 +6,8 @@
 // | Block | Enter | Backspace at its start | Tab, Shift+Tab |
 // |---|---|---|---|
 // | paragraph | splits it (edit.ts) | joins it to the block before (edit.ts) | indents it one step, or back |
-// | heading | splits it; at the end, a paragraph after | first in the page: a paragraph; else joins | indents it |
-// | list item | lists.ts | first in the page: a paragraph; else joins | lists.ts |
+// | heading | splits it; at the end, a paragraph after | a paragraph (the next Backspace joins) | indents it |
+// | list item | lists.ts | the list's first: a paragraph; a later one joins the item above | lists.ts |
 // | quote's paragraph | empty: leaves the quote | first in the quote: leaves the quote | indents it |
 // | code block | a new line; at the end, one that shows | joins | two spaces (edit.ts) |
 // | summary | at the end: a paragraph in the open details, or after the closed one | joins | nothing |
@@ -77,19 +77,19 @@ function unquote(src: string, p: M.ElementNode, quote: M.ElementNode): Change[] 
 }
 
 /**
- * Backspace at the start of `u`'s text: a quote's first paragraph leaves the quote; a heading, or a list item at the
- * top level, with no text block before it in the page, becomes a paragraph. Null for a join (edit.ts, join).
+ * Backspace at the start of `u`'s text: a quote's first paragraph leaves the quote; a heading, and the first item of a
+ * list at the top level, become a paragraph (Pete's decision, as Notion and Typora do). The next Backspace joins it.
+ * Null for a join (edit.ts, join).
  */
-export function backspaceBlock(src: string, units: M.Unit[], u: M.Unit, pos: number): ListEdit | null {
+export function backspaceBlock(src: string, u: M.Unit, pos: number): ListEdit | null {
   const q = quoteOf(u);
   if (q && elements(q.quote)[0] == q.p) return edit(src, unquote(src, q.p, q.quote), pos, "delete.backward");
-  if (u.id > 0 && units[u.id - 1]) return null;
   if (HEADING.test(u.tag) && !u.node.selfClosing) return edit(src, retag(src, u.node, "p"), pos, "delete.backward");
   const item = itemOf(u);
   if (!item || item.text != item.li || item.lists.length || item.list.parent?.tag == "li" || item.li.selfClosing) return null;
   const { li, list } = item;
-  if (list.selfClosing || !src.startsWith("</", li.closeFrom)) return null;
-  // The first item (nothing is before it): a paragraph before the list, or in its place if it was the only one.
+  if (list.selfClosing || elements(list)[0] != li || !src.startsWith("</", li.closeFrom)) return null;
+  // A paragraph before the list, or in its place if the item was the only one.
   const only = elements(list).length == 1;
   const at = M.lineIndent(src, list.from);
   const close = only ? "</p>" : `</p>\n${at}${src.slice(list.from, list.openTo)}`;

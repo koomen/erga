@@ -33,6 +33,8 @@ test("HTML: a join (Backspace that empties a list), then Backspace and typing at
   await ed.press("Home");
   await ed.press("Backspace");
   await ed.press("Home");
+  // (The first Backspace takes the bullet off: blocks.ts.)
+  await ed.press("Backspace");
   await burst(ed, "Backspace", "+");
   await expect.poll(() => ed.source()).toContain(`<p id="gamma">keeps its own type.+Item oneItem two</p>`);
 });

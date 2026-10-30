@@ -25,11 +25,13 @@ test("a list with nothing left goes, typing goes in at the join and reaches the 
   const original = await ed.source();
   await backspaceAt(ed, "#two");
   await ed.press("Home");
+  // The first takes the bullet off, the next joins (blocks.ts).
+  await ed.press("Backspace");
   await ed.press("Backspace");
   await ed.type("+");
   await expect.poll(() => ed.source()).toContain(`<p id="gamma">keeps its own type.+Item oneItem two</p>\n    <p id="after">`);
   await expect.poll(() => ed.disk()).toContain("type.+Item oneItem two</p>");
-  for (let i = 0; i < 3; i++) await ed.press("ControlOrMeta+z");
+  for (let i = 0; i < 4; i++) await ed.press("ControlOrMeta+z");
   await expect.poll(async () => (await ed.source()) == original && (await ed.count("li")) == 2).toBe(true);
 });
 

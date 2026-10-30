@@ -274,7 +274,7 @@ export abstract class EditorEdit extends EditorRender {
     // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
     const blank = !!placeholderBr(src, u);
     if (!forward && (blank || pos <= M.textStart(u))) {
-      const rule = backspaceBlock(src, this.units, u, pos);
+      const rule = backspaceBlock(src, u, pos);
       return rule ? this.listEdit(rule) : this.join(u.id - 1, u.id, pos, false);
     }
     if (forward && (blank || pos >= M.textEnd(u))) return this.join(u.id, u.id + 1, pos, true);

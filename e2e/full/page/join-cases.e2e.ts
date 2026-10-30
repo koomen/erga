@@ -103,7 +103,8 @@ for (const [what, a, b] of HTML) {
   for (const key of ["Backspace", "Delete"] as const) {
     test(`${key}: ${what} joins, the caret at the join, and one undo splits it again`, async ({ tab }) => {
       const ed = await openEditor(tab, await servers.main(), "join-cases");
-      if (a) return joins(ed, a, b, key);
+      // (Backspace at a heading's start makes it a paragraph first: blocks.ts.)
+      if (a) return joins(ed, a, b, key, key == "Backspace" && /heading/.test(what) ? 2 : 1);
       // An empty block before: it takes the text, so the block with it is the one that starts with the text.
       const original = await ed.source();
       await caretAt(ed, key == "Backspace" ? b : "After an empty", false);
@@ -163,6 +164,6 @@ test("a canvas: a frame's text joins its heading, and the next frame's heading j
   const ed = editor(tab.page, { address: made.address, dir: "", file: "" });
   await ed.loaded();
   await joins(ed, "One big canvas", "Every idea in this talk", "Backspace");
-  await joins(ed, "Every idea in this talk", "Glide to the next", "Backspace");
+  await joins(ed, "Every idea in this talk", "Glide to the next", "Backspace", 2);
   await joins(ed, "Every idea in this talk", "Glide to the next", "Delete");
 });
