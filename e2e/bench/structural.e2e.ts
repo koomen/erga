@@ -1,7 +1,7 @@
 // What a structural key costs in the page editor, by document size: Enter at the end of a paragraph and the
 // Backspace that joins it back, Tab in a list item and the Shift+Tab that takes it back. Not a test of behaviour, and
 // in no suite (run it by name: `bun run test:e2e e2e/bench/structural.e2e.ts`). For each key, 20 times: the frame's
-// work for the key (median, ms), the DOM mutations it makes, and the time spent in the analysis and the morph.
+// work for the key (median, ms), the DOM mutations it makes, and the time spent in the analysis and in reconcile (client/page-editor/mirror.ts).
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { servers, test } from "../helpers/fixtures";
@@ -33,6 +33,10 @@ for (const [name, bytes] of [
     const server = await servers.main();
     const { dir, address } = await server.fixture("page");
     writeFileSync(join(dir, "index.html"), documentOf(bytes));
+    // The check that the page shows its HTML, after each key (client/page-editor/check.ts): its reports are printed.
+    await tab.page.addInitScript(() => {
+      if (window.top == window) (window as { __ergaCheck?: boolean }).__ergaCheck = true;
+    });
     await tab.page.goto(`${address}?edit`);
     const ed = editor(tab.page, { address, dir, file: join(dir, "index.html") });
     await ed.loaded();
@@ -43,10 +47,12 @@ for (const [name, bytes] of [
       await ed.settle();
       return ed.frame<unknown>(`(async () => {
         const ef = window.ergaFrame, page = ef.page;
-        const t = { analyze: 0, morph: 0, patchText: 0, renders: 0, analyzeN: 0, morphN: 0 };
+        const t = { analyze: 0, reconcile: 0, renders: 0, analyzeN: 0 };
         const wrap = (k, f) => { const o = page[k].bind(page); page[k] = (...x) => { const t0 = performance.now(); try { return o(...x); } finally { f(performance.now() - t0); } }; return o; };
         const oa = wrap("analyze", (d) => { t.analyze += d; t.analyzeN++; });
-        const om = wrap("morph", (d) => { t.morph += d; t.morphN++; });
+        const orc = wrap("reconcile", (d) => { t.reconcile += d; });
+        const keys = ["dispatch", "applyChanges", "keepView", "syncDOMSelection", "notify", "changed", "carrySrc", "paintMarks", "scrollCaretIntoView", "updateEmpty", "recordAuthorship", "mapMarks"];
+        const each = {}; const olds = keys.map((k) => wrap(k, (d) => { each[k] = (each[k] ?? 0) + d; }));
         const orr = page.render.bind(page); page.render = () => { t.renders++; };
         let muts = 0; const mo = new MutationObserver((r) => { muts += r.length; });
         mo.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
@@ -59,13 +65,18 @@ for (const [name, bytes] of [
           await next(); muts = 0;
           t0 = performance.now(); ${b}; B.push(performance.now() - t0); await acked(); MB.push(muts + mo.takeRecords().length);
         }
-        page.analyze = oa; page.morph = om; page.render = orr; mo.disconnect();
+        keys.forEach((k, i) => (page[k] = olds[i])); page.reconcile = orc;
+        page.analyze = oa; page.render = orr; mo.disconnect();
         const med = (x) => [...x].sort((p, q) => p - q)[x.length >> 1].toFixed(2);
-        return { a: med(A), b: med(B), mutA: med(MA), mutB: med(MB), perOp: { analyze: (t.analyze / 40).toFixed(2), analyzeN: t.analyzeN, morph: (t.morph / 40).toFixed(2), morphN: t.morphN, renders: t.renders } };
+        return { a: med(A), b: med(B), mutA: med(MA), mutB: med(MB), perOp: { analyze: (t.analyze / 40).toFixed(2), analyzeN: t.analyzeN, reconcile: (t.reconcile / 40).toFixed(2), renders: t.renders, each: Object.fromEntries(Object.entries(each).map(([k, v]) => [k, (v / 40).toFixed(2)])) } };
       })()`);
     };
     const enter = await run(`#s${mid} p:nth-of-type(2)`, "page.enter(false)", "page.deleteChar(false)");
     const tabk = await run(`#s${mid} li:nth-of-type(2)`, "page.indentItem(false)", "page.indentItem(true)");
     console.log(`structural ${name}:`, JSON.stringify({ enterThenBackspace: enter, tabThenShiftTab: tabk }));
+    const drift = tab.errors.filter((e) => e.includes("does not show its HTML"));
+    console.log(
+      `structural ${name}: ${drift.length} differences between the page and its HTML${drift.length ? `:\n${drift.slice(0, 5).join("\n")}` : ""}`
+    );
   });
 }

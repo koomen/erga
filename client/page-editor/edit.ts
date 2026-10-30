@@ -59,11 +59,11 @@ export abstract class EditorEdit extends EditorRender {
       this.mapMarks(tr.changes);
       this.recordAuthorship(tr.changes, this.config.self ?? null);
       this.applyChanges(tr, oldUnits, oldSrc);
-      // A change outside the text blocks (a list indented) that patching couldn't show: the page is made afresh, or it
-      // keeps the old shape (an emptied <li> showed as a blank bullet until a reload).
+      // A change the page can't show in place (a script or a style changed): the page is made afresh.
       if (this.unshown) this.render();
       if (this.tracking) this.queueDiff();
       else this.paintMarks();
+      this.caretInText();
     }
     this.syncDOMSelection(true);
     if (tr.docChanged) this.changed();
@@ -75,6 +75,19 @@ export abstract class EditorEdit extends EditorRender {
       changes: tr.docChanged ? tr.changes : null,
       remote: false,
     });
+  }
+
+  /**
+   * A caret the change left outside every text block (undo's history maps it through the change: the redo of "- "
+   * puts it after the new list's </ul>) goes into the nearest one: the end of the block before it, else the start of
+   * the next, as a person expects to type on where the change was.
+   */
+  protected caretInText(): void {
+    const main = this.state.selection.main;
+    if (!main.empty || !this.units.length || M.unitAt(this.units, main.head)) return;
+    const before = [...this.units].reverse().find((u) => u.contentTo <= main.head);
+    const pos = before ? M.textEnd(before) : M.textStart(this.units.find((u) => u.contentFrom >= main.head) ?? this.units[0]);
+    this.state = this.state.update({ selection: { anchor: pos }, annotations: noHistory() }).state;
   }
 
   protected scrollCaretIntoView(): void {
@@ -480,6 +493,25 @@ export function joinHtml(
   // The element that goes: next's, or the one around it that holds nothing else, but not one around prev too. A list
   // item with lists in it goes whole, and its lists go where lists.ts says (carryLists).
   const carried = carryLists(src, prev, next);
+  // Two blocks of one kind side by side (two items, two paragraphs): only the tags between their texts go, and the
+  // text stays where it is, so a caret in it, a key typed in it in another tab, and undo's history keep their place.
+  if (
+    !carried &&
+    prev.tag == next.tag &&
+    prev.tag != "pre" &&
+    prev.node.parent == next.node.parent &&
+    M.adjacent(src, prev, next) &&
+    !todoBox(src, next) &&
+    !placeholderBr(src, prev) &&
+    !placeholderBr(src, next) &&
+    !/<br\s*\/?>\s*$/i.test(src.slice(prev.contentFrom, prev.contentTo))
+  ) {
+    let at = prev.contentTo,
+      to = next.contentFrom;
+    while (at > prev.contentFrom && /\s/.test(src[at - 1])) at--;
+    while (to < next.contentTo && /\s/.test(src[to])) to++;
+    return Object.assign([{ from: at, to }], { at });
+  }
   let gone: M.ElementNode = carried?.gone ?? next.node;
   for (let up = carried ? null : gone.parent; up?.parent && up.from >= prev.to; up = up.parent) {
     const only = up.children.every((c) => c == gone || (c.kind == "text" && !/\S/.test(src.slice(c.from, c.to))));

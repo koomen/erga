@@ -465,7 +465,7 @@ function watchPage() {
 // The page's background, so the shell can paint its canvas to match: its
 // root's, or its body's when the root has none, as the browser would. Read
 // after every change applied to the page (an edit in place can change a
-// style rule: morph.ts), after a render, when a stylesheet loads, and when
+// style rule: mirror.ts), after a render, when a stylesheet loads, and when
 // the page's own script switches themes (a class or style on <html> or
 // <body>); said again only when it changed, at most once a task.
 let backdropObserver: MutationObserver | null = null, backdropSaid = "", backdropQueued = false;
@@ -557,7 +557,7 @@ async function captureView(req: ViewRequest, text?: string): Promise<ViewResult>
   const shot = document.createElement("iframe");
   shot.setAttribute("sandbox", "allow-scripts allow-same-origin");
   shot.setAttribute("aria-hidden", "true");
-  // (The editor's own, in the page: data-erga, which its morph leaves be.)
+  // (The editor's own, in the page: data-erga, which its patch leaves be.)
   shot.setAttribute("data-erga", "");
   shot.style.cssText = `position:fixed;left:-100000px;top:0;width:${width}px;height:${viewport}px;border:0;`;
   const html = page!.renderedHtml(text);

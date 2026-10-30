@@ -352,21 +352,32 @@ export interface Analysis {
 /** Finds the manuscript units of an HTML document. */
 export function analyzeHtml(src: string, decode: EntityDecoder = basicDecoder): Analysis {
   const tree = parseHtml(src);
+  return { units: unitsIn(src, tree, decode), tree };
+}
+
+/**
+ * The units of one element of a parse of `src`: the element itself if it is one, else those in it. Their ids are
+ * their places in the list, from `first`.
+ */
+export function unitsIn(src: string, el: ElementNode, decode: EntityDecoder = basicDecoder, first = 0): Unit[] {
   const units: Unit[] = [];
-  const visit = (el: ElementNode, excluded: boolean) => {
-    for (const child of el.children) {
+  let excluded = false;
+  for (let a: ElementNode | null = el; a; a = a.parent) if (ATOMIC.has(a.tag) || (a.tag != "#root" && noEdit(src, a))) excluded = true;
+  const isUnit = (e: ElementNode, out: boolean) => !out && !NEVER_UNIT.has(e.tag) && e.tag != "#root" && classify(src, e) == "unit";
+  const visit = (e: ElementNode, out: boolean) => {
+    for (const child of e.children) {
       if (child.kind != "element") continue;
-      const tag = child.tag;
-      const childExcluded = excluded || ATOMIC.has(tag) || noEdit(src, child);
-      if (!childExcluded && !NEVER_UNIT.has(tag) && classify(src, child) == "unit") {
-        units.push(makeUnit(src, child, units.length, decode));
+      const childExcluded = out || ATOMIC.has(child.tag) || noEdit(src, child);
+      if (isUnit(child, childExcluded)) {
+        units.push(makeUnit(src, child, first + units.length, decode));
         continue;
       }
-      if (!NO_DOM_CONTENT.has(tag)) visit(child, childExcluded);
+      if (!NO_DOM_CONTENT.has(child.tag)) visit(child, childExcluded);
     }
   };
-  visit(tree, false);
-  return { units, tree };
+  if (isUnit(el, excluded)) return [makeUnit(src, el, first, decode)];
+  if (!NO_DOM_CONTENT.has(el.tag)) visit(el, excluded);
+  return units;
 }
 
 type Kind = "unit" | "container" | "none";

@@ -12,6 +12,8 @@ import type { PausableWindow, RawProblem } from "./problems";
 export interface Analysis {
   units: M.Unit[];
   html: string;
+  /** The parse the units are in. */
+  tree: M.ElementNode;
 }
 
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -52,15 +54,13 @@ export abstract class EditorCore {
   protected stopped = false;
   /** The page's own editability on the elements the editor made editable (contenteditable, spellcheck), to give back on stop. */
   protected own = new Map<Element, [string | null, string | null]>();
-  /**
-   * What the page on screen shows (rendered from, then patched to), for a morph to start from: its HTML, or, after
-   * a patch of the page's text alone, the source, whose HTML is worked out only when a morph needs it (see
-   * domHtml). Empty when the page matches no HTML (see patch).
-   */
-  protected domFrom: string | Source = "";
+  /** Each unit's element to its unit (an element's data-erga-id marks it as a unit's; its value is no place). */
+  protected unitByEl = new WeakMap<Element, M.Unit>();
+  /** The data-erga-id of the next element that becomes a unit's. */
+  protected nextMark = 0;
   /** The source as a string, for the text it was made from (see `src`). */
   protected srcOf: { doc: Source; src: string } | null = null;
-  /** The last patch left a change outside the text blocks off the page: only a render shows it (see `stale`). */
+  /** The last patch could not show a change (a script or a style changed): only a render shows it (see `stale`). */
   protected unshown = false;
   /**
    * Set when an edit from elsewhere changed something outside the text
@@ -108,12 +108,6 @@ export abstract class EditorCore {
     this.srcOf = { doc: to, src: src + old.slice(pos) };
   }
 
-  /** The HTML the page on screen shows, or "" if it matches none (see domFrom). */
-  protected domHtml(): string {
-    if (typeof this.domFrom != "string") this.domFrom = this.analyze(this.domFrom.toString()).html;
-    return this.domFrom;
-  }
-
   protected decoder: M.EntityDecoder = (ref) => {
     let v = this.decoderCache.get(ref);
     if (v == null) {
@@ -126,7 +120,7 @@ export abstract class EditorCore {
 
   protected analyze(src: string): Analysis {
     const a = M.analyzeHtml(src, this.decoder);
-    return { units: a.units, html: M.stamp(src, a.units) };
+    return { units: a.units, html: M.stamp(src, a.units), tree: a.tree };
   }
 
   /** The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture, in a frame of its own): its files where they are. */
@@ -196,7 +190,11 @@ export abstract class EditorCore {
       const id = el.getAttribute("data-erga-id")!;
       if (!first.has(id)) first.set(id, el);
     }
-    for (const u of this.units) this.els[u.id] = first.get(String(u.id));
+    for (const u of this.units) {
+      const el = (this.els[u.id] = first.get(String(u.id)));
+      if (el) this.unitByEl.set(el, u);
+    }
+    this.nextMark = this.units.length;
   }
 
   /** A unit element is its own editing host; anything atomic inside it stays a normal widget. */
@@ -288,8 +286,8 @@ export abstract class EditorCore {
   protected unitOf(node: Node): M.Unit | null {
     const el = (node.nodeType == 1 ? (node as Element) : node.parentElement)?.closest("[data-erga-id]");
     if (!el) return null;
-    const u = this.units[+el.getAttribute("data-erga-id")!];
-    return u && this.els[u.id] == el ? u : null;
+    const u = this.unitByEl.get(el);
+    return u && this.units[u.id] == u && this.els[u.id] == el ? u : null;
   }
 
   /** Source position for a DOM point inside a unit, or null. */

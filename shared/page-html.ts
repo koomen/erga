@@ -5,7 +5,7 @@
 // blocks by their marks and checks the page was made from the text it has (sourceDigest). Pure: the server makes the
 // page with it, and the editor reads it back.
 //
-// Each script here goes in as a <script data-erga>: the editor's additions, which its morph (client/page-editor/morph.ts) leaves be.
+// Each script here goes in as a <script data-erga>: the editor's additions, which the editor's patch (client/page-editor/mirror.ts) leaves be.
 
 import { analyzeHtml, stamp } from "./manuscript";
 

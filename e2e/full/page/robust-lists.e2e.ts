@@ -47,15 +47,15 @@ test("a key right after Tab is kept when an extension has put a <div> in the pag
     await until(async () => (await ed.textOf("li li")) == "Twox", 3000, "the nested item shows the key");
 });
 
-// When the page's own script has changed the body (here, a text node that its HTML doesn't have), Tab loads the page
-// again: the keys typed while it loads are held, and the page that comes types them.
-test("keys typed while Tab loads the page again are kept", async ({ tab }) => {
+// When the page must load again (a change to a script; here the test starts the load), the keys typed while it loads
+// are held, and the page that comes types them.
+test("keys typed while the page loads again are kept", async ({ tab }) => {
   const ed = await empty(tab);
   await ed.type("- One");
   await ed.press("Enter");
   await ed.type("Two");
-  await ed.frame(`(document.body.append(document.createTextNode("made by the page")), true)`);
   await ed.press("Tab");
+  await ed.frame(`(ergaFrame.page.render(), true)`);
   await ed.type("xyz");
   await until(
     async () => (await ed.textOf("li li")) == "Twoxyz",
