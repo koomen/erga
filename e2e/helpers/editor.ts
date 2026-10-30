@@ -68,6 +68,8 @@ export async function openEditor(tab: Tab, server: Server, fixture: string, opts
   await page.addInitScript(({ timescale, agent }) => {
     if (window.top != window) return;
     (window as any).__ergaTimescale = timescale;
+    // The page editor checks after each change that the page shows its HTML (client/page-editor/check.ts).
+    (window as any).__ergaCheck = true;
     // Someone who keeps the agent pane closed (it opens by itself in the editor otherwise): set once, so the tab can still open it.
     if (!agent) try {
       if (!sessionStorage.getItem("erga-test:agent-seeded")) {

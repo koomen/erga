@@ -92,6 +92,7 @@ export type ToFrame =
       focus?: boolean;
       frame?: { sandbox: string | null; allow: string | null };
       paused?: boolean;
+      check?: boolean;
     }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }

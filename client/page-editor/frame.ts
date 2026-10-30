@@ -257,6 +257,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     self: m.self,
     held: m.held,
     paused: m.paused,
+    check: m.check,
     onReload: reload,
     onUpdate(u) {
       if (u.changes && !u.remote && !detached) relay!.local(u.changes);

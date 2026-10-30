@@ -66,6 +66,7 @@ export class PageEditor extends EditorInput {
     const hadFocus = this.hasFocus;
     this.keepView(() => this.applyChanges(tr, oldUnits, oldSrc), changes);
     if (hadFocus) this.syncDOMSelection(true);
+    this.changed();
     this.notify({ docChanged: true, selectionSet: false, rendered: false, changes, remote: true });
     if (this.staleSince == null && this.unshown) this.staleSince = oldSrc;
     // The view stays where the reader put it: a change off screen is marked, not followed (reveal finds a peer on request).
@@ -104,6 +105,7 @@ export class PageEditor extends EditorInput {
     const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
     if (first && !M.unitAt(this.units, head)) this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
     if (this.hasFocus) this.syncDOMSelection(true);
+    if (changes) this.changed();
     this.notify({ docChanged: !!changes, selectionSet: true, rendered: false, changes: null, remote: false });
     if (!this.tracking) this.paintMarks();
   }

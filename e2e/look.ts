@@ -147,6 +147,10 @@ try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // And the page editor's check: where the page does not show its HTML (client/page-editor/check.ts).
+  page.on("console", (m) => {
+    if (m.type() == "error" && m.text().includes("does not show its HTML")) errors.push(m.text());
+  });
   const tab = { page, errors, strict: false, own: () => Promise.reject(new Error("no server of its own")) };
   const ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
   await ed.clickEnd("[data-erga-id][contenteditable]");
