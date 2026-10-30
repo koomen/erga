@@ -7,15 +7,16 @@ import { RESERVED, ID, OWNER } from "../directory/index.ts";
 const APP_SEGMENTS = new Set(["deploy", "git", "source"]);
 
 /**
- * A path in reach of a token without the admin scope on staging: the server's API and MCP for agents, a
- * document's versions and tree, and a document's own host (/<owner>/<doc>/api/..., /d/<id>/doc/...). Not the
+ * A path in reach of a token without the admin scope on staging: the server's API and MCP for agents, the
+ * operations (/api/tools), and a document's own host (/<owner>/<doc>/api/..., /d/<id>/doc/...). Not the
  * homepage's API, the deploys', the Ops page's, the admin agent's or anything else under /api.
  */
 export function tokenPath(path: string): boolean {
   path = path.replace(/\/+$/, "") || "/";
   if (path == "/llms.txt" || path == "/api" || path == "/mcp" || path == "/api/publish") return true;
   if (path == "/api/ext" || path.startsWith("/api/ext/")) return true;
-  if (/^\/api\/docs\/[^/]+\/(versions|tree|versions\/[^/]+\/restore)$/.test(path)) return true;
+  // The operations, as the pages call them (each checks the token's scope: no admin power, one document's reach).
+  if (path == "/api/tools" || path.startsWith("/api/tools/")) return true;
   const [, first, second] = /^\/([^/]+)\/([^/]+)\/(?:api|doc)(?:\/|$)/.exec(path) ?? [];
   if (!first) return false;
   if (first == "d") return ID.test(second);

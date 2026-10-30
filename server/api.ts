@@ -13,14 +13,11 @@
 //                                  pages only), and every agent has the same ones as tools
 //   GET  /api/ext/tools            the tools, as JSON (name, description, JSON Schema), for an agent token
 //   POST /api/ext/tools/<name>     runs one, the body its arguments: {"ok": true, "content": [...]}
-//   POST /api/publish              a folder of files as a document (multipart or JSON), or into one
-//   GET  /api/docs/<id>/versions   a document's versions;
-//                                  POST .../versions/<versionId>/restore brings one back, or one file of it with {"path": ...}
+//   POST /api/publish              a folder of files as a document (multipart or JSON), or into one: for an HTTP client
+//                                  (curl -F), whose multipart body isn't an operation's JSON arguments
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
-//   GET  /api/docs/<id>/tree       a document's file tree; POST does a tree operation. For people
-//                                  signed in (the tree's UI) as well as tokens
 //   /tokens, /tokens/...           a person's tokens: make one (a scope, an expiry), revoke one, approve or deny an agent's request
 //   /settings                      their settings: their tokens and the test token
 //
@@ -36,15 +33,10 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpServerResponse } from "effect/http";
-import { ID, roleMay } from "./directory/index.ts";
-import { fromElsewhere } from "./pages/index.ts";
-import { forwarded } from "./documents/index.ts";
 import { type Platform, type Session, whoOf } from "./platform";
-import { call, fromWeb, json, platform as currentPlatform, text, webRequest, type Route } from "./http.ts";
-import { accessOf } from "../document/access";
-import { byLine } from "../shared/attribution";
+import { call, json, platform as currentPlatform, text, webRequest, type Route } from "./http.ts";
 import { allTools, jsonSchemaOf, runTool, toolsFor, type Tool } from "../agents/tools";
-import { addFile, type Caller, cleanFilePath, OperationError } from "./operations/index.ts";
+import { addFile, type Caller, cleanFilePath, offered, OperationError } from "./operations/index.ts";
 import type { ToolContent, ToolSpec } from "../document/agent";
 import { authOps, expiryOf, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
 import { Base64 } from "effect/encoding";
@@ -78,9 +70,12 @@ const runNamed = Effect.fnUntraced(function* (name: string, args: unknown, ctx: 
     return yield* refuse(`There's no tool named "${name}". The tools are: ${(yield* listed(ctx)).map((t) => t.name).join(", ")}.`, 404);
   if (args == null) args = {};
   if (typeof args != "object" || Array.isArray(args)) return yield* refuse("The arguments must be a JSON object.");
-  for (const key of jsonSchemaOf(tool).required ?? [])
+  // One the caller may not use at all (an admin's, without admin power) is refused as such, whatever its arguments.
+  const usable = yield* call(() => offered(tool, ctx));
+  for (const key of usable ? (jsonSchemaOf(tool).required ?? []) : [])
     if ((args as Record<string, unknown>)[key] === undefined) return yield* refuse(`${name} needs "${key}".`);
-  const a = tool.loose
+  const a =
+    tool.loose || !usable
     ? (args as Record<string, unknown>)
     : yield* Schema.decodeUnknownEffect(tool.parameters as Schema.Codec<Record<string, unknown>>)(args, { errors: "all" }).pipe(
         Effect.mapError((e) => new OperationError({ message: `Validation failed for tool "${name}":\n${e.message}`, status: 400 }))
@@ -160,18 +155,6 @@ export const serverApi: Route = Effect.gen(function* () {
       Effect.catchTag("OperationError", (e) => Effect.succeed(failure(e.message, e.status)))
     );
   }
-  // A document's versions: for the person signed in (the settings UI) or an agent token alike.
-  const [, docId, , restoreId] = /^\/api\/docs\/([^/]+)\/(versions|versions\/([^/]+)\/restore)$/.exec(path) ?? [];
-  if (docId)
-    return yield* versionsApi(
-      platform,
-      session,
-      decodeURIComponent(docId),
-      restoreId ? "restore" : "versions",
-      restoreId && decodeURIComponent(restoreId)
-    );
-  const [, treeOf] = /^\/api\/docs\/([^/]+)\/tree$/.exec(path) ?? [];
-  if (treeOf && (method == "GET" || method == "POST")) return yield* docTree(platform, session, decodeURIComponent(treeOf));
   if (path == "/api/auth/poll" && method == "POST") return yield* pollForToken(platform);
 
   const [, name] = /^\/api\/ext\/tools\/([^/]+)$/.exec(path) ?? [];
@@ -195,78 +178,6 @@ export const serverApi: Route = Effect.gen(function* () {
     );
   }
   return failure(`There's nothing at ${method} ${path}. The guide: GET ${origin}/api/ext`, 404);
-});
-
-/** A restore's body: optionally one file only, {"path": "blog/post.html"}. */
-const RestoreBody = Schema.Struct({ path: Schema.optionalKey(Schema.Unknown) });
-
-/**
- * GET /api/docs/<id>/versions[?before=<versionId>&limit=<n>]: its versions,
- * newest first, the current one, and whether the person may restore one
- * (canEdit). POST /api/docs/<id>/versions/<versionId>/restore: editors only.
- * For anyone who may open the document, signed in or with an agent token; a
- * POST from a browser only from this site's own pages.
- */
-const versionsApi = Effect.fnUntraced(function* (
-  platform: Platform,
-  session: Session | null,
-  ref: string,
-  what: "versions" | "restore",
-  versionRef?: string
-) {
-  const request = yield* webRequest;
-  const url = new URL(request.url);
-  const fail = (error: string, status: number) => json({ error }, status);
-  if (!session) return fail("Sign in first, or send an agent token as \"Authorization: Bearer <token>\".", 401);
-  const doc = /^[a-z0-9]{8}$/.test(ref) ? yield* call(() => platform.directory.get(ref)) : null;
-  const role = doc ? yield* call(() => platform.directory.access(whoOf(session), doc)) : null;
-  if (!doc || !role) return fail("There's no such document, or it isn't shared with you.", 404);
-  const canEdit = roleMay(role, "edit");
-  if (what == "versions") {
-    if (request.method != "GET" && request.method != "HEAD") return fail("GET this.", 405);
-    const limit = Number(url.searchParams.get("limit") ?? "") || undefined;
-    const state = yield* call(() => platform.docs.versions(doc, { before: url.searchParams.get("before"), limit }));
-    return state ? json({ ...state, canEdit }) : fail("There's no such document.", 404);
-  }
-  if (request.method != "POST") return fail("POST this.", 405);
-  if (!session.agent && request.headers.get("origin") != url.origin) return fail(`Only this site's own pages may ${what}.`, 403);
-  if (!canEdit) return fail(`You may only view this document, so you can't ${what} it.`, 403);
-  // A person's restore is theirs; an agent token's is its person's, via it ("ada, via a shared agent (CI)").
-  const by = byLine(session.login.toLowerCase(), whoOf(session).via);
-  const asked = yield* body(RestoreBody);
-  const one = asked._tag == "Some" ? asked.value.path : undefined;
-  const path = typeof one == "string" && one ? one : null;
-  const r = yield* call(() => platform.docs.restore(doc, versionRef ?? "", by, path));
-  return r.ok ? json({ current: r.current, from: r.from, files: r.files }) : fail(r.error, r.status);
-});
-
-/**
- * A document's file tree (document/host.ts, /api/tree): GET reads it, for whoever may
- * open the document; POST does one operation, for its editors. Signed in
- * with the app's session (the tree's UI, from this site's pages only) or an
- * agent token. Answers JSON: the tree, or {error}.
- */
-const docTree = Effect.fnUntraced(function* (platform: Platform, session: Session | null, id: string) {
-  const request = yield* webRequest;
-  const err = (error: string, status: number) => json({ error }, status);
-  if (!session) return err("Sign in first, or send an agent token as \"Authorization: Bearer <token>\".", 401);
-  const post = request.method == "POST";
-  if (post && !session.agent && fromElsewhere(request)) return err("Not from this site.", 403);
-  const route = ID.test(id) ? yield* call(() => platform.directory.route(id)) : null;
-  const access = route && (yield* call(() => platform.directory.access(whoOf(session), route)));
-  if (!route || !access) return err("There's no such document, or it isn't shared with you.", 404);
-  if (post && accessOf(access) != "edit") return err("You can only view this document.", 403);
-  const url = new URL(request.url);
-  const inner = new Request(new URL("/api/tree", url.origin), {
-    method: request.method,
-    headers: request.headers,
-    body: post ? yield* call(() => request.text()) : undefined,
-  });
-  return fromWeb(
-    yield* call(() =>
-      platform.docs.fetch(route, forwarded(inner, new URL("/api/tree", url.origin), "/api/tree", `${url.origin}/d/${route.id}`, session))
-    )
-  );
 });
 
 /** The publish's fields that aren't files, in a multipart body. */

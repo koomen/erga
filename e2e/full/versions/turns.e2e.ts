@@ -32,7 +32,7 @@ test("versions list newest first, paging back with before= and limit=", async ()
     for (const w of [" one", " two", " three"]) await cut(owner, id, ada, intoHeading(w));
     const all = await owner.versions(id);
     expect(all.versions.map((v) => v.n)).toEqual([4, 3, 2, 1]);
-    const page = await owner.versions(id, "?limit=1&before=v4");
+    const page = await owner.versions(id, { limit: 1, before: "v4" });
     expect(page.versions.map((v) => v.n)).toEqual([3]);
     expect(page.total).toBe(4);
   } finally { ada.disconnect(); }

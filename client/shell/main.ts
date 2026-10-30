@@ -322,7 +322,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => shell.room.needRefresh(),
     onOpen: (path) => openPage(path),
-    onFiles: (files) => addFiles(api, files, (path) => dropped.add(path)),
+    onFiles: (files) => addFiles(shell.docId, api, files, (path) => dropped.add(path)),
     flushed: () => collab.flushed(),
     onZoom: (by) => zoomPage(by),
   });

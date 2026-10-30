@@ -22,7 +22,6 @@ const OVER: Record<string, number> = {
   "dev/mock-cloudflare.ts": 63809,
   "control/routes.ts": 57202,
   "client/pages/pages-tree.ts": 57709,
-  "agents/document/tools.ts": 55382,
   "control/deploys/branches.ts": 54145,
 };
 

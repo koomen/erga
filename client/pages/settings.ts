@@ -14,14 +14,15 @@
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
 //     current one marked; Show older versions loads ten more. Edit, on hover or
-//     focus, makes a copy of a version the current one (POST .../versions/<id>/restore).
+//     focus, makes a copy of a version the current one (restore_version).
 //
-// It talks to the server's API as the shared contract says (document/versions.ts,
-// server/home/api.ts, and the tree's API: document/host.ts), and refreshes on the event channel's
+// It runs the operations (server/operations/editor.ts: list_versions, restore_version, list_pages, make_project,
+// make_document; over POST /api/tools/<name>) and server/home/api.ts's, and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only.
 
 import { ago, clock, RECENT, type Version, type Versions } from "./versions";
+import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
 import { plural } from "../../shared/time";
 
@@ -29,7 +30,7 @@ export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed"
 /** GET /api/docs/<id>/home. */
 export interface Home { isHome: boolean; canDeploy: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; deploy: Deploy }
 export type DocKind = "document" | "project";
-/** GET /api/docs/<id>/tree, as far as this panel reads it. */
+/** list_pages's answer, as far as this panel reads it. */
 interface Tree { entries: { path: string; type: string }[]; canEdit?: boolean; kind?: DocKind }
 
 export interface SettingsHost {
@@ -223,7 +224,7 @@ function mount(host: SettingsHost): Settings {
   async function loadVersions() {
     const seq = ++loadSeq;
     try {
-      const d = await call<Versions>("versions");
+      const d = await runTool<Versions>("list_versions", { document: host.docId });
       if (seq != loadSeq) return;
       // What was loaded before stays (older versions shown), with the fresh copies over it.
       if (data && d.total < data.total) loaded = new Map();
@@ -246,7 +247,10 @@ function mount(host: SettingsHost): Settings {
     if (!data || !oldest || oldest.n <= 1 || loadingOlder) return;
     loadingOlder = true;
     render();
-    const r = await call<Versions>("versions", undefined, { before: oldest.id, limit: String(RECENT) }).catch((e: Error) => { histError.textContent = `Couldn't load older versions: ${e.message}`; return null; });
+    const r = await runTool<Versions>("list_versions", { document: host.docId, before: oldest.id, limit: RECENT }).catch((e: Error) => {
+      histError.textContent = `Couldn't load older versions: ${e.message}`;
+      return null;
+    });
     loadingOlder = false;
     if (r) add(r.versions);
     render();
@@ -263,7 +267,7 @@ function mount(host: SettingsHost): Settings {
 
   async function loadTree() {
     const seq = ++treeSeq;
-    const t = await call<Tree>("tree").catch(() => null);
+    const t = await runTool<Tree>("list_pages", { document: host.docId }).catch(() => null);
     if (seq != treeSeq) return;
     if (t) { tree = t; if (t.kind) host.onKind(t.kind); }
     renderKind();
@@ -278,7 +282,7 @@ function mount(host: SettingsHost): Settings {
     histError.textContent = "";
     render();
     try {
-      const r = await call<{ current: Version }>(`versions/${encodeURIComponent(id)}/restore`, { method: "POST" });
+      const r = await runTool<{ current: Version }>("restore_version", { document: host.docId, version: id });
       restoring = null;
       // Shown at once; the event channel's "versions" brings the rest (its description, the total).
       if (data && !data.versions.some((x) => x.id == r.current.id)) {
@@ -377,7 +381,7 @@ function mount(host: SettingsHost): Settings {
     kindError.textContent = "";
     renderKind();
     try {
-      await call("tree", { method: "POST", body: JSON.stringify({ op: want == "project" ? "make_project" : "make_document" }) });
+      await runTool(want == "project" ? "make_project" : "make_document", { document: host.docId });
       tree = { ...tree, kind: want };
       host.onKind(want);
     } catch (e) { kindError.textContent = `Couldn't make it a ${want}: ${(e as Error).message}`; }

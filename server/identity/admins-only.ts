@@ -28,7 +28,7 @@
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
 //                                   must work here as on production: /llms.txt, /api, /api/ext/..., /mcp, /api/publish,
-//                                   /api/docs/<id>/(versions|tree), and /<owner or d>/<doc>/(api|doc)/..., and
+//                                   /api/tools/..., and /<owner or d>/<doc>/(api|doc)/..., and
 //                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin; a test person's token never passes. Past this guard the token's
 //                                   own scope decides, as on production: no admin

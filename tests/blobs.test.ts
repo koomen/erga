@@ -2,6 +2,7 @@
 // document on MemoryStorage with MemoryBlobs, uploaded to, served, versioned,
 // moved, restored and copied, and what a Worker from before blobs still finds.
 
+import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { BLOB_HEADER, OBJECT_MAX } from "../document/blobs";
 import { sha256Hex } from "../shared/bytes";
@@ -67,7 +68,7 @@ test("a text file arrives as text; a second upload replaces the first, and says 
   // A blob replaced by text becomes text: a file changes kind only when it's replaced whole.
   expect((await (await put("data.csv", "a,b\n1,2\n")).json())).toMatchObject({ kind: "text", replaced: true });
   expect(await (await get("/doc/data.csv")).text()).toBe("a,b\n1,2\n");
-  expect((await (await doc.handle(new Request("http://doc/api/files", { headers: { "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) } }))).json()).files.find((f: { path: string }) => f.path == "data.csv").kind).toBe("text");
+  expect((await Effect.runPromise(doc.self.call((c) => c.files())))!.files.find((f) => f.path == "data.csv")!.kind).toBe("text");
   expect(await doc.paths()).toEqual(["data.csv", "index.html", "notes.md"]);
 });
 
@@ -113,12 +114,11 @@ test("a blob moves by its ref, is deleted with its file, and comes back with a r
   await put("a.pdf", pdf);
   await sleep(150);
   const before = (await doc.versionsState())!.current.n;
-  const handle = (op: object) => doc.handle(new Request("http://doc/api/tree", { method: "POST", body: JSON.stringify(op), headers: { "content-type": "application/json", "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }), "x-erga-who": JSON.stringify({ login: "ada" }) } }));
-  expect((await handle({ op: "move", from: "a.pdf", to: "docs/b.pdf" })).status).toBe(200);
+  expect((await Effect.runPromise(doc.self.call((c) => c.treeOp({ op: "move", from: "a.pdf", to: "docs/b.pdf" }))))!.ok).toBe(true);
   expect(storage.data.has(KEYS.ref + "a.pdf")).toBe(false);
   expect(storage.data.get(KEYS.ref + "docs/b.pdf")).toMatchObject({ hash: await sha256Hex(pdf) });
   expect(new Uint8Array(await (await get("/doc/docs/b.pdf")).arrayBuffer())).toEqual(pdf);
-  expect((await handle({ op: "delete", path: "docs/b.pdf" })).status).toBe(200);
+  expect((await Effect.runPromise(doc.self.call((c) => c.treeOp({ op: "delete", path: "docs/b.pdf" }))))!.ok).toBe(true);
   expect(storage.data.has(KEYS.ref + "docs/b.pdf")).toBe(false);
   expect((await get("/doc/docs/b.pdf")).status).toBe(404);
   // The blob stays: a version has it.

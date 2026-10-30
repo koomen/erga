@@ -63,7 +63,14 @@ export async function draftDoc(server: Server, title: string, upTo: number, styl
   };
   await doc.versions(upTo);
   // Its address follows its title (the page's first heading) once it's no longer blank.
-  doc.address = await until(async () => { const a = ((await (await owner.get(`/d/${id}/api/name`)).json()) as { address: string }).address; return a.includes(slug(title)) ? a : null; }, 5_000, "the document takes its title's address") as string;
+  doc.address = (await until(
+    async () => {
+      const a = ((await (await owner.get(`/d/${id}/api/doc`)).json()) as { docName: { address: string } }).docName.address;
+      return a.includes(slug(title)) ? a : null;
+    },
+    5_000,
+    "the document takes its title's address"
+  )) as string;
   return doc;
 }
 

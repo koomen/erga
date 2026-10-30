@@ -1,6 +1,6 @@
 // The files view (server/pages/files.ts): every file of a document or
 // project as a tree, and the selected one shown as the browser shows it.
-// It reads the list from GET <base>/api/files, and hears the tree change
+// It reads the list with the operation ls (server/operations/editor.ts), and hears the tree change
 // over a socket of its own (<base>/api/room?watch=files: it never joins the
 // room), so a file someone or an agent adds, moves or deletes shows at once.
 // The files themselves come over HTTP: from the document's pages origin (a
@@ -12,19 +12,21 @@
 // with PUT <base>/api/files/<path> and a progress bar; a file with the same
 // name is replaced, and the page says so ("Replaced 3 files"). Rows move by
 // drag and drop onto a folder, rename in place (F2, or the pencil) and
-// delete (a folder asks once). Errors show where they happened, in the
+// delete (a folder asks once): the operations mv and rm. Errors show where they happened, in the
 // server's words.
 
 import { readableSize, sha256Hex } from "../../shared/bytes";
 import { baseName, encodePath, joinPath, parentOf } from "../../document/pages";
 import { plural, timeAgo } from "../../shared/time";
 import { esc } from "../../shared/html";
+import { runTool } from "../common/tools";
 
 interface FileRow { path: string; kind: "text" | "file"; size: number | null; at: number | null; type: string }
 interface Listing { files: FileRow[]; folders: string[]; index: string; canEdit: boolean }
 
 const meta = (name: string) => document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content ?? "";
 const base = meta("erga-base");
+const docId = meta("erga-doc");
 const pages = meta("erga-pages");
 const main = document.querySelector<HTMLElement>("main.files")!;
 const treeEl = main.querySelector<HTMLUListElement>("ul.tree")!;
@@ -87,9 +89,14 @@ async function errorOf(r: Response): Promise<string> {
 // ---------------------------------------------------------------- the list
 
 async function load(): Promise<void> {
-  const r = await fetch(`${base}/api/files`, { cache: "no-store" }).catch(() => null);
-  if (!r?.ok) { say(r ? await errorOf(r) : "Couldn't reach the server. It tries again when the page is back online.", true); return; }
-  listing = (await r.json()) as Listing;
+  const r = await runTool<Omit<Listing, "files"> & { files: (Omit<FileRow, "at"> & { at: string | null })[] }>("ls", {
+    document: docId,
+  }).catch((e: Error) => e);
+  if (r instanceof Error) {
+    say(r.message, true);
+    return;
+  }
+  listing = { ...r, files: r.files.map((f) => ({ ...f, at: f.at ? Date.parse(f.at) : null })) };
   main.setAttribute("aria-busy", "false");
   if (selected && !listing.files.some((f) => f.path == selected) && !isFolder(selected)) selected = "";
   render();
@@ -228,11 +235,15 @@ function show(path: string): void {
 
 // ---------------------------------------------------------------- tree operations
 
+/** Each change's operation (server/operations/editor.ts). */
+const TOOLS: Record<string, string> = { new_page: "new_page", new_folder: "mkdir", move: "mv", delete: "rm" };
+
 async function treeOp(op: Record<string, string>): Promise<string | null> {
-  const r = await fetch(`${base}/api/tree`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(op) }).catch(() => null);
-  if (!r) return "Couldn't reach the server.";
-  if (!r.ok) return errorOf(r);
-  return null;
+  const { op: name, ...args } = op;
+  return runTool(TOOLS[name] ?? name, { document: docId, ...args }).then(
+    () => null,
+    (e: Error) => e.message
+  );
 }
 
 function rowError(el: HTMLElement, text: string): void {

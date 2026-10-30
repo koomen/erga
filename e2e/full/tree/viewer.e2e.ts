@@ -16,7 +16,7 @@ test("for a viewer the tree has no add, rename, move or delete, no keys that cha
   expect((await share("*", "none")).ok).toBe(true);
   expect((await share("ada", "viewer")).ok).toBe(true);
   const ada = await signIn(server, "ada");
-  const seen = await (await fetch(`${server.root}/api/docs/${doc.id}/tree`, { headers: { Cookie: ada } })).json() as { canEdit: boolean };
+  const seen = (await runTool(server.root, "list_pages", { document: doc.id }, { cookie: ada })).result as { canEdit: boolean };
   expect(seen.canEdit).toBe(false);
 
   const page = tab.page;

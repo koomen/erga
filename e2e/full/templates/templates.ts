@@ -18,7 +18,7 @@ export async function newDoc(server: Server, template: string) {
 }
 
 /** The document's id, from its address. */
-export const idOf = async (address: string) => ((await (await fetch(`${address.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
+export { idOf } from "../../helpers/tools";
 
 /**
  * Opens a URL in the test's tab, as someone who keeps the agent pane closed (it opens by itself in the editor

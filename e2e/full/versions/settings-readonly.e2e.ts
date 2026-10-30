@@ -1,6 +1,7 @@
 // Settings for someone who may only view.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { closeDrafts, draftDoc, openDocEditor, rect, viewerShows } from "./settings";
+import { runTool } from "../../helpers/tools";
 
 await servers.short();
 test.afterEach(closeDrafts);
@@ -27,8 +28,17 @@ test("a viewer at the editor's address gets the viewer, with the document as it 
   await doc.owner.share(doc.id, "bo", "viewer");
   await viewerShows(tab.page, server, `${doc.address}?user=Bo&edit`, "Draft 5");
   expect(await rect(tab.page, "#btn-settings")).toBeNull();
-  const bo = (path: string, method = "GET") => fetch(`${server.root}${path}?user=Bo`, { method, headers: { Origin: server.root, "Content-Type": "application/json" }, body: method == "POST" ? JSON.stringify({ mode: "latest" }) : undefined });
-  const state = (await (await bo(`/api/docs/${doc.id}/versions`)).json()) as { canEdit: boolean; current: { n: number } };
+  const bo = (path: string, method = "GET") =>
+    fetch(`${server.root}${path}?user=Bo`, {
+      method,
+      headers: { Origin: server.root, "Content-Type": "application/json" },
+      body: method == "POST" ? JSON.stringify({ mode: "latest" }) : undefined,
+    });
+  const state = (await runTool(server.root, "list_versions", { document: doc.id }, { user: "Bo" })).result as {
+    canEdit: boolean;
+    current: { n: number };
+  };
   expect(state).toMatchObject({ canEdit: false, current: { n: 5 } });
-  for (const path of [`/api/docs/${doc.id}/versions/v3/restore`, `/api/docs/${doc.id}/home/deploy`]) expect((await bo(path, "POST")).status).toBe(403);
+  expect((await runTool(server.root, "restore_version", { document: doc.id, version: "v3" }, { user: "Bo" })).status).toBe(403);
+  expect((await bo(`/api/docs/${doc.id}/home/deploy`, "POST")).status).toBe(403);
 });

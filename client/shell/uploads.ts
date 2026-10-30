@@ -5,6 +5,7 @@
 
 import { encodePath } from "../../document/pages";
 import { sha256Hex } from "../../shared/bytes";
+import { runTool } from "../common/tools";
 
 /** Files over this size go with their sha-256, so they stream to storage (the server asks for it over 25 MB). */
 const HASH_FROM = 20_000_000;
@@ -20,13 +21,15 @@ const cleanName = (name: string) => name.replace(/[/\\]/g, "-").replace(/^\.+/, 
  * before its file goes. Returns the paths they got, in order, up to the first that couldn't be added, and why it couldn't.
  */
 export async function addFiles(
+  docId: string,
   api: (path: string) => string,
   files: File[],
   sending: (path: string) => void = () => {}
 ): Promise<{ paths: string[]; error: string | null }> {
-  const listed = await fetch(api("/api/files"), { cache: "no-store" }).catch(() => null);
-  if (!listed?.ok) return { paths: [], error: await why(listed, files.length == 1 ? files[0].name : "the files") };
-  const taken = new Set(((await listed.json()) as { files: { path: string }[] }).files.map((f) => f.path.toLowerCase()));
+  const listed = await runTool<{ files: { path: string }[] }>("ls", { document: docId }).catch((e: Error) => e);
+  if (listed instanceof Error)
+    return { paths: [], error: `Couldn't add ${files.length == 1 ? files[0].name : "the files"}: ${listed.message}` };
+  const taken = new Set(listed.files.map((f) => f.path.toLowerCase()));
   const paths: string[] = [];
   for (const file of files) {
     const dir = folderFor(file);

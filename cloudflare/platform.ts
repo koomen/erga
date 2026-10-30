@@ -199,6 +199,12 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       snapshot: (doc) => counted("doc", () => host(doc).snapshot()),
       versions: (doc, opts) => host(doc).versionsState(opts),
       restore: (doc, ref, by, path) => host(doc).restore(ref, by, path),
+      version: (doc, ref) => counted("doc", () => host(doc).version(ref)),
+      versionFile: (doc, ref, path) => counted("doc", () => host(doc).versionFile(ref, path)),
+      tree: (doc) => counted("doc", () => host(doc).tree()),
+      treeOp: (doc, op) => counted("doc", () => host(doc).treeOp(op)),
+      files: (doc) => counted("doc", () => host(doc).fileList()),
+      rename: (doc, person, patch) => counted("doc", () => host(doc).rename(person, patch)),
       exists: (doc) => counted("doc", () => host(doc).exists()),
       delete: (doc) => counted("doc", () => host(doc).delete()),
       list: async (owner) => {

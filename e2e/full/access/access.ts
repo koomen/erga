@@ -25,7 +25,7 @@ export async function newDoc(root: string): Promise<{ at: string; id: string }> 
   const get = getter(root);
   const at = (await get("/new")).headers.get("location")!;
   expect(at).toMatch(/[?&]edit=?$/);
-  const id = ((await (await get(`${at.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
+  const id = ((await (await get(`${at.replace(/[?&]edit=?$/, "")}/api/doc`)).json()) as { docName: { id: string } }).docName.id;
   return { at, id };
 }
 

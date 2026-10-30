@@ -3,6 +3,7 @@
 // time, grep searches PDFs through their text (extracted once, kept by the PDF's hash), edit refuses a file kept whole,
 // and someone who may only view has the tools that change nothing.
 
+import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { PDFDocument } from "pdf-lib";
 import { sha256Hex } from "../shared/bytes";
@@ -75,15 +76,16 @@ test("write takes bytes: a file kept whole (or text, if they're text), within th
   expect(await doc.paths()).not.toContain("big.bin");
 });
 
-test("ls gives each file's kind, size and time; edit refuses a file kept whole", async () => {
-  const { tool, put } = await withTools();
+test("the files' list (ls) gives each file's kind, type, size and time; edit refuses a file kept whole", async () => {
+  const { tool, put, doc } = await withTools();
   await put("receipts/a.pdf", pdf("A"));
   await put("receipts/notes.md", "# Notes");
-  const ls = await tool("ls", { path: "receipts" });
-  const [aLine, notesLine] = ls.text.split("\n");
-  expect(aLine).toMatch(/^file\s+\d+ B\s+\d{4}-\d\d-\d\d \d\d:\d\d\s+a\.pdf {2}\(application\/pdf\)$/);
-  expect(notesLine).toMatch(/^text\s+7 B\s+.*notes\.md$/);
-  expect((await tool("ls", {})).text).toMatch(/^dir\s+receipts\/$/m);
+  const list = (await Effect.runPromise(doc.self.call((c) => c.files())))!;
+  const a = list.files.find((f) => f.path == "receipts/a.pdf")!;
+  expect(a).toMatchObject({ kind: "file", type: "application/pdf" });
+  expect(a.size).toBeGreaterThan(0);
+  expect(a.at).toBeGreaterThan(0);
+  expect(list.files.find((f) => f.path == "receipts/notes.md")).toMatchObject({ kind: "text", size: 7 });
   const e = await tool("edit", { path: "receipts/a.pdf", edits: [{ oldText: "A", newText: "B" }] });
   expect(e.ok).toBe(false);
   expect(e.error).toContain("a file kept whole (not text), so it can't be edited");
@@ -109,12 +111,12 @@ test("grep searches PDFs through their text, page by page, extracted once and ke
   expect((await tool("grep", { pattern: "contribution", glob: "copy/*.pdf" })).text).toBe("copy/goodwill.pdf:2: Charitable contribution receipt");
 });
 
-test("someone who may only view has the tools that change nothing: read, ls, find and grep work; write is refused", async () => {
+test("someone who may only view has the tools that change nothing: read, find and grep work; write is refused", async () => {
   const { tool, tools, put } = await withTools();
   await put("a.pdf", pdf("Shared"));
   const mine = await tools("bob");
-  for (const t of ["read", "ls", "find", "grep"]) expect(mine).toContain(t);
-  for (const t of ["edit", "write", "mv", "rm", "mkdir", "new_page", "set_title", "restore_version"]) expect(mine).not.toContain(t);
+  for (const t of ["read", "find", "grep"]) expect(mine).toContain(t);
+  for (const t of ["edit", "write"]) expect(mine).not.toContain(t);
   expect((await tools("ada"))).toContain("write");
   expect((await tool("grep", { pattern: "Shared" }, "bob")).text).toBe("a.pdf:1: Shared");
   const w = await tool("write", { path: "x.md", content: "x" }, "bob");

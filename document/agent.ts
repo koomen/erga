@@ -8,8 +8,7 @@
 import type { Attachment } from "../shared/attach.ts";
 import type { Log, LogEvent, ViewRequest, ViewResult } from "../shared/agent-log.ts";
 import type { BlobStore } from "./blobs.ts";
-import type { Naming } from "./names.ts";
-import type { DocKind, TreeEntry, TreeOp } from "./pages.ts";
+import type { DocKind } from "./pages.ts";
 import type { Room } from "./room.ts";
 import type { RestoreResult, Version, VersionsState } from "./versions.ts";
 
@@ -39,20 +38,12 @@ export interface FilesAccess {
 export interface VersionsAccess {
   state(opts: { before?: string | number | null; limit?: number }): Promise<VersionsState>;
   version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null>;
-  file(ref: string | number, path: string): Promise<Uint8Array | null>;
   /** Every file of a version (null if there's no such version). */
   files(ref: string | number): Promise<Map<string, Uint8Array> | null>;
   /** Every file as it is now, up to the keystroke. */
   current(): Promise<Map<string, Uint8Array>>;
-  /** Brings a version back (or, with `path`, one file of it) as a new current version, by `by` (a login). */
-  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult>;
 }
 
-/** The document's pages as list_pages answers them: every entry (titles on pages), and the document's address. */
-export interface PageTree {
-  address: string;
-  entries: TreeEntry[];
-}
 /** What open_page did: the page it opened, and in how many of the person's tabs (none: nothing opened). */
 export interface OpenResult {
   path: string;
@@ -79,13 +70,7 @@ export interface SessionOptions {
   /** Asks one of the owner's open tabs to render and capture the page. */
   view: (req: ViewRequest) => Promise<ViewResult>;
   readAsset: (path: string) => Promise<Uint8Array | null>;
-  /** The document's title and address, as the owner (get_title, set_title); without it those tools are left out. */
-  naming?: Naming;
-  /** Does a tree operation in the room: new_page, mkdir, mv and rm; without it those tools are left out. */
-  tree?: (op: TreeOp) => Promise<void>;
-  /** The document's pages with titles, and its address (list_pages); without it list_pages and open_page are left out. */
-  pages?: () => Promise<PageTree>;
-  /** Switches the owner's open editor tabs to a page (open_page, new_page's open). */
+  /** Switches the owner's open editor tabs to a page (open_page). */
   open?: (path: string) => Promise<OpenResult>;
   /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
   turnEnded?: () => Promise<string | null> | void;

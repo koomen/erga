@@ -27,7 +27,7 @@ test("the owner shares it with a viewer, who opens it and has it on their list, 
   expect(list).toContain(`${p.login} · view only`);
   expect(list).not.toContain(`value="${id}"`);
   expect((await p.as("Ada", `/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Mine now</h1>" })).status).toBe(403);
-  expect((await p.as("Ada", `/d/${id}/api/name`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Viewer's title" }) })).ok).toBe(false);
+  expect((await p.tool("rename_document", { document: id, title: "Viewer's title" }, "Ada")).status).toBe(403);
   expect((await p.tool("delete_document", { document: id }, "Ada")).status).toBe(403);
   expect((await p.share(id, "Bo", "editor", "Ada")).status).toBe(403);
 });

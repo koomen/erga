@@ -3,6 +3,7 @@
 // PDF as a document (an embedded resource over MCP), and write of bytes, which the files view then lists.
 import { expect, servers, test, until, type Server } from "../../helpers/fixtures";
 import { person } from "../versions/versions";
+import { runTool } from "../../helpers/tools";
 
 await servers.main();
 
@@ -48,7 +49,10 @@ test("ls says each file's kind and size; grep finds words in PDFs, by page; read
   expect((await put("receipts/2026-11-redcross.pdf", pdf("Thank you for your charitable gift"))).status).toBe(200);
   const ls = await call("ls", { path: "receipts" });
   expect(ls.ok).toBe(true);
-  expect(ls.text).toMatch(/^file\s+\d+ B\s+\S+ \S+\s+2026-03-goodwill\.pdf {2}\(application\/pdf\)$/m);
+  expect(JSON.parse(ls.text).files.find((f: { path: string }) => f.path == "receipts/2026-03-goodwill.pdf")).toMatchObject({
+    kind: "file",
+    type: "application/pdf",
+  });
   const grep = await call("grep", { pattern: "charitable", ignoreCase: true, glob: "receipts/*.pdf" });
   expect(grep.text.split("\n")).toEqual([
     "receipts/2026-03-goodwill.pdf:2: Charitable contribution receipt",
@@ -73,8 +77,13 @@ test("write of bytes makes a file kept whole, which the files view lists and ser
   const w = await call("write", { path: "made/agent.pdf", content_base64: Buffer.from(bytes).toString("base64") });
   expect(w.ok).toBe(true);
   expect(w.text).toContain("a file kept whole");
-  const files = await until(async () => {
-    const list = ((await (await ada.get(`/d/${id}/api/files`)).json()) as { files: { path: string; kind: string; size: number }[] }).files;
+  const files = await until(
+    async () => {
+      const list = (
+        (await runTool(server.root, "ls", { document: id }, { cookie: ada.cookie })).result as {
+          files: { path: string; kind: string; size: number }[];
+        }
+      ).files;
     return list.find((f) => f.path == "made/agent.pdf");
   }, 5000, "the files list has the agent's file");
   expect(files).toMatchObject({ kind: "file", size: bytes.length });

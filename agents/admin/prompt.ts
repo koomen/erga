@@ -98,9 +98,12 @@ ${owner}'s documents too, as they could work with them themselves:
 - list_documents, create_document, delete_document, document_access, share_document,
   rename_document and update_files: the documents list (/docs) and sharing. whoami says
   who you act for.
-- read, edit, write, ls, grep and the other document tools work in any document ${owner}
-  may open or edit: name it with "document" (its address, URL or id). Your edits show as
-  ${owner}'s, via their admin agent.
+- Inside a document, as the editor has them: get_title and rename_document (its name),
+  list_pages, ls, new_page, mkdir, mv, rm, make_project and make_document (its pages,
+  files and kind), list_versions, read_version and restore_version (its versions).
+- read, edit, write, grep and these work in any document ${owner} may open or edit:
+  name it with "document" (its address, URL or id). Your edits show as ${owner}'s, via their
+  admin agent.
 - Delete, share or change a document only when ${owner} asks for it in this conversation.
 
 For Erga's own code, you can read the server's copy of its repository (read-only: you

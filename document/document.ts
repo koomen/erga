@@ -49,7 +49,7 @@ import { nameOf, namingFor, UNTITLED, type NamedRow, type Naming, type NamesDire
 import { DocumentAccess, type Asker, type Role } from "./access.ts";
 import { DocumentView, type ViewAnswer } from "./view.ts";
 import type { DocumentAgents } from "./agent.ts";
-import { docFile, makeHost, typeOf } from "./host.ts";
+import { docFile, makeHost, typeOf, type EditorCalls } from "./host.ts";
 import { blobPointer, INLINE_HEADER, isBlobRef, OBJECT_MAX, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import type { AgentState, DocName, Hello } from "./api.ts";
 import { digest, FileStore, NoSuchDocument, Room, StateStore, StoreError, type Connection } from "./room.ts";
@@ -253,11 +253,7 @@ export class Document {
   private editing = 0;
   /** Who the files arriving whole now are by (publish), for the version. */
   private publisher: string | null = null;
-  /**
-   * Who may edit, by person id, as the app last said (x-erga-access):
-   * their agent, and an external agent acting for them, may do what they could
-   * at their latest request.
-   */
+  /** Who may edit, by person id, as the app said last (x-erga-access): their agents may too. */
   private editors = new Map<string, boolean>();
   /** Who may do what: its copy of its permissions, and the directory's rule (access.ts). */
   private access: DocumentAccess;
@@ -1159,6 +1155,14 @@ export class Document {
     return info ? { opened, info } : null;
   }
 
+  /** An operation's call (host.ts) on the document, opened; null if there's none. */
+  call<A>(f: (calls: EditorCalls) => A | Promise<A>): Effect.Effect<A | null, StoreError> {
+    return io(async () => {
+      const o = await this.room();
+      return o ? f(o.calls) : null;
+    });
+  }
+
   /** Its versions, newest first (`limit`, before version `before`), and the current one. Null if there's no such document. */
   versionsState(opts: { before?: string | number | null; limit?: number } = {}): Effect.Effect<VersionsState | null, StoreError> {
     const self = this;
@@ -1195,13 +1199,9 @@ export class Document {
   }
 
   /**
-   * Brings a version back: its files are written over the document as it
-   * is now (every file: those it didn't have are deleted), as an edit open
-   * editors see live, and that becomes a new version, the current one, by
-   * `by`, "Restored version <n>". With `path`, only that file comes back
-   * ("Restored <path> from version <n>"); the other files stay as they are.
-   * Edits not yet in a version become one first, so nothing is lost.
-   * Viewers then see it.
+   * Brings a version back over the document as it is now (files it didn't have go), as an edit open editors see live:
+   * a new current version by `by`, "Restored version <n>". With `path`, only that file ("Restored <path> from version
+   * <n>"). Edits not yet in a version become one first, so nothing is lost.
    */
   restore(ref: string | number, by: string, path?: string | null): Effect.Effect<RestoreResult, StoreError> {
     const self = this;
@@ -1535,14 +1535,12 @@ export class Document {
       versions: {
         state: (opts) => Effect.runPromise(this.versionsState(opts)).then((s) => s!),
         version: (ref) => Effect.runPromise(this.version(ref)),
-        file: (ref, path) => Effect.runPromise(this.versionFile(ref, path)),
         files: async (ref) => {
           const n = versionNumber(ref);
           const v = n != null && (await this.ready()) ? await Effect.runPromise(this.versions.get(n)) : null;
           return v ? Effect.runPromise(this.versions.files(v)) : null;
         },
         current: async () => (await this.ready())?.opened.current() ?? new Map(),
-        restore: (ref, by, path) => Effect.runPromise(this.restore(ref, by, path)),
       },
       // A new page in its file tree starts as a new document does.
       newPage: this.deps.pageTemplate,
@@ -1609,6 +1607,7 @@ export class Document {
       },
       files,
       handler: host.handler,
+      calls: host.calls,
       renamed: host.renamed,
       notify: host.notify,
       addTab: host.addTab,
@@ -1649,6 +1648,8 @@ export interface Opened {
   /** Its files' store (refs, blobs). */
   files: FileStore["Service"];
   handler: (request: Request) => Promise<Response>;
+  /** What the operations call (host.ts). */
+  calls: EditorCalls;
   /** A tab joins its person's event channel (`watch`: a files view, hearing only what every tab does); returns the leave function. */
   addTab: (user: string, send: (msg: unknown) => void, watch?: boolean) => () => void;
   /** What a tab hears first ({ type: "hello" }): the document's details as the person sees them, and its tree. */

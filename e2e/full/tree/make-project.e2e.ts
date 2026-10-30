@@ -5,6 +5,7 @@
 // project's has, and says Project. The New menu's Project makes a project from the start, with two pages.
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { clickOn, js, openTreeEditor, paths } from "./tree";
+import { idOf, treeOp as runTreeOp } from "../../helpers/tools";
 
 /**
  * Clicks a control of the editor's chrome until `opened` holds, as a person would. The chrome hides while the page
@@ -45,9 +46,9 @@ test("Document or Project in the settings: the breadcrumb's caret follows the ki
   const server = await servers.main();
   const made = (await fetch(`${server.root}/new?template=page`, { redirect: "manual" })).headers.get("location") ?? "";
   const address = made.replace(/[?&]edit=?$/, "");
-  const { id } = (await (await fetch(`${server.root}${address}/api/name`)).json()) as { id: string };
+  const id = await idOf(`${server.root}${address}`);
   /** A tree operation from outside the tabs, as an agent's (the tests' server signs it in as DEV_LOGIN). */
-  const treeOp = (op: object) => fetch(`${server.root}/api/docs/${id}/tree`, { method: "POST", headers: { "Content-Type": "application/json", Origin: server.root }, body: JSON.stringify(op) });
+  const treeOp = (op: Record<string, unknown>) => runTreeOp(server.root, id, op);
   // Documents: no chevron for it.
   await page.goto(`${server.root}/docs`);
   await until(() => page.evaluate(`!!document.querySelector('a.doc[href*="${address}"]')`), 5000, "the document is on the list");

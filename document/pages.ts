@@ -28,7 +28,7 @@
 /** One entry in the tree: a page (.html), any other file, or a folder. */
 export interface TreeEntry { path: string; type: "page" | "file" | "folder"; /** A page's title, when it has one (the API adds it). */ title?: string }
 
-/** What can be done to the tree (POST /api/docs/<id>/tree): rename is a move. */
+/** What can be done to the tree (the operations new_page, mkdir, mv, rm, make_project, make_document): rename is a move. */
 export type TreeOp =
   | { op: "new_page"; path: string }
   | { op: "new_folder"; path: string }

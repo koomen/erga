@@ -35,17 +35,18 @@ export async function person(server: Server, as: string) {
     /** A blank document of theirs (/new): its address and id. */
     async newDoc() {
       const at = (await get("/new")).headers.get("location")!.replace(/(\/edit|[?&]edit)$/, "");
-      const { id } = (await (await get(`${at}/api/name`)).json()) as { id: string };
+      const { id } = ((await (await get(`${at}/api/doc`)).json()) as { docName: { id: string } }).docName;
       return { address: at, id };
     },
-    versions: async (id: string, q = "") => (await (await get(`/api/docs/${id}/versions${q}`)).json()) as State,
+    /** Its versions, as the settings list them (list_versions; `q`: before and limit). */
+    versions: async (id: string, q: { before?: string; limit?: number } = {}) =>
+      (await runTool(server.root, "list_versions", { document: id, ...q }, { cookie, origin })).result as State,
     home: async (id: string) => (await (await get(`/api/docs/${id}/home`)).json()) as HomeState,
-    restore: (id: string, version: string, body?: unknown) =>
-      get(`/api/docs/${id}/versions/${version}/restore`, {
-        method: "POST",
-        headers: { Origin: origin, ...(body ? { "Content-Type": "application/json" } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-      }),
+    /** Brings a version back, as the settings' Edit does (restore_version; `body.path`: one file). */
+    restore: async (id: string, version: string, body?: { path?: string }) => {
+      const r = await runTool(server.root, "restore_version", { document: id, version, ...body }, { cookie, origin });
+      return { ok: r.ok, status: r.status, json: async () => (r.ok ? r.result : { error: r.error }) };
+    },
     share: (id: string, login: string, role: string) =>
       runTool(server.root, "share_document", { document: id, login, role }, { cookie, origin }),
     /** An agent token of theirs (/tokens/new). */

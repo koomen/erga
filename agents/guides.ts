@@ -125,9 +125,12 @@ A document is a folder of files. Pages are its .html files
 shared assets. Users see pages; you see files: the document tools see the
 whole document as one file system, rooted at its folder.
 
-Every document has the tools its embedded agent uses (read, edit, write, ls,
-find, grep, list_pages, open_page, new_page, mkdir, mv, rm, view_page,
-evaluate_page, get_title, set_title). Here they take a \`document\` argument too.
+Every document has the tools its embedded agent uses (read, edit, write,
+find, grep, open_page, view_page, evaluate_page, diff_versions and the live
+page's). Here they take a \`document\` argument too. What a person does with a
+document's name, pages, files and versions in the editor is a server tool:
+get_title, rename_document, list_pages, ls, new_page, mkdir, mv, rm,
+make_project, make_document, list_versions, read_version and restore_version.
 open_page switches your person's open editor on that document to another
 page (if they have none open, it says so and gives the address). Each document also has its own guide, with the rules for
 writing pages people can keep editing by hand (read it before changing a page
@@ -141,12 +144,11 @@ because someone changed the text meanwhile.
 
 Each document keeps versions: snapshots of all its files, cut after each burst
 of edits and each agent turn, with a five-word description. Its viewers always
-see the document as it is now. The document tools list_versions, read_version,
-diff_versions and restore_version handle them; so does plain HTTP:
+see the document as it is now. The server tools list_versions, read_version
+and restore_version, and the document tool diff_versions, handle them:
 
-    curl -s ${origin}/api/docs/<id>/versions -H "Authorization: Bearer $ERGA_TOKEN"
-    curl -s -X POST ${origin}/api/docs/<id>/versions/v3/restore -H "Authorization: Bearer $ERGA_TOKEN"
-    curl -s -X POST ${origin}/api/docs/<id>/versions/v3/restore -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"path": "blog/post.html"}'
+    curl -s -X POST ${origin}/api/tools/list_versions -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"document": "<id>"}'
+    curl -s -X POST ${origin}/api/tools/restore_version -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"document": "<id>", "version": "v3", "path": "blog/post.html"}'
 
 Only someone who may edit a document may restore a version (a restore writes
 the old version's files over the document, as a new version; with a path, only
@@ -185,9 +187,10 @@ export function documentGuide(o: { docName: string; owner: string; base: string;
 ${o.owner} has given you access to edit the document "${o.docName}" in Erga's page
 editor, as their agent, ${agentName(o.owner)}.
 
-${FILES_PROMPT} The tools below work on it: ls, find, grep, read, edit, write,
-new_page, mkdir, mv and rm on its files, and list_pages for its pages as users see
-them.
+${FILES_PROMPT} The tools below work on its files' text: find, grep, read, edit
+and write. Its pages, files' list, name and versions are the server's tools
+(list_pages, ls, new_page, mkdir, mv, rm, get_title, rename_document,
+list_versions, restore_version: see "Beyond this document").
 
 ${PAGES_PROMPT}
 
@@ -237,22 +240,14 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   handlers. Use page_inspect, page_click and page_key only when the
   person you work for asks you to look into or act on that page.
 - open_page switches ${o.owner}'s open editor (every tab they have open on this
-  document) to another page; new_page with open: true makes one and opens it. If
+  document) to another page (after new_page, to show the new one). If
   they have no editor open, nothing opens: the answer says so and gives the page's
   address, which you can pass on. Use it when asked to go to a page, or to show
   them one you made.
-- get_title and set_title read and change the document's title (shown in the
-  document list and the browser tab) and its address, /<owner>/<slug>. Until
-  someone sets them, the title follows the page's first heading and the slug
-  follows the title. Use set_title when asked to rename the document or change
-  its address; old addresses keep redirecting, and the API address above never
-  changes.
 - The document keeps versions (a snapshot of every file after each burst of
-  edits, and after each run of your calls). list_versions and read_version show
-  them; diff_versions shows what changed between two of them, or since your last
-  run of calls (by default), as a unified diff for each file; restore_version
-  brings one back (or one file of it) as a new version. Only restore when asked.
-  Viewers always see the document as it is now.
+  edits, and after each run of your calls). diff_versions shows what changed
+  between two of them, or since your last run of calls (by default), as a
+  unified diff for each file. Viewers always see the document as it is now.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand.
 

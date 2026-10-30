@@ -4,7 +4,7 @@
 import type { Page } from "playwright-core";
 import { request } from "node:http";
 import { expect, servers, test, until, type Server } from "../../helpers/fixtures";
-import { runTool } from "../../helpers/tools";
+import { runTool, idOf, treeOp } from "../../helpers/tools";
 
 /** A GET of a pages origin's address (<id>-<owner>.localhost, which this process can't look up): to this machine, with its Host. */
 function viaHost(url: string): Promise<{ type: string; body: string }> {
@@ -24,12 +24,16 @@ await servers.main();
 async function newDoc(server: Server) {
   const at = (await fetch(`${server.root}/new`, { redirect: "manual" })).headers.get("location")!.replace(/[?&]edit$/, "");
   const address = new URL(at, server.root).pathname;
-  const { id } = (await (await fetch(`${server.root}${address}/api/name`)).json()) as { id: string };
+  const id = await idOf(`${server.root}${address}`);
   return {
-    id, address, root: server.root,
-    put: (path: string, body: Uint8Array | string) => fetch(`${server.root}/d/${id}/api/files/${path}`, { method: "PUT", body: body as BodyInit }),
-    files: async () => ((await (await fetch(`${server.root}/d/${id}/api/files`)).json()) as { files: { path: string; kind: string; size: number }[] }).files,
-    tree: (op: object) => fetch(`${server.root}/d/${id}/api/tree`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(op) }),
+    id,
+    address,
+    root: server.root,
+    put: (path: string, body: Uint8Array | string) =>
+      fetch(`${server.root}/d/${id}/api/files/${path}`, { method: "PUT", body: body as BodyInit }),
+    files: async () =>
+      ((await runTool(server.root, "ls", { document: id })).result as { files: { path: string; kind: string; size: number }[] }).files,
+    tree: (op: Record<string, unknown>) => treeOp(server.root, id, op),
   };
 }
 

@@ -11,7 +11,7 @@ import { editor } from "../../helpers/editor";
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
 import { unique } from "../access/access";
 import { FIX_REPORTED } from "../../../shared/page-report";
-import { runTool } from "../../helpers/tools";
+import { runTool, idOf } from "../../helpers/tools";
 
 await servers.script();
 
@@ -122,7 +122,7 @@ test("a page that attacks whoever edits it, with the editor in it: no prompt sen
 test("a page that attacks its reader (someone it's shared with to view): the same, and the editor's messages go nowhere", async ({ tab }) => {
   const { s, address } = await hostileDoc(), page = tab.page;
   tab.strict = false;
-  const id = ((await (await fetch(`${address}/api/name`)).json()) as { id: string }).id;
+  const id = await idOf(address);
   // (A linked document is everyone's to edit on the test server: only its owner's now, and Bo's to view.)
   for (const [login, role] of [["*", "none"], ["bo", "viewer"]]) {
     const shared = await runTool(s.root, "share_document", { document: id, login, role });

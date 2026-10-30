@@ -47,16 +47,19 @@ export async function person(s: Server, login = freshLogin()) {
     /** As someone else, by the dev server's ?user= (no cookie needed). */
     as: (who: string, path: string, init?: RequestInit) => get(`${path}${path.includes("?") ? "&" : "?"}user=${who}`, init),
     /** A document's title and address, from its host. */
-    nameOf: async (id: string): Promise<Name> => (await get(`/d/${id}/api/name`)).json() as Promise<Name>,
-    /** Renames a document through its host, as the editor does. */
-    rename: (id: string, patch: { title?: string; slug?: string }) => get(`/d/${id}/api/name`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }),
+    nameOf: async (id: string): Promise<Name> => (await runTool<Name>(base, "get_title", { document: id }, { cookie, origin })).result!,
+    /** Renames a document, as the editor's title card does (rename_document): its answer, or the error, as a response's. */
+    rename: async (id: string, patch: { title?: string; slug?: string }) => {
+      const r = await runTool<Name>(base, "rename_document", { document: id, ...patch }, { cookie, origin });
+      return { ok: r.ok, status: r.status, json: async () => (r.ok ? r.result : { error: r.error }) };
+    },
     /** Makes a document with /new and returns its id, checking that /new sends its maker to its editor, at its canonical address. */
     async make(query = ""): Promise<string> {
       const r = await get(`/new${query}`);
       const at = r.headers.get("location") ?? "";
       expect(r.status, `/new${query}`).toBe(302);
       expect(at.startsWith(`/${login}/`), at).toBe(true);
-      const name = (await (await get(`${at.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as Name;
+      const name = ((await (await get(`${at.replace(/[?&]edit=?$/, "")}/api/doc`)).json()) as { docName: Name }).docName;
       expect(`${name.address}?edit`).toBe(at);
       return name.id;
     },

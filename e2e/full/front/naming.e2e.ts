@@ -1,6 +1,6 @@
 // Titles and addresses: what counts as an edit, the
 // title that follows the page's heading and the slug that follows the title until they're set, old addresses that
-// redirect, the agent's get_title and set_title, and open tabs following a rename.
+// redirect, an agent's get_title and rename_document, and open tabs following a rename.
 import { expect, test, until } from "../../helpers/fixtures";
 import { person, retitle, servers, tools, type Person } from "./front";
 
@@ -96,29 +96,33 @@ test("the list shows a renamed document at its new address", async () => {
   expect(await p.docs()).toContain(`href="/${p.login}/my-demo?edit"`);
 });
 
-test("the agent's get_title and set_title, over /api/ext with the share button's token: the guide lists them; set_title renames (an empty slug follows the title) and is refused a taken slug; the API under the old /<owner>/<id> still answers", async () => {
+test("an agent's get_title and rename_document, with the share button's token: the guide lists them; rename_document renames (an empty slug follows the title) and is refused a taken slug; the document's API under the old /<owner>/<id> still answers", async () => {
   const p = await person(await servers.script());
   const [taken, id] = [await p.make(), await p.make()];
   await p.rename(taken, { slug: "q4-launch" });
   await p.rename(id, { title: "Demo copy", slug: "my-demo" });
   const { token } = (await (await p.get(`/d/${id}/api/share`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json()) as { token: string };
-  const tool = async (name: string, args: unknown) => {
-    const res = await fetch(`${p.base}/d/${id}/api/ext/tools/${name}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(args) });
-    const body = (await res.json()) as { content?: { text?: string }[]; error?: string };
-    return { status: res.status, text: body.content?.map((c) => c.text ?? "").join("") ?? body.error ?? "" };
+  // As an agent calls them: POST /api/tools/<name> with the token, naming the document.
+  const tool = async (name: string, args: Record<string, unknown>) => {
+    const res = await fetch(`${p.base}/api/tools/${name}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ document: id, ...args }),
+    });
+    const body = (await res.json()) as { result?: unknown; error?: string };
+    return { status: res.status, result: body.result as { title: string; address: string } | undefined, text: body.error ?? "" };
   };
-  const guide = await (await fetch(`${p.base}/d/${id}/api/ext`, { headers: { Authorization: `Bearer ${token}` } })).text();
-  expect(guide).toContain("set_title");
-  expect(guide).toContain(`/d/${id}/api/ext`);
+  const guide = await (await fetch(`${p.base}/api/ext`, { headers: { Authorization: `Bearer ${token}` } })).text();
+  expect(guide).toContain("rename_document");
+  expect(guide).toContain("get_title");
   let t = await tool("get_title", {});
   expect(t.status).toBe(200);
-  expect(t.text).toContain("Title: Demo copy");
-  expect(t.text).toContain(`/${p.login}/my-demo`);
-  t = await tool("set_title", { title: "Agent's pick", slug: "" });
+  expect(t.result).toMatchObject({ title: "Demo copy", address: `/${p.login}/my-demo` });
+  t = await tool("rename_document", { title: "Agent's pick", slug: "" });
   expect(t.status).toBe(200);
   expect(await p.nameOf(id)).toMatchObject({ title: "Agent's pick", slug: "agents-pick", slugSet: false });
-  t = await tool("set_title", { slug: "q4-launch" });
-  expect(t.status).toBe(400);
+  t = await tool("rename_document", { slug: "q4-launch" });
+  expect(t.status).toBe(409);
   expect(t.text).toContain("already");
   // Share links from before the directory used /<owner>/<id>.
   expect((await fetch(`${p.base}/${p.login}/${id}/api/ext/tools`, { headers: { Authorization: `Bearer ${token}` } })).ok).toBe(true);

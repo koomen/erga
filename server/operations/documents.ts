@@ -1,7 +1,7 @@
 // The operations on documents as wholes: who you are, the documents list (/docs: list, make, delete), sharing (the
-// Share dialogs of the list and the editor), publishing files into one, renaming one, and an admin's search of
-// everyone's. The editor works inside one document through that document's own API (document/api.ts); its tools
-// are agents/document/tools.ts's, which agents/tools.ts offers for any document.
+// Share dialogs of the list and the editor), publishing files into one, and an admin's search of everyone's. What a
+// person does inside one document (its name, pages, files and versions) is editor.ts's; its text is edited over the
+// room's socket, and by the document tools (agents/document/tools.ts), which agents/tools.ts offers for any document.
 
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -13,7 +13,6 @@ import type { FileData } from "../../document/document.ts";
 import { cleanRel, isDocKind, type DocKind } from "../../document/pages.ts";
 import { byLine } from "../../shared/attribution.ts";
 import {
-  callDocument,
   type Caller,
   described,
   DOCUMENT,
@@ -254,35 +253,6 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         throw new OperationError({ message: "Nothing to do: give files, delete, or replace.", status: 400 });
       const r = await platform.docs.publish(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via));
       return { ...withApi((await platform.directory.get(doc.id)) ?? doc, caller), ...r };
-    },
-  },
-  {
-    name: "rename_document",
-    loose: true,
-    ui: "The editor: the title, and the address under it",
-    description:
-      "Sets a document's title and/or address (slug). An empty one goes back to following: the title the page's first heading, the slug the title. Old addresses keep redirecting.",
-    parameters: Schema.Struct({
-      document: ANY_DOCUMENT,
-      title: Schema.optionalKey(str('The new title ("" to follow the page\'s first heading).')),
-      slug: Schema.optionalKey(str('The new address after /<owner>/ ("" to follow the title).')),
-    }),
-    run: async (args, caller) => {
-      const doc = await findDocument(caller, args.document, "rename");
-      const patch = {
-        ...(args.title !== undefined ? { title: optString(args.title, "title") ?? "" } : {}),
-        ...(args.slug !== undefined ? { slug: optString(args.slug, "slug") ?? "" } : {}),
-      };
-      // Through the document's host, as a rename in the editor is, so its open tabs follow.
-      const r = await callDocument(caller, doc, "/api/name", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      const body = (await r.json().catch(() => ({}))) as { error?: string };
-      if (!r.ok)
-        throw new OperationError({ message: body.error ?? `The document answered ${r.status}.`, status: r.status == 409 ? 409 : 400 });
-      return withApi((await platformOf(caller).directory.get(doc.id)) ?? doc, caller);
     },
   },
   {

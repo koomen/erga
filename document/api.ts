@@ -40,8 +40,6 @@ export class SessionFailed extends Schema.TaggedError<SessionFailed>()("SessionF
 export class NoSuchTool extends Schema.TaggedError<NoSuchTool>()("NoSuchTool", { ...failed, error: Schema.String }, { httpApiStatus: 404 }) {}
 /** The tool ran and failed (bad arguments, an edit that didn't match): `error` is what the model would read. */
 export class ToolFailed extends Schema.TaggedError<ToolFailed>()("ToolFailed", { ...failed, error: Schema.String }, { httpApiStatus: 400 }) {}
-/** A rename that can't be done (the address is taken or reserved, or it isn't theirs to rename): `error` says which. */
-export class NameRefused extends Schema.TaggedError<NameRefused>()("NameRefused", { ...failed, error: Schema.String }, { httpApiStatus: 409 }) {}
 
 // ------------------------------------------------------------ who's asking
 
@@ -123,7 +121,7 @@ export type AgentState = typeof AgentState.Type;
 /**
  * The start of GET /api/start's answer, and the first message on a tab's socket (/api/room?events=1, a text frame),
  * again each time the document opens for it: the document's details as its person sees them, and its tree as GET
- * /api/tree gives it (with the latest moves, for a page that moved while the tab wasn't connected).
+ * list_pages gives it (with the latest moves, for a page that moved while the tab wasn't connected).
  */
 export interface Hello {
   type: "hello";
@@ -141,18 +139,6 @@ const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String
 export const Api = HttpApi.make("erga")
   .add(HttpApiGroup.make("doc")
     .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
-    /** Its title and address. */
-    .add(HttpApiEndpoint.get("name", "/api/name", { success: DocName, error: NameRefused }))
-    /**
-     * Renames it: a title, a slug, or both; an empty one (or null) goes back to
-     * following (the title the page's first heading, the slug the title).
-     * Every open tab hears of it ({ type: "name" } on its socket, /api/room?events=1).
-     */
-    .add(HttpApiEndpoint.post("rename", "/api/name", {
-      payload: Schema.Struct({ title: Schema.optional(Schema.NullOr(Schema.String)), slug: Schema.optional(Schema.NullOr(Schema.String)) }),
-      success: DocName,
-      error: NameRefused,
-    }))
     .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("agent")
     .add(HttpApiEndpoint.get("state", "/api/agent", { success: AgentState }))

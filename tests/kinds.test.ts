@@ -4,16 +4,17 @@
 // make_document turns a project back, only while it has one page: else it says how many it has, and what to delete.
 // One from before kinds decides its kind as it opens. The documents list shows a project's chevron, and none for a document.
 
+import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { Document } from "../document/document";
 import { KEYS, MemoryStorage } from "../document/storage";
-import { kindOf, pageRefusal } from "../document/pages";
+import { kindOf, pageRefusal, type TreeOp } from "../document/pages";
 import { docsPage } from "../server/pages/docs";
 import type { Listed, Session } from "../server/platform";
 import { setup } from "./helpers/files-fixture";
 import { promised } from "./helpers/promised";
 
-/** The document of the files tests, with its tree's API and its agent's tools as its owner. */
+/** The document of the files tests, with its tree's calls (as the operations make them) and its agent's tools as its owner. */
 async function withTree() {
   const s = await setup();
   await s.doc.setPermissions([{ login: "ada", role: "owner" }]);
@@ -22,9 +23,13 @@ async function withTree() {
     const r = await s.doc.handle(new Request(`http://doc${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...who, ...headers } }));
     return { status: r.status, body: (await r.json()) as { error?: string; kind?: string; ok?: boolean; content?: { text: string }[] } };
   };
-  const treeOp = (op: unknown) => post("/api/tree", op);
+  /** A tree operation: its answer as an HTTP status (200, or the refusal's) and the error, as the operations answer it. */
+  const treeOp = async (op: TreeOp) => {
+    const r = (await Effect.runPromise(s.doc.self.call((c) => c.treeOp(op))))!;
+    return { status: r.ok ? 200 : r.status, body: r.ok ? { kind: r.kind } : { error: r.error } };
+  };
   const tool = (name: string, args: object) => post(`/api/ext/tools/${name}`, args, { "x-erga-agent": "token-1" });
-  const kind = async () => ((await (await s.doc.handle(new Request("http://doc/api/tree", { headers: who }))).json()) as { kind: string }).kind;
+  const kind = async () => (await Effect.runPromise(s.doc.self.call((c) => c.tree())))!.kind;
   return { ...s, treeOp, tool, kind };
 }
 
@@ -59,7 +64,7 @@ test("a document refuses a second page however it comes, saying how to make it a
 
 test("make_project: the document becomes a project, in its object and in the directory, and takes more pages", async () => {
   const { treeOp, tool, dir, kind } = await withTree();
-  expect((await tool("make_project", {})).body.ok).toBe(true);
+  expect((await treeOp({ op: "make_project" })).status).toBe(200);
   expect(await kind()).toBe("project");
   expect((await dir.get("doc12345"))!.kind).toBe("project");
   expect((await treeOp({ op: "new_page", path: "about" })).status).toBe(200);
@@ -78,13 +83,10 @@ test("make_document: a project with one page becomes a document again; with more
   expect(no.status).toBe(409);
   expect(no.body.error).toBe("It has 3 pages, and a document has one. Delete the others first: about.html, blog/post.html.");
   expect(await kind()).toBe("project");
-  const agent = await tool("make_document", {});
-  expect(agent.body.ok).toBe(false);
-  expect(JSON.stringify(agent.body)).toContain("It has 3 pages");
   // The others gone (a file that isn't a page may stay): a document, in its object and in the directory, which refuses a second page again.
   expect((await treeOp({ op: "delete", path: "about.html" })).status).toBe(200);
   expect((await treeOp({ op: "delete", path: "blog" })).status).toBe(200);
-  expect((await tool("make_document", {})).body.ok).toBe(true);
+  expect((await treeOp({ op: "make_document" })).status).toBe(200);
   expect(await kind()).toBe("document");
   expect((await dir.get("doc12345"))!.kind).toBe("document");
   expect((await treeOp({ op: "new_page", path: "about" })).status).toBe(409);

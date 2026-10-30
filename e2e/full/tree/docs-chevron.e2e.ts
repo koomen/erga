@@ -2,6 +2,7 @@
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../../helpers/fixtures";
 import { clickOn, multi } from "./tree";
+import { idOf } from "../../helpers/tools";
 
 await servers.main();
 
@@ -23,7 +24,7 @@ const twist = (page: Page, id: string) => clickOn(page, `button.twist[data-id="$
 async function empty(root: string) {
   const made = (await fetch(`${root}/new?template=page&kind=project`, { redirect: "manual" })).headers.get("location") ?? "";
   expect(made).toMatch(/[?&]edit=?$/);
-  return ((await (await fetch(`${root}${made.replace(/[?&]edit=?$/, "")}/api/name`)).json()) as { id: string }).id;
+  return idOf(`${root}${made}`);
 }
 const hasRows = (s: State) => s.rows > 0;
 const nonePlaceholder = (s: State) => /No other pages yet\./.test(s.text) && /New page/.test(s.text) && /New folder/.test(s.text);
