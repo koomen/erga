@@ -19,7 +19,8 @@
     "test:full": "bun e2e/run.ts --full",
     "test:e2e": "bun e2e/run.ts --e2e",
     "test:browsers": "bunx @e2e-dev/web install chromium",
-    "bench": "bun e2e/bench/run.ts"
+    "bench": "bun e2e/bench/run.ts",
+    "look": "bun e2e/look.ts"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

@@ -13,6 +13,29 @@ you change (`bun run test:e2e e2e/full/page/`); the whole suite
 (`bun run test:full`) only when asked. A new smoke test (`e2e/smoke/`, 90 s limit)
 replaces one.
 
+## Testing as the user
+
+Agents and tests use the code the way its intended user does:
+
+- the editor: real keys, and the page as a person sees it;
+- agent tools: tool calls, as an agent makes them;
+- the API: requests, as an API client sends them.
+
+1. While you build, check your work by hand as the user would. For the
+   editor, press real keys and look at the screenshot:
+   `bun run look 'type:- Milk' Enter Tab` (`--help` has the steps). A
+   passing test alone is not proof.
+2. A reported bug becomes a failing end-to-end test first, with the
+   person's exact keys. The fix comes in the same commit.
+3. An editor e2e test drives the editor with keys, from an empty or
+   realistic document (`e2e/fixtures/empty`). It checks what the page shows
+   (`await ed.shows(...)`, the visible snapshot), not only the source.
+4. A test that shows a bug you do not fix keeps the right expectation and
+   the mark `knownBug`, with a comment that says what is wrong.
+
+Tests run with no model in the loop: they are fast and give the same
+result each time.
+
 ## Deploys
 
 docs/operations.md tells how a deployment builds, deploys and rolls back.

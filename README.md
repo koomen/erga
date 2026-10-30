@@ -23,6 +23,7 @@ You need [Bun](https://bun.sh) 1.4 or newer, and Git.
     bun run test       # the format check, lint, typecheck, unit tests and smoke run: under a minute
     bun run format     # formats the lines your change touches (Biome, biome.json), and no others
     bun run test:full  # and every end-to-end test (e2e/full): only when you want the whole suite
+    bun run look Enter # presses keys in the editor, headless: prints the page as text, saves a screenshot
 
 `bun start` runs the same Worker that Cloudflare runs, under Vite and
 Miniflare, and signs you in without GitHub. To turn on the agent, put an
