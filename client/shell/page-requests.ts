@@ -1,7 +1,9 @@
 // The agent's requests to see and use the page, which this tab answers: view_page, and the live page's tools
 // (page_console, page_network, page_events, page_inspect, page_click, page_key).
 
-import type { ViewRequest } from "../../shared/agent-log";
+import type { ViewRequest, ViewResult } from "../../shared/agent-log";
+import { aimEdits, applySpans } from "../../shared/text-edits";
+import { cleanPath } from "../../document/pages";
 import { ConsoleLog, liveWatch, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../../shared/live-page";
 import { ms } from "../page-editor/timescale";
 import { $, type Shell } from "./shell";
@@ -20,7 +22,17 @@ export function mountPageRequests(shell: Shell) {
   // The agent asks to see the page: the page editor's frame draws it,
   // with the latest edits, and the picture goes back to the agent.
   // No server-side browser: whoever has the editor open is the agent's eyes.
-  const captureView = (req: ViewRequest) => shell.page.capture(req);
+  const captureView = async (req: ViewRequest): Promise<ViewResult> => {
+    if (!req.preview) return shell.page.capture(req);
+    // A preview: the edits on a copy of the page's text, for this render only.
+    const path = shell.pagePath, asked = req.preview.path != null ? cleanPath(req.preview.path) : path;
+    const fail = (error: string): ViewResult => ({ width: 0, height: 0, errors: [], error });
+    if (asked != path) return fail(`Nothing was rendered: a preview shows the open page, ${path}, and the edits are for ${req.preview.path}. Preview edits of ${path}, or open_page ${req.preview.path} first.`);
+    const edits = Array.isArray(req.preview.edits) ? req.preview.edits : [];
+    const aimed = aimEdits(shell.page.source(), edits, path);
+    if ("reason" in aimed) return fail(`Nothing was rendered: ${aimed.message}`);
+    return { ...(await shell.page.capture(req, applySpans(shell.page.source(), aimed.spans))), preview: { path, edits: edits.length } };
+  };
   async function answerView(id: string, req: ViewRequest) {
     // Render only once this tab has every edit the agent had made when it asked.
     if (req.after) await shell.collab.waitFor(req.after);

@@ -1,35 +1,10 @@
 // view_page and evaluate_page at a presentation's step and a time, as an agent calls them (POST /api/tools/<name>,
 // with the document): "3.2" shows that part, frames catch a transition partway, and the render waits for the page's
 // scripts, so window.ergaSteps is there every time. The person's own view doesn't move.
-import { idOf, runTool, textOf } from "../../helpers/tools";
 import { expect, servers, test } from "../../helpers/fixtures";
-import { openEditor } from "../../helpers/editor";
-import { differ } from "./view-page";
-import { person } from "../versions/versions";
+import { deck, differ } from "./view-page";
 
 await servers.main();
-
-type Content = { type: "text" | "image"; text?: string; data?: string };
-
-/** The builds deck (e2e/fixtures/builds: 7 steps on 3 slides, a bar that grows to each step's place in 1.5 s), open in the editor. */
-async function deck(tab: Parameters<typeof openEditor>[0]) {
-  const s = await servers.main();
-  const ed = await openEditor(tab, s, "builds");
-  const document = await idOf(ed.address);
-  // An agent of the tab's person (DEV_LOGIN), with their token: an outside agent's call, as MCP makes it.
-  const token = await (await person(s, "tester")).token("view-steps");
-  const tool = async (name: string, args: object) => {
-    const r = await runTool<Content[]>(s.root, name, { document, ...args }, { token });
-    expect(r.ok, `${name}: ${r.error}`).toBe(true);
-    return { text: textOf(r.result), images: r.result!.filter((c) => c.type == "image").map((c) => c.data!) };
-  };
-  const fails = async (name: string, args: object) => {
-    const r = await runTool(s.root, name, { document, ...args }, { token });
-    expect(r.ok).toBe(false);
-    return r.error ?? "";
-  };
-  return { ed, tool, fails };
-}
 
 test("view_page and evaluate_page at step \"3.2\" show that part; the person's view stays on the first slide", { timeout: 30_000 }, async ({ tab }) => {
   const { ed, tool, fails } = await deck(tab);

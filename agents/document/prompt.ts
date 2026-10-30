@@ -109,6 +109,9 @@ ${PAGES_PROMPT}`}
   as the steps' list numbers it), an index from 0, or a hash ("#3.2"). at_ms waits that long
   after the step (default 1000); frames: [300, 900, 2500] gives a picture (or a result) at each
   time, to check a transition in one call.
+- To see an edit before you make it, give view_page or evaluate_page edits (as the edit tool
+  takes them): they go to a copy of the open page, for that render only. Look, adjust, then
+  apply them with edit, so ${owner} doesn't watch you fix mistakes in their page.
 - evaluate_page runs a JavaScript expression in that same render and gives you its result
   as JSON: computed styles, the fonts in use, element sizes, e.g.
   getComputedStyle(document.querySelector("h1")).fontFamily. Use it to measure what a

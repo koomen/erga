@@ -1,6 +1,7 @@
 // Helpers for view_page's tests (view-page.e2e.ts, view-page-modes.e2e.ts): a page whose web font comes from another
 // site (as Google Fonts' does) and loads slowly, one font from the document itself, one that fails, and a dark mode in
-// its CSS and in its script, opened in the editor; captures of it, and their pixels.
+// its CSS and in its script, opened in the editor; captures of it, and their pixels; and the builds deck, with the
+// tools an agent calls (view-steps.e2e.ts, view-preview.e2e.ts, edit-selector.e2e.ts).
 import { mkdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -8,7 +9,9 @@ import { join } from "node:path";
 import type { ViewResult } from "../../../shared/agent-log";
 import { ROOT } from "../../helpers/env";
 import { expect, servers, type Tab } from "../../helpers/fixtures";
-import { editor, type Editor } from "../../helpers/editor";
+import { editor, openEditor, type Editor } from "../../helpers/editor";
+import { idOf, runTool, textOf } from "../../helpers/tools";
+import { person } from "../versions/versions";
 
 export const FONT = join(ROOT, "client/fonts/inter-latin-normal.woff2");
 /** How long the other site's font takes to arrive. */
@@ -88,3 +91,25 @@ export async function expectColour(ed: Editor, png: string, x: number, y: number
 // gives the page's scripts 600 ms to draw. A test that takes two or more needs more than the usual 15 s.
 export const CAPTURES = { timeout: 30_000 };
 export const WHITE = [255, 255, 255], DARK = [10, 20, 30], SCRIPT_LIGHT = [200, 0, 0], SCRIPT_DARK = [0, 200, 0];
+
+export type Content = { type: "text" | "image"; text?: string; data?: string };
+
+/** The builds deck (e2e/fixtures/builds: 7 steps on 3 slides, a bar that grows to each step's place in 1.5 s), open in the editor. */
+export async function deck(tab: Parameters<typeof openEditor>[0]) {
+  const s = await servers.main();
+  const ed = await openEditor(tab, s, "builds");
+  const document = await idOf(ed.address);
+  // An agent of the tab's person (DEV_LOGIN), with their token: an outside agent's call, as MCP makes it.
+  const token = await (await person(s, "tester")).token("view tests");
+  const tool = async (name: string, args: object) => {
+    const r = await runTool<Content[]>(s.root, name, { document, ...args }, { token });
+    expect(r.ok, `${name}: ${r.error}`).toBe(true);
+    return { text: textOf(r.result), images: r.result!.filter((c) => c.type == "image").map((c) => c.data!) };
+  };
+  const fails = async (name: string, args: object) => {
+    const r = await runTool(s.root, name, { document, ...args }, { token });
+    expect(r.ok).toBe(false);
+    return r.error ?? "";
+  };
+  return { ed, tool, fails };
+}

@@ -460,9 +460,12 @@ export class RemotePage {
     return r && typeof r == "object" ? r : { error: "The page didn't answer in time." };
   }
 
-  /** The agent's look at the page: the frame renders it, with `text` if the source view has newer. */
-  async capture(req: ViewRequest): Promise<ViewResult> {
-    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>({ type: "capture", id: this.nextId++, req, ...(this.detached ? { text: this.state.doc.toString() } : {}) }, viewWait(req));
+  /** The page's text as this tab has it now. */
+  source(): string { return this.state.doc.toString(); }
+
+  /** The agent's look at the page: the frame renders it, with `text` if given (a preview) or if the source view has newer. */
+  async capture(req: ViewRequest, text?: string): Promise<ViewResult> {
+    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>({ type: "capture", id: this.nextId++, req, ...(text != null || this.detached ? { text: text ?? this.state.doc.toString() } : {}) }, viewWait(req));
     const r = reply?.result;
     if (!r) return { width: 0, height: 0, errors: [], error: "The page didn't send a picture back in time." };
     return {

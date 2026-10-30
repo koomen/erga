@@ -10,7 +10,7 @@ import type { AgentTool } from "../run";
 import type { ViewRequest, ViewResult } from "../../shared/agent-log";
 import { readableSize } from "../../shared/bytes";
 import { unifiedDiff } from "../../document/versions";
-import { WorkspaceError, globToRegExp, modelPath, type Workspace } from "./workspace";
+import { EDITS, WorkspaceError, globToRegExp, modelPath, type Workspace } from "./workspace";
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 import type { FilesAccess, OpenResult, VersionsAccess } from "../../document/agent";
 import { pageTools } from "./page-tools";
@@ -144,12 +144,7 @@ export function makeTools(
       description: "Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn't found, the file changed since you read it: read it again.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: "Path of the file to edit" }),
-        edits: Schema.Array(
-          Schema.Struct({
-            oldText: Schema.String.annotate({ description: "Exact text to replace; must be unique in the file" }),
-            newText: Schema.String.annotate({ description: "Replacement text" }),
-          })
-        ).annotate({ description: "One or more targeted replacements, each matched against the current file" }),
+        edits: EDITS.annotate({ description: "One or more targeted replacements, each matched against the current file" }),
       }),
       execute: async (_id, p: { path: string; edits: { oldText: string; newText: string }[] }) => {
         const r = await Effect.runPromise(Effect.match(ws.edit(p.path, p.edits), { onFailure: (e) => e, onSuccess: (r) => r }));
