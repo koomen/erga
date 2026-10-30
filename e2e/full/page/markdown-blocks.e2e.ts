@@ -55,18 +55,15 @@ test("#, - and 1. with a space make a heading and lists; undo gives back the typ
   `);
 });
 
-// Bug: Tab in a paragraph moves the focus out of the page: the editor loses the caret, and the keys typed after it go
-// nowhere. Google Docs and Typora indent; Notion nests the block. None loses the keys.
-test(
-  "Tab in a paragraph keeps the caret in the page, and the next key types there",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+// Tab in a paragraph keeps the caret in the page (it moved the focus out of the page, and the keys typed after it went
+// nowhere). Google Docs and Typora indent; Notion nests the block. None loses the keys.
+test("Tab in a paragraph keeps the caret in the page, and the next key types there", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "Plan");
     await ed.press("Tab");
     await keys(ed, "x");
     await expect.poll(() => ed.textOf("body")).toContain("x");
-  })
-);
+});
 
 // Bug: Backspace at the start of a heading does nothing. Notion, Typora and Bear make it a paragraph again.
 test(

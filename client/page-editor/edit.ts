@@ -375,11 +375,21 @@ export abstract class EditorEdit extends EditorRender {
     return true;
   }
 
-  /** Tab in a list item, and Shift+Tab (lists.ts, indentItems). False outside a list item: the key is the browser's. */
+  /**
+   * Tab in a list item, and Shift+Tab (lists.ts, indentItems). In a code block Tab types an indent: a tab if the
+   * block's lines start with tabs, else two spaces. In any other block Tab does nothing: the browser would move the
+   * focus to the next block, or out of the page, and the keys after it would go there. (Google Docs indents the
+   * paragraph, which here would need new markup.)
+   */
   protected indentItem(out: boolean): boolean {
-    const edit = indentItems(this.src, this.units, this.currentSelection(), out, (u) => this.verify(u));
+    const sel = this.currentSelection();
+    const edit = indentItems(this.src, this.units, sel, out, (u) => this.verify(u));
     if (edit && edit != "stay") this.listEdit(edit);
-    return !!edit;
+    if (edit) return true;
+    const u = M.unitAt(this.units, sel.from);
+    if (!out && u?.tag == "pre" && M.unitAt(this.units, sel.to) == u && this.verify(u) && this.editableAt(u, sel.from))
+      this.insertText(/^\t/m.test(this.src.slice(u.contentFrom, u.contentTo)) ? "\t" : "  ", null);
+    return true;
   }
 
   /** Makes a list edit (lists.ts): one transaction. */
