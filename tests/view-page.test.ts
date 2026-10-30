@@ -4,7 +4,7 @@
 // The capture itself, in a browser: e2e/page/view-*.e2e.ts.
 
 import { describe, expect, test } from "bun:test";
-import { describeView } from "../agents/document/tools";
+import { describeView } from "../agents/document/page-tools";
 
 describe("describeView", () => {
   test("says the size, the mode and the fonts", () => {
