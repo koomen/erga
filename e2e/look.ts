@@ -11,7 +11,7 @@ import { openEditor } from "./helpers/editor";
 import { ROOT } from "./helpers/env";
 import { descendants, startServer, type Server } from "./helpers/server";
 
-const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--keep | --stop] [step ...]
+const HELP = `bun run look [--doc <fixture | file.html | folder>] [--out <file.png>] [--source] [--latency <ms>] [--keep | --stop] [step ...]
 
 Opens a copy of the document in the editor, clicks at the end of its first text block, runs the steps,
 then saves a screenshot and prints the page as a person sees it: "|" is the caret, "[" "]" a selection.
@@ -19,6 +19,8 @@ then saves a screenshot and prints the page as a person sees it: "|" is the care
   --doc     a folder of e2e/fixtures (default: empty, one empty paragraph), or an HTML file or folder
   --out     where the screenshot goes (default: a new folder in .e2e/shots/ of this checkout)
   --source  print the page's body as HTML too
+  --latency a network's delay between the tab and the room, each way: 120, or a range 60-180 (ms);
+            a server left running with --keep has the delay it started with
   --keep    leave the dev server running, for the next look (a new server takes about 10 s)
   --stop    stop the server that --keep left running
 
@@ -90,6 +92,7 @@ const docArg = option("--doc") ?? "empty";
 const shots = join(ROOT, ".e2e", "shots");
 mkdirSync(shots, { recursive: true });
 const out = resolve(option("--out") ?? join(mkdtempSync(join(shots, "look-")), "page.png"));
+const latency = option("--latency");
 const keep = flag("--keep"),
   source = flag("--source");
 const unknown = args.find((a) => a.startsWith("--"));
@@ -116,7 +119,7 @@ let root: string, scratch: string, stop: (() => void) | undefined;
 const k = await kept();
 if (k) ({ root, scratch } = k);
 else {
-  const s = await startServer({ keep });
+  const s = await startServer({ keep, latency });
   ({ root, scratch } = s);
   if (keep) {
     writeFileSync(KEPT, JSON.stringify({ pid: s.pid()!, root, scratch } satisfies Kept));

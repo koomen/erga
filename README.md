@@ -32,6 +32,11 @@ shell. `bun start path/to/folder` opens a folder on disk as a document:
 edits in the browser go to the files, and edits to the files show in the
 browser.
 
+`ERGA_DEV_LATENCY_MS=120 bun start` (or a range, `60-180`) delays each message
+between a tab and the room by that much, each way, as a deployed Worker's
+network does. `bun run look --latency 120` and the e2e helper
+`startServer({ latency })` set it too. It is for the dev server only.
+
 CONTRIBUTING.md tells how to send a change. AGENTS.md has the rules for
 coding agents.
 

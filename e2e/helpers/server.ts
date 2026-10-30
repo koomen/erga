@@ -32,6 +32,8 @@ export interface ServerOptions {
   port?: number;
   /** The local state (ERGA_STATE_DIR) of a server stopped before, to start again on: a restart. Its owner disposes of it. */
   state?: string;
+  /** A network's delay on the room's sockets, each way, in ms: "120", or a range "60-180" (dev/latency.ts). */
+  latency?: string;
   /** It runs on after this process exits (bun run look --keep): its output goes to server.log in the scratch folder, and its owner stops it by its PID. */
   keep?: boolean;
 }
@@ -107,6 +109,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   writeFileSync(join(envDir, ".dev.vars"), Object.entries(vars).filter(([k, v]) => DEV_VARS.has(k) && v).map(([k, v]) => `${k}=${v}\n`).join(""));
   const env = cleanEnv({
     ...Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k))),
+    ...(opts.latency ? { ERGA_DEV_LATENCY_MS: opts.latency } : {}),
     ...opts.processEnv,
     ERGA_STATE_DIR: state, ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ERGA_BUILT: "1",
   });
