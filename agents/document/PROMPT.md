@@ -63,6 +63,15 @@ rendered page:
    rest of the paragraph still is. Clicking it tells the person to ask the
    agent. The attribute has no effect on how the page looks or behaves.
 
+   A `contenteditable` element of the page's own is text like any other: the
+   editor saves what people type in it. For a scratch field the page keeps for
+   itself (a note that is not saved, an input a script reads), add the mark:
+   the page's own editing then works as written, and the editor never saves it.
+
+   ```html
+   <div contenteditable data-erga-noedit>Type a test sentence here.</div>
+   ```
+
 5. **Never let scripts rewrite manuscript text.** Text a script changes no
    longer matches the source, so its unit locks. Give a script its own
    target: an empty `div` or `span` (empty elements aren't units), an `svg`

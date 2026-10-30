@@ -1,6 +1,6 @@
 // Pages with their own parts (the robustness hunt): a <details>, the page's own contenteditable, an extension's
 // span in the text. Keys only, checked by what the page shows.
-import { expect, knownBug, servers, test, until } from "../../helpers/fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { openEditor } from "../../helpers/editor";
 
 await servers.main();
@@ -17,6 +17,23 @@ test("text typed in the page's own contenteditable box is still there after a re
     expect(await ed.textOf("#own")).toBe("Own editable XY");
   });
 
+// The page's own contenteditable box marked data-erga-noedit is the page's: the browser edits it as the page wrote it,
+// with no note that it is not editable, and the editor never saves it (Pete's decision).
+test("text typed in the page's own contenteditable box marked data-erga-noedit shows, and the file does not change", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "robust-page");
+  const before = await ed.source();
+  await ed.clickEnd("#scratch p");
+  await ed.type(" XY");
+  await expect.poll(() => ed.textOf("#scratch")).toBe("Scratch XY");
+  expect((await ed.toast()).shown).toBe(false);
+  await ed.settle();
+  expect(await ed.source()).toBe(before);
+  // The text around it still edits.
+  await ed.clickEnd("#last");
+  await ed.type("!");
+  await expect.poll(() => ed.source()).toContain("Last paragraph.!</p>");
+});
+
 // Enter at the end of a <summary> keeps one summary (a browser uses only the first): the new paragraph goes into the
 // <details> if they are open, else after them, and the next key goes there.
 test("Enter at the end of a <details> summary keeps one summary, and the next key shows after it", async ({ tab }) => {
@@ -29,11 +46,9 @@ test("Enter at the end of a <details> summary keeps one summary, and the next ke
     expect(await ed.textOf("#sum")).toBe("More info");
 });
 
-// Known bug: an extension (as Grammarly did) wraps some of a paragraph's text in its own <span>. After that, the keys
-// typed in that paragraph are lost: the caret stays, and no text comes.
-test(
-  "keys typed after an extension wraps a word in a <span> show in the paragraph",
-  knownBug(async ({ tab }) => {
+// An extension (as Grammarly did) wraps some of a paragraph's text in its own <span>. The keys typed in that paragraph
+// still show (they were lost): the editor draws the paragraph again from its HTML, without the extension's <span>.
+test("keys typed after an extension wraps a word in a <span> show in the paragraph", async ({ tab }) => {
     const ed = await openEditor(tab, await servers.main(), "robust-page");
     await ed.clickEnd("#last");
     await ed.type("12");
@@ -47,5 +62,4 @@ test(
       "the paragraph shows the keys",
       () => ed.textOf("#last")
     );
-  })
-);
+});

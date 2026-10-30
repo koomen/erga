@@ -2,16 +2,84 @@
 // bar shows and changes.
 
 import * as M from "../../shared/manuscript";
-import { EditorSelection, type SelectionRange, type ChangeSet } from "@codemirror/state";
+import { EditorSelection, type SelectionRange, type ChangeSet, type Text } from "@codemirror/state";
 import type { InlineStyle, LinkEdit, LinkInfo } from "./types";
-import { attrOf, escapeAttr, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn } from "./source";
-import { EditorEdit } from "./edit";
+import { attrOf, dropped, escapeAttr, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn } from "./source";
+import { EditorEdit, inlineAt } from "./edit";
 
 export abstract class EditorFormat extends EditorEdit {
   /** A style shortcut: always handled, so the browser never applies its own; if it can't apply, say why. */
   protected styleKey(style: InlineStyle): boolean {
-    const why = this.toggleStyle(style);
+    const why = this.currentSelection().empty ? this.storeStyle(style) : this.toggleStyle(style);
     if (why) this.config.onNotice?.(why);
+    return true;
+  }
+
+  /**
+   * The styles a style key with no selection set for the text typed next at the caret (a stored mark, as ProseMirror
+   * has): each on or off. Good only while the caret and the document stay as they were.
+   */
+  protected stored: { at: number; doc: Text; styles: Map<InlineStyle, boolean> } | null = null;
+
+  /** A style key with no selection: the text typed next has the style, or loses it; the key again takes that back. */
+  protected storeStyle(style: InlineStyle): string | null {
+    const pos = this.state.selection.main.head;
+    const u = M.unitAt(this.units, pos);
+    if (!u || !this.verify(u) || !this.editableAt(u, pos)) return "Put the caret in the text first.";
+    if (u.tag == "pre") return "Text in a code block can't be styled.";
+    const live = this.stored?.at == pos && this.stored.doc == this.state.doc ? this.stored : null;
+    const styles = new Map(live?.styles);
+    const on = styles.get(style) ?? inlineAt(u, pos).some((e) => STYLE_TAGS[style].includes(e.tag));
+    styles.set(style, !on);
+    this.stored = { at: pos, doc: this.state.doc, styles };
+    return null;
+  }
+
+  /**
+   * Text typed where a style key stored styles (storeStyle): in a new element of each style turned on (the caret stays
+   * in it, so the next keys go there too); out of the element of a style turned off (past its end tag at its end, before
+   * its open tag at its start, else between its two halves). Returns whether it did.
+   */
+  protected typeStored(pos: number, text: string): boolean {
+    const s = this.stored;
+    this.stored = null;
+    const u = s && s.at == pos && s.doc == this.state.doc ? M.unitAt(this.units, pos) : null;
+    if (!s || !u) return false;
+    const src = this.src,
+      stack = inlineAt(u, pos);
+    let at = pos,
+      before = "",
+      after = "",
+      open = "",
+      close = "";
+    const tags = (l: M.ElementNode[]) => l.map((e) => ({ tag: e.tag, open: src.slice(e.from, e.openTo) }));
+    for (const [style, on] of s.styles) {
+      const i = stack.findIndex((e) => STYLE_TAGS[style].includes(e.tag));
+      if (on && i < 0) {
+        open += `<${STYLE_TAGS[style][0]}>`;
+        close = `</${STYLE_TAGS[style][0]}>` + close;
+      } else if (!on && i >= 0 && at == pos) {
+        const e = stack[i],
+          inner = tags(stack.slice(i + 1));
+        const onlyTags = (a: number, b: number) => !src.slice(a, b).replace(/<[^>]*>/g, "");
+        if (onlyTags(pos, e.closeFrom)) at = e.to;
+        else if (onlyTags(e.openTo, pos)) at = e.from;
+        if (at != pos) [before, after] = [M.openTags(inner), M.closeTags(inner)];
+        else {
+          before = M.closeTags(tags(stack.slice(i))) + M.openTags(inner);
+          after = M.closeTags(inner) + M.openTags(tags(stack.slice(i)));
+        }
+      }
+    }
+    if (at == pos && !before && !open) return false;
+    const head = before + open + M.escapeHtmlText(text);
+    const drops = this.placeholderDrops(src, [u], pos, pos, true);
+    this.dispatch({
+      changes: [{ from: at, insert: head + close + after }, ...drops],
+      selection: { anchor: at + head.length - dropped(drops, at) },
+      userEvent: "input.type",
+      scrollIntoView: true,
+    });
     return true;
   }
 

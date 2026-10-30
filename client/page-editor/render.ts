@@ -10,7 +10,7 @@ import { ms } from "./timescale";
 import { balanceWhitespace, same } from "./source";
 import { PAGE_STYLE } from "./page-style";
 import { describeProblem, type RawProblem } from "./problems";
-import { noHistory } from "./core";
+import { noHistory, pageOwnBox } from "./core";
 import { EditorMarks } from "./marks";
 import { differ, Ownership } from "./check";
 import { Mirror } from "./mirror";
@@ -135,7 +135,8 @@ export abstract class EditorRender extends EditorMarks {
       own = this.ownership;
     if (!doc?.body || !own || this.rendering || this.stopped) return;
     const want = new DOMParser().parseFromString(this.analyze(this.src).html, "text/html").body;
-    const skip = (n: Node) => own.owned.has(n) || (n.nodeType == 1 && (n as Element).classList.contains("erga-locked"));
+    const skip = (n: Node) =>
+      own.owned.has(n) || (n.nodeType == 1 && ((n as Element).classList.contains("erga-locked") || pageOwnBox(n as Element)));
     for (let i = 0; i < 100; i++) {
       const d = differ(doc.body, want, skip, own.foreign, own.theirs);
       if (!d) return;
@@ -659,6 +660,14 @@ export abstract class EditorRender extends EditorMarks {
       }
     });
     return changed;
+  }
+
+  protected redraw(u: M.Unit, el: Element): boolean {
+    const src = this.src;
+    this.rebuildUnit(el, u, src);
+    this.mirror?.rebind(u.node, el, src);
+    const nodes = this.textNodes(el);
+    return nodes.length == u.runs.length && nodes.every((n, i) => same(n.nodeValue!, u.runs[i].text));
   }
 
   /** Builds a unit's element's content afresh from the source. */

@@ -59,6 +59,11 @@ export class Mirror {
     return this.live.get(n);
   }
 
+  /** Binds an element's children again, after its content was drawn afresh from the HTML. */
+  rebind(s: M.ElementNode, el: Element, src: string): void {
+    this.bindChildren(s, el, src);
+  }
+
   private set(s: M.SourceNode, n: Node): void {
     this.dom.set(s, n);
     this.live.set(n, s);

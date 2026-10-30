@@ -98,6 +98,19 @@ Two more decisions come with it:
   6. A range that an edit replaces keeps the inline tags it opens or closes (`cut` in `edit.ts`). Before, a delete
      across `<em>` left `</em>` alone in the HTML. One host made this easy to reach.
   Cost: a typed letter takes 0.6 ms at 200 KB and 1.9 ms at 1 MB, before 0.5 ms and 1.7 ms.
+- Step 8 (ownership and stored marks): done.
+  1. A page's own `contenteditable` element is text like any other: the editor saves what people type in it. In a part
+     marked `data-erga-noedit` it stays the page's (`pageOwnBox` in `core.ts`): the islands code keeps its
+     `contenteditable`, the editor leaves its keys and input to the browser, and the check skips it. Rule 4 of
+     `agents/document/PROMPT.md` (and so `/llms.txt`) says so, with an example.
+  2. Cmd+B, Cmd+I, Cmd+U and Cmd+E with no selection store the style for the text typed next at the caret
+     (`storeStyle`, `typeStored` in `format.ts`); the key again ends it (Pete: Cmd+B in bold text ends the bold, and
+     the next letters go after the `</strong>`). Cmd+U, new, underlines with `<u>`, on a selection too. On: the typed text goes into a new element of the style, and
+     the caret stays in it. Off: the text goes past the element's end tag (at its end), before its open tag (at its
+     start), or between its two halves. A stored style holds while the caret and the document stay as they were.
+- The last open knownBug (an extension's `<span>` around a word locked the paragraph): the editor reads the caret in
+  text that others split by its length, and draws the block again from its HTML before the edit (`redraw`). No
+  knownBug test is left in `e2e/full/page/`.
 - The one-host prototype (step 7) works in Chromium, WebKit and Firefox, with two additions: a caret that lands
   outside the text (in an `<svg>`, or past the last block in Firefox) goes to the nearest block before the paint,
   and Enter and Shift+Enter stay in `keydown` (WebKit sends Shift+Enter as `insertParagraph`).

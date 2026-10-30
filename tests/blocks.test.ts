@@ -93,6 +93,16 @@ const CASES: [string, string, string[], string][] = [
     ["x"],
     '<p>Ax|</p>\n<section>\n  <div><b id="n"></b><span>icks</span></div>\n</section>',
   ],
+  // Cmd+B with no selection: the text typed next is bold, or not (a stored mark).
+  ["Cmd+B, typing, Cmd+B, typing", "<p>A |</p>", ["Mod+b", "b", "c", "Mod+b", " d"], "<p>A <strong>bc</strong> d|</p>"],
+  [
+    "Cmd+B in the middle of bold text, then typing",
+    "<p><strong>ab|cd</strong></p>",
+    ["Mod+b", "x"],
+    "<p><strong>ab</strong>x|<strong>cd</strong></p>",
+  ],
+  ["Cmd+B at the start of bold text, then typing", "<p>A <strong>|bc</strong></p>", ["Mod+b", "x"], "<p>A x|<strong>bc</strong></p>"],
+  ["Cmd+B twice is no change", "<p>A|</p>", ["Mod+b", "Mod+b", "x"], "<p>Ax|</p>"],
 ];
 
 for (const [name, src, ks, after] of CASES)
