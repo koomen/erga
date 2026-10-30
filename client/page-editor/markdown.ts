@@ -52,6 +52,29 @@ export abstract class EditorMarkdown extends EditorFormat {
   }
 
   /**
+   * Markdown alone in a paragraph, then Enter at its end: ``` (with a language or not: ```js) makes an empty code block
+   * in its place, `<pre><code class="language-js">`, with the caret in it; `---`, `***` or `___` makes a horizontal
+   * rule, with an empty paragraph after it for the caret. Its own undo step. Returns whether it did.
+   */
+  protected enterRule(u: M.Unit, pos: number): boolean {
+    if (u.tag != "p" || u.node.parent?.tag == "li" || pos < M.textEnd(u)) return false;
+    const typed = textIn([u], u.contentFrom, u.contentTo).trim();
+    const code = /^```([\w+#.-]*)$/.exec(typed);
+    if (!code && !/^(?:-{3,}|\*{3,}|_{3,})$/.test(typed)) return false;
+    const open = code
+      ? `<pre><code${code[1] ? ` class="language-${escapeAttr(code[1])}"` : ""}>`
+      : `<hr>\n${M.lineIndent(this.src, u.from)}<p>`;
+    this.dispatch({
+      changes: { from: u.from, to: u.to, insert: open + (code ? "<br></code></pre>" : "<br></p>") },
+      selection: { anchor: u.from + open.length },
+      annotations: isolateHistory.of("full"),
+      userEvent: "input.format",
+      scrollIntoView: true,
+    });
+    return true;
+  }
+
+  /**
    * `[ ] ` (or `[] `, `[x] `) at the start of a list item or a paragraph makes a to-do item: a checkbox before its text
    * (todoBox), and no bullet. In a paragraph (`- [ ] ` too), a list of one such item. Returns whether it did.
    */

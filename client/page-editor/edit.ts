@@ -13,6 +13,7 @@ export abstract class EditorEdit extends EditorRender {
   protected abstract blockRule(pos: number): void;
   protected abstract inputRule(pos: number): void;
   protected abstract linkRule(pos: number): void;
+  protected abstract enterRule(u: M.Unit, pos: number): boolean;
   protected abstract typeAtLinkEdge(pos: number, text: string, userEvent: string): boolean;
 
   /**
@@ -324,6 +325,7 @@ export abstract class EditorEdit extends EditorRender {
     const src = this.src;
     const insertAt = (insert: string, caret: number) =>
       this.dispatch({ changes: { from: pos, insert }, selection: { anchor: caret }, userEvent: "input", scrollIntoView: true });
+    if (!shift && this.enterRule(u, pos)) return true;
     if (u.tag == "pre") {
       insertAt("\n", pos + 1);
       return true;
