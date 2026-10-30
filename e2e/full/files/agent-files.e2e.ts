@@ -1,9 +1,9 @@
 // The agent's tools on every file, in the Worker as it runs (PDF.js and pdf-lib under workerd): over an agent token, the
-// way an external agent calls them (/api/ext/tools) and over MCP: ls with kinds and sizes, grep through PDFs, read of a
+// way an outside agent calls them (/api/tools/<name>) and over MCP: ls with kinds and sizes, grep through PDFs, read of a
 // PDF as a document (an embedded resource over MCP), and write of bytes, which the files view then lists.
 import { expect, servers, test, until, type Server } from "../../helpers/fixtures";
 import { person } from "../versions/versions";
-import { runTool } from "../../helpers/tools";
+import { runTool, textOf } from "../../helpers/tools";
 
 await servers.main();
 
@@ -31,9 +31,13 @@ async function owner(server: Server) {
   const { id, address } = await ada.newDoc();
   const token = await ada.token("Files test");
   const call = async (name: string, args: object) => {
-    const r = await fetch(`${server.root}/api/ext/tools/${name}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ document: id, ...args }) });
-    const body = (await r.json()) as { ok: boolean; content?: { type: string; text?: string; data?: string; mimeType?: string }[]; error?: string };
-    return { ...body, text: body.content?.filter((c) => c.type == "text").map((c) => c.text).join("\n") ?? body.error ?? "" };
+    const r = await runTool<{ type: string; text?: string; data?: string; mimeType?: string }[]>(
+      server.root,
+      name,
+      { document: id, ...args },
+      { token }
+    );
+    return { ...r, content: r.result, text: r.ok ? textOf(r.result) : (r.error ?? "") };
   };
   const mcp = async (name: string, args: object) => {
     const r = await fetch(`${server.root}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { document: id, ...args } } }) });

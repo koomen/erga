@@ -68,16 +68,26 @@ test("list_pages: every page with its title and address, the folders and the oth
   expect((await s.tool("open_page", { path: "nope.html" })).ok).toBe(false);
 });
 
-test("the token API and MCP list the file tools; the external agent's guide says a document is a folder of files whose pages users see", async () => {
+test("the token API and MCP list the file tools; the guide says a document is a folder of files whose pages users see", async () => {
   const server = await servers.short();
   const s = await site(server);
-  const listed = ((await (await fetch(`${server.root}/api/ext/tools`, { headers: s.auth })).json()) as { tools: { name: string }[] }).tools.map((t) => t.name);
-  const mcp = ((await (await fetch(`${server.root}/mcp`, { method: "POST", headers: { ...s.auth, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })).json()) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+  const listed = ((await (await fetch(`${server.root}/api/tools`, { headers: s.auth })).json()) as { tools: { name: string }[] }).tools.map(
+    (t) => t.name
+  );
+  const mcp = (
+    (await (
+      await fetch(`${server.root}/mcp`, {
+        method: "POST",
+        headers: { ...s.auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      })
+    ).json()) as { result: { tools: { name: string }[] } }
+  ).result.tools.map((t) => t.name);
   for (const n of ["new_page", "mkdir", "mv", "rm", "ls", "read", "write", "list_pages", "open_page"]) {
     expect(listed).toContain(n);
     expect(mcp).toContain(n);
   }
-  const guide = await (await fetch(`${server.root}/d/${s.id}/api/ext`, { headers: s.auth })).text();
+  const guide = await (await fetch(`${server.root}/llms.txt`, { headers: s.auth })).text();
   for (const part of ["A document is a folder of files", "Users\nsee pages; you see files", "blog/index.html is /<owner>/<slug>/blog", "open_page"]) expect(guide).toContain(part);
 });
 

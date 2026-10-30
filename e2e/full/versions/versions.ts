@@ -10,7 +10,7 @@ import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
 import { until, type Server } from "../../helpers/fixtures";
 import { postForm } from "../../helpers/form-post";
-import { runTool } from "../../helpers/tools";
+import { runTool, textOf } from "../../helpers/tools";
 
 export { Participant };
 
@@ -68,12 +68,11 @@ export function roomOf(server: Server, id: string, headers: Record<string, strin
   return { base: `${server.root}/d/${id}`, path: "index.html", roomUrl: `${ws}/d/${id}/api/room`, roomName: "doc", headers, headersFor: () => headers } as unknown as Doc;
 }
 
-/** An agent tool over the server's API (/api/ext/tools/<name>), with a token, on one document. */
+/** An agent tool over the server's API (/api/tools/<name>), with a token, on one document. */
 export function tools(server: Server, token: string, document: string) {
   return async (name: string, args: object) => {
-    const res = await fetch(`${server.root}/api/ext/tools/${name}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ document, ...args }) });
-    const body = (await res.json()) as { ok: boolean; content?: { text?: string }[]; error?: string };
-    return { status: res.status, ok: body.ok, text: body.content?.map((c) => c.text ?? "").join("\n") ?? body.error ?? "" };
+    const r = await runTool(server.root, name, { document, ...args }, { token });
+    return { status: r.status, ok: r.ok, text: r.ok ? textOf(r.result) : (r.error ?? "") };
   };
 }
 

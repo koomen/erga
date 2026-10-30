@@ -1,23 +1,17 @@
-// The server's API for agents: everything a person can do in the app, for an
-// agent holding one of their agent tokens. It's the same token,
-// and the same mechanism, as a document's own external agent API (document/host.ts,
-// /d/<id>/api/ext): this one covers the whole server, and offers each
-// document's tools for any document the person may edit.
+// The server's one API: everything a person can do on the server, for their own pages and for every agent alike.
+// The same operations, through the same route, with the same answers: with the person's session (their pages), or
+// with one of their agent tokens (an outside agent: "Authorization: Bearer erga_...").
 //
-//   GET  /llms.txt                 the guide, for anyone (how to get a token, call the API, publish a site)
-//   GET  /api, /api/ext            the same guide (personal, with a token)
-//   GET  /api/tools                the operations and tools the caller may use, as JSON (name, description, JSON Schema):
-//                                  for the person's own pages (their session) and for an agent token alike
+//   GET  /llms.txt                 the guide, made from the operations: for anyone; with a token, that token's own
+//   GET  /api/tools                the operations and tools the caller may use, as JSON (name, description, JSON Schema)
 //   POST /api/tools/<name>         runs one, the body its arguments: {"ok": true, "result": ...} or {"ok": false, "error"}.
-//                                  The front end's one API: every page calls its operations here (from this site's own
-//                                  pages only), and every agent has the same ones as tools
-//   GET  /api/ext/tools            the tools, as JSON (name, description, JSON Schema), for an agent token
-//   POST /api/ext/tools/<name>     runs one, the body its arguments: {"ok": true, "content": [...]}
+//                                  A person's session acts from this site's own pages only; a token from anywhere
+//   POST /mcp                      the same list and the same calls over MCP (stateless, Streamable HTTP, JSON answers),
+//                                  for a token: an adapter, with no logic of its own
 //   POST /api/publish              a folder of files as a document (multipart or JSON), or into one: for an HTTP client
 //                                  (curl -F), whose multipart body isn't an operation's JSON arguments
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
-//   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
 //   /tokens, /tokens/...           a person's tokens: make one (a scope, an expiry), revoke one, approve or deny an agent's request
 //   /settings                      their settings: their tokens and the test token
 //
@@ -25,10 +19,9 @@
 // (server/http.ts), with the platform that knows agent tokens. The share button's token
 // (<document>/api/share) is server/documents/make.ts's.
 //
-// The tools are agents/tools.ts's: the server's operations (server/operations/: documents, sharing, tokens, and the
-// server's settings and users for a caller with admin power), and every document tool (read, edit, write, ...)
-// with a `document` argument, run in that document's host as the person's agent. The front end, REST, MCP and the
-// guide all reach the same ones.
+// The tools are agents/tools.ts's: the operations (server/operations/, control/operations.ts), and every document
+// tool (read, edit, write, ...) with a `document` argument, run in that document's host as the person's agent. A
+// document is always named by that argument, never by the URL.
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -57,8 +50,8 @@ const callerOf = (platform: Platform, session: Session, origin: string): ToolCon
   ...(session.agent ? { token: session.agent as AgentToken } : {}),
 });
 
-/** The tools a caller may use; without one, all of them (the admin ones say so). */
-const listed = (ctx: ToolContext | null) => call(() => (ctx ? toolsFor(ctx) : Promise.resolve(allTools())));
+/** The tools a caller may use. */
+const listed = (ctx: ToolContext) => call(() => toolsFor(ctx));
 const specOf = (t: Tool): ToolSpec => ({ name: t.name, description: t.description, parameters: jsonSchemaOf(t) });
 
 const refuse = (message: string, status = 400) => Effect.fail(new OperationError({ message, status }));
@@ -87,18 +80,12 @@ const runNamed = Effect.fnUntraced(function* (name: string, args: unknown, ctx: 
   });
 });
 
-/** The same, its answer as content items (an outside agent's REST and MCP). */
-const callTool = (name: string, args: unknown, ctx: ToolContext) =>
-  Effect.map(runNamed(name, args, ctx), (out): ToolContent[] => {
-    if (Array.isArray(out) && out.every((c) => c && typeof c == "object" && "type" in c)) return out as ToolContent[];
-    return [{ type: "text", text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }];
-  });
-
 // ---------------------------------------------------------------- HTTP
 
 const failure = (error: string, status: number) =>
   json({ ok: false, error }, status, status == 401 ? { "WWW-Authenticate": 'Bearer realm="erga"' } : {});
-const NO_TOKEN = (origin: string) => `This needs an agent token, sent as "Authorization: Bearer <token>". Your person can make one at ${origin}/tokens, or you can ask for one: POST ${origin}/api/auth/request (see ${origin}/llms.txt). If yours stopped working it was revoked.`;
+const NO_TOKEN = (origin: string) =>
+  `This needs an agent token, sent as "Authorization: Bearer <token>". Your person can make one at ${origin}/tokens, or you can ask for one: POST ${origin}/api/auth/request (see ${origin}/llms.txt). If yours stopped working it expired or was revoked.`;
 
 /** The body as JSON, as `schema` has it; or None, when it isn't JSON or isn't that. */
 const body = <S extends Schema.Top>(schema: S) =>
@@ -117,25 +104,22 @@ export const serverApi: Route = Effect.gen(function* () {
     origin = url.origin;
   const session = yield* call(() => platform.sessionOf(request));
   const agent = session?.agent ? (session as Session & { agent: AgentToken }) : null;
-  // An agent token's caller: the outside agents' API is for tokens.
+  // An agent token's caller (MCP is for tokens only).
   const ctx: ToolContext | null = agent && callerOf(platform, agent, origin);
   const method = request.method;
 
-  if (path == "/llms.txt" && (method == "GET" || method == "HEAD"))
-    return text(serverGuide(origin, null, true), 200, { "Cache-Control": "no-cache" });
-  if ((path == "/api" || path == "/api/ext") && (method == "GET" || method == "HEAD")) {
+  // The guide: for anyone; with a token, written for it (what it may do). A token that doesn't work is told so.
+  if (path == "/llms.txt" && (method == "GET" || method == "HEAD")) {
     if (request.headers.get("authorization") && !agent) return failure(NO_TOKEN(origin), 401);
     const guide = serverGuide(origin, agent, agent ? yield* adminStatus(platform, agent) : true);
-    return HttpServerResponse.text(guide, { contentType: "text/markdown; charset=utf-8", headers: { "Cache-Control": "no-store" } });
+    return HttpServerResponse.text(guide, {
+      contentType: "text/markdown; charset=utf-8",
+      headers: { "Cache-Control": agent ? "no-store" : "no-cache" },
+    });
   }
   if (path == "/mcp") return yield* mcp(ctx, origin);
-  if (path == "/api/ext/tools" && method == "GET") {
-    // With a token, the tools its person may use; without, all of them (the admin ones say so).
-    if (request.headers.get("authorization") && !ctx) return failure(NO_TOKEN(origin), 401);
-    return json({ ok: true, tools: (yield* listed(ctx)).map(specOf) });
-  }
   if (path == "/api/auth/request" && method == "POST") return yield* askForToken(platform, origin);
-  // The front end's API, and any agent's: the person's session, or a token.
+  // The one API: the person's own pages (their session), and every agent (a token).
   if (path == "/api/tools" || path.startsWith("/api/tools/")) {
     if (!session) return failure(request.headers.get("authorization") ? NO_TOKEN(origin) : "Sign in first.", 401);
     const caller = callerOf(platform, session, origin);
@@ -156,18 +140,6 @@ export const serverApi: Route = Effect.gen(function* () {
     );
   }
   if (path == "/api/auth/poll" && method == "POST") return yield* pollForToken(platform);
-
-  const [, name] = /^\/api\/ext\/tools\/([^/]+)$/.exec(path) ?? [];
-  if (name && method == "POST") {
-    if (!ctx) return failure(NO_TOKEN(origin), 401);
-    const args = yield* body(Schema.Unknown);
-    if (args._tag == "None" && request.headers.get("content-length") != "0")
-      return failure("The body must be the tool's arguments, as JSON.", 400);
-    return yield* callTool(decodeURIComponent(name), args._tag == "Some" ? args.value : undefined, ctx).pipe(
-      Effect.map((content) => json({ ok: true, content })),
-      Effect.catchTag("OperationError", (e) => Effect.succeed(failure(e.message, e.status)))
-    );
-  }
   if (path == "/api/publish" && method == "POST") {
     if (!ctx) return failure(NO_TOKEN(origin), 401);
     return yield* publish(ctx).pipe(
@@ -177,7 +149,7 @@ export const serverApi: Route = Effect.gen(function* () {
       )
     );
   }
-  return failure(`There's nothing at ${method} ${path}. The guide: GET ${origin}/api/ext`, 404);
+  return failure(`There's nothing at ${method} ${path}. The guide: GET ${origin}/llms.txt`, 404);
 });
 
 /** The publish's fields that aren't files, in a multipart body. */
@@ -233,13 +205,9 @@ const publish = Effect.fnUntraced(function* (ctx: ToolContext) {
       return yield* refuse('Send the files as multipart/form-data, or JSON: {"files": {"index.html": "..."}, "title": "..."}.');
     args = { ...parsed.value };
   }
-  if (args.document) {
-    const content = yield* callTool("update_files", { replace: true, ...args }, ctx);
-    return { updated: true, ...JSON.parse((content[0] as { text: string }).text) } as object;
-  }
+  if (args.document) return { updated: true, ...((yield* runNamed("update_files", { replace: true, ...args }, ctx)) as object) };
   if (!args.files || !Object.keys(args.files as object).length) return yield* refuse("No files: send at least the page (index.html).");
-  const content = yield* callTool("create_document", args, ctx);
-  return { created: true, ...JSON.parse((content[0] as { text: string }).text) } as object;
+  return { created: true, ...((yield* runNamed("create_document", args, ctx)) as object) };
 });
 
 // ---------------------------------------------------------------- MCP
@@ -278,6 +246,18 @@ const mcp = Effect.fnUntraced(function* (ctx: ToolContext | null, origin: string
   return json(batch ? answers : answers[0]);
 });
 
+/**
+ * A tool's result as MCP's content items: a document tool's items as they are (a PDF, read's, as an embedded
+ * resource); an operation's answer as its JSON, in one text item.
+ */
+const contentOf = (name: string, out: unknown) => {
+  if (!(Array.isArray(out) && out.every((c) => c && typeof c == "object" && "type" in c)))
+    return [{ type: "text", text: typeof out == "string" ? out : JSON.stringify(out, null, 2) }];
+  return (out as ToolContent[]).map((c) =>
+    c.type == "document" ? { type: "resource", resource: { uri: `erga:${name}/document.pdf`, mimeType: c.mimeType, blob: c.data } } : c
+  );
+};
+
 const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
   const decoded = decodeRpc(raw);
   const id = (raw as RpcMessage | null)?.id;
@@ -295,7 +275,7 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "erga", title: "Erga", version: "1.0.0" },
-        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${admin ? ", and, as they're an admin with an admin token, read and change the server's settings and users" : ""}.${ctx.session.onlyDoc != null ? ` This token reaches one document only (id ${ctx.session.onlyDoc}).` : ""} The full guide: ${ctx.origin}/api/ext.`,
+        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${admin ? ", and, as they're an admin with an admin token, run the server: its settings, users, source and deploys" : ""}.${ctx.session.onlyDoc != null ? ` This token reaches one document only (id ${ctx.session.onlyDoc}).` : ""} Read the guide first (GET ${ctx.origin}/llms.txt with the same token): it has the rules for pages people can keep editing by hand.`,
       });
     }
     case "ping":
@@ -304,19 +284,8 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
       return ok({ tools: (yield* listed(ctx)).map((t) => ({ name: t.name, description: t.description, inputSchema: jsonSchemaOf(t) })) });
     case "tools/call": {
       const name = String(m.params?.name ?? "");
-      if (!allTools().some((t) => t.name == name))
-        return { jsonrpc: "2.0", id: m.id, error: { code: -32602, message: `Unknown tool: ${name}` } } as object;
-      return yield* callTool(name, m.params?.arguments ?? {}, ctx).pipe(
-        // A PDF (read's) as MCP carries a file: an embedded resource.
-        Effect.map((content) =>
-          ok({
-            content: content.map((c) =>
-              c.type == "document"
-                ? { type: "resource", resource: { uri: `erga:${name}/document.pdf`, mimeType: c.mimeType, blob: c.data } }
-                : c
-            ),
-          })
-        ),
+      return yield* runNamed(name, m.params?.arguments ?? {}, ctx).pipe(
+        Effect.map((result) => ok({ content: contentOf(name, result) })),
         Effect.catchTag("OperationError", (e) => Effect.succeed(ok({ content: [{ type: "text", text: e.message }], isError: true })))
       );
     }

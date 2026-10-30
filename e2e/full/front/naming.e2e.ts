@@ -96,7 +96,7 @@ test("the list shows a renamed document at its new address", async () => {
   expect(await p.docs()).toContain(`href="/${p.login}/my-demo?edit"`);
 });
 
-test("an agent's get_title and rename_document, with the share button's token: the guide lists them; rename_document renames (an empty slug follows the title) and is refused a taken slug; the document's API under the old /<owner>/<id> still answers", async () => {
+test("an agent's get_title and rename_document, with the share button's token: the guide lists them; rename_document renames (an empty slug follows the title) and is refused a taken slug; the old address /<owner>/<id> still names the document", async () => {
   const p = await person(await servers.script());
   const [taken, id] = [await p.make(), await p.make()];
   await p.rename(taken, { slug: "q4-launch" });
@@ -112,7 +112,7 @@ test("an agent's get_title and rename_document, with the share button's token: t
     const body = (await res.json()) as { result?: unknown; error?: string };
     return { status: res.status, result: body.result as { title: string; address: string } | undefined, text: body.error ?? "" };
   };
-  const guide = await (await fetch(`${p.base}/api/ext`, { headers: { Authorization: `Bearer ${token}` } })).text();
+  const guide = await (await fetch(`${p.base}/llms.txt`, { headers: { Authorization: `Bearer ${token}` } })).text();
   expect(guide).toContain("rename_document");
   expect(guide).toContain("get_title");
   let t = await tool("get_title", {});
@@ -124,8 +124,8 @@ test("an agent's get_title and rename_document, with the share button's token: t
   t = await tool("rename_document", { slug: "q4-launch" });
   expect(t.status).toBe(409);
   expect(t.text).toContain("already");
-  // Share links from before the directory used /<owner>/<id>.
-  expect((await fetch(`${p.base}/${p.login}/${id}/api/ext/tools`, { headers: { Authorization: `Bearer ${token}` } })).ok).toBe(true);
+  // An address from before the directory used slugs, /<owner>/<id>, still names the document.
+  expect((await tool("get_title", { document: `/${p.login}/${id}` })).status).toBe(200);
 });
 
 test("open tabs follow a rename, by anyone or by an edit to the heading: the address bar and the title, without reloading", async ({ tab }) => {

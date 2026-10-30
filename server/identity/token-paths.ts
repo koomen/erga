@@ -13,9 +13,8 @@ const APP_SEGMENTS = new Set(["deploy", "git", "source"]);
  */
 export function tokenPath(path: string): boolean {
   path = path.replace(/\/+$/, "") || "/";
-  if (path == "/llms.txt" || path == "/api" || path == "/mcp" || path == "/api/publish") return true;
-  if (path == "/api/ext" || path.startsWith("/api/ext/")) return true;
-  // The operations, as the pages call them (each checks the token's scope: no admin power, one document's reach).
+  if (path == "/llms.txt" || path == "/mcp" || path == "/api/publish") return true;
+  // The one API (each operation checks the token's scope: no admin power, one document's reach).
   if (path == "/api/tools" || path.startsWith("/api/tools/")) return true;
   const [, first, second] = /^\/([^/]+)\/([^/]+)\/(?:api|doc)(?:\/|$)/.exec(path) ?? [];
   if (!first) return false;

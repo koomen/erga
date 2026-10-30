@@ -6,6 +6,7 @@
 // the requests and the events.
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { person, tools } from "../versions/versions";
+import { runTool } from "../../helpers/tools";
 
 await servers.script();
 
@@ -41,9 +42,14 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   const server = await servers.script();
   const owner = await person(server, "tester");
   const token = await owner.token("Live page test");
-  const made = await (await fetch(`${server.root}/api/ext/tools/create_document`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ title: "Player", slug: `player-${crypto.randomUUID().slice(0, 8)}`, files: { "index.html": PAGE, "tone.wav": { base64: tone() } } }) })).json() as { ok: boolean; content: { text: string }[] };
+  const made = await runTool<{ id: string; address: string }>(
+    server.root,
+    "create_document",
+    { title: "Player", slug: `player-${crypto.randomUUID().slice(0, 8)}`, files: { "index.html": PAGE, "tone.wav": { base64: tone() } } },
+    { token }
+  );
   expect(made.ok).toBe(true);
-  const doc = JSON.parse(made.content[0].text) as { id: string; address: string };
+  const doc = made.result!;
   const tool = tools(server, token, doc.id);
   const p = tab.page;
   await p.setViewportSize({ width: 1200, height: 800 });

@@ -1,7 +1,7 @@
 // Every tool, in every list of tools, gives its arguments as an object's JSON Schema ({"type": "object", ...}): MCP
 // clients refuse a tools/list with any other (Claude Code did, for the tools with no arguments), and so does the
-// Anthropic API for the model's tools. The lists: MCP's tools/list and REST's /api/ext/tools (server/api.ts), a
-// document's own /api/ext/tools (the document agent's tools), the admin agent's, and the request to the model.
+// Anthropic API for the model's tools. The lists: MCP's tools/list and GET /api/tools
+// (server/api.ts), the admin agent's, and the request to the model.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
@@ -15,7 +15,6 @@ import { respond } from "../server/http";
 import { Tokens } from "../server/identity/tokens";
 import { agentTools, allTools, jsonSchemaOf } from "../agents/tools";
 import { argumentsSchema } from "../agents/run";
-import { setup } from "./helpers/files-fixture";
 
 const ORIGIN = "https://erga.test";
 type Listed = { name: string; schema: { type?: string } };
@@ -64,9 +63,9 @@ async function server() {
   return { call };
 }
 
-test("REST's /api/ext/tools and MCP's tools/list: every tool's inputSchema is an object's", async () => {
+test("GET /api/tools and MCP's tools/list: every tool's inputSchema is an object's", async () => {
   const { call } = await server();
-  const rest = (await (await call("/api/ext/tools")).json()) as { tools: { name: string; parameters: { type?: string } }[] };
+  const rest = (await (await call("/api/tools")).json()) as { tools: { name: string; parameters: { type?: string } }[] };
   expect(rest.tools.length).toBeGreaterThan(20);
   expect(notObjects(rest.tools.map((t) => ({ name: t.name, schema: t.parameters })))).toEqual([]);
   const mcp = (await (
@@ -85,18 +84,4 @@ test("every tool of the registry, the admin agent's own and the model's: an obje
   const admin = agentTools(allTools(), null);
   expect(notObjects(admin.map((t) => ({ name: t.name, schema: argumentsSchema(t.parameters) })))).toEqual([]);
   expect(argumentsSchema(Schema.Struct({}))).toEqual({ type: "object", properties: {} });
-});
-
-test("a document's own /api/ext/tools (the document agent's tools): an object's schema each", async () => {
-  const { doc } = await setup();
-  const headers = {
-    "x-erga-person": JSON.stringify({ id: "ada", name: "Ada" }),
-    "x-erga-who": JSON.stringify({ login: "ada" }),
-    "x-erga-agent": "token-1",
-  };
-  const r = (await (await doc.handle(new Request("http://doc/api/ext/tools", { headers }))).json()) as {
-    tools: { name: string; parameters: { type?: string } }[];
-  };
-  expect(r.tools.length).toBeGreaterThan(5);
-  expect(notObjects(r.tools.map((t) => ({ name: t.name, schema: t.parameters })))).toEqual([]);
 });

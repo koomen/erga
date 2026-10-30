@@ -7,6 +7,7 @@
 
 import { expect, settle, until, type Page } from "../../helpers/fixtures";
 import { postForm } from "../../helpers/form-post";
+import { runTool, textOf } from "../../helpers/tools";
 
 /** A request to the server, its redirects not followed. */
 export const getter = (root: string) => (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
@@ -77,11 +78,10 @@ export async function mint(root: string, cookie: string | null, fields: Record<s
   return { token: /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "", page };
 }
 
-/** Calls one of the outside agents' tools with a token. */
-export async function tool(root: string, token: string, name: string, args: unknown = {}) {
-  const r = await fetch(`${root}/api/ext/tools/${name}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(args) });
-  const body = (await r.json()) as { content?: { text: string }[]; error?: string };
-  return { status: r.status, text: body.content?.[0]?.text ?? body.error ?? "" };
+/** Calls a tool with a token, as an outside agent does: its status, and its result as text (or the error). */
+export async function tool(root: string, token: string, name: string, args: Record<string, unknown> = {}) {
+  const r = await runTool(root, name, args, { token });
+  return { status: r.status, text: r.ok ? textOf(r.result) : (r.error ?? "") };
 }
 
 /** Publishes a document with a documents token: its id and address. */

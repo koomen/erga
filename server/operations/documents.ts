@@ -164,7 +164,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         });
         if (doc)
           return {
-            ...withApi(doc, caller),
+            ...described(doc, caller),
             page: index,
             files: Object.keys(files).sort(),
             ...(from ? { from } : {}),
@@ -252,7 +252,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       if (!Object.keys(files).length && !remove.size)
         throw new OperationError({ message: "Nothing to do: give files, delete, or replace.", status: 400 });
       const r = await platform.docs.publish(doc, files, [...remove], byLine(caller.who.login.toLowerCase(), caller.who.via));
-      return { ...withApi((await platform.directory.get(doc.id)) ?? doc, caller), ...r };
+      return { ...described((await platform.directory.get(doc.id)) ?? doc, caller), ...r };
     },
   },
   {
@@ -338,12 +338,6 @@ async function shareAnswer(caller: Caller, doc: DocRow) {
     avatars: await dir.users.avatars(permissions.map((p) => p.login)),
     publicSharing: await dir.config.get("public_sharing"),
   };
-}
-
-/** A document's row, its URL and its API, as the answers about one document give them. */
-function withApi(doc: DocRow, caller: Caller) {
-  const origin = caller.origin ?? "";
-  return { ...described(doc, caller), ...(origin ? { api: `${origin}/d/${doc.id}/api/ext` } : {}) };
 }
 
 const MAX_FILE = 2_000_000,

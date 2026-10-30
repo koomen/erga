@@ -40,7 +40,6 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { withBlobs, type ChatStore } from "../checkpoint";
 import { argumentsSchema, resultImage, startLoop, type AgentTool } from "../run";
-import { documentGuide } from "../guides";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
 import { pageRefusal } from "../../document/pages";
@@ -112,7 +111,6 @@ export function documentAgents(o: {
         elsewhere: o.elsewhere && ((ref, name, args) => o.elsewhere!(opts.owner, opts.docId, ref, name, args)),
       });
     },
-    guide: documentGuide,
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
     changes: CHANGES,
     async descriptionKey() {

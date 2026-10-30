@@ -17,7 +17,7 @@
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
-//   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token
+//   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent, and its guide
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /_home/<gen>/<path>        the homepage's files, as deployed
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
@@ -25,7 +25,6 @@
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
 //                              users, how people sign in, the API keys
 //   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout
-//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; agents/admin/sessions.ts)
 //                              Every /admin page has the same layout, and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own routes.
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
@@ -41,7 +40,7 @@
 
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
-import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
+import { adminAgentApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
 import { serverApi } from "./api.ts";
 import { documentRoutes, isPagesSite } from "./documents/index.ts";
 import { serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
@@ -163,9 +162,7 @@ const route = (url: URL, outside: Outside): Route =>
     if (isAdminAgentPath(path)) return yield* adminAgentApi;
     // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
     if (path == "/api/release" && read) return yield* releaseApi;
-    // What an outside agent with an admin token reads first (Share with agent): the admin APIs.
-    if (path == "/api/admin/guide") return yield* adminGuideApi;
-    // The server's API for agents, and people's agent tokens.
+    // The server's one API (the pages' and every agent's), its guide, and people's agent tokens.
     if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* serverApi;
     if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/"))
       return yield* tokensRoutes;

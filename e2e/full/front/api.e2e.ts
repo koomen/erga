@@ -1,4 +1,4 @@
-// The server's API for agents: /llms.txt, agent tokens (asked for by an
+// The server's one API, as an outside agent uses it: /llms.txt, agent tokens (asked for by an
 // agent and approved, made at /tokens, the share button's), publishing a folder as a document, every tool over HTTP
 // and MCP with the person's own permissions, and revoking.
 import { expect, test } from "../../helpers/fixtures";
@@ -24,9 +24,20 @@ async function publish(p: Person, token: string, title = "Published app") {
 test("/llms.txt explains getting a token, publishing and the tools, to anyone; the tools need a real token", async () => {
   const s = await servers.script();
   const guide = await (await fetch(`${s.root}/llms.txt`)).text();
-  for (const want of ["/api/auth/request", "/api/publish", "### create_document", `${new URL(s.root).origin}/mcp`]) expect(guide, want).toContain(want);
-  expect((await fetch(`${s.root}/api/ext/tools/whoami`, { method: "POST", body: "{}" })).status).toBe(401);
-  expect((await fetch(`${s.root}/api/ext/tools/whoami`, { method: "POST", body: "{}", headers: { Authorization: "Bearer erga_forged" } })).status).toBe(401);
+  for (const want of [
+    "/api/auth/request",
+    "/api/publish",
+    "### create_document",
+    `${new URL(s.root).origin}/mcp`,
+    `${new URL(s.root).origin}/api/tools/`,
+  ])
+    expect(guide, want).toContain(want);
+  // Without a token, a request from another site is refused (in local development it is the dev person's, from elsewhere).
+  expect([401, 403]).toContain((await fetch(`${s.root}/api/tools/whoami`, { method: "POST", body: "{}" })).status);
+  expect(
+    (await fetch(`${s.root}/api/tools/whoami`, { method: "POST", body: "{}", headers: { Authorization: "Bearer erga_forged" } })).status
+  ).toBe(401);
+  expect((await fetch(`${s.root}/llms.txt`, { headers: { Authorization: "Bearer erga_forged" } })).status).toBe(401);
 });
 
 test("an agent asks for a token; its person approves it on this site's own page; the agent collects it, once, and acts as them; /tokens and /settings list it", async () => {
@@ -72,7 +83,7 @@ test("the document tools work on any of your documents, named by address, URL, s
   expect(r.status).toBe(200);
   expect(r.text).toContain("Hello from a folder");
   r = await t.call("read", { document: pub.url, path: "img/dot.png" });
-  expect(r.body.content?.[0]?.type).toBe("image");
+  expect(r.body.result?.[0]?.type).toBe("image");
   r = await t.call("edit", { document: "published-app", path: "index.html", edits: [{ oldText: "Hello from a folder", newText: "Hello, edited by an agent" }] });
   expect(r.status).toBe(200);
   expect(await (await p.get(`/d/${pub.id}/doc/index.html`)).text()).toContain("Hello, edited by an agent");
@@ -81,6 +92,15 @@ test("the document tools work on any of your documents, named by address, URL, s
   expect(r.text.length).toBeGreaterThan(0);
   expect((await t.call("read", { document: "/nobody/nothing", path: "index.html" })).status).toBe(404);
   expect(((await t.call("list_documents")).data as { id: string }[]).some((d) => d.id == pub.id)).toBe(true);
+  // There is no second route by the document's URL: the old one, and the host's own, point to /api/tools.
+  for (const path of [`/d/${pub.id}/api/tools/read`, `${pub.address}/api/ext/tools/read`]) {
+    const old = await fetch(`${p.base}${path}`, {
+      method: "POST",
+      headers: { ...t.auth, "Content-Type": "application/json" },
+      body: '{"path": "index.html"}',
+    });
+    expect(`${path}: ${old.status}`).toBe(`${path}: 404`);
+  }
 });
 
 test("/mcp serves the same tools as a stateless MCP server: initialize, a notification, tools/list, tools/call (a tool's failure is isError); it needs the token too", async () => {
@@ -139,8 +159,18 @@ test("someone else's document: an agent can't open it until it's shared with its
 test("the share button's token is a server-wide agent token: the same each time, until New token turns it off", async () => {
   const p = await person(await servers.script());
   const id = await p.make();
-  const share = async (rotate: boolean) => ((await (await p.get(`/d/${id}/api/share`, { method: "POST", headers: { "Content-Type": "application/json", Origin: p.origin }, body: JSON.stringify({ rotate }) })).json()) as { token: string }).token;
-  const whoami = (token: string) => fetch(`${p.base}/api/ext/tools/whoami`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "{}" });
+  const share = async (rotate: boolean) =>
+    (
+      (await (
+        await p.get(`/d/${id}/api/share`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: p.origin },
+          body: JSON.stringify({ rotate }),
+        })
+      ).json()) as { token: string }
+    ).token;
+  const whoami = (token: string) =>
+    fetch(`${p.base}/api/tools/whoami`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "{}" });
   const shared = await share(false);
   expect(shared.startsWith("erga_")).toBe(true);
   expect(await share(false)).toBe(shared);

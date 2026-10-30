@@ -142,13 +142,23 @@ export const agent: Test[] = [
       const token = await share();
       expect(/^erga_[\w-]{40,}$/.test(token), "the share button gets a token", token);
       expect((await share()) == token, "asking again gives the same one");
-      const ext = (path: string, init: RequestInit = {}, t = token) => fetch(d.base + path, { ...init, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } });
-      expect((await fetch(d.base + "/api/ext")).status == 401, "the API needs the token");
-      const guide = await (await ext("/api/ext")).text();
-      expect(/Editing .* in Erga/.test(guide) && /### edit/.test(guide) && /data-erga-noedit/.test(guide), "the guide explains the tools and the document rules", guide.slice(0, 300));
-      const run = async (name: string, args: unknown) => { const r = await ext(`/api/ext/tools/${name}`, { method: "POST", body: JSON.stringify(args) }); return { status: r.status, body: (await r.json()) as { ok: boolean; content?: { type: string; text?: string }[]; error?: string } }; };
+      // As the Share card's prompt says: the guide, then the tools, with the document's address as "document".
+      const origin = new URL(d.base).origin;
+      const ext = (path: string, init: RequestInit = {}, t = token) =>
+        fetch(origin + path, { ...init, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } });
+      expect((await ext("/api/tools/whoami", { method: "POST", body: "{}" }, "erga_forged")).status == 401, "the API needs a real token");
+      const guide = await (await ext("/llms.txt")).text();
+      expect(
+        /### edit/.test(guide) && /data-erga-noedit/.test(guide),
+        "the guide explains the tools and the document rules",
+        guide.slice(0, 300)
+      );
+      const run = async (name: string, args: Record<string, unknown>) => {
+        const r = await ext(`/api/tools/${name}`, { method: "POST", body: JSON.stringify({ document: d.base, ...args }) });
+        return { status: r.status, body: (await r.json()) as { ok: boolean; result?: { type: string; text?: string }[]; error?: string } };
+      };
       const read = await run("read", { path: d.path });
-      expect(read.body.ok && read.body.content?.[0]?.text?.includes("<h1>Launch notes") == true, "read returns the file", read);
+      expect(read.body.ok && read.body.result?.[0]?.text?.includes("<h1>Launch notes") == true, "read returns the file", read);
       const ed = await run("edit", edit(d.path, "<h1>Launch notes", "<h1>Launch notes EXT").args);
       expect(ed.body.ok, "edit succeeds", ed);
       await until(() => b.str().includes("Launch notes EXT"), 3000, "Bo sees the external agent's edit");
@@ -163,7 +173,10 @@ export const agent: Test[] = [
       await d.fetch("/api/agent/undo?user=Ada", { method: "POST" }, "Ada");
       await until(() => !b.str().includes("EXT"), 3000, "the undo takes it back");
       const fresh = await share(true);
-      expect((await ext("/api/ext")).status == 401 && (await ext("/api/ext", {}, fresh)).status == 200, "a new token turns the old one off");
+      expect(
+        (await ext("/llms.txt")).status == 401 && (await ext("/llms.txt", {}, fresh)).status == 200,
+        "a new token turns the old one off"
+      );
     },
   },
   {

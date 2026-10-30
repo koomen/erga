@@ -13,7 +13,7 @@ import type { Doc } from "../suite/target";
 import { ROOT } from "../../helpers/env";
 import { expect, servers, type Server } from "../../helpers/fixtures";
 import { postForm } from "../../helpers/form-post";
-import { runTool } from "../../helpers/tools";
+import { runTool, textOf } from "../../helpers/tools";
 
 export { servers };
 
@@ -106,19 +106,29 @@ export const retitle = (p: Participant, from: string, to: string) => p.edit((t) 
 /** The server's tools over HTTP with an agent token: status, text, the text as JSON if it is. */
 export function tools(base: string, token: string) {
   const auth = { Authorization: `Bearer ${token}` };
-  const call = async (name: string, args: unknown = {}) => {
-    const res = await fetch(`${base}/api/ext/tools/${name}`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(args) });
-    const body = (await res.json()) as { ok: boolean; content?: { type: string; text?: string; data?: string }[]; error?: string };
-    const text = body.content?.map((c) => c.text ?? "").join("") ?? "";
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const r = await runTool(base, name, args, { token });
+    const text = r.ok ? textOf(r.result) : "";
     let data: any = null;
     try { data = JSON.parse(text); } catch { /* text */ }
-    return { status: res.status, text: text || body.error || "", data, body };
+    return { status: r.status, text: text || r.error || "", data, body: r };
   };
   return {
-    auth, call,
-    names: async () => ((await (await fetch(`${base}/api/ext/tools`, { headers: auth })).json()) as { tools: { name: string }[] }).tools.map((t) => t.name),
-    mcpNames: async () => ((await (await fetch(`${base}/mcp`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })).json()) as any).result.tools.map((t: { name: string }) => t.name) as string[],
-    guide: async () => (await fetch(`${base}/api/ext`, { headers: auth })).text(),
+    auth,
+    call,
+    names: async () =>
+      ((await (await fetch(`${base}/api/tools`, { headers: auth })).json()) as { tools: { name: string }[] }).tools.map((t) => t.name),
+    mcpNames: async () =>
+      (
+        (await (
+          await fetch(`${base}/mcp`, {
+            method: "POST",
+            headers: { ...auth, "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+          })
+        ).json()) as any
+      ).result.tools.map((t: { name: string }) => t.name) as string[],
+    guide: async () => (await fetch(`${base}/llms.txt`, { headers: auth })).text(),
   };
 }
 

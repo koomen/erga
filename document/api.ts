@@ -17,7 +17,7 @@
 
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/http-api";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
 import type { Log } from "../shared/agent-log";
 
 // ------------------------------------------------------------ failures
@@ -131,9 +131,6 @@ export interface Hello {
   epoch: string;
 }
 
-/** One of the agent's tools, as an external agent sees it (parameters are JSON Schema). */
-const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String, parameters: Schema.Unknown });
-
 // ------------------------------------------------------------ the API
 
 export const Api = HttpApi.make("erga")
@@ -179,18 +176,13 @@ export const Api = HttpApi.make("erga")
     /** Undoes the agent's last change; ok is false when there was nothing to undo. */
     .add(HttpApiEndpoint.post("undo", "/api/agent/undo", { success: Schema.Struct({ ok: Schema.Boolean }) }))
     .middleware(PersonFromRequest))
-  .add(HttpApiGroup.make("ext")
-    /** The external agent's guide: how to call the tools, and the document rules. */
-    .add(HttpApiEndpoint.get("guide", "/api/ext", {
-      success: Schema.String.pipe(HttpApiSchema.asText({ contentType: "text/markdown; charset=utf-8" })),
-      error: SessionFailed,
-    }))
-    .add(HttpApiEndpoint.get("tools", "/api/ext/tools", {
-      success: Schema.Struct({ ok: Schema.Literal(true), tools: Schema.Array(ToolSpec) }),
-      error: SessionFailed,
-    }))
+  // The server's, only: an agent's document tool (POST /api/tools/<name> with "document", server/api.ts) runs here, as
+  // the person's agent (agents/tools.ts, runInDocument). The app refuses this path from outside (server/documents/routes.ts).
+  .add(
+    HttpApiGroup.make("tools")
     /** Runs one tool with the body as its arguments, in the person's agent session. */
-    .add(HttpApiEndpoint.post("run", "/api/ext/tools/:name", {
+    .add(
+      HttpApiEndpoint.post("run", "/api/tools/:name", {
       params: { name: Schema.String },
       payload: Schema.Record(Schema.String, Schema.Unknown),
       success: Schema.Struct({ ok: Schema.Literal(true), content: Schema.Any }),

@@ -684,9 +684,9 @@ fetch('mail.json')
             <div class="cc-pop">
               <b>Let another agent edit this page</b>
               Paste this into an agent that can run commands on this computer (Claude Code, Codex…).
-              <pre>I'd like your help editing "index.html", an Erga document I have open in my editor. You can read and change it through the editor's API, working as my agent…
+              <pre>I'd like your help editing "index.html", an Erga document I have open in my editor. You can read and change it through Erga's API, working as my agent…
 
-API: http://127.0.0.1:4400/api/ext
+Document: http://127.0.0.1:4400/d/k2m9x4qp
 Token: erga_OIoY…</pre>
               <div class="cc-acts"><span class="primary">Copy prompt</span><span>New token</span><i>Copied</i></div>
             </div>
@@ -736,9 +736,9 @@ Token: erga_OIoY…</pre>
           input.innerHTML = '<i>[Pasted text #1 +9 lines]</i>';
           await wait(1000); if (!live()) return;
           input.textContent = '';
-          line('cc-me', '&gt; I\'d like your help editing "index.html", an Erga document I have open in my editor. You can read and change it through the editor\'s API…');
+          line('cc-me', '&gt; I\'d like your help editing "index.html", an Erga document I have open in my editor. You can read and change it through Erga\'s API…');
           await wait(600); if (!live()) return;
-          if (!await tool('<strong>Bash</strong>(curl -s -H "Authorization: Bearer erga_OIoY…" http://127.0.0.1:4400/api/ext)', '# Editing "index.html" in Erga … +214 lines', 1100, live)) return;
+          if (!await tool('<strong>Bash</strong>(curl -s -H "Authorization: Bearer erga_OIoY…" http://127.0.0.1:4400/llms.txt)', '# Erga … +214 lines', 1100, live)) return;
           await wait(400); if (!live()) return;
           line('cc-dot', "I've read the API guide. What would you like me to change?");
           await wait(800); if (!live()) return;
@@ -747,8 +747,8 @@ Token: erga_OIoY…</pre>
           line('cc-me', '&gt; ' + input.textContent); input.textContent = '';
           await wait(600); if (!live()) return;
           fig.classList.add('agent', 'busy');
-          if (!await tool('<strong>Bash</strong>(curl -s -X POST …/tools/read -d \'{"path":"index.html"}\')', 'Read 7 lines', 900, live)) return;
-          const call = line('cc-dot tool run', '<strong>Bash</strong>(curl -s -X POST …/tools/edit -d \'{"path":"index.html","edits":[…]}\')');
+          if (!await tool('<strong>Bash</strong>(curl -s -X POST …/api/tools/read -d \'{"document":"k2m9x4qp","path":"index.html"}\')', 'Read 7 lines', 900, live)) return;
+          const call = line('cc-dot tool run', '<strong>Bash</strong>(curl -s -X POST …/api/tools/edit -d \'{"document":"k2m9x4qp","path":"index.html","edits":[…]}\')');
           const caret = document.createElement('span'); caret.className = 'cc-caret';
           for (const [k, s] of says.entries()) {
             s.classList.add('sel'); await wait(380); if (!live()) return;

@@ -7,23 +7,23 @@ import { BASE, $, type Shell } from "./shell";
 
 export function mountSharing(shell: Shell) {
 
-  // Share with an external agent: a prompt carrying this page's API and your
+  // Share with an external agent: a prompt carrying this document's address and your
   // agent token (server/identity/tokens.ts: the share button's, the same until rotated), which
-  // lets the agent call your agent's tools here (document/host.ts, /api/ext) and act
-  // as you on the rest of the server.
+  // lets the agent call the server's API (server/api.ts, /api/tools) as you: this document's
+  // tools, with it as "document", and the rest of the server.
   const shareBtn = $("btn-share");
   function promptFor(token: string): string {
-    const api = `${location.origin}${BASE}/api/ext`;
-    return `I'd like your help editing "${shell.info?.path ?? shell.info?.name ?? "the document"}", an Erga document I have open in my editor. You can read and change it through the editor's API, working as my agent: your edits show up in my editor as you make them.
+    const doc = `${location.origin}${BASE}`;
+    return `I'd like your help editing "${shell.info?.path ?? shell.info?.name ?? "the document"}", an Erga document I have open in my editor. You can read and change it through Erga's API, working as my agent: your edits show up in my editor as you make them.
 
-API: ${api}
+Document: ${doc}
 Token: ${token}
 
-Send the token on every request, as the header "Authorization: Bearer ${token}". Start by reading the API guide, which explains the tools and how to call them:
+Send the token on every request, as the header "Authorization: Bearer ${token}". Name the document in each tool call as "document": "${doc}". Start by reading the API guide, which explains the tools, how to call them, and the rules for pages:
 
-curl -s -H "Authorization: Bearer ${token}" ${api}
+curl -s -H "Authorization: Bearer ${token}" ${location.origin}/llms.txt
 
-The same token works for the rest of Erga as me (my other documents, new ones, publishing a site): ${location.origin}/api/ext explains it, if I ask for that.
+The same token works for the rest of Erga as me (my other documents, new ones, publishing a site), if I ask for that.
 
 Once you've read the guide, await further instructions.`;
   }

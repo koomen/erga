@@ -25,7 +25,7 @@
 //
 // An outside agent (Claude Code on a laptop) gets the same powers over HTTP
 // with an admin token (server/identity/tokens.ts; Share with agent on the admin pages makes
-// one that ends within 12 hours), and reads agents/guides.ts `adminGuide` first.
+// one that ends within 12 hours), and reads the guide first (/llms.txt: agents/guides.ts).
 
 import type { AgentConfig, ModelChoice } from "../models";
 import type { Attachment } from "../../shared/attach";

@@ -12,7 +12,7 @@
 import type { Page } from "playwright-core";
 import { expect, settle, until, type Server, type Tab } from "../../helpers/fixtures";
 import { postForm } from "../../helpers/form-post";
-import { runTool } from "../../helpers/tools";
+import { runTool, textOf } from "../../helpers/tools";
 
 /** Evaluates an expression in the tab, its value as any (for expect.poll, whose matchers need a type). */
 export const js = (page: Page, expr: string) => page.evaluate(expr) as Promise<any>;
@@ -47,10 +47,9 @@ export async function multi(server: Server) {
     /** One of the agents' tools, over the token API, on this document, as its owner. */
     async agentTool(name: string, args: Record<string, unknown> = {}) {
       if (!token) token = await agentToken(server);
-      const r = await fetch(`${server.root}/api/ext/tools/${name}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ document: id, ...args }) });
-      const body = (await r.json()) as { ok: boolean; content?: { text?: string }[]; error?: string };
-      expect(body.ok, `the agent's ${name}: ${JSON.stringify(body)}`).toBe(true);
-      return body.content?.map((c) => c.text ?? "").join("\n") ?? "";
+      const r = await runTool(server.root, name, { document: id, ...args }, { token });
+      expect(r.ok, `the agent's ${name}: ${JSON.stringify(r)}`).toBe(true);
+      return textOf(r.result);
     },
   };
   return doc;

@@ -22,7 +22,6 @@ const ADMINS = (doc: { id: string; address: string }) =>
     ["GET", "/admin/ops"],
     ["POST", "/api/tools/set_setting"],
     ["GET", "/api/admin/agent"],
-    ["GET", "/api/admin/guide"],
     ["POST", "/api/tools/list_deploys"],
     ["POST", "/api/tools/list_branches"],
     ["GET", "/api/events"],
@@ -62,18 +61,15 @@ test("on staging an admin's document token reads and edits its document (API, MC
   const at = (await get(`${one.address}/api/share`, { method: "POST", headers: { Origin: root, "Content-Type": "application/json" }, body: "{}" }));
   const share = ((await at.json()) as { token: string }).token;
   expect(share).toMatch(/^erga_/);
-  // The Share card's prompt, step by step: the document's guide at its address, then its tools.
-  const bearer = { Authorization: `Bearer ${share}` };
-  const guide = await get(`${one.address}/api/ext`, { headers: bearer });
+  // The Share card's prompt, step by step: the guide, then the tools, with the document's address as "document".
+  const guide = await get("/llms.txt", { headers: { Authorization: `Bearer ${share}` } });
   expect(guide.status).toBe(200);
-  const base = /curl -s -X POST (\S+)\/api\/ext\/tools\/read/.exec(await guide.text())?.[1] ?? "";
-  expect(base.startsWith(root)).toBe(true);
-  const run = (name: string, args: unknown) => fetch(`${base}/api/ext/tools/${name}`, { method: "POST", headers: { ...bearer, "Content-Type": "application/json" }, body: JSON.stringify(args) });
-  const read = await run("read", { path: "index.html" });
-  expect(`${read.status} ${await read.text()}`).toContain("Edited on staging");
-  expect((await run("edit", { path: "index.html", edits: [{ oldText: "Edited on staging", newText: "Edited by the Share prompt" }] })).status).toBe(200);
-  expect((await (await run("read", { path: "index.html" })).text())).toContain("Edited by the Share prompt");
-  expect((await get("/api/ext", { headers: bearer })).status).toBe(200);
+  expect(await guide.text()).toContain(`curl -s -X POST ${root}/api/tools/read`);
+  const document = root + one.address;
+  expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited on staging");
+  const edit = { document, path: "index.html", edits: [{ oldText: "Edited on staging", newText: "Edited by the Share prompt" }] };
+  expect((await tool(root, share, "edit", edit)).status).toBe(200);
+  expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited by the Share prompt");
   expect((await tool(root, share, "list_documents")).text).toContain("Staging two");
   expect((await tool(root, share, "set_user_role", { login: "tester", role: "write" })).status).toBe(403);
 

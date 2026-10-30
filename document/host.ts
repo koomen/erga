@@ -94,8 +94,6 @@ export interface HostOptions {
    * for, as the app vouched (null if it came without one).
    */
   readonly agentOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string; via?: string } | null;
-  /** The document's public address for a request, for the external agent's guide. */
-  readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** A person's picture, if the platform knows one (hosted: the one the app sent, shared/avatars.ts). */
   readonly avatarOf?: (person: { id: string; name: string; avatar?: string }) => string | undefined;
   /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/objects/document.ts). */
@@ -368,7 +366,7 @@ export function makeHost(opts: HostOptions) {
 
   // An external agent (Claude Code, Codex...) holds one of the person's
   // agent tokens (server/identity/tokens.ts; the share button makes one), which the app
-  // checks; over /api/ext it calls that person's agent tools, as their agent.
+  // checks; the server runs that person's agent tools here for it (/api/tools/<name>), as their agent.
 
   const modelState = (s: AgentSession): ModelState => ({
     model: s.model,
@@ -437,16 +435,9 @@ export function makeHost(opts: HostOptions) {
     .handle("undo", () => Person.use((user) => session(user).pipe(
       Effect.map((s) => ({ ok: s.undo() })), Effect.orElseSucceed(() => ({ ok: false }))))));
 
-  const extApi = HttpApiBuilder.group(Api, "ext", (h) => h
-    .handle("guide", () => Effect.gen(function* () {
-      const user = yield* Person;
-      const s = yield* extSession;
-      const base = opts.baseUrl(yield* HttpServerRequest.HttpServerRequest);
-      const name = yield* nameFor(user);
-      return agents.guide({ docName: name?.title ?? doc.path, owner: user.name, base, tools: s.tools() });
-    }))
-    .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
-    .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
+  const toolsApi = HttpApiBuilder.group(Api, "tools", (h) =>
+    h.handle("run", ({ params: { name }, payload }) =>
+      Effect.gen(function* () {
       const user = yield* Person;
       const s = yield* extSession;
       if (!s.tools().some((t) => t.name == name)) {
@@ -474,7 +465,7 @@ export function makeHost(opts: HostOptions) {
   const api = HttpApiBuilder.layer(Api).pipe(Layer.provide([
     docApi.pipe(Layer.provide([personFromRequest, explainBadRequests])),
     agentApi.pipe(Layer.provide([personFromRequest, explainBadRequests])),
-    extApi.pipe(Layer.provide([externalAgent, explainBadRequests])),
+    toolsApi.pipe(Layer.provide([externalAgent, explainBadRequests])),
   ]));
 
   // ---------------------------------------------------------- storage and files
