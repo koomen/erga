@@ -24,11 +24,32 @@ export interface ShareOptions {
   onOpen?(): void;
   /** Close it on Escape and on a click outside it (pages that don't do that themselves). */
   dismiss?: boolean;
+  /** After Copy prompt confirms on its button: the editor's card closes then. */
+  onCopied?(): void;
 }
 
 export interface SharePanel {
   el: HTMLElement;
   toggle(force?: boolean): void;
+}
+
+/** A copy button confirms on itself: "Copied ✓", with a short pop (style.css, .copied). With `then` (the card closes),
+ *  that comes a moment later, so the confirmation shows first; the label comes back then. */
+export function showCopied(button: HTMLElement, then?: () => void) {
+  const label = (button.dataset.label ??= button.textContent ?? "");
+  button.style.minWidth = `${button.offsetWidth}px`;
+  button.textContent = "Copied ✓";
+  button.classList.remove("copied");
+  void button.offsetWidth; // the pop again, on a second copy
+  button.classList.add("copied");
+  clearTimeout(Number(button.dataset.timer));
+  const done = () => {
+    then?.();
+    button.textContent = label;
+    button.classList.remove("copied");
+    button.style.minWidth = "";
+  };
+  button.dataset.timer = String(setTimeout(done, then ? 700 : 1600));
 }
 
 export function shareWithAgent(o: ShareOptions): SharePanel {
@@ -116,7 +137,8 @@ export function shareWithAgent(o: ShareOptions): SharePanel {
     const copied = await navigator.clipboard.writeText(prompt.value).then(() => true, () => false);
     // No clipboard: the prompt, selected to copy by hand (shown first, where it waits behind "Show the prompt").
     if (!copied) { el.querySelector<HTMLElement>("#share-more")?.removeAttribute("hidden"); prompt.focus(); prompt.select(); }
-    status.textContent = copied ? "Copied" : "Couldn't reach the clipboard: the prompt is selected, press ⌘C.";
+    status.textContent = copied ? "" : "Couldn't reach the clipboard: the prompt is selected, press ⌘C.";
+    if (copied) showCopied(copy, o.onCopied);
   });
   rotate.addEventListener("click", () => { if (rotate.getAttribute("aria-disabled") != "true") load(true); });
   if (o.dismiss) {

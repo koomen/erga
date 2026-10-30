@@ -1,7 +1,7 @@
 // Share: the document with people (its owner only), and with an external agent.
 
 import { colorFor, type Author } from "../../document/content";
-import { shareWithAgent } from "../agent/share-agent";
+import { shareWithAgent, showCopied } from "../agent/share-agent";
 import { runTool } from "../common/tools";
 import { BASE, $, type Shell } from "./shell";
 
@@ -30,12 +30,13 @@ Once you've read the guide, await further instructions.`;
   const { toggle: loadAgentShare } = shareWithAgent({
     into: $("sharing-agent"),
     title: "Share with an agent",
-    intro: "Paste a prompt into Claude Code, Codex or another agent that can run commands. It edits this page as you.",
+    intro: "Paste it into Claude Code, Codex or another agent. It edits this page as you.",
     note: `Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/settings" target="_blank">your settings</a> lists and revokes them all.`,
     token: (rotate) => fetch(shell.api("/api/share"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }), signal: AbortSignal.timeout(10_000) })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`the host answered ${r.status}`))) as Promise<{ token: string }>)
       .then((r) => r.token, (e: Error) => Promise.reject(e.name == "TimeoutError" ? new Error("the editor's host didn't answer") : e)),
     prompt: promptFor,
+    onCopied: () => closeAfterCopy(),
   });
 
   // Share (#btn-share, the Share card): with people, then with an agent (above). With people: who may view or edit the
@@ -43,8 +44,12 @@ Once you've read the guide, await further instructions.`;
   // card's people half shows for them alone; each change is saved as it's made (the operation share_document, as on My
   // Documents' share dialog).
   const sharing = $("sharing");
-  const sharingList = $("sharing-list"), sharingAdd = $("sharing-add") as HTMLFormElement;
-  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement, sharingStatus = $("sharing-status"), anyoneLabel = document.querySelector<HTMLLabelElement>("label[for=sharing-anyone]")!;
+  const sharingList = $("sharing-list"),
+    sharingAdd = $("sharing-add") as HTMLFormElement;
+  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement,
+    sharingStatus = $("sharing-status"),
+    linkHint = $("sharing-hint"),
+    anyoneLabel = document.querySelector<HTMLLabelElement>("label[for=sharing-anyone]")!;
   const shareAt = !!document.querySelector<HTMLMetaElement>('meta[name="erga-share"]');
   $("sharing-people").hidden = !shareAt;
   type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string>; publicSharing?: boolean };
@@ -96,18 +101,26 @@ Once you've read the guide, await further instructions.`;
     const offered = !!publicSharing || anyone != "none";
     sharingAnyone.hidden = !offered;
     for (const o of sharingAnyone.options) o.disabled = !publicSharing && o.value != "none" && o.value != anyone;
-    linkHint = publicSharing ? (anyone == "none" ? "only the people it's shared with" : "anyone may view it, signed in or not")
-      : anyone == "none" ? "only the people it's shared with" : "public sharing is off here: they sign in first";
-    if (copied.textContent != "Copied") copied.textContent = linkHint;
+    // Who the link lets in, where its menu doesn't say: no menu, or a share made before public sharing went off.
+    linkHint.textContent = !offered ? "only people added" : !publicSharing && anyone != "none" ? "they sign in first" : "";
     anyoneLabel.textContent = offered ? "Anyone with the link" : "Link";
   }
   async function changeSharing(login: string, role: string): Promise<boolean> {
     tellSharing("Saving…");
-    try { renderSharing(await shareCall({ login, role })); tellSharing(""); return true; }
-    catch (e) { tellSharing((e as Error).message, true); return false; }
+    try {
+      renderSharing(await shareCall({ login, role }));
+      tellSharing("");
+      return true;
+    } catch (e) {
+      tellSharing((e as Error).message, true);
+      return false;
+    }
   }
+  // Where focus was when the card opened (the page, mostly: the Share button doesn't take it), to go back to after a copy.
+  let focusBefore: Element | null = null;
   function toggleSharing(force?: boolean) {
     const open = typeof force == "boolean" ? force : sharing.hidden;
+    if (open && sharing.hidden) focusBefore = document.activeElement;
     sharing.hidden = !open;
     shareBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
@@ -127,16 +140,19 @@ Once you've read the guide, await further instructions.`;
     if (login && (await changeSharing(login, (sharingAdd.elements.namedItem("role") as HTMLSelectElement).value))) input.value = "";
   });
   sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
-  const copied = $("sharing-copied");
-  let linkHint = copied.textContent;
-  let copiedTimer = 0;
-  $("sharing-copy").addEventListener("click", async () => {
+  // Copy link and Copy prompt: the button confirms (showCopied), then the card closes and focus goes back.
+  function closeAfterCopy() {
+    if (sharing.hidden) return;
+    toggleSharing(false);
+    if (!focusBefore || focusBefore == document.body || focusBefore instanceof HTMLIFrameElement) shell.page.focus();
+    else (focusBefore as HTMLElement).focus?.();
+  }
+  const copyLink = $("sharing-copy");
+  copyLink.addEventListener("click", async () => {
     const url = location.origin + (shell.docName?.address ?? location.pathname);
     const ok = await navigator.clipboard.writeText(url).then(() => true, () => false);
     if (!ok) { tellSharing(url); return; }
-    copied.textContent = "Copied";
-    clearTimeout(copiedTimer);
-    copiedTimer = window.setTimeout(() => { copied.textContent = linkHint; }, 2000);
+    showCopied(copyLink, closeAfterCopy);
   });
   return { toggleSharing };
 }

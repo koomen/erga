@@ -231,8 +231,64 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 .share-actions .share-primary { background: var(--caret); border-color: var(--caret); color: #fff; }
 .share-actions button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
 .share-status { font-size: 12px; color: var(--soft); }
+/* A copy that worked: the button says so (share-agent.ts, showCopied), green, with a short pop. */
+.share-actions .share-primary.copied { background: #16a34a; border-color: #16a34a; }
+.text-btn.copied { color: #16a34a; }
+button.copied { animation: copied-pop 260ms ease-out; }
+@keyframes copied-pop { 0% { transform: scale(0.94); } 55% { transform: scale(1.05); } 100% { transform: scale(1); } }
 .help.share .share-note { margin: 10px 0 0; font-size: 12px; }
 .help.share .share-note a { color: inherit; }
+/* Share (#sharing): two halves, as Document settings' sections, one line between them. Every row of "Share with people" (the
+   box to add someone, each person, the link) is one line on one grid: face, who, the role menu, and a last column (Add, ×,
+   Copy link), so the menus line up and the row ends share one right edge. The lower half, Share with an agent, is share-agent.ts's. */
+.help.sharing { width: min(380px, calc(100vw - 32px)); padding: 0; }
+.sharing section { padding: 12px 14px; }
+.sharing section + section { border-top: 1px solid var(--rule); }
+.sharing section[hidden] { display: none; }
+.help.sharing h2 { margin: 0 0 8px; }
+.share-grid { display: grid; grid-template-columns: 24px minmax(0, 1fr) 96px 60px; align-items: center; column-gap: 8px; }
+.sharing-add { margin: 0 0 4px; }
+.sharing-add .naming-input { grid-column: 1 / span 2; min-width: 0; height: 28px; margin: 0; padding: 0 9px; }
+.sharing-add button { height: 28px; padding: 0; font: 600 12.5px var(--font-text); border-radius: 7px; border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); cursor: pointer; }
+.sharing-add button:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
+.sharing-list { list-style: none; margin: 0; padding: 0; }
+.sharing-list li, .sharing-anyone { min-height: 32px; }
+.sharing :is(.sharing-list, .sharing-anyone) .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); }
+.sharing .who small { margin-left: 6px; font-size: 11.5px; color: var(--soft); }
+.sharing-list .who .pending { color: #c2410c; }
+.sharing-list .fixed { grid-column: 3 / span 2; justify-self: end; font-size: 12.5px; color: var(--soft); }
+.sharing-list .remove { justify-self: end; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--chrome); cursor: pointer; font-size: 16px; line-height: 1; }
+.sharing-list .remove:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+.sharing .face { position: relative; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; font: 600 11px/1 var(--font-text); color: #fff; background: var(--c, var(--chrome)); }
+.sharing .face img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.sharing .face.anyone { color: var(--soft); background: color-mix(in srgb, var(--chrome) 16%, transparent); }
+.sharing .face.anyone svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+/* The link's row: who it lets in, its menu (while it's offered: the who takes its place otherwise), then Copy link. The
+   who wraps where it doesn't fit, a phone's width, rather than being cut off. */
+.sharing .sharing-anyone .who { white-space: normal; line-height: 1.3; }
+.sharing-anyone:has(select[hidden]) .who { grid-column: 2 / span 2; }
+.sharing-anyone select[hidden] { display: none; }
+.sharing-anyone label { cursor: pointer; }
+.sharing-anyone .text-btn { grid-column: 4; justify-self: end; white-space: nowrap; }
+.text-btn { padding: 0; border: 0; background: none; color: var(--caret); font: 500 12.5px/1.6 var(--font-text); cursor: pointer; }
+.text-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+.sharing select.role { width: 96px; height: 28px; padding: 0 22px 0 8px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: 12.5px var(--font-text); cursor: pointer;
+  appearance: none; -webkit-appearance: none; background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 6px center / 13px; }
+.sharing select.role:hover { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+.sharing :is(select.role, .text-btn, .sharing-add button, .share-show):focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+.sharing-status { margin: 6px 0 0 !important; }
+.sharing-status:empty { display: none; }
+.sharing-status.error { color: #c2410c; }
+.sharing .share-lede { margin: 0 0 10px; color: var(--soft); font-size: 12.5px; line-height: 1.4; }
+.sharing .share-actions { margin: 0; }
+.sharing .share-actions button { padding: 5px 12px; white-space: nowrap; }
+.sharing .share-actions .share-show { border: 0; padding: 0 4px; background: none; color: var(--soft); font: 500 12.5px var(--font-text); cursor: pointer; }
+.sharing .share-show:hover { color: var(--fg-strong, var(--fg)); }
+.sharing .share-status:empty { display: none; }
+.sharing .share-more { margin-top: 10px; }
+.sharing .share-more[hidden] { display: none; }
+.sharing .share-more .share-actions { margin-top: 8px; }
+.help.sharing .share-more textarea { height: 120px; }
 
 kbd {
   font-family: var(--font-text);
@@ -275,7 +331,7 @@ kbd {
 
 @media (prefers-reduced-motion: reduce) {
   :root { --hide-ms: 0ms; --show-ms: 0ms; }
-  body, .toast, .help { transition: none; animation: none; }
+  body, .toast, .help, button.copied { transition: none; animation: none; }
 }
 
 @media print {
