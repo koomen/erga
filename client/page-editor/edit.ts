@@ -3,7 +3,7 @@
 
 import * as M from "../../shared/manuscript";
 import { ChangeSet, EditorSelection, Transaction, findClusterBreak, type TransactionSpec } from "@codemirror/state";
-import { undo, redo } from "@codemirror/commands";
+import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { BLOCK_SPLIT, contentIn, dropped, emptyIn, HEADING, lineHolder, placeholderBr, TODO_BOX, todoBox, WHOLE_BLOCKS } from "./source";
 import { carryLists, dropBlankItem, enterItem, indentItems, type ListEdit, tidy, untodo } from "./lists";
 import { noHistory } from "./core";
@@ -32,7 +32,40 @@ export abstract class EditorEdit extends EditorRender {
     return fromDOM.main;
   }
 
+  /** Set by an edit made of two (Enter over a selection): the second joins the first in one undo step (see dispatch). */
+  protected joining: "first" | "second" | null = null;
+
+  /**
+   * The undo steps: an edit that changes tags (Enter, Tab, a join, a paste of blocks), and isn't typing, is a step of
+   * its own, apart from the typing before and after it; CodeMirror's history would join it to them (a "delete" or "input.type" event next
+   * to the last, within 500 ms). An edit made of two parts (`joining`) is one step.
+   */
+  protected undoStep(spec: TransactionSpec): TransactionSpec {
+    let isolate: "before" | "after" | "full" | null = null;
+    if (this.joining == "first") {
+      isolate = "before";
+      this.joining = "second";
+    } else if (this.joining == "second") {
+      // A user event CodeMirror joins to the step before it ("input.type": see joinableUserEvent).
+      spec = { ...spec, userEvent: "input.type.join" };
+      isolate = "after";
+      this.joining = null;
+    } else {
+      const tr = this.state.update(spec);
+      let tags = false;
+      tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+        if (/[<>]/.test(tr.startState.doc.sliceString(fromA, toA)) || /[<>]/.test(inserted.toString())) tags = true;
+      });
+      // (Typing stays typing, though its first key in an empty block takes the block's <br> out.)
+      if (tags && !tr.isUserEvent("external") && !tr.isUserEvent("input.type")) isolate = "full";
+    }
+    if (!isolate) return spec;
+    const own = spec.annotations ? (Array.isArray(spec.annotations) ? spec.annotations : [spec.annotations]) : [];
+    return { ...spec, annotations: [...own, isolateHistory.of(isolate)] };
+  }
+
   protected dispatch(spec: TransactionSpec | Transaction): void {
+    if (!(spec instanceof Transaction) && spec.changes) spec = this.undoStep(spec);
     let tr = spec instanceof Transaction ? spec : this.state.update(spec);
     // An id is unique in the page: an element an edit here adds (Enter, a custom edit) loses an id the page has already.
     // Edits from elsewhere (the source, an agent, the disk) and undo (a Transaction) stay as they are.
@@ -332,7 +365,22 @@ export abstract class EditorEdit extends EditorRender {
   /** Enter: split the block (Shift: a line break). */
   protected enter(shift: boolean): boolean {
     const sel = this.currentSelection();
-    if (!sel.empty && !this.replaceRange(sel.from, sel.to, "", "delete")) return false;
+    if (!sel.empty) {
+      // The selection's delete and the split are one undo step (see undoStep).
+      this.joining = "first";
+      const deleted = this.replaceRange(sel.from, sel.to, "", "delete");
+      if (this.joining == "first") this.joining = null;
+      if (!deleted) return false;
+      try {
+        return this.enterAt(shift);
+      } finally {
+        this.joining = null;
+      }
+    }
+    return this.enterAt(shift);
+  }
+
+  private enterAt(shift: boolean): boolean {
     const pos = this.state.selection.main.from;
     const u = M.unitAt(this.units, pos);
     if (!u || !this.verify(u) || !this.editableAt(u, pos)) return false;
