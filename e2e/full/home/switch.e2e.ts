@@ -1,7 +1,7 @@
 // Making another document the homepage: its deploys, its files, isolation from the controls, and who may.
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { events, someone } from "../versions/versions";
-import { adminToken, deployed, fresh, front, get, home, post, publish, resetLanding, setLanding } from "./home";
+import { adminToken, deployed, fresh, front, get, home, publish, redeploy, resetLanding, setLanding } from "./home";
 import { runTool } from "../../helpers/tools";
 
 await servers.short();
@@ -39,8 +39,6 @@ test("landing_document makes another document the homepage, deployed at once, an
   await deployed(server);
   const { id } = await publish(server, await adminToken(server), files, { title: "Second home" });
   expect(await home(server, id)).toMatchObject({ isHome: false, canDeploy: false, deploy: { state: "idle" } });
-  // The document's own API only says so, and deploys it: the homepage is chosen on /admin.
-  expect((await post(server, `/api/docs/${id}/home`, { isHome: true })).status).toBe(405);
   const heard = await events(server, id);
   try {
     expect((await setLanding(server, id)).error).toBeUndefined();
@@ -103,13 +101,13 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   const share = async (doc: string, login: string, role: string) => ({
     error: (await runTool(server.root, "share_document", { document: doc, login, role })).error,
   });
-  expect((await get(server, `/api/docs/${id}/home?user=${bo}`)).status).toBe(404);
+  expect((await runTool(server.root, "homepage_status", { document: id }, { user: bo })).status).toBe(403);
   await share(id, bo, "viewer");
   expect(await home(server, id, bo)).toMatchObject({ isHome: true, canDeploy: false });
-  expect((await post(server, `/api/docs/${id}/home/deploy`, undefined, bo)).status).toBe(403);
+  expect((await redeploy(server, bo)).status).toBe(403);
   expect((await share(id, bo, "editor")).error).toMatch(/only admins may edit it/);
   expect((await share(id, "*", "editor")).error).toMatch(/only admins may edit it/);
-  expect((await get(server, `/api/docs/${id}/home/deploy`, { method: "POST", headers: { Origin: "https://evil.example" } })).status).toBe(403);
+  expect((await redeploy(server, undefined, "https://evil.example")).status).toBe(403);
   // A document someone else may edit can't become the homepage.
   const third = await publish(server, token, { "index.html": "<!doctype html><title>Third</title><h1>Third</h1>" }, { title: "Third" });
   await share(third.id, bo, "editor");
@@ -153,12 +151,12 @@ test("edits deploy the delay after the last of them, each step told to the docum
 test("Redeploy now deploys at once; a failed deploy says why and the last good one keeps serving; fixed, it deploys again", async () => {
   const { server, token, id } = await secondHome();
   await publish(server, token, { ...files, "index.html": page("Right now") }, { document: id });
-  const forced = (await (await post(server, `/api/docs/${id}/home/deploy`)).json()) as { deploy: { state: string } };
+  const forced = (await redeploy(server)).result as { deploy: { state: string } };
   expect(["deploying", "deployed"]).toContain(forced.deploy.state);
   await expect.poll(async () => (await front(server)).html, { timeout: SHORT.homeDelay - 200 }).toContain("<h1>Right now</h1>"); // before the delay would have
   const lastAt = (await home(server, id)).deploy.at;
   await publish(server, token, { ...files, "index.html": page("Broken", "<!-- erga:test-fail-deploy -->") }, { document: id });
-  await post(server, `/api/docs/${id}/home/deploy`);
+  await redeploy(server);
   await expect.poll(async () => (await home(server, id)).deploy.state).toBe("failed");
   const s = await home(server, id);
   expect(s.deploy.error).toMatch(/asks for its deploy to fail/);
@@ -167,7 +165,7 @@ test("Redeploy now deploys at once; a failed deploy says why and the last good o
   expect(now.direct).toBe(true);
   expect(now.html).toContain("<h1>Right now</h1>");
   await publish(server, token, { ...files, "index.html": page("Fixed") }, { document: id });
-  await post(server, `/api/docs/${id}/home/deploy`);
+  await redeploy(server);
   await expect.poll(async () => (await home(server, id)).deploy.state == "deployed" && (await front(server)).html.includes("<h1>Fixed</h1>")).toBe(true);
 });
 

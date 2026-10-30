@@ -2,7 +2,7 @@
 // as you type (the operation search_documents), each with its owner, address and kind; choosing one saves it, and Reset puts the
 // repo's demo page back.
 import { expect, servers, test } from "../../helpers/fixtures";
-import { adminToken, fresh, landingSetting, publish, resetLanding } from "./home";
+import { adminToken, fresh, home, landingSetting, publish, resetLanding } from "./home";
 import { runTool } from "../../helpers/tools";
 
 await servers.short();
@@ -53,7 +53,7 @@ test("the Homepage Project picker finds a document by its title as you type; cho
     )
     .toBe(title);
   expect(await landingSetting(server)).toBe(where.split(" · ")[1]);
-  expect(await (await fetch(`${server.root}/api/docs/${id}/home`)).json()).toMatchObject({ isHome: true });
+  expect(await home(server, id)).toMatchObject({ isHome: true });
 
   // Reset: back to the default (none: the repo's demo page).
   await page.click(`${row} .reset`);
