@@ -297,7 +297,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
       }
       shell.fmt.queueFmt();
     },
-    onKey: (keys) => { appShortcut(keys); },
+    onKey: (keys) => {
+      appShortcut(keys, true);
+    },
     onNotice: (m, fix) => shell.toast.explain(m, fix),
     // Each problem once, until someone asks the agent to fix it (if it's still broken after, it says so again).
     onProblem: (p) => { if (shell.room.shownProblems.has(p.key)) return; shell.room.shownProblems.add(p.key); shell.toast.reportProblem(p.message, p.fix, p.key); },
@@ -368,7 +370,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
 
   // ---------------------------------------------------------------- shortcuts & wiring
 
-  function appShortcut(e: Keys): boolean {
+  /** `fromPage`: the key was pressed in the page (the frame sent it). */
+  function appShortcut(e: Keys, fromPage = false): boolean {
     if (!editing()) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
@@ -388,11 +391,18 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
       else if (!$("help").hidden) shell.chrome.toggleHelp(false);
       else if (!$("naming").hidden) shell.naming.toggleNaming(false);
       else if (!$("pages").hidden) { shell.naming.togglePages(false); $("doc-title").focus(); }
-      else if (!$("sharing").hidden) shell.sharing.toggleSharing(false);
-      else if (!$("pause-card").hidden) shell.pause.showPauseCard(false);
+      // (Its box had the focus: the caret goes back to the text.)
+      else if (!$("sharing").hidden) {
+        shell.sharing.toggleSharing(false);
+        if (shell.mode == "text") page.focus();
+      } else if (!$("pause-card").hidden) shell.pause.showPauseCard(false);
       else if ($("agent").contains(document.activeElement)) shell.agent.toggleAgent(false);
       else if (shell.mode != "text") shell.views.setMode("text");
-      else shell.chrome.hideChrome();
+      else {
+        shell.chrome.hideChrome();
+        // Nothing else to close: the focus leaves the text, so the page's own keys work (a deck's arrows).
+        if (fromPage) page.leaveText();
+      }
       return true;
     }
     return false;

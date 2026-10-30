@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Deck</title>
+<style>
+  body { background: #fff; font: 20px/1.5 sans-serif; margin: 0; }
+  .slide { display: none; padding: 60px; }
+  .slide.current { display: block; }
+</style>
+</head>
+<body>
+  <section class="slide current"><h1>First slide</h1><p>The arrows move between slides.</p></section>
+  <section class="slide"><h1>Second slide</h1><p>Space and Page Down go on too.</p></section>
+  <section class="slide"><h1>Third slide</h1><p>The last one.</p></section>
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    let at = 0;
+    function show(i) {
+      at = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((s, j) => s.classList.toggle("current", j == at));
+    }
+    // Keys typed in text (a field, or text being edited) are the text's, not the deck's.
+    document.addEventListener("keydown", (e) => {
+      if (e.target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])")) return;
+      if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key)) { e.preventDefault(); show(at + 1); }
+      else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key)) { e.preventDefault(); show(at - 1); }
+    });
+  </script>
+</body>
+</html>

@@ -403,9 +403,19 @@ export class RemotePage {
     f.style.transition = "";
     if (this.ready) this.post({ type: "zoom", level: z });
   }
-  focus(): void { this.frame.focus(); this.post({ type: "focus" }); }
-  reveal(pos: number): void { this.post({ type: "reveal", pos }); }
-  setPeers(peers: Peer[]): void { this.post({ type: "peers", peers }); }
+  focus(): void {
+    this.frame.focus();
+    this.post({ type: "focus" });
+  }
+  leaveText(): void {
+    this.post({ type: "leave" });
+  }
+  reveal(pos: number): void {
+    this.post({ type: "reveal", pos });
+  }
+  setPeers(peers: Peer[]): void {
+    this.post({ type: "peers", peers });
+  }
 
   /** The selection's rectangle in the frame's coordinates, or null with nothing to style. */
   selectionRect() { return this.snapshot.fmt.rect; }

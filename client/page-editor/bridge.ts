@@ -105,6 +105,8 @@ export type ToFrame =
   /** A zoom for a page that zooms itself: `by` times closer, or 0 for its own first view (window.ergaZoom). */
   | { type: "pageZoom"; by: number }
   | { type: "focus" }
+  /** Escape, with nothing of the shell's to close: the focus off the text, but still in the page (the page's own keys). */
+  | { type: "leave" }
   | { type: "reveal"; pos: number }
   | { type: "peers"; peers: Peer[] }
   /** Leaving the page for the source view: the frame answers with its state, undo history and all, once its edits are in. */

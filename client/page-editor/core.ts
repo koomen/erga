@@ -70,6 +70,8 @@ export abstract class EditorCore {
   protected staleSince: string | null = null;
   /** Whether the page's own scripts are paused (see setPaused); kept across renders. */
   protected paused = false;
+  /** Escape took the focus off the text (see leaveText): no caret comes back until a unit takes the focus again. */
+  protected leftText = false;
   /** Reports a problem with the page as the page's own watcher would (set once it renders). */
   protected reportRaw: ((raw: RawProblem) => void) | null = null;
   /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
@@ -483,7 +485,7 @@ export abstract class EditorCore {
   syncDOMSelection(force = false): void {
     const doc = this.doc;
     // Not into a page on its way out: the render puts the caret in the new one (focusing the old one would take the keys the render holds).
-    if (!doc || this.composing || this.rendering) return;
+    if (!doc || this.composing || this.rendering || this.leftText) return;
     if (!force && !this.activeUnit && !this.spanning) return;
     const main = this.state.selection.main;
     const across = this.across;
@@ -510,6 +512,18 @@ export abstract class EditorCore {
     if (this.rendering || !this.doc) return;
     this.win.focus();
     this.syncDOMSelection(true);
+  }
+
+  /**
+   * Takes the focus off the text, but keeps it in the page: no caret, no selection, and the keys go to the page's own
+   * listeners (a deck's arrows). A click on text, or Tab to it, puts the caret back (a unit's focusin: input.ts).
+   */
+  leaveText(): void {
+    if (!this.doc) return;
+    this.leftText = true;
+    this.setSpanning(false);
+    (this.doc.activeElement as HTMLElement | null)?.blur?.();
+    this.doc.getSelection()?.removeAllRanges();
   }
 
   get hasFocus(): boolean {
