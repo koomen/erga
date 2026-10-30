@@ -20,7 +20,10 @@
     function show(i) {
       at = Math.max(0, Math.min(slides.length - 1, i));
       slides.forEach((s, j) => s.classList.toggle("current", j == at));
+      // The slide, in the address (#3): a reload, and a link to it, open at it.
+      history.replaceState(null, "", "#" + (at + 1));
     }
+    show(location.hash.slice(1) - 1 || 0);
     // Keys typed in text (a field, or text being edited) are the text's, not the deck's.
     document.addEventListener("keydown", (e) => {
       if (paused || e.target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])")) return;

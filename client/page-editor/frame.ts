@@ -334,7 +334,10 @@ function reload(view: { pos: number; top: number } | null) {
       const held = page?.takeHeld() ?? [];
       if (held.length) post({ type: "held", held });
       const y = Math.round(scrollY);
-      location.replace(location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : ""));
+      // With the page's place in its own address (#3: agents/document/PROMPT.md, rule 14). (A reload: going to the same
+      // address with a hash only goes to the place.)
+      window.history.replaceState(null, "", location.pathname + "?erga-edit" + (y > 0 ? `&erga-y=${y}` : "") + location.hash);
+      location.reload();
     };
     setTimeout(() => goAgain?.(), 4000);
     if (page && relay)
