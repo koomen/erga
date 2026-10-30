@@ -35,6 +35,12 @@ export default function viewerSteps(): void {
     '<span class="erga-steps-at" aria-live="polite"></span>' +
     '<button type="button" class="erga-steps-next" aria-label="Forward">' +
     svg("M9.5 6.5L15 12l-5.5 5.5") +
+    "</button>" +
+    // Full screen only: out of it (viewer-full.ts runs every .erga-full-button), for a screen with no Escape key.
+    '<button type="button" class="erga-steps-exit erga-full-button" aria-label="Leave full screen">' +
+    svg(
+      "M9.25 4.75v3.5a1 1 0 0 1-1 1h-3.5M19.25 9.25h-3.5a1 1 0 0 1-1-1v-3.5M14.75 19.25v-3.5a1 1 0 0 1 1-1h3.5M4.75 14.75h3.5a1 1 0 0 1 1 1v3.5"
+    ) +
     "</button>";
   // The list under a head: the editor docks it beside the page, and the head is where it's dragged from.
   panel.className = "erga-steps-panel";
@@ -174,6 +180,25 @@ export default function viewerSteps(): void {
     panel.style.setProperty("--ar", r.width && r.height ? r.width + " / " + r.height : "16 / 9");
     panel.style.maxHeight = docked ? "" : Math.max(80, innerHeight - Math.max(12, innerHeight - r.bottom + 14) - 50 - r.top - 12) + "px";
   }
+  // Full screen (viewer-full.ts): back, the step and forward over the page, out of sight while the pointer is still, as a
+  // presenter expects. No list, but a way out.
+  let still = 0;
+  function wake() {
+    bar.classList.remove("erga-steps-still");
+    clearTimeout(still);
+    still = window.setTimeout(() => bar.classList.toggle("erga-steps-still", !bar.matches(":hover")), 2000);
+  }
+  function full() {
+    const on = document.documentElement.classList.contains("erga-full");
+    if (on == bar.classList.contains("erga-steps-full")) return;
+    bar.classList.toggle("erga-steps-full", on);
+    clearTimeout(still);
+    bar.classList.remove("erga-steps-still");
+    if (on) {
+      show(false);
+      wake();
+    }
+  }
   function show(on: boolean) {
     panel.hidden = !on;
     toggle.setAttribute("aria-expanded", String(on));
@@ -214,6 +239,8 @@ export default function viewerSteps(): void {
             }
           : null
       );
+    } else if (m.type == "erga-pointer") {
+      if (bar.classList.contains("erga-steps-full")) wake();
     } else if (m.type == "erga-step-image" && steps && m.rev == steps.rev && Number.isInteger(m.step) && m.step < steps.count) {
       const old = pics.get(m.step);
       if (old) URL.revokeObjectURL(old.url);
@@ -233,6 +260,9 @@ export default function viewerSteps(): void {
     if (b) go({ to: Number(b.dataset.step) });
   });
   list.addEventListener("scroll", ask, { passive: true });
+  bar.addEventListener("pointermove", () => {
+    if (bar.classList.contains("erga-steps-full")) wake();
+  });
   document.addEventListener("keydown", (e) => {
     const t = e.target as HTMLElement | null;
     if (!steps || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -251,6 +281,7 @@ export default function viewerSteps(): void {
   watch.observe(document.body, { attributes: true, attributeFilter: ["class"], childList: true });
   // (The frame shows once the band has its colour: viewer-band-wait.ts's class on the root.)
   watch.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  new MutationObserver(full).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
   document.addEventListener("transitionend", (e) => {
     if ((e.target as Element | null)?.id == "frame") place();
   });

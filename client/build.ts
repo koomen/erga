@@ -216,14 +216,15 @@ async function build(): Promise<void> {
   const admin = enc(["admin.css", "ops.css"].map((f) => readFileSync(join(ROOT, "client/styles", f), "utf8")).join("\n"));
   files["admin.css"] = put(`admin-${hashOf(admin)}.css`, admin);
 
-  // The editor's page, naming the files of this build: the typeface's rules in it (no stylesheet to wait for), its
-  // stylesheet, and its script as a module.
+  // The editor's page, naming the files of this build: the typeface's rules and its own styles in it (no stylesheet to
+  // wait for), its stylesheet, and its script as a module.
   let editor = readFileSync(join(ROOT, "client/editor.html"), "utf8");
   const swap = (from: string, to: string) => {
     if (!editor.includes(from)) throw new Error(`client/editor.html has no ${from}`);
     editor = editor.replace(from, () => to);
   };
   swap(`<link rel="stylesheet" href="/fonts/inter.css">`, `<style id="erga-fonts">${fontCss}</style>`);
+  swap(`<link rel="stylesheet" href="/editor.css">`, `<style>${readFileSync(join(ROOT, "client/styles/editor.css"), "utf8")}</style>`);
   swap(`<link rel="stylesheet" href="/style.css">`, `<link rel="stylesheet" href="${files["style.css"]}">`);
   swap(`<script src="/page.js"></script>`, `<script type="module" src="${files["page.js"]}"></script>`);
   // (Not fetched by any page: the server puts the shell into the document's page, below. Its address names this build of

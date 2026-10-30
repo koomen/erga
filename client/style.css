@@ -364,7 +364,7 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 @keyframes dock-ghost-in { from { opacity: 0; transform: scale(0.97); } }
 
 /* ---------- The agent panel's insides ----------
-   Its head, the conversation and the box: the editor's panel (client/editor.html places it) and
+   Its head, the conversation and the box: the editor's panel (client/styles/editor.css places it) and
    the admin's on the admin pages both use them. */
 
 .agent-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px 18px; }

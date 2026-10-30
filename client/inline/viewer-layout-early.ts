@@ -2,7 +2,7 @@
 // viewer-editing-body.ts), so the first frame already has the document where it stays: the agent open or not
 // (client/shell/main.ts, settings.agent), its side and width (client/agent/layout.ts: KEY, geometry, and mountLayout's variables;
 // tests/layout.test.ts checks the two agree), and the document's zoom (client/shell/main.ts, ZOOM_KEY), which the frame takes
-// (client/editor.html, html.erga-zoomed). The steps list isn't known yet: it takes no room.
+// (client/styles/editor.css, html.erga-zoomed). The steps list isn't known yet: it takes no room.
 
 type Panel = "agent" | "doc" | "picker";
 

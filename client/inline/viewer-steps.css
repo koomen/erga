@@ -33,5 +33,11 @@ html.page-dark :is(.erga-steps, .erga-steps-panel) { --st-bg: rgba(31, 31, 35, .
 .erga-steps-plain .erga-step-name { margin: 0; }
 .erga-steps-plain .erga-step[aria-current="step"] { color: #3b7cf0; }
 .erga-steps-plain .erga-step[aria-current="step"] b { color: inherit; }
+/* Full screen (viewer-steps.ts, full): over the page's frame (viewer.css, html.erga-full), without the list; gone while
+   the pointer is still. */
+.erga-steps-full { z-index: 2147483647; transition: opacity 400ms ease; }
+.erga-steps-full .erga-steps-toggle, .erga-steps:not(.erga-steps-full) .erga-steps-exit { display: none; }
+.erga-steps-full.erga-steps-still { opacity: 0; cursor: none; }
+@media (prefers-reduced-motion: reduce) { .erga-steps-full { transition: none; } }
 /* On a phone the agent covers the page: the steps go with it. */
-@media (max-width: 640px) { body.agent-open :is(.erga-steps, .erga-steps-panel) { display: none; } }
+@media (max-width: 640px) { body.agent-open :is(.erga-steps:not(.erga-steps-full), .erga-steps-panel) { display: none; } }

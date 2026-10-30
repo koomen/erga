@@ -25,6 +25,9 @@ export const filesButton = (href: string) => `<a href="${esc(href)}" class="erga
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
+/** The viewer's Full screen button, as the editor's (client/editor.html, #btn-full): the page's frame fills the screen (client/inline/viewer-full.ts), where it can (viewer.css). */
+export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-full-button" aria-label="Full screen" data-tip="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 9.25v-3.5a1 1 0 0 1 1-1h3.5M14.75 4.75h3.5a1 1 0 0 1 1 1v3.5M19.25 14.75v3.5a1 1 0 0 1-1 1h-3.5M9.25 19.25h-3.5a1 1 0 0 1-1-1v-3.5"/></svg></button>`;
+
 /** What a page kept for its reload (client/live/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";
 
@@ -58,7 +61,7 @@ export const NAV_SCRIPT = inlineCall("viewer-nav");
  * the document, and it takes the document's own background, so it reads as
  * part of the page: its colour, and over that its gradient or image
  * (.erga-canvas, which has the frame's box; BAND_BOOT paints it). --band-h is the controls' row
- * (34px, at max(12px, the notch)) and a 10px gap; the editor's client/editor.html
+ * (34px, at max(12px, the notch)) and a 10px gap; the editor's client/styles/editor.css
  * keeps the frame there too. Until the frame says (BAND_BOOT), the colour
  * is the one this document had last time on this browser, and the
  * controls' tone (light or dark text) with it.
@@ -80,6 +83,9 @@ export const STEPS_BOOT = inlineCall("viewer-steps");
 
 /** The steps' bar and panel (client/inline/viewer-steps.css). */
 export const STEPS_STYLE = `<style>${inlineStyle("viewer-steps")}</style>`;
+
+/** Full screen: the page's frame, from the button in the viewer and the editor (client/inline/viewer-full.ts). */
+export const FULL_BOOT = inlineCall("viewer-full");
 
 /** The fade (client/common/fade.ts) on a document's page, from the frame's scroll and pointer (client/inline/viewer-fade.ts). */
 export const FADE_BOOT = inlineCall("viewer-fade");
@@ -118,7 +124,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 <body>${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const after = `
-${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${o.files ?? ""}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}
+${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${o.files ?? ""}${FULL_BUTTON}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}
 `;
   return { before, after };
 }
