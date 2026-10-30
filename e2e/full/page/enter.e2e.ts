@@ -22,7 +22,7 @@ test("Enter at the end, then typing: the text fills the new paragraph, with no <
 
 test("Enter twice keeps a blank paragraph, a line high, held open by a <br>; the paragraph typed into has none; Backspace into the blank one leaves none", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
-  await ed.clickEnd("blockquote p");
+  await ed.clickEnd("h1");
   await ed.press("Enter");
   await ed.type("hello");
   await expect.poll(() => ed.source()).toMatch(/<p>hello<\/p>/);
@@ -30,11 +30,11 @@ test("Enter twice keeps a blank paragraph, a line high, held open by a <br>; the
   await ed.press("Enter");
   await ed.type("world");
   await expect.poll(() => ed.source()).toMatch(/<p>hello<\/p>\s*<p><br><\/p>\s*<p>world<\/p>/);
-  expect(await html(ed, "blockquote p:nth-of-type(4)")).toBe("world");
-  expect(await ed.frame<number>(`${F}.querySelector("blockquote p:nth-of-type(3)").getBoundingClientRect().height`)).toBeGreaterThan(10);
+  expect(await html(ed, "main > p:nth-of-type(3)")).toBe("world");
+  expect(await ed.frame<number>(`${F}.querySelector("main > p:nth-of-type(2)").getBoundingClientRect().height`)).toBeGreaterThan(10);
   for (let i = 0; i < 5; i++) await ed.press("ArrowLeft");
   await ed.press("Backspace");
-  await expect.poll(() => ed.source()).toMatch(/<p>hello<\/p>\s*<p>world<\/p>\s*<\/blockquote>/);
+  await expect.poll(() => ed.source()).toMatch(/<p>hello<\/p>\s*<p>world<\/p>\s*<p class="lede">/);
 });
 
 test("Enter at the start of a block leaves a blank block before it, held open by a <br>", async ({ tab }) => {

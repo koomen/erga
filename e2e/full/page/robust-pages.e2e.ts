@@ -20,11 +20,9 @@ test(
   })
 );
 
-// Known bug: Enter at the end of a <summary> adds a second <summary> to the <details>, which HTML does not allow: a
-// browser uses only the first. When the <details> is closed, the next key goes to the start of the first summary.
-test(
-  "Enter at the end of a <details> summary keeps one summary, and the next key shows after it",
-  knownBug(async ({ tab }) => {
+// Enter at the end of a <summary> keeps one summary (a browser uses only the first): the new paragraph goes into the
+// <details> if they are open, else after them, and the next key goes there.
+test("Enter at the end of a <details> summary keeps one summary, and the next key shows after it", async ({ tab }) => {
     const ed = await openEditor(tab, await servers.main(), "robust-page");
     await ed.clickEnd("#sum");
     await ed.press("Enter");
@@ -32,8 +30,7 @@ test(
     await ed.idle();
     expect(await ed.count("summary")).toBe(1);
     expect(await ed.textOf("#sum")).toBe("More info");
-  })
-);
+});
 
 // Known bug: an extension (as Grammarly did) wraps some of a paragraph's text in its own <span>. After that, the keys
 // typed in that paragraph are lost: the caret stays, and no text comes.

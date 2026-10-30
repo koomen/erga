@@ -5,6 +5,7 @@ import * as M from "../../shared/manuscript";
 import { ChangeSet, EditorSelection, Transaction, findClusterBreak, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { BLOCK_SPLIT, contentIn, dropped, emptyIn, HEADING, lineHolder, placeholderBr, TODO_BOX, todoBox, WHOLE_BLOCKS } from "./source";
+import { backspaceBlock, enterBlock, indentBlocks } from "./blocks";
 import { carryLists, dropBlankItem, enterItem, indentItems, type ListEdit, tidy, untodo } from "./lists";
 import { noHistory } from "./core";
 import { EditorRender } from "./render";
@@ -188,7 +189,7 @@ export abstract class EditorEdit extends EditorRender {
         holder &&
         to <= holder.from &&
         !src.slice(to, holder.from).trim() &&
-        /<br\s*\/?>\s*$/i.test(src.slice(a.contentFrom, from))
+        (a.tag == "pre" ? /\n$/ : /<br\s*\/?>\s*$/i).test(src.slice(a.contentFrom, from))
       )
         drops.push(holder);
       // Deleting all of a last line's text after a line break: a <br> holds the line open, with the caret on it.
@@ -272,7 +273,10 @@ export abstract class EditorEdit extends EditorRender {
     if (box) return this.listEdit(box);
     // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
     const blank = !!placeholderBr(src, u);
-    if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id, pos, false);
+    if (!forward && (blank || pos <= M.textStart(u))) {
+      const rule = backspaceBlock(src, this.units, u, pos);
+      return rule ? this.listEdit(rule) : this.join(u.id - 1, u.id, pos, false);
+    }
     if (forward && (blank || pos >= M.textEnd(u))) return this.join(u.id, u.id + 1, pos, true);
     // A line break (<br>) between the caret and the text that way: the break goes, and the two lines join. With it
     // goes the <br> that held an empty last line open (lineHolder).
@@ -325,6 +329,13 @@ export abstract class EditorEdit extends EditorRender {
     const from = M.runPos(run, Math.min(k, other)),
       to = M.runPos(run, Math.max(k, other));
     if (from == to) return false;
+    // A code block's last line break goes with the <br> that held the empty line after it open, unless the line
+    // before is empty too (then the <br> holds that one).
+    const holder = !forward && u.tag == "pre" && run.text.slice(Math.min(k, other), Math.max(k, other)) == "\n" ? lineHolder(src, u) : null;
+    if (holder && !src.slice(to, holder.from).trim() && !/\n$/.test(src.slice(u.contentFrom, from))) {
+      this.dispatch({ changes: { from, to: holder.to }, selection: { anchor: from }, userEvent: "delete.backward", scrollIntoView: true });
+      return true;
+    }
     this.dispatch({
       changes: { from, to, insert: holdsLine(src, u, from, to) ? "<br>" : "" },
       selection: { anchor: from },
@@ -388,10 +399,11 @@ export abstract class EditorEdit extends EditorRender {
     const insertAt = (insert: string, caret: number) =>
       this.dispatch({ changes: { from: pos, insert }, selection: { anchor: caret }, userEvent: "input", scrollIntoView: true });
     if (!shift && this.enterRule(u, pos)) return true;
-    if (u.tag == "pre") {
-      insertAt("\n", pos + 1);
-      return true;
-    }
+    const rule =
+      shift && u.tag != "pre"
+        ? null
+        : enterBlock(src, u, pos, u.tag == "summary" && !!(this.els[u.id]?.parentElement as HTMLDetailsElement | null)?.open);
+    if (rule) return this.listEdit(rule);
     if (shift || !BLOCK_SPLIT.has(u.tag)) {
       // At the end of a block's text, a second <br> holds the new, empty line open (see lineHolder).
       const last = !emptyIn(src, u, u.contentFrom, pos) && emptyIn(src, u, pos, u.contentTo) && !/<br\b/i.test(src.slice(pos, u.contentTo));
@@ -441,9 +453,9 @@ export abstract class EditorEdit extends EditorRender {
 
   /**
    * Tab in a list item, and Shift+Tab (lists.ts, indentItems). In a code block Tab types an indent: a tab if the
-   * block's lines start with tabs, else two spaces. In any other block Tab does nothing: the browser would move the
-   * focus to the next block, or out of the page, and the keys after it would go there. (Google Docs indents the
-   * paragraph, which here would need new markup.)
+   * block's lines start with tabs, else two spaces. In paragraphs, headings and quotes it indents them one step, and
+   * Shift+Tab takes the step back (blocks.ts, indentBlocks). The editor always takes the key: the browser would move
+   * the focus to the next block, or out of the page, and the keys after it would go there.
    */
   protected indentItem(out: boolean): boolean {
     const sel = this.currentSelection();
@@ -451,8 +463,21 @@ export abstract class EditorEdit extends EditorRender {
     if (edit && edit != "stay") this.listEdit(edit);
     if (edit) return true;
     const u = M.unitAt(this.units, sel.from);
-    if (!out && u?.tag == "pre" && M.unitAt(this.units, sel.to) == u && this.verify(u) && this.editableAt(u, sel.from))
-      this.insertText(/^\t/m.test(this.src.slice(u.contentFrom, u.contentTo)) ? "\t" : "  ", null);
+    if (u?.tag == "pre") {
+      if (!out && M.unitAt(this.units, sel.to) == u && this.verify(u) && this.editableAt(u, sel.from))
+        this.insertText(/^\t/m.test(this.src.slice(u.contentFrom, u.contentTo)) ? "\t" : "  ", null);
+      return true;
+    }
+    const changes = indentBlocks(this.src, this.units, sel.from, sel.to, out);
+    if (changes?.length) {
+      const set = this.state.changes(changes);
+      this.dispatch({
+        changes: set,
+        selection: EditorSelection.single(set.mapPos(sel.anchor, 1), set.mapPos(sel.head, 1)),
+        annotations: isolateHistory.of("full"),
+        userEvent: "input.indent",
+      });
+    }
     return true;
   }
 
@@ -503,13 +528,15 @@ export abstract class EditorEdit extends EditorRender {
 
 /**
  * Whether deleting [from, to) of `u` takes all the text of the block's last line after a line break
- * (`text<br><br>s`, Backspace): then a <br> must take its place, or the line goes too (lineHolder).
+ * (`text<br><br>s`, Backspace; in a code block, `text\ns`): then a <br> must take its place, or the line goes too
+ * (lineHolder).
  */
 function holdsLine(src: string, u: M.Unit, from: number, to: number): boolean {
+  const pre = u.tag == "pre";
   return (
     !emptyIn(src, u, from, to) &&
-    /<br\s*\/?>\s*$/i.test(src.slice(u.contentFrom, from)) &&
-    /^(?:\s|<\/[a-z][^>]*>)*$/i.test(src.slice(to, u.contentTo))
+    (pre ? /\n$/ : /<br\s*\/?>\s*$/i).test(src.slice(u.contentFrom, from)) &&
+    (pre ? /^(?:<\/[a-z][^>]*>)*$/i : /^(?:\s|<\/[a-z][^>]*>)*$/i).test(src.slice(to, u.contentTo))
   );
 }
 

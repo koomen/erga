@@ -22,7 +22,6 @@ const CASES: [string, string, string, string, string][] = [
   ["the first list item into the paragraph before the list", "#one", `<p id="gamma">keeps its own type.|Item one</p>\n    <ul>\n      <li id="two">`, "#gamma", "keeps its own type.Item one"],
   ["a list item into the one before", "#two", `<li id="one">Item one|Item two</li>\n    </ul>`, "#one", "Item oneItem two"],
   ["a paragraph after a list into its last item", "#after", `<li id="two">Item two|after the list.</li>\n    </ul>\n    <blockquote>`, "#two", "Item twoafter the list."],
-  ["a quote's only paragraph, and the quote with it", "#quoted", `<p id="after">after the list.|A quote</p>\n    <figure>`, "#after", "after the list.A quote"],
 ];
 
 for (const [what, sel, joined, prevSel, prevText] of CASES) {
@@ -41,3 +40,20 @@ for (const [what, sel, joined, prevSel, prevText] of CASES) {
     await expect.poll(async () => (await ed.source()) == original && (await ed.count(sel)) == 1).toBe(true);
   });
 }
+
+// A quote's paragraph first leaves the quote (blocks.ts), and the next Backspace joins it; one undo takes back each.
+test("a quote's only paragraph: Backspace takes the quote off, the next joins it; undo brings back each", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "join");
+  const original = await ed.source();
+  await backspaceAt(ed, "#quoted");
+  await expect.poll(() => ed.source()).toContain(`<p id="after">after the list.</p>\n    <p id="quoted">A quote</p>\n    <figure>`);
+  expect(await ed.count("blockquote")).toBe(0);
+  const unquoted = await ed.source();
+  await ed.press("Backspace");
+  await expect.poll(() => ed.source()).toContain(`<p id="after">after the list.A quote</p>\n    <figure>`);
+  await expect.poll(() => ed.textOf("#after")).toBe("after the list.A quote");
+  await ed.press("ControlOrMeta+z");
+  await expect.poll(() => ed.source()).toBe(unquoted);
+  await ed.press("ControlOrMeta+z");
+  await expect.poll(() => ed.source()).toBe(original);
+});
