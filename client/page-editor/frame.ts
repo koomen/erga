@@ -69,6 +69,8 @@ let dropSeq = 0;
 let relay: Relay | null = null;
 /** In the source view the shell holds the text; edits here would go nowhere. */
 let detached = false;
+/** Out of step with the shell: its text, whole, is on its way (attach); the changes before it don't fit. */
+let resyncing = false;
 let restoreScroll: number | null = null;
 /** What stops what the editor added to the page besides its own (its caret, the watches the shell's controls follow). */
 let unwatch: (() => void)[] = [];
@@ -117,17 +119,45 @@ window.addEventListener("message", (e: MessageEvent) => {
   if (!page || !relay) return;
   switch (m.type) {
     case "external": {
-      const mine = relay.remote(ChangeSet.fromJSON(m.changes));
+      if (resyncing) return;
+      // A change that doesn't fit this text: the two sides are out of step. The shell's text, whole, puts it right (attach).
+      let mine: ChangeSet | null = null;
+      try {
+        mine = relay.remote(ChangeSet.fromJSON(m.changes));
+      } catch {
+        /* out of step */
+      }
+      if (!mine || mine.length != page.state.doc.length) {
+        console.warn(
+          `page editor: a change for a text of ${m.length} characters doesn't fit this one (${page.state.doc.length}); resyncing`
+        );
+        resyncing = true;
+        post({ type: "resync" });
+        return;
+      }
       page.applyExternal(mine, m.author);
       if (relay.idle && page.state.doc.length != m.length) post({ type: "resync" });
       if (page.stale) post({ type: "stale" });
       return;
     }
-    case "ack": relay.accepted(); sendSelection(); return;
-    case "reject": relay.refused(); return;
-    case "authorship": page.recordAuthorship(ChangeSet.fromJSON(m.changes), m.author); return;
-    case "tracking": page.setTracking(m.on); return;
-    case "paused": page.setPaused(m.on); queueSnapshot(); return;
+    case "ack":
+      relay.accepted();
+      sendSelection();
+      return;
+    case "reject":
+      relay.refused();
+      return;
+    case "authorship":
+      if (resyncing) return;
+      page.recordAuthorship(ChangeSet.fromJSON(m.changes), m.author);
+      return;
+    case "tracking":
+      page.setTracking(m.on);
+      return;
+    case "paused":
+      page.setPaused(m.on);
+      queueSnapshot();
+      return;
     // (The page loads again, made from the text: reload.)
     case "render": page.render(); return;
     case "zoom": setZoom(m.level); return;
@@ -159,6 +189,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       detach(m.id);
       return;
     case "attach":
+      resyncing = false;
       relay.reset(m.version);
       detached = false;
       page.setState(stateFrom(m.state));

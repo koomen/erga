@@ -64,6 +64,9 @@ export interface RemotePageConfig {
 /** What the source view's state is made with: its extensions, and the field its undo history is in. */
 export interface SourceState { extensions: Extension; history: StateField<unknown> }
 
+/** The messages about the text: a frame that comes has it from its init instead. */
+const TEXT = new Set<ToFrame["type"]>(["external", "authorship", "ack", "reject", "attach"]);
+
 const EMPTY: Snapshot = { title: "", canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, text: "", link: null } };
 
 export class RemotePage {
@@ -155,7 +158,13 @@ export class RemotePage {
   // ------------------------------------------------------------ messages
 
   private post(m: ToFrame): void {
-    if (!this.ready && m.type != "init") { this.queue.push(m); return; }
+    if (!this.ready && m.type != "init") {
+      // The text goes whole with the init: a change, an answer to an offer or a state queued for a frame that isn't up
+      // yet would come to a frame that has it already (a change applied twice: "the wrong length").
+      if (!TEXT.has(m.type)) this.queue.push(m);
+      else if (m.type == "attach") this.carry = m.state;
+      return;
+    }
     this.frame.contentWindow?.postMessage(m, this.config.origin);
   }
 
