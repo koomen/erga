@@ -221,6 +221,7 @@
 #source-pane #deploy-log .meta .bad { color: var(--bad); }
 #source-pane #deploy-log .close { margin-left: auto; height: 30px; }
 #source-pane #deploy-log .rollback { height: 30px; white-space: nowrap; }
+#source-pane #deploy-log .rollback[hidden] { display: none; }
 #source-pane #deploy-log .rollback[data-armed="1"] { color: var(--bad); border-color: var(--bad); }
 #source-pane #deploy-log pre { margin: 0; border-radius: 0 0 12px 12px; height: min(60vh, 520px); overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 #source-pane #deploy-log pre .t { color: var(--chrome); }

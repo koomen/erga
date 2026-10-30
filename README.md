@@ -168,7 +168,7 @@ health checks and rollbacks work.
       checkpoint.ts   an agent's conversation, kept step by step (chat-store.ts, in a Durable Object's SQLite)
       document/       the document agent: session.ts (one session per person per document), workspace.ts, tools.ts,
                       prompt.ts, PROMPT.md
-      admin/          the admin agent: agent.ts (its session), tools.ts (its own tools), prompt.ts, sessions.ts (one
+      admin/          the admin agent: agent.ts (its session), tools.ts (its own tool: the homepage's deploy), prompt.ts, sessions.ts (one
                       session per admin, and its routes), panel.ts (the panel's preferences)
     shared/       code the server and the browser bundles both use: the agent's transcript (agent-log.ts), attached
                   files (attach.ts), who did something (attribution.ts), a page's text and its source (manuscript.ts,
@@ -192,14 +192,15 @@ health checks and rollbacks work.
                   (dev.ts, dev-entry.ts)
     control/      the control Worker: Erga's repository and Git endpoint, the deploy pipeline, the Ops page and its
                   sign-in, and the build container (builder/), apart from the app, so a broken app never takes the
-                  way to fix it down (index.ts the entry, settings.ts its settings, routes.ts, platform.ts, wrangler.jsonc: its bindings, env.ts types them; d1.ts). The app reaches it
+                  way to fix it down (index.ts the entry, settings.ts its settings, routes.ts, operations.ts: the Ops page's operations, which the app's
+                  /api/tools and every admin's agent have too, platform.ts, wrangler.jsonc: its bindings, env.ts types them; d1.ts). The app reaches it
                   over a service binding; locally the app hosts its routes.
       source/         Erga's own Git repository: its routes (routes.ts), the repository (repo.ts) and its Durable
                       Object (source-host.ts), Git itself (git.ts, http.ts, merge.ts), the GitHub App (github.ts),
-                      the Ops page (page.ts)
+                      the Ops page (page.ts) and its operations on the repository (operations.ts)
       deploys/        the deploy pipeline (pipeline.ts; control-worker.ts for the control Worker's own deploy), its
                       Cloudflare credential (credential.ts: an OAuth grant), branch deploys (branches.ts, in
-                      pipeline-object.ts), the release store (releases.ts), the deploys' API (api.ts)
+                      pipeline-object.ts), the release store (releases.ts), the Ops page's operations on the deploys (operations.ts), the event stream (api.ts)
       install/        /deploy: installs in other accounts (install.ts, forks.ts, the page, its routes and session)
       cloudflare.ts   what the control Worker has of Cloudflare: Artifacts, the GitHub App, the release bucket
     deploy/       what a person runs on a machine: a deploy (run.ts), the release build (release.ts), the setup

@@ -1,7 +1,9 @@
 // The Ops page, /admin/ops, for admins with admin access: the one place to
 // manage Erga's environments, its Cloudflare credential, its own source and
 // its deploys. It has the layout every admin page shares: the breadcrumb,
-// Share with agent, the admin's agent and the sidebar.
+// Share with agent, the admin's agent and the sidebar. Each action on it is an
+// operation (control/operations.ts), which its script runs over
+// POST /api/tools/<name>; the admin agent has the same ones as tools.
 //
 // Status, at the top: one card for each environment (production, staging,
 // the control Worker): its state, when, the commit that is live, and its
@@ -12,7 +14,7 @@
 // on the control Worker's origin, which may not be this page's). The popup
 // tells this page when it's done, and the event stream says so too; the
 // deploys that waited for the credential go by themselves. Disconnect
-// (POST /api/deploys/credential/disconnect) revokes it. No link elsewhere.
+// (disconnect_deploy_credential) revokes it. No link elsewhere.
 //
 // Git Repository, below: how to clone and push, Merge
 // and Cut release, then the git log:
@@ -25,22 +27,22 @@
 // when it leaves at least one commit out (17 or more ahead). Beside it, one dot column,
 // with no header: every commit listed is on staging; a solid green circle is
 // on main too, a hollow orange circle only on staging. Then two deploy
-// columns, staging and production: each target's deploys (GET
-// /api/deploys?history=100), one beside each commit it deployed: its state
+// columns, staging and production: each target's deploys (list_deploys,
+// history 100), one beside each commit it deployed: its state
 // as plain text (live, deployed, failed, cancelled, or running) and when.
 // A commit deployed more than once shows one deploy: the running one, else
 // the live one, else the newest (a redeploy cancels the attempt before it).
 // Only the live deploy has a background. Each target's status is in its column's head. Any deploy opens
-// its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
+// its log, past or live (deploy_log, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Above the log, how to clone and
 // push. GitHub's card in Status says which repository is connected and how
 // the sync stands (Connect GitHub, a popup; Sync now; Disconnect). Releases are tags:
 // a tagged commit's row carries its version, "stable" on the newest release
-// tag, and "edge" on the newest commit of main the store has (GET
-// /api/releases). Cut release (beside Merge) cuts the next one: a dialog with
+// tag, and "edge" on the newest commit of main the store has
+// (list_releases). Cut release (beside Merge) cuts the next one: a dialog with
 // the version (the next patch version, which the admin may change) and short
-// notes, the tag's message (POST /api/source/release). It follows the
+// notes, the tag's message (cut_release). It follows the
 // system's light or dark.
 //
 // A downstream (an Erga on its own domain, forked from erga.dev's: the
@@ -49,11 +51,11 @@
 // in the log, as their own kind of row (a hollow blue dot, no deploys), then a
 // line says how many ("erga.dev: 12 commits (v0.15.0) that you do not have ·
 // 3 commits of your own"); its own commits (not on erga.dev) carry "yours".
-// Update from erga.dev (POST /api/source/update) merges upstream's channel
+// Update from erga.dev (update_from_upstream) merges upstream's channel
 // into staging; when files conflict, a box lists them and the two ways out
 // (the admin agent, or a merge in a checkout pushed to staging), and Drop.
-// Each environment's card lists its domains (GET /api/domains), with Add and
-// remove (POST and DELETE), through the instance's own Cloudflare grant.
+// Each environment's card lists its domains (list_domains), with Add and
+// remove (add_domain, remove_domain), through the instance's own Cloudflare grant.
 //
 // It updates by itself, with no reload: /api/events (a WebSocket) says what changed (a push
 // or a merge, the sync with GitHub, each step of a deploy, a redeploy, its log lines),

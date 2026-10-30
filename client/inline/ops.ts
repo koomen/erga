@@ -1,8 +1,10 @@
 // The Ops page's script (control/source/page.ts, adminSourcePage): the git log with each environment's deploys, Merge,
 // Update from upstream, the domains, GitHub, and their live updates. It runs on the app's /admin/ops and on the
-// control Worker alike, inside the admin pages' one page (window.ergaView).
+// control Worker alike, inside the admin pages' one page (window.ergaView). Each action is an operation
+// (control/operations.ts), run over POST /api/tools/<name> where the page is: the same ones the admin agent has.
 
 import { esc as escText } from "../../shared/html";
+import { runTool } from "../common/tools";
 
 // The answers of the API are typed loosely (any): this page reads what the server sends and shows it.
 type Json = any;
@@ -424,9 +426,7 @@ export default function ops(): void {
     updateHint.className = "hint";
     updateHint.textContent = "Updating from " + upstreamName() + "…";
     try {
-      const r = await fetch("/api/source/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || "The update failed (HTTP " + r.status + ").");
+      const body = await runTool("update_from_upstream");
       updateHint.textContent =
         body.result == "up-to-date"
           ? "Nothing to update: staging has everything."
@@ -465,13 +465,10 @@ export default function ops(): void {
     btn.dataset.armed = "";
     btn.textContent = "Drop this merge";
     btn.disabled = true;
-    const r = await fetch("/api/source/update/abandon", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    }).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
-    hint.textContent = !r || !r.ok ? body.error || "Couldn't drop it." : "";
+    hint.textContent = await runTool("drop_waiting_merge").then(
+      () => "",
+      (e: Error) => e.message
+    );
     btn.disabled = false;
     await load();
   });
@@ -479,10 +476,9 @@ export default function ops(): void {
   // Each environment's domains (its Worker's custom domains), with Add and remove.
   let domains: Json = null;
   async function loadDomains() {
-    const r = await fetch("/api/domains", { headers: { Accept: "application/json" } }).catch(() => null);
-    const body = r && r.ok ? await r.json().catch(() => null) : null;
+    const body = await runTool("list_domains").catch(() => null);
     if (pageView.signal.aborted) return;
-    domains = body && !body.error ? body : null;
+    domains = body;
     renderDomains();
   }
   function renderDomains() {
@@ -529,17 +525,11 @@ export default function ops(): void {
       retry = at.closest<HTMLButtonElement>("button[data-retry]");
     if (retry) {
       retry.disabled = true;
-      const r = await fetch("/api/deploys/" + retry.dataset.retry, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      }).catch(() => null);
-      const body = r ? await r.json().catch(() => ({})) : {};
-      if (!r || !r.ok) {
+      await runTool("redeploy", { target: retry.dataset.retry }).catch((e: Error) => {
         retry.disabled = false;
-        retry.title = body.error || "Couldn't start the deploy.";
+        retry.title = e.message;
         retry.textContent = "Retry (failed)";
-      }
+      });
       await loadDeploys();
     }
     if (add) {
@@ -567,15 +557,13 @@ export default function ops(): void {
         return;
       }
       rm.disabled = true;
-      const r = await fetch("/api/domains", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: rm.dataset.target, hostname: rm.dataset.remove }),
-      }).catch(() => null);
-      if (!r || !r.ok) {
-        const body = r ? await r.json().catch(() => ({})) : {};
+      const failed = await runTool("remove_domain", { target: rm.dataset.target, hostname: rm.dataset.remove }).then(
+        () => null,
+        (e: Error) => e.message
+      );
+      if (failed) {
         rm.disabled = false;
-        rm.title = body.error || "Couldn't remove it.";
+        rm.title = failed;
         rm.textContent = "!";
         return;
       }
@@ -596,13 +584,7 @@ export default function ops(): void {
     status.className = "";
     status.textContent = "Adding " + hostname + "…";
     try {
-      const r = await fetch("/api/domains", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: domDlg.dataset.target, hostname }),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      await runTool("add_domain", { target: domDlg.dataset.target, hostname });
       status.textContent = "Added. Cloudflare makes its DNS record and certificate in a minute or two.";
       await loadDomains();
       setTimeout(() => domDlg.close(), 1200);
@@ -677,14 +659,12 @@ export default function ops(): void {
     btn.dataset.armed = "";
     btn.textContent = "Disconnect";
     btn.disabled = true;
-    const r = await fetch("/api/deploys/credential/disconnect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    }).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
+    const failed = await runTool("disconnect_deploy_credential").then(
+      () => null,
+      (e: Error) => e.message
+    );
     btn.disabled = false;
-    note(r && r.ok ? "Disconnected: the grant is revoked." : body.error || "Couldn't disconnect.", !(r && r.ok));
+    note(failed ?? "Disconnected: the grant is revoked.", !!failed);
     loadDeploys();
   });
   function renderCredential() {
@@ -787,9 +767,7 @@ export default function ops(): void {
 
   async function load() {
     try {
-      const r = await fetch("/api/source/branches", { headers: { Accept: "application/json" } });
-      const body = await r.json();
-      if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      const body = await runTool("list_branches");
       if (pageView.signal.aborted) return;
       view = body;
       render();
@@ -807,18 +785,15 @@ export default function ops(): void {
       return asking;
     }
     asking = (async () => {
-      // A request that hangs ends: else it would hold every later status back (they wait for this one).
-      const r = await fetch("/api/deploys?history=100", {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(15000),
-      }).catch(() => null);
-      // No answer, or a 5xx (a server restarting into its new version): keep what's shown, and the poll below asks again.
-      const body = r && r.ok ? await r.json().catch(() => null) : null;
+      // A call that hangs ends: else it would hold every later status back (they wait for this one).
+      const body = await Promise.race([
+        runTool("list_deploys", { history: 100 }).catch(() => null),
+        new Promise((ok) => setTimeout(() => ok(null), 15000)),
+      ]);
       if (pageView.signal.aborted) return;
-      if (body || (r && r.status < 500)) {
-        deploys = body;
-        deploysKnown = true;
-      }
+      // No answer (a server restarting into its new version, say): keep what's shown, and the poll below asks again.
+      deploysKnown = true;
+      if (body) deploys = body;
       renderTargets();
       if (open && !open.pinned) {
         const t = targetOf(open.target);
@@ -865,14 +840,15 @@ export default function ops(): void {
     if (!open) return;
     const name = open.target,
       want = open.pinned ? open.deployId : null;
-    const r = await fetch("/api/deploys/" + name + "/log" + (want ? "?deploy=" + encodeURIComponent(want) : "")).catch(() => null);
-    const log = r && r.ok ? await r.json().catch(() => null) : null;
+    let missing = "";
+    const log = await runTool("deploy_log", { target: name, ...(want ? { deploy: want } : {}), lines: 0 }).catch((e: Error) => {
+      missing = e.message;
+      return null;
+    });
     if (pageView.signal.aborted) return;
     if (!open || open.target != name) return;
     if (!log || !log.deployId) {
-      if (first) {
-        pre.textContent = r && r.status == 404 ? "This deploy isn't in the history any more." : "No deploy log yet.";
-      }
+      if (first) pre.textContent = want && missing ? "This deploy isn't in the history any more." : "No deploy log yet.";
       return;
     }
     const lines = log.lines || [];
@@ -938,13 +914,7 @@ export default function ops(): void {
     rb.textContent = "Rolling back…";
     const meta = byId("log-meta");
     try {
-      const r = await fetch("/api/deploys/" + rb.dataset.target + "/rollback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || "The rollback failed (HTTP " + r.status + ").");
+      await runTool("rollback", { target: rb.dataset.target });
       // The log follows the target's latest deploy now: the rollback's.
       if (open) open.pinned = false;
       rb.hidden = true;
@@ -992,13 +962,7 @@ export default function ops(): void {
     hint.className = "hint";
     hint.textContent = "Merging…";
     try {
-      const r = await fetch("/api/source/merge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from: "staging", to: "main", ...(commit ? { commit } : {}) }),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || "The merge failed (HTTP " + r.status + ").");
+      await runTool("deploy_production", commit ? { commit } : {});
       hint.textContent = "";
     } catch (e) {
       hint.className = "hint error";
@@ -1058,13 +1022,14 @@ export default function ops(): void {
     const btn = e.currentTarget as HTMLButtonElement;
     btn.disabled = true;
     ghSay("Syncing…");
-    const r = await fetch("/api/source/github/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(
-      () => null
-    );
-    const body = r ? await r.json().catch(() => ({})) : {};
+    let failed = "";
+    const body = await runTool("sync_github").catch((e: Error) => {
+      failed = e.message;
+      return null;
+    });
     btn.disabled = false;
     const g = body && body.github;
-    ghSay(!r || !r.ok ? body.error || "Couldn't sync." : g && g.error ? g.error : "In sync.", !(r && r.ok) || !!(g && g.error));
+    ghSay(failed || (g && g.error) || "In sync.", !!(failed || (g && g.error)));
     await load();
   });
   byId("github-disconnect").addEventListener("click", async (e) => {
@@ -1083,29 +1048,21 @@ export default function ops(): void {
     btn.dataset.armed = "";
     btn.textContent = "Disconnect";
     btn.disabled = true;
-    const r = await fetch("/api/source/github/disconnect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    }).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
-    btn.disabled = false;
-    ghSay(
-      r && r.ok
-        ? "Disconnected: the App is uninstalled from the account; the repository on GitHub stays."
-        : body.error || "Couldn't disconnect.",
-      !(r && r.ok)
+    const failed = await runTool("disconnect_github").then(
+      () => null,
+      (e: Error) => e.message
     );
+    btn.disabled = false;
+    ghSay(failed ?? "Disconnected: the App is uninstalled from the account; the repository on GitHub stays.", !!failed);
     await load();
   });
 
   // The store's channels, for the marks on the log: edge's latest, and stable.
   let channels: Json = null;
   async function loadReleases() {
-    const r = await fetch("/api/releases", { headers: { Accept: "application/json" } }).catch(() => null);
-    const body = r && r.ok ? await r.json().catch(() => null) : null;
+    const body = await runTool("list_releases").catch(() => null);
     if (pageView.signal.aborted) return;
-    channels = body && !body.error ? body : null;
+    channels = body;
     render();
   }
   // Cut release: the next version suggested, the notes as the tag's message.
@@ -1139,13 +1096,7 @@ export default function ops(): void {
     status.className = "";
     status.textContent = "Cutting " + version + "…";
     try {
-      const r = await fetch("/api/source/release", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version, ...(notes ? { notes } : {}) }),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      const body = await runTool("cut_release", { version, ...(notes ? { notes } : {}) });
       status.textContent =
         "Release " + body.tag + " cut at " + body.commit.slice(0, 10) + ". It goes on stable once its build is in the store.";
       await load();

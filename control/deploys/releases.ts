@@ -63,7 +63,7 @@ export interface Manifest {
   files: Record<string, { sha256: string; size: number }>;
 }
 
-/** What GET /api/releases answers: both channels. */
+/** What list_releases answers: both channels. */
 export interface ReleasesView { edge: ChannelFile; stable: ChannelFile }
 
 const text = (s: string) => new TextEncoder().encode(s);

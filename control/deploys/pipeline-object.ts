@@ -170,12 +170,12 @@ export class Pipeline extends DurableObject<HostEnv> {
   historyOf(name: string, limit?: number): Promise<DeployRecord[] | null> { return this.deploys.historyOf(name, limit); }
   hook(branch: string, commit: string, trigger?: string): Promise<void> { return this.deploys.hook(branch, commit, trigger); }
   redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
-  /** A redeploy with options (POST /api/deploys/<name> {fresh: true}): staging with a fresh copy of production's data. */
+  /** A redeploy with options (redeploy, fresh_data: true): staging with a fresh copy of production's data. */
   redeployWith(name: string, trigger: string, o: { fresh?: boolean }) { return this.deploys.redeploy(name, trigger, o); }
-  /** Back to the Worker version before the live deploy (POST /api/deploys/<name>/rollback). */
+  /** Back to the Worker version before the live deploy (rollback). */
   rollback(name: string, trigger?: string) { return this.deploys.rollback(name, trigger); }
   async alarm(): Promise<void> { await this.deploys.alarm(); }
-  // Each environment's domains (GET/POST/DELETE /api/domains).
+  // Each environment's domains (list_domains, add_domain, remove_domain).
   domains() { return this.deploys.domains(); }
   addDomain(name: string, hostname: string, by: string) { return this.deploys.addDomain(name, hostname, by); }
   removeDomain(name: string, hostname: string, by: string) { return this.deploys.removeDomain(name, hostname, by); }

@@ -1,13 +1,13 @@
 // Every tool an agent has on the server, as its person. The tools are the
-// server's operations (server/operations/: the same ones the front end calls
+// operations (server/operations/, and the Ops page's, control/operations.ts: the same ones the front end calls
 // over POST /api/tools/<name>), and each document tool (read, edit, write, ...
 // of agents/document/tools.ts) for any document the caller names, run in that
 // document's host as the person's agent (`documentTools`).
 //
 //   the editor's agent   (agents/document/session.ts) every operation its person may use but the admin ones, and
 //                        its own document tools, which take a `document` too: another document's run there
-//   the admin agent      (agents/admin/sessions.ts) every operation, with admin power, the document tools for any
-//                        document, and its own (the Ops page's, Erga's source: agents/admin/tools.ts)
+//   the admin agent      (agents/admin/sessions.ts) every operation, with admin power (the Ops page's too), the
+//                        document tools for any document, and its own (the homepage's deploy: agents/admin/tools.ts)
 //   an outside agent     (server/api.ts: REST, /mcp and the guide) every operation its token's person may use (the admin
 //                        ones only with an admin token; none that reach beyond one document with a document token),
 //                        and the document tools for any document
@@ -32,6 +32,14 @@ import {
 import type { ToolContent } from "../document/agent.ts";
 import type { Route } from "../server/directory/index.ts";
 import { CHANGES, documentToolSpecs } from "./document/tools.ts";
+import { CONTROL_OPERATIONS } from "../control/operations.ts";
+
+/**
+ * Every operation: the server's (server/operations/), and the Ops page's (control/operations.ts), which work the
+ * control Worker's repository and deploys and so live in control/, above server/. Add one to either list and the
+ * front end's API, every agent, REST, MCP and the guides have it.
+ */
+export const ALL_OPERATIONS: Operation[] = [...OPERATIONS, ...CONTROL_OPERATIONS];
 
 /** A tool, for any agent: an operation, a document tool for any document, or one of the admin agent's own. */
 export type Tool = Omit<Operation, "ui"> & { readonly ui?: string };
@@ -98,7 +106,7 @@ export const jsonSchemaOf = (t: Tool): { type: "object"; required?: string[] } =
 };
 
 /** Every tool there is: the operations, and the document tools for any document. */
-export const allTools = (): Tool[] => [...OPERATIONS, ...documentTools()];
+export const allTools = (): Tool[] => [...ALL_OPERATIONS, ...documentTools()];
 
 /**
  * The tools a caller may use: the operations it's offered (the admin ones only with admin power; none that reach
@@ -107,7 +115,7 @@ export const allTools = (): Tool[] => [...OPERATIONS, ...documentTools()];
  */
 export async function toolsFor(caller: Caller): Promise<Tool[]> {
   const ops: Tool[] = [];
-  for (const op of OPERATIONS) if (await offered(op, caller)) ops.push(op);
+  for (const op of ALL_OPERATIONS) if (await offered(op, caller)) ops.push(op);
   return caller.here ? ops : [...ops, ...documentTools()];
 }
 

@@ -56,10 +56,16 @@ test("a push, its deploy and a merge show on the open Ops page without a reload"
   // The deploy's log opens, live.
   await page.click(stagingDep);
   await expect.poll(() => text("#log-lines"), { timeout: 10_000 }).toContain("build");
+  // A failed deploy isn't live: its log offers no Roll back (the button's pill style once showed it while hidden).
+  expect(await page.evaluate(() => document.getElementById("log-rollback")!.getClientRects().length)).toBe(0);
   await page.click("#log-close");
 
   // A merge (as another tab, or an agent, makes it): the dots turn green, and production's column shows its deploy.
-  const merged = await fetch(`${server.root}/api/source/merge`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: "staging", to: "main" }) });
+  const merged = await fetch(`${server.root}/api/tools/deploy_production`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
   expect(merged.status, await merged.clone().text()).toBe(200);
   await expect.poll(() => classOf(`${row} .dot`), { timeout: 10_000 }).toContain("on-main");
   await expect.poll(() => classOf(`${row} .deps[data-target="production"] .dep`), { timeout: 15_000 }).toContain("dep");
@@ -69,7 +75,11 @@ test("a push, its deploy and a merge show on the open Ops page without a reload"
   expect(await page.evaluate(() => (document.getElementById("merge") as HTMLButtonElement).disabled)).toBe(true);
 
   // A release cut on main's head: its badge on the row shows whole, at desktop and phone width (the subject shortens instead).
-  const cut = await fetch(`${server.root}/api/source/release`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ version: "v0.1.0", notes: "First" }) });
+  const cut = await fetch(`${server.root}/api/tools/cut_release`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ version: "v0.1.0", notes: "First" }),
+  });
   expect(cut.status, await cut.clone().text()).toBe(200);
   const badge = `${row} .subj .rel`;
   await expect.poll(() => text(badge), { timeout: 10_000 }).toContain("v0.1.0");

@@ -138,7 +138,7 @@ describe("the routes", () => {
     expect((await releasesRoutes(null, "/releases"))!.status).toBe(404);
   });
 
-  test("the channels on the control Worker: admins read /api/releases; the store is for anyone; a tag rides on stable", async () => {
+  test("the channels on the control Worker: admins read list_releases; the store is for anyone; a tag rides on stable", async () => {
     const { store: s } = store();
     await s.publish(release(V1), C1);
     await s.addTo("edge", V1);
@@ -149,6 +149,7 @@ describe("the routes", () => {
     const platform = {
       sessionOf: async () => who,
       directory: { users: { isAdmin: async () => true, actsAsAdmin: async () => true } },
+      deploys: { releases: () => s.view() },
     } as unknown as Platform;
     const c: Control = {
       platform,
@@ -161,12 +162,24 @@ describe("the routes", () => {
       oauth: { clientId: "", accountId: "", worker: "erga-control", net: fetch },
     };
     const go = (path: string) => controlRoutes(new Request(`${ORIGIN}${path}`, { headers: { accept: "application/json" } }), c);
+    // The Ops page's call: POST /api/tools/list_releases, from its own origin.
+    const channels = (on: Control) =>
+      controlRoutes(
+        new Request(`${ORIGIN}/api/tools/list_releases`, {
+          method: "POST",
+          headers: { Origin: ORIGIN, "Content-Type": "application/json" },
+          body: "{}",
+        }),
+        on
+      );
     who = null;
     expect((await go("/releases/stable.json")).status).toBe(200);
-    expect((await go("/api/releases")).status).toBe(401);
+    expect((await channels(c)).status).toBe(401);
     who = { login: "ada", name: "Ada" } as unknown as Session;
-    expect(((await (await go("/api/releases")).json()) as { stable: { latest: string | null; releases: { tag?: string }[] } }).stable).toMatchObject({ latest: V1, releases: [{ tag: "v0.1.0" }] });
-    const none: Control = { ...c, releases: null, deploys: { releases: async () => null } as never };
-    expect((await controlRoutes(new Request(`${ORIGIN}/api/releases`, { headers: { accept: "application/json" } }), none)).status).toBe(404);
+    expect(
+      ((await (await channels(c)).json()) as { result: { stable: { latest: string | null; releases: { tag?: string }[] } } }).result.stable
+    ).toMatchObject({ latest: V1, releases: [{ tag: "v0.1.0" }] });
+    const none: Control = { ...c, releases: null, platform: { ...platform, deploys: { releases: async () => null } } as never };
+    expect((await channels(none)).status).toBe(404);
   });
 });

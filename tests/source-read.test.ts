@@ -1,5 +1,5 @@
 // The factory's agent reading Erga's own source (control/source/browse.ts,
-// SourceRepo.read, agents/admin/tools.ts `sourceTools`): list a folder, read a file
+// SourceRepo.read, and the operations list_source, read_source, search_source and source_log of control/source/operations.ts): list a folder, read a file
 // or some of its lines, search, and the git log, at staging (the default), main,
 // a task's branch or a commit, in front of pretend Artifacts (real git,
 // tests/helpers/source-fixture.ts). Read-only: with a read token only, and no branch moves.
@@ -15,7 +15,8 @@ import { lsRefs } from "../control/source/remote.ts";
 import { SourceRepo } from "../control/source/repo.ts";
 import type { SourceRead } from "../control/source/browse.ts";
 import { startAdminAgent } from "../agents/admin/agent.ts";
-import { sourceTools } from "../agents/admin/tools.ts";
+import { SOURCE_OPERATIONS } from "../control/source/operations.ts";
+import type { Caller } from "../server/operations/index.ts";
 import { agentTools } from "../agents/tools.ts";
 import { must, startFixture, type Fixture } from "./helpers/source-fixture.ts";
 
@@ -142,9 +143,17 @@ test("the agent's tools: each checks the admin first, and says the text is infor
   const guard = async () => {
     if (locked) throw new Error("Unlock admin access first.");
   };
+  // The admin agent's caller: an admin, on a server whose repository is this one.
+  const caller = {
+    dir: { users: { actsAsAdmin: async () => true, isAdmin: async () => true } },
+    who: { login: "root", admin: true },
+    origin: "https://erga.test",
+    platform: { source: { object: { read: (_origin: string, q: SourceRead) => repo.read(q) } } },
+  } as unknown as Caller;
+  const reads = ["list_source", "read_source", "search_source", "source_log"];
   const tools = agentTools(
-    sourceTools((q) => repo.read(q)),
-    null,
+    SOURCE_OPERATIONS.filter((o) => reads.includes(o.name)),
+    caller,
     guard
   );
   expect(tools.map((t) => t.name)).toEqual(["list_source", "read_source", "search_source", "source_log"]);

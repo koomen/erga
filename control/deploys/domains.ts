@@ -1,5 +1,5 @@
 // Domains: each environment's custom domains on its Worker (the Ops page,
-// /api/domains), and domains through Cloudflare Registrar (the install page):
+// list_domains, add_domain and remove_domain), and domains through Cloudflare Registrar (the install page):
 // search, check, register, and a registration's progress.
 
 import { Cloudflare, DeployError } from "./cloudflare-api";
@@ -75,11 +75,11 @@ export async function registrationStatus(cf: Cloudflare, accountId: string, name
   return workflow(await cf.call<Workflow>("GET", `/accounts/${accountId}/registrar/registrations/${encodeURIComponent(name)}/registration-status`, `check on ${name}'s registration`));
 }
 
-// ---- each environment's domains: its Worker's custom domains, through the credential (control/routes.ts, /api/domains).
+// ---- each environment's domains: its Worker's custom domains, through the credential (the operations list_domains, add_domain and remove_domain).
 
 /** One of an environment's domains: its own address (`primary`, the fleet's), or one added on the Ops page; the zone it's on, when known. */
 export interface DomainEntry { hostname: string; primary: boolean; zone: string | null }
-/** GET /api/domains: each environment's domains. */
+/** list_domains: each environment's domains. */
 export interface DomainsView { targets: Partial<Record<DeployName, DomainEntry[]>> }
 
 export class Domains {

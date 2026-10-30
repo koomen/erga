@@ -11,8 +11,7 @@ import type { Session } from "../server/platform.ts";
 import { REQUEST_MINUTES, type AgentToken } from "../server/identity/index.ts";
 import { DOCUMENT_RULES, FILES_PROMPT, PAGES_PROMPT } from "./document/prompt";
 import type { ToolSpec } from "../document/agent";
-import { documentTools } from "./tools";
-import { OPERATIONS } from "../server/operations/index.ts";
+import { ALL_OPERATIONS, documentTools } from "./tools";
 
 /** The tools, as a guide lists them: each one's name, what it does, and its arguments as JSON Schema. */
 const toolDocs = (tools: ToolSpec[]) =>
@@ -155,7 +154,7 @@ that file). Do it only when your person asks.
 
 ## The server's tools
 
-${toolDocs(OPERATIONS.filter((t) => !t.admin))}
+${toolDocs(ALL_OPERATIONS.filter((t) => !t.admin))}
 
 ## Admin tools
 
@@ -167,7 +166,7 @@ deploy locks shows as \`"locked": true\` and can't be changed here. Users are
 everyone who may sign in; an admin by the deploy (\`"bootstrap": true\`) can't
 be demoted or removed here.
 
-${admin || !session ? toolDocs(OPERATIONS.filter((t) => t.admin)) : "(none for you)"}
+${admin || !session ? toolDocs(ALL_OPERATIONS.filter((t) => t.admin)) : "(none for you)"}
 
 ## Document tools
 
@@ -323,16 +322,23 @@ For example:
 
     curl -s -X POST ${api}/ext/tools/list_settings -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{}'
 
-**Erga's source and deploys** (the Ops page, ${o.origin}/admin/ops):
+**Erga's source and deploys** (the Ops page, ${o.origin}/admin/ops) are tools too, the same
+ones the page calls (\`POST ${api}/tools/<name>\` answers {"ok": true, "result": ...}):
 
-    GET   ${api}/source/branches                  staging and main: each head and its recent commits, GitHub's status, any merge waiting
-    POST  ${api}/source/merge                     {from: "staging", to: "main", commit?}: main moves to staging: production deploys it
-    GET   ${api}/source/github                    the GitHub connection: the repository, the sync's state and its last error
-    POST  ${api}/source/github/sync               sync with GitHub now
-    GET   ${api}/deploys[?history=N]              every deploy target's status, and its last N deploys
-    GET   ${api}/deploys/<name>/history           a target's past deploys
-    GET   ${api}/deploys/<name>/log[?deploy=<id>] a deploy's log
-    POST  ${api}/deploys/<name>                   redeploy a target's branch head now
+    list_branches, deploy_production           staging and main, GitHub's status, any merge waiting; main moved to staging
+    cut_release, list_releases                 a release tag on main's head; the release store's channels
+    github_status, sync_github,                the GitHub connection, a sync now, and Disconnect
+      disconnect_github
+    list_deploys, deploy_log, redeploy,        every target's deploys, a deploy's log, a redeploy, a rollback
+      rollback
+    deploy_credential,                         the Cloudflare credential every deploy uses, and Disconnect
+      disconnect_deploy_credential
+    list_domains, add_domain, remove_domain    each environment's domains
+    update_from_upstream, resolve_conflict_file,   a downstream's Update from upstream, and the merge waiting on conflicts
+      finish_waiting_merge, drop_waiting_merge
+    list_source, read_source, search_source,   Erga's source, read-only
+      source_log
+
     POST  ${api}/docs/<id>/home/deploy            deploy the homepage again
 
 Erga's repository is ${o.origin}/git/erga.git: anyone may clone it, and a push takes this

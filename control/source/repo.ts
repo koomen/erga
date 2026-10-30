@@ -367,7 +367,7 @@ export class SourceRepo {
     // The sync with GitHub is the mover's: it follows what they did.
     if (this.github.githubLink()) this.deps.background(this.github.syncGithub(byLine(m.by, m.via)).catch(() => {}));
   }
-  // ---- Merging (the Ops page, POST /api/source/merge) ------------------------------
+  // ---- Merging (the Ops page, deploy_production) ------------------------------
 
   /**
    * Moves main forward to staging's head, or to `commit`, one of staging's
