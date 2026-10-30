@@ -57,6 +57,9 @@ export abstract class EditorEdit extends EditorRender {
       this.mapMarks(tr.changes);
       this.recordAuthorship(tr.changes, this.config.self ?? null);
       this.applyChanges(tr, oldUnits, oldSrc);
+      // A change outside the text blocks (a list indented) that patching couldn't show: the page is made afresh, or it
+      // keeps the old shape (an emptied <li> showed as a blank bullet until a reload).
+      if (this.unshown) this.render();
       if (this.tracking) this.queueDiff();
       else this.paintMarks();
     }
