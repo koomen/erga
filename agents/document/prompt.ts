@@ -56,6 +56,8 @@ export function beyondPrompt(owner: string, names: string[]): string {
     lines.push(`- list_tokens and revoke_token: ${owner}'s agent tokens (/settings). Revoke one only when
   ${owner} asks, naming it. A token is made only on /settings, never here.`);
   if (names.includes("whoami")) lines.push(`- whoami says who you act for, and how.`);
+  if (names.includes("homepage_status"))
+    lines.push(`- homepage_status says whether a document is the server's homepage, and how its deploy goes.`);
   lines.push(`- You have no admin power here, even if ${owner} is an admin: the server's settings,
   users and keys are for the admin agent on the admin pages (/admin). If ${owner} asks for
   one of those, say so.`);

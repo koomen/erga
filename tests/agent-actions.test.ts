@@ -12,7 +12,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
 import { beyondPrompt } from "../agents/document/prompt";
 import { documentToolSpecs } from "../agents/document/tools";
-import { homeTools } from "../agents/admin/tools";
 import { systemPrompt } from "../agents/admin/prompt";
 import { allTools } from "../agents/tools";
 import { OPERATIONS } from "../server/operations/index.ts";
@@ -29,7 +28,6 @@ const ROUTE_TABLES = [
   "control/source/routes.ts",
   "cloudflare/deploy-routes.ts",
   "control/install/routes.ts",
-  "server/home/api.ts",
   "server/identity/settings.ts",
   "server/identity/accounts.ts",
   "server/admin/routes.ts",
@@ -84,7 +82,7 @@ const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRou
 const audited = new Set(AGENT_ACTIONS.flatMap((a) => [a.route, a.route.replace(/ (do|op)=\w+$/, "")]));
 
 /** The agents' tools, as they're made (no ops behind them: only their names matter here). The admin agent has every one. */
-const ADMIN = [...allTools(), ...homeTools(async () => ({}))].map((t) => t.name);
+const ADMIN = allTools().map((t) => t.name);
 const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...OPERATIONS.filter((t) => !t.admin).map((t) => t.name)];
 
 test("the route tables are read: the known routes are found", () => {

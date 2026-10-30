@@ -19,7 +19,6 @@
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
-//   /api/docs/<id>/home        whether a document is the homepage, and its deploys (/admin chooses it)
 //   /_home/<gen>/<path>        the homepage's files, as deployed
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
 //                              and /api/events; `outside` answers them (a redirect to the control Worker, or itself in local development)
@@ -45,7 +44,7 @@ import { adminGate, isAdminPath } from "./admin/index.ts";
 import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
 import { serverApi } from "./api.ts";
 import { documentRoutes, isPagesSite } from "./documents/index.ts";
-import { homeApi, serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
+import { serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
 import {
   adminsOnlyGate,
   chooseSignIn,
@@ -154,9 +153,6 @@ const route = (url: URL, outside: Outside): Route =>
       if (home) return home;
     }
     if (path.startsWith("/_home/")) return yield* serveHomeFile;
-    // Whether a document is the homepage, and its deploys.
-    const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
-    if (homeId) return yield* homeApi(homeId, (homeAction ?? "") as "" | "deploy");
     // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
     // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
     if (read && isHomeFilePath(path)) {

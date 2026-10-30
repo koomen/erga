@@ -7,7 +7,7 @@
 //   the editor's agent   (agents/document/session.ts) every operation its person may use but the admin ones, and
 //                        its own document tools, which take a `document` too: another document's run there
 //   the admin agent      (agents/admin/sessions.ts) every operation, with admin power (the Ops page's too), the
-//                        document tools for any document, and its own (the homepage's deploy: agents/admin/tools.ts)
+//                        document tools for any document
 //   an outside agent     (server/api.ts: REST, /mcp and the guide) every operation its token's person may use (the admin
 //                        ones only with an admin token; none that reach beyond one document with a document token),
 //                        and the document tools for any document
@@ -119,7 +119,7 @@ export async function toolsFor(caller: Caller): Promise<Tool[]> {
   return caller.here ? ops : [...ops, ...documentTools()];
 }
 
-/** What a tool that needs no one runs with (the admin agent's own: agents/admin/tools.ts): nothing of the directory. */
+/** What a tool that needs no one runs with: nothing of the directory. */
 const NOBODY = new Proxy({} as Caller, {
   get: () => {
     throw new OperationError({ message: "This tool needs to know who's asking.", status: 500 });

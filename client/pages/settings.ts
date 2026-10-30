@@ -16,8 +16,8 @@
 //     current one marked; Show older versions loads ten more. Edit, on hover or
 //     focus, makes a copy of a version the current one (restore_version).
 //
-// It runs the operations (server/operations/editor.ts: list_versions, restore_version, list_pages, make_project,
-// make_document; over POST /api/tools/<name>) and server/home/api.ts's, and refreshes on the event channel's
+// It runs the operations (server/operations/: list_versions, restore_version, list_pages, make_project,
+// make_document, homepage_status, deploy_homepage; over POST /api/tools/<name>), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only.
 
@@ -27,7 +27,7 @@ import { esc } from "../../shared/html";
 import { plural } from "../../shared/time";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
-/** GET /api/docs/<id>/home. */
+/** homepage_status's answer. */
 export interface Home { isHome: boolean; canDeploy: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; deploy: Deploy }
 export type DocKind = "document" | "project";
 /** list_pages's answer, as far as this panel reads it. */
@@ -183,27 +183,6 @@ function mount(host: SettingsHost): Settings {
 
   // ------------------------------------------------------------ the server
 
-  const url = (path: string, params: Record<string, string> = {}) => {
-    const q = new URLSearchParams(host.query);
-    for (const [k, v] of Object.entries(params)) q.set(k, v);
-    const s = q.toString();
-    return `/api/docs/${encodeURIComponent(host.docId)}/${path}${s ? `?${s}` : ""}`;
-  };
-  async function call<T>(path: string, init?: RequestInit, params?: Record<string, string>): Promise<T> {
-    let r: Response;
-    try {
-      r = await fetch(url(path, params), { ...init, headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}) }, signal: AbortSignal.timeout(10_000) });
-    } catch (e) {
-      throw new Error((e as Error).name == "TimeoutError" ? "The server didn't answer in time. Try again." : "Couldn't reach the server. Check your connection and try again.");
-    }
-    const body = (await r.json().catch(() => ({}))) as { error?: string };
-    if (!r.ok) {
-      throw new Error(body.error || (r.status == 403 ? "You don't have permission to do that."
-        : r.status == 404 ? "The server doesn't know this document's versions." : `The server had a problem (error ${r.status}). Try again.`));
-    }
-    return body as T;
-  }
-
   // ------------------------------------------------------------ state
 
   let data: Versions | null = null;
@@ -259,7 +238,11 @@ function mount(host: SettingsHost): Settings {
   async function loadHome() {
     const seq = ++homeSeq;
     let h: Home | null = null;
-    try { h = await call<Home>("home"); } catch { h = null; }
+    try {
+      h = await runTool<Home>("homepage_status", { document: host.docId });
+    } catch {
+      h = null;
+    }
     if (seq != homeSeq) return;
     home = h;
     renderHome();
@@ -414,8 +397,11 @@ function mount(host: SettingsHost): Settings {
     homeError.textContent = "";
     if (home) home = { ...home, deploy: { ...home.deploy, state: "deploying", error: null } };
     renderHome();
-    try { await call("home/deploy", { method: "POST" }); }
-    catch (e) { homeError.textContent = `Couldn't redeploy: ${(e as Error).message}`; }
+    try {
+      await runTool("deploy_homepage");
+    } catch (e) {
+      homeError.textContent = `Couldn't redeploy: ${(e as Error).message}`;
+    }
     homeBusy = false;
     loadHome();
   });

@@ -64,7 +64,8 @@ For staging, production and access (the Ops page, /admin/ops, and /settings):
   resolve_conflict_file, then finish_waiting_merge; or drop_waiting_merge.
 - list_deploys reads each target's deploys (staging, production); deploy_log reads a
   deploy's log; redeploy deploys a target's branch again; rollback puts the version before its live deploy back. deploy_homepage deploys the
-  homepage again.
+  homepage again; homepage_status says whether a document is the homepage, and how its
+  deploy goes.
 - deploy_credential reads the Cloudflare credential every deploy uses. When it isn't
   connected (or Cloudflare refused it), say so in Cloudflare's own words, and tell
   ${owner} to click Connect Cloudflare: the button shows under that call in this panel,

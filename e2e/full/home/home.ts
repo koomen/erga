@@ -57,8 +57,12 @@ export async function fresh(server: Server) {
 /** Once / is served directly (the first deploy, which the first / started, is done). */
 export const deployed = (server: Server, ms = 5_000) => until(async () => (await front(server)).direct, ms, "/ is served from a deploy");
 
-/** GET /api/docs/<id>/home. */
-export const home = async (server: Server, id: string, user?: string) => (await (await get(server, `/api/docs/${id}/home${user ? `?user=${user}` : ""}`)).json()) as HomeState;
+/** homepage_status, as `user` (the dev server's ?user=; none: its own person). */
+export const home = async (server: Server, id: string, user?: string) =>
+  (await runTool(server.root, "homepage_status", { document: id }, user ? { user } : {})).result as HomeState;
+/** deploy_homepage (Redeploy now), as `user`, from `origin` (the site's own, unless given). */
+export const redeploy = (server: Server, user?: string, origin?: string) =>
+  runTool(server.root, "deploy_homepage", {}, { ...(user ? { user } : {}), ...(origin ? { origin } : {}) });
 
 /**
  * An admin-scope agent token of DEV_LOGIN's (only an admin's token with it may edit the homepage: server/directory/,

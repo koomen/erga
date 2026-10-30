@@ -32,7 +32,7 @@ const ADMINS = (doc: { id: string; address: string }) =>
     ["GET", "/docs"],
     ["GET", "/new"],
     ["GET", "/deploy"],
-    ["GET", `/api/docs/${doc.id}/home`],
+    ["POST", "/api/tools/deploy_homepage"],
     ["GET", doc.address],
     ["GET", "/git/erga.git/info/refs?service=git-upload-pack"],
 ] as const;

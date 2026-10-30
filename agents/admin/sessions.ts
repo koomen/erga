@@ -23,7 +23,6 @@
 
 import { startAdminAgent, type AdminAgent } from "./agent.ts";
 import { adminGuide } from "../guides.ts";
-import { homeTools } from "./tools.ts";
 import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
@@ -32,8 +31,7 @@ import type { Caller } from "../../server/operations/index.ts";
 import { isModelChoice, MODELS } from "../models.ts";
 import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
-import { byLine, VIA } from "../../shared/attribution.ts";
-import { forgetHome } from "../../server/home/index.ts";
+import { VIA } from "../../shared/attribution.ts";
 import { authOps, SHARE_ADMIN_HOURS } from "../../server/identity/index.ts";
 import { LOCKED } from "../../server/directory/index.ts";
 import { whoOf, type Platform } from "../../server/platform.ts";
@@ -110,7 +108,7 @@ export class AdminAgents {
     const agent = startAdminAgent({
       cfg,
       owner: login,
-      tools: agentTools([...allTools(), ...homeTools(() => this.deployHome(login, state.origin))], as, guard),
+      tools: agentTools(allTools(), as, guard),
       store,
       stored: this.chats.load(scope),
       meta: { origin },
@@ -121,14 +119,6 @@ export class AdminAgents {
     // A run a restart cut off goes on, from its last checkpoint.
     agent.resume().catch((e: unknown) => console.log(`couldn't resume ${login}'s admin agent: ${e}`));
     return s;
-  }
-
-  /** The homepage (the landing_document setting) deployed again, as the admin. */
-  private async deployHome(login: string, origin: string): Promise<object> {
-    if (!(await this.platform.directory.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");
-    const status = await this.platform.home.deploy(byLine(login, VIA.admin));
-    await forgetHome(this.platform, new URL(origin)).catch(() => {});
-    return { done: "The homepage deploys now", status };
   }
 
   async agentState(login: string, origin: string) {

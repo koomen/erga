@@ -137,10 +137,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },
   { route: "GET /api/snapshot/blob/<sha-256>", domain: "none", action: "Staging reads a blob its copy of production's documents needs", exempt: "server to server (staging's blob store, cloudflare/blobs.ts)" },
 
-  // ------------------------------------------------------------ the homepage (server/home/api.ts: the editor's settings say which document it is;
-  // /admin's landing_document setting chooses it)
-  { route: "GET /api/docs/<id>/home", domain: "admin", action: "See whether a document is the homepage, and its deploy (editor's settings)", tool: "list_settings" },
-  { route: "POST /api/docs/<id>/home/deploy", domain: "admin", action: "Redeploy the homepage (editor's settings, on the homepage)", tool: "deploy_homepage" },
+  // (The homepage's status and its deploy are operations: server/operations/home.ts. /admin's landing_document setting
+  // chooses it.)
 
   // ------------------------------------------------------------ /settings: the person's agent tokens
   { route: "GET /settings", domain: "document", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_tokens" },

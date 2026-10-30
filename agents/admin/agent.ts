@@ -1,13 +1,11 @@
 // The admin's agent, on every admin page: an agent panel like the editor's
 // (the same transcript, shared/agent-log.ts, and the same panel,
 // client/agent/agent-chat.ts, run by client/admin/admin-agent.ts), on the
-// loop both agents share (agents/run.ts). Its tools: the admin tools of
-// agents/tools.ts: the settings on /admin, their change log, the API keys
-// (read, clear), sign-in (read, clear: /admin/auth), and the users. And its
-// own (agents/admin/tools.ts): read-only tools for Erga's own source, in the
-// server's copy of its repository, and the Ops page's: staging and main,
-// production's deploy (main moved to staging), GitHub, the deploys and their
-// logs, the homepage's deploy, and the admin's own agent tokens. Its prompt:
+// loop both agents share (agents/run.ts). Its tools: every operation of
+// agents/tools.ts, with admin power: the settings on /admin, their change log, the API keys
+// (read, clear), sign-in (read, clear: /admin/auth), the users, Erga's own source, the
+// Ops page's (staging and main, production's deploy, GitHub, the deploys and their
+// logs), the homepage's deploy, and the admin's own agent tokens. Its prompt:
 // agents/admin/prompt.ts. One session per admin (agents/admin/sessions.ts),
 // in the AdminAgent Durable Object, so it keeps working when the tab closes.
 //

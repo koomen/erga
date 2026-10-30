@@ -6,6 +6,7 @@
 import { ADMIN_OPERATIONS } from "./admin.ts";
 import { DOCUMENT_OPERATIONS, TOKEN_OPERATIONS } from "./documents.ts";
 import { EDITOR_OPERATIONS } from "./editor.ts";
+import { HOME_OPERATIONS } from "./home.ts";
 import type { Operation } from "./operation.ts";
 
 export {
@@ -23,4 +24,10 @@ export {
 export { addFile, cleanFilePath } from "./documents.ts";
 
 /** Every operation. Add one here and the front end's API, every agent, REST, MCP and the guide have it. */
-export const OPERATIONS: Operation[] = [...DOCUMENT_OPERATIONS, ...EDITOR_OPERATIONS, ...TOKEN_OPERATIONS, ...ADMIN_OPERATIONS];
+export const OPERATIONS: Operation[] = [
+  ...DOCUMENT_OPERATIONS,
+  ...EDITOR_OPERATIONS,
+  ...HOME_OPERATIONS,
+  ...TOKEN_OPERATIONS,
+  ...ADMIN_OPERATIONS,
+];
