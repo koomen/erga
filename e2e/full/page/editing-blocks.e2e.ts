@@ -47,18 +47,24 @@ test(
   })
 );
 
-// Tab in a paragraph, heading, quote or code block moves the caret to the start of the next block (the browser's focus
-// order), and the text typed next goes there; in the last block, the text typed next is lost.
-test(
-  "Tab in a paragraph keeps the caret in it",
-  knownBug(async ({ tab }) => {
+// Tab in a paragraph, heading or quote keeps the caret where it is (the browser moved the focus to the next block, and
+// the text typed next went there or was lost). Google Docs indents the paragraph; that needs new markup here.
+test("Tab in a paragraph keeps the caret in it", async ({ tab }) => {
     const ed = await open(tab, "#q");
     await ed.press("Tab");
     await ed.type("x");
     // Google Docs puts a tab there, Notion indents the block: either way, the x follows the paragraph's text.
     await expect.poll(async () => /A quote line\.[^\n]*x\|/.test(await ed.visible()), { timeout: 3000 }).toBe(true);
-  })
-);
+});
+
+// Tab in a code block types an indent: two spaces, or a tab where the block's lines start with tabs.
+test("Tab in a code block types two spaces", async ({ tab }) => {
+  const ed = await open(tab, "pre");
+  await ed.press("Home");
+  await ed.press("Tab");
+  await ed.type("x");
+  await expect.poll(() => ed.source()).toContain("code line one\n  xcode line two</pre>");
+});
 
 // Enter at the end of a code block adds a line break after the caret: the text typed next joins the last line.
 test(
