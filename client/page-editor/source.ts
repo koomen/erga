@@ -134,11 +134,12 @@ export function placeholderBr(src: string, u: M.Unit): { from: number; to: numbe
 
 /**
  * The <br> that holds an empty last line open in a block with text (`text<br><br>`: a line break at the end of a block
- * shows no new line alone): the block's last <br>, right after another, with nothing after it. Typing on that line
- * takes it out.
+ * shows no new line alone): the block's last <br>, right after another, with nothing after it; in a code block, right
+ * after a line break ("\n": a <pre> shows no last one). Typing on that line takes it out.
  */
 export function lineHolder(src: string, u: M.Unit): { from: number; to: number } | null {
-  const m = /<br\s*\/?>\s*(<br\s*\/?>)((?:\s|<\/[a-z][^>]*>)*)$/i.exec(src.slice(u.contentFrom, u.contentTo));
+  const re = u.tag == "pre" ? /\n(<br\s*\/?>)((?:\s|<\/[a-z][^>]*>)*)$/i : /<br\s*\/?>\s*(<br\s*\/?>)((?:\s|<\/[a-z][^>]*>)*)$/i;
+  const m = re.exec(src.slice(u.contentFrom, u.contentTo));
   if (!m || placeholderBr(src, u)) return null;
   const from = u.contentFrom + m.index + m[0].length - m[2].length - m[1].length;
   return { from, to: from + m[1].length };

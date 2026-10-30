@@ -7,6 +7,7 @@ import type { HeldInput } from "./types";
 import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked, STOPS } from "./source";
 import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
 import { isMac } from "./core";
+import { leaveCode } from "./blocks";
 import { EditorClipboard } from "./clipboard";
 
 /** The selection moves a held arrow, Home or End key makes, if the editor doesn't take the key itself. */
@@ -581,6 +582,11 @@ export abstract class EditorInput extends EditorClipboard {
     }
     const next = this.units[u.id + (down ? 1 : -1)],
       nel = next && this.els[next.id];
+    if (!next && down) {
+      // A code block that ends the page: a paragraph after it, as there is no other way out of it.
+      const out = leaveCode(src, this.units, u);
+      if (out && this.verify(u)) return this.listEdit(out);
+    }
     if (!next || !nel) return false;
     // The middle of the next unit's first line (going down) or its last line (going up), whatever the size of its text.
     const nr = nel.getBoundingClientRect();

@@ -69,6 +69,16 @@ Two more decisions come with it:
   writes items the same way, and a list pasted right above a list of the same kind joins it.
 - Step 5 (undo steps): done. An edit that changes tags, and isn't typing, is an undo step of its own
   (`undoStep` in `edit.ts`); Enter over a selection is one step with the delete of the selection.
+- Step 6 (block rules): done, in `client/page-editor/blocks.ts`, with the table at its top. Each rule changes tags
+  only. Two changes to the plan, to keep behavior that tests and Pete's decisions document:
+  1. Backspace at the start of a heading or a list item joins it to the block before, as before (`join.e2e.ts`,
+     `list-keys`, `list-select`). Only a heading or a list item with no text block before it becomes a paragraph.
+  2. Backspace at the start of a quote's first paragraph always takes it out of the quote (as Notion, Typora and Bear
+     do). The next Backspace joins it. Before, the first Backspace joined it.
+  Tab in a paragraph, a heading or a quote adds `margin-left` in steps of 40 px to the block's `style` (Pete's
+  decision); Shift+Tab takes a step back. A code block's empty last line has a `<br>` after its `\n` (a `<pre>` shows
+  no last line break), as a paragraph's has `<br><br>`. Enter at the end of a summary makes a paragraph in its
+  details if they are open on the page, else after them.
 - The one-host prototype (step 7) works in Chromium, WebKit and Firefox, with two additions: a caret that lands
   outside the text (in an `<svg>`, or past the last block in Firefox) goes to the nearest block before the paint,
   and Enter and Shift+Enter stay in `keydown` (WebKit sends Shift+Enter as `insertParagraph`).

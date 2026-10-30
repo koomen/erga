@@ -146,9 +146,14 @@ function attach(doc: Document, win: Window & typeof globalThis, zoomOf: () => nu
     if (before && (lineEnd || (clickY! >= before.top && clickY! < before.bottom)))
       return { left: Math.min(before.right, el.getBoundingClientRect().right), top: before.top, height: before.height };
     if (r && r.height > 0) return r;
-    // An empty line: a <br> holds it open, and its box is where the line is.
+    // An empty line: a <br> holds it open, and its box is where the line is (also after a code block's last "\n").
     const c = range.startContainer;
-    const child = c.nodeType == 1 ? c.childNodes[range.startOffset] ?? c.childNodes[range.startOffset - 1] : null;
+    const child =
+      c.nodeType == 1
+        ? (c.childNodes[range.startOffset] ?? c.childNodes[range.startOffset - 1])
+        : range.startOffset == (c as Text).length
+          ? c.nextSibling
+          : null;
     if (child instanceof win.HTMLBRElement) {
       const b = child.getBoundingClientRect();
       if (b.height > 0) return { left: b.left, top: b.top, height: b.height };

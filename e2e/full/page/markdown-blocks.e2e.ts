@@ -55,20 +55,33 @@ test("#, - and 1. with a space make a heading and lists; undo gives back the typ
   `);
 });
 
-// Tab in a paragraph keeps the caret in the page (it moved the focus out of the page, and the keys typed after it went
-// nowhere). Google Docs and Typora indent; Notion nests the block. None loses the keys.
-test("Tab in a paragraph keeps the caret in the page, and the next key types there", async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await keys(ed, "Plan");
-    await ed.press("Tab");
-    await keys(ed, "x");
-    await expect.poll(() => ed.textOf("body")).toContain("x");
+// Tab in a paragraph indents it one step, as Google Docs does, and Shift+Tab takes the step back. The caret stays in
+// the paragraph, and the next key types there (Tab moved the focus out of the page once, and the keys went nowhere).
+test("Tab in a paragraph indents it, Shift+Tab takes it back, and the next key types there", async ({ tab }: { tab: Tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "Plan");
+  const left = () => ed.frame<number>(`${F}.querySelector("body > p").getBoundingClientRect().left`);
+  const start = await left();
+  await ed.press("Tab");
+  await ed.press("Tab");
+  await keys(ed, "x");
+  await ed.shows(`
+    Planx|
+  `);
+  await expect.poll(() => ed.source()).toContain(`<p style="margin-left: 80px">Planx</p>`);
+  expect(await left()).toBe(start + 80);
+  await ed.press("Shift+Tab");
+  await ed.press("Shift+Tab");
+  await expect.poll(() => ed.source()).toContain("<p>Planx</p>");
+  expect(await left()).toBe(start);
+  // Each Tab is its own undo step.
+  await ed.press("ControlOrMeta+z");
+  await expect.poll(() => ed.source()).toContain(`<p style="margin-left: 40px">Planx</p>`);
 });
 
-// Bug: Backspace at the start of a heading does nothing. Notion, Typora and Bear make it a paragraph again.
-test(
-  "Backspace at the start of a heading makes it a paragraph",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+// Backspace at the start of a heading first in the page makes it a paragraph, as Notion, Typora and Bear do. (After
+// another block, it joins the heading to that block: join.e2e.ts.)
+test("Backspace at the start of a heading makes it a paragraph", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "# Title");
     await ed.press("Home");
@@ -76,13 +89,11 @@ test(
     await ed.shows(`
       |Title
     `);
-  })
-);
+});
 
-// Bug: Backspace at the start of a list's only item does nothing. Google Docs, Notion, Typora and Bear take the bullet off.
-test(
-  "Backspace at the start of a list item takes the bullet off",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+// Backspace at the start of a list's first item, first in the page, takes the bullet off, as Google Docs, Notion, Typora
+// and Bear do. (After another block, it joins the item to that block: list-keys.e2e.ts.)
+test("Backspace at the start of a list item takes the bullet off", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "- Milk");
     await ed.press("Home");
@@ -90,14 +101,11 @@ test(
     await ed.shows(`
       |Milk
     `);
-  })
-);
+});
 
-// Bug: Enter in an empty line of a quote adds another empty line to the quote; there is no way out of it with keys.
-// Notion, Typora and Bear leave the quote, as Enter in an empty list item leaves the list.
-test(
-  "Enter twice in a quote leaves the quote",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+// Enter in an empty line of a quote leaves the quote, as Notion, Typora and Bear do, and as Enter in an empty list item
+// leaves the list.
+test("Enter twice in a quote leaves the quote", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "> Quoted\n\nAfter");
     await ed.shows(`
@@ -106,13 +114,10 @@ test(
       After|
     `);
     await expect.poll(() => ed.count("blockquote p")).toBe(1);
-  })
-);
+});
 
-// Bug: Backspace at the start of a quote does nothing. Notion, Typora and Bear make it a paragraph again.
-test(
-  "Backspace at the start of a quote makes it a paragraph",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+// Backspace at the start of a quote makes it a paragraph again, as Notion, Typora and Bear do.
+test("Backspace at the start of a quote makes it a paragraph", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "> Quoted");
     await ed.press("Home");
@@ -121,8 +126,7 @@ test(
     await ed.shows(`
       |Quoted
     `);
-  })
-);
+});
 
 test("- [ ] makes a to-do item that shows a checkbox and no bullet", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
@@ -148,34 +152,28 @@ test("``` and Enter make a code block, with the language as a class; undo gives 
   await expect.poll(() => ed.count("pre")).toBe(0);
 });
 
-// Bug: Enter at the end of a code line adds a "\n" that the page does not show (a <pre> hides its last line break), so
-// the caret stays on the line and the next text joins it. Left for the editor's redesign (one table of block rules).
-test(
-  "Enter in a code block adds a line in it",
-  knownBug(async ({ tab }: { tab: Tab }) => {
-    const ed = await empty(tab);
-    await keys(ed, "```js\nlet a = 1\nlet b");
-    await ed.shows(`
-      let a = 1
-      let b|
-    `);
-    await expect.poll(() => ed.count("pre")).toBe(1);
-  })
-);
+// Enter at the end of a code line adds a line that shows (a <pre> hides its last line break: a <br> holds the new line
+// open until text comes). The snapshot shows a code block's lines with a space between them.
+test("Enter in a code block adds a line in it", async ({ tab }: { tab: Tab }) => {
+  const ed = await empty(tab);
+  await keys(ed, "```js\nlet a = 1\nlet b");
+  await ed.shows(`
+    let a = 1 let b|
+  `);
+  await expect.poll(() => ed.source()).toContain(">let a = 1\nlet b</code></pre>");
+  await expect.poll(() => ed.count("pre")).toBe(1);
+});
 
-// Bug: there is no way out of a code block with keys. Notion leaves it with Enter at the end of an empty last line, or
-// ArrowDown at its end, into a paragraph after it. Left for the editor's redesign (one table of block rules).
-test(
-  "ArrowDown at the end of a code block goes to a paragraph after it",
-  knownBug(async ({ tab }: { tab: Tab }) => {
+// ArrowDown on the last line of a code block that ends the page makes a paragraph after it, as Notion does: else there
+// is no way out of the code block with keys.
+test("ArrowDown at the end of a code block goes to a paragraph after it", async ({ tab }: { tab: Tab }) => {
     const ed = await empty(tab);
     await keys(ed, "```\ncode");
     await ed.press("ArrowDown");
     await keys(ed, "After");
     await expect.poll(() => ed.textOf("pre")).toBe("code");
     await expect.poll(() => ed.textOf("body > p")).toBe("After");
-  })
-);
+});
 
 test("---, *** or ___ on its own line, then Enter, makes a horizontal rule; undo gives back the typed marks", async ({ tab }) => {
   const ed = await empty(tab);

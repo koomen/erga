@@ -57,14 +57,20 @@ test("a click in the margin puts the caret at the start or end of the line besid
   await ed.shows(PAGE.replace("## Section", "## XSection").replace("Last paragraph.", "Last paragraph.Y|"));
 });
 
-// Tab in a paragraph, heading or quote keeps the caret where it is (the browser moved the focus to the next block, and
-// the text typed next went there or was lost). Google Docs indents the paragraph; that needs new markup here.
-test("Tab in a paragraph keeps the caret in it", async ({ tab }) => {
-    const ed = await open(tab, "#q");
-    await ed.press("Tab");
-    await ed.type("x");
-    // Google Docs puts a tab there, Notion indents the block: either way, the x follows the paragraph's text.
-    await expect.poll(async () => /A quote line\.[^\n]*x\|/.test(await ed.visible()), { timeout: 3000 }).toBe(true);
+// Tab in a paragraph, heading or quote indents it one step, and keeps the caret where it is (the browser moved the
+// focus to the next block, and the text typed next went there or was lost). A selection indents each block in it.
+test("Tab indents the paragraph of a quote, and a selection's blocks; the caret stays", async ({ tab }) => {
+  const ed = await open(tab, "#q");
+  await ed.press("Tab");
+  await ed.type("x");
+  await ed.shows(PAGE.replace("A quote line.", "A quote line.x|"));
+  await expect.poll(() => ed.source()).toContain(`<p id="q" style="margin-left: 40px">A quote line.x</p>`);
+  await ed.press("ControlOrMeta+a");
+  await ed.press("ControlOrMeta+a");
+  await ed.press("Tab");
+  await expect.poll(() => ed.source()).toContain(`<h1 style="margin-left: 40px">Title here</h1>`);
+  expect(await ed.source()).toContain(`<p id="q" style="margin-left: 80px">`);
+  expect(await ed.source()).toContain("<li>Apple</li>");
 });
 
 // Tab in a code block types an indent: two spaces, or a tab where the block's lines start with tabs.
@@ -76,43 +82,35 @@ test("Tab in a code block types two spaces", async ({ tab }) => {
   await expect.poll(() => ed.source()).toContain("code line one\n  xcode line two</pre>");
 });
 
-// Enter at the end of a code block adds a line break after the caret: the text typed next joins the last line.
-test(
-  "Enter at the end of a code block starts a new line in it, and typing goes there",
-  knownBug(async ({ tab }) => {
+// Enter at the end of a code block starts a new line, and the text typed next goes on it (it joined the last line: a
+// <pre> hides its last line break).
+test("Enter at the end of a code block starts a new line in it, and typing goes there", async ({ tab }) => {
     const ed = await open(tab, "pre");
     await ed.press("End");
     await ed.press("Enter");
     await ed.type("three");
     await ed.shows(PAGE.replace("code line two", "code line two three|"));
     expect(await ed.source()).toContain("code line two\nthree</pre>");
-  })
-);
+});
 
-// Enter on an empty line of a quote makes another empty line in the quote: there is no way out of it with Enter.
-test(
-  "Enter on an empty line at the end of a quote leaves the quote",
-  knownBug(async ({ tab }) => {
+// Enter on an empty line at the end of a quote leaves the quote (it made another empty line in the quote).
+test("Enter on an empty line at the end of a quote leaves the quote", async ({ tab }) => {
     const ed = await open(tab, "#q");
     await ed.press("Enter");
     await ed.press("Enter");
     await ed.type("y");
     await ed.shows(PAGE.replace("A quote line.", "A quote line.\n\ny|"));
     expect(await inQuote(ed)).toBe(false);
-  })
-);
+});
 
-// Backspace at the start of a quote joins its text to the list item above; it should take the quote off first.
-test(
-  "Backspace at the start of a quote turns it into a paragraph",
-  knownBug(async ({ tab }) => {
+// Backspace at the start of a quote takes the quote off; the next Backspace joins its text to the list item above.
+test("Backspace at the start of a quote turns it into a paragraph", async ({ tab }) => {
     const ed = await open(tab, "#q");
     await ed.press("Home");
     await ed.press("Backspace");
     await ed.shows(PAGE.replace("A quote line.", "|A quote line."));
     expect(await inQuote(ed)).toBe(false);
-  })
-);
+});
 
 // Cmd+B, Cmd+I and Cmd+U with no selection only say "Select some text to style first."; the text typed next is plain.
 test(
