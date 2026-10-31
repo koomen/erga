@@ -17,10 +17,10 @@ const ROWS = ["Document", "Slides", "Canvas", "Project"];
 
 const picker = (page: Page) => page.evaluate(`(() => {
   const r = ${ROOT_OF}, menu = r.querySelector(".erga-new-menu");
-  return { open: !!menu && !menu.hidden, note: menu?.querySelector(".erga-new-note")?.textContent ?? "",
+  return { open: !!menu && !menu.hidden,
     expanded: r.querySelector('.erga-new-btn[aria-expanded="true"]')?.getAttribute("aria-label") ?? null,
     rows: [...(menu?.querySelectorAll("a b") ?? [])].map((e) => e.textContent.trim()) };
-})()`) as Promise<{ open: boolean; rows: string[]; note: string; expanded: string | null }>;
+})()`) as Promise<{ open: boolean; rows: string[]; expanded: string | null }>;
 
 /** Clicks the middle of the first visible element matching `selector` (in the picker's root). */
 async function clickOn(page: Page, selector: string) {
@@ -66,7 +66,7 @@ test("the viewer's + opens the picker, in one typeface; Escape closes it; Docume
   await openTab(tab, address);
   await clickOn(page, ".erga-view-buttons .erga-new-btn");
   const m = await picker(page);
-  expect(m).toEqual({ open: true, rows: ROWS, note: "", expanded: "New document" });
+  expect(m).toEqual({ open: true, rows: ROWS, expanded: "New document" });
   // No icons: names and their lines only.
   const icons = (await page.evaluate(
     `[...${ROOT_OF}.querySelectorAll(".erga-new-menu a")].some((a) => a.querySelector("svg"))`
@@ -117,7 +117,7 @@ test("the documents page's New opens the same picker under it, without icons; Pr
   await openTab(tab, `${s.root}/docs`);
   await clickOn(page, "header .erga-new-btn");
   const m = await picker(page);
-  expect(m).toEqual({ open: true, rows: ROWS, note: "", expanded: "New document" });
+  expect(m).toEqual({ open: true, rows: ROWS, expanded: "New document" });
   expect(await page.evaluate(() => [...document.querySelectorAll(".erga-new-menu a")].some((a) => a.querySelector("svg")))).toBe(false);
   await sameTypeface(page);
   const place = await page.evaluate(() => ({
@@ -141,7 +141,7 @@ test("the documents page's New opens the same picker under it, without icons; Pr
   expect(await fileOf(s.root, s.root + new URL(page.url()).pathname)).toBe(template("assets/templates/project"));
 });
 
-test("signed out, the homepage's + says you sign in first, and a template goes to sign-in and comes back to make it", async ({ tab }) => {
+test("signed out, the homepage's + opens the menu, and a template goes to sign-in and comes back to make it", async ({ tab }) => {
   const s = await servers.main();
   const out = (await fetch(`${s.root}/auth/logout`, { method: "POST", headers: { Origin: s.root }, redirect: "manual" })).headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
   const page = tab.page;
@@ -151,7 +151,6 @@ test("signed out, the homepage's + says you sign in first, and a template goes t
   const m = await picker(page);
   expect(m.open).toBe(true);
   expect(m.rows).toEqual(ROWS);
-  expect(m.note).toMatch(/sign in first/);
   await sameTypeface(page);
   const href = await page.evaluate(`${ROOT_OF}.querySelector('.erga-new-menu a[data-template="page"]').getAttribute("href")`) as string;
   const r = await fetch(s.root + href, { redirect: "manual", headers: { Cookie: out } });
