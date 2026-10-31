@@ -131,6 +131,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /install/disconnect", domain: "admin", action: "Disconnect: revoke and forget the control Worker's Cloudflare credential (/install)", tool: "disconnect_deploy_credential" },
   { route: "GET /api/health", domain: "none", action: "The app's health check", exempt: "the deploy pipeline's, after each deploy" },
   { route: "GET /api/events", domain: "none", action: "The Ops page's live updates", exempt: STREAM },
+  { route: "GET /api/news", domain: "none", action: "An open page's live updates", exempt: STREAM },
+  { route: "GET /api/news/rows", domain: "none", action: "The rows an open page shows, after they changed", exempt: STREAM },
   { route: "GET /api/release", domain: "none", action: "An open page asks whether its code is still the server's (after a redeploy)", exempt: "the page's own check, not a person's action" },
   { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },

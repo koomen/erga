@@ -5,6 +5,7 @@ import type { DocumentObject } from "./objects/document";
 import type { SourceHost } from "../control/source/source-host";
 import type { Pipeline } from "../control/deploys/pipeline-object";
 import type { Home } from "./objects/home";
+import type { NewsHub } from "./objects/news";
 import type { OwnStorage } from "./objects/own";
 import type { PersonAgent } from "./objects/person-agent";
 
@@ -14,6 +15,8 @@ export interface Env {
   DOCUMENTS: DurableObjectNamespace<DocumentObject>;
   /** The homepage's deploys and its served snapshot: one Durable Object, named "home". */
   HOME: DurableObjectNamespace<Home>;
+  /** Live pages' hub (server/news/): the open pages' sockets and which rows changed. One Durable Object, "news". */
+  NEWS: DurableObjectNamespace<NewsHub>;
   /** The server's own small storage (server/platform.ts `own`): one Durable Object, "own". */
   OWN: DurableObjectNamespace<OwnStorage>;
   /** Each admin's agent, its conversation and panel: one Durable Object, "admin". */

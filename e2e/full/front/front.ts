@@ -42,8 +42,8 @@ export async function person(s: Server, login = freshLogin()) {
   const get = (path: string, init: RequestInit = {}) => fetch(base + path, { redirect: "manual", ...init, headers: { Cookie: cookie, ...(init.headers as Record<string, string>) } });
   const p = {
     login, cookie, base, origin, get,
-    // (Without its script nonce, new at each answer: server/security.ts.)
-    docs: async () => (await (await get("/docs")).text()).replace(/ nonce="[^"]*"/g, ""),
+    // (Without its script nonce, new at each answer (server/security.ts), and when the server made it (live pages: data-live-at).)
+    docs: async () => (await (await get("/docs")).text()).replace(/ nonce="[^"]*"/g, "").replace(/ data-live-at="\d+"/g, ""),
     /** As someone else, by the dev server's ?user= (no cookie needed). */
     as: (who: string, path: string, init?: RequestInit) => get(`${path}${path.includes("?") ? "&" : "?"}user=${who}`, init),
     /** A document's title and address, from its host. */
@@ -85,7 +85,7 @@ export async function person(s: Server, login = freshLogin()) {
     /** Where a path redirects to, or its status in brackets. */
     location: async (path: string) => { const r = await get(path); return r.status == 302 ? r.headers.get("location") : `(${r.status})`; },
     /** A document's row on the list (/docs), or "(not listed)". */
-    row: (id: string, html: string) => html.split("<li>").find((li) => li.includes(`value="${id}"`)) ?? "(not listed)",
+    row: (id: string, html: string) => html.split(/<li[ >]/).find((li) => li.includes(`value="${id}"`)) ?? "(not listed)",
     /** An agent token of theirs, made at /tokens (scope: documents, or admin for an admin). */
     async token(label = "Test token", scope = "documents") {
       const { page } = await postForm(base, "/tokens/new", { label, scope }, cookie);

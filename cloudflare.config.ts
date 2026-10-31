@@ -65,6 +65,8 @@ export default defineConfig(({ mode }) => ({
       Home: exports.durableObject({ storage: "sqlite" }),
       // The server's own small storage (the sign-in values set on /admin/auth): one object, "own", which no copy of another server's data replaces.
       OwnStorage: exports.durableObject({ storage: "sqlite" }),
+      // Live pages' hub (server/news/): the open pages' sockets and which rows changed. One object, "news".
+      NewsHub: exports.durableObject({ storage: "sqlite" }),
       // Each document's site on its person's own Cloudflare account (a document at a domain of its own): gone, with what it held.
       SiteHost: exports.durableObject({ state: "deleted" }),
       // Each admin's agent, its conversation and panel: one object, "admin".
@@ -89,6 +91,7 @@ export default defineConfig(({ mode }) => ({
       } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       OWN: bindings.durableObject({ worker: PROD.worker, exportName: "OwnStorage" }),
+      NEWS: bindings.durableObject({ worker: PROD.worker, exportName: "NewsHub" }),
       ADMIN_AGENT: bindings.durableObject({ worker: PROD.worker, exportName: "AdminAgentHost" }),
       AGENTS: bindings.durableObject({ worker: PROD.worker, exportName: "PersonAgent" }),
       // The server's database: users, settings and the directory. The deploy pipeline finds it by name, or
