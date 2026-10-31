@@ -121,7 +121,7 @@ export type ToFrame =
   | { type: "style"; id: number; op: "toggle"; style: InlineStyle }
   | { type: "style"; id: number; op: "clear" }
   | { type: "style"; id: number; op: "link"; edit: LinkEdit }
-  | { type: "capture"; id: number; req: ViewRequest; text?: string }
+  | { type: "capture"; id: number; req: ViewRequest; text?: string; dir?: string }
   /** The agent's request to the live page (shared/live-page.ts). */
   | { type: "live"; id: number; req: LiveRequest }
   /** The files the frame sent (upload) are in the document's files at these paths, in order; `error` says why the others aren't. */

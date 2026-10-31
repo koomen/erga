@@ -94,10 +94,13 @@ export const WHITE = [255, 255, 255], DARK = [10, 20, 30], SCRIPT_LIGHT = [200, 
 
 export type Content = { type: "text" | "image"; text?: string; data?: string };
 
-/** The builds deck (e2e/fixtures/builds: 7 steps on 3 slides, a bar that grows to each step's place in 1.5 s), open in the editor. */
-export async function deck(tab: Parameters<typeof openEditor>[0]) {
+/**
+ * The builds deck (e2e/fixtures/builds: 7 steps on 3 slides, a bar that grows to each step's place in 1.5 s), or
+ * another `fixture`, open in the editor.
+ */
+export async function deck(tab: Parameters<typeof openEditor>[0], fixture = "builds") {
   const s = await servers.main();
-  const ed = await openEditor(tab, s, "builds");
+  const ed = await openEditor(tab, s, fixture);
   const document = await idOf(ed.address);
   // An agent of the tab's person (DEV_LOGIN), with their token: an outside agent's call, as MCP makes it.
   const token = await (await person(s, "tester")).token("view tests");

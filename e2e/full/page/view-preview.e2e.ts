@@ -28,9 +28,7 @@ test("a preview shows the edit at its step; the file, the person's page and the 
   expect(await ed.source()).toBe(before);
 });
 
-test("an edit that doesn't apply, edits for another file, or a path without edits: nothing renders, and the answer says why", async ({
-  tab,
-}) => {
+test("an edit that doesn't apply, or a path that isn't a page: nothing renders, and the answer says why", async ({ tab }) => {
   const { fails } = await deck(tab);
   expect(await fails("view_page", { edits: [{ oldText: "Mauve.", newText: "x" }] })).toMatch(
     /^Nothing was rendered: oldText isn't in the current text of index\.html/
@@ -39,7 +37,27 @@ test("an edit that doesn't apply, edits for another file, or a path without edit
     /oldText matches more than once in index\.html/
   );
   expect(await fails("evaluate_page", { expression: "1", edits: [BLUE], path: "style.css" })).toMatch(
-    /a preview shows the open page, index\.html, and the edits are for style\.css/
+    /^Nothing was rendered: there's no page style\.css in this document/
   );
-  expect(await fails("view_page", { path: "index.html" })).toMatch(/path goes with edits/);
+  expect(await fails("view_page", { path: "missing.html" })).toMatch(/there's no page missing\.html/);
+});
+
+test("path renders another page than the open one, as an agent in Pete's trace asked for it: with edits too", async ({ tab }) => {
+  const { ed, tool } = await deck(tab, "glide");
+  const h1 = `document.querySelector("h1").textContent`;
+  const notes = await tool("evaluate_page", { path: "notes.html", expression: h1 });
+  expect(notes.text).toMatch(/^"Speaker notes"/);
+  expect(notes.text).toContain("[Rendered notes.html.]");
+  const edited = await tool("evaluate_page", {
+    path: "notes.html",
+    expression: h1,
+    edits: [{ oldText: "Speaker notes", newText: "Notes, in the preview" }],
+  });
+  expect(edited.text).toMatch(/^"Notes, in the preview"/);
+  expect(edited.text).toContain("A preview: 1 edit applied to a copy of notes.html");
+  const seen = await tool("view_page", { path: "notes.html" });
+  expect(seen.images).toHaveLength(1);
+  expect(seen.text).toContain("of notes.html");
+  // The person's tab stays on the deck.
+  expect(await ed.frame<string>(`document.querySelector(".current h2").textContent`)).toBe("First frame");
 });

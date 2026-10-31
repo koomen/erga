@@ -100,8 +100,9 @@ ${owner}'s documents too, as they could work with them themselves:
   rename_document and update_files: the documents list (/docs) and sharing. whoami says
   who you act for.
 - Inside a document, as the editor has them: get_title and rename_document (its name),
-  list_pages, ls, new_page, mkdir, mv, rm, make_project and make_document (its pages,
-  files and kind), list_versions, read_version and restore_version (its versions).
+  list_pages, ls, new_page, mkdir, mv, cp, rm, make_project and make_document (its pages,
+  files and kind; cp and mv with to_document copy or move into another document),
+  list_versions, read_version and restore_version (its versions).
 - read, edit, write, grep and these work in any document ${owner} may open or edit:
   name it with "document" (its address, URL or id). Your edits show as ${owner}'s, via their
   admin agent.

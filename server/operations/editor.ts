@@ -16,6 +16,7 @@ import { nameOf } from "../../document/names.ts";
 import { pageAddress, type TreeOp } from "../../document/pages.ts";
 import { cleanFilePath } from "./documents.ts";
 import { byLine } from "../../shared/attribution.ts";
+import { readLines } from "../../shared/text-edits.ts";
 import { type Caller, described, DOCUMENT, findDocument, iso, type Operation, OperationError, platformOf, str } from "./operation.ts";
 
 const MAX_LINES = 2000,
@@ -55,6 +56,60 @@ async function treeOp(caller: Caller, ref: unknown, op: TreeOp) {
 }
 
 const PATH = (what: string) => str(what);
+
+const TO_DOCUMENT = Schema.optionalKey(
+  str("Another document to put it in: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours (default: the same one).")
+);
+
+/**
+ * cp, and mv into another document: `from` (a file; a folder with everything in it; "." for the whole document) to
+ * `to` in `to_document` (else the same one), as a publish writes files: text as an edit, a blob by its ref, so no
+ * bytes go through the agent. A file at the destination is replaced (the old one stays in the versions). `to` that
+ * ends with "/", or names a folder there, takes it inside. A move then deletes what it copied.
+ */
+async function copyFiles(caller: Caller, args: Record<string, unknown>, move: boolean) {
+  const platform = platformOf(caller);
+  const other = args.to_document != null && String(args.to_document).trim() != "";
+  const src = await findDocument(caller, args.document, move || !other ? "edit" : "open");
+  const dst = other ? await findDocument({ ...caller, here: undefined }, args.to_document, "edit") : src;
+  const raw = String(args.from ?? "").trim();
+  const from = raw == "." || raw == "./" ? "" : cleanFilePath(raw);
+  const snap = await platform.docs.snapshot(src);
+  if (!snap) throw new OperationError({ message: "There's no such document.", status: 404 });
+  const under = Object.keys(snap.files).filter((p) => !from || p == from || p.startsWith(`${from}/`));
+  if (!under.length)
+    throw new OperationError({ message: `There's no file or folder ${raw} in ${described(src, caller).address}.`, status: 404 });
+  if (move && dst.id != src.id && under.includes(snap.index))
+    throw new OperationError({
+      message: `${snap.index} is ${described(src, caller).address}'s own page, which can't leave it: cp it instead (then delete_document, if the whole document should go).`,
+      status: 400,
+    });
+  const there = dst.id == src.id ? Object.keys(snap.files) : await platform.docs.paths(dst);
+  const rawTo = String(args.to ?? "").trim();
+  const toDir = rawTo == "." || rawTo == "./" ? "" : rawTo.endsWith("/") ? cleanFilePath(rawTo) : null;
+  const named = toDir == null ? cleanFilePath(rawTo) : null;
+  const into = toDir ?? (named != null && there.some((p) => p.startsWith(`${named}/`)) ? named : null);
+  const name = from.split("/").pop() ?? "";
+  const target = into == null ? named! : [into, name].filter(Boolean).join("/");
+  if (dst.id == src.id && (target == from || (from && target.startsWith(`${from}/`)) || !from))
+    throw new OperationError({ message: `${raw} can't be copied onto itself, or into itself.`, status: 400 });
+  const files = Object.fromEntries(
+    under.map((p) => [[target, p.slice(from.length).replace(/^\//, "")].filter(Boolean).join("/"), snap.files[p]])
+  );
+  const by = byLine(caller.who.login.toLowerCase(), caller.who.via);
+  const r = await platform.docs.publish(dst, files, [], by);
+  const removed = move && !r.refused.length ? (await platform.docs.publish(src, {}, under, by)).removed : [];
+  // A folder that moved goes whole, empty folders in it too.
+  if (move && removed.length && !(from in snap.files)) await platform.docs.treeOp(src, { op: "delete", path: from });
+  return {
+    from: described(src, caller),
+    to: described(dst, caller),
+    written: r.written,
+    replaced: r.written.filter((p) => there.includes(p)),
+    ...(r.refused.length ? { refused: r.refused } : {}),
+    ...(move ? { removed } : {}),
+  };
+}
 
 export const EDITOR_OPERATIONS: Operation[] = [
   {
@@ -173,13 +228,32 @@ export const EDITOR_OPERATIONS: Operation[] = [
     activity: "moving",
     ui: "The page tree and the files view: Rename, and a drag to another folder",
     description:
-      "Moves or renames a file or a folder (with everything in it). Nothing may be at the destination already. The document's own page (index.html at its root) can't be moved. Moving a page changes its address: fix links to it in other pages. Answers the tree after it.",
+      "Moves or renames a file or a folder (with everything in it). In one document, nothing may be at the destination already, and the document's own page (index.html at its root) can't be moved; answers the tree after it. With to_document, it goes into that document (images too, without their bytes through you), replacing what's there, and is deleted here; answers what was written. Moving a page changes its address: fix links to it in other pages.",
     parameters: Schema.Struct({
       document: DOCUMENT,
       from: PATH("Path of the file or folder now"),
-      to: PATH("Its new path"),
+      to: PATH('Its new path, or a folder to put it in ("images/", or "." for the top)'),
+      to_document: TO_DOCUMENT,
     }),
-    run: (args, caller) => treeOp(caller, args.document, { op: "move", from: String(args.from ?? ""), to: String(args.to ?? "") }),
+    run: (args, caller) =>
+      args.to_document != null && String(args.to_document).trim() != ""
+        ? copyFiles(caller, args, true)
+        : treeOp(caller, args.document, { op: "move", from: String(args.from ?? ""), to: String(args.to ?? "") }),
+  },
+  {
+    name: "cp",
+    label: "Copy",
+    activity: "copying",
+    ui: "None yet: a person downloads a file from the files view and drops it into another document",
+    description:
+      'Copies a file, a folder with everything in it, or a whole document ("."), within a document or into another (to_document), in one call: text and images alike, without their content through you. A file at the destination is replaced (the old one stays in the versions). E.g. a presentation into a project as its page: cp {"document": "/ada/deck", "from": "index.html", "to": "index.html", "to_document": "/ada/project"}, and its images with from "images", to "images". Answers what was written and replaced.',
+    parameters: Schema.Struct({
+      document: DOCUMENT,
+      from: PATH('Path of the file or folder to copy, or "." for every file'),
+      to: PATH('Its new path, or a folder to put it in ("images/", or "." for the top)'),
+      to_document: TO_DOCUMENT,
+    }),
+    run: (args, caller) => copyFiles(caller, args, false),
   },
   {
     name: "rm",
@@ -264,15 +338,12 @@ export const EDITOR_OPERATIONS: Operation[] = [
       } catch {
         return [{ type: "text", text: `${path} in ${v.id} is a binary file of ${bytes.length} bytes.` }];
       }
-      const lines = body.split("\n");
-      const start = Math.max(0, (typeof args.offset == "number" ? args.offset : 1) - 1);
-      let end = Math.min(lines.length, start + (typeof args.limit == "number" ? args.limit : MAX_LINES));
-      let out = lines.slice(start, end).join("\n");
-      while (out.length > MAX_BYTES && end > start + 1) {
-        end = start + Math.max(1, Math.floor((end - start) / 2));
-        out = lines.slice(start, end).join("\n");
-      }
-      if (end < lines.length) out += `\n\n[Showing lines ${start + 1}-${end} of ${lines.length}. Use offset=${end + 1} to continue.]`;
+      const out = readLines(
+        body,
+        typeof args.offset == "number" ? args.offset : 1,
+        typeof args.limit == "number" ? args.limit : MAX_LINES,
+        MAX_BYTES
+      );
       return [{ type: "text", text: out }];
     },
   },

@@ -130,13 +130,17 @@ The document tools (read, edit, write, find, grep, view_page, evaluate_page,
 diff_versions and the live page's) work in any document your person may open
 (edit, for the ones that change it). What a person does with a document's name,
 pages, files and versions in the editor is a tool too: get_title,
-rename_document, list_pages, ls, new_page, mkdir, mv, rm, make_project,
+rename_document, list_pages, ls, new_page, mkdir, mv, cp, rm, make_project,
 make_document, list_versions, read_version, restore_version and open_page.
 
 - Your edits go straight into the shared document and show up live in everyone's
   editor, attributed to your person, via you (your token's label names you). Your
   person can undo them one call at a time. Prefer small, targeted edits (edit)
   over rewriting whole files.
+- To copy or move files, within a document or between two, use cp or mv with
+  to_document: a file, a folder, or a whole document ("."), images too, in one
+  call and without the content through you. Never read a file to write it again:
+  \`cp {"document": "/ada/deck", "from": "index.html", "to": "index.html", "to_document": "/ada/project"}\`.
 - People may be typing while you work. edit matches its text against the file as
   it is at that moment: read a file right before editing it (with read, not grep:
   search output cuts long lines), and read again if an edit fails because the
@@ -150,16 +154,17 @@ make_document, list_versions, read_version, restore_version and open_page.
 - view_page shows you the page your person has open, rendered in their browser
   (so it needs their editor open): a screenshot, any script errors, and the fonts
   its text rendered in. Use it to check visual work before you say it's done.
+  path renders another page of the document instead (\`"path": "notes.html"\`).
   evaluate_page runs a JavaScript expression in that same render and answers its
   result as JSON. Neither changes the document, nor moves your person's view: they
   render a hidden copy, once the page loaded and its scripts ran.
 - For a presentation (window.ergaSteps), view_page and evaluate_page take step:
-  "3.2" (slide 3, its second part, as the steps' list numbers it), an index from 0,
-  or a hash ("#3.2"). at_ms waits that long after the step (default 1000 ms);
+  its number as the steps' list shows it, as a string ("3.2": slide 3, its second
+  part; "4": slide 4), or a hash ("#3.2"). at_ms waits that long after the step (default 1000 ms);
   frames ([300, 900, 2500]) gives a picture or a result at each time, in one call,
   to check a transition: \`view_page {"document": "...", "step": "3.2", "frames": [300, 900]}\`.
 - To see an edit before you make it, give view_page or evaluate_page edits (as
-  edit takes them, with path: the open page): they go to a copy of the page, for
+  edit takes them): they go to a copy of the page, for
   that render only, and the document stays as it is. Look, adjust, then apply
   them with edit: \`view_page {"document": "...", "step": "3.3", "edits": [{"oldText": "Blue.", "newText": "Purple."}]}\`.
 - page_console, page_network, page_events, page_inspect, page_click and page_key

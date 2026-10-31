@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import type { AgentTool } from "../run";
 import type { TextEdit } from "../../shared/text-edits";
 import { EDITS } from "./workspace";
+import { stepSpec } from "../../shared/steps";
 import {
   EVAL_MAX_JSON,
   EVAL_TIMEOUT,
@@ -274,15 +275,15 @@ const RENDER = {
 type RenderArgs = { width?: number; height?: number; color_scheme?: ColorScheme };
 const renderReq = (p: RenderArgs) => ({ width: p.width, height: p.height, colorScheme: p.color_scheme });
 
-const AT_STEP = `For a presentation (window.ergaSteps), step shows one step first: "3.2" (slide 3, its second part, as the steps' list numbers it), an index from 0, or a hash ("#3.2") to open the page at. at_ms waits that long after the step before the picture or the run (default ${FRAMES.afterStep} ms after a step, ${FRAMES.afterLoad} ms after the load); frames takes several at once, at these times after the step (e.g. [300, 900, 2500]), to check a transition in one call.`;
+const AT_STEP = `For a presentation (window.ergaSteps), step shows one step first: its number as the steps' list shows it, as a string ("3.2": slide 3, its second part; "4": slide 4), or a hash ("#3.2") to open the page at. at_ms waits that long after the step before the picture or the run (default ${FRAMES.afterStep} ms after a step, ${FRAMES.afterLoad} ms after the load); frames takes several at once, at these times after the step (e.g. [300, 900, 2500]), to check a transition in one call.`;
 const PREVIEW_WORDS =
-  "To see edits before you make them, give edits (as the edit tool takes them): they go to a copy of the open page, for this render only.";
+  'path renders another page of the document (e.g. "notes.html") in place of the open one. To see edits before you make them, give edits (as the edit tool takes them): they go to a copy of the page, for this render only.';
 /** step, at_ms and frames: a presentation's step, and when. */
 const STEP_FIELDS = (what: string) => ({
   step: Schema.optionalKey(
     Schema.Union([Schema.String, Schema.Finite]).annotate({
       description:
-        'The step to show first: its number as the steps\' list shows it ("3", "3.2"), its index from 0 (a number), or a hash ("#3.2").',
+        'The step to show first, as a string: its number as the steps\' list shows it ("3": slide 3; "3.2": slide 3, its second part), or a hash ("#3.2").',
     })
   ),
   at_ms: Schema.optionalKey(
@@ -295,9 +296,9 @@ const STEP_FIELDS = (what: string) => ({
   ),
 });
 type StepArgs = { step?: string | number; at_ms?: number; frames?: readonly number[] };
-function stepReq(p: StepArgs): { step?: string | number; atMs?: number; frames?: number[] } {
+function stepReq(p: StepArgs): { step?: string; atMs?: number; frames?: number[] } {
   if (p.at_ms != null && p.frames?.length) throw new Error("Give at_ms or frames, not both.");
-  return { step: p.step, atMs: p.at_ms, ...(p.frames?.length ? { frames: [...p.frames] } : {}) };
+  return { step: p.step == null ? undefined : stepSpec(p.step), atMs: p.at_ms, ...(p.frames?.length ? { frames: [...p.frames] } : {}) };
 }
 const PREVIEW = {
   edits: Schema.optionalKey(
@@ -306,12 +307,19 @@ const PREVIEW = {
         "A preview: edits as the edit tool takes them, applied to a copy of the open page's text for this render only, never to the document. If one doesn't apply, nothing renders and the answer says why.",
     })
   ),
-  path: Schema.optionalKey(Schema.String.annotate({ description: "The file the edits are for: the page open (the default)." })),
+  path: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        'The page to render, by its path in the document, e.g. "notes.html" (default: the page the user has open). edits go to it.',
+    })
+  ),
 };
 type PreviewArgs = { edits?: readonly TextEdit[]; path?: string };
-function previewReq(p: PreviewArgs): { preview?: { path?: string; edits: TextEdit[] } } {
-  if (p.path != null && !p.edits) throw new Error("path goes with edits: the file a preview's edits are for.");
-  return p.edits ? { preview: { ...(p.path != null ? { path: p.path } : {}), edits: p.edits.map((e) => ({ ...e })) } } : {};
+function previewReq(p: PreviewArgs): { path?: string; preview?: { edits: TextEdit[] } } {
+  return {
+    ...(p.path != null ? { path: p.path } : {}),
+    ...(p.edits ? { preview: { edits: p.edits.map((e) => ({ ...e })) } } : {}),
+  };
 }
 const describePreview = (p: { path: string; edits: number }) =>
   `A preview: ${p.edits} edit${p.edits == 1 ? "" : "s"} applied to a copy of ${p.path}, for this render only. The document is unchanged: apply them with edit.`;

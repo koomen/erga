@@ -73,3 +73,18 @@ export function applySpans(text: string, spans: readonly Span[]): string {
   }
   return out + text.slice(pos);
 }
+
+/**
+ * A file's lines as read answers them: from line `offset` (from 1), at most `limit` lines and as many whole lines as
+ * fit in `maxChars` (at least one), and where to go on.
+ */
+export function readLines(text: string, offset: number, limit: number, maxChars: number): string {
+  const lines = text.split("\n");
+  const start = Math.max(0, offset - 1),
+    last = Math.min(lines.length, start + limit);
+  let end = start,
+    size = -1;
+  while (end < last && (end == start || size + 1 + lines[end].length <= maxChars)) size += 1 + lines[end++].length;
+  const out = lines.slice(start, end).join("\n");
+  return end < lines.length ? `${out}\n\n[Showing lines ${start + 1}-${end} of ${lines.length}. Use offset=${end + 1} to continue.]` : out;
+}

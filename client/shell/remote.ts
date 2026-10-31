@@ -470,10 +470,19 @@ export class RemotePage {
     return this.state.doc.toString();
   }
 
-  /** The agent's look at the page: the frame renders it, with `text` if given (a preview) or if the source view has newer. */
-  async capture(req: ViewRequest, text?: string): Promise<ViewResult> {
+  /**
+   * The agent's look at the page: the frame renders it, with `text` if given (a preview, or another page) or if the
+   * source view has newer. `dir`: another page's folder in the document, for its files' addresses.
+   */
+  async capture(req: ViewRequest, text?: string, dir?: string): Promise<ViewResult> {
     const reply = await this.request<Extract<FromFrame, { type: "captured" }>>(
-      { type: "capture", id: this.nextId++, req, ...(text != null || this.detached ? { text: text ?? this.state.doc.toString() } : {}) },
+      {
+        type: "capture",
+        id: this.nextId++,
+        req,
+        ...(text != null || this.detached ? { text: text ?? this.state.doc.toString() } : {}),
+        ...(dir != null ? { dir } : {}),
+      },
       viewWait(req)
     );
     const r = reply?.result;

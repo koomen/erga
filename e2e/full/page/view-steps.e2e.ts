@@ -14,7 +14,7 @@ test('view_page and evaluate_page at step "3.2" show that part; the person\'s vi
   const at = await tool("evaluate_page", { expression: text, step: "3.2" });
   expect(at.text).toMatch(/^"Third slide Red\. Green\."/);
   expect(at.text).toContain("at step 3.2 (index 5 of 7: Third slide)");
-  expect((await tool("evaluate_page", { expression: text, step: 3 })).text).toMatch(/^"Second slide No parts here\."/);
+  expect((await tool("evaluate_page", { expression: text, step: 2 })).text).toMatch(/^"Second slide No parts here\."/);
   expect((await tool("evaluate_page", { expression: text, step: "#1.2" })).text).toMatch(/^"First slide One\. Two\."/);
   const two = await tool("view_page", { step: "3.2" });
   expect(two.images).toHaveLength(1);
@@ -23,7 +23,10 @@ test('view_page and evaluate_page at step "3.2" show that part; the person\'s vi
   expect(two.text).toContain("No script errors.");
   const three = await tool("view_page", { step: "3.3" });
   expect(await differ(ed, two.images[0], three.images[0]), "3.3 shows Blue, 3.2 doesn't").toBeGreaterThan(50);
-  expect(await fails("view_page", { step: "3.4" })).toMatch(/Slide 3 has 3 parts, so there's no "3\.4"/);
+  expect(await fails("view_page", { step: "3.4" })).toMatch(/Slide 3 has 3 parts \(3\.1 to 3\.3\), so there's no "3\.4"/);
+  // As the agent in Pete's trace gave it: 3.3 as a JSON number, then "#3.3" in quotes. Both are slide 3, its third part.
+  expect((await tool("evaluate_page", { expression: text, step: 3.3 })).text).toContain("at step 3.3 (index 6 of 7");
+  expect((await tool("evaluate_page", { expression: text, step: '"#3.3"' })).text).toMatch(/^"Third slide Red\. Green\. Blue\."/);
   // The person's own view: still the first slide, the address unchanged.
   expect(await ed.frame<string>(`document.querySelector(".slide.current h1").textContent`)).toBe("First slide");
   expect(await ed.eval<string>(`location.hash`)).not.toContain("3");
