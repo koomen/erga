@@ -82,7 +82,8 @@ rendered page:
    `images/chart.png`, `./data.json`, never `/style.css`. The editor serves
    the folder under its own path, and so may a published site. Link pages to
    each other the same way (`about.html`, `../index.html`, `blog/`): each page
-   renders at its own file's path.
+   renders at its own file's path. Link other documents by their address
+   (`/<owner>/<slug>`).
 
 7. **Keep the page free of errors.** The editor announces script errors and
    files that fail to load (stylesheets, scripts, images) to whoever is

@@ -24,7 +24,7 @@
 //
 // Uses the DOM (DOMParser): runs in the browser only.
 
-import { pageUrl } from "../../document/pages";
+import { publicHref, type Place } from "../common/link-target";
 
 /** Text as HTML text (the quotes as they are: it goes into the page's source as typed). */
 const escapeHtmlText = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -884,66 +884,6 @@ export function itemSource(i: Item, indent: string): string {
 }
 
 // ------------------------------------------------------------------ copying
-
-/**
- * Where a page is: its origin, the path its document's files are under there
- * (/t/<token>/), its own path in the document, and the document's public
- * address, once the viewer has said it (client/inline/reader.ts).
- */
-export interface Place {
-  origin: string;
-  prefix: string;
-  page: string;
-  address: string | null;
-}
-
-/** Where the page in `win` is, from the viewer's script's config; null outside a document's page. */
-export function placeOf(win: Window, config: { prefix: string; address?: string } | undefined): Place | null {
-  const path = win.location.pathname;
-  if (!config || !path.startsWith(config.prefix)) return null;
-  let page = path.slice(config.prefix.length);
-  try {
-    page = decodeURIComponent(page);
-  } catch {
-    /* as it is */
-  }
-  return {
-    origin: win.location.origin,
-    prefix: config.prefix,
-    page: !page || page.endsWith("/") ? page + "index.html" : page,
-    address: config.address ?? null,
-  };
-}
-
-/**
- * A link's address where a copy goes. The document's files have their
- * address under a token, which opens the document to whoever has it: a link
- * to a page goes to its public address instead (a place in it, #id, too),
- * and a link to any other file of the document goes. Before the viewer has
- * said the address, a place in this page stays #id, and links to other pages
- * go.
- */
-export function publicHref(a: Element, p: Place | null): string | null {
-  const own = a.getAttribute("href")?.trim() ?? "";
-  if (!own) return null;
-  let url: URL;
-  try {
-    url = new URL(own, a.ownerDocument.baseURI);
-  } catch {
-    return null;
-  }
-  if (!p || url.origin != p.origin) return own.startsWith("#") ? own : url.href;
-  if (!url.pathname.startsWith(p.prefix)) return null;
-  let path = url.pathname.slice(p.prefix.length);
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    return null;
-  }
-  if (!path || path.endsWith("/")) path += "index.html";
-  if (!p.address) return path == p.page && url.hash ? url.hash : null;
-  return /\.html$/i.test(path) ? pageUrl(p.address, path) + url.hash : null;
-}
 
 /** A picture in a copy is at most this wide and high: the copy holds the picture itself. */
 const IMAGE_MAX = 1600;

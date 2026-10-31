@@ -161,8 +161,13 @@ export const PAGES_PROMPT = `index.html at the root is the document's own page, 
 the extension: about.html is /<owner>/<slug>/about, blog/post.html is
 /<owner>/<slug>/blog/post, and blog/index.html is /<owner>/<slug>/blog (blog.html, if
 there is one, wins over blog/index.html). Link pages to each other with relative links
-("post.html", "../about.html", "blog/"), never ones starting with /: each page renders
-at its own file's path, so relative links and assets resolve as they would on disk.
+("post.html", "../about.html", "blog/"): each page renders at its own file's path, so
+relative links and assets resolve as they would on disk, here and anywhere the files go.
+A link to another document or to Erga itself is its address: /<owner>/<slug> or
+https://<erga host>/<owner>/<slug>. Erga opens it in a new tab (target="_self" opens it
+in this one). Write no target="_top": a page's frame can't use it outside Erga's viewer.
+A ⌘-click (Ctrl-click) or middle click on any link opens it in a new tab, at a page's
+public address. Assets stay relative: never "/style.css".
 Styles and scripts the pages share can live in one file they all link to. A page's
 address with ?edit opens it in the editor (/<owner>/<slug>/blog?edit).`;
 

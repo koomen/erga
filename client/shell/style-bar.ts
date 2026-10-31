@@ -2,6 +2,7 @@
 
 import type { InlineStyle } from "../page-editor/editor";
 import { $, type Shell } from "./shell";
+import { linkTarget, type Place } from "../common/link-target";
 
 export function mountStyleBar(shell: Shell) {
 
@@ -142,6 +143,29 @@ export function mountStyleBar(shell: Shell) {
     if (!url || /^[a-z][a-z0-9+.-]*:/i.test(url) || /^[#/?.]/.test(url)) return url;
     return /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#].*)?$/.test(url) ? "https://" + url : url;
   }
+  /**
+   * Where the open button takes a link's address, read as the page reads it (client/common/link-target.ts): a page of
+   * this document, or another Erga address, on Erga; relative to this page's file. A mail address as it is.
+   */
+  function openable(href: string): string | null {
+    if (/^mailto:/i.test(href)) return href;
+    const doc = shell.docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
+    const p: Place = {
+      origin: location.origin,
+      prefix: doc + "/",
+      page: shell.pagePath,
+      shell: location.origin,
+      address: location.origin + doc,
+    };
+    let url: URL;
+    try {
+      url = new URL(href, location.origin + doc + "/" + shell.pagePath);
+    } catch {
+      return null;
+    }
+    const to = linkTarget(url, p);
+    return to.kind == "page" ? to.public : to.kind == "erga" || to.kind == "out" ? to.url : to.kind == "file" ? url.href : null;
+  }
   /** Leaves the link bar: back to the style bar for a selection; for a caret, closed until the caret leaves links. */
   function closeLink() {
     if (linking == "caret") linkDismissed = true;
@@ -171,9 +195,10 @@ export function mountStyleBar(shell: Shell) {
     else if (b.dataset.link == "close") closeLink();
     else if (b.dataset.link == "remove") applyLink({ url: "" });
     else if (b.dataset.link == "open") {
-      const url = linkAddress(linkUrl.value);
-      if (/^(https?:|mailto:)/i.test(url)) window.open(url, "_blank", "noopener");
-      else shell.toast.explain(url ? "Only web and email addresses open from here." : "Type an address to open it.");
+      const url = linkAddress(linkUrl.value),
+        go = url && openable(url);
+      if (go) window.open(go, "_blank", "noopener");
+      else shell.toast.explain(url ? "Only web, email and Erga addresses open from here." : "Type an address to open it.");
     } else if (b.dataset.link == "tab") {
       const newTab = linkTab.getAttribute("aria-checked") != "true";
       setLinkTab(newTab);

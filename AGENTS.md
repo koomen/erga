@@ -115,6 +115,9 @@ Found a new trap? Write it here, in the same change.
 - Gate a push on the log: `bun run test > log 2>&1; grep -q "^all passing" log && git push ...`.
   Never `bun run test | tail && git push`: `tail` exits 0 after a failure,
   and a failing commit reached staging that way.
+- `bun run format` formats only changed lines, and on a new file it can leave
+  broken indentation that the check then flags again. Format a new file whole:
+  `node_modules/.bin/biome format --write <file>`.
 - `rm` only with `"${VAR:?}"` or a literal path, never a bare `$VAR`.
 - A passing local test, even one that fakes staging, is not proof. Run the
   real flow on staging, end to end, before you say a fix works. If you need
