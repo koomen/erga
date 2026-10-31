@@ -307,13 +307,16 @@ export abstract class EditorCore {
       )
     )
       ok = this.redraw(unit, el);
-    if (!ok) {
-      el.classList.add("erga-locked");
-      this.keepOwn(el);
-      el.setAttribute("contenteditable", "false");
-      this.lockReasons.set(el, this.whyLocked(unit));
-    }
+    if (!ok) this.lock(unit, el);
     return ok;
+  }
+
+  /** Locks a unit: its text can't be edited on the page, and a click on it says why. */
+  protected lock(unit: M.Unit, el: Element): void {
+    el.classList.add("erga-locked");
+    this.keepOwn(el);
+    el.setAttribute("contenteditable", "false");
+    this.lockReasons.set(el, this.whyLocked(unit));
   }
 
   /**

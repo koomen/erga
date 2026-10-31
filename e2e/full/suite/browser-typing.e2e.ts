@@ -63,12 +63,20 @@ browserTest(FILE, "interleaved typing converges and is stored; ⌘Z undoes only 
   noErrors(a, "Ada"); noErrors(b, "Bo");
 });
 
-browserTest(FILE, "Backspace at the start of a list item joins it to the paragraph before, for others too, and one ⌘Z undoes it for all", {}, async (ctx, tab) => {
+// At the start of a top-level list's first item, the first Backspace takes the bullet off and the next joins the
+// paragraph before (Pete's decision: docs/design/view.md, step 6). Each is an undo step of its own.
+browserTest(
+  FILE,
+  "Backspace twice at the start of a list's first item joins it to the paragraph before, for others too, and two ⌘Z undo it for all",
+  {},
+  async (ctx, tab) => {
   const d = await ctx.doc("join");
   const a = await openAs(tab, ctx, d, "Ada"), b = await openAs(tab, ctx, d, "Bo");
   const original = await a.source();
   await a.clickEnd("#one");
   await a.press("Home");
+  await a.press("Backspace");
+  await until(async () => (await a.count("li")) == 1, 5000, "the first Backspace takes the bullet off");
   await a.press("Backspace");
   const joined = `<p id="gamma">keeps its own type.Item one</p>`;
   await until(async () => (await a.source()).includes(joined) && (await b.source()) == (await a.source()), 5000, "both tabs have the join", async () => (await b.source()).match(/<p id="gamma">[\s\S]*?<\/ul>/)?.[0]);
@@ -77,9 +85,16 @@ browserTest(FILE, "Backspace at the start of a list item joins it to the paragra
   await until(async () => (await d.stored(d.path))?.text == s, 5000, "and stored");
   await a.idle();
   await a.press("ControlOrMeta+z");
-  await until(async () => (await b.source()) == original && (await b.count("li")) == 2, 5000, "Ada's one ⌘Z brings both blocks back, for Bo too");
-  noErrors(a, "Ada"); noErrors(b, "Bo");
-});
+  await a.press("ControlOrMeta+z");
+  await until(
+    async () => (await b.source()) == original && (await b.count("li")) == 2,
+    5000,
+    "Ada's two ⌘Z bring both blocks back, for Bo too"
+  );
+  noErrors(a, "Ada");
+  noErrors(b, "Bo");
+}
+);
 
 browserTest(FILE, "a headless participant's edit shows on the page like anyone's", {}, async (ctx, tab) => {
   const d = await ctx.doc();

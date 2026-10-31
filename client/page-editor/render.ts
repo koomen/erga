@@ -385,9 +385,10 @@ export abstract class EditorRender extends EditorMarks {
 
   protected applyChanges(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): void {
     if (!this.doc || this.rendering) return;
-    if (this.reconcile(tr.changes, oldUnits, oldSrc)) {
+    const how = this.reconcile(tr.changes, oldUnits, oldSrc);
+    if (how) {
       this.unshown = false;
-      this.recheck(tr.changes);
+      this.recheck(tr.changes, how == "region");
     } else this.unshown = true;
     this.showChecks();
   }
@@ -401,9 +402,12 @@ export abstract class EditorRender extends EditorMarks {
   /**
    * Re-verifies the units a change touched: a change can break a unit (a
    * stray tag typed into it) or mend a locked one (the agent fixing it), and
-   * either has to show without a full render.
+   * either has to show without a full render. After a change to markup
+   * (`markup`), a unit drawn from the parse shows its runs, but the browser,
+   * loading the page, could read its HTML otherwise (a stray end tag, which it
+   * drops): then it is locked, as it is after a reload.
    */
-  protected recheck(changes: ChangeSet): void {
+  protected recheck(changes: ChangeSet, markup: boolean): void {
     const units = new Set<M.Unit>();
     changes.iterChangedRanges((_fa, _ta, f, t) => {
       let lo = 0,
@@ -423,7 +427,8 @@ export abstract class EditorRender extends EditorMarks {
         this.lockReasons.delete(el);
         this.prepareUnit(el);
       }
-      this.verify(u);
+      if (markup && !this.readsAsParsed(u)) this.lock(u, el);
+      else this.verify(u);
     }
   }
 
@@ -433,9 +438,9 @@ export abstract class EditorRender extends EditorMarks {
    * one text node: the units move in place (M.editRuns), and each changed run's node gets its text. Else the smallest
    * element that holds the change is reconciled, and the units in it are found again; the others move through the
    * change. False, with nothing changed, if the change can't be made in place (a script or a style changed): only a
-   * render shows it (unshown).
+   * render shows it (unshown). Else which way it went: "text" or "region".
    */
-  protected reconcile(changes: ChangeSet, oldUnits: M.Unit[], oldSrc: string): boolean {
+  protected reconcile(changes: ChangeSet, oldUnits: M.Unit[], oldSrc: string): "text" | "region" | false {
     const mirror = this.mirror;
     if (!this.doc || !mirror || oldUnits != this.units) return false;
     const src = this.src;
@@ -443,7 +448,7 @@ export abstract class EditorRender extends EditorMarks {
     if (texts) {
       for (const id of texts) this.setTexts(this.units[id], src);
       this.updateEmpty(texts);
-      return true;
+      return "text";
     }
     const oldEls = oldUnits.map((u) => this.elOf(u));
     // The units in the element the change is in (or the unit that holds it), found by the old tree's shape.
@@ -519,7 +524,7 @@ export abstract class EditorRender extends EditorMarks {
         }
       });
     }
-    return true;
+    return "region";
   }
 
   /**
@@ -648,6 +653,14 @@ export abstract class EditorRender extends EditorMarks {
     });
   }
 
+  /** Whether the browser reads a unit's HTML as the parse does: the same text, in the same text nodes. */
+  protected readsAsParsed(u: M.Unit): boolean {
+    const tpl = this.doc!.createElement("template");
+    tpl.innerHTML = this.src.slice(u.node.openTo, u.node.closeFrom < u.node.to ? u.node.to : u.node.closeFrom);
+    const alone = this.textNodes(tpl.content);
+    return alone.length >= u.runs.length && u.runs.every((r, i) => same(alone[i].nodeValue!, r.text));
+  }
+
   /**
    * Draws a unit's element's content afresh from the source (mirror.ts, redraw: what others put in it goes); whether
    * its text then matches. The units in it are the same units, on new nodes.
@@ -655,10 +668,7 @@ export abstract class EditorRender extends EditorMarks {
   protected redraw(u: M.Unit, el: Element): boolean {
     const src = this.src;
     // Only HTML the browser reads as the parse does: a stray end tag (which the browser drops) keeps the block locked.
-    const tpl = this.doc!.createElement("template");
-    tpl.innerHTML = src.slice(u.node.openTo, u.node.closeFrom < u.node.to ? u.node.to : u.node.closeFrom);
-    const alone = this.textNodes(tpl.content);
-    if (alone.length < u.runs.length || !u.runs.every((r, i) => same(alone[i].nodeValue!, r.text))) return false;
+    if (!this.readsAsParsed(u)) return false;
     this.mirror!.redraw(u.node, src, this.decoder);
     for (const v of M.unitsIn(src, u.node, this.decoder)) {
       const w = this.units.find((x) => x.node == v.node);

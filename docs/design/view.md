@@ -156,6 +156,9 @@ Pete's page "Erga editor mechanics" proposes four more changes. Their status:
   text. `agree()` is gone: with one copy of the text, nothing can drift. The shell's readers ask `currentSelection()`
   (cursors, the style bar, the reload's kept caret) or `currentState()` (the agent's caret context: made afresh). The
   prototype found every reader of the old copy; each now reads the replica or the selection.
+- After a change to markup, a text block drawn from the parse is locked if the browser reads its HTML otherwise
+  (`readsAsParsed`: a stray end tag, which the browser drops). Before, such a block locked after a reload, but not
+  when the broken markup came as an edit (`suite/browser-broken`).
 
 ## 2. What is wrong today (the evidence)
 
