@@ -6,7 +6,8 @@
 // half for whoever may edit.
 
 import type { ReaderConfig } from "../../shared/page-html";
-import { copyOf, placeOf } from "../page-editor/clipboard-html";
+import { copyOf } from "../page-editor/clipboard-html";
+import { linkTarget, placeOf } from "../common/link-target";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
 type Canvas = {
@@ -165,24 +166,41 @@ export default function reader(C: ReaderConfig): void {
     },
     { capture: true, passive: true }
   );
-  // Links, reading (the editor follows its own: client/page-editor/frame.ts). To another of the document's pages: in this frame, as
-  // the link says. Out of the document: a new tab, unless the link names its own target; "_self" takes the whole tab.
-  // The viewer opens both, on the reader's click.
-  document.addEventListener("click", (e) => {
-    if (editing() || e.defaultPrevented || e.button != 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  // Links, reading (the editor follows its own: client/page-editor/frame.ts), read as Erga addresses
+  // (client/common/link-target.ts). To another of the document's pages: in this frame, even when the link names it by
+  // its Erga address or says "_top". Out of the document: a new tab, unless the link names its own target; "_self"
+  // takes the whole tab. A ⌘-, Ctrl- or Shift-click, or the middle button: a new tab, at a page's public address (never
+  // the token's). The viewer opens new tabs and the whole tab, on the reader's click.
+  function follow(e: MouseEvent) {
+    if (editing() || e.defaultPrevented || e.altKey || e.button != (e.type == "auxclick" ? 1 : 0)) return;
     const target = e.target as Element | null;
     const a = target && target.closest ? target.closest<HTMLAnchorElement>("a[href]") : null;
-    if (!a || a.hasAttribute("download") || !/^https?:$/.test(a.protocol)) return;
-    if (a.origin == location.origin && a.pathname.indexOf(C.prefix) == 0) return;
-    const t = (a.getAttribute("target") || "").toLowerCase();
-    if (!t || t == "_blank") {
-      e.preventDefault();
-      tell({ type: "erga-go", url: a.href, tab: "new" });
-    } else if (t == "_self" || t == "_top" || t == "_parent") {
-      e.preventDefault();
-      tell({ type: "erga-go", url: a.href });
+    const p = placeOf(window, C);
+    if (!a || !p || a.hasAttribute("download")) return;
+    let url: URL;
+    try {
+      url = new URL(a.href);
+    } catch {
+      return;
     }
-  });
+    const to = linkTarget(url, p);
+    if (to.kind == "none" || to.kind == "file") return;
+    const t = (a.getAttribute("target") || "").toLowerCase(),
+      tab = e.type == "auxclick" || e.metaKey || e.ctrlKey || e.shiftKey || t == "_blank",
+      here = !t || t == "_self" || t == "_top" || t == "_parent";
+    if (to.kind == "page" && !tab) {
+      if (!here || (url.href == to.frame && t != "_top" && t != "_parent")) return;
+      e.preventDefault();
+      location.assign(to.frame);
+      return;
+    }
+    const go = to.kind == "page" ? to.public : to.url;
+    if (!go || (!tab && !here && t)) return;
+    e.preventDefault();
+    tell({ type: "erga-go", url: go, tab: tab || !t ? "new" : undefined });
+  }
+  document.addEventListener("click", follow);
+  document.addEventListener("auxclick", follow);
   // The band above the page takes its background (its own colour; else a gradient's colour at the top), and the canvas
   // around the frame its background's layers: what the browser gives the canvas (the root's, or the body's when the
   // root has none), placed against the root's box. An image goes as its file, fetched here; one that can't be is left out.

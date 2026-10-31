@@ -140,8 +140,8 @@ test("for readers, a link that leaves the document opens a new tab; one set to o
   const popup = page.context().waitForEvent("page");
   await inPage(page, `document.querySelector("p.lede a").click()`);
   expect((await popup).url()).toContain("example.com");
-  // In this tab: a reader's click (a real one) takes the whole tab, not the page's frame.
-  const away = address + (address.includes("?") ? "&" : "?") + "went=1";
+  // In this tab: a reader's click (a real one) on a link to another Erga address takes the whole tab, not the page's frame.
+  const away = new URL("/docs?went=1", page.url()).href;
   await inPage(page, `(() => { const a = document.querySelector("p.lede a"); a.href = ${JSON.stringify(away)}; a.target = "_self"; return 1; })()`);
   const box = await page.evaluate(() => { const r = document.getElementById("frame")!.getBoundingClientRect(); return { x: r.left, y: r.top }; });
   const r = (await inPage<{ x: number; y: number }>(page, `(() => { const b = document.querySelector("p.lede a").getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`))[0];

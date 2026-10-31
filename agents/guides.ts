@@ -118,7 +118,8 @@ follow) and files that are gone are deleted. JSON works too: \`{"title": "...",
 "files": {"index.html": "<!doctype html>...", "logo.png": {"base64": "..."}}}\`,
 which is what the create_document and update_files tools take. Files can be at
 most 2MB each, 50MB in all. The page runs as it would anywhere (its scripts
-too), on an origin of its own; relative links between its files work.
+too), on an origin of its own; relative links between its files work, and links to Erga
+addresses (/<owner>/<slug>) open in Erga.
 
 ## Working in a document
 

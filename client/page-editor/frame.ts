@@ -22,6 +22,7 @@ import { LivePage } from "./live-page-tab";
 import { changesBetween } from "../../document/merge";
 import { baseName, encodePath } from "../../document/pages";
 import { sourceDigest } from "../../shared/page-html";
+import { linkTarget, placeOf } from "../common/link-target";
 import type { ViewResult } from "../../shared/agent-log";
 
 declare global {
@@ -461,23 +462,34 @@ function watchPage() {
   // The format bar follows selected text that moves another way: a scroll in an element, a pan of the page's own (moves.ts).
   watchMoves(d, win, () => { if (page && d.getSelection()?.isCollapsed === false) queueSnapshot(); });
   on(d, "selectionchange", () => queueSnapshot());
-  // A link to another of the document's pages, outside the text being edited (a menu, say): the shell goes
-  // there, to that page's editor. Links in the text itself aren't followed (⌘-click opens them in a tab).
-  on(d, "click", (e) => {
+  // Links, read as Erga addresses (client/common/link-target.ts). A link to another of the document's pages, outside the
+  // text being edited (a menu, say): the shell goes there, to that page's editor. Any other web address: the shell
+  // opens it, in a new tab unless the link says "_self" or "_top" (never in this frame). Links in the text itself aren't
+  // followed; a ⌘-click (Ctrl-click), a Shift-click or the middle button opens any link in a new tab, as in the viewer.
+  const follow = (e: Event) => {
     const c = e as MouseEvent;
-    if (c.defaultPrevented || c.button || c.metaKey || c.ctrlKey || c.shiftKey || c.altKey) return;
+    if (c.defaultPrevented || c.altKey || c.button != (c.type == "auxclick" ? 1 : 0)) return;
     const a = (c.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
-    if (!a || a.isContentEditable || (a.target && a.target != "_self") || a.getAttribute("href")!.startsWith("#")) return;
+    const p = placeOf(win, reader);
+    if (!a || !p || a.hasAttribute("download")) return;
     let url: URL;
     try { url = new URL(a.href); } catch { return; }
-    if (url.origin != location.origin || !url.pathname.startsWith(BASE)) return;
-    let path: string;
-    try { path = decodeURIComponent(url.pathname.slice(BASE.length)); } catch { return; }
-    // A page, or an address like a folder's ("blog/"); not a stylesheet or an image.
-    if (/\.[^./]+$/.test(path) && !/\.(html|md)$/i.test(path)) return;
+    const to = linkTarget(url, p);
+    if (to.kind == "none" || to.kind == "file") return;
+    const t = a.target.toLowerCase(),
+      tab = c.type == "auxclick" || (isMac ? c.metaKey : c.ctrlKey) || c.shiftKey || t == "_blank",
+      here = !t || t == "_self" || t == "_top" || t == "_parent";
+    if (!tab && (a.isContentEditable || !here || a.getAttribute("href")!.startsWith("#"))) return;
     c.preventDefault();
-    post({ type: "open", path });
-  });
+    if (to.kind == "page" && !tab) {
+      post({ type: "open", path: to.path || "index.html" });
+      return;
+    }
+    const go = to.kind == "page" ? to.public : to.url;
+    if (go) window.parent.postMessage({ type: "erga-go", url: go, tab: tab || !t ? "new" : undefined }, SHELL);
+  };
+  on(d, "click", follow);
+  on(d, "auxclick", follow);
   on(win, "resize", () => queueSnapshot());
   // The shell's shortcuts, from anywhere on the page.
   on(win, "keydown", (e) => {

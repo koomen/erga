@@ -287,13 +287,10 @@ export abstract class EditorInput extends EditorClipboard {
         return;
       }
     }
-    // Inside manuscript the browser doesn't follow links; Cmd-click does.
+    // Inside manuscript the browser doesn't follow links; a Cmd-click opens one in a new tab (frame.ts, on the click),
+    // and leaves the caret where it was.
     if (!this.ours(e)) return;
-    const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
-    if (a && (isMac ? e.metaKey : e.ctrlKey)) {
-      e.preventDefault();
-      window.open(a.href, "_blank", "noopener");
-    }
+    if ((isMac ? e.metaKey : e.ctrlKey) && (e.target as Element).closest?.("a[href]")) e.preventDefault();
   }
 
   /**

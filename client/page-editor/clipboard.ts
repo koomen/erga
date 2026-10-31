@@ -2,6 +2,7 @@
 
 import * as M from "../../shared/manuscript";
 import * as C from "./clipboard-html";
+import { placeOf, publicHref, type Place } from "../common/link-target";
 import { escapeAttr, HEADING } from "./source";
 import { EditorMarkdown } from "./markdown";
 import { editableAt } from "./rules";
@@ -91,10 +92,10 @@ export abstract class EditorClipboard extends EditorMarkdown {
     e.clipboardData.setData("text/html", data.html);
   }
 
-  /** Where this page is, for the links and pictures in a copy (clipboard-html.ts, Place). */
-  protected place(): C.Place | null {
+  /** Where this page is, for the links and pictures in a copy (client/common/link-target.ts, Place). */
+  protected place(): Place | null {
     const win = this.doc?.defaultView;
-    return win ? C.placeOf(win, win.__ergaReader?.config) : null;
+    return win ? placeOf(win, win.__ergaReader?.config) : null;
   }
 
   /**
@@ -115,7 +116,7 @@ export abstract class EditorClipboard extends EditorMarkdown {
     const lines: C.Line[] = [];
     const taken: Element[] = [];
     const place = this.place(),
-      link = (a: Element) => C.publicHref(a, place);
+      link = (a: Element) => publicHref(a, place);
     // Widgets and text the page doesn't let you edit, and the editor's own marks.
     const skip = (el: Element) =>
       el.getAttribute("contenteditable") == "false" || el.localName.startsWith("erga-") || el.hasAttribute("data-erga");
