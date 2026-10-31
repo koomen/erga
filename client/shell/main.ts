@@ -325,6 +325,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
       if (!$("naming").hidden) shell.naming.toggleNaming(false);
       if (!$("pages").hidden) shell.naming.togglePages(false);
       if (!$("sharing").hidden) shell.sharing.toggleSharing(false);
+      if (shell.docSettings?.isOpen()) shell.docSettings.toggle(false);
       shell.pause.showPauseCard(false);
     },
     onActivity: (kind) => {
