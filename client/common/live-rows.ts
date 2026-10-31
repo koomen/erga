@@ -28,7 +28,6 @@ const pending = new Set<string>();
 let since = 0,
   socket: WebSocket | null = null,
   tries = 0,
-  asking = false,
   heard = 0;
 
 /** The page's ?user= (local development: who is signed in), for its asks. */
@@ -105,40 +104,66 @@ function connect() {
   };
 }
 
+/**
+ * The page's own change: these rows as they are now, asked for at once (not waiting for the socket, nor needing it).
+ * Settles once they're in (or waiting: someone is typing in one).
+ */
+export function refresh(...keys: string[]): Promise<void> {
+  for (const k of keys) if (listOf(k)) pending.add(k);
+  return ask();
+}
+
 /** Whether `el` shows rows of `key`'s kind. */
 const shows = (el: HTMLElement, key: string) => (el.dataset.liveKind ?? "").split(" ").includes(key.slice(0, key.indexOf(":")));
 
 /** The list that shows rows of `key`'s kind, if any. */
 const listOf = (key: string) => [...lists.keys()].find((el) => shows(el, key));
 
-/** Asks for the rows that changed, one ask at a time; a hidden tab waits until it shows. */
-async function ask(): Promise<void> {
-  if (asking || !pending.size || document.hidden) return;
-  asking = true;
-  try {
-    const keys = [...pending];
-    pending.clear();
-    for (const [el, o] of lists) {
-      const mine = keys.filter((k) => shows(el, k));
-      if (!mine.length) continue;
-      const q = new URLSearchParams({ view: el.dataset.liveView!, keys: mine.join(",") });
-      if (user()) q.set("user", user()!);
-      const r = await fetch(`/api/news/rows?${q}`, { headers: { Accept: "application/json" } }).catch(() => null);
-      if (!r?.ok) {
-        // Asked again with the next change, or after the socket comes back.
-        mine.forEach((k) => pending.add(k));
-        continue;
-      }
-      const { rows } = (await r.json()) as { rows: Record<string, Row> };
-      for (const [key, row] of Object.entries(rows)) if (!put(el, o, key, row)) pending.add(key);
-      o.changed?.();
+let running: Promise<void> | null = null,
+  again = false;
+
+/** Asks for the rows that changed, one ask at a time (a change meanwhile: once more after it); a hidden tab waits until it shows. */
+function ask(): Promise<void> {
+  if (running) {
+    again = true;
+    return running;
+  }
+  running = (async () => {
+    do {
+      again = false;
+      await askOnce();
+    } while (again && pending.size && !document.hidden);
+  })().finally(() => {
+    running = null;
+  });
+  return running;
+}
+
+async function askOnce(): Promise<void> {
+  if (!pending.size || document.hidden) return;
+  const keys = [...pending];
+  pending.clear();
+  for (const [el, o] of lists) {
+    const mine = keys.filter((k) => shows(el, k));
+    if (!mine.length) continue;
+    const q = new URLSearchParams({ view: el.dataset.liveView!, keys: mine.join(",") });
+    if (user()) q.set("user", user()!);
+    const r = await fetch(`/api/news/rows?${q}`, { headers: { Accept: "application/json" } }).catch(() => null);
+    if (!r?.ok) {
+      // Asked again with the next change, or after the socket comes back.
+      mine.forEach((k) => pending.add(k));
+      continue;
     }
-  } finally {
-    asking = false;
+    const { rows } = (await r.json()) as { rows: Record<string, Row> };
+    for (const [key, row] of Object.entries(rows)) if (!put(el, o, key, row)) pending.add(key);
+    o.changed?.();
   }
   // A failed ask, or a row someone is typing in: again in a while.
   if (pending.size) setTimeout(ask, 1000);
 }
+
+/** The row's status lines (role="status": "Saved.", an error), as they are: a row replaced keeps what they say. */
+const statuses = (row: Element) => [...row.querySelectorAll<HTMLElement>('[role="status"]')];
 
 /** A row, with what follows it until the next row (a project's pages beneath it). */
 const group = (row: Element) => {
@@ -184,6 +209,14 @@ function put(el: HTMLElement, o: LiveList, key: string, row: Row): boolean {
   const focusables = (r: Element) => [...r.querySelectorAll<HTMLElement>("a, button, input, select, textarea")];
   const at = old ? focusables(old).indexOf(document.activeElement as HTMLElement) : -1;
   const moving = old ? group(old).slice(1) : [];
+  const said = old ? statuses(old) : [];
+  statuses(fresh).forEach((s, i) => {
+    const was = said[i];
+    if (was?.textContent && !s.textContent) {
+      s.textContent = was.textContent;
+      s.className = was.className;
+    }
+  });
   if (old) old.replaceWith(fresh);
   // Its place, in the list's order: before the first row it comes ahead of; else after the last row.
   const others = [...el.querySelectorAll<HTMLElement>(":scope > [data-live]")].filter((r) => r != fresh);

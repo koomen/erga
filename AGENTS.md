@@ -135,6 +135,10 @@ Found a new trap? Write it here, in the same change.
   timers once a second, after 5 minutes once a minute, and draws no frames. Code
   that answers the agent from the tab (view_page's render) waits with
   `client/page-editor/clock.ts`, never with `sleep` or requestAnimationFrame.
+- A live list (`data-live-kind`, server/news/) gets new rows after the page loaded,
+  and a changed row is a new element. Attach a row's listeners in its
+  `wire(row)` (client/common/live-rows.ts), never in a loop over the rows at
+  load: a row that comes later would have none.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

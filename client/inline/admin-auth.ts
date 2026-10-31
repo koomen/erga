@@ -2,26 +2,15 @@
 // Discard and Clear.
 
 import { post, reload, runTool, say } from "../common/admin-post";
-import { liveList } from "../common/live-rows";
+import { liveList, refresh } from "../common/live-rows";
 
 export default function adminAuth(): void {
-  // A change shows the page again in place (reload), and its message under the provider's card in the new page: it
-  // waits in sessionStorage through the reload (a whole page's too, without the admin shell).
-  const SAID = "erga:admin-auth-said";
-  const sayAfter = (provider: string, text: string) => {
-    try {
-      sessionStorage.setItem(SAID, JSON.stringify({ provider, text }));
-    } catch {}
-  };
-  try {
-    const said = JSON.parse(sessionStorage.getItem(SAID) || "null");
-    sessionStorage.removeItem(SAID);
-    const hint = said && document.querySelector('section.server[data-provider="' + said.provider + '"] .hint');
-    if (hint) say(hint, said.text);
-  } catch {}
+  // A change shows both providers' sections as they are now (each says whether the other is on), and its message under
+  // the provider's card.
   const changed = async (provider: string, text: string) => {
-    sayAfter(provider, text);
-    await reload();
+    await refresh("auth:github", "auth:google");
+    const hint = document.querySelector('section.server[data-provider="' + provider + '"] .hint');
+    if (hint) say(hint, text);
   };
   // A check GitHub or Google didn't answer in time: the page asks again by itself, a few times, while it's open.
   const RETRIES = "erga:admin-auth-retries";
@@ -54,7 +43,8 @@ export default function adminAuth(): void {
       say(hint, "Saving…");
       try {
         await runTool("switch_sign_in_provider", { provider: box.dataset.provider!, on: box.checked });
-        reload();
+        say(hint, "");
+        refresh("auth:github", "auth:google");
       } catch (err) {
         box.checked = !box.checked;
         say(hint, (err as Error).message, true);

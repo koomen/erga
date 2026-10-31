@@ -1,8 +1,8 @@
 // The API keys page's script (/admin/api-keys, server/admin/api-keys.ts): Save sets or replaces the key typed in, Clear
 // removes it. The answer never holds the key; the page reloads to show what it is now.
 
-import { post, reload, runTool, say } from "../common/admin-post";
-import { liveList } from "../common/live-rows";
+import { post, runTool, say } from "../common/admin-post";
+import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 
 export default function adminApiKeys(): void {
@@ -24,7 +24,8 @@ export default function adminApiKeys(): void {
       try {
         await post(form.action, { name: li.dataset.name!, value: input.value });
         input.value = "";
-        reload();
+        input.blur();
+        refresh(li.dataset.live!);
       } catch (err) {
         say(hint, (err as Error).message, true);
       }
@@ -44,7 +45,7 @@ export default function adminApiKeys(): void {
       say(hint, "Clearing…");
       try {
         await runTool("clear_api_key", { name: li.dataset.name! });
-        reload();
+        refresh(li.dataset.live!);
       } catch (err) {
         say(hint, (err as Error).message, true);
       }
