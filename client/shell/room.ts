@@ -7,7 +7,6 @@ import type { SocketEvent } from "./collab";
 import type { Author } from "../../document/content";
 import type { AgentState, DocName, Hello, ModelState } from "../../document/api";
 import type { LogEvent, ViewRequest } from "../../shared/agent-log";
-import { changesBetween } from "../../document/merge";
 import { live } from "../live/client";
 import { ms } from "../page-editor/timescale";
 import { $, type Shell } from "./shell";
@@ -53,23 +52,9 @@ export function mountRoom(shell: Shell) {
       shell.sourceView.dispatch({ changes, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
       shell.page.recordAuthorship(changes, markAuthor(author));
     }
-    // The shell's copy of the text takes it either way; the page does when it isn't set aside for the source view.
+    // The page takes it when it isn't set aside for the source view.
     shell.page.applyExternal(changes, markAuthor(author));
-    // The editor and the room must agree; if they ever don't, the room wins. Their lengths at once; the whole texts
-    // once the changes stop for a moment (comparing them on every change someone types costs the document's length).
-    if (shell.collab.currentLength() != shell.currentState().doc.length) agree();
-    else { clearTimeout(agreeTimer); agreeTimer = window.setTimeout(agree, 250); }
     shell.people.queuePeers();
-  }
-  let agreeTimer = 0;
-  function agree() {
-    clearTimeout(agreeTimer);
-    const want = shell.collab.current(), have = shell.currentState().doc.toString();
-    if (want == have) return;
-    console.warn("page editor: out of step with the room; resyncing");
-    const fix = changesBetween(have, want);
-    if (shell.sourceView) shell.sourceView.dispatch({ changes: fix, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
-    shell.page.applyExternal(fix, null);
   }
 
   // Changes the editor can't make in place (another file in the folder: a

@@ -119,7 +119,7 @@ window.addEventListener("message", (e: MessageEvent) => {
   switch (m.type) {
     case "external": {
       if (resyncing) return;
-      // A change that doesn't fit this text: the two sides are out of step. The shell's text, whole, puts it right (attach).
+      // A change that doesn't fit this text: the two sides are out of step. The room's text, whole, puts it right (attach).
       let mine: ChangeSet | null = null;
       try {
         mine = relay.remote(ChangeSet.fromJSON(m.changes));
@@ -253,8 +253,8 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
   }
   if (m.frame) live.pageFrame = m.frame;
   relay = new Relay(m.version, (version, changes) => post({ type: "push", version, changes: changes.toJSON() }));
-  // The state this page's editor had (with its undo history), brought to the shell's text: before the page loaded again,
-  // or before the editor stopped (out of the editor and back). Else the shell's.
+  // The state this page's editor had (with its undo history), brought to the room's text: before the page loaded again,
+  // or before the editor stopped (out of the editor and back). Else the one the shell sent.
   let state = stateFrom(m.state), view = m.view ?? null;
   if (m.carry) {
     try {

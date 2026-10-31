@@ -224,7 +224,7 @@ export class Relay {
     this.flush();
   }
 
-  /** Starts again from the shell's state (after the source view, or a resync). */
+  /** Starts again from the state the shell sends (after the source view, or a resync). */
   reset(version: number): void {
     this.version = version;
     this.inflight = this.buffer = null;

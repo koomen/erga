@@ -12,6 +12,7 @@
 
 import type { SocketEvent } from "./collab";
 import { Collab } from "./collab";
+import { EditorState } from "@codemirror/state";
 import type { MarkAuthor } from "../page-editor/editor";
 import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "../page-editor/bridge";
@@ -240,9 +241,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
 
   // Into the room as who this tab is, and the document's text (on its way already, or here).
   collab.join(me, info.path);
-  let initialText: string;
   try {
-    initialText = await collab.ready();
+    await collab.ready();
     performance.mark("erga:synced");
   } catch (e) {
     $("welcome").hidden = false;
@@ -252,8 +252,24 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   }
   document.title = info.docName?.title ?? info.name;
 
-  const currentState = () => (shell.sourceView ? shell.sourceView.state : shell.page.state);
-  Object.assign(shell, { collab, me, self, as, api, frame, docId: BASE.replace(/^\/d\//, ""), addressOf, goTo, openPage, swapPage, currentState });
+  /** The caret in the text, and the text: the source view's while it has them, else the page's selection in the room's text. */
+  const currentSelection = () => (shell.sourceView ? shell.sourceView.state.selection : shell.page.selection);
+  const currentState = () => shell.sourceView?.state ?? EditorState.create({ doc: collab.current(), selection: shell.page.selection });
+  Object.assign(shell, {
+    collab,
+    me,
+    self,
+    as,
+    api,
+    frame,
+    docId: BASE.replace(/^\/d\//, ""),
+    addressOf,
+    goTo,
+    openPage,
+    swapPage,
+    currentSelection,
+    currentState,
+  });
   shell.naming = mountNaming(shell);
   shell.room = mountRoom(shell);
   shell.people = mountPeople(shell);
@@ -274,7 +290,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     frame,
     origin: new URL(pagesUrl, location.href).origin,
     files: pagesUrl,
-    text: initialText,
+    room: { text: () => collab.current(), length: () => collab.currentLength() },
     self,
     tracking: settings.track,
     ...(back && back.path == shell.pagePath ? { selection: back.selection, scroll: back.scroll } : {}),
@@ -501,7 +517,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     l.flush(() => collab.flushed());
     l.hold(() => shell.fmt.pointerDown ? "a pointer is down on the page" : shell.agent.voice ? "voice mode is on" : shell.agent.files.reading ? "files are being read" : null);
     l.keep("editor", (): EditorKept => {
-      const sel = currentState().selection.main;
+        const sel = currentSelection().main;
       return {
         path: shell.pagePath, selection: { anchor: sel.anchor, head: sel.head }, scroll: shell.mode == "text" ? page.scrollY : 0, mode: shell.mode,
         pages: !$("pages").hidden, settings: !!shell.docSettings?.isOpen(), help: !$("help").hidden,
@@ -553,7 +569,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     if (text == null) { goTo(addressOf(path)); return; }
     shell.pagePath = path;
     shell.info = { ...shell.info, path, name: path };
-    page.load({ path, text });
+    page.load(path);
     // What was said of the last page was of it alone.
     shell.room.shownProblems.clear();
     shell.toast.clearProblems();

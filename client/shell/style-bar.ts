@@ -22,7 +22,10 @@ export function mountStyleBar(shell: Shell) {
   let linkDismissed = false;
   /** The selection the link bar opened on: its changes go there, even after a click has moved the caret. */
   let linkSel: { anchor: number; head: number } | undefined;
-  const pageSel = () => { const m = shell.page.state.selection.main; return { anchor: m.anchor, head: m.head }; };
+  const pageSel = () => {
+    const m = shell.page.selection.main;
+    return { anchor: m.anchor, head: m.head };
+  };
   let morphing = false;
   function queueFmt() {
     if (fmtQueued) return;

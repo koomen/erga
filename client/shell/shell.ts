@@ -2,7 +2,7 @@
 // is, the document and the page it edits, the page editor, and each part's own calls. A part reads what another
 // part keeps through here at the moment it needs it, so the parts can mount in any order the page allows.
 
-import type { EditorState } from "@codemirror/state";
+import type { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { MarkAuthor } from "../page-editor/editor";
 import type { RemotePage } from "./remote";
@@ -83,6 +83,9 @@ export interface Shell {
   goTo: (url: string, replace?: boolean) => void;
   openPage: (path: string) => void;
   swapPage: (path: string, push?: boolean) => boolean;
+  /** The caret in the text (the source view's, else the page's). */
+  currentSelection: () => EditorSelection;
+  /** The text and the caret as a state, made afresh: the text whole (for the agent's look, not for each key). */
   currentState: () => EditorState;
 
   naming: Naming;
