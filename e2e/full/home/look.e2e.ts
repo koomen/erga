@@ -6,10 +6,11 @@ import { devicePage, diffPng, shoot, steady, VIEWS } from "./shots";
 await servers.short();
 test.afterEach(async () => { await resetLanding(await servers.short()); });
 
-// / differs from the viewer in two ways: the page starts below the controls' band, so they never cover its top; and its
-// breadcrumbs are the wordmark alone (the viewer's name the document), so the shots leave them out.
+// / differs from the viewer in three ways: the page starts below the controls' band, so they never cover its top; its
+// breadcrumbs are the wordmark alone (the viewer's name the document), so the shots leave them out; and it has no
+// full-screen button (the viewer's makes its frame fill the screen; / has no frame), so the viewer's shot leaves it out.
 const BAND = 58;
-const NO_CRUMBS = `for (const r of [document, document.querySelector("erga-controls")?.shadowRoot]) r?.querySelector(".erga-crumbs")?.style.setProperty("visibility", "hidden")`;
+const NO_CRUMBS = `for (const r of [document, document.querySelector("erga-controls")?.shadowRoot]) { r?.querySelector(".erga-crumbs")?.style.setProperty("visibility", "hidden"); r?.querySelector(".erga-full-button")?.style.setProperty("display", "none", "important"); }`;
 
 for (const v of VIEWS) {
   test(`/ looks as the viewer shows its document, the page moved below the band: ${v.name} (pixel diff)`, async ({ tab }) => {

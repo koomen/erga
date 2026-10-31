@@ -37,7 +37,8 @@ test("its owner edits it in the editor, and / shows the edit", { timeout: 30_000
   const ed = editor(tab.page, { address, dir: "", file: "" });
   await expect.poll(() => tab.page.evaluate(() => document.body.classList.contains("erga-editor-ready"))).toBe(true);
   // The first paragraph: the heading is the logo, which isn't edited (data-erga-noedit).
-  await expect.poll(() => ed.frame<string | null>(`${F}?.querySelector("p.lede")?.getAttribute("contenteditable") ?? null`)).toBe("true");
+  // (The page's <body> is the one editing host: the paragraph is editable in it.)
+  await expect.poll(() => ed.frame<boolean>(`!!${F}?.querySelector("p.lede")?.isContentEditable`)).toBe(true);
   // Its fonts first: the text moves when they load.
   await ed.frame(`${F}.fonts.ready.then(() => true)`);
   await ed.clickEnd("p.lede");
