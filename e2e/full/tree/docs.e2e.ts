@@ -13,7 +13,9 @@ async function openDocs(page: Page, doc: Doc) {
   await until(() => page.evaluate(`document.querySelectorAll("#pages-${doc.id} .et-row[data-path]").length > 0`), 5000, "the document's pages show beneath it");
 }
 
-test("a project's pages start at the top level (the row above is the project), by their titles, its other files after them; the chevron says it's open", async ({ tab }) => {
+test("a project's tree starts with index.html, then its folders, pages (by their titles) and other files at the same level; the chevron says it's open", async ({
+  tab,
+}) => {
   const page = tab.page;
   tab.strict = true;
   const doc = await multi(await servers.main());
@@ -21,9 +23,17 @@ test("a project's pages start at the top level (the row above is the project), b
   await doc.agentTool("write", { path: "owl-calls.html", content: "<!doctype html><title>Owl calls</title><h1>Owl calls</h1>" });
   await openDocs(page, doc);
   const r = await rows(page, `#pages-${doc.id}`);
-  // Folders first, then pages, then the other files (a project's tree shows them all).
-  expect(r.filter((x) => x[2] == 1).map((x) => x[0])).toEqual(["assets", "blog", "fonts", "about.html", "contact.html", "owl-calls.html", "style.css"]);
-  expect(r.some((x) => x[0] == "index.html")).toBe(false);
+  // index.html, then folders, then pages, then the other files (a project's tree shows them all).
+  expect(r.filter((x) => x[2] == 1).map((x) => x[0])).toEqual([
+    "index.html",
+    "assets",
+    "blog",
+    "fonts",
+    "about.html",
+    "contact.html",
+    "owl-calls.html",
+    "style.css",
+  ]);
   expect(r.find((x) => x[0] == "owl-calls.html")?.[1]).toBe("Owl calls");
   expect(await js(page, `document.querySelector('button.twist[data-id="${doc.id}"]').getAttribute("aria-expanded")`)).toBe("true");
 });

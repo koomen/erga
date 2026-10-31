@@ -14,7 +14,7 @@ test("a page's menu says page (never document); Move page to… moves it into a 
   expect(await menuItems(page)).toEqual(["Open in a new tab", "Rename page", "Move page to…", "Delete page"]);
   const words = await page.evaluate(`document.getElementById("pages").textContent + " " + [...document.querySelectorAll("#pages [aria-label], #pages [placeholder], #pages [title]")].map((e) => (e.getAttribute("aria-label") ?? "") + " " + (e.getAttribute("placeholder") ?? "") + " " + (e.getAttribute("title") ?? "")).join(" ")`) as string;
   expect(words).toContain("New page");
-  // Only the root row's rename names the document.
+  // Only index.html's row renames the document.
   expect(words.replace(/Rename this document, or change its address/g, "")).not.toMatch(/\bdocuments?\b/i);
   await menuItem(page, "Move page to…");
   await menuItem(page, "notes");

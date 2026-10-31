@@ -1,10 +1,12 @@
-// The editor's title opens the tree: the project as its root row, its pages, folders and other files under it ("the editor").
+// The editor's title opens the tree: index.html first, as its own row, then the project's folders, pages and other files ("the editor").
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { focused, multi, openCard, openTreeEditor, rows, js } from "./tree";
 
 await servers.main();
 
-test("the title opens the tree: the document by its title as the root row, marked as the page you're on, its pages under it, folders first; focus goes to the page you're on", async ({ tab }) => {
+test("the title opens the tree: index.html first by its title, marked as the page you're on, then the rest at the same level, folders first; focus goes to the page you're on", async ({
+  tab,
+}) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
   await openTreeEditor(tab, doc.base);
@@ -13,14 +15,21 @@ test("the title opens the tree: the document by its title as the root row, marke
   const r = await rows(page);
   expect(r[0]).toEqual(["index.html", "Field guide", 1, true]);
   // Folders first, then pages, then the project's other files.
-  expect(r.slice(1).map((x) => [x[0], x[2]])).toEqual([["assets", 2], ["blog", 2], ["fonts", 2], ["about.html", 2], ["contact.html", 2], ["style.css", 2]]);
+  expect(r.slice(1).map((x) => [x[0], x[2]])).toEqual([
+    ["assets", 1],
+    ["blog", 1],
+    ["fonts", 1],
+    ["about.html", 1],
+    ["contact.html", 1],
+    ["style.css", 1],
+  ]);
   expect(r.find((x) => x[0] == "about.html")?.[1]).toBe("About us");
   expect(await js(page, `document.getElementById("doc-title").getAttribute("aria-expanded") == "true"`)).toBe(true);
   // (openTreeEditor waits for the editor's page to have the focus first: see it, and the race it avoids.)
   await expect.poll(() => focused(page)).toBe("index.html");
 });
 
-test("a project's tree shows every file, as the server and an agent (ls, find) do; a file that isn't a page has no link", async ({
+test("a project's tree shows every file, as the server and an agent (ls, find) do; a file that isn't a page links to itself, in a new tab", async ({
   tab,
 }) => {
   const page = tab.page;
@@ -34,5 +43,9 @@ test("a project's tree shows every file, as the server and an agent (ls, find) d
   await openCard(page);
   await page.evaluate(`document.querySelector('.et-row[data-path="assets"]').click()`);
   await until(async () => (await rows(page)).some((x) => x[0] == "assets/owl.svg"), 5000, "the folder of images opens");
-  expect(await js(page, `document.querySelector('.et-row[data-path="assets/owl.svg"] .et-name').localName`)).toBe("span");
+  const link = await js(
+    page,
+    `(() => { const a = document.querySelector('.et-row[data-path="assets/owl.svg"] .et-name'); return [a.localName, new URL(a.href).pathname, a.target]; })()`
+  );
+  expect(link).toEqual(["a", `${doc.address}/assets/owl.svg`, "_blank"]);
 });

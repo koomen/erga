@@ -29,6 +29,7 @@ import type { ViewAnswer } from "../../document/view.ts";
 import { mayDeploy } from "../identity/index.ts";
 import { ID, OWNER, roleMay } from "../directory/index.ts";
 import type { Role } from "../../document/access.ts";
+import type { DocKind } from "../../document/pages.ts";
 import { BUILD_HEADER, CHECK_HEADER, pageBuild } from "../live.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { frontDocument, landingPage } from "./landing.ts";
@@ -63,6 +64,8 @@ interface Decision {
   file: string;
   /** The page's own address under the document's ("" for its own page). */
   canonical: string;
+  /** A project (pages: its crumb opens its tree), or not; null if its row doesn't say. */
+  kind?: DocKind | null;
 }
 
 /** Decisions in this isolate: key -> when, and what. */
@@ -116,6 +119,9 @@ const refused = (session: Session) => session.test
   ? page("Test documents only", "Test people can open only test documents.", 403)
   : page("Not shared with you", `This document hasn't been shared with <b>${esc(session.login)}</b>. Ask its owner to share it with you.`, 403);
 
+/** An address under a document's that names a file that isn't a page: its last part has an extension, not .html. */
+const FILE = /(?:^|\/)[^/]+\.(?!html?$)[a-z0-9]+$/i;
+
 /** A page's address under its document's, as the address bar has it. */
 const suffix = (canonical: string) => (canonical ? `/${canonical.split("/").map(encodeURIComponent).join("/")}` : "");
 
@@ -140,7 +146,7 @@ async function address(
   let answer: ViewAnswer | null = null;
   if (!d) {
     // The document at the address: by id straight from its host; by slug, the directory finds it.
-    let row: { id: string; owner: string; slug: string; title: string } | null = null;
+    let row: { id: string; owner: string; slug: string; title: string; kind: DocKind | null } | null = null;
     if (first == "d") { if (!ID.test(second)) return nothing(); }
     else {
       if (!OWNER.test(first)) return nothing();
@@ -153,8 +159,28 @@ async function address(
     if (!answer.role) return refused(session);
     const name = row ?? answer.name ?? (await platform.directory.get(id));
     if (!name) return nothing();
+    // A file that isn't a page (style.css, assets/owl.png: a project's tree links to them) opens as itself, on the
+    // document's pages origin, where its scripts can't reach the app; the pages origin answers 404 if it isn't there.
+    if (answer.file == null && FILE.test(wanted)) {
+      const by = platform.adminsOnly ? session.login : null;
+      const token = await pagesToken(platform.secret, name.owner, id, url.origin, undefined, by ? { by } : {});
+      return redirect(`${pagesOrigin(name.owner, id, url, platform)}/t/${token}/${wanted}`, 302, {
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+      });
+    }
     if (answer.file == null || answer.ver == null) return noPage(`/${name.owner}/${name.slug}`);
-    d = { id, owner: name.owner, slug: name.slug, title: name.title, role: answer.role, ver: answer.ver, file: answer.file, canonical: answer.canonical ?? "" };
+    d = {
+      id,
+      owner: name.owner,
+      slug: name.slug,
+      title: name.title,
+      role: answer.role,
+      ver: answer.ver,
+      file: answer.file,
+      canonical: answer.canonical ?? "",
+      kind: row?.kind ?? null,
+    };
     if (answer.quiet) keepDecision(platform, key, d);
   }
   const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
@@ -283,6 +309,7 @@ async function render(
     edit,
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
     ...(session && !session.agent ? { live: d.ver } : {}),
+    ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),
   });
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
   const before = shell.before, after = shell.after + corner;

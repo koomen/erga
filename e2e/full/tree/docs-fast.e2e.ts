@@ -1,6 +1,6 @@
 // Documents, fast: a button acts as the press starts, once (client/common/fast-click.ts), and a document is fetched ahead as the
 // pointer rests on its row, each document once.
-import { expect, servers, test } from "../../helpers/fixtures";
+import { expect, servers, test, until } from "../../helpers/fixtures";
 import { js, multi } from "./tree";
 
 await servers.main();
@@ -13,7 +13,8 @@ test("the chevron and the account button act on the press, not on its release, a
   await page.goto(`${server.root}/docs`);
   const chevron = `button.twist[data-id="${id}"]`;
   const expanded = () => js(page, `document.querySelector('${chevron}').getAttribute("aria-expanded")`);
-  const box = (await page.locator(chevron).boundingBox())!;
+  // (Tests in other files share the server: a row of theirs coming in replaces the rows, so the box is read until it's there.)
+  const box = (await until(() => page.locator(chevron).boundingBox(), 3000, "the chevron is on the page"))!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   expect(await expanded(), "open on the press").toBe("true");
@@ -52,7 +53,7 @@ test("the pointer resting on a document's row fetches its page ahead (speculatio
   const rules = () => js(page, `[...document.querySelectorAll('script[type="speculationrules"]')].flatMap((s) => JSON.parse(s.textContent).prefetch[0].urls)`) as Promise<string[]>;
   expect(await rules()).toEqual([]);
   const href = await js(page, `document.querySelector('button.twist[data-id="${id}"]').closest("li").querySelector("a.doc").href`);
-  const row = (await page.locator(`button.twist[data-id="${id}"]`).boundingBox())!;
+  const row = (await until(() => page.locator(`button.twist[data-id="${id}"]`).boundingBox(), 3000, "the row is on the page"))!;
   await page.mouse.move(row.x + 300, row.y + row.height / 2);
   await expect.poll(rules).toEqual([href]);
   // (The editor's script: its shell comes in the document's page.)

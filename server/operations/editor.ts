@@ -152,7 +152,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "list_pages",
     label: "List pages",
     activity: "looking at the pages",
-    ui: "The editor's page tree, and each document's on the documents list (/docs)",
+    ui: "A project's tree: on the documents list (/docs), and on its crumb in the viewer and the editor",
     description:
       "A document's pages, folders and other files, as its page tree shows them: each entry's path and type (page, folder or file), a page's title and address. Pages are the .html files; index.html is the home page. Also its kind (document: one page; project: pages), whether you may change it (canEdit), and the latest moves.",
     parameters: Schema.Struct({ document: DOCUMENT }),
