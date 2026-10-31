@@ -1,5 +1,5 @@
 // The operations inside one document, as a person does them in the editor: its name and address (the title card),
-// its pages and folders (the page tree, the files view's list), its kind (the settings' Document/Project switch) and
+// its pages and folders (the page tree), its kind (the settings' Document/Project switch) and
 // its versions (the settings' Versions). Each takes `document`; the editor's agent may leave it out for the one it's
 // in (Caller.here). They reach the document's host through its Durable Object's calls (platform.docs), as the person,
 // after the directory says they may.
@@ -178,7 +178,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "ls",
     label: "List files",
     activity: "looking around",
-    ui: "The files view: every file, its kind, size and time",
+    ui: "The page tree: every file",
     description:
       "Every file of a document under a folder (default: all of them): each one's path, kind (text, or a file kept whole), type, size in bytes and time; and the folders. Also the document's page (index), its kind, and whether you may change its files (canEdit).",
     parameters: Schema.Struct({ document: DOCUMENT, path: Schema.optionalKey(PATH("Only the files in this folder")) }),
@@ -217,7 +217,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "mkdir",
     label: "New folder",
     activity: "making a folder",
-    ui: "The page tree and the files view: New folder",
+    ui: "The page tree: New folder",
     description: "Makes a folder (and any it's in). Empty folders stay until deleted. Answers the tree after it.",
     parameters: Schema.Struct({ document: DOCUMENT, path: PATH('Path of the folder, e.g. "blog/drafts"') }),
     run: (args, caller) => treeOp(caller, args.document, { op: "new_folder", path: String(args.path ?? "") }),
@@ -226,7 +226,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "mv",
     label: "Move",
     activity: "moving",
-    ui: "The page tree and the files view: Rename, and a drag to another folder",
+    ui: "The page tree: Rename, and a drag to another folder",
     description:
       "Moves or renames a file or a folder (with everything in it). In one document, nothing may be at the destination already, and the document's own page (index.html at its root) can't be moved; answers the tree after it. With to_document, it goes into that document (images too, without their bytes through you), replacing what's there, and is deleted here; answers what was written. Moving a page changes its address: fix links to it in other pages.",
     parameters: Schema.Struct({
@@ -244,7 +244,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "cp",
     label: "Copy",
     activity: "copying",
-    ui: "None yet: a person downloads a file from the files view and drops it into another document",
+    ui: "None yet",
     description:
       'Copies a file, a folder with everything in it, or a whole document ("."), within a document or into another (to_document), in one call: text and images alike, without their content through you. A file at the destination is replaced (the old one stays in the versions). E.g. a presentation into a project as its page: cp {"document": "/ada/deck", "from": "index.html", "to": "index.html", "to_document": "/ada/project"}, and its images with from "images", to "images". Answers what was written and replaced.',
     parameters: Schema.Struct({
@@ -259,7 +259,7 @@ export const EDITOR_OPERATIONS: Operation[] = [
     name: "rm",
     label: "Delete",
     activity: "deleting",
-    ui: "The page tree and the files view: Delete",
+    ui: "The page tree: Delete",
     description:
       "Deletes a file, or a folder with everything in it. The document's own page (index.html at its root) can't be deleted. Only delete what you were asked to. Answers the tree after it.",
     parameters: Schema.Struct({ document: DOCUMENT, path: PATH("Path of the file or folder") }),

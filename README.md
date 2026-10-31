@@ -156,7 +156,7 @@ health checks and rollbacks work.
                       and its tokens (pages-origin.ts), the viewer (view.ts), new documents and the list (make.ts),
                       the homepage's document (landing.ts)
       pages/          the HTML the server renders, no routing: the viewer's scripts and styles (viewer.ts), the page's
-                      own script (reader.ts), the files view (files.ts), the documents list (docs.ts), the start page,
+                      own script (reader.ts), the documents list (docs.ts), the start page,
                       the account menu, the templates, and what every page shares (chrome.ts)
       home/           the homepage: its deploys (deploys.ts), serving / from the snapshot (serve.ts), the page (render.ts), the API
       admin/          the admin pages, one file for each (settings.ts, api-keys.ts, auth.ts, access.ts, changes.ts,
@@ -186,7 +186,7 @@ health checks and rollbacks work.
       page-editor/    the page editor in the page (frame.js: frame.ts), and what the shell shares with it
       agent/          the agent panel both the editor and the admin pages use (agent-chat.ts, layout.ts, ...)
       admin/          the admin pages' scripts (admin-agent.ts, admin-nav.ts, admin-share.ts)
-      pages/          the other pages' scripts: the files view, the settings, the pages tree
+      pages/          the other pages' scripts: the settings, the pages tree
       live/           open pages across a redeploy (live.ts, client.ts, restore.ts)
       inline/         the scripts and styles a page carries inline, typed (build.ts --inline writes
                       server/pages/inline-code.ts): the documents list, the Ops, install and admin pages, ...

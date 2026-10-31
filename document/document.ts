@@ -914,7 +914,7 @@ export class Document {
    * see every edit, and theirs go nowhere.
    */
   joinRoom(opened: Opened, o: { epoch: string | null; readOnly: boolean; send: (m: Uint8Array | string) => void; events?: Person | null; watch?: boolean }): { receive: (data: Uint8Array) => boolean; left: () => void } | null {
-    // A files view: it hears what every tab hears (the tree changing), as text, and never joins the room.
+    // A watcher: it hears what every tab hears (the tree changing), as text, and never joins the room.
     if (o.watch && o.events) {
       const leave = opened.addTab(o.events.id, (msg) => o.send(JSON.stringify(msg)), true);
       return { receive: () => true, left: leave };
@@ -1280,7 +1280,7 @@ export class Document {
 
   /**
    * PUT /api/files/<path>: one file from a person or an HTTP client (the
-   * files view's drop), its bytes the body, its size Content-Length. Its
+   * editor's drop of a file), its bytes the body, its size Content-Length. Its
    * kind is decided now (D5): a text file's name, UTF-8 and at most TEXT_MAX
    * bytes is text, merged into the room as a publish is; anything else is a
    * blob, which streams to the blob store (`x-erga-sha256`, the bytes'
@@ -1649,7 +1649,7 @@ export interface Opened {
   handler: (request: Request) => Promise<Response>;
   /** What the operations call (host.ts). */
   calls: EditorCalls;
-  /** A tab joins its person's event channel (`watch`: a files view, hearing only what every tab does); returns the leave function. */
+  /** A tab joins its person's event channel (`watch`: a watcher, hearing only what every tab does); returns the leave function. */
   addTab: (user: string, send: (msg: unknown) => void, watch?: boolean) => () => void;
   /** What a tab hears first ({ type: "hello" }): the document's details as the person sees them, and its tree. */
   hello: (person: Person, canEdit: boolean) => Promise<Hello>;

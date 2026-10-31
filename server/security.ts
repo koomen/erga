@@ -6,7 +6,7 @@
 //     browsers' HTTPS-only list anyway);
 //   - on the site's own origin, no frame but its own: frame-ancestors 'self',
 //     and X-Frame-Options for the browsers before it. The editor frames its
-//     own files (a PDF in the files view), never another site's page this one;
+//     own files (a PDF in the viewer), never another site's page this one;
 //   - on the site's own pages, a Content-Security-Policy: no plugins
 //     (object-src) and no <base> to another site, so a script that got in
 //     can't load code or send forms elsewhere by that;

@@ -188,7 +188,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   {
     route: "PUT /api/files/<path>",
     domain: "document",
-    action: "Add or replace a file of any kind, its bytes the body (a drop on the files view or the page, an HTTP client)",
+    action: "Add or replace a file of any kind, its bytes the body (a drop on the page, an HTTP client)",
     tool: "write",
   },
   {

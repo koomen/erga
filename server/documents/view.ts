@@ -38,8 +38,6 @@ import {
   accountOf,
   cloneButton,
   editButton,
-  filesButton,
-  filesPage,
   link,
   OWN_ACCOUNT,
   page,
@@ -162,7 +160,6 @@ async function address(
   const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
-  if (url.searchParams.has("files")) return renderFiles(platform, request, session, d);
   return render(platform, request, session, d, false);
 }
 
@@ -192,22 +189,6 @@ async function publicView(
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
   return render(platform, request, null, d, false);
-}
-
-/**
- * The files view (?files: server/pages/files.ts): every file of the document, for whoever may view it; whoever may
- * edit adds, moves, renames and deletes them there. Its files come from the pages origin, under a token as the viewer's.
- */
-async function renderFiles(platform: Platform, request: Request, session: Session, d: Decision) {
-  const url = new URL(request.url);
-  const canEdit = !session.agent && roleMay(d.role, "edit");
-  const by = platform.adminsOnly ? session.login : null;
-  const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, by ? { by } : {});
-  const pages = `${pagesOrigin(d.owner, d.id, url, platform)}/t/${token}/`;
-  return html(filesPage({ session, title: d.title, address: `/${d.owner}/${d.slug}`, docId: d.id, pages, canEdit }), 200, {
-    "Cache-Control": "no-store",
-    "Referrer-Policy": "no-referrer",
-  });
 }
 
 /**
@@ -288,9 +269,19 @@ async function render(
     : "");
   // The page's own address there: its file, under the token.
   const src = files + d.file.split("/").map(encodeURIComponent).join("/");
-  // The files view, for whoever signed in may view the document; on the homepage (everyone's), for whoever may edit it.
-  const filesLink = session && !session.agent && (!landing || canEdit) ? filesButton(link(`${address}?files`, session)) : "";
-  const shell = viewerPage({ title: d.title, docId: d.id, pages: origin, src, meta, session, editable: canEdit, editing, landing, clone, edit, files: filesLink });
+  const shell = viewerPage({
+    title: d.title,
+    docId: d.id,
+    pages: origin,
+    src,
+    meta,
+    session,
+    editable: canEdit,
+    editing,
+    landing,
+    clone,
+    edit,
+  });
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
   const before = shell.before, after = shell.after + corner;
   const build = await pageBuild(before + after);
