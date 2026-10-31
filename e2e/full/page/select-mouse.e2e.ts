@@ -6,7 +6,7 @@ await servers.main();
 
 const domText = (ed: Editor) => ed.frame<string>(`${F}.getSelection().toString()`);
 const hosts = (ed: Editor) =>
-  ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.isContentEditable)`);
+  ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-text]:not(.erga-locked)")].every((el) => el.isContentEditable)`);
 
 test("a drag from the heading into the paragraph selects across both; Backspace deletes it and joins them as valid HTML; undo brings both back", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

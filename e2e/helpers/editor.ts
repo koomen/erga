@@ -135,7 +135,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
         async () =>
           (await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`)) &&
           (await ed.frame<boolean>(
-            `!!window.ergaFrame?.page && !!${F}.querySelector("[data-erga-id]") && ${F}.documentElement.hasAttribute("data-erga-editing")`
+            `!!window.ergaFrame?.page && !!${F}.querySelector("[data-erga-text]") && ${F}.documentElement.hasAttribute("data-erga-editing")`
           )),
         10_000,
         "the editor loads"
@@ -160,7 +160,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       await until(
         () =>
           ed.frame<boolean>(
-            `!!window.ergaFrame?.page && !ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && ${F}.activeElement == ${F}.body && (() => { const n = ${F}.getSelection().focusNode; return !!(n && (n.nodeType == 1 ? n : n.parentElement)?.closest("[data-erga-id]")); })()`
+            `!!window.ergaFrame?.page && !ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && ${F}.activeElement == ${F}.body && (() => { const n = ${F}.getSelection().focusNode; return !!(n && (n.nodeType == 1 ? n : n.parentElement)?.closest("[data-erga-text]")); })()`
           ),
         5000,
         "the editor to settle"

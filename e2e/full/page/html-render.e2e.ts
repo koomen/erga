@@ -8,12 +8,12 @@ test("the page renders as units; a widget's button is a plain button; the body i
   tab,
 }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
-  expect(await ed.count("[data-erga-id]")).toBeGreaterThanOrEqual(9);
+  expect(await ed.count("[data-erga-text]")).toBeGreaterThanOrEqual(9);
   expect(await ed.frame<boolean>(`!${F}.getElementById("bump").isContentEditable`)).toBe(true);
   expect(await ed.frame<boolean>(`${F}.body.getAttribute("contenteditable") == "true" && ${F}.querySelector("h1").isContentEditable`)).toBe(
     true
   );
-  expect(await ed.frame<boolean>(`!${F}.querySelector("svg text").closest("[data-erga-id]")`)).toBe(true);
+  expect(await ed.frame<boolean>(`!${F}.querySelector("svg text").closest("[data-erga-text]")`)).toBe(true);
 });
 
 test("the shell's canvas follows the page's background", async ({ tab }) => {

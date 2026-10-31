@@ -3,7 +3,7 @@
 
 import * as M from "../../shared/manuscript";
 import { Transaction, MapMode, type ChangeSet, type TransactionSpec } from "@codemirror/state";
-import { sourceDigest } from "../../shared/page-html";
+import { sourceDigest, TEXT_ATTR } from "../../shared/page-html";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
 import { watchMoves } from "./moves";
 import { ms } from "./timescale";
@@ -25,9 +25,9 @@ export abstract class EditorRender extends EditorMarks {
   protected abstract dispatch(spec: TransactionSpec | Transaction): void;
 
   /**
-   * Takes the page in the window, the first time: the pages origin made it from the text (shared/page-html.ts), its text
-   * blocks marked as this editor's analysis of the same text numbers them; only if its text is this one (else, and
-   * any later time: the page is made afresh from the text, as it loads again, onReload, and the editor with it).
+   * Takes the page in the window, the first time: the pages origin made it from the text (shared/page-html.ts); only if
+   * its text is this one (else, and any later time: the page is made afresh from the text, as it loads again, onReload,
+   * and the editor with it).
    */
   render(): void {
     this.staleSince = null;
@@ -67,8 +67,11 @@ export abstract class EditorRender extends EditorMarks {
     this.win.dispatchEvent(new Event("erga-editing"));
     this.watchProblems();
     this.takeCustomEdits();
-    this.collectEls();
     this.mirror = this.tree ? Mirror.bind(doc, this.tree, src) : null;
+    for (const u of this.units) {
+      const el = this.elOf(u);
+      if (el) this.markUnit(u, el);
+    }
     this.bind();
     // A page starts live: tell it it's paused again, if it still can be.
     if (this.paused) {
@@ -76,7 +79,10 @@ export abstract class EditorRender extends EditorMarks {
       else this.paused = false;
     }
     this.rendering = false;
-    for (const el of this.els) if (el) this.prepareUnit(el);
+    for (const u of this.units) {
+      const el = this.elOf(u);
+      if (el) this.prepareUnit(el);
+    }
     this.makeHost();
     // Verified, never guessed: a unit whose DOM text doesn't match the
     // source is locked now, not when someone tries to type into it.
@@ -110,10 +116,6 @@ export abstract class EditorRender extends EditorMarks {
     this.release();
   }
 
-  /** The parse the units are in, and its binding to the page (mirror.ts). */
-  protected tree: M.ElementNode | null = null;
-  protected mirror: Mirror | null = null;
-
   /** Who made each element of the page, for the check (config.check only). */
   protected ownership: Ownership | null = null;
   /** The differences the check reported, each once. */
@@ -134,11 +136,11 @@ export abstract class EditorRender extends EditorMarks {
     const doc = this.doc,
       own = this.ownership;
     if (!doc?.body || !own || this.rendering || this.stopped) return;
-    const want = new DOMParser().parseFromString(this.analyze(this.src).html, "text/html").body;
+    const want = new DOMParser().parseFromString(this.src, "text/html").body;
     const skip = (n: Node) =>
       own.owned.has(n) || (n.nodeType == 1 && ((n as Element).classList.contains("erga-locked") || pageOwnBox(n as Element)));
     for (let i = 0; i < 100; i++) {
-      const d = differ(doc.body, want, skip, own.foreign, own.theirs);
+      const d = differ(doc.body, want, skip, own.foreign, own.theirs, (n) => !!this.mirror?.sourceOf(n));
       if (!d) return;
       if (d.at == doc.body) {
         if (!start) this.report(d.message);
@@ -193,6 +195,7 @@ export abstract class EditorRender extends EditorMarks {
     this.own.clear();
     for (const el of doc.querySelectorAll(".erga-locked, .erga-empty, .erga-flash"))
       el.classList.remove("erga-locked", "erga-empty", "erga-flash");
+    for (const el of doc.querySelectorAll(`[${TEXT_ATTR}]`)) el.removeAttribute(TEXT_ATTR);
     doc.documentElement.removeAttribute("data-erga-editing");
     this.win.dispatchEvent(new Event("erga-editing"));
     const w = this.win as Window & { __ergaReport?: unknown; __ergaApply?: unknown };
@@ -213,8 +216,8 @@ export abstract class EditorRender extends EditorMarks {
       | null;
     const win = this.win;
     if (!doc || !win) return null;
-    for (let i = start; i < this.els.length; i++) {
-      const el = this.els[i];
+    for (let i = start; i < this.units.length; i++) {
+      const el = this.elOf(this.units[i]);
       if (!el) continue;
       const r = el.getBoundingClientRect();
       if (r.bottom <= 0 || !r.height) continue;
@@ -249,11 +252,11 @@ export abstract class EditorRender extends EditorMarks {
    * block above the window's.
    */
   protected firstShown(): number {
-    const els = this.els;
+    const units = this.units;
     /** Whether the first block with a height at or after `i` ends above the window (none: false). */
     const above = (i: number) => {
-      for (; i < els.length; i++) {
-        const el = els[i];
+      for (; i < units.length; i++) {
+        const el = this.elOf(units[i]);
         if (!el) continue;
         const r = el.getBoundingClientRect();
         if (r.height) return r.bottom <= 0;
@@ -261,7 +264,7 @@ export abstract class EditorRender extends EditorMarks {
       return false;
     };
     let lo = 0,
-      hi = els.length;
+      hi = units.length;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
       if (above(mid)) lo = mid + 1;
@@ -388,7 +391,7 @@ export abstract class EditorRender extends EditorMarks {
 
   /** The checkboxes in the text, ticked as the file says: once someone clicks one, its attribute no longer shows. */
   protected showChecks(): void {
-    for (const box of this.doc?.querySelectorAll<HTMLInputElement>('[data-erga-id] input[type="checkbox" i]') ?? [])
+    for (const box of this.doc?.querySelectorAll<HTMLInputElement>(`[${TEXT_ATTR}] input[type="checkbox" i]`) ?? [])
       box.checked = box.hasAttribute("checked");
   }
 
@@ -410,7 +413,7 @@ export abstract class EditorRender extends EditorMarks {
       for (let i = lo; i < this.units.length && this.units[i].from <= t; i++) units.add(this.units[i]);
     });
     for (const u of [...units].sort((a, b) => a.id - b.id)) {
-      const el = this.els[u.id];
+      const el = this.elOf(u);
       if (!el) continue;
       if (el.classList.contains("erga-locked")) {
         el.classList.remove("erga-locked");
@@ -442,8 +445,8 @@ export abstract class EditorRender extends EditorMarks {
    */
   protected reconcile(changes: ChangeSet, oldSrc: string, src: string): boolean {
     const mirror = this.mirror!;
-    const oldUnits = this.units,
-      oldEls = this.els;
+    const oldUnits = this.units;
+    const oldEls = oldUnits.map((u) => this.elOf(u));
     // The units in the element the change is in (or the unit that holds it), found by the old tree's shape.
     const e = mirror.reconcile(changes, oldSrc, src, this.decoder);
     if (!e) return false;
@@ -477,29 +480,24 @@ export abstract class EditorRender extends EditorMarks {
     after.forEach(map);
     const units = [...before, ...fresh, ...after];
     const els: (Element | undefined)[] = [];
-    const isNew = new Set(fresh);
-    // A unit's element keeps the mark it has (data-erga-id: its value never changes, so a block added near the top
-    // changes nothing below it); a new unit's element gets one.
+    // Each unit's element, through the binding, marked: a block added near the top changes nothing below it.
     units.forEach((u, i) => {
-      const el = isNew.has(u) ? (mirror.nodeOf(u.node) as Element | undefined) : oldEls[u.id];
+      const el = this.elOf(u);
       u.id = i;
       els[i] = el;
-      if (!el) return;
-      this.unitByEl.set(el, u);
-      if (!el.hasAttribute("data-erga-id")) el.setAttribute("data-erga-id", String(this.nextMark++));
+      if (el) this.markUnit(u, el);
     });
     // An element that is no longer a text block (a list item whose text went into a <p>) loses the unit's marks.
     const now = new Set(els);
     for (const el of oldEls) {
       if (!el || now.has(el) || !el.isConnected) continue;
       if (el.classList.contains("erga-locked")) el.removeAttribute("contenteditable");
-      el.removeAttribute("data-erga-id");
+      el.removeAttribute(TEXT_ATTR);
       this.unitByEl.delete(el);
       el.classList.remove("erga-empty", "erga-locked", "erga-flash");
       if (!el.classList.length) el.removeAttribute("class");
     }
     this.units = units;
-    this.els = els;
     this.unshown = false;
     const ids = new Set<number>();
     for (const u of fresh) {
@@ -538,12 +536,12 @@ export abstract class EditorRender extends EditorMarks {
     // Every block it changes is on the page (else the whole patch finds where it goes).
     for (const s of splices) {
       const u = M.unitAt(this.units, s.from);
-      if (!u || !this.els[u.id]) return false;
+      if (!u || !this.elOf(u)) return false;
     }
     const changed = M.editRuns(this.units, oldSrc, src, splices, this.decoder);
     if (!changed) return false;
     this.unshown = false;
-    for (const id of changed) this.patchRuns(this.els[id]!, this.units[id], src);
+    for (const id of changed) this.patchRuns(this.elOf(this.units[id])!, this.units[id], src);
     this.updateEmpty(changed);
     return true;
   }
@@ -572,8 +570,8 @@ export abstract class EditorRender extends EditorMarks {
     const start = this.firstShown();
     const text = this.stillHeld() ?? this.topText(start);
     const held: { el: Element; top: number }[] = [];
-    for (let i = start; i < this.els.length; i++) {
-      const el = this.els[i];
+    for (let i = start; i < this.units.length; i++) {
+      const el = this.elOf(this.units[i]);
       if (!el) continue;
       const r = el.getBoundingClientRect();
       if (r.bottom <= 0 || !r.height) continue;
@@ -637,20 +635,21 @@ export abstract class EditorRender extends EditorMarks {
 
   /** Writes a verified unit's spaces into its DOM as they show while editing (see balanceWhitespace). */
   protected showSpaces(u: M.Unit, src: string): void {
-    const el = this.els[u.id];
+    const el = this.elOf(u);
     if (!el || el.classList.contains("erga-locked")) return;
-    const nodes = this.textNodes(el);
-    if (nodes.length == u.runs.length)
-      this.domTexts(u, src).forEach((t, i) => {
-        if (nodes[i].nodeValue != t && same(nodes[i].nodeValue!, t)) nodes[i].nodeValue = t;
-      });
+    const nodes = this.runNodes(u);
+    this.domTexts(u, src).forEach((t, i) => {
+      const n = nodes[i];
+      if (n && n.nodeValue != t && same(n.nodeValue!, t)) n.nodeValue = t;
+    });
   }
 
 
   /** Patches the text of a unit's element whose markup is as it was; returns true if anything changed. */
   protected patchRuns(el: Element, u: M.Unit, src: string): boolean {
-    const nodes = this.textNodes(el);
-    if (nodes.length != u.runs.length) return this.rebuildUnit(el, u, src);
+    const live = this.runNodes(u);
+    if (live.some((n) => !n || !el.contains(n))) return this.redraw(u, el);
+    const nodes = live as Text[];
     const texts = this.domTexts(u, src);
     let changed = false;
     nodes.forEach((n, i) => {
@@ -662,24 +661,18 @@ export abstract class EditorRender extends EditorMarks {
     return changed;
   }
 
+  /** Draws a unit's element's content afresh from the source, and binds it; whether its text then matches. */
   protected redraw(u: M.Unit, el: Element): boolean {
     const src = this.src;
-    this.rebuildUnit(el, u, src);
-    this.mirror?.rebind(u.node, el, src);
-    const nodes = this.textNodes(el);
-    return nodes.length == u.runs.length && nodes.every((n, i) => same(n.nodeValue!, u.runs[i].text));
-  }
-
-  /** Builds a unit's element's content afresh from the source. */
-  protected rebuildUnit(el: Element, u: M.Unit, src: string): boolean {
     el.innerHTML = src.slice(u.contentFrom, u.contentTo);
+    this.mirror?.rebind(u.node, el, src);
     this.prepareUnit(el);
     // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
-    const nodes = this.textNodes(el);
-    if (nodes.length == u.runs.length)
-      this.domTexts(u, src).forEach((t, i) => {
-        if (nodes[i].nodeValue != t) nodes[i].nodeValue = t;
-      });
-    return true;
+    const nodes = this.runNodes(u);
+    this.domTexts(u, src).forEach((t, i) => {
+      const n = nodes[i];
+      if (n && n.nodeValue != t) n.nodeValue = t;
+    });
+    return this.shows(u, el);
   }
 }

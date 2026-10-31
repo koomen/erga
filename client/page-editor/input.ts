@@ -7,6 +7,7 @@ import type { HeldInput } from "./types";
 import { contentIn, escapeAttr, findDiff, norm, placeholderBr, setChecked } from "./source";
 import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
 import { isMac, pageOwnBox } from "./core";
+import { TEXT_ATTR } from "../../shared/page-html";
 import { leaveCode } from "./blocks";
 import { EditorClipboard } from "./clipboard";
 
@@ -209,7 +210,7 @@ export abstract class EditorInput extends EditorClipboard {
     if (!t) return false;
     const el = t.nodeType == 1 ? (t as Element) : t.parentElement;
     if (!el || this.inIsland(el)) return false;
-    if (el.closest("[data-erga-id]")) return true;
+    if (el.closest(`[${TEXT_ATTR}]`)) return true;
     if (el != this.host || /^(mouse|pointer|click|drag|drop)/.test(e.type)) return false;
     const at = this.doc?.getSelection()?.focusNode;
     const fe = at && (at.nodeType == 1 ? (at as Element) : at.parentElement);
@@ -319,7 +320,7 @@ export abstract class EditorInput extends EditorClipboard {
       return null;
     let best: { el: Element; r: DOMRect } | null = null,
       bd = Infinity;
-    for (const el of t.querySelectorAll("[data-erga-id]")) {
+    for (const el of t.querySelectorAll(`[${TEXT_ATTR}]`)) {
       if (!(el as HTMLElement).isContentEditable) continue;
       const r = el.getBoundingClientRect();
       if (!r.width && !r.height) continue;
@@ -347,7 +348,7 @@ export abstract class EditorInput extends EditorClipboard {
     const box = e.target as HTMLInputElement;
     if (!box.matches?.('input[type="checkbox" i]')) return;
     const u = this.unitOf(box),
-      el = u && this.els[u.id];
+      el = u && this.elOf(u);
     if (!u || !el || !this.verify(u)) return;
     const src = this.src;
     const k = [...el.querySelectorAll('input[type="checkbox" i]')].indexOf(box);
@@ -514,7 +515,7 @@ export abstract class EditorInput extends EditorClipboard {
   protected lineEdge(pos: number, down: boolean): { caret: DOMRect; el: Element; onEdge: boolean } | null {
     const u = M.unitAt(this.units, pos);
     const caret = this.coordsAtPos(pos),
-      el = u && this.els[u.id];
+      el = u && this.elOf(u);
     if (!caret || !el) return null;
     const r = el.getBoundingClientRect(),
       cs = this.doc!.defaultView!.getComputedStyle(el);
@@ -539,7 +540,7 @@ export abstract class EditorInput extends EditorClipboard {
     if (!type.startsWith("history") && !this.readSelection()) {
       e.preventDefault();
       const u = this.unitOf(e.target as Node);
-      const el = u ? this.els[u.id] : null;
+      const el = u ? this.elOf(u) : null;
       const why = el ? this.lockReasons.get(el) : undefined;
       if (u && el && !this.verify(u)) this.config.onNotice?.(why?.message ?? "This text can't be edited here.", why?.fix);
       else this.config.onNotice?.("Can't tell where the caret is in the file, so that wasn't typed. Click into the text again.");
@@ -631,12 +632,12 @@ export abstract class EditorInput extends EditorClipboard {
 
   /** Folds what the browser changed in a unit's text into the model. */
   protected readBack(u: M.Unit, userEvent: string): void {
-    const el = this.els[u.id];
+    const el = this.elOf(u);
     if (!el) return;
-    const nodes = this.textNodes(el);
-    if (!u.runs.length && nodes.length) {
+    const all = this.textNodes(el);
+    if (!u.runs.length && all.length) {
       // An empty block: what the browser put there is all new, and takes the place of a placeholder <br>.
-      const text = norm(nodes.map((n) => n.nodeValue!).join(""));
+      const text = norm(all.map((n) => n.nodeValue!).join(""));
       if (!text) return;
       const src = this.src,
         br = placeholderBr(src, u);
@@ -646,10 +647,14 @@ export abstract class EditorInput extends EditorClipboard {
       this.dispatch({ changes: { from: at, to: br ? br.to : at, insert }, selection: { anchor: at + insert.length }, userEvent });
       return;
     }
-    if (nodes.length != u.runs.length) {
+    // The browser wrote the text into the runs' own nodes; text in a node it made (or one gone) only a render reads back.
+    const live = this.runNodes(u);
+    const bound = new Set(live);
+    if (live.some((n) => !n || !el.contains(n)) || all.some((n) => !bound.has(n))) {
       this.render();
       return;
     }
+    const nodes = live as Text[];
     const before = u.runs.map((r) => r.text).join("");
     const after = norm(nodes.map((n) => n.nodeValue!).join(""));
     // Offsets in the concatenated text -> source positions.

@@ -1,13 +1,11 @@
 // A document's page as its pages origin serves it (server/documents/pages-origin.ts), to readers and editors alike:
-// its own HTML with the source marks the editor needs (data-erga-id on each text block: manuscript.ts's stamp), and
-// first in its <head> the viewer's script (server/pages/reader.ts), with, for whoever may edit, the scripts below. The
-// page loads once: going into the editor loads the editor's half into it (client/page-editor/frame.ts), which finds the text
-// blocks by their marks and checks the page was made from the text it has (sourceDigest). Pure: the server makes the
-// page with it, and the editor reads it back.
+// its own HTML as written, with first in its <head> the viewer's script (server/pages/reader.ts), and, for whoever may
+// edit, the scripts below. The page loads once: going into the editor loads the editor's half into it
+// (client/page-editor/frame.ts), which checks the page was made from the text it has (sourceDigest) and ties the page to
+// a parse of that text (client/page-editor/mirror.ts). Pure: the server makes the page with it, and the editor reads it
+// back.
 //
 // Each script here goes in as a <script data-erga>: the editor's additions, which the editor's patch (client/page-editor/mirror.ts) leaves be.
-
-import { analyzeHtml, stamp } from "./manuscript";
 
 /** What the script needs: the viewer's origin, where the document's files are (with the token), and its text's digest. */
 export interface ReaderConfig {
@@ -22,9 +20,6 @@ export interface ReaderConfig {
   /** For whoever may edit: the editor's half (frame.js), its chunks and their integrity. */
   editor?: { src: string; integrity: string; preload: string[]; map: Record<string, string> };
 }
-
-/** The page's HTML, its text blocks marked (data-erga-id), as the editor's own analysis of the same text numbers them. */
-export const markPage = (src: string): string => stamp(src, analyzeHtml(src).units);
 
 /** A digest of a page's text (cyrb53), which the editor compares with its own text's: the page was made from the same. */
 export function sourceDigest(src: string): string {
@@ -53,8 +48,10 @@ export function insertHead(html: string, inject: string): string {
   return doctype ? doctype[0] + inject + html.slice(doctype[0].length) : inject + html;
 }
 
-/** Where a press is the editor's: in a text block (data-erga-id) that takes edits, not in a widget or a form field. */
-export const GUARD_TEXT = "[data-erga-id]";
+/** The mark the editor puts on each text block's element while it edits (client/page-editor/core.ts). */
+export const TEXT_ATTR = "data-erga-text";
+/** Where a press is the editor's: in a text block that takes edits, not in a widget or a form field. */
+export const GUARD_TEXT = `[${TEXT_ATTR}]`;
 export const GUARD_NOT_TEXT = '.erga-locked, [data-erga-noedit], [contenteditable="false"], input, textarea, select, button';
 /** What keeps the browser's own press (a link, a form field, an editable part the page made itself, a video's controls). */
 export const GUARD_INTERACTIVE =

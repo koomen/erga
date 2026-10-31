@@ -12,7 +12,7 @@ test("a disk edit reaches the page, patched in place, with the change marked exa
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("Where the leads go.", "Where the leads went."));
   await expect.poll(() => ed.textOf("figcaption"), { timeout: DISK_MS }).toBe("Where the leads went.");
-  expect(await ed.count("[data-erga-id]")).toBeGreaterThanOrEqual(9);
+  expect(await ed.count("[data-erga-text]")).toBeGreaterThanOrEqual(9);
   expect(await ed.frame<boolean>(`!!${F}.querySelector("figcaption.erga-flash")`)).toBe(false);
   const m = await ed.marks();
   expect(m.added.join("|")).toBe("went");
@@ -26,7 +26,7 @@ test("a diagram added on disk shows up without a reload, and the page still edit
   const ed = await openEditor(tab, await servers.main(), "page");
   ed.write(ed.disk().replace("<h2>What changed</h2>", `<svg id="diagram" width="80" height="20"><rect width="80" height="20" fill="#c00"/></svg>\n    <h2>What changed</h2>`));
   await expect.poll(() => ed.frame<boolean>(`!!${F}.getElementById("diagram")`), { timeout: DISK_MS }).toBe(true);
-  await expect.poll(() => ed.count("[data-erga-id]")).toBeGreaterThanOrEqual(9);
+  await expect.poll(() => ed.count("[data-erga-text]")).toBeGreaterThanOrEqual(9);
 });
 
 test("a change to the page's stylesheet reaches the page", async ({ tab }) => {

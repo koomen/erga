@@ -6,8 +6,14 @@ await servers.main();
 
 test("a no-edit section has no editable text, and a no-edit span inside a paragraph is fenced off", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "noedit");
-  expect(await ed.frame<boolean>(`[...${F}.querySelectorAll(".fixed h2, .fixed p")].every((e) => !e.hasAttribute("data-erga-id") && !e.isContentEditable)`)).toBe(true);
-  expect(await ed.frame<boolean>(`${F}.querySelector(".free").isContentEditable && !${F}.querySelector(".count").isContentEditable`)).toBe(true);
+  expect(
+    await ed.frame<boolean>(
+      `[...${F}.querySelectorAll(".fixed h2, .fixed p")].every((e) => !e.hasAttribute("data-erga-text") && !e.isContentEditable)`
+    )
+  ).toBe(true);
+  expect(await ed.frame<boolean>(`${F}.querySelector(".free").isContentEditable && !${F}.querySelector(".count").isContentEditable`)).toBe(
+    true
+  );
 });
 
 test("clicking a no-edit part says why, typing there changes nothing, and the rest of the paragraph still edits", async ({ tab }) => {

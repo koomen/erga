@@ -54,12 +54,12 @@ export const readerScript = (config: ReaderConfig) => inlineCall("reader", confi
 const LIVE_WATCH = inlineCall("page-live-watch");
 
 /**
- * A page of the document as its pages origin serves it: its marked HTML (shared/page-html.ts, markPage) with, first in its
+ * A page of the document as its pages origin serves it: its HTML as written with, first in its
  * <head>, this script; for whoever may edit, before it, the editor's half's integrity (an import map: the browser checks
  * each of its modules against it, and it must come before any module loads), and after it, the scripts the editor needs
  * from the page's first moment (its problems and its live log, the text guard, ergaEditor).
  */
-export function readerPage(marked: string, o: { shell: string; prefix: string; src: string; editor: boolean }): string {
+export function readerPage(html: string, o: { shell: string; prefix: string; src: string; editor: boolean }): string {
   const editor = o.editor ? frameScripts(o.shell) : undefined;
   const head =
     (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
@@ -67,7 +67,7 @@ export function readerPage(marked: string, o: { shell: string; prefix: string; s
     (editor
       ? `<script data-erga>${PROBLEM_WATCH}</script><script data-erga>${LIVE_WATCH}</script><script data-erga>${TEXT_GUARD}</script><script data-erga>${EDITING_API}</script>`
       : "");
-  return insertHead(marked, head);
+  return insertHead(html, head);
 }
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */

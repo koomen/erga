@@ -186,7 +186,11 @@ export async function openAs(tab: Tab, ctx: Ctx, d: Doc, user: string): Promise<
   });
   await page.goto(d.pageUrl(user));
   const ed = editor(page, { address: d.base, dir: "", file: "" });
-  await until(async () => await ed.eval<boolean>("!!window.ergaPage") && await ed.frame<boolean>(`!!${ed.F}?.querySelector("[data-erga-id]")`), 10_000, `${user}'s page renders`);
+  await until(
+    async () => (await ed.eval<boolean>("!!window.ergaPage")) && (await ed.frame<boolean>(`!!${ed.F}?.querySelector("[data-erga-text]")`)),
+    10_000,
+    `${user}'s page renders`
+  );
   await ed.frame(`${ed.F}.fonts.ready.then(() => true)`);
   await settle(page);
   return Object.assign(ed, { errors });

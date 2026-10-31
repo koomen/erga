@@ -200,7 +200,7 @@ export abstract class EditorClipboard extends EditorMarkdown {
     const skip = (el: Element) =>
       el.getAttribute("contenteditable") == "false" || el.localName.startsWith("erga-") || el.hasAttribute("data-erga");
     for (const u of this.units) {
-      const el = this.els[u.id];
+      const el = this.elOf(u);
       if (!el?.isConnected || !range.intersectsNode(el) || taken.some((t) => t.contains(el))) continue;
       // A list item's text beside its nested list (manuscript.ts, headOf) ends where the list starts; the list's items
       // are units of their own.

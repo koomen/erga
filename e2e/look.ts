@@ -153,7 +153,7 @@ try {
   });
   const tab = { page, errors, strict: false, own: () => Promise.reject(new Error("no server of its own")) };
   const ed = await openEditor(tab, server, docArg, { file: isDir ? undefined : basename(path) });
-  await ed.clickEnd("[data-erga-id]:not(.erga-locked)");
+  await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
   await ed.idle();
   for (const step of args) {
     const [, verb, rest] = /^(type|click|shot):([\s\S]*)$/.exec(step) ?? [];

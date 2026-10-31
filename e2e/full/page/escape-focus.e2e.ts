@@ -47,7 +47,7 @@ test("Escape with the Share card open closes the card, and the caret stays in th
   await ed.press("Escape");
   await expect.poll(() => ed.eval<boolean>(`document.getElementById("sharing").hidden`)).toBe(true);
   // The card's box had the focus: it goes back to the text, by message, a moment later.
-  await expect.poll(() => ed.caretIn("[data-erga-id]")).toBe(true);
+  await expect.poll(() => ed.caretIn("[data-erga-text]")).toBe(true);
   await ed.press("ArrowLeft");
   await ed.type("!");
   await ed.shows(`

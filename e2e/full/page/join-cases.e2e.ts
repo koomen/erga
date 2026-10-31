@@ -9,7 +9,8 @@ import { editorReady, newDoc, openTab } from "../templates/templates";
 await servers.main();
 
 /** The block (a unit of the page) whose text starts with `text`, as an expression in the page editor's frame. */
-const block = (text: string) => `[...${F}.querySelectorAll("[data-erga-id]")].find((e) => e.textContent.trim().startsWith(${JSON.stringify(text)}))`;
+const block = (text: string) =>
+  `[...${F}.querySelectorAll("[data-erga-text]")].find((e) => e.textContent.trim().startsWith(${JSON.stringify(text)}))`;
 
 /**
  * Puts the caret at the start (or the end) of a block's text, in its first (or last) text node: inside a
@@ -21,7 +22,7 @@ async function caretAt(ed: Editor, text: string, end: boolean) {
   await ed.settle();
   const r = await ed.frame<{ x: number; y: number }>(`(() => {
     const seen = (e) => { const r = e.getBoundingClientRect(); return r.width > 20 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; };
-    const e = seen(${block(text)}) ? ${block(text)} : [...${F}.querySelectorAll("[data-erga-id]")].find(seen);
+    const e = seen(${block(text)}) ? ${block(text)} : [...${F}.querySelectorAll("[data-erga-text]")].find(seen);
     const r = e.getBoundingClientRect(), f = ({ offsetWidth: innerWidth, offsetHeight: innerHeight, getBoundingClientRect() { const k = window.ergaFrame?.zoom ?? 1; return { left: 0, top: 0, x: 0, y: 0, width: innerWidth * k, height: innerHeight * k, right: innerWidth * k, bottom: innerHeight * k }; } }).getBoundingClientRect();
     return { x: f.left + r.left + r.width * 0.98, y: f.top + r.top + r.height / 2 };
   })()`);
@@ -58,7 +59,11 @@ async function joins(ed: Editor, a: string, b: string, key: "Backspace" | "Delet
   await caretAt(ed, key == "Backspace" ? b : a, key == "Delete");
   for (let i = 0; i < presses; i++) await ed.press(key);
   await expect.poll(() => textOf(ed, a)).toBe(aText + bText);
-  expect(await ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]")].some((e) => e.textContent.replace(/\\s+/g, " ").trim() == ${JSON.stringify(bText)})`)).toBe(false);
+  expect(
+    await ed.frame<boolean>(
+      `[...${F}.querySelectorAll("[data-erga-text]")].some((e) => e.textContent.replace(/\\s+/g, " ").trim() == ${JSON.stringify(bText)})`
+    )
+  ).toBe(false);
   expect(await beforeCaret(ed, a)).toBe(aText);
   for (let i = 0; i < presses; i++) await ed.press("ControlOrMeta+z");
   await expect.poll(() => ed.source()).toBe(original);

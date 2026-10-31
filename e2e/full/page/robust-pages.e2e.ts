@@ -46,6 +46,24 @@ test("Enter at the end of a <details> summary keeps one summary, and the next ke
     expect(await ed.textOf("#sum")).toBe("More info");
 });
 
+// An extension wraps a whole text node in its own <span>: the node is still the editor's (the binding ties it to the
+// HTML by object), so the keys go into it, in the span, and the paragraph isn't drawn again.
+test("keys typed after an extension wraps a whole text node in a <span> go into that node", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "robust-page");
+  await ed.clickEnd("#last");
+  await ed.frame(
+    `(() => { const t = document.getElementById("last").firstChild, s = document.createElement("span"); s.className = "ext"; t.before(s); s.append(t); return true; })()`
+  );
+  await ed.type("12");
+  await until(
+    async () => (await ed.textOf("#last")) == "Last paragraph.12",
+    3000,
+    "the paragraph shows the keys",
+    () => ed.textOf("#last")
+  );
+  expect(await ed.frame<string>(`document.querySelector("#last .ext")?.textContent ?? ""`)).toBe("Last paragraph.12");
+});
+
 // An extension (as Grammarly did) wraps some of a paragraph's text in its own <span>. The keys typed in that paragraph
 // still show (they were lost): the editor draws the paragraph again from its HTML, without the extension's <span>.
 test("keys typed after an extension wraps a word in a <span> show in the paragraph", async ({ tab }) => {

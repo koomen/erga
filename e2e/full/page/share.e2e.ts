@@ -69,7 +69,7 @@ for (const [what, button, expected] of [
   }) => {
     const ed = await openEditor(tab, await servers.main(), "empty");
     await tab.page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(ed.address).origin });
-    await ed.clickEnd("[data-erga-id]:not(.erga-locked)");
+    await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
     await ed.idle();
     await clickOn(ed, "#btn-share");
     await expect.poll(() => ed.eval<string>(`document.getElementById("share-prompt").value`)).toContain("Token: erga_");

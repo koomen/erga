@@ -12,7 +12,13 @@ test("⌘⇧P shows the file, and again goes back to a page that edits", { timeo
   await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("source")`)).toBe(true);
   expect(await ed.source()).toContain("Where leads go now.");
   await ed.press("ControlOrMeta+Shift+p");
-  await expect.poll(async () => !(await ed.eval<boolean>(`document.body.classList.contains("source")`)) && await ed.frame<boolean>(`!!${F}.querySelector("h1[data-erga-id]")`)).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        !(await ed.eval<boolean>(`document.body.classList.contains("source")`)) &&
+        (await ed.frame<boolean>(`!!${F}.querySelector("h1[data-erga-text]")`))
+    )
+    .toBe(true);
   // A click right away puts the caret where it lands: the editor doesn't move it back afterwards.
   await ed.clickEnd("h1");
   await ed.type("!");

@@ -1,5 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeHtml, stamp, runPos, runOffset, unitAt, inlineStackAt, closeTags, openTags, balanced, decodeText, basicDecoder, adjacent, textStart, textEnd, duplicateIds, editRuns, type ElementNode, type Splice, type Unit } from "../shared/manuscript";
+import {
+  analyzeHtml,
+  runPos,
+  runOffset,
+  unitAt,
+  inlineStackAt,
+  closeTags,
+  openTags,
+  balanced,
+  decodeText,
+  basicDecoder,
+  adjacent,
+  textStart,
+  textEnd,
+  duplicateIds,
+  editRuns,
+  type ElementNode,
+  type Splice,
+  type Unit,
+} from "../shared/manuscript";
 
 const doc = `<!doctype html>
 <html>
@@ -63,11 +82,8 @@ describe("analyzeHtml", () => {
     expect(p.runs.map((r) => [r.text, r.editable])).toEqual([["Press ", true], ["Go", false], [" now", true]]);
   });
 
-  test("stamping inserts ids into open tags only", () => {
-    const html = stamp(doc, units);
-    expect(html).toContain('<h1 class="big" data-erga-id="0">Hello</h1>');
-    expect(html).toContain('<li data-erga-id="4">one<li data-erga-id="5">two');
-    expect(html.replace(/ data-erga-id="\d+"/g, "")).toBe(doc);
+  test("each run is a text node of the parse", () => {
+    for (const u of units) for (const r of u.runs) expect([r.node.kind, r.node.from, r.node.to]).toEqual(["text", r.from, r.to]);
   });
 
   test("unitAt and text bounds", () => {

@@ -3,18 +3,11 @@
 
 import * as M from "../../shared/manuscript";
 import { EditorState, EditorSelection, type SelectionRange, Transaction, type ChangeSet, type Text as Source } from "@codemirror/state";
-import { insertHead } from "../../shared/page-html";
+import { insertHead, TEXT_ATTR } from "../../shared/page-html";
 import type { HeldInput, PageEditorConfig, PageUpdate } from "./types";
 import { HEADING, placeholderBr, same, textIn } from "./source";
 import type { PausableWindow, RawProblem } from "./problems";
-
-/** The analysis of a source: its units, and its HTML with their marks (data-erga-id). */
-export interface Analysis {
-  units: M.Unit[];
-  html: string;
-  /** The parse the units are in. */
-  tree: M.ElementNode;
-}
+import type { Mirror } from "./mirror";
 
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -39,7 +32,9 @@ export abstract class EditorCore {
   state: EditorState;
   protected readonly win: Window;
   protected units: M.Unit[] = [];
-  protected els: (Element | undefined)[] = [];
+  /** The parse the units are in, and its binding to the page (mirror.ts): a unit's element and its runs' text nodes. */
+  protected tree: M.ElementNode | null = null;
+  protected mirror: Mirror | null = null;
   protected doc: Document | null = null;
   protected cleanup: (() => void)[] = [];
   protected composing = false;
@@ -66,10 +61,8 @@ export abstract class EditorCore {
   protected stopped = false;
   /** The page's own editability on the elements the editor made editable (contenteditable, spellcheck), to give back on stop. */
   protected own = new Map<Element, [string | null, string | null]>();
-  /** Each unit's element to its unit (an element's data-erga-id marks it as a unit's; its value is no place). */
+  /** Each unit's element to its unit (the element carries TEXT_ATTR, for the page's styles and the text guard). */
   protected unitByEl = new WeakMap<Element, M.Unit>();
-  /** The data-erga-id of the next element that becomes a unit's. */
-  protected nextMark = 0;
   /** The source as a string, for the text it was made from (see `src`). */
   protected srcOf: { doc: Source; src: string } | null = null;
   /** The last patch could not show a change (a script or a style changed): only a render shows it (see `stale`). */
@@ -130,9 +123,8 @@ export abstract class EditorCore {
     return v;
   };
 
-  protected analyze(src: string): Analysis {
-    const a = M.analyzeHtml(src, this.decoder);
-    return { units: a.units, html: M.stamp(src, a.units), tree: a.tree };
+  protected analyze(src: string): M.Analysis {
+    return M.analyzeHtml(src, this.decoder);
   }
 
   /**
@@ -140,7 +132,7 @@ export abstract class EditorCore {
    * its own): its files where they are (`base`: another page's folder).
    */
   renderedHtml(src = this.src, base = this.config.base): string {
-    return insertHead(this.analyze(src).html, `<base href="${base}">`);
+    return insertHead(src, `<base href="${base}">`);
   }
 
   /** The page's title: its <title>, else its first heading. */
@@ -196,20 +188,20 @@ export abstract class EditorCore {
     }
   }
 
-  protected collectEls(): void {
-    const doc = this.doc!;
-    this.els = [];
-    // One pass over the page: the first element with each number, as querySelector would find it.
-    const first = new Map<string, Element>();
-    for (const el of doc.querySelectorAll("[data-erga-id]")) {
-      const id = el.getAttribute("data-erga-id")!;
-      if (!first.has(id)) first.set(id, el);
-    }
-    for (const u of this.units) {
-      const el = (this.els[u.id] = first.get(String(u.id)));
-      if (el) this.unitByEl.set(el, u);
-    }
-    this.nextMark = this.units.length;
+  /** A unit's element on the page, through the binding; undefined if the page doesn't show it. */
+  protected elOf(u: M.Unit): Element | undefined {
+    return this.mirror?.nodeOf(u.node) as Element | undefined;
+  }
+
+  /** A unit's runs' text nodes on the page, through the binding: wherever they are in its element. */
+  protected runNodes(u: M.Unit): (Text | undefined)[] {
+    return u.runs.map((r) => this.mirror?.nodeOf(r.node) as Text | undefined);
+  }
+
+  /** Marks a unit's element as a text block: the editor finds the unit from it. */
+  protected markUnit(u: M.Unit, el: Element): void {
+    this.unitByEl.set(el, u);
+    if (!el.hasAttribute(TEXT_ATTR)) el.setAttribute(TEXT_ATTR, "");
   }
 
   /** Makes the page's <body> the one editing host, with the parts that aren't text as islands. */
@@ -247,7 +239,7 @@ export abstract class EditorCore {
   /** One element for islands: an island, or text, whose children are looked at in turn. */
   protected markIsland(c: Element, inUnit: boolean): void {
     if (c.localName.startsWith("erga-") || c.hasAttribute("data-erga") || pageOwnBox(c)) return;
-    if (this.unitByEl.has(c) || c.querySelector("[data-erga-id]")) this.islands(c);
+    if (this.unitByEl.has(c) || c.querySelector(`[${TEXT_ATTR}]`)) this.islands(c);
     else if (!(inUnit && (M.INLINE.has(c.localName) || M.ATOMIC.has(c.localName) || c.localName == "br"))) {
       this.keepOwn(c);
       c.setAttribute("contenteditable", "false");
@@ -276,14 +268,14 @@ export abstract class EditorCore {
 
   protected updateEmpty(changed?: Set<number>): void {
     for (const u of changed ? [...changed].map((id) => this.units[id]) : this.units) {
-      const el = this.els[u.id];
+      const el = this.elOf(u);
       if (!el) continue;
       const empty = !u.runs.some((r) => r.editable && /\S/.test(r.text)) && !el.querySelector("img,svg,video,canvas,input");
       el.classList.toggle("erga-empty", empty);
     }
   }
 
-  /** A unit's text nodes: those in its element, up to a block in it (a list item's text stops at its nested list). */
+  /** The text nodes in a unit's element, up to a block in it (a list item's text stops at its nested list), whoever made them. */
   protected textNodes(el: Element): Text[] {
     const out: Text[] = [];
     const block = (e: Element) => !M.INLINE.has(e.localName) && !M.ATOMIC.has(e.localName) && !M.TRANSPARENT.has(e.localName);
@@ -299,13 +291,21 @@ export abstract class EditorCore {
 
   /** The unit's DOM text still matches the source; otherwise lock it. */
   protected verify(unit: M.Unit): boolean {
-    const el = this.els[unit.id];
+    const el = this.elOf(unit);
     if (!el || el.classList.contains("erga-locked")) return false;
-    const nodes = this.textNodes(el);
-    let ok = nodes.length == unit.runs.length && nodes.every((n, i) => same(n.nodeValue!, unit.runs[i].text));
-    // Others split the text into other nodes (an extension's <span> around a word): the same text, so the unit is drawn
-    // again from its HTML, and their element goes with it (docs/design/view.md, "Ownership").
-    if (!ok && unit.contentTo == unit.node.closeFrom && same(nodes.map((n) => n.nodeValue).join(""), unit.runs.map((r) => r.text).join("")))
+    let ok = this.shows(unit, el);
+    // Others took our text nodes out and put theirs in (the same text): the unit is drawn again from its HTML, and
+    // their nodes go with it (docs/design/view.md, "Ownership"). An element of theirs around our node is no matter.
+    if (
+      !ok &&
+      unit.contentTo == unit.node.closeFrom &&
+      same(
+        this.textNodes(el)
+          .map((n) => n.nodeValue)
+          .join(""),
+        unit.runs.map((r) => r.text).join("")
+      )
+    )
       ok = this.redraw(unit, el);
     if (!ok) {
       el.classList.add("erga-locked");
@@ -314,6 +314,19 @@ export abstract class EditorCore {
       this.lockReasons.set(el, this.whyLocked(unit));
     }
     return ok;
+  }
+
+  /**
+   * Whether the page shows a unit's text: each run's bound text node is in the unit's element and holds the run's text.
+   * A run in a part the binding doesn't go into (an <svg>, a <select>) can't be edited, and doesn't count.
+   */
+  protected shows(u: M.Unit, el: Element): boolean {
+    const nodes = this.runNodes(u);
+    return u.runs.every((r, i) => {
+      const n = nodes[i];
+      if (!n) return !r.editable;
+      return el.contains(n) && same(n.nodeValue!, r.text);
+    });
   }
 
   /** Draws a unit's content again from its HTML (render.ts); whether its text then matches. */
@@ -354,26 +367,22 @@ export abstract class EditorCore {
   }
 
   protected unitOf(node: Node): M.Unit | null {
-    const el = (node.nodeType == 1 ? (node as Element) : node.parentElement)?.closest("[data-erga-id]");
-    if (!el) return null;
-    const u = this.unitByEl.get(el);
-    return u && this.units[u.id] == u && this.els[u.id] == el ? u : null;
+    for (let el = node.nodeType == 1 ? (node as Element) : node.parentElement; el; el = el.parentElement) {
+      const u = this.unitByEl.get(el);
+      if (u) return this.units[u.id] == u && this.elOf(u) == el ? u : null;
+    }
+    return null;
   }
 
   /** Source position for a DOM point inside a unit, or null. */
   posFromDOM(node: Node, offset: number): number | null {
     const u = this.unitOf(node);
     if (!u) return null;
-    const el = this.els[u.id]!;
-    const nodes = this.textNodes(el);
-    // Others split the text into other nodes (an extension's <span> around a word): the same text, read by its length
-    // (verify draws the unit again before an edit).
-    const split = nodes.length != u.runs.length;
-    if (split && !same(nodes.map((n) => n.nodeValue).join(""), u.runs.map((r) => r.text).join(""))) return null;
-    if (node.nodeType == 3 && !split) {
+    const el = this.elOf(u)!;
+    const nodes = this.runNodes(u);
+    if (node.nodeType == 3) {
       const i = nodes.indexOf(node as Text);
-      if (i < 0) return null;
-      return M.runPos(u.runs[i], offset);
+      if (i >= 0) return M.runPos(u.runs[i], offset);
     }
     // Right after a line break: right after that <br> in the source (the start of the line, which may have no text).
     const prev = offset > 0 ? node.childNodes[offset - 1] : null;
@@ -383,20 +392,38 @@ export abstract class EditorCore {
       const m = j >= 0 ? [...this.state.doc.sliceString(u.contentFrom, u.contentTo).matchAll(/<br\s*\/?>/gi)][j] : null;
       if (m) return u.contentFrom + m.index + m[0].length;
     }
-    const range = this.doc!.createRange();
-    range.setStart(el, 0);
+    // Others split our text into nodes of theirs (an extension's <span> around part of a word): the same text, read by
+    // its length (verify draws the unit again before an edit).
+    if (!this.shows(u, el)) {
+      const all = this.textNodes(el);
+      if (!same(all.map((n) => n.nodeValue).join(""), u.runs.map((r) => r.text).join(""))) return null;
+      const range = this.doc!.createRange();
+      range.setStart(el, 0);
+      try {
+        range.setEnd(node, offset);
+      } catch {
+        return u.contentFrom;
+      }
+      let len = range.toString().length;
+      for (const r of u.runs) {
+        if (len <= r.text.length) return M.runPos(r, len);
+        len -= r.text.length;
+      }
+    }
+    // Elsewhere in the unit (between two of its nodes, in an element of others'): the end of the run before the point,
+    // else the start of the first run.
+    const at = this.doc!.createRange();
     try {
-      range.setEnd(node, offset);
+      at.setStart(node, offset);
     } catch {
       return u.contentFrom;
     }
-    let len = range.toString().length;
-    for (let i = 0; i < u.runs.length; i++) {
-      const l = (split ? u.runs[i].text : nodes[i].nodeValue!).length;
-      if (len <= l) return M.runPos(u.runs[i], len);
-      len -= l;
-    }
-    if (u.runs.length) return u.runs[u.runs.length - 1].to;
+    let before = -1;
+    nodes.forEach((n, i) => {
+      if (n?.isConnected && at.comparePoint(n, 0) < 0) before = i;
+    });
+    if (before >= 0) return u.runs[before].to;
+    if (u.runs.length) return u.runs[0].from;
     // An empty block whose placeholder <br> is in an inline element (`<pre><code><br></code></pre>`): there, in it.
     const br = placeholderBr(this.src, u);
     return br && /</.test(this.src.slice(u.contentFrom, br.from)) ? br.from : u.contentTo;
@@ -428,10 +455,11 @@ export abstract class EditorCore {
   domAtPos(pos: number, side = 1): { node: Node; offset: number } | null {
     const u = M.unitAt(this.units, pos);
     if (!u) return null;
-    const el = this.els[u.id];
+    const el = this.elOf(u);
     if (!el) return null;
-    const nodes = this.textNodes(el);
-    if (!u.runs.length || nodes.length != u.runs.length) return { node: el, offset: 0 };
+    const live = this.runNodes(u);
+    if (!u.runs.length || live.some((n) => !n)) return { node: el, offset: 0 };
+    const nodes = live as Text[];
     // On a line with no text, after a line break (an empty last line, `text<br>|<br>`): the point after the <br>.
     const texts = u.runs.filter((r) => r.text.length);
     if (!texts.some((r) => r.from <= pos && pos <= r.to)) {
@@ -467,7 +495,7 @@ export abstract class EditorCore {
     }
     const units = after ? this.units : [...this.units].reverse();
     for (const u of units) {
-      const el = this.els[u.id];
+      const el = this.elOf(u);
       if (!el?.isConnected) continue;
       if (after ? at.comparePoint(el, 0) > 0 : at.comparePoint(el, el.childNodes.length) < 0) return after ? M.textStart(u) : M.textEnd(u);
     }

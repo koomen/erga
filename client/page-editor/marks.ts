@@ -247,18 +247,17 @@ export abstract class EditorMarks extends EditorCore {
   protected rangesIn(from: number, to: number): Range[] {
     const out: Range[] = [];
     for (const u of unitsIn(this.units, from, to)) {
-      const el = this.els[u.id];
+      const el = this.elOf(u);
       if (!el) continue;
-      const nodes = this.textNodes(el);
-      if (nodes.length != u.runs.length) continue;
+      const nodes = this.runNodes(u);
       u.runs.forEach((run, i) => {
         const s = Math.max(from, run.from),
           e = Math.min(to, run.to);
-        if (s >= e) return;
+        if (s >= e || !nodes[i]?.isConnected) return;
         const range = this.doc!.createRange();
         try {
-          range.setStart(nodes[i], M.runOffset(run, s));
-          range.setEnd(nodes[i], M.runOffset(run, e));
+          range.setStart(nodes[i]!, M.runOffset(run, s));
+          range.setEnd(nodes[i]!, M.runOffset(run, e));
         } catch {
           return;
         }
@@ -349,7 +348,7 @@ export abstract class EditorMarks extends EditorCore {
    */
   protected visibleNear(pos: number): number | null {
     const u = M.unitAt(this.units, pos);
-    if (u && this.els[u.id]) {
+    if (u && this.elOf(u)) {
       const runs = u.runs.filter((r) => r.editable);
       if (!runs.length || runs.some((r) => r.from <= pos && pos <= r.to)) return pos;
       let best = pos,
@@ -363,10 +362,10 @@ export abstract class EditorMarks extends EditorCore {
       return best;
     }
     // In a block's own tags: the start of its text for its opening tag, the end for its closing one.
-    const own = this.units.find((x) => x.from <= pos && pos <= x.to && this.els[x.id]);
+    const own = this.units.find((x) => x.from <= pos && pos <= x.to && this.elOf(x));
     if (own) return pos < own.contentFrom ? M.textStart(own) : M.textEnd(own);
-    const prev = [...this.units].reverse().find((x) => x.to <= pos && this.els[x.id]);
-    const next = this.units.find((x) => x.from >= pos && this.els[x.id]);
+    const prev = [...this.units].reverse().find((x) => x.to <= pos && this.elOf(x));
+    const next = this.units.find((x) => x.from >= pos && this.elOf(x));
     if (!prev && !next) return null;
     const end = prev ? M.textEnd(prev) : null,
       start = next ? M.textStart(next) : null;
@@ -378,13 +377,13 @@ export abstract class EditorMarks extends EditorCore {
   /** Where a source position is on the page: inside text (a caret rect), or else at the start of the next paragraph. */
   protected anchorAt(pos: number): { rect: DOMRect; inline: boolean } | null {
     const u = M.unitAt(this.units, pos);
-    if (u && this.els[u.id]) {
+    if (u && this.elOf(u)) {
       const rect = this.coordsAtPos(pos, -1);
       if (rect) return { rect, inline: true };
     }
-    const next = this.units.find((x) => x.from >= pos && this.els[x.id]) ?? [...this.units].reverse().find((x) => this.els[x.id]);
+    const next = this.units.find((x) => x.from >= pos && this.elOf(x)) ?? [...this.units].reverse().find((x) => this.elOf(x));
     if (!next) return null;
-    const r = this.els[next.id]!.getBoundingClientRect();
+    const r = this.elOf(next)!.getBoundingClientRect();
     return { rect: new DOMRect(r.left, next.from >= pos ? r.top : r.bottom - 18, 0, 0), inline: false };
   }
 
@@ -392,7 +391,7 @@ export abstract class EditorMarks extends EditorCore {
   protected flash(ranges: { from: number; to: number }[]): void {
     for (const u of this.units) {
       if (!ranges.some((r) => r.from <= u.to && r.to >= u.from)) continue;
-      const el = this.els[u.id];
+      const el = this.elOf(u);
       if (!el) continue;
       el.classList.remove("erga-flash");
       void (el as HTMLElement).offsetWidth;

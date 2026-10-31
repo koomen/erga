@@ -6,8 +6,13 @@ await servers.main();
 
 const list = async (ed: Editor) => ((await ed.source()).match(/<ul>[\s\S]*<\/ul>/)?.[0] ?? "").replace(/\s*\n\s*/g, "");
 // An indent here renders the page afresh: a click waits for the new page (ed.idle), keys don't need to.
-const start = async (ed: Editor, selector: string) => { await ed.idle(); await ed.clickEnd(selector); await ed.press("Home"); };
-const editable = (ed: Editor) => ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]")].filter((e) => e.closest("li")).every((e) => e.isContentEditable)`);
+const start = async (ed: Editor, selector: string) => {
+  await ed.idle();
+  await ed.clickEnd(selector);
+  await ed.press("Home");
+};
+const editable = (ed: Editor) =>
+  ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-text]")].filter((e) => e.closest("li")).every((e) => e.isContentEditable)`);
 const NESTED = "<ul><li>Faster builds<ul><li>A <strong>new</strong> editor</li></ul></li></ul>";
 const NESTED2 = "<ul><li>Faster builds<ul><li>A <strong>new</strong> editor</li><li>Fewer bugs</li></ul></li></ul>";
 

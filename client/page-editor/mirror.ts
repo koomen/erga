@@ -72,7 +72,7 @@ export class Mirror {
 
   /** Binds the children of a source element to those of its live element, in order, passing over nodes of others. */
   private bindChildren(s: M.ElementNode, el: Node, src: string): void {
-    if (OPAQUE.has(s.tag) || M.ATOMIC.has(s.tag)) return;
+    if (OPAQUE.has(s.tag)) return;
     let cur = el.firstChild;
     for (const c of s.children) {
       if (c.kind == "text") {
