@@ -3,6 +3,7 @@
 // through this file. Each admin's agent is agents/admin/.
 
 export {
+  ADMIN_PAGES,
   adminGate,
   adminPage,
   adminResponse,

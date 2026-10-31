@@ -36,7 +36,7 @@ export function isAppShortcut(e: Keys, isMac: boolean): boolean {
   if (!mod) return false;
   // The page's zoom (zoom.ts): the shell sets it.
   if (zoomKey(e, isMac)) return true;
-  if (e.shiftKey) return key == "p";
+  if (e.shiftKey) return key == "p" || key == "k";
   return key == "j" || key == "k" || key == "/" || key == "?" || key == "s";
 }
 

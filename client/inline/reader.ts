@@ -55,6 +55,13 @@ export default function reader(C: ReaderConfig): void {
   function editing() {
     return root.hasAttribute("data-erga-editing");
   }
+  // ⌘K (Ctrl+K off a Mac) here opens the viewer's quick search (client/common/quick-search.ts); the editor's bridge passes it on while editing.
+  addEventListener("keydown", (e) => {
+    const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? e.metaKey : e.ctrlKey;
+    if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() != "k" || editing()) return;
+    e.preventDefault();
+    tell({ type: "erga-quick-search" });
+  });
   window.__ergaReader = {
     config: C,
     changed: () => {

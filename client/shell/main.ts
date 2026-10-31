@@ -387,10 +387,26 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     if (!editing()) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
-    if (mod && e.shiftKey && key == "p") { shell.views.toggleSource(); return true; }
-    if (mod && !e.shiftKey && key == "j") { shell.agent.toggleAgent(); return true; }
-    if (mod && !e.shiftKey && key == "k" && shell.mode == "text") { shell.fmt.openLink(); return true; }
-    if (mod && !e.shiftKey && (key == "/" || key == "?")) { shell.chrome.toggleHelp(); return true; }
+    if (mod && e.shiftKey && key == "p") {
+      shell.views.toggleSource();
+      return true;
+    }
+    if (mod && !e.shiftKey && key == "j") {
+      shell.agent.toggleAgent();
+      return true;
+    }
+    if (mod && e.shiftKey && key == "k" && shell.mode == "text") {
+      shell.fmt.openLink();
+      return true;
+    }
+    if (mod && !e.shiftKey && key == "k") {
+      window.ergaQuickSearch?.();
+      return true;
+    }
+    if (mod && !e.shiftKey && (key == "/" || key == "?")) {
+      shell.chrome.toggleHelp();
+      return true;
+    }
     const zoom = zoomKey(e, isMac);
     if (zoom) { if (zoom == "reset") { if (page.zoomsItself) page.zoomItself(0); else setZoomLevel(1); } else zoomPage({ step: zoom }); return true; }
     if (mod && !e.shiftKey && key == "s") { shell.toast.flash(shell.room.connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
@@ -420,9 +436,17 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     }
     return false;
   }
-  window.addEventListener("keydown", (e) => {
-    if (appShortcut(e)) { e.preventDefault(); e.stopPropagation(); }
-  }, true);
+  // (Not the quick search's keys: they're its own, client/common/quick-search.ts.)
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (!(e.target as Element).closest?.(".erga-qs") && appShortcut(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    true
+  );
 
   // Full screen (client/inline/viewer-full.ts) is for showing the page, not editing it: the page, not its source, and the
   // focus off the text, as after Escape, so the page's own keys work (a deck's arrows). It stays off after: a click on

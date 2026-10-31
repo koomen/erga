@@ -5,6 +5,7 @@
 import { imgFallback } from "../common/img-fallback";
 import { newDocPicker } from "../common/new-doc";
 import ergaFade from "../common/fade";
+import { installQuickSearch } from "../common/quick-search";
 
 export default function homeControls(): void {
   const host = document.currentScript!.previousElementSibling as HTMLElement;
@@ -46,6 +47,8 @@ export default function homeControls(): void {
   const acc = root.querySelector(".erga-account"),
     btn = acc && acc.querySelector("button"),
     menu = acc && acc.querySelector<HTMLElement>(".erga-account-menu");
+  // ⌘K, for someone signed in (client/common/quick-search.ts).
+  if ((acc as HTMLElement | null)?.dataset.ergaAccount == "in") installQuickSearch();
   if (acc && btn && menu) {
     const show = (open: boolean) => {
       menu.hidden = !open;

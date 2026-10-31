@@ -3,12 +3,15 @@
 
 import { fastClick } from "../common/fast-click";
 import { imgFallback } from "../common/img-fallback";
+import { installQuickSearch } from "../common/quick-search";
 
 export default function accountMenu(): void {
   const root = document.currentScript!.previousElementSibling!.previousElementSibling!,
     btn = root.querySelector("button")!,
     menu = root.querySelector<HTMLElement>(".erga-account-menu")!;
   imgFallback(root);
+  // ⌘K, for someone signed in: on a document's page, from inside its frame too.
+  if ((root as HTMLElement).dataset.ergaAccount == "in") installQuickSearch((e) => typeof ergaFrames != "undefined" && ergaFrames.from(e));
   const show = (open: boolean) => {
     menu.hidden = !open;
     btn.setAttribute("aria-expanded", String(open));
