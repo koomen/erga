@@ -3,13 +3,13 @@
 export const PAGE_STYLE = `
 html { overscroll-behavior: none; }
 body[contenteditable] { outline: none; }
-[data-erga-id] { cursor: text; }
-[data-erga-id].erga-empty { min-height: 1lh; }
-[data-erga-id].erga-locked { cursor: default; }
-[data-erga-id] [contenteditable="false"] { cursor: default; }
-[data-erga-id] a[href] { cursor: text; }
+[data-erga-text] { cursor: text; }
+[data-erga-text].erga-empty { min-height: 1lh; }
+[data-erga-text].erga-locked { cursor: default; }
+[data-erga-text] [contenteditable="false"] { cursor: default; }
+[data-erga-text] a[href] { cursor: text; }
 @keyframes erga-flash { from { background-color: rgba(59, 124, 240, 0.24); } to { background-color: rgba(59, 124, 240, 0); } }
-[data-erga-id].erga-flash { animation: erga-flash 1.8s ease-out; border-radius: 3px; }
+[data-erga-text].erga-flash { animation: erga-flash 1.8s ease-out; border-radius: 3px; }
 ::highlight(erga-add-0) { background-color: rgba(34, 197, 94, 0.3); }
 ::highlight(erga-add-1) { background-color: rgba(34, 197, 94, 0.24); }
 ::highlight(erga-add-2) { background-color: rgba(34, 197, 94, 0.18); }

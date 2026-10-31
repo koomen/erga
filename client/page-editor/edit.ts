@@ -407,7 +407,7 @@ export abstract class EditorEdit extends EditorRender {
     const rule =
       shift && u.tag != "pre"
         ? null
-        : enterBlock(src, u, pos, u.tag == "summary" && !!(this.els[u.id]?.parentElement as HTMLDetailsElement | null)?.open);
+        : enterBlock(src, u, pos, u.tag == "summary" && !!(this.elOf(u)?.parentElement as HTMLDetailsElement | null)?.open);
     if (rule) return this.listEdit(rule);
     if (shift || !BLOCK_SPLIT.has(u.tag)) {
       // At the end of a block's text, a second <br> holds the new, empty line open (see lineHolder).

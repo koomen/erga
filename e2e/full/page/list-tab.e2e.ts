@@ -9,7 +9,7 @@ await servers.main();
 const focused = async (ed: Editor) =>
   (await ed.eval<boolean>(`document.activeElement?.id == "frame"`)) &&
   (await ed.frame<boolean>(`document.hasFocus()`)) &&
-  (await ed.caretIn("[data-erga-id]"));
+  (await ed.caretIn("[data-erga-text]"));
 /** Puts the caret `at` characters into an element's text. */
 const caret = async (ed: Editor, selector: string, at: number) => {
   await ed.rectOf(selector);
@@ -111,7 +111,7 @@ test("Tab and undo in a long page change only the list: no block outside it is t
   tab,
 }) => {
   const ed = await openEditor(tab, await servers.main(), "list-tab-long");
-  expect(await ed.count("[data-erga-id]")).toBeGreaterThan(250);
+  expect(await ed.count("[data-erga-text]")).toBeGreaterThan(250);
   await caret(ed, "ul > li:nth-child(6)", 10);
   // Every change the page sees to an element outside the lists, from here on (the time it takes grows with them).
   await ed.frame(

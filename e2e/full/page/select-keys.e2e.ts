@@ -6,7 +6,7 @@ await servers.main();
 
 const domText = (ed: Editor) => ed.frame<string>(`${F}.getSelection().toString()`);
 const hosts = (ed: Editor) =>
-  ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.isContentEditable)`);
+  ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-text]:not(.erga-locked)")].every((el) => el.isContentEditable)`);
 async function fromHeading(ed: Editor, keys: string[]) {
   const h = await ed.charAt("h1", 2);
   await ed.click(h.x, h.y);

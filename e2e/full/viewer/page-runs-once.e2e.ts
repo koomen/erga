@@ -30,7 +30,7 @@ const docFrame = (page: Page) => page.frames().find((f) => f.parentFrame() == pa
 const editing = async (page: Page) =>
   (await page.evaluate(() => document.body.classList.contains("erga-editing") && document.body.classList.contains("erga-editor-ready"))) &&
   !!(await docFrame(page)
-    ?.evaluate(() => !!(window as any).ergaFrame?.page && !!document.querySelector("[data-erga-id]:not(.erga-locked)"))
+    ?.evaluate(() => !!(window as any).ergaFrame?.page && !!document.querySelector("[data-erga-text]:not(.erga-locked)"))
     .catch(() => false));
 /** Whether the viewer shows the page alone: the page in the frame with nothing of the editor's on it. */
 const viewing = async (page: Page) => await page.evaluate(() => !document.body.classList.contains("erga-editing"))

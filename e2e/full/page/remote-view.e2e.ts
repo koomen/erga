@@ -10,7 +10,8 @@ await servers.script();
 const LONG = " This sentence makes the paragraph much longer, so that it wraps onto more lines than it did.".repeat(4);
 
 /** The first text block whose text starts with `text`, as an expression for the page's document `d`. */
-const block = (d: string, text: string) => `[...${d}.querySelectorAll("[data-erga-id]")].find((e) => e.textContent.startsWith(${JSON.stringify(text)}))`;
+const block = (d: string, text: string) =>
+  `[...${d}.querySelectorAll("[data-erga-text]")].find((e) => e.textContent.startsWith(${JSON.stringify(text)}))`;
 
 /**
  * Scrolls the page so the block starting with `text` is near the top, marks the page's window (a page that loads again has another),

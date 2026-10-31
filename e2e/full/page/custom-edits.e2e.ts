@@ -27,7 +27,7 @@ test("the page's buttons edit its source: add, delete, move, add under; each is 
 
   // A button is a button: clicking one that has nothing to do (the first view can't move up) puts no caret in the text.
   await press(ed, "Front page", "up");
-  expect(await ed.caretIn("[data-erga-id]")).toBe(false);
+  expect(await ed.caretIn("[data-erga-text]")).toBe(false);
 
   await press(ed, "Admin", "add");
   await expect.poll(() => views(ed)).toEqual(["Front page", "Documents", "New document", "Document", "Page", "Editor", "Settings", "Admin", "New view"]);

@@ -71,7 +71,7 @@ test("editing: the controls show, forward flies the same way, and the frames' te
   expect(
     await inPage<boolean>(
       page,
-      `(() => { const h = document.querySelector(".frame.current h2"); return h ? !!h.closest("[data-erga-id]") && !h.closest('[contenteditable="false"], .erga-locked') : null; })()`
+      `(() => { const h = document.querySelector(".frame.current h2"); return h ? !!h.closest("[data-erga-text]") && !h.closest('[contenteditable="false"], .erga-locked') : null; })()`
     )
   ).toBe(true);
 });

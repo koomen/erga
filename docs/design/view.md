@@ -115,6 +115,22 @@ Two more decisions come with it:
   outside the text (in an `<svg>`, or past the last block in Firefox) goes to the nearest block before the paint,
   and Enter and Shift+Enter stay in `keydown` (WebKit sends Shift+Enter as `insertParagraph`).
 
+## The simpler design (2026-10-30)
+
+Pete's page "Erga editor mechanics" proposes four more changes. Their status:
+
+- Change 1 (one map between the source and the page): done. Each run of a unit holds its text node in the parse
+  (`TextRun.node`), and the binding ties that node to the live one. A unit's element is `elOf(unit)` and its runs'
+  nodes are `runNodes(unit)`, both through the binding (`core.ts`). `els[id]`, the server's `data-erga-id` stamp
+  (`stamp`, `markPage`) and the counts of text nodes are gone. The pages origin serves the HTML as written; the editor
+  binds it by the parallel walk (section 3.1). While it edits, the editor marks each unit's element with
+  `data-erga-text` (no value), for the page's styles and the text guard; `stop()` takes it off. The binding now goes
+  into atomic elements too (a `<button>` in a paragraph), so their text is checked; `<svg>`, `<math>`, `<select>`,
+  `<textarea>` and `<template>` stay opaque, and a run in them doesn't count. An extension's element around one of our
+  text nodes changes nothing: a key writes to the bound node in it, and the check (`check.ts`, `bound`) looks through
+  the element. An extension that splits our node (a word in the middle) still makes the editor read the caret by length
+  and draw the block again (`redraw`).
+
 ## 2. What is wrong today (the evidence)
 
 ### 2.1 How the view works now

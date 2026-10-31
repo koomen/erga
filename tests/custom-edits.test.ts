@@ -81,7 +81,7 @@ describe("custom edits", () => {
     expect(err((f) => [{ op: "insert", after: f("<li>"), html: "<li>A</li></ul>" }])).toMatch(/end tag that closes nothing/);
     expect(err((f) => [{ op: "insert", after: f("<li>"), html: "<li>A<script>x()</script></li>" }])).toMatch(/<script>/);
     expect(err((f) => [{ op: "insert", after: f("<li>"), html: `<li onclick="x()">A</li>` }])).toMatch(/onclick/);
-    expect(err((f) => [{ op: "insert", after: f("<li>"), html: `<li data-erga-id="3">A</li>` }])).toMatch(/data-erga-id/);
+    expect(err((f) => [{ op: "insert", after: f("<li>"), html: `<li data-erga-text>A</li>` }])).toMatch(/data-erga-text/);
     expect(err((f) => [{ op: "attr", el: f("<li>"), name: "onclick", value: "x()" }])).toMatch(/onclick/);
     expect(err((f) => [{ op: "move", el: f("<li>"), into: f("<div") }])).toMatch(/into itself/);
     expect(err((f) => [{ op: "remove", el: f("<li>") }, { op: "attr", el: f("<div"), name: "a", value: "b" }])).toMatch(/same element/);

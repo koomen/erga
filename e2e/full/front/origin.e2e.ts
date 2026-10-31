@@ -22,12 +22,12 @@ test("the viewer names the document's own origin, which serves the page only to 
   const { id, url, at } = await pages(p);
   expect(at.hostname.startsWith(`${id}-${p.login}.`), url).toBe(true);
   expect(at.origin).not.toBe(p.origin);
-  // The page, as a frame's: only this site may frame it; its text blocks marked, the viewer's script first.
+  // The page, as a frame's: only this site may frame it; its HTML as written, the viewer's script first.
   const page = await framed(`${url}index.html`);
   expect(page.status).toBe(200);
   expect(page.headers.get("content-security-policy") ?? "").toContain(`frame-ancestors ${p.origin}`);
   const html = await page.text();
-  expect(html).toContain("data-erga-id=");
+  expect(html.replace(/<script[^]*?<\/script>/g, "")).not.toContain("data-erga-text");
   expect(html.indexOf("erga-hello")).toBeGreaterThan(0);
   // The file itself, as a page's own fetch has it: as it is.
   expect(await (await pagesFetch(`${url}index.html`)).text()).toBe(await (await p.get(`/d/${id}/doc/index.html`)).text());
@@ -117,5 +117,5 @@ test("a reader's viewer holds the page in one frame on its own origin (allow-sam
   expect((await p.as("Zed", address)).status).toBe(403);
   // Edited: the next load shows it (readers see the document as it is now).
   expect((await p.get(`/d/${id}/api/stored/index.html`, { method: "PUT", body: "<h1>Edited</h1>" })).status).toBe(200);
-  expect(await (await framed(src)).text()).toContain("<h1 data-erga-id=\"0\">Edited</h1>");
+  expect(await (await framed(src)).text()).toContain("<h1>Edited</h1>");
 });

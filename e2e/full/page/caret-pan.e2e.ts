@@ -115,7 +115,7 @@ test("with the caret in text, a drag on the empty board (a grab cursor) pans it 
   const board = () => ed.frame<string>(`${F}.querySelector(".board").style.transform`);
   const sel = () => ed.frame<{ text: string; node: string; offset: number; collapsed: boolean; active: string }>(`(() => {
     const s = ${F}.getSelection();
-    return { text: s.toString(), node: s.focusNode?.textContent ?? "", offset: s.focusOffset, collapsed: s.isCollapsed, active: (s.focusNode?.nodeType == 1 ? s.focusNode : s.focusNode?.parentElement)?.closest("[data-erga-id]")?.className ?? "" };
+    return { text: s.toString(), node: s.focusNode?.textContent ?? "", offset: s.focusOffset, collapsed: s.isCollapsed, active: (s.focusNode?.nodeType == 1 ? s.focusNode : s.focusNode?.parentElement)?.closest("[data-erga-text]")?.className ?? "" };
   })()`);
   const c = await ed.charAt(".card p.note", 5);
   await ed.click(c.x, c.y);

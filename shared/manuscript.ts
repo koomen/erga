@@ -31,10 +31,12 @@ export interface TextRun {
   map: number[] | null;
   /** False inside script/style/svg/button and other app-logic islands. */
   editable: boolean;
+  /** Its text node in the parse: the page editor's binding (client/page-editor/mirror.ts) ties it to the live one. */
+  node: TextNode;
 }
 
 export interface Unit {
-  /** Index in the unit list; stamped as data-erga-id on the rendered element. */
+  /** Index in the unit list. */
   id: number;
   tag: string;
   /** The whole element in source, open tag through close tag. */
@@ -451,7 +453,7 @@ function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecode
       if (child.kind == "text") {
         const dropNl = (node.tag == "pre" || node.tag == "textarea" || node.tag == "listing") && child.from == node.openTo;
         const { text, map } = decodeText(src, child.from, child.to, child.raw, decode, dropNl);
-        if (text.length) runs.push({ from: child.from, to: child.to, text, map, editable });
+        if (text.length) runs.push({ from: child.from, to: child.to, text, map, editable, node: child });
         continue;
       }
       if (NO_DOM_CONTENT.has(child.tag)) continue;
@@ -600,19 +602,6 @@ function textParent(el: ElementNode, pos: number): ElementNode | null {
     if (c.openTo <= pos && pos < c.closeFrom) return textParent(c, pos);
   }
   return null;
-}
-
-/** Inserts data-erga-id attributes into the units' open tags. */
-export function stamp(src: string, units: Unit[]): string {
-  let out = "";
-  let pos = 0;
-  for (const u of units) {
-    let at = u.openTo - 1; // before ">"
-    if (src[at - 1] == "/") at--; // before "/>"
-    out += src.slice(pos, at) + ` data-erga-id="${u.id}"`;
-    pos = at;
-  }
-  return out + src.slice(pos);
 }
 
 // ------------------------------------------------------------------ positions

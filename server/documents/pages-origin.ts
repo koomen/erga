@@ -13,7 +13,7 @@ import * as Result from "effect/Result";
 import { ID, OWNER } from "../directory/index.ts";
 import type { Platform } from "../platform.ts";
 import { forwarded } from "./routes.ts";
-import { markPage, sourceDigest } from "../../shared/page-html.ts";
+import { sourceDigest } from "../../shared/page-html.ts";
 import { readerPage, readerVersion } from "../pages/index.ts";
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
@@ -116,27 +116,10 @@ export async function readPagesClaims(secret: string, token: string, owner: stri
   } catch { return null; }
 }
 
-/** A page made from a text (by its file's ETag): its marked HTML and its text's digest, a few megabytes at most. */
-const marked = new Map<string, { html: string; src: string }>();
-let markedSize = 0;
-const MARKED_MAX = 8_000_000;
-
-function markedPage(etag: string | null, text: string): { html: string; src: string } {
-  const kept = etag ? marked.get(etag) : undefined;
-  if (kept) return kept;
-  const made = { html: markPage(text), src: sourceDigest(text) };
-  if (etag && text.length < MARKED_MAX / 8) {
-    if (markedSize + made.html.length > MARKED_MAX) { marked.clear(); markedSize = 0; }
-    marked.set(etag, made);
-    markedSize += made.html.length;
-  }
-  return made;
-}
-
 /**
  * A request to a document's pages origin: /t/<token>/<path> is the document's file at <path> (/t/<token>/ its own
  * page), which only the viewer on the token's site may frame. A page the frame goes to (an HTML file, as a frame's
- * document) comes marked, with the viewer's script first in it (readerPage); anything else as the file is.
+ * document) comes with the viewer's script first in it (readerPage); anything else as the file is.
  */
 export const pagesRoutes = (doc: { owner: string; id: string }) =>
   Effect.flatMap(ctx, ({ request, url, platform }) =>
@@ -187,6 +170,9 @@ async function pageFile(request: Request, url: URL, doc: { owner: string; id: st
   headers.set("Content-Security-Policy", `frame-ancestors ${shell}`);
   headers.set("Referrer-Policy", "no-referrer");
   if (answer.status == 304) return new Response(null, { status: 304, headers });
-  const made = markedPage(etag, await answer.text());
-  return new Response(readerPage(made.html, { shell, prefix: `/t/${token}/`, src: made.src, editor: !!claims.edit }), { status: 200, headers });
+  const text = await answer.text();
+  return new Response(readerPage(text, { shell, prefix: `/t/${token}/`, src: sourceDigest(text), editor: !!claims.edit }), {
+    status: 200,
+    headers,
+  });
 }

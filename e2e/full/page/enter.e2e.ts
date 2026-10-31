@@ -69,5 +69,5 @@ test("composing (IME) into a new paragraph leaves no <br>, and the page shows th
   await ed.press("Enter");
   await ed.compose(["か", "かな"], "仮名");
   await expect.poll(() => ed.source()).toMatch(/<\/p>\s*<p class="lede">仮名<\/p>/);
-  expect(await ed.frame<string>(`${F}.getSelection().focusNode.parentElement.closest("[data-erga-id]").innerHTML`)).toBe("仮名");
+  expect(await ed.frame<string>(`${F}.getSelection().focusNode.parentElement.closest("[data-erga-text]").innerHTML`)).toBe("仮名");
 });
