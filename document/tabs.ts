@@ -28,12 +28,13 @@ import type { Document, Opened, Person } from "./document.ts";
 import type { StoreError } from "./room.ts";
 import { isAwareness } from "./room.ts";
 import { PING, PONG } from "../shared/room-socket.ts";
+import type { Asker, Role } from "./access.ts";
 
 /**
  * What a socket is, kept with it: read-only or not; `epoch`, the history the tab holds, once it has one; `events`,
  * whether it hears its person's events (and the document's details as it joins: Document.joinRoom).
  */
-export type Tab = { id: string; readOnly: boolean; epoch: string | null; person: Person; events: boolean; watch?: boolean };
+export type Tab = { id: string; readOnly: boolean; epoch: string | null; person: Person; events: boolean; watch?: boolean; who?: Asker };
 
 /** A socket call that may find it closed already: nothing to do then. */
 const quietly = (f: () => void) => void Result.try(f);
@@ -120,6 +121,23 @@ export class Tabs<S extends TabSocket> {
     const joined = this.joined.get(tab.id);
     this.joined.delete(tab.id);
     joined?.leave();
+  }
+
+  /**
+   * The document's permissions changed: a tab whose person may no longer open it is closed (4403: the page opens again,
+   * and says so); one whose person may edit now, or no longer, is closed to join again as they may now (4408: the tab
+   * comes back by itself); every other tab hears it ({ type: "access" }).
+   */
+  async permissionsChanged(roleOf: (who: Asker) => Promise<Role | null>): Promise<void> {
+    for (const socket of this.o.sockets()) {
+      const tab = this.o.tabOf(socket);
+      if (!tab?.who) continue;
+      const role = await roleOf(tab.who);
+      const edits = role == "owner" || role == "editor";
+      if (!role) quietly(() => socket.close(4403, "not shared"));
+      else if (!tab.watch && edits == tab.readOnly) quietly(() => socket.close(4408, "role changed"));
+    }
+    this.notify({ type: "access" });
   }
 
   /** A message for every tab (the homepage's deploy status): through the document if it's open, else to the tabs that hear events. */

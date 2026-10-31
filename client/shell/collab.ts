@@ -244,6 +244,12 @@ export class Collab {
     awarenessProtocol.removeAwarenessStates(this.awareness, [...this.awareness.getStates().keys()].filter((c) => c != this.doc.clientID), this);
     if (was) this.opts.onStatus(false);
     if (code == 4409) { this.stopped = true; this.opts.onStale(); return; }
+    // Its person may no longer open it: the page opens again, and says so. (4408, a role changed: it joins again below, as they may now.)
+    if (code == 4403) {
+      this.stopped = true;
+      location.reload();
+      return;
+    }
     if (this.stopped) return;
     if (!was && !this.greeted && this.tries >= 2) { this.stopped = true; this.noHello(new Error("the host refused the connection")); return; }
     setTimeout(() => this.connect(), Math.min(2500, 100 * 2 ** this.tries++));

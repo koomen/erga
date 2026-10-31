@@ -24,7 +24,7 @@ import type { FileList, NameAnswer, TreeAnswer, TreeState } from "../../document
 import { Tabs, type Tab } from "../../document/tabs";
 import { PING, PONG } from "../../shared/room-socket";
 import type { Who } from "../../server/directory/index.ts";
-import type { Role } from "../../document/access";
+import { askerFrom, type Role } from "../../document/access";
 import type { NamedRow } from "../../document/names";
 import { documentAgents } from "../../agents/document/session";
 import { agentToolsFor, elsewhere } from "../../agents/tools";
@@ -254,8 +254,10 @@ export class DocumentObject extends DurableObject<Env> {
     );
   }
   /** The directory's permissions for this document now (Directory.share pushes each change): the document's copy. */
-  setPermissions(list: { login: string; role: Role }[]): Promise<void> {
-    return run(this.document.setPermissions(list));
+  async setPermissions(list: { login: string; role: Role }[]): Promise<void> {
+    await run(this.document.setPermissions(list));
+    // The open tabs: one whose person may no longer do what it does closes; the rest hear it.
+    await this.tabs.permissionsChanged((who) => run(this.document.roleOf(who)));
   }
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */
   view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
@@ -288,6 +290,8 @@ export class DocumentObject extends DurableObject<Env> {
     const tab: Tab = {
       id: crypto.randomUUID(), readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null,
       person: personOf(request.headers), events: url.searchParams.get("events") == "1" || url.searchParams.get("watch") == "files",
+      // Whom it's for, as the app said: when the permissions change, whether they may still (Tabs.permissionsChanged).
+      ...(askerFrom(request.headers) ? { who: askerFrom(request.headers)! } : {}),
       // A watcher (?watch=files, no caller now): it hears the tree change, and never joins the room.
       ...(url.searchParams.get("watch") == "files" ? { watch: true } : {}),
     };
