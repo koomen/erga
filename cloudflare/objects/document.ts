@@ -288,12 +288,15 @@ export class DocumentObject extends DurableObject<Env> {
     const opened = await run(this.document.admit(request));
     if (!opened) return new Response("No such document", { status: 404 });
     const tab: Tab = {
-      id: crypto.randomUUID(), readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null,
-      person: personOf(request.headers), events: url.searchParams.get("events") == "1" || url.searchParams.get("watch") == "files",
+      id: crypto.randomUUID(),
+      readOnly: request.headers.get("x-erga-access") != "edit",
+      epoch: url.searchParams.get("epoch") || null,
+      person: personOf(request.headers),
+      events: url.searchParams.get("events") == "1" || url.searchParams.get("watch") == "view",
       // Whom it's for, as the app said: when the permissions change, whether they may still (Tabs.permissionsChanged).
       ...(askerFrom(request.headers) ? { who: askerFrom(request.headers)! } : {}),
-      // A watcher (?watch=files, no caller now): it hears the tree change, and never joins the room.
-      ...(url.searchParams.get("watch") == "files" ? { watch: true } : {}),
+      // A viewer's page (?watch=view, client/inline/viewer-live.ts): it hears what it shows change, and never joins the room.
+      ...(url.searchParams.get("watch") == "view" ? { watch: true } : {}),
     };
     const [client, server] = Object.values(new WebSocketPair());
     // A tab holding another epoch's history is refused, never merged (on a socket of its own, closed at once).

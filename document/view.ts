@@ -11,6 +11,7 @@ import type { DocName } from "./api.ts";
 import { assets, files as texts } from "./content.ts";
 import { resolvePage } from "./pages.ts";
 import { digest, NoSuchDocument, StoreError } from "./room.ts";
+import { throttle } from "../shared/time.ts";
 import type { Storage } from "./storage.ts";
 import type { Role } from "./access.ts";
 
@@ -38,6 +39,9 @@ export interface ViewAnswer {
 /** How long with no file changed before a viewer's answer may be kept (ViewAnswer.quiet). */
 const QUIET_MS = 60_000;
 
+/** How often, at most, the open viewers' pages hear that what they show changed (each then loads the page again). */
+const TELL_EVERY_MS = 2000;
+
 /** Where what viewers see is kept in the document's storage, while no file changes. */
 const VIEW = "view";
 
@@ -54,6 +58,10 @@ export interface ViewOptions {
   doc: () => Effect.Effect<Y.Doc | null, StoreError>;
   /** The first change after a quiet while: a viewer's answer kept meanwhile is out of date. */
   changedAfterQuiet?: () => void;
+  /** The document's page and where it is, now (null: no document): the version viewers see is worked out from it. */
+  info: () => Promise<{ index: string; disk?: unknown } | null>;
+  /** Tells the open viewers' pages the version they should show (client/inline/viewer-live.ts loads it). */
+  tell: (ver: string) => void;
   log: (line: string) => void;
 }
 
@@ -80,6 +88,7 @@ export class DocumentView {
     if (Date.now() - this.lastChange > QUIET_MS) this.o.changedAfterQuiet?.();
     this.lastChange = Date.now();
     this.latest = null;
+    this.news();
     if (!this.kept) return;
     this.kept = false;
     void this.o.storage.delete(VIEW).catch((e) => this.o.log(`couldn't forget the view: ${e}`));
@@ -123,6 +132,26 @@ export class DocumentView {
       return state;
     });
   }
+
+  /** The version viewers see now; null if there's no document. */
+  async current(): Promise<string | null> {
+    const info = await this.o.info();
+    return info ? Effect.runPromise(Effect.map(this.now(info), (s) => s.ver).pipe(Effect.orElseSucceed(() => null))) : null;
+  }
+
+  /** A viewer's page that just opened (or came back) hears the version it should show, so it catches up. */
+  greet(send: (ver: string) => void): void {
+    void this.current().then(
+      (ver) => ver && send(ver),
+      () => {}
+    );
+  }
+
+  /** The open viewers' pages hear the version now, at most every TELL_EVERY_MS however fast the files change; the last always lands. */
+  private news = throttle(async () => {
+    const ver = await this.current();
+    if (ver) this.o.tell(ver);
+  }, TELL_EVERY_MS);
 
   /** The answer for someone who may view (`role`, or anyone: the homepage): which file the address `page` is, in what viewers see now, and that version. */
   answer(
