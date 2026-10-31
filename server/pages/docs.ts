@@ -73,7 +73,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   <ol class="rows" data-live-kind="doc" data-live-view="docs" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
   <p class="empty"${docs.length ? " hidden" : ""}>No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${plural(hours, "hour")} if you never edit it.`}</p>
 </main>
-${newDocMenu((path) => link(path, session), true)}${NEW_DOC_STYLE}
+${newDocMenu((path) => link(path, session))}${NEW_DOC_STYLE}
 <dialog id="share" aria-labelledby="share-title" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">

@@ -136,7 +136,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 <body>${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const after = `
-${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${FULL_BUTTON}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}
+${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${FULL_BUTTON}${o.edit}</div>${newDocMenu((path) => link(path, session))}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}
 `;
   return { before, after };
 }

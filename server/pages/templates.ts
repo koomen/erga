@@ -64,10 +64,10 @@ export const newDocButton = (cls: string, label = "") =>
  * links keep, ?user=). /new asks someone signed out to sign in first, and
  * comes back to make it.
  */
-export function newDocMenu(href: (path: string) => string, signedIn: boolean): string {
+export function newDocMenu(href: (path: string) => string): string {
   const item = (t: Template) =>
     `<a role="menuitem" href="${esc(href(`/new?template=${encodeURIComponent(t.id)}`))}" data-template="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.description)}</span></a>`;
-  return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" data-fonts="${esc(asset("inter.css"))}" hidden><p class="erga-new-title">New document</p>${TEMPLATES.map(item).join("")}${signedIn ? "" : `<p class="erga-new-note">You sign in first, then Erga makes the document.</p>`}</div>`;
+  return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" data-fonts="${esc(asset("inter.css"))}" hidden><p class="erga-new-title">New document</p>${TEMPLATES.map(item).join("")}</div>`;
 }
 
 /** The menu's look (client/inline/new-doc.css). */

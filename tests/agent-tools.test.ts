@@ -180,7 +180,7 @@ test("the Project template makes a project from the start, with its two pages th
   };
   const t = templateById("project")!;
   expect([t.name, t.kind]).toEqual(["Project", "project"]);
-  expect(newDocMenu((p) => p, true)).toContain('data-template="project"');
+  expect(newDocMenu((p) => p)).toContain('data-template="project"');
   expect(read("index.html")).toContain('href="about.html"');
   expect(read("about.html")).toContain('href="index.html"');
   const ada: Caller = { dir, who: { login: "ada" }, platform, origin: "https://erga.test" };
