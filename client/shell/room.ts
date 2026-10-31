@@ -48,10 +48,7 @@ export function mountRoom(shell: Shell) {
   // marked in their author's colour. They stay out of the undo history:
   // ⌘Z only takes back your own edits.
   function applyRemote(changes: ChangeSet, author: Author | null) {
-    if (shell.sourceView) {
-      shell.sourceView.dispatch({ changes, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
-      shell.page.recordAuthorship(changes, markAuthor(author));
-    }
+    if (shell.sourceView) shell.sourceView.dispatch({ changes, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
     // The page takes it when it isn't set aside for the source view.
     shell.page.applyExternal(changes, markAuthor(author));
     shell.people.queuePeers();

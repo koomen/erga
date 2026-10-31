@@ -79,8 +79,8 @@ test("its owner adds someone, sees them listed with their role and picture, and 
     "taking them off unlists them"
   );
   const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden])")].map((e) => e.id).join(" "));
-  // New document (+), clone, then the editor's own (pause, track changes, share, document settings), then edit.
-  expect(order).toBe("btn-new btn-clone btn-pause btn-track btn-share btn-settings btn-edit");
+  // New document (+), clone, full screen, then the editor's own (pause, share, document settings), then edit.
+  expect(order).toBe("btn-new btn-clone btn-full btn-pause btn-share btn-settings btn-edit");
   await page.keyboard.press("Escape");
 });
 

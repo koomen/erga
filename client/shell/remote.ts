@@ -33,8 +33,6 @@ export interface RemotePageConfig {
   files: string;
   /** The page's text: the tab's replica of the room's (collab.ts), which takes each edit the frame makes (onLocal). */
   room: { text(): string; length(): number };
-  self: MarkAuthor;
-  tracking: boolean;
   /** An edit made on the page, accepted: the replica takes it now. */
   onLocal: (changes: ChangeSet) => void;
   /** The page's caret moved (`selection` has it). */
@@ -67,7 +65,7 @@ export interface RemotePageConfig {
 export interface SourceState { extensions: Extension; history: StateField<unknown> }
 
 /** The messages about the text: a frame that comes has it from its init instead. */
-const TEXT = new Set<ToFrame["type"]>(["external", "authorship", "ack", "reject", "attach"]);
+const TEXT = new Set<ToFrame["type"]>(["external", "ack", "reject", "attach"]);
 
 const EMPTY: Snapshot = {
   title: "",
@@ -82,7 +80,6 @@ export class RemotePage {
   private readonly frame: HTMLIFrameElement;
   private readonly authority = new Authority();
   private snapshot: Snapshot = EMPTY;
-  private tracking: boolean;
   /** The level the page is drawn at (zoom.ts). */
   private zoom = 1;
   /** While the source view holds the text: the frame is set aside until `attach`. */
@@ -104,7 +101,6 @@ export class RemotePage {
 
   constructor(private readonly config: RemotePageConfig) {
     this.frame = config.frame;
-    this.tracking = config.tracking;
     const sel = config.selection && selectionFrom(config.selection.anchor, config.selection.head, config.room.length());
     this.selection = sel ?? EditorSelection.single(0);
     window.addEventListener("message", (e) => {
@@ -196,8 +192,6 @@ export class RemotePage {
           type: "init",
           state: this.state().toJSON(),
           version: this.authority.version,
-          self: c.self,
-          tracking: this.tracking,
           ...(timescale ? { timescale } : {}),
           ...(check ? { check } : {}),
           ...(c.scroll ? { scroll: c.scroll } : {}),
@@ -359,11 +353,6 @@ export class RemotePage {
     this.post({ type: "external", changes: changes.toJSON(), author, length: this.config.room.length() });
   }
 
-  /** An edit the page didn't make (the source view's), for the change marks. */
-  recordAuthorship(changes: ChangeSet, author: MarkAuthor | null): void {
-    this.post({ type: "authorship", changes: changes.toJSON(), author });
-  }
-
   /**
    * Hands the text to the source view: the frame's state, undo history and
    * all, once its edits are in, made with the source view's extensions and its history's field (source-view.ts, which
@@ -414,8 +403,6 @@ export class RemotePage {
 
   /** In the editor, and the editor in the page isn't up yet (the page loads again, or comes). */
   get loading(): boolean { return this.active && !this.ready; }
-  get isTracking(): boolean { return this.tracking; }
-  setTracking(on: boolean): void { this.tracking = on; this.post({ type: "tracking", on }); }
   get canPause(): boolean { return this.snapshot.canPause; }
   get isPaused(): boolean { return this.snapshot.paused; }
   /** The page zooms itself (window.ergaZoom), so the editor's zoom goes to it, not to the frame. */

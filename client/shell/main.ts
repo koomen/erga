@@ -13,7 +13,6 @@
 import type { SocketEvent } from "./collab";
 import { Collab } from "./collab";
 import { EditorState } from "@codemirror/state";
-import type { MarkAuthor } from "../page-editor/editor";
 import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "../page-editor/bridge";
 import { colorFor, files, type Author } from "../../document/content";
@@ -74,7 +73,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   performance.mark("erga:main");
 
   const KEYS = { settings: "erga:settings:v1" };
-  const settings: { track: boolean; agent: boolean } = { track: false, agent: true, ...store.json(KEYS.settings) };
+  const settings: { agent: boolean } = { agent: true, ...store.json(KEYS.settings) };
   const saveSettings = () => store.set(KEYS.settings, JSON.stringify(settings));
   /** The parts of the shell, and what they share: filled in below, as each is ready. */
   const shell = { settings, saveSettings, mode: "text", sourceView: null, source: null, docSettings: null, docName: null, docKind: "project" } as Partial<Shell> as Shell;
@@ -205,7 +204,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const info = shell.info;
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
-  const self: MarkAuthor = { name: me.name, color: me.color };
   // Your documents to go back to (test people have none), as whoever this tab is.
   $("nav-back").hidden = me.user.startsWith("test-");
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
@@ -258,7 +256,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   Object.assign(shell, {
     collab,
     me,
-    self,
     as,
     api,
     frame,
@@ -291,8 +288,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     origin: new URL(pagesUrl, location.href).origin,
     files: pagesUrl,
     room: { text: () => collab.current(), length: () => collab.currentLength() },
-    self,
-    tracking: settings.track,
     ...(back && back.path == shell.pagePath ? { selection: back.selection, scroll: back.scroll } : {}),
     onLocal(changes) {
       collab.push(changes);
@@ -437,20 +432,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     shell.fmt.hideFmt();
     page.leaveText();
   });
-
-  // Track changes: keep every change marked, as a growing diff, instead of
-  // letting the agent's edits fade once seen.
-  function setTracking(on: boolean) {
-    settings.track = on;
-    saveSettings();
-    page.setTracking(on);
-    const b = $("btn-track");
-    b.setAttribute("aria-pressed", String(on));
-    b.dataset.tip = on ? "Tracking changes (click to stop)" : "Track changes";
-    shell.toast.flash(on ? "Tracking changes from here" : "Stopped tracking changes");
-  }
-  $("btn-track").addEventListener("click", () => setTracking(!page.isTracking));
-  if (settings.track) { page.setTracking(true); $("btn-track").setAttribute("aria-pressed", "true"); $("btn-track").dataset.tip = "Tracking changes (click to stop)"; }
 
   shell.pause = mountPause(shell);
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());

@@ -100,7 +100,7 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 .nav-back:hover { color: var(--fg-strong, var(--fg)); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
 :is(.nav-brand, .nav-back):focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .nav-back svg { display: none; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-/* A paused page stays in sight (its button) while the rest of the controls hide. Track changes hides with them. */
+/* A paused page stays in sight (its button) while the rest of the controls hide. */
 body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) { opacity: 1; }
 body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) > :not(.edit-group),
 body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-inner > :not(#btn-pause) { opacity: 0; pointer-events: none; }

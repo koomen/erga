@@ -80,8 +80,6 @@ export type ToFrame =
       type: "init";
       state: unknown;
       version: number;
-      self: MarkAuthor;
-      tracking: boolean;
       timescale?: number;
       scroll?: number;
       zoom?: number;
@@ -97,8 +95,6 @@ export type ToFrame =
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }
-  | { type: "authorship"; changes: unknown; author: MarkAuthor | null }
-  | { type: "tracking"; on: boolean }
   | { type: "paused"; on: boolean }
   | { type: "render" }
   /** The level to draw the page at (zoom.ts). */

@@ -146,13 +146,6 @@ window.addEventListener("message", (e: MessageEvent) => {
     case "reject":
       relay.refused();
       return;
-    case "authorship":
-      if (resyncing) return;
-      page.recordAuthorship(ChangeSet.fromJSON(m.changes), m.author);
-      return;
-    case "tracking":
-      page.setTracking(m.on);
-      return;
     case "paused":
       page.setPaused(m.on);
       queueSnapshot();
@@ -289,7 +282,6 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     source: shown,
     state,
     base: HERE,
-    self: m.self,
     held: m.held,
     paused: m.paused,
     check: m.check,
@@ -336,7 +328,6 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
       post({ type: "upload", id, files: files.slice(0, 50) });
     },
   });
-  if (m.tracking) page.setTracking(true);
   window.ergaFrame = {
     page,
     get relay() {

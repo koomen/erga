@@ -4,7 +4,6 @@
 
 import type { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { MarkAuthor } from "../page-editor/editor";
 import type { RemotePage } from "./remote";
 import type { Collab } from "./collab";
 import type { Author } from "../../document/content";
@@ -54,7 +53,6 @@ export interface Shell {
   collab: Collab;
   /** Who this tab is, as the host attributes edits and the agent. */
   me: Author;
-  self: MarkAuthor;
   /** The query that says who this tab is in local development (?user=Ada), or "". */
   as: string;
   /** The host's endpoints, as this person. */
@@ -62,7 +60,7 @@ export interface Shell {
   frame: HTMLIFrameElement;
   docId: string;
   /** `agent`: whether the agent pane is open while editing. It starts open, and stays as the user last left it. */
-  settings: { track: boolean; agent: boolean };
+  settings: { agent: boolean };
   saveSettings: () => void;
 
   info: DocInfo;

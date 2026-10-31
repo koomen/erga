@@ -23,7 +23,6 @@ export function mountViews(shell: Shell) {
   const sourceHooks = {
     edited(changes: ChangeSet) {
       shell.collab.push(changes);
-      shell.page.recordAuthorship(changes, shell.self);
       shell.chrome.hideChrome();
     },
     moved: () => shell.people.queueCursor(),

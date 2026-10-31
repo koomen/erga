@@ -1,12 +1,11 @@
-// The marks over the page: text a change added, and text it removed, in its author's colour, fading or tracked;
+// The marks over the page: text a change from elsewhere added, and text it removed, in its author's colour, fading;
 // other people's carets and selections; and blocks that flash where a change showed no text.
 
 import type { ChangeSet } from "@codemirror/state";
 import * as M from "../../shared/manuscript";
-import { changesBetween } from "../../document/merge";
 import { ms } from "./timescale";
 import type { MarkAuthor, Peer } from "./types";
-import { copyUnit, textIn, unitsIn } from "./source";
+import { textIn, unitsIn } from "./source";
 import { EditorCore } from "./core";
 
 export type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number; author?: MarkAuthor | null };
@@ -45,22 +44,9 @@ export abstract class EditorMarks extends EditorCore {
   /**
    * What changed, drawn over the page without touching its text: added text
    * gets a green highlight, removed text a red notch (hover it for the text).
-   * With tracking off, edits from elsewhere are marked briefly and fade
-   * (`level` counts up the fade); with tracking on, the marks are a diff of
-   * the document against `tracking.baseline`, whoever made the changes.
+   * Edits from elsewhere are marked briefly and fade (`level` counts up the fade).
    */
   protected marks: Mark[] = [];
-  /**
-   * While tracking, who wrote what: every insertion and deletion since it
-   * started, with its author, mapped through later changes. The tracked diff
-   * is computed from the text alone; its marks take their authors from here.
-   */
-  protected tracking: {
-    baseline: string;
-    units: M.Unit[];
-    adds: { from: number; to: number; author: MarkAuthor | null }[];
-    dels: { pos: number; author: MarkAuthor | null }[];
-  } | null = null;
   protected overlay: HTMLElement | null = null;
   /** Other people's carets and selections, drawn over the page like the marks. */
   protected peers: Peer[] = [];
@@ -69,94 +55,15 @@ export abstract class EditorMarks extends EditorCore {
   protected authorStyles = new Map<string, number>();
   protected markObserver: ResizeObserver | null = null;
   protected paintQueued = false;
-  protected diffQueued = false;
   protected fadeTimer = 0;
 
-  get isTracking(): boolean {
-    return !!this.tracking;
-  }
-
-  /**
-   * Track changes: on, every change from now on (yours, the agent's) stays
-   * marked, as a diff against the document as it is now (so text typed and
-   * deleted again leaves no trace); off, the marks go.
-   */
-  setTracking(on: boolean): void {
-    if (on == !!this.tracking) return;
-    this.marks = [];
-    this.tracking = on ? { baseline: this.src, units: this.units.map(copyUnit), adds: [], dels: [] } : null;
-    this.paintMarks();
-  }
-
-  /**
-   * Records who made a change, while tracking (see `tracking`). The page's
-   * own edits and `applyExternal`'s are recorded here; the shell records
-   * the ones made in the source view.
-   */
-  recordAuthorship(changes: ChangeSet, author: MarkAuthor | null): void {
-    const t = this.tracking;
-    if (!t) return;
-    t.adds = t.adds.flatMap((a) => {
-      const from = changes.mapPos(a.from, 1),
-        to = changes.mapPos(a.to, -1);
-      return to > from ? [{ ...a, from, to }] : [];
-    });
-    for (const d of t.dels) d.pos = changes.mapPos(d.pos, -1);
-    changes.iterChanges((fromA, toA, fromB, toB) => {
-      if (toB > fromB) t.adds.push({ from: fromB, to: toB, author });
-      if (toA > fromA) t.dels.push({ pos: fromB, author });
-    });
-    if (t.adds.length > 2000) t.adds.splice(0, t.adds.length - 2000);
-    if (t.dels.length > 2000) t.dels.splice(0, t.dels.length - 2000);
-  }
-
-  /** The author of a tracked mark: whoever wrote most of an addition, or deleted nearest a deletion. */
-  protected trackedAuthor(m: Mark): MarkAuthor | null {
-    const t = this.tracking!;
-    if (m.kind == "add") {
-      let best: MarkAuthor | null = null,
-        most = 0;
-      for (const a of t.adds) {
-        const overlap = Math.min(a.to, m.to) - Math.max(a.from, m.from);
-        if (overlap > most) {
-          most = overlap;
-          best = a.author;
-        }
-      }
-      return best;
-    }
-    let best: MarkAuthor | null = null,
-      dist = Infinity;
-    for (let i = t.dels.length - 1; i >= 0; i--) {
-      const d = Math.abs(t.dels[i].pos - m.pos);
-      if (d < dist) {
-        dist = d;
-        best = t.dels[i].author;
-      }
-    }
-    return dist <= Math.max(8, m.text.length) ? best : null;
-  }
-
   protected mapMarks(changes: ChangeSet): void {
-    if (this.tracking || !this.marks.length) return;
+    if (!this.marks.length) return;
     this.marks = this.marks.flatMap((m): Mark[] => {
       if (m.kind == "del") return [{ ...m, pos: changes.mapPos(m.pos, -1) }];
       const from = changes.mapPos(m.from, 1),
         to = changes.mapPos(m.to, -1);
       return to > from ? [{ ...m, from, to }] : [];
-    });
-  }
-
-  /** Recomputes the tracked diff (coalesced to one per frame: it runs on every keystroke). */
-  protected queueDiff(): void {
-    if (this.diffQueued) return;
-    this.diffQueued = true;
-    requestAnimationFrame(() => {
-      this.diffQueued = false;
-      if (!this.tracking) return;
-      this.marks = marksFor(changesBetween(this.tracking.baseline, this.src), this.tracking.units, this.units, 0).marks;
-      for (const m of this.marks) m.author = this.trackedAuthor(m);
-      this.paintMarks();
     });
   }
 
@@ -172,7 +79,7 @@ export abstract class EditorMarks extends EditorCore {
       const now = performance.now();
       this.marks = this.marks.filter((m) => now - m.born! < HOLD + LEVELS * STEP);
       for (const m of this.marks) m.level = Math.max(0, Math.min(LEVELS - 1, Math.floor((now - m.born! - HOLD) / STEP) + 1));
-      if (!this.marks.length || this.tracking) {
+      if (!this.marks.length) {
         clearInterval(this.fadeTimer);
         this.fadeTimer = 0;
       }
