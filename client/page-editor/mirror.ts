@@ -59,9 +59,25 @@ export class Mirror {
     return this.live.get(n);
   }
 
-  /** Binds an element's children again, after its content was drawn afresh from the HTML. */
-  rebind(s: M.ElementNode, el: Element, src: string): void {
-    this.bindChildren(s, el, src);
+  /**
+   * Draws a bound element's content again from the HTML, keeping none of it: what others put in it goes too (their
+   * nodes in place of ours). The source nodes stay the same objects, bound to the new live nodes.
+   */
+  redraw(s: M.ElementNode, src: string, decode: M.EntityDecoder): void {
+    const el = this.dom.get(s);
+    if (!el) return;
+    const unbind = (n: M.ElementNode) => {
+      for (const c of n.children) {
+        const l = this.dom.get(c);
+        this.dom.delete(c);
+        if (l) this.live.delete(l);
+        if (c.kind == "element") unbind(c);
+      }
+    };
+    unbind(s);
+    (el as Element).replaceChildren();
+    s.children = this.build(s.children, s, el, src, new Map(), new Map(), decode);
+    for (const k of s.children) if (k.kind == "element") k.parent = s;
   }
 
   private set(s: M.SourceNode, n: Node): void {

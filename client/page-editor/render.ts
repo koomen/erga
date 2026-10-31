@@ -385,7 +385,10 @@ export abstract class EditorRender extends EditorMarks {
 
   protected applyChanges(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): void {
     if (!this.doc || this.rendering) return;
-    if (this.patch(tr, oldUnits, oldSrc)) this.recheck(tr.changes);
+    if (this.reconcile(tr.changes, oldUnits, oldSrc)) {
+      this.unshown = false;
+      this.recheck(tr.changes);
+    } else this.unshown = true;
     this.showChecks();
   }
 
@@ -425,27 +428,23 @@ export abstract class EditorRender extends EditorMarks {
   }
 
   /**
-   * Brings the page to the new source in place: the text of the blocks it changed (patchText), else the element that
-   * holds the change (reconcile). False, with the page as it was, if neither can show the change (a script or a style
-   * changed): only a render shows it (unshown).
+   * Brings the page to the new source in place, through the binding (mirror.ts): the smallest region that holds the
+   * change gets its new content. A change to the text of runs alone (typing, deleting) is the case where the region is
+   * one text node: the units move in place (M.editRuns), and each changed run's node gets its text. Else the smallest
+   * element that holds the change is reconciled, and the units in it are found again; the others move through the
+   * change. False, with nothing changed, if the change can't be made in place (a script or a style changed): only a
+   * render shows it (unshown).
    */
-  protected patch(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): boolean {
-    if (!this.doc) return false;
+  protected reconcile(changes: ChangeSet, oldUnits: M.Unit[], oldSrc: string): boolean {
+    const mirror = this.mirror;
+    if (!this.doc || !mirror || oldUnits != this.units) return false;
     const src = this.src;
-    if (oldUnits == this.units && this.patchText(tr.changes, oldSrc, src)) return true;
-    if (this.mirror && oldUnits == this.units && this.reconcile(tr.changes, oldSrc, src)) return true;
-    this.unshown = true;
-    return false;
-  }
-
-  /**
-   * Brings the page to the new source in place through the binding (mirror.ts): the smallest element that holds the
-   * change gets its new content, and the units in it are found again; the others move through the change. False, with
-   * nothing changed, if the change can't be made in place.
-   */
-  protected reconcile(changes: ChangeSet, oldSrc: string, src: string): boolean {
-    const mirror = this.mirror!;
-    const oldUnits = this.units;
+    const texts = this.textChanges(changes, oldSrc, src);
+    if (texts) {
+      for (const id of texts) this.setTexts(this.units[id], src);
+      this.updateEmpty(texts);
+      return true;
+    }
     const oldEls = oldUnits.map((u) => this.elOf(u));
     // The units in the element the change is in (or the unit that holds it), found by the old tree's shape.
     const e = mirror.reconcile(changes, oldSrc, src, this.decoder);
@@ -498,7 +497,6 @@ export abstract class EditorRender extends EditorMarks {
       if (!el.classList.length) el.removeAttribute("class");
     }
     this.units = units;
-    this.unshown = false;
     const ids = new Set<number>();
     for (const u of fresh) {
       const el = els[u.id];
@@ -525,27 +523,18 @@ export abstract class EditorRender extends EditorMarks {
   }
 
   /**
-   * The patch for a change to the text of text blocks alone (typing,
-   * deleting): the analysis is brought up to date in place (M.editRuns), not
-   * done again, and only the blocks whose text changed are touched. False,
-   * with nothing changed, for any other change: patch does it whole.
+   * The units whose text a change to the text of runs alone changed, brought up to date in place (M.editRuns): no parse,
+   * no analysis. Null, with nothing changed, for any other change, or one in a block the page doesn't show.
    */
-  protected patchText(changes: ChangeSet, oldSrc: string, src: string): boolean {
+  private textChanges(changes: ChangeSet, oldSrc: string, src: string): Set<number> | null {
     const splices: M.Splice[] = [];
     changes.iterChanges((fromA, toA, fromB, toB) => splices.push({ from: fromA, to: toA, length: toB - fromB }));
-    // Every block it changes is on the page (else the whole patch finds where it goes).
     for (const s of splices) {
       const u = M.unitAt(this.units, s.from);
-      if (!u || !this.elOf(u)) return false;
+      if (!u || !this.elOf(u)) return null;
     }
-    const changed = M.editRuns(this.units, oldSrc, src, splices, this.decoder);
-    if (!changed) return false;
-    this.unshown = false;
-    for (const id of changed) this.patchRuns(this.elOf(this.units[id])!, this.units[id], src);
-    this.updateEmpty(changed);
-    return true;
+    return M.editRuns(this.units, oldSrc, src, splices, this.decoder);
   }
-
 
   /**
    * Makes a change to the page with the reader's view held still: the text
@@ -645,34 +634,46 @@ export abstract class EditorRender extends EditorMarks {
   }
 
 
-  /** Patches the text of a unit's element whose markup is as it was; returns true if anything changed. */
-  protected patchRuns(el: Element, u: M.Unit, src: string): boolean {
+  /** Sets each run's bound text node to the run's text; a unit whose nodes others took is drawn again (redraw). */
+  protected setTexts(u: M.Unit, src: string): void {
+    const el = this.elOf(u)!;
     const live = this.runNodes(u);
-    if (live.some((n) => !n || !el.contains(n))) return this.redraw(u, el);
-    const nodes = live as Text[];
+    if (live.some((n) => !n || !el.contains(n))) {
+      this.redraw(u, el);
+      return;
+    }
     const texts = this.domTexts(u, src);
-    let changed = false;
-    nodes.forEach((n, i) => {
-      if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) {
-        n.nodeValue = texts[i];
-        changed = true;
-      }
+    (live as Text[]).forEach((n, i) => {
+      if (!same(n.nodeValue!, u.runs[i].text) || (n.nodeValue != texts[i] && n.nodeValue == u.runs[i].text)) n.nodeValue = texts[i];
     });
-    return changed;
   }
 
-  /** Draws a unit's element's content afresh from the source, and binds it; whether its text then matches. */
+  /**
+   * Draws a unit's element's content afresh from the source (mirror.ts, redraw: what others put in it goes); whether
+   * its text then matches. The units in it are the same units, on new nodes.
+   */
   protected redraw(u: M.Unit, el: Element): boolean {
     const src = this.src;
-    el.innerHTML = src.slice(u.contentFrom, u.contentTo);
-    this.mirror?.rebind(u.node, el, src);
-    this.prepareUnit(el);
-    // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
-    const nodes = this.runNodes(u);
-    this.domTexts(u, src).forEach((t, i) => {
-      const n = nodes[i];
-      if (n && n.nodeValue != t) n.nodeValue = t;
-    });
+    // Only HTML the browser reads as the parse does: a stray end tag (which the browser drops) keeps the block locked.
+    const tpl = this.doc!.createElement("template");
+    tpl.innerHTML = src.slice(u.node.openTo, u.node.closeFrom < u.node.to ? u.node.to : u.node.closeFrom);
+    const alone = this.textNodes(tpl.content);
+    if (alone.length < u.runs.length || !u.runs.every((r, i) => same(alone[i].nodeValue!, r.text))) return false;
+    this.mirror!.redraw(u.node, src, this.decoder);
+    for (const v of M.unitsIn(src, u.node, this.decoder)) {
+      const w = this.units.find((x) => x.node == v.node);
+      const e = w && this.elOf(w);
+      if (!w || !e) continue;
+      this.markUnit(w, e);
+      this.prepareUnit(e);
+      // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
+      const nodes = this.runNodes(w);
+      this.domTexts(w, src).forEach((t, i) => {
+        const n = nodes[i];
+        if (n && n.nodeValue != t) n.nodeValue = t;
+      });
+    }
+    this.islands(el);
     return this.shows(u, el);
   }
 }

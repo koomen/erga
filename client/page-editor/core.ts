@@ -276,7 +276,7 @@ export abstract class EditorCore {
   }
 
   /** The text nodes in a unit's element, up to a block in it (a list item's text stops at its nested list), whoever made them. */
-  protected textNodes(el: Element): Text[] {
+  protected textNodes(el: Node): Text[] {
     const out: Text[] = [];
     const block = (e: Element) => !M.INLINE.has(e.localName) && !M.ATOMIC.has(e.localName) && !M.TRANSPARENT.has(e.localName);
     const w = this.doc!.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {

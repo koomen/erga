@@ -130,6 +130,15 @@ Pete's page "Erga editor mechanics" proposes four more changes. Their status:
   text nodes changes nothing: a key writes to the bound node in it, and the check (`check.ts`, `bound`) looks through
   the element. An extension that splits our node (a word in the middle) still makes the editor read the caret by length
   and draw the block again (`redraw`).
+- Change 2 (one way to update the page): done. Every change reaches the page through `reconcile` (`render.ts`). Its
+  first case is a change to the text of runs alone, where the region is one text node: the units move in place
+  (`M.editRuns`) and each changed run's bound node gets its text (`setTexts`). Else the Mirror reconciles the smallest
+  element that holds the change. `patch`, `patchText`, `patchRuns` and `rebuildUnit` are gone. A block drawn again
+  (`redraw`: others took our nodes, or a composition wrote into a node the browser made) is drawn by the Mirror
+  (`Mirror.redraw`), not with `innerHTML`, and keeps its source nodes; only HTML the browser reads as the parse does is
+  drawn (a stray end tag keeps the block locked). A composition no longer loads the page again. The page loads again
+  only for a change the Mirror can't make in place: a `<script>`, a new `<style>`, or a change outside the `<body>`
+  other than the text of a `<style>` or the `<title>` and an element's attributes.
 
 ## 2. What is wrong today (the evidence)
 
