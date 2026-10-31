@@ -19,7 +19,7 @@ export {
   webPage,
   withEdit,
 } from "./chrome.ts";
-export { docRow, docsPage } from "./docs.ts";
+export { docsPage, docsRows } from "./docs.ts";
 export { readerPage, readerVersion } from "./reader.ts";
 export { startPage } from "./start.ts";
 export { cloneButton, editButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";

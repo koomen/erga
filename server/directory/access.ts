@@ -84,6 +84,9 @@ const matches = (r: AccessRule, f: Facts) =>
 interface Row { id: number; kind: RuleKind; value: string; access: Access; created: number; added_by: string | null; added_via: string | null }
 const fromRow = (r: Row): AccessRule => ({ id: Number(r.id), kind: r.kind, value: r.value, access: r.access, created: Number(r.created), addedBy: r.added_by, ...(r.added_via ? { addedVia: r.added_via } : {}) });
 
+/** A rule's key on the open Access page (server/news/): by what it matches, which a rule keeps (its id may be none: everybody's). */
+export const ruleKey = (kind: string, value: string) => `rule:${kind}:${value}`;
+
 export class AccessRules {
   private remembered: { at: number; rules: AccessRule[] } | null = null;
   /** Goes up at each change here, so what's remembered of a person's access is asked again (Directory.accessOf). */
@@ -145,6 +148,7 @@ export class AccessRules {
     ]);
     this.remembered = null;
     this.version++;
+    await this.users.pagesChanged([ruleKey(kind, value)]);
     return (await this.all()).find((r) => r.kind == kind && r.value == value)!;
   }
 
@@ -163,6 +167,7 @@ export class AccessRules {
     ]);
     this.remembered = null;
     this.version++;
+    await this.users.pagesChanged([ruleKey(rule.kind, rule.value)]);
     return (await this.all()).find((r) => r.kind == rule.kind && r.value == rule.value)!;
   }
 
@@ -175,6 +180,7 @@ export class AccessRules {
     await this.sql.batch([["DELETE FROM access_rules WHERE id = ?1", id], logged(by, Date.now(), { event: "removed", kind: rule.kind, value: rule.value, access: rule.access })]);
     this.remembered = null;
     this.version++;
+    await this.users.pagesChanged([ruleKey(rule.kind, rule.value)]);
   }
 
   /** What the page offers as WHO: the Workspace domains and GitHub organizations of people who signed in here. */

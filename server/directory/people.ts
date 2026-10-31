@@ -139,6 +139,7 @@ export class People {
       logged(by, at, `${label(p.provider)} ${p.handle}`, "added", role),
     ]);
     const [row] = await this.sql.all<Row>("SELECT * FROM people WHERE provider = ?1 AND handle = ?2", p.provider, p.handle);
+    await this.users.pagesChanged([`person:${row.id}`]);
     return fromRow(row);
   }
 
@@ -150,6 +151,7 @@ export class People {
       ["UPDATE people SET role = ?2 WHERE id = ?1", id, role],
       logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "role", role),
     ]);
+    await this.users.pagesChanged([`person:${id}`]);
     return { ...p, role };
   }
 
@@ -158,11 +160,7 @@ export class People {
     const p = await this.get(id);
     if (!p) throw new NotAllowed({ message: `Nobody waits as ${id}: list_users lists them.` });
     await this.sql.batch([["DELETE FROM people WHERE id = ?1", id], logged(by, Date.now(), `${label(p.provider)} ${p.handle}`, "removed")]);
-  }
-
-  /** The statement that ends a person's wait: their account is made (in the same batch). */
-  claimed(id: number): Statement {
-    return ["DELETE FROM people WHERE id = ?1", id];
+    await this.users.pagesChanged([`person:${id}`]);
   }
 }
 

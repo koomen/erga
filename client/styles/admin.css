@@ -257,6 +257,8 @@ section.public-sharing .switch { font-size: 14px; color: var(--fg-strong); }
 section.public-sharing .hint { margin: 8px 0 0; }
 
 /* The change log: one row each, across the page: who (their avatar, and how), what changed (each change on its own line, in full), when. */
+/* A live list with no rows yet (server/news/), and the words the page shows instead. */
+[data-live-kind][hidden], .changes-empty[hidden] { display: none; }
 .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr) max-content; column-gap: 24px; border-bottom: 1px solid var(--rule); }
 .changes > li.change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: start; padding: 10px 4px; border-top: 1px solid var(--rule); font-size: 13.5px; line-height: 1.55; }
 .changes > li.change:hover { background: color-mix(in srgb, var(--chrome) 5%, transparent); }

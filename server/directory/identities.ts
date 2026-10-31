@@ -203,11 +203,11 @@ export class Identities {
 
   /**
    * A new account, under the username its person chose, with the identity that signed them in: both or neither.
-   * `role`: the one an admin gave them (people.ts; `extra` ends their wait), or local development's; none: only the
+   * `role`: the one an admin gave them (people.ts; `waited`, the person whose wait it ends), or local development's; none: only the
    * group rules let them in. The username must have no problem (usernameProblem); two people who choose one at once
    * can't both have it.
    */
-  async createAccount(username: string, v: Vouched, o: { role?: "admin" | "write" | "read"; extra?: Statement[] } = {}): Promise<string> {
+  async createAccount(username: string, v: Vouched, o: { role?: "admin" | "write" | "read"; waited?: number } = {}): Promise<string> {
     const login = username.trim().toLowerCase();
     const problem = await this.usernameProblem(login);
     if (problem) throw new NotAllowed({ message: problem });
@@ -228,13 +228,14 @@ export class Identities {
         this.linkStatement(login, v, at),
         ...this.emailStatements(login, v, at),
         avatarStatement(login, v),
-        ...(o.extra ?? []),
+        ...(o.waited != null ? [["DELETE FROM people WHERE id = ?1", o.waited] as Statement] : []),
       ]);
     } catch {
       throw new NotAllowed({ message: `"${login}" is taken: choose another.` });
     }
     this.users.forget(login);
     if (o.role) this.users.accessChanged();
+    await this.users.pagesChanged([`user:${login}`, ...(o.waited != null ? [`person:${o.waited}`] : [])]);
     return login;
   }
 }

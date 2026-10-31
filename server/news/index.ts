@@ -2,4 +2,4 @@
 // The rest of the app imports live pages through this file.
 
 export { Hub, KEEP_MS, type HubSql, type Listener, type Said } from "./hub.ts";
-export { newsRoutes, type Row } from "./routes.ts";
+export { newsRoutes } from "./routes.ts";

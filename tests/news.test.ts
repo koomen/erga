@@ -4,6 +4,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { Directory, type News } from "../server/directory/index.ts";
+import { Tokens } from "../server/identity/tokens.ts";
 import { Hub, KEEP_MS, type Listener } from "../server/news/index.ts";
 import { memory } from "./helpers/memory-sql.ts";
 
@@ -13,13 +14,14 @@ const ada = { login: "ada", test: false };
 /** A directory whose news is kept, as "key>logins" lines. */
 function directory() {
   const heard: string[] = [];
-  const dir = new Directory(memory(), {
+  const sql = memory();
+  const dir = new Directory(sql, {
     admins: ["ada", "bo", "cy"],
     news: async (news: News[]) => {
       for (const n of news) heard.push(`${n.key}>${n.to == "admins" ? "admins" : [...n.to].sort().join(",")}`);
     },
   });
-  return { dir, heard, take: () => heard.splice(0) };
+  return { dir, sql, take: () => heard.splice(0) };
 }
 
 test("each change of a document's row sends its key to everyone whose list shows it, and to who just lost it", async () => {
@@ -45,6 +47,39 @@ test("each change of a document's row sends its key to everyone whose list shows
   take();
   await dir.remove("aaaaaaaa");
   expect(take()).toEqual(["doc:aaaaaaaa>ada,cy"]);
+});
+
+test("each change on the admin pages sends its row's key to the admins, with the change log's new line; a user's change, every admin's row", async () => {
+  const { dir, take } = directory();
+  const admin = { login: "ada", admin: true };
+  const log = async () => (await dir.config.history(admin, { limit: 1 })).versions[0].n;
+  await dir.users.add(admin, "dee");
+  expect(take()).toEqual(["user:dee>admins", `change:${await log()}>admins`]);
+  await dir.rules.add(admin, { kind: "github_org", value: "acme", access: "read" });
+  expect(take()).toEqual(["rule:github_org:acme>admins", `change:${await log()}>admins`]);
+  await dir.config.set(admin, "public_sharing", true);
+  expect(take()).toEqual(["setting:public_sharing>admins", `change:${await log()}>admins`]);
+  await dir.users.setUserRole(admin, "dee", "admin");
+  expect(take()).toEqual(["user:dee>admins", `change:${await log()}>admins`]);
+  // Dee is an admin now: a change to any user sends Dee's row too, which says whether Dee is the last admin.
+  await dir.users.setDeploy(admin, "dee", true);
+  expect(take()).toEqual(["user:dee>admins", `change:${await log()}>admins`]);
+  await dir.users.add(admin, "eve");
+  expect(take()).toEqual(["user:eve>admins", "user:dee>admins", `change:${await log()}>admins`]);
+});
+
+test("a token's key goes to its person's open /settings as it's made, rotated or revoked", async () => {
+  const { dir, sql, take } = directory();
+  const tokens = new Tokens(sql, "secret-".repeat(6), dir);
+  const me = { ...ada, name: "Ada" };
+  const { info } = await tokens.mint(me, "Laptop", { scope: "documents" });
+  expect(take()).toEqual([`token:${info.id}>ada`]);
+  const share = (await tokens.share(me, false)).info;
+  expect(take()).toEqual([`token:${share.id}>ada`]);
+  const next = (await tokens.share(me, true)).info;
+  expect(take()).toEqual([`token:${share.id}>ada`, `token:${next.id}>ada`]);
+  await tokens.revoke("ada", info.id);
+  expect(take().slice(0, 1)).toEqual([`token:${info.id}>ada`]);
 });
 
 /** A hub on SQLite, its clock in the test's hands, and two open pages: Ada's and an admin's. */

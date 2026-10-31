@@ -206,11 +206,7 @@ export const usernameStep: Route = Effect.gen(function* () {
   const login = yield* Effect.tryPromise({
     try: async () => {
       const { may, person } = await dir.joining(v);
-      return dir.identities.createAccount(
-        wanted,
-        v,
-        person ? { role: person.role, extra: [dir.people.claimed(person.id)] } : may ? {} : { role: "write" }
-      );
+      return dir.identities.createAccount(wanted, v, person ? { role: person.role, waited: person.id } : may ? {} : { role: "write" });
     },
     catch: (e) => e,
   }).pipe(

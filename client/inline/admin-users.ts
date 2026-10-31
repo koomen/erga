@@ -3,6 +3,8 @@
 // list as it is now.
 
 import { reload, runTool, say } from "../common/admin-post";
+import { liveList } from "../common/live-rows";
+import times from "./times";
 
 export interface UsersConfig {
   /** The signed-in admin's login, in lower case. */
@@ -39,7 +41,8 @@ export default function adminUsers(c: UsersConfig): void {
       "Adding…"
     );
   });
-  for (const li of document.querySelectorAll<HTMLElement>("ol.users > li")) {
+  /** A user's or a waiting person's row: the role, the deploy role, Remove. */
+  function wire(li: HTMLElement) {
     const login = li.dataset.login,
       person = li.dataset.person,
       role = li.querySelector<HTMLSelectElement>("select.role")!,
@@ -71,4 +74,8 @@ export default function adminUsers(c: UsersConfig): void {
       change("remove_user", whom, "Removing…");
     });
   }
+  const list = document.querySelector<HTMLElement>("ol.users")!;
+  for (const li of list.querySelectorAll<HTMLElement>(":scope > li")) wire(li);
+  // Changes made elsewhere (another admin, an agent, someone's first sign-in) show here as they're made (client/common/live-rows.ts).
+  liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);
 }

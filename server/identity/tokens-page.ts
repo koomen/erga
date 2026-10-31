@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import { nameOf } from "../../document/names.ts";
 import { appPage, crumbs, ICON, inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
-import { type Platform, type Session, whoOf } from "../platform";
+import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform";
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
 import { mintTestToken } from "./sign-in.ts";
 import { type Note, noteOf, readOnce, seeOther } from "./flash.ts";
@@ -140,6 +140,33 @@ ${may ? `<p class="notice error">${esc(may)}</p>` : ""}
 <form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></form></section>`;
 }
 
+/**
+ * A token's row, as the documents list's: its name (and whether it's the share button's), its scope, when it expires,
+ * when it was last used, revoke on hover. The full page's, and the one an open page fetches when it changes (server/news/).
+ */
+async function tokenRow(platform: Platform, t: AgentToken): Promise<string> {
+  const when = (at: number | null) => (at ? dateTag(at) : `<span class="never">Never</span>`);
+  const scope =
+    t.scope == "document"
+      ? `<span class="scope">One document</span> ${await docLabel(platform, t.docId)}`
+      : `<span class="scope">${SCOPE_NAMES[t.scope]}</span>`;
+  return `  <li data-live="token:${esc(t.id)}" data-sort="${t.created}"${t.expires != null && t.expires <= Date.now() ? ` class="expired"` : ""}>
+    <div class="name"><span class="title">${esc(t.label)}</span>${t.kind == "share" ? `<span class="note">${t.scope == "admin" ? "Admin pages" : "Share button"}</span>` : ""}</div>
+    <div class="what">${scope}</div>
+    ${t.expires ? (t.expires <= Date.now() ? `<span class="never">Expired</span>` : day(t.expires)) : `<span class="never">Never</span>`}
+    ${when(t.lastUsed)}
+    <div class="acts"><form data-label="${esc(t.label)}"><input type="hidden" name="id" value="${esc(t.id)}"><button class="act" aria-label="Revoke ${esc(t.label)}" data-tip="Revoke">${ICON.delete}</button></form></div>
+  </li>`;
+}
+
+/** The rows of /settings that `keys` name ("token:<id>"), as they are now (null: gone), for an open page (server/news/). */
+export const tokensRows: LiveRows = async (platform, session, keys) => {
+  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  for (const t of await platform.tokens.list(session.login))
+    if (`token:${t.id}` in out) out[`token:${t.id}`] = { html: await tokenRow(platform, t), sort: t.created };
+  return out;
+};
+
 async function tokensPage(
   platform: Platform,
   session: Session,
@@ -150,16 +177,7 @@ async function tokensPage(
   const [list, docs, admin] = await Promise.all([
     platform.tokens.list(session.login), platform.docs.list(session.login), platform.directory.users.isAdmin(whoOf(session)),
   ]);
-  const when = (t: number | null) => (t ? dateTag(t) : `<span class="never">Never</span>`);
-  const scopeCell = async (t: AgentToken) => t.scope == "document" ? `<span class="scope">One document</span> ${await docLabel(platform, t.docId)}` : `<span class="scope">${SCOPE_NAMES[t.scope]}</span>`;
-  // Rows as the documents list's: its name (and whether it's the share button's), its scope, when it expires, when it was last used, revoke on hover.
-  const rows = (await Promise.all(list.map(async (t) => `  <li${t.expires != null && t.expires <= Date.now() ? ` class="expired"` : ""}>
-    <div class="name"><span class="title">${esc(t.label)}</span>${t.kind == "share" ? `<span class="note">${t.scope == "admin" ? "Admin pages" : "Share button"}</span>` : ""}</div>
-    <div class="what">${await scopeCell(t)}</div>
-    ${t.expires ? (t.expires <= Date.now() ? `<span class="never">Expired</span>` : day(t.expires)) : `<span class="never">Never</span>`}
-    ${when(t.lastUsed)}
-    <div class="acts"><form data-label="${esc(t.label)}"><input type="hidden" name="id" value="${esc(t.id)}"><button class="act" aria-label="Revoke ${esc(t.label)}" data-tip="Revoke">${ICON.delete}</button></form></div>
-  </li>`))).join("\n");
+  const rows = (await Promise.all(list.map((t) => tokenRow(platform, t)))).join("\n");
   const m = o.made;
   const made = m ? `<section class="card made"><h2>${esc(m.info.label)}</h2>
 <p>${SCOPE_NAMES[m.info.scope]}${m.info.scope == "document" ? `: ${await docLabel(platform, m.info.docId)}` : ""}. ${m.info.expires ? `Expires ${day(m.info.expires)}.` : "It lasts until you revoke it."} Copy it now: it isn't shown again.</p>
@@ -190,8 +208,9 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   <section class="part">
   <h2>Your tokens</h2>
   <p class="sub">A token lets an agent or a script (Claude Code, Codex, git) act as you, within its scope. <a href="/llms.txt">Point agents here</a>.</p>
-  ${list.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Scope</span><span>Expires</span><span>Last used</span><span></span></div>
-  <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No tokens yet.</p>`}
+  <div class="labels" aria-hidden="true"${list.length ? "" : " hidden"}><span>Name</span><span>Scope</span><span>Expires</span><span>Last used</span><span></span></div>
+  <ol class="rows" data-live-kind="token" data-live-view="tokens" data-live-at="${Date.now()}"${list.length ? "" : " hidden"}>\n${rows}\n  </ol>
+  <p class="empty"${list.length ? " hidden" : ""}>No tokens yet.</p>
   <form class="add" method="post" action="/tokens/new">
     <h3>New token</h3>
     <label class="field">Name<input class="input" name="label" maxlength="${LABEL_MAX}" placeholder="What it's for: Claude Code on my laptop" autocomplete="off"></label>
