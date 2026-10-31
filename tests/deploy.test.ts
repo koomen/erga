@@ -28,9 +28,26 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const ACC = "0123456789abcdef0123456789abcdef";
 let release: Release;
 
+/**
+ * Whether .build/release is this checkout's: built from HEAD, with no edits since to what this test checks (the Worker's
+ * config and Durable Objects, the control Worker, the migrations). One left from before a rebase or a commit is not.
+ */
+function current(dir: string): boolean {
+  if (!existsSync(join(dir, "release.json"))) return false;
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", ...args], { cwd: ROOT })
+      .stdout.toString()
+      .trim();
+  const built = (JSON.parse(readFileSync(join(dir, "release.json"), "utf8")) as { version: string }).version;
+  return (
+    built == git("rev-parse", "--short", "HEAD").slice(0, 12) &&
+    !git("status", "--porcelain", "--", "cloudflare.config.ts", "cloudflare", "control", "server/migrations", "deploy")
+  );
+}
+
 beforeAll(async () => {
   const dir = join(ROOT, ".build/release");
-  if (!existsSync(join(dir, "release.json"))) {
+  if (!current(dir)) {
     if (!existsSync(join(ROOT, ".build/manifest.json"))) expect(Bun.spawnSync(["bun", join(ROOT, "client/build.ts")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
