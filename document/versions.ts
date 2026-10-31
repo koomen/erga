@@ -8,10 +8,10 @@
 // their sha-256, shared by every version that has them, so a version that
 // changes one file stores that one file; a version itself (`versions/<n>`)
 // is a manifest, path -> sha-256 (a tree of hashes), plus who made it, when,
-// and its description. Every blob a version has is in the blob store; one of
-// at most OBJECT_MAX bytes is in the object too (`blobs/<sha-256>`), as
-// before the blob store, so a Worker from before it still reads every
-// version but those holding a bigger file. A file that is a blob already
+// and its description. Every blob a version has is in the blob store (in
+// the object, `blobs/<sha-256>`, only where there is no blob store: the
+// tests). A `blobs/` value an older server left in the object beside the
+// blob store is never read. A file that is a blob already
 // (an upload: its BlobRef) goes into a version by its hash, with no bytes read.
 //
 // When a version is cut (document.ts decides, in `noteEdit`), and what's
@@ -26,7 +26,7 @@ import * as Schedule from "effect/Schedule";
 import { LanguageModel, Prompt } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic";
-import { OBJECT_MAX, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
+import { TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
 import { sha256Hex } from "../shared/bytes.ts";
 import { isTextPath } from "./content.ts";
 import { StoreError } from "./room.ts";
@@ -63,6 +63,8 @@ export interface KV {
 const HEAD = "versions/head", VERSION = "versions/", BLOB = "blobs/";
 /** Durable Object storage takes at most 128 keys in one get or put. */
 const BATCH = 128;
+/** How many blobs a version's read asks the blob store for at once. */
+const READS = 16;
 const key = (n: number) => VERSION + String(n).padStart(8, "0");
 export const versionId = (n: number) => `v${n}`;
 /** A version's number from its id ("v3"), its number ("3", 3), or null. */
@@ -135,13 +137,13 @@ export class Versions {
       const blobs = self.blobs;
       for (let i = 0; i < unknown.length; i += BATCH) {
         const chunk = unknown.slice(i, i + BATCH);
-        const have = yield* io(() => self.kv.get<Uint8Array>(chunk.map((d) => BLOB + d)));
-        for (const d of chunk) {
-          const bytes = bytesOf.get(d)!;
-          // In the blob store too, unless it's there (the object's copy, while one is kept, may predate it).
-          if (blobs && !(yield* io(() => blobs.head(d)))) yield* io(() => blobs.put(d, bytes, bytes.length));
-          if (!have.has(BLOB + d) && (!blobs || bytes.length <= OBJECT_MAX)) missing[BLOB + d] = bytes;
+        if (blobs) {
+          for (const d of chunk)
+            if (!(yield* io(() => blobs.head(d)))) yield* io(() => blobs.put(d, bytesOf.get(d)!, bytesOf.get(d)!.length));
+          continue;
         }
+        const have = yield* io(() => self.kv.get<Uint8Array>(chunk.map((d) => BLOB + d)));
+        for (const d of chunk) if (!have.has(BLOB + d)) missing[BLOB + d] = bytesOf.get(d)!;
       }
       const entries = Object.entries(missing);
       for (let i = 0; i < entries.length; i += BATCH) yield* io(() => self.kv.put(Object.fromEntries(entries.slice(i, i + BATCH))));
@@ -196,54 +198,47 @@ export class Versions {
     });
   }
 
-  /** One file of a version (null if it has no such file): from the object, else the blob store. */
+  /** A blob's bytes: from the blob store (from the object, without one); null if it isn't there. */
+  private async blob(digest: string): Promise<Uint8Array | null> {
+    return this.blobs ? await this.blobs.bytes(digest) : ((await this.kv.get<Uint8Array>(BLOB + digest)) ?? null);
+  }
+
+  /** One file of a version (null if it has no such file). */
   file(v: StoredVersion, path: string): Effect.Effect<Uint8Array | null, StoreError> {
     const digest = v.files[path];
     if (!digest) return Effect.succeed(null);
-    return io(async () => (await this.kv.get<Uint8Array>(BLOB + digest)) ?? (await this.blobs?.bytes(digest)) ?? null);
+    return io(() => this.blob(digest));
   }
 
   /** Every file of a version. */
   files(v: StoredVersion): Effect.Effect<Map<string, Uint8Array>, StoreError> {
-    return io(async () => {
-      const paths = Object.keys(v.files);
-      const out = new Map<string, Uint8Array>();
-      for (let i = 0; i < paths.length; i += BATCH) {
-        const chunk = paths.slice(i, i + BATCH);
-        const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
-        for (const p of chunk) {
-          const b = got.get(BLOB + v.files[p]) ?? (await this.blobs?.bytes(v.files[p]));
-          if (b) out.set(p, b);
-        }
-      }
-      return out;
-    });
+    return Effect.map(
+      Effect.forEach(Object.entries(v.files), ([p, digest]) => io(async () => [p, await this.blob(digest)] as const), {
+        concurrency: READS,
+      }),
+      (got) => new Map(got.filter((e): e is [string, Uint8Array] => !!e[1]))
+    );
   }
 
   /**
-   * Every file of a version as a restore takes it: text (and a small file
-   * the object keeps) as bytes, any other file as a blob's ref, with no
-   * bytes read; null for one no store has.
+   * Every file of a version as a restore takes it: text as bytes, any
+   * other file as a blob's ref, with no bytes read; left out if no store
+   * has it. Without a blob store, every file as bytes.
    */
   entries(v: StoredVersion): Effect.Effect<Map<string, Uint8Array | BlobRef>, StoreError> {
-    return io(async () => {
-      const paths = Object.keys(v.files);
-      const out = new Map<string, Uint8Array | BlobRef>();
-      for (let i = 0; i < paths.length; i += BATCH) {
-        const chunk = paths.slice(i, i + BATCH);
-        const got = await this.kv.get<Uint8Array>(chunk.map((p) => BLOB + v.files[p]));
-        for (const p of chunk) {
-          const hash = v.files[p], b = got.get(BLOB + hash);
-          if (b) { out.set(p, b); continue; }
-          const there = await this.blobs?.head(hash);
-          if (!there) continue;
-          // A text file comes back as text (it may be one): its bytes.
-          const bytes = isTextPath(p) && there.size <= TEXT_MAX ? await this.blobs!.bytes(hash) : null;
-          out.set(p, bytes ?? { hash, size: there.size, at: this.now() });
-        }
-      }
-      return out;
-    });
+    const blobs = this.blobs;
+    if (!blobs) return this.files(v);
+    const one = async (p: string, hash: string): Promise<Uint8Array | BlobRef | null> => {
+      const there = await blobs.head(hash);
+      if (!there) return null;
+      // A text file comes back as text (it may be one): its bytes.
+      const bytes = isTextPath(p) && there.size <= TEXT_MAX ? await blobs.bytes(hash) : null;
+      return bytes ?? { hash, size: there.size, at: this.now() };
+    };
+    return Effect.map(
+      Effect.forEach(Object.entries(v.files), ([p, hash]) => io(async () => [p, await one(p, hash)] as const), { concurrency: READS }),
+      (got) => new Map(got.filter((e): e is [string, Uint8Array | BlobRef] => !!e[1]))
+    );
   }
 
   /** What changed from `previous` to `version`: files added, removed and changed, and a compact diff of the text. */

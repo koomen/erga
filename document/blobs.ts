@@ -21,8 +21,8 @@ export const BlobRef = Schema.Struct({
 });
 export type BlobRef = typeof BlobRef.Type;
 
-/** A stored value that is a blob's ref (one from before refs kept `at` counts too: its time reads as 0). */
-export const isBlobRef = Schema.is(Schema.Struct({ hash: BlobRef.fields.hash, size: Schema.Number })) as (v: unknown) => v is BlobRef;
+/** A stored value that is a blob's ref. */
+export const isBlobRef = Schema.is(BlobRef);
 
 /** Bytes that a store refused for a blob: their size or their hash isn't the one named. */
 export class BlobMismatch extends Schema.TaggedError<BlobMismatch>()("BlobMismatch", { message: Schema.String }) {}
@@ -46,9 +46,7 @@ export interface BlobStore {
 
 /**
  * The most bytes the Durable Object keeps in one value of its storage: a
- * text file's stored copy over this goes to the blob store instead, and a
- * blob up to this size is kept in the object too (`files/<path>`), so that
- * a Worker from before blobs still serves it after a rollback.
+ * text file's stored copy over this goes to the blob store instead.
  */
 export const OBJECT_MAX = 2_000_000;
 
@@ -113,8 +111,6 @@ export class MemoryBlobs implements BlobStore {
  * bytes never pass through the document's object.
  */
 export const BLOB_HEADER = "x-erga-blob", BLOB_SIZE_HEADER = "x-erga-blob-size";
-/** Asked of a document by the Worker when the blob store didn't have a blob: the bytes themselves, if the object keeps them. */
-export const INLINE_HEADER = "x-erga-inline";
 
 /** A document's answer for a blob: which blob, its size and type; no bytes. */
 export function blobPointer(ref: BlobRef, type: string, extra: Record<string, string> = {}): Response {
@@ -145,23 +141,13 @@ export function byteRange(header: string, size: number): { start: number; end: n
  * The answer for `request` when the document answered with a blob pointer:
  * the blob's bytes (a Range of them: 206), or 304 for a browser that has
  * them (ETag: the hash; a blob never changes). The document's other
- * headers stay. `inline`: asks the document again for the bytes themselves,
- * when the blob store doesn't have the blob (a copy of the data that came
- * without it); null if the answer isn't a pointer.
+ * headers stay. 404 when the blob store doesn't have the blob; null if the
+ * answer isn't a pointer.
  */
-export const serveBlob = (
-  answer: Response,
-  request: Request,
-  blobs: BlobStore | null,
-  inline: () => Promise<Response>
-): Effect.Effect<Response | null, BlobStoreError> => blobStore(() => blobAnswer(answer, request, blobs, inline));
+export const serveBlob = (answer: Response, request: Request, blobs: BlobStore | null): Effect.Effect<Response | null, BlobStoreError> =>
+  blobStore(() => blobAnswer(answer, request, blobs));
 
-async function blobAnswer(
-  answer: Response,
-  request: Request,
-  blobs: BlobStore | null,
-  inline: () => Promise<Response>
-): Promise<Response | null> {
+async function blobAnswer(answer: Response, request: Request, blobs: BlobStore | null): Promise<Response | null> {
   const hash = answer.headers.get(BLOB_HEADER);
   if (!hash) return null;
   const size = Number(answer.headers.get(BLOB_SIZE_HEADER)) || 0;
@@ -186,7 +172,7 @@ async function blobAnswer(
     return new Response(null, { status: 416, headers });
   }
   const got = blobs ? await blobs.get(hash, r ?? undefined) : null;
-  if (!got) return inline();
+  if (!got) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   // Where it came from, for page_network and for a person checking: the edge's cache, or the store.
   const from = got.cached ? "blob from the edge's cache" : "blob";
   const timed = (more: string) => headers.set("Server-Timing", `file;desc="${from}${more} type ${type}"`);

@@ -81,7 +81,7 @@ export interface DocRow {
   /** When it goes if nobody edits it; null once someone has. */
   expires: number | null;
   test: boolean;
-  /** A document (one page) or a project (pages); null for one from before kinds that hasn't opened since. */
+  /** A document (one page) or a project (pages); null if its row has none. */
   kind: DocKind | null;
 }
 
@@ -93,7 +93,7 @@ export interface DocFound {
   owner: string;
   /** Its canonical address, "/<owner>/<slug>". */
   address: string;
-  /** A document (one page) or a project (pages); a document for one from before kinds. */
+  /** A document (one page) or a project (pages); a document if its row has none. */
   kind: DocKind;
 }
 

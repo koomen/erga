@@ -20,8 +20,8 @@ const cacheKey = (hash: string) => `https://blobs.erga.dev/${hash}`;
 const key = (hash: string) => `blobs/${hash}`;
 
 /**
- * The blob store on `env.FILES`, or undefined where it isn't bound (a
- * server deployed before blobs). `background`: work after the answer (the
+ * The blob store on `env.FILES`, or undefined where it isn't bound.
+ * `background`: work after the answer (the
  * cache's copy of a blob); without it nothing is cached.
  */
 export function blobsOf(env: Pick<Env, "FILES" | "SNAPSHOT_IMPORT" | "SNAPSHOT_TOKEN" | "DEPLOY_TARGET">, background?: (work: Promise<unknown>) => void): BlobStore | undefined {

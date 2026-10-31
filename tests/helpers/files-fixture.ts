@@ -5,7 +5,7 @@ import { Database } from "bun:sqlite";
 import * as Effect from "effect/Effect";
 import { readdirSync, readFileSync } from "node:fs";
 import { Document, type DocumentDeps } from "../../document/document";
-import { INLINE_HEADER, MemoryBlobs, serveBlob } from "../../document/blobs";
+import { MemoryBlobs, serveBlob } from "../../document/blobs";
 import { MemoryStorage } from "../../document/storage";
 import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
 import { documentAgents } from "../../agents/document/session";
@@ -47,8 +47,7 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
   const get = async (path: string, headers: Record<string, string> = {}) => {
     const request = new Request(`http://doc${path}`, { headers: as(headers) });
     const answer = await doc.handle(request);
-    const inline = () => doc.handle(new Request(request, { headers: { ...as(headers), [INLINE_HEADER]: "1" } }));
-    return (await Effect.runPromise(serveBlob(answer, request, deps.blobs ?? null, inline))) ?? answer;
+    return (await Effect.runPromise(serveBlob(answer, request, deps.blobs ?? null))) ?? answer;
   };
   const put = (path: string, body: Uint8Array | string, headers: Record<string, string> = {}) => {
     const bytes = typeof body == "string" ? new TextEncoder().encode(body) : body;

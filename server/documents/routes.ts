@@ -194,7 +194,17 @@ export function forwardedAs(
 ): Request {
   const inner = new URL(rest + url.search, url.origin);
   const headers = new Headers(request.headers);
-  for (const h of ["x-erga-person", "x-erga-access", "x-erga-who", "x-erga-checked", "x-erga-view", "x-erga-agent", "x-erga-via", "x-erga-inline", "authorization"]) headers.delete(h);
+  for (const h of [
+    "x-erga-person",
+    "x-erga-access",
+    "x-erga-who",
+    "x-erga-checked",
+    "x-erga-view",
+    "x-erga-agent",
+    "x-erga-via",
+    "authorization",
+  ])
+    headers.delete(h);
   if (person)
     headers.set(
       "x-erga-person",

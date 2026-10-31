@@ -66,7 +66,7 @@ import { isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
 import { checkAttachments } from "../shared/attach";
 import { encodeStart } from "../shared/room-socket";
-import { blobPointer, byteRange, INLINE_HEADER, type BlobStore } from "./blobs";
+import { blobPointer, byteRange, type BlobStore } from "./blobs";
 import { sha256Hex } from "../shared/bytes";
 import { pdfText } from "./pdf";
 import * as Y from "yjs";
@@ -295,7 +295,7 @@ export function makeHost(opts: HostOptions) {
     }
     return out;
   };
-  /** A PDF's text, kept by its hash: its blob's, or (a file the object keeps, from before blobs) its bytes'. */
+  /** A PDF's text, kept by its hash: its blob's, or (a file in storage: no blob store) its bytes'. */
   const pdfTextOf = (path: string) =>
     Effect.gen(function* () {
       const ref = files.ref ? yield* Effect.orElseSucceed(files.ref(path), () => null) : null;
@@ -568,8 +568,8 @@ export function makeHost(opts: HostOptions) {
       if (!rel) return page() ?? HttpServerResponse.text("Not found", { status: 404 });
       if (raw && room.exists(rel) != "file") { const to = page(); if (to) return to; }
       const text = room.text(rel);
-      // A blob: the Worker sends it, from the edge or the blob store (blobs.ts, serveBlob); the bytes here only when it asks.
-      const ref = text == null && files.ref && !req.headers[INLINE_HEADER] ? yield* files.ref(rel) : null;
+      // A blob: the Worker sends it, from the edge or the blob store (blobs.ts, serveBlob).
+      const ref = text == null && files.ref ? yield* files.ref(rel) : null;
       if (ref) return HttpServerResponse.fromWeb(blobPointer(ref, typeOf(rel), { "Cache-Control": "no-cache" }));
       const bytes = text != null ? new TextEncoder().encode(text) : yield* files.read(rel);
       if (!bytes) return HttpServerResponse.text("Not found", { status: 404 });

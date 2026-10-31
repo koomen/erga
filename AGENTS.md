@@ -126,6 +126,12 @@ Found a new trap? Write it here, in the same change.
   needs `bun deploy/setup.ts --control --yes` (OrbStack running) before
   `main` deploys it. The new builder image rolls out with a lag: if the
   first build still uses the old one, deploy again a few minutes later.
+- A document's object runs the old code until it restarts, minutes after a
+  deploy if tabs keep it busy. The Worker calls its methods directly
+  (`cloudflare/objects/document-stub.ts`). A deploy that adds a method of
+  `DocumentObject`, or changes its arguments, gives 500s on the documents
+  open at the deploy until their objects restart. Add the new method, deploy,
+  and only then call it.
 - Cloudflare refuses an upload that marks a Durable Object class deleted
   while the bundle still exports it. `cloudflare/index.ts` must not export
   a deleted class; local development uses `cloudflare/dev-entry.ts`.
