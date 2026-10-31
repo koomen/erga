@@ -135,9 +135,12 @@ export abstract class EditorCore {
     return { units: a.units, html: M.stamp(src, a.units), tree: a.tree };
   }
 
-  /** The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture, in a frame of its own): its files where they are. */
-  renderedHtml(src = this.src): string {
-    return insertHead(this.analyze(src).html, `<base href="${this.config.base}">`);
+  /**
+   * The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture, in a frame of
+   * its own): its files where they are (`base`: another page's folder).
+   */
+  renderedHtml(src = this.src, base = this.config.base): string {
+    return insertHead(this.analyze(src).html, `<base href="${base}">`);
   }
 
   /** The page's title: its <title>, else its first heading. */

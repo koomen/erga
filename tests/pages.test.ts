@@ -10,7 +10,7 @@ import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import { relativeUrl, runTreeOp } from "../document/host";
-import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, TreeError, treeEntries } from "../document/pages";
+import { checkNewName, cleanTreePath, pageAddress, pageUrl, resolvePage, titleOf, TreeError, treeEntries } from "../document/pages";
 import { files, folders } from "../document/content";
 
 test("an address is <path>.html, then <path>/index.html; never with a slash added", () => {
@@ -42,6 +42,14 @@ test("an address is <path>.html, then <path>/index.html; never with a slash adde
   expect(resolvePage(has, "blog/post")).toEqual({ file: "blog/post.html", canonical: "blog/post" });
   expect(resolvePage(has, "caf%C3%A9")).toBeNull();
   expect(resolvePage((p) => p == "café.html", "caf%C3%A9")).toEqual({ file: "café.html", canonical: "café" });
+});
+
+test("a page's title: its h1, its <title>, then its first heading; a <title> of Untitled is no name", () => {
+  expect(titleOf("<title>T</title><h1>One</h1>")).toBe("One");
+  expect(titleOf("<title>Notes &amp; more</title><h2>Two</h2>")).toBe("Notes & more");
+  // A deck like Pete's: slides with h2s, and a blank page's <title>.
+  expect(titleOf("<title>Untitled</title><section><h2>How we use AI at YC</h2></section>")).toBe("How we use AI at YC");
+  expect(titleOf("<title>Untitled</title><p>No heading</p>")).toBe(null);
 });
 
 test("a page's address", () => {

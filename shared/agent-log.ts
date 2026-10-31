@@ -102,19 +102,21 @@ export interface ViewRequest {
   /** How long evaluate waits for its result, in ms (EVAL_TIMEOUT). */
   timeout?: number;
   /**
-   * A presentation's step to show first (shared/steps.ts): its index, its number ("3.2"), or a hash ("#3.2") the
+   * A presentation's step to show first (shared/steps.ts, stepSpec): its number ("3.2"), or a hash ("#3.2") the
    * render opens at.
    */
-  step?: number | string;
+  step?: string;
   /** How long after the step (or the load) the picture is taken, or the expression runs, in ms (FRAMES). */
   atMs?: number;
   /** Several pictures (or runs of the expression), at these times after the step, in ms, in one render (FRAMES). */
   frames?: number[];
+  /** The page to render, by its path in the document: the page open in the tab by default. */
+  path?: string;
   /**
-   * A preview: these edits (as the edit tool takes them) applied to a copy of the open page's text, for this render
-   * only, never to the document. `path`, if given, must be the open page.
+   * A preview: these edits (as the edit tool takes them) applied to a copy of the page's text (`path`'s), for this
+   * render only, never to the document.
    */
-  preview?: { path?: string; edits: TextEdit[] };
+  preview?: { edits: TextEdit[] };
   /**
    * The live page instead (shared/live-page.ts): every one of the person's tabs answers, its result as JSON in
    * `value`, and the host takes the focused tab's (else a visible one's) answer.

@@ -252,12 +252,21 @@ export function resolvePage(has: (path: string) => boolean, address: string, ind
 
 /**
  * A page's title, as the list shows it: its first top-level heading (what
- * people edit on the page), else its <title>. Null if it has neither.
+ * people edit on the page), else its <title>, else its first heading of any
+ * level (a deck's slides have h2s). A <title> of "Untitled" is a blank
+ * page's, not a name. Null if it has none.
  */
 export function titleOf(text: string): string | null {
-  const clean = (s: string) => decodeEntities(s.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim().slice(0, 120) || null;
-  const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text), title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
-  return (h1 && clean(h1[1])) || (title && clean(title[1])) || null;
+  const clean = (s: string) =>
+    decodeEntities(s.replace(/<[^>]*>/g, ""))
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120) || null;
+  const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text),
+    title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+  const named = title && clean(title[1]),
+    heading = /<h([2-6])\b[^>]*>([\s\S]*?)<\/h\1>/i.exec(text);
+  return (h1 && clean(h1[1])) || (named && named.toLowerCase() != "untitled" ? named : null) || (heading && clean(heading[2])) || null;
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };

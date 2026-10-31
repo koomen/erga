@@ -14,7 +14,7 @@ import { EDITS, WorkspaceError, globToRegExp, modelPath, type Workspace } from "
 import { isPdf, pageCount, pageRange, PAGES_PER_READ, PDF_READ_MAX, pdfPages } from "../../document/pdf";
 import type { FilesAccess, OpenResult, VersionsAccess } from "../../document/agent";
 import { pageTools } from "./page-tools";
-import type { TextEdit } from "../../shared/text-edits";
+import { readLines, type TextEdit } from "../../shared/text-edits";
 import { findInSource } from "../../shared/source-select";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
@@ -147,13 +147,9 @@ export function makeTools(
             `[${path}, ${a == b ? `line ${a}` : `lines ${a}-${b}`}: the ${p.selector != null ? `element "${p.selector}"` : `CSS rule "${p.css_rule}"`}]\n${all.slice(found.from, found.to)}`
           );
         }
-        const lines = all.split("\n");
-        const start = Math.max(0, (p.offset ?? 1) - 1);
-        if (start >= lines.length && lines.length > 1) throw new Error(`Offset ${p.offset} is beyond the end of the file (${lines.length} lines)`);
-        let end = Math.min(lines.length, start + (p.limit ?? MAX_LINES));
-        let out = lines.slice(start, end).join("\n");
-        while (out.length > MAX_BYTES && end > start + 1) { end = start + Math.max(1, Math.floor((end - start) / 2)); out = lines.slice(start, end).join("\n"); }
-        if (end < lines.length) out += `\n\n[Showing lines ${start + 1}-${end} of ${lines.length}. Use offset=${end + 1} to continue.]`;
+        const lines = all.split("\n").length;
+        if ((p.offset ?? 1) > lines && lines > 1) throw new Error(`Offset ${p.offset} is beyond the end of the file (${lines} lines)`);
+        const out = readLines(all, p.offset ?? 1, p.limit ?? MAX_LINES, MAX_BYTES);
         return text(out);
       },
     },

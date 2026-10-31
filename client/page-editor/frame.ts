@@ -217,7 +217,11 @@ window.addEventListener("message", (e: MessageEvent) => {
       return;
     }
     case "capture":
-      (async () => captureView(m.req, page!.renderedHtml(m.text), location.hash))()
+      // Another page of the document (dir: its folder) renders at its own address, at its start.
+      (async () =>
+        m.dir != null
+          ? captureView(m.req, page!.renderedHtml(m.text, BASE + encodePath(m.dir)), "")
+          : captureView(m.req, page!.renderedHtml(m.text), location.hash))()
         .catch((err: Error): ViewResult => ({ width: 0, height: 0, errors: [], error: `Couldn't capture the page: ${err.message}` }))
         .then((result) => post({ type: "captured", id: m.id, result }));
       return;

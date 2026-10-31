@@ -11,8 +11,8 @@ import {
   type ViewRequest,
   type ViewResult,
 } from "../../shared/agent-log";
-import { findStep, stepNumber } from "../../shared/steps";
-import { sleep } from "../../shared/time";
+import { findStep, stepNumber, stepSpec } from "../../shared/steps";
+import { FRAMES_BY_CLOCK, frames, wait } from "./clock";
 
 // The agent asks to see the page. This frame renders the latest version
 // (edits still waiting for the end of the agent's turn included) in a
@@ -97,21 +97,23 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
   const times = req.frames?.length ? req.frames : [req.atMs ?? (req.step != null ? FRAMES.afterStep : FRAMES.afterLoad)];
   if (times.length > FRAMES.count || times.some((t) => !Number.isFinite(t) || t < 0 || t > FRAMES.max))
     return { width: 0, height: 0, errors: [], error: `Give at most ${FRAMES.count} times, each from 0 to ${FRAMES.max} ms.` };
-  const asHash = typeof req.step == "string" && req.step.trim().startsWith("#") ? req.step.trim() : null;
+  const spec = req.step == null ? null : stepSpec(req.step);
+  const asHash = spec?.startsWith("#") ? spec : null;
   const shot = document.createElement("iframe");
   shot.setAttribute("sandbox", "allow-scripts allow-same-origin");
   shot.setAttribute("aria-hidden", "true");
   // (The editor's own, in the page: data-erga, which its patch leaves be.)
   shot.setAttribute("data-erga", "");
   shot.style.cssText = `position:fixed;left:-100000px;top:0;width:${width}px;height:${viewport}px;border:0;`;
-  const head = CATCH_ERRORS + ownHash(asHash ?? hash) + (forced ? forceSchemeScript(scheme) : "");
+  const head = CATCH_ERRORS + FRAMES_BY_CLOCK + ownHash(asHash ?? hash) + (forced ? forceSchemeScript(scheme) : "");
   shot.srcdoc = /<head(\s[^>]*)?>/i.test(html) ? html.replace(/<head(\s[^>]*)?>/i, (m) => m + head) : head + html;
   document.body.append(shot);
+  const drawing = frames(shot);
   try {
     // The load event comes once the page's scripts ran (inline, deferred, modules) and its images loaded.
     await new Promise<void>((resolve, reject) => {
       shot.onload = () => resolve();
-      setTimeout(() => reject(new Error("the page took more than 10 s to load, so nothing ran in it")), 10_000);
+      void wait(10_000).then(() => reject(new Error("the page took more than 10 s to load, so nothing ran in it")));
     });
     const d = shot.contentDocument!,
       win = shot.contentWindow as (Window & { __ergaErrors?: string[] }) | null;
@@ -122,8 +124,8 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
     const notes: string[] = [];
     if (pending.length && req.evaluate != null) notes.push(`Still loading when the expression ran: ${pending.join(", ")}.`);
     let step: StepShown | undefined;
-    if (req.step != null) {
-      const s = await goToStep(win!, asHash ?? req.step, Date.now() + STEPS_WAIT);
+    if (spec != null) {
+      const s = await goToStep(win!, spec, Date.now() + STEPS_WAIT);
       if (typeof s == "string") return { width: 0, height: 0, errors: errors(), error: s };
       if ("note" in s) notes.push(s.note);
       else step = s;
@@ -226,6 +228,7 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
       ...(notes.length ? { note: notes.join("\n") } : {}),
     };
   } finally {
+    drawing.stop();
     shot.remove();
   }
 }
@@ -238,22 +241,20 @@ type Steps = { count(): number; current(): number; go(i: number): void; label?(i
  * none. A page without ergaSteps goes to the step's number as its hash, as a link to it would. Answers the step shown,
  * a note, or why it can't.
  */
-async function goToStep(win: Window, spec: number | string, deadline: number): Promise<StepShown | { note: string } | string> {
+async function goToStep(win: Window, spec: string, deadline: number): Promise<StepShown | { note: string } | string> {
   const steps = () => {
     const s = (win as Window & { ergaSteps?: Steps }).ergaSteps;
     return s && typeof s.go == "function" && typeof s.count == "function" ? s : null;
   };
-  const asHash = typeof spec == "string" && spec.startsWith("#");
-  while (!steps() && !asHash && Date.now() < deadline) await sleep(50);
+  const asHash = spec.startsWith("#");
+  while (!steps() && !asHash && Date.now() < deadline) await wait(50);
   const s = steps();
   try {
     if (!s) {
       if (asHash) return { note: `Opened at ${spec} (the page has no window.ergaSteps).` };
-      if (typeof spec == "number")
-        return `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s), so it has no step ${spec}. Give a hash ("#3") to open it at the part its address names.`;
-      win.location.hash = "#" + spec.trim();
+      win.location.hash = "#" + spec;
       return {
-        note: `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s): its address went to #${spec.trim()}, as a link to that part would.`,
+        note: `The page has no window.ergaSteps (after ${STEPS_WAIT / 1000} s): its address went to #${spec}, as a link to that part would.`,
       };
     }
     const count = Math.max(0, Math.floor(Number(s.count())) || 0);
@@ -264,7 +265,7 @@ async function goToStep(win: Window, spec: number | string, deadline: number): P
       slides = [];
       for (let i = 0; i < count; i++) slides.push(Math.max(i ? slides[i - 1] : 0, Math.floor(Number(s.slide(i))) || 0));
     }
-    const i = asHash ? Math.floor(Number(s.current())) || 0 : findStep(typeof spec == "string" ? spec.trim() : spec, count, slides);
+    const i = asHash ? Math.floor(Number(s.current())) || 0 : findStep(spec, count, slides);
     if (typeof i == "string") return i;
     if (!asHash) s.go(i);
     const label = typeof s.label == "function" ? s.label(i) : undefined;
@@ -283,7 +284,7 @@ async function goToStep(win: Window, spec: number | string, deadline: number): P
  * Time since the step, for the frames. The CSS transitions and animations the step started (all of
  * document.getAnimations() then) are set to each frame's time while it is taken, and the others held still: a frame
  * at 600 ms shows them 600 ms in, however slowly the browser draws the hidden frame. The time a picture takes is left
- * out of the clock. Animation by script (requestAnimationFrame, timers) keeps running on its own time.
+ * out of the clock. Animation by script (requestAnimationFrame, run by clock.ts, and timers) keeps running on its own time.
  */
 function animationClock(d: Document) {
   const begun = new Map<Animation, number>();
@@ -293,7 +294,7 @@ function animationClock(d: Document) {
   const now = () => performance.now() - start - held;
   return {
     async at<T>(t: number, take: () => Promise<T>): Promise<{ at: number; value: T }> {
-      if (t > now()) await sleep(t - now());
+      if (t > now()) await wait(t - now());
       const at = Math.round(now());
       const running = d.getAnimations().filter((a) => a.playState == "running");
       for (const a of running) {
@@ -375,16 +376,16 @@ async function settle(d: Document, deadline: number): Promise<string[]> {
   // Text laid out in a newly loaded font can need another (a bold or an italic): look again until nothing loads.
   for (let round = 0; round < 5; round++) {
     void d.documentElement.getBoundingClientRect();
-    await Promise.race([new Promise((r) => requestAnimationFrame(r)), sleep(50)]); // a tab in the background gets no frames
+    await wait(50);
     const now = loading();
     if (!now.length) {
-      await Promise.race([d.fonts.ready, sleep(deadline - Date.now())]);
+      await Promise.race([d.fonts.ready, wait(deadline - Date.now())]);
       if (!loading().length) break;
       continue;
     }
     const left = deadline - Date.now();
     if (left <= 0) break;
-    await Promise.race([Promise.all(now.map((l) => l.done)), sleep(left)]);
+    await Promise.race([Promise.all(now.map((l) => l.done)), wait(left)]);
   }
   return [...new Set(loading().map((l) => l.what))];
 }

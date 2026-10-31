@@ -21,8 +21,11 @@ export function beyondPrompt(owner: string, names: string[]): string {
     lines.push(`- The document's pages and files, as ${owner} has them in the editor's page tree and the
   files view: list_pages lists its pages with their titles and addresses, ls every file
   with its kind, size and time. new_page makes a page from the template, mkdir a folder,
-  mv moves or renames a file or folder, rm deletes one; make_project and make_document
-  change its kind. ${owner} sees your changes at once.`);
+  mv moves or renames a file or folder, cp copies one, rm deletes one; make_project and
+  make_document change its kind. ${owner} sees your changes at once. cp and mv take
+  to_document too: a file, a folder or a whole document (".") goes into another document
+  in one call, images and all, without its content through you. Never copy a file by
+  reading it and writing it again.`);
   if (names.includes("rename_document"))
     lines.push(`- get_title and rename_document read and change the document's title (shown in the list
   and the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title

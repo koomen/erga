@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Glide</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #fff; font: 32px/1.4 sans-serif; }
+  .canvas { position: absolute; left: 0; top: 0; width: 3000px; height: 600px; transform-origin: 0 0; }
+  .frame { position: absolute; top: 0; width: 1000px; height: 600px; padding: 40px; box-sizing: border-box; }
+  .frame .build { visibility: hidden; }
+  .frame.built .build { visibility: visible; }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <section class="frame" style="left: 0"><h2>First frame</h2><p>Hello.</p></section>
+  <section class="frame" data-parts="2" style="left: 1000px"><h2>Second frame</h2><p>One.</p><p class="build">Two.</p></section>
+  <section class="frame" style="left: 2000px"><h2>Third frame</h2><p>The end.</p></section>
+</div>
+<script>
+  // A camera that glides to each frame by requestAnimationFrame (600 ms), and marks the frame "arrived" once there.
+  const canvas = document.querySelector(".canvas"), frames = [...document.querySelectorAll(".frame")];
+  const parts = (f) => Math.max(1, f.dataset.parts | 0);
+  const steps = frames.flatMap((f) => Array.from({ length: parts(f) }, (_, p) => ({ f, p })));
+  let at = 0, x = 0, run = 0;
+  const place = (to) => { x = to; canvas.style.transform = `translateX(${-x}px)`; };
+  function show(i) {
+    at = i;
+    const { f, p } = steps[i], from = x, to = f.offsetLeft, id = ++run, t0 = performance.now();
+    frames.forEach((g) => { g.classList.toggle("current", g == f); g.classList.toggle("built", g == f && p > 0); g.classList.remove("arrived"); });
+    const tick = (now) => {
+      if (id != run) return;
+      const t = Math.min(1, (now - t0) / 600);
+      place(from + (to - from) * t);
+      t < 1 ? requestAnimationFrame(tick) : f.classList.add("arrived");
+    };
+    requestAnimationFrame(tick);
+  }
+  window.ergaSteps = { count: () => steps.length, current: () => at, go: show, slide: (i) => frames.indexOf(steps[i].f), label: (i) => steps[i].f.querySelector("h2").textContent };
+  place(0);
+  frames[0].classList.add("current", "arrived");
+</script>
+</body>
+</html>
