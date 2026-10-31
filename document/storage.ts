@@ -42,15 +42,21 @@ export interface Storage {
  * bytes are in the blob store, document/blobs.ts), when a text file was
  * last written (ms: TimeIndex; a blob's time is in its ref), a folder made as one
  * (empty ones too), what the document is, the room's journal and the files
- * whose latest text storage doesn't have yet (in it). `state`: the room's
- * whole Yjs state in one value, as documents kept it before the journal
- * (read once, then gone).
+ * whose latest text storage doesn't have yet (in it).
  *
- * A file with a ref is a blob: its `files/` value, if any, is a copy of the
- * same bytes (one of at most OBJECT_MAX bytes is kept there too, for a
- * Worker from before blobs). A file without one is its `files/` value.
+ * A file with a ref is a blob: its bytes are only in the blob store (a
+ * `files/` value an older server left beside the ref is never read). A file
+ * without one is its `files/` value.
  */
-export const KEYS = { file: "files/", ref: "refs/", at: "at/", dir: "folders/", meta: "info", room: "room/", unwritten: "room/unwritten", state: "room-state" } as const;
+export const KEYS = {
+  file: "files/",
+  ref: "refs/",
+  at: "at/",
+  dir: "folders/",
+  meta: "info",
+  room: "room/",
+  unwritten: "room/unwritten",
+} as const;
 
 /**
  * Which files have a ref (KEYS.ref), as the file store and the room's
@@ -171,10 +177,9 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
     const r = await storage.get<BlobRef>(REF + path);
     return isBlobRef(r) ? r : null;
   };
-  /** Makes `path` the blob `ref`, with its bytes kept in the object too when they're given and small. */
-  const putBlob = async (path: string, ref: BlobRef, bytes?: Uint8Array) => {
-    const keep = bytes && bytes.length <= OBJECT_MAX ? bytes : null;
-    await Promise.all([storage.put<unknown>({ [REF + path]: ref, ...(keep ? { [FILE + path]: keep } : {}) }), keep ? null : storage.delete(FILE + path), refs.add(path)]);
+  /** Makes `path` the blob `ref`. */
+  const putBlob = async (path: string, ref: BlobRef) => {
+    await Promise.all([storage.put(REF + path, ref), storage.delete(FILE + path), refs.add(path)]);
     await hooks.touch();
   };
   /** Drops a file's ref (written as text now, or gone). */
@@ -186,10 +191,9 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
     }),
     read: (path) => Effect.tryPromise({
       try: async () => {
-        const kept = await storage.get<Uint8Array>(FILE + path);
-        if (kept) return kept;
         const ref = await refOf(path);
-        return ref && blobs ? await blobs.bytes(ref.hash) : null;
+        if (ref) return blobs ? await blobs.bytes(ref.hash) : null;
+        return (await storage.get<Uint8Array>(FILE + path)) ?? null;
       },
       catch: storeError,
     }),
@@ -197,7 +201,7 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
     writeBytes: (path, bytes) => Effect.tryPromise({
       try: async () => {
         if (!blobs) { await Promise.all([storage.put(FILE + path, bytes), hooks.touch()]); return; }
-        await putBlob(path, await Effect.runPromise(storeBlob(blobs, bytes)), bytes);
+        await putBlob(path, await Effect.runPromise(storeBlob(blobs, bytes)));
       },
       catch: storeError,
     }),
@@ -222,12 +226,16 @@ export function fileStoreOf(storage: Storage, hooks: { touch: () => Promise<void
     }),
     ...(blobs ? {
       ref: (path: string) => Effect.tryPromise({ try: () => refOf(path), catch: storeError }),
-      putBlob: (path: string, ref: BlobRef, bytes?: Uint8Array) => Effect.tryPromise({ try: () => putBlob(path, ref, bytes), catch: storeError }),
+      putBlob: (path: string, ref: BlobRef) => Effect.tryPromise({ try: () => putBlob(path, ref), catch: storeError }),
     } : {}),
     copy: (from, to) => Effect.tryPromise({
       try: async () => {
-        const [bytes, ref] = await Promise.all([storage.get<Uint8Array>(FILE + from), refOf(from)]);
-        if (ref) { await putBlob(to, ref, bytes ?? undefined); return true; }
+        const ref = await refOf(from);
+        if (ref) {
+          await putBlob(to, ref);
+          return true;
+        }
+        const bytes = await storage.get<Uint8Array>(FILE + from);
         if (!bytes) return false;
         await Promise.all([storage.put(FILE + to, bytes), dropRef(to), hooks.touch()]);
         return true;
@@ -342,17 +350,11 @@ export class Journal {
 
   /**
    * The history, in order (the snapshot, then each log entry), and the files
-   * storage doesn't have the latest text of; null if there's none. A
-   * document from before the journal has its whole state in one value
-   * (`legacy`): the room reads every file against it, once.
+   * storage doesn't have the latest text of; null if there's none.
    */
-  async load(): Promise<{ updates: Uint8Array[]; unwritten: string[]; legacy: boolean } | null> {
+  async load(): Promise<{ updates: Uint8Array[]; unwritten: string[] } | null> {
     const all = await this.storage.list<unknown>({ prefix: KEYS.room });
-    if (!all.size) {
-      const legacy = await this.storage.get<Uint8Array>(KEYS.state);
-      if (legacy) this.stale = [KEYS.state];
-      return legacy ? { updates: [legacy], unwritten: [], legacy: true } : null;
-    }
+    if (!all.size) return null;
     const head = (all.get(HEAD) as Head | undefined) ?? { gen: 0, parts: 0, through: 0, bytes: 0 };
     const snap: Uint8Array[] = [], snapKeys: string[] = [], stale: string[] = [];
     const entries = new Map<number, { parts: Uint8Array[]; keys: string[]; count: number }>();
@@ -385,7 +387,7 @@ export class Journal {
     }
     const unwritten = (all.get(KEYS.unwritten) as string[] | undefined) ?? [];
     Object.assign(this, { head, snapKeys, log, stale, seq: Math.max(head.through, ...log.map((e) => e.seq)), unwritten: [...unwritten].sort().join("\n") });
-    return { updates, unwritten, legacy: false };
+    return { updates, unwritten };
   }
 
   /**
@@ -427,7 +429,7 @@ export class Journal {
     const head: Head = { gen, parts: parts.length, through: this.seq, bytes: state.length };
     await writeAll(this.storage, Object.fromEntries(parts), []);
     await this.storage.put(HEAD, head);
-    const replaced = [...this.snapKeys, ...this.log.flatMap((e) => e.keys), ...this.stale, KEYS.state];
+    const replaced = [...this.snapKeys, ...this.log.flatMap((e) => e.keys), ...this.stale];
     Object.assign(this, { head, snapKeys: parts.map(([k]) => k), log: [], stale: replaced });
     await writeAll(this.storage, {}, replaced);
     this.stale = [];
@@ -457,7 +459,7 @@ export function stateStoreOf(storage: Storage, opts: { reconcile?: boolean; edit
     load: Effect.tryPromise({
       try: async () => {
         const saved = await journal.load();
-        return saved && { updates: saved.updates, unwritten: saved.unwritten, reconcile: !!opts.reconcile || saved.legacy };
+        return saved && { updates: saved.updates, unwritten: saved.unwritten, reconcile: !!opts.reconcile };
       },
       catch: storeError,
     }),

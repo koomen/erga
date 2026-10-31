@@ -56,7 +56,7 @@ export interface Listed {
   role: Role;
   /** How many it's shared with besides its owner (anyone with the link counts as one). */
   shared?: number;
-  /** A document (one page) or a project (pages); missing for one from before kinds that hasn't opened since. */
+  /** A document (one page) or a project (pages); missing if its row has none. */
   kind?: DocKind;
 }
 

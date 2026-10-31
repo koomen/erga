@@ -3,8 +3,7 @@
 // was, in one read of storage; the log becomes a snapshot when it grows; a
 // compaction stopped half way, or a write cut short, leaves a history that
 // still loads whole; big states are cut into parts; files the room hadn't
-// written yet are written when it opens again; a document from before the
-// journal is read once and converted.
+// written yet are written when it opens again.
 
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -205,30 +204,6 @@ test("files are written lazily: one stopped before writing them writes them as i
   expect(await text(s, "index.html")).toBe("<p>new one</p>");
   expect(s.data.has(KEYS.unwritten)).toBe(false);
   expect(b.edits()).toBe(1);
-  await b.close();
-});
-
-test("a document from before the journal (its whole state in one value) is read once against its files, then converted", async () => {
-  const s = new MemoryStorage();
-  // As the room kept it before: the state, and the files written from it, one changed since.
-  const old = new Y.Doc();
-  old.transact(() => {
-    old.getMap<string>("room").set("epoch", "epoch-1");
-    const t = new Y.Text();
-    t.insert(0, "<p>kept</p>");
-    files(old).set("index.html", t);
-  });
-  await s.put(KEYS.state, Y.encodeStateAsUpdate(old));
-  await s.put(KEYS.file + "index.html", new TextEncoder().encode("<p>kept, and changed</p>"));
-  const a = await open(s);
-  expect(a.room.epoch).toBe("epoch-1");
-  expect(a.room.text("index.html")).toBe("<p>kept, and changed</p>");
-  expect(s.data.has(KEYS.state)).toBe(false);
-  expect(roomKeys(s).some((k) => k.startsWith("room/s/"))).toBe(true);
-  await a.close();
-  const b = await open(s);
-  expect(b.room.epoch).toBe("epoch-1");
-  expect(b.room.text("index.html")).toBe("<p>kept, and changed</p>");
   await b.close();
 });
 

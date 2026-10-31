@@ -32,9 +32,8 @@ export const servedAssets = (release: Release) => Object.fromEntries(Object.entr
  */
 export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null; existing?: boolean }) {
   const w = release.worker;
-  // Which release this is (GET /api/deploys/version answers it), when this upload was made (a document's object older
-  // than its caller restarts: cloudflare/objects/document-stub.ts), and which account the server is in (for its own branch deploys).
-  const text: Record<string, string> = { ERGA_VERSION: release.version, ERGA_DEPLOYED: String(Date.now()), CLOUDFLARE_ACCOUNT_ID: target.accountId, ...target.vars };
+  // Which release this is (GET /api/deploys/version answers it), and which account the server is in (for its own branch deploys).
+  const text: Record<string, string> = { ERGA_VERSION: release.version, CLOUDFLARE_ACCOUNT_ID: target.accountId, ...target.vars };
   const secrets = target.secrets;
   const bindings: Record<string, unknown>[] = [];
   const named = new Set<string>();

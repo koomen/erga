@@ -1,12 +1,14 @@
 // A document's files that aren't text, as blobs (document/blobs.ts): one
 // document on MemoryStorage with MemoryBlobs, uploaded to, served, versioned,
-// moved, restored and copied, and what a Worker from before blobs still finds.
+// moved, restored and copied. R2 is the only place a blob's bytes are.
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { BLOB_HEADER, OBJECT_MAX } from "../document/blobs";
 import { sha256Hex } from "../shared/bytes";
-import { KEYS } from "../document/storage";
+import { KEYS, MemoryStorage } from "../document/storage";
+import { Document } from "../document/document";
+import { promised } from "./helpers/promised";
 import { bytesOf, setup } from "./helpers/files-fixture";
 import { sleep } from "../shared/time";
 import { files } from "../document/content";
@@ -49,13 +51,44 @@ test("an upload over 2 MB is a blob: only its ref in the object, served by hash 
   expect(await doc.versionFile(v.n, "receipts/tax.pdf")).toEqual(pdf);
 });
 
-test("a small upload is a blob too, with its bytes kept in the object for a Worker from before blobs", async () => {
-  const { storage, get, put } = await setup();
+test("a small upload is a blob too: only its ref in the object, and in the versions only in the blob store", async () => {
+  const { doc, storage, blobs, get, put } = await setup();
   const png = bytesOf(5_000, 3);
+  const hash = await sha256Hex(png);
   expect((await (await put("logo.png", png)).json()).kind).toBe("file");
-  expect(storage.data.get(KEYS.file + "logo.png")).toEqual(png);
-  expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash: await sha256Hex(png) });
+  expect(storage.data.has(KEYS.file + "logo.png")).toBe(false);
+  expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash });
   expect(new Uint8Array(await (await get("/doc/logo.png")).arrayBuffer())).toEqual(png);
+  await sleep(150);
+  const v = (await doc.version((await doc.versionsState())!.current.n))!;
+  expect(v.files).toContain("logo.png");
+  expect(storage.data.has("blobs/" + hash)).toBe(false);
+  expect(blobs.data.get(hash)).toEqual(png);
+});
+
+test("a new document's image is a blob from the start; a copy left in the object is never read", async () => {
+  const { doc, storage, blobs, get } = await setup();
+  const png = bytesOf(3_000, 23);
+  const hash = await sha256Hex(png);
+  const made = await setup();
+  const storage2 = new MemoryStorage();
+  const fresh = promised(new Document({ ...made.deps, storage: storage2 }));
+  expect(
+    await fresh.create("ada", "new12345", { "index.html": "<h1>New</h1>", "logo.png": png }, "index.html", {
+      expires: null,
+      modified: Date.now(),
+    })
+  ).toBe(true);
+  expect(storage2.data.has(KEYS.file + "logo.png")).toBe(false);
+  expect(storage2.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash, size: png.length });
+  expect(made.blobs.data.get(hash)).toEqual(png);
+  // A copy an older server kept beside the ref: the blob store's bytes are the file's.
+  await doc.publish({ "p.png": png }, []);
+  storage.data.set(KEYS.file + "p.png", bytesOf(3_000, 99));
+  expect(new Uint8Array(await (await get("/doc/p.png")).arrayBuffer())).toEqual(png);
+  // Without the blob in the store, the file isn't found: nothing else has its bytes.
+  blobs.data.delete(hash);
+  expect((await get("/doc/p.png")).status).toBe(404);
 });
 
 test("a text file arrives as text; a second upload replaces the first, and says so", async () => {
@@ -148,43 +181,6 @@ test("a text file that grows past 2 MB in edits stays text; its stored copy goes
   await doc.flush();
   expect(storage.data.has(KEYS.ref + "index.html")).toBe(false);
   expect(new TextDecoder().decode(storage.data.get(KEYS.file + "index.html") as Uint8Array)).toBe("<h1>Small again</h1>");
-});
-
-test("what the object kept before blobs is copied to the blob store as it opens, and kept", async () => {
-  // A document from before blobs: its image and its versions' blobs only in the object.
-  const old = await setup({ blobs: false });
-  await old.doc.publish({ "logo.png": bytesOf(1000, 13) }, []);
-  await sleep(150);
-  await old.doc.flush();
-  const kept = new Map(old.storage.data);
-  expect([...kept.keys()].some((k) => k.startsWith(KEYS.ref))).toBe(false);
-
-  // The same storage, opened by this Worker with a blob store.
-  const { doc, blobs, storage, get } = await setup();
-  storage.data.clear();
-  for (const [k, v] of kept) storage.data.set(k, v);
-  const logo = bytesOf(1000, 13);
-  expect(new Uint8Array(await (await get("/doc/logo.png")).arrayBuffer())).toEqual(logo);
-  await doc.paths();
-  for (let i = 0; i < 50 && !storage.data.has("blobs-copied"); i++) await sleep(10);
-  expect(storage.data.get(KEYS.ref + "logo.png")).toMatchObject({ hash: await sha256Hex(logo), size: 1000 });
-  expect(blobs.data.get(await sha256Hex(logo))).toEqual(logo);
-  for (const k of [...kept.keys()].filter((k) => k.startsWith("blobs/"))) expect(blobs.data.has(k.slice("blobs/".length))).toBe(true);
-  // Copied, not moved: every key the object had is still there, as it was.
-  for (const [k, v] of kept) if (k.startsWith("files/") || k.startsWith("blobs/") || k.startsWith("versions/")) expect(storage.data.get(k)).toEqual(v);
-  // And now it's served as a blob.
-  const served = await get("/doc/logo.png");
-  expect(served.headers.get("etag")).toBe(`"${await sha256Hex(logo)}"`);
-});
-
-test("a blob the store doesn't have (a copy of the data without it) is served from the object's copy", async () => {
-  const { blobs, get, put } = await setup();
-  const png = bytesOf(4000, 17);
-  await put("p.png", png);
-  blobs.data.clear();
-  const r = await get("/doc/p.png");
-  expect(r.status).toBe(200);
-  expect(new Uint8Array(await r.arrayBuffer())).toEqual(png);
 });
 
 test("a copy of a document takes its blobs by their refs", async () => {

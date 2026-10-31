@@ -41,7 +41,7 @@ export type TreeOp =
 export type DocKind = "document" | "project";
 export const isDocKind = (k: unknown): k is DocKind => k == "document" || k == "project";
 
-/** The kind of a document from before kinds: a project if it has more than one page. */
+/** The kind of a new document made from these files: a project if it has more than one page. */
 export const kindOf = (paths: Iterable<string>): DocKind => {
   let pages = 0;
   for (const p of paths) if (isPage(p) && ++pages > 1) return "project";

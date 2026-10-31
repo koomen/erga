@@ -1,14 +1,13 @@
 // New documents, the documents list and the share token: what /new, /docs and <document>/api/share do. The list's
 // page is pages/docs.ts. Deleting and sharing are operations (server/operations/documents.ts).
 
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { FileData } from "../../document/document.ts";
 import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
 import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, type Who } from "../directory/index.ts";
 import { UNTITLED } from "../../document/names.ts";
-import { type Listed, type Platform, type Session, whoOf } from "../platform.ts";
+import { type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
 import {
   confirmAction,
@@ -153,24 +152,6 @@ export interface MakeOptions {
 
 /** A new document's id: 8 letters and digits, none easily mistaken for another. */
 
-/** How long the list waits for documents from before kinds to say theirs (they say it once, for good). */
-const KINDS_WAIT = Duration.millis(1500);
-
-/**
- * Documents from before kinds, in a list: each opens (in the background, if it takes longer than the list may wait),
- * which decides its kind from its pages and writes it to the directory. The list shows the ones known in time.
- */
-const decideKinds = Effect.fnUntraced(function* (platform: Platform, docs: Listed[]) {
-  const unknown = docs.filter((d) => !d.kind && d.path == null);
-  if (!unknown.length) return;
-  const work = Promise.all(unknown.map(async (d) => {
-    const paths = await platform.docs.paths({ id: d.id, owner: d.owner, test: false }).catch(() => null);
-    if (paths?.length) d.kind = kindOf(paths);
-  }));
-  platform.edge.background(work);
-  yield* call(() => work).pipe(Effect.timeoutOption(KINDS_WAIT));
-});
-
 /** /docs: the signed-in person's documents, most recently edited first. */
 export const listDocs = Effect.gen(function* () {
   const { request, platform } = yield* ctx;
@@ -181,7 +162,6 @@ export const listDocs = Effect.gen(function* () {
   const [docs, hours] = yield* call(() =>
     Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")])
   );
-  yield* decideKinds(platform, docs);
   return html(docsPage(session, docs, Date.now(), hours), 200, NO_STORE);
 });
 

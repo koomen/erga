@@ -85,8 +85,6 @@ export interface Env {
   DEPLOY_TARGET?: string;
   /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
   ERGA_VERSION?: string;
-  /** When the pipeline uploaded this server (ms): a document's object older than its caller restarts (cloudflare/objects/document-stub.ts). */
-  ERGA_DEPLOYED?: string;
   /** The Cloudflare account the server is in (the pipeline sets it): where it deploys itself. */
   CLOUDFLARE_ACCOUNT_ID?: string;
   /** A secret, the same on production and staging: production's read-only snapshot endpoint takes it, and staging's import. */

@@ -85,8 +85,8 @@ export class FileStore extends Context.Service<FileStore, {
   readonly rmdir?: (path: string) => Effect.Effect<void, StoreError>;
   /** A file kept as a blob: its ref; null for any other (document/blobs.ts). Absent: the store keeps no blobs. */
   readonly ref?: (path: string) => Effect.Effect<BlobRef | null, StoreError>;
-  /** Makes a file the blob `ref`, whose bytes the blob store has (`bytes`: the same bytes, if they're at hand). */
-  readonly putBlob?: (path: string, ref: BlobRef, bytes?: Uint8Array) => Effect.Effect<void, StoreError>;
+  /** Makes a file the blob `ref`, whose bytes the blob store has. */
+  readonly putBlob?: (path: string, ref: BlobRef) => Effect.Effect<void, StoreError>;
   /** Copies a file to another path, a blob by its ref (no bytes read); false if there's no such file. */
   readonly copy?: (from: string, to: string) => Effect.Effect<boolean, StoreError>;
   /** What storage knows of its files beyond their bytes: a blob's size, hash and time, a text file's last write. */
@@ -676,13 +676,13 @@ export class Room {
    * once. A text file at the path is replaced: a file changes kind only so,
    * replaced whole, never while someone edits it.
    */
-  putBlob(path: string, ref: BlobRef, bytes?: Uint8Array): Effect.Effect<void, StoreError> {
+  putBlob(path: string, ref: BlobRef): Effect.Effect<void, StoreError> {
     const self = this;
     return Semaphore.withPermit(this.turn, Effect.gen(function* () {
       if (!self.store.putBlob) return yield* Effect.fail(new StoreError({ message: "this document keeps no files but text" }));
       // A text there goes first (its stored copy with it), then the blob takes its place.
       if (files(self.doc).has(path)) { self.removeFile(path); yield* self.write(true); }
-      yield* self.store.putBlob(path, ref, bytes);
+      yield* self.store.putBlob(path, ref);
       self.removals.delete(path);
       if (assets(self.doc).get(path) != ref.hash) self.act(() => assets(self.doc).set(path, ref.hash), self);
       yield* self.write(true);

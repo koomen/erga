@@ -2,12 +2,11 @@
 // project is a folder of pages. A document refuses a second page however it comes (the tree, a move, an upload, an
 // agent's write, a publish), saying how to make it a project; make_project does, in its object and in the directory.
 // make_document turns a project back, only while it has one page: else it says how many it has, and what to delete.
-// One from before kinds decides its kind as it opens. The documents list shows a project's chevron, and none for a document.
+// The documents list shows a project's chevron, and none for a document.
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
 import { Document } from "../document/document";
-import { KEYS, MemoryStorage } from "../document/storage";
 import { kindOf, pageRefusal, type TreeOp } from "../document/pages";
 import { docsPage } from "../server/pages/docs";
 import type { Listed, Session } from "../server/platform";
@@ -92,29 +91,6 @@ test("make_document: a project with one page becomes a document again; with more
   expect((await treeOp({ op: "new_page", path: "about" })).status).toBe(409);
   // Again: nothing to do.
   expect((await treeOp({ op: "make_document" })).status).toBe(200);
-});
-
-test("a document from before kinds decides its kind as it opens: a project if it has more than one page; the directory hears it", async () => {
-  const { deps, dir } = await withTree();
-  // Its row as the directory had it before kinds (no kind), and its object without one, as a Worker from before kinds left it.
-  const storage = new MemoryStorage();
-  await dir.add({ id: "old12345", owner: "ada", title: "Old site", created: Date.now(), expires: null });
-  await promised(new Document({ ...deps, storage })).create(
-    "ada",
-    "old12345",
-    { "index.html": "<h1>Home</h1>", "about.html": "<h1>About</h1>" },
-    "index.html",
-    { expires: null, modified: Date.now() }
-  );
-  const info = (await storage.get<Record<string, unknown>>(KEYS.meta))!;
-  delete info.kind;
-  await storage.put(KEYS.meta, info);
-  expect((await dir.get("old12345"))!.kind).toBeNull();
-  const opened = promised(new Document({ ...deps, storage }));
-  expect(await opened.paths()).toEqual(["about.html", "index.html"]);
-  expect((await storage.get<{ kind?: string }>(KEYS.meta))!.kind).toBe("project");
-  await new Promise((r) => setTimeout(r, 10));
-  expect((await dir.get("old12345"))!.kind).toBe("project");
 });
 
 test("the documents list: a project's row has its chevron and says so; a document's has none", () => {

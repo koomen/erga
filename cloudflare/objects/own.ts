@@ -4,8 +4,7 @@
 // secret in them encrypted). Its own object, apart from the database (a copy
 // of production's data replaces staging's database, and must not replace
 // staging's sign-in) and apart from the deploys' object (which moves to the
-// control Worker). Values kept in the Pipeline object before 2026-10-11 are
-// read from there once, and moved here (cloudflare/platform.ts).
+// control Worker).
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
