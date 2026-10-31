@@ -139,6 +139,17 @@ Pete's page "Erga editor mechanics" proposes four more changes. Their status:
   drawn (a stray end tag keeps the block locked). A composition no longer loads the page again. The page loads again
   only for a change the Mirror can't make in place: a `<script>`, a new `<style>`, or a change outside the `<body>`
   other than the text of a `<style>` or the `<title>` and an element's attributes.
+- Change 3 (the editing rules in one pure module): done, in `client/page-editor/rules.ts`. One function, `rules(page,
+  selection, intent)`, gives each key's step: its changes, the selection after them, and its undo step ("type" joins
+  the typing before it, "own" is a step of its own; `undoOf` decides it for every other edit too). The intents: typing
+  and a delete of a range (`type`), Backspace and Delete, Enter and Shift+Enter, Tab and Shift+Tab, and a paste of
+  blocks. The page is known by its HTML, its units and two questions (`editable`: not locked; `open`: a summary's
+  details). The module owns the three shared answers: where a range stops at a block's edge (`blockRange`), how two
+  blocks join (`joinBlocks`), and where the caret goes when a change leaves it outside the text (`caretNear`). Enter over
+  a selection and a paste over one are one step made of two parts, composed in the module, so `edit.ts`'s `joining`
+  state is gone. `tests/editing-rules.test.ts` runs it with no browser and no editor. Not in it yet: the Markdown rules
+  (`markdown.ts`: they run after a key, as steps of their own), the styles (`format.ts`) and stored styles, which
+  still build their changes in the editor's classes.
 
 ## 2. What is wrong today (the evidence)
 

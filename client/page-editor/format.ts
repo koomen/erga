@@ -5,7 +5,8 @@ import * as M from "../../shared/manuscript";
 import { EditorSelection, type SelectionRange, type ChangeSet, type Text } from "@codemirror/state";
 import type { InlineStyle, LinkEdit, LinkInfo } from "./types";
 import { attrOf, dropped, escapeAttr, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn } from "./source";
-import { EditorEdit, inlineAt } from "./edit";
+import { EditorEdit } from "./edit";
+import { editableAt, inlineAt, placeholderDrops } from "./rules";
 
 export abstract class EditorFormat extends EditorEdit {
   /** A style shortcut: always handled, so the browser never applies its own; if it can't apply, say why. */
@@ -25,7 +26,7 @@ export abstract class EditorFormat extends EditorEdit {
   protected storeStyle(style: InlineStyle): string | null {
     const pos = this.state.selection.main.head;
     const u = M.unitAt(this.units, pos);
-    if (!u || !this.verify(u) || !this.editableAt(u, pos)) return "Put the caret in the text first.";
+    if (!u || !this.verify(u) || !editableAt(u, pos)) return "Put the caret in the text first.";
     if (u.tag == "pre") return "Text in a code block can't be styled.";
     const live = this.stored?.at == pos && this.stored.doc == this.state.doc ? this.stored : null;
     const styles = new Map(live?.styles);
@@ -73,7 +74,7 @@ export abstract class EditorFormat extends EditorEdit {
     }
     if (at == pos && !before && !open) return false;
     const head = before + open + M.escapeHtmlText(text);
-    const drops = this.placeholderDrops(src, [u], pos, pos, true);
+    const drops = placeholderDrops(src, [u], pos, pos, true);
     this.dispatch({
       changes: [{ from: at, insert: head + close + after }, ...drops],
       selection: { anchor: at + head.length - dropped(drops, at) },
@@ -399,7 +400,7 @@ export abstract class EditorFormat extends EditorEdit {
    */
   protected typeAtLinkEdge(pos: number, text: string, userEvent: string): boolean {
     const u = M.unitAt(this.units, pos);
-    if (!u || u.tag == "pre" || !this.verify(u) || !this.editableAt(u, pos)) return false;
+    if (!u || u.tag == "pre" || !this.verify(u) || !editableAt(u, pos)) return false;
     const el = this.enclosing(u, ["a"], pos, pos) ?? linkEnding(u, pos);
     if (!el) return false;
     const end = pos == el.closeFrom || pos == el.to,

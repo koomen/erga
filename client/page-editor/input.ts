@@ -9,6 +9,7 @@ import { hasFiles, LOADING_AGAIN, showDropCaret, showDropNote } from "./drop";
 import { isMac, pageOwnBox } from "./core";
 import { TEXT_ATTR } from "../../shared/page-html";
 import { leaveCode } from "./blocks";
+import { blockRange, editableAt, placeholderDrops } from "./rules";
 import { EditorClipboard } from "./clipboard";
 
 /** The selection moves a held arrow, Home or End key makes, if the editor doesn't take the key itself. */
@@ -148,7 +149,7 @@ export abstract class EditorInput extends EditorClipboard {
     if (!el || el.closest('[contenteditable="false"], input, textarea, select')) return null;
     const u = this.unitOf(node);
     const pos = u && this.verify(u) ? this.posFromDOM(node, range.startOffset) : null;
-    return pos != null && this.editableAt(u!, pos) ? { pos, range } : null;
+    return pos != null && editableAt(u!, pos) ? { pos, range } : null;
   }
 
   /** Files dropped on the text: to the caller, which adds them to the document's files (onDropFiles). */
@@ -170,7 +171,7 @@ export abstract class EditorInput extends EditorClipboard {
    */
   insertFiles(at: number, items: { href: string; name: string; image: boolean }[]): boolean {
     const u = M.unitAt(this.units, at);
-    if (!items.length || !u || !this.verify(u) || !this.editableAt(u, at)) return false;
+    if (!items.length || !u || !this.verify(u) || !editableAt(u, at)) return false;
     const src = this.src;
     const html = items.map((i) =>
       i.image
@@ -192,7 +193,7 @@ export abstract class EditorInput extends EditorClipboard {
     const stack = M.inlineStackAt(src, u, at),
       split = items.some((i) => !i.image) && stack.some((t) => t.tag == "a");
     const insert = split ? M.closeTags(stack) + html.join("") + M.openTags(stack) : html.join("");
-    this.dispatch({ changes: [{ from: at, to: at, insert }, ...this.placeholderDrops(src, [u], at, at, true)], userEvent: "input.drop" });
+    this.dispatch({ changes: [{ from: at, to: at, insert }, ...placeholderDrops(src, [u], at, at, true)], userEvent: "input.drop" });
     return true;
   }
 
@@ -589,15 +590,10 @@ export abstract class EditorInput extends EditorClipboard {
       case "deleteContent":
       case "deleteByCut": {
         e.preventDefault();
-        const r = this.targetRange(e),
-          sel = this.currentSelection();
-        // A delete from a caret (a word, the rest of the line: Ctrl+K) stays in the caret's block. Chrome's range can
-        // reach into the next block's text: it counts the offset in the whitespace between the two.
-        const u = r && sel.empty ? M.unitAt(this.units, sel.head) : null;
-        if (r && u) {
-          r.from = Math.max(r.from, M.textStart(u));
-          r.to = Math.min(r.to, M.textEnd(u));
-        }
+        const sel = this.currentSelection();
+        // A delete from a caret (a word, the rest of the line: Ctrl+K) stays in the caret's block (rules.ts, blockRange).
+        const t = this.targetRange(e);
+        const r = t && sel.empty ? blockRange(this.units, t.from, t.to, sel.head) : t;
         if (r && r.from < r.to && type == "deleteHardLineForward") {
           const t = this.doc!.createElement("template");
           t.innerHTML = this.src.slice(r.from, r.to);
