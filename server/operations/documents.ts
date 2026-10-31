@@ -234,7 +234,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
   {
     name: "update_files",
     loose: true,
-    ui: "The files view: a drop of files; an HTTP client's publish (POST /api/publish)",
+    ui: "An HTTP client's publish (POST /api/publish)",
     description:
       "Publishes files into an existing document: each replaces the file as it is now, as an edit (open editors show it at once, and anyone's undo history stays). replace: true also deletes every file not given (the page itself stays), for publishing a site again. delete removes the files named.",
     parameters: Schema.Struct({

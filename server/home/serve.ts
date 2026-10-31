@@ -104,7 +104,6 @@ async function homePage(request: Request, platform: Platform): Promise<Response 
     return homeHeader({
       clone: link("/new?from=landing", session),
       edit: session && !session.agent && roleMay(role, "edit") ? withEdit(link(page.address, session)) : null,
-      files: session && !session.agent && roleMay(role, "edit") ? link(`${page.address}?files`, session) : null,
       account: accountOf(session, admin, await mayDeploy(dir, session)),
       here: url.pathname + url.search,
       doc: page.docId,

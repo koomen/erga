@@ -20,7 +20,9 @@ test("the title opens the tree: the document by its title as the root row, marke
   await expect.poll(() => focused(page)).toBe("index.html");
 });
 
-test("a project's tree shows every file, as the server and an agent (ls, find) do; a file that isn't a page opens in the files view", async ({ tab }) => {
+test("a project's tree shows every file, as the server and an agent (ls, find) do; a file that isn't a page has no link", async ({
+  tab,
+}) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
   const all = await doc.tree();
@@ -32,5 +34,5 @@ test("a project's tree shows every file, as the server and an agent (ls, find) d
   await openCard(page);
   await page.evaluate(`document.querySelector('.et-row[data-path="assets"]').click()`);
   await until(async () => (await rows(page)).some((x) => x[0] == "assets/owl.svg"), 5000, "the folder of images opens");
-  expect(await js(page, `document.querySelector('.et-row[data-path="assets/owl.svg"] a.et-name').getAttribute("href")`)).toMatch(/\?files=assets%2Fowl\.svg$/);
+  expect(await js(page, `document.querySelector('.et-row[data-path="assets/owl.svg"] .et-name').localName`)).toBe("span");
 });

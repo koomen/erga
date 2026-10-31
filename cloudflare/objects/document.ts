@@ -288,7 +288,7 @@ export class DocumentObject extends DurableObject<Env> {
     const tab: Tab = {
       id: crypto.randomUUID(), readOnly: request.headers.get("x-erga-access") != "edit", epoch: url.searchParams.get("epoch") || null,
       person: personOf(request.headers), events: url.searchParams.get("events") == "1" || url.searchParams.get("watch") == "files",
-      // A files view (client/pages/files.ts): it hears the tree change, and never joins the room.
+      // A watcher (?watch=files, no caller now): it hears the tree change, and never joins the room.
       ...(url.searchParams.get("watch") == "files" ? { watch: true } : {}),
     };
     const [client, server] = Object.values(new WebSocketPair());

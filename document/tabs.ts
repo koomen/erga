@@ -93,7 +93,7 @@ export class Tabs<S extends TabSocket> {
         if (data == PING) quietly(() => socket.send(PONG));
         return;
       }
-      // A files view only listens.
+      // A watcher only listens.
       if (tab.watch) return;
       const document = self.o.document();
       let joined = self.joined.get(tab.id);

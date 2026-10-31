@@ -185,7 +185,7 @@ const fromStorage = Layer.mergeAll(
 export function makeHost(opts: HostOptions) {
   const { room, files, doc, agents } = opts;
   const tabs = new Set<Tab>();
-  /** A person's own tabs (an editor's: not a files view, which only watches the tree). */
+  /** A person's own tabs (an editor's: not a watcher, which only watches the tree). */
   const own = (user: string) => [...tabs].filter((t) => t.user == user && !t.watch);
   const sendTo = (user: string, msg: unknown) => { for (const t of own(user)) t.send(msg); };
   /** Every open tab, whoever's. */
@@ -285,7 +285,6 @@ export function makeHost(opts: HostOptions) {
     return { path: file, tabs: n, message: `Opened ${file} (${at}) in ${user.name}'s editor${n > 1 ? `, in all ${n} of their tabs` : ""}.` };
   };
 
-  /** Every file's kind, size and time: the files view's list and the agent's ls. */
   const fileStats = async () => {
     const stats = files.stats ? await Effect.runPromise(Effect.orElseSucceed(files.stats, () => new Map<string, { size?: number; at?: number; hash?: string }>())) : new Map<string, { size?: number; at?: number; hash?: string }>();
     const encoder = new TextEncoder();
@@ -598,7 +597,7 @@ export function makeHost(opts: HostOptions) {
       tabs.clear();
       await web.dispose();
     },
-    /** A tab joins its person's event channel (`watch`: a files view, which hears only what every tab does); returns the leave function. */
+    /** A tab joins its person's event channel (`watch`: a watcher, which hears only what every tab does); returns the leave function. */
     addTab: (user: string, send: (msg: unknown) => void, watch = false) => {
       const tab: Tab = { user, send, watch };
       tabs.add(tab);
@@ -628,7 +627,7 @@ export interface TreeState {
 }
 /** A tree operation's answer: the tree after it, or why it wasn't done (`status`: the HTTP status it means). */
 export type TreeAnswer = { ok: true; entries: TreeState["entries"]; kind: DocKind } | { ok: false; status: number; error: string };
-/** Every file of a document, as the files view lists them. */
+/** Every file of a document, as the page tree and ls list them. */
 export interface FileList {
   files: { path: string; kind: "text" | "file"; size: number | null; at: number | null; type: string }[];
   folders: string[];
@@ -645,7 +644,7 @@ export interface EditorCalls {
   tree(): TreeState;
   /** A tree operation (a new page or folder, a move, a delete, a change of kind): the tree after it, or what's wrong. */
   treeOp(op: TreeOp): Promise<TreeAnswer>;
-  /** Every file, its kind (text, or a file kept whole), type, size and time, and the folders (ls, the files view). */
+  /** Every file, its kind (text, or a file kept whole), type, size and time, and the folders (ls, the page tree). */
   files(): Promise<FileList>;
   /** Renames it as a person (their agent's rename too): every open tab hears of it. */
   rename(user: { id: string; name: string }, patch: { title?: string | null; slug?: string | null }): Promise<NameAnswer>;

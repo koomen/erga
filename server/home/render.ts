@@ -18,7 +18,6 @@ import {
   cloneButton,
   crumbsFont,
   editButton,
-  filesButton,
   inlineScript,
   inlineStyle,
   link,
@@ -176,9 +175,9 @@ export async function renderHome(opts: { index: string; files: Record<string, st
  * page's <body> (so nothing the page does to its body moves it) and runs the
  * account menu and the tooltips.
  */
-export function homeHeader(o: { clone: string; edit: string | null; files?: string | null; account: Account | null; here: string; doc?: string }): string {
+export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
   const session = o.account?.session ?? null;
-  const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.files ? filesButton(o.files) : ""}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session), !!session && !session.test)}`;
+  const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session), !!session && !session.test)}`;
   // The font goes outside the shadow root: a font declared inside one isn't used.
   return `${crumbsFont(session)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("home-controls")}</style><div class="band"></div>${viewCrumbs(session, null)}${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls>${inlineScript("home-controls")}`;
 }

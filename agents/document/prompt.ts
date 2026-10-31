@@ -18,8 +18,8 @@ export const DOCUMENT_RULES = documentPrompt.trim();
 export function beyondPrompt(owner: string, names: string[]): string {
   const lines: string[] = [];
   if (names.includes("list_pages"))
-    lines.push(`- The document's pages and files, as ${owner} has them in the editor's page tree and the
-  files view: list_pages lists its pages with their titles and addresses, ls every file
+    lines.push(`- The document's pages and files, as ${owner} has them in the editor's page tree:
+  list_pages lists its pages with their titles and addresses, ls every file
   with its kind, size and time. new_page makes a page from the template, mkdir a folder,
   mv moves or renames a file or folder, cp copies one, rm deletes one; make_project and
   make_document change its kind. ${owner} sees your changes at once. cp and mv take

@@ -1,6 +1,6 @@
 // The agent's tools on every file, in the Worker as it runs (PDF.js and pdf-lib under workerd): over an agent token, the
 // way an outside agent calls them (/api/tools/<name>) and over MCP: ls with kinds and sizes, grep through PDFs, read of a
-// PDF as a document (an embedded resource over MCP), and write of bytes, which the files view then lists.
+// PDF as a document (an embedded resource over MCP), and write of bytes, which ls then lists.
 import { expect, servers, test, until, type Server } from "../../helpers/fixtures";
 import { person } from "../versions/versions";
 import { runTool, textOf } from "../../helpers/tools";
@@ -74,7 +74,7 @@ test("ls says each file's kind and size; grep finds words in PDFs, by page; read
   expect(atob(resource.blob).startsWith("%PDF-")).toBe(true);
 });
 
-test("write of bytes makes a file kept whole, which the files view lists and serves", async () => {
+test("write of bytes makes a file kept whole, which ls lists and the document serves", async () => {
   const server = await servers.main();
   const { ada, id, call } = await owner(server);
   const bytes = pdf("Written by the agent");

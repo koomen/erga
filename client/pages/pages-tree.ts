@@ -9,8 +9,7 @@
 // index.html is the home page; the others sit under it. A document (one
 // page) shows only that page: a project is a folder of pages, and only a
 // project has more (the document's settings switch between the two). A project's tree shows its
-// pages, its other files (stylesheets, scripts, images, PDFs: each opens in
-// the files view) and its folders. To an agent either is one folder of files. A page shows by its
+// pages, its other files (stylesheets, scripts, images, PDFs: each shows by name, with no link) and its folders. To an agent either is one folder of files. A page shows by its
 // title when known, else by its name made readable ("spring-migration" is
 // "Spring migration"; a folder's index is the folder's name), its file's name
 // a quiet hint only where two would read the same. Clicking a page opens it,
@@ -314,8 +313,6 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   /** Where a page opens: its address, and ?edit in the editor (an address always names a page, so one may be called "edit"). */
   const href = (path: string) => pageUrl(base, path) + query + (opts.editing ? (query ? "&edit" : "?edit") : "");
-  /** Where a file that isn't a page opens: the files view, with it selected. */
-  const fileHref = (path: string) => base + query + (query ? "&" : "?") + "files=" + encodeURIComponent(path);
   const titleFor = (n: { path: string; title?: string }) => (n.path == ROOT && rootTitle) || opts.titleOf?.(n.path) || n.title || null;
   // A new page's template is titled "Untitled": that says nothing, so its name does instead.
   const known = (t: string | null | undefined) => (t && t.trim() && t.trim().toLowerCase() != "untitled" ? t.trim() : null);
@@ -617,7 +614,6 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const icon = el("span", { className: "et-icon", "aria-hidden": "true" }, svg(folder ? (open.has(n.path) ? ICONS.folderOpen : ICONS.folder) : n.type == "page" ? ICONS.page : ICONS.file));
     const text = n.type == "page"
       ? el("a", { className: "et-name", href: href(n.path), tabIndex: -1, draggable: false }, name)
-      : n.type == "file" ? el("a", { className: "et-name", href: fileHref(n.path), tabIndex: -1, draggable: false }, name)
       : el("span", { className: "et-name" }, name);
     r.append(twist, icon, text);
     if (hint) r.append(el("span", { className: "et-ext", "aria-hidden": "true" }, hint));
@@ -859,7 +855,6 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
         e.preventDefault();
         if (type == "folder") toggle(path);
         else if (type == "page") go(path, e.key == "Enter" && (e.metaKey || e.ctrlKey));
-        else if (type == "file") location.assign(fileHref(path));
         return;
       case "F2":
         if (canEdit) { e.preventDefault(); startRename(path); }

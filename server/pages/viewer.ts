@@ -19,8 +19,6 @@ import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 /** The viewer's Clone button (a copy of your own, at `href`): also the homepage's. */
 export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0345) translate(-12 -13.25)" stroke-width="1.5467"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></g></svg></a>`;
 
-/** The viewer's Files button: the document's files view (/<owner>/<slug>?files), for whoever may view it. */
-export const filesButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-files-button" aria-label="Files" data-tip="Files"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><path d="M3.75 7.25a2 2 0 0 1 2-2h3.6l2 2h6.9a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-12.5a2 2 0 0 1-2-2z"/></g></svg></a>`;
 
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
@@ -99,7 +97,19 @@ export const VIEW_STYLE = `<style>${inlineStyle("viewer")}</style>`;
  * the frame, on its pages origin; editing is loaded into it (editBoot) only when someone goes into it, by the pencil or
  * at ?edit (`editing`: opened so).
  */
-export function viewerPage(o: { title: string; docId: string; pages: string; src: string; meta: string; session: Session | null; editable: boolean; editing: boolean; landing: boolean; clone: string; edit: string; files?: string }): { before: string; after: string } {
+export function viewerPage(o: {
+  title: string;
+  docId: string;
+  pages: string;
+  src: string;
+  meta: string;
+  session: Session | null;
+  editable: boolean;
+  editing: boolean;
+  landing: boolean;
+  clone: string;
+  edit: string;
+}): { before: string; after: string } {
   // Opened with ?edit, for whoever may edit: the page is the editor's from its first moment (editingHead, EDITING_BODY),
   // the page in the frame starts on its half of the editor at once (frameSrc), and the editor's files are fetched as the
   // page parses, rather than one after another once its script runs (editBoot).
@@ -124,7 +134,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 <body>${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const after = `
-${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${o.files ?? ""}${FULL_BUTTON}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}
+${viewCrumbs(session, o.landing ? null : o.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${FULL_BUTTON}${o.edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}
 `;
   return { before, after };
 }
