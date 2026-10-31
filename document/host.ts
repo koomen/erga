@@ -185,7 +185,7 @@ const fromStorage = Layer.mergeAll(
 export function makeHost(opts: HostOptions) {
   const { room, files, doc, agents } = opts;
   const tabs = new Set<Tab>();
-  /** A person's own tabs (an editor's: not a watcher, which only watches the tree). */
+  /** A person's own tabs (an editor's: not a watcher, a viewer's page, which hears only what every tab does). */
   const own = (user: string) => [...tabs].filter((t) => t.user == user && !t.watch);
   const sendTo = (user: string, msg: unknown) => { for (const t of own(user)) t.send(msg); };
   /** Every open tab, whoever's. */

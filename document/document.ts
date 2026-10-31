@@ -62,6 +62,7 @@ import { describeChange, fallbackDescription, publicVersion, versionNumber, Vers
 import { decodeValue, exportPage, type DocSnapshot, type Page } from "./snapshot.ts";
 import { cleanRel, kindOf, pageRefusal, parentsOf, titleOf, type DocKind } from "./pages.ts";
 import { throttle } from "../shared/time.ts";
+import { later, stop } from "./later.ts";
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -127,22 +128,6 @@ export interface DocumentDirectory extends NamesDirectory<Asker> {
 /** How often edits may update a document's row (its time, and the title that follows its heading). */
 const DIRECTORY_EVERY_MS = 2000;
 
-
-/**
- * Runs `then` in `ms`, in a fiber of its own; `more`, asked then, may wait
- * longer first (again and again: while an agent works, its milliseconds).
- */
-function later(ms: number, then: () => void, more: () => number = () => 0): Fiber.Fiber<void> {
-  const run = Effect.gen(function* () {
-    yield* Effect.sleep(ms);
-    for (let wait = more(); wait > 0; wait = more()) yield* Effect.sleep(wait);
-    then();
-  });
-  return Effect.runFork(run);
-}
-
-/** A fiber of `later` that hasn't run yet doesn't. */
-const stop = (fiber: Fiber.Fiber<void>) => void Effect.runFork(Fiber.interrupt(fiber));
 
 /** A storage call's failure, as a StoreError. */
 const storeError = (e: unknown) => (e instanceof StoreError ? e : new StoreError({ message: e instanceof Error ? e.message : String(e) }));
@@ -294,6 +279,8 @@ export class Document {
         const id = this.info?.id;
         if (id) deps.viewChanged?.(id);
       },
+      info: () => this.readInfo(),
+      tell: (ver) => this.opened?.broadcast({ type: "view", ver }),
     });
   }
 
@@ -914,9 +901,10 @@ export class Document {
    * see every edit, and theirs go nowhere.
    */
   joinRoom(opened: Opened, o: { epoch: string | null; readOnly: boolean; send: (m: Uint8Array | string) => void; events?: Person | null; watch?: boolean }): { receive: (data: Uint8Array) => boolean; left: () => void } | null {
-    // A watcher: it hears what every tab hears (the tree changing), as text, and never joins the room.
+    // A watcher (a viewer's page): it hears what every tab hears, first the version to show, and never joins the room.
     if (o.watch && o.events) {
       const leave = opened.addTab(o.events.id, (msg) => o.send(JSON.stringify(msg)), true);
+      this.views.greet((ver) => o.send(JSON.stringify({ type: "view", ver })));
       return { receive: () => true, left: leave };
     }
     if (o.epoch && o.epoch != opened.room.epoch) return null;

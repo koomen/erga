@@ -281,6 +281,8 @@ async function render(
     landing,
     clone,
     edit,
+    // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
+    ...(session && !session.agent ? { live: d.ver } : {}),
   });
   const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
   const before = shell.before, after = shell.after + corner;
