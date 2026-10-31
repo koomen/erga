@@ -647,16 +647,13 @@ export abstract class EditorInput extends EditorClipboard {
       this.dispatch({ changes: { from: at, to: br ? br.to : at, insert }, selection: { anchor: at + insert.length }, userEvent });
       return;
     }
-    // The browser wrote the text into the runs' own nodes; text in a node it made (or one gone) only a render reads back.
+    // The browser writes the text into the runs' own nodes, or into a node it makes: the block's text is read whole, and
+    // in the second case the block is drawn again from its HTML after the edit, without the browser's node.
     const live = this.runNodes(u);
     const bound = new Set(live);
-    if (live.some((n) => !n || !el.contains(n)) || all.some((n) => !bound.has(n))) {
-      this.render();
-      return;
-    }
-    const nodes = live as Text[];
+    const own = live.some((n) => !n || !el.contains(n)) || all.some((n) => !bound.has(n));
     const before = u.runs.map((r) => r.text).join("");
-    const after = norm(nodes.map((n) => n.nodeValue!).join(""));
+    const after = norm(all.map((n) => n.nodeValue!).join(""));
     // Offsets in the concatenated text -> source positions.
     const starts: number[] = [];
     let acc = 0;
@@ -674,13 +671,16 @@ export abstract class EditorInput extends EditorClipboard {
     for (let i = 0; i < u.runs.length; i++)
       if (u.runs[i].from <= hint && hint <= u.runs[i].to) hintK = starts[i] + M.runOffset(u.runs[i], hint);
     const diff = findDiff(norm(before), after, hintK);
-    if (!diff) {
-      this.syncDOMSelection(true);
-      return;
+    if (diff) {
+      const from = toPos(diff.from),
+        to = toPos(diff.toA);
+      const insert = M.escapeHtmlText(after.slice(diff.from, diff.toB));
+      this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
     }
-    const from = toPos(diff.from),
-      to = toPos(diff.toA);
-    const insert = M.escapeHtmlText(after.slice(diff.from, diff.toB));
-    this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent });
+    const now = own && this.unitByEl.get(el);
+    if (now && this.units[now.id] == now) {
+      this.redraw(now, el);
+      this.syncDOMSelection(true);
+    } else if (!diff) this.syncDOMSelection(true);
   }
 }
