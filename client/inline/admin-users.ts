@@ -2,8 +2,8 @@
 // Each change goes to the server, which checks it (admins only, and never the last admin); the page reloads to show the
 // list as it is now.
 
-import { reload, runTool, say } from "../common/admin-post";
-import { liveList } from "../common/live-rows";
+import { runTool, say } from "../common/admin-post";
+import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 
 export interface UsersConfig {
@@ -16,6 +16,7 @@ export default function adminUsers(c: UsersConfig): void {
   const hint = document.getElementById("users-hint")!,
     addForm = document.querySelector<HTMLFormElement>("form.add-user")!;
   const field = <T extends HTMLElement = HTMLInputElement>(name: string) => addForm.elements.namedItem(name) as unknown as T;
+  /** An operation on a user or a waiting person; their row shows it (theirs is `login` or `person` in args, else in the answer). */
   async function change(op: string, args: Record<string, unknown>, saying: string, undo?: () => void) {
     say(hint, saying);
     try {
@@ -23,7 +24,13 @@ export default function adminUsers(c: UsersConfig): void {
       if (answer.note) {
         say(hint, answer.note);
         undo?.();
-      } else reload();
+      } else {
+        say(hint, "");
+        const login = args.login ?? answer.user?.login,
+          person = args.person ?? answer.person?.person;
+        refresh(...(login ? [`user:${login}`] : []), ...(person != null ? [`person:${person}`] : []));
+        if (op == "add_user") field("handle").value = "";
+      }
     } catch (err) {
       undo?.();
       say(hint, (err as Error).message, true);

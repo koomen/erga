@@ -1,8 +1,8 @@
 // The Access page's script (/admin/access, server/admin/access.ts): whether users can share content publicly, and the
 // group rules: add one, change its access, remove one.
 
-import { reload, runTool, say } from "../common/admin-post";
-import { liveList } from "../common/live-rows";
+import { runTool, say } from "../common/admin-post";
+import { liveList, refresh } from "../common/live-rows";
 
 export default function adminAccess(): void {
   const publicHint = document.getElementById("public-hint")!;
@@ -40,8 +40,14 @@ export default function adminAccess(): void {
     e.preventDefault();
     say(rulesHint, "Adding…");
     try {
-      await runTool("add_access_rule", { kind: field("kind").value, value: field("value").value.trim(), access: field("access").value });
-      reload();
+      const rule = await runTool("add_access_rule", {
+        kind: field("kind").value,
+        value: field("value").value.trim(),
+        access: field("access").value,
+      });
+      say(rulesHint, "");
+      field("value").value = "";
+      refresh(`rule:${rule.kind}:${rule.value}`);
     } catch (err) {
       say(rulesHint, (err as Error).message, true);
     }
@@ -65,7 +71,7 @@ export default function adminAccess(): void {
       if (!confirm("Remove this rule? The people only it lets in can't sign in any more.")) return;
       try {
         await runTool("remove_access_rule", { id: Number(li.dataset.id) });
-        reload();
+        refresh(li.dataset.live!);
       } catch (err) {
         say(rulesHint, (err as Error).message, true);
       }

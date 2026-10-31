@@ -2,8 +2,8 @@
 // the rest, Save lights up once the value differs from what's saved. Each is checked by the server, which says what's
 // wrong.
 
-import { reload, runTool, say } from "../common/admin-post";
-import { liveList } from "../common/live-rows";
+import { runTool, say } from "../common/admin-post";
+import { liveList, refresh } from "../common/live-rows";
 import times from "./times";
 import { esc } from "../../shared/html";
 
@@ -63,7 +63,8 @@ export default function adminSettings(c: SettingsConfig): void {
           throw new Error(`${key} needs a value as JSON (a number, true or false, "text" in quotes...).`);
         }
         await runTool("set_setting", { key, value });
-        reload();
+        say(hint, "Saved.");
+        refresh(li.dataset.live!);
       } catch (err) {
         say(hint, (err as Error).message, true);
         if (input.type == "checkbox") {
@@ -243,7 +244,8 @@ export default function adminSettings(c: SettingsConfig): void {
       say(hint, "Saving…");
       try {
         await runTool("reset_setting", { key: li.dataset.key! });
-        reload();
+        say(hint, "Saved.");
+        refresh(li.dataset.live!);
       } catch (err) {
         say(hint, (err as Error).message, true);
       }
