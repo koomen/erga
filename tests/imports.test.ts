@@ -32,7 +32,7 @@ import { join, relative, resolve } from "node:path";
 import { expect, test } from "bun:test";
 
 const ROOT = resolve(import.meta.dir, "..");
-const AREAS = ["directory", "identity", "documents", "pages", "home", "admin", "operations"];
+const AREAS = ["directory", "identity", "documents", "pages", "home", "admin", "operations", "news"];
 /** The repository's folders (an import that names none is a package's). */
 const REPO = readdirSync(ROOT).filter((n) => !n.startsWith(".") && n != "node_modules" && statSync(join(ROOT, n)).isDirectory());
 const BROWSER_DOCUMENT = ["document/content", "document/pages", "document/merge"];

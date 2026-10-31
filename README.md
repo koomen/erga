@@ -145,6 +145,8 @@ health checks and rollbacks work.
       health.ts       the health check, GET /api/health
       security.ts     the security headers on every answer of the app
       live.ts         open pages follow a redeploy
+      news/           live pages: which rows changed, for the open pages that show them (hub.ts, its Durable Object
+                      cloudflare/objects/news.ts), and the rows a page asks for then (routes.ts)
       directory/      the database: documents, owners and permissions (directory.ts), users, sign-in identities,
                       access rules, settings and their change log, the API keys admins store
       identity/       who is asking: sessions (session.ts), agent tokens (tokens.ts) and their page (tokens-page.ts:

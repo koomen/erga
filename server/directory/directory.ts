@@ -124,6 +124,12 @@ export const NO_PUBLIC =
 /** The login a permission for anyone with the link is under: anyone signed in, and, while the server lets users share content publicly, people who aren't signed in too (as viewers). */
 export const ANYONE = "*";
 
+/** A row some open pages show changed: its key ("doc:<id>"), and who may see it ("admins": every admin). server/news/ carries it. */
+export interface News {
+  key: string;
+  to: readonly string[] | "admins";
+}
+
 /** One person's (or anyone's, "*") permission on a document. */
 export interface Permission {
   login: string; role: Role; granted: number; grantedBy: string | null;
@@ -205,6 +211,8 @@ export class Directory {
    */
   /** Tells a document's host its permissions now (the platform's: its Durable Object keeps a copy); none: the document is gone. */
   private readonly permissionsChanged: (id: string, permissions: Permission[]) => Promise<void>;
+  /** Tells the open pages that show these rows (the platform's news hub: server/news/); none: nobody listens. */
+  private readonly news: ((news: News[]) => Promise<void>) | null;
 
   /** Local development, where everyone may sign in while the access rules let in accounts one by one (accounts.ts, mayJoin). */
   private readonly local: boolean;
@@ -221,9 +229,11 @@ export class Directory {
       credentialSecret?: string | null;
       fallback?: (env: string) => boolean;
       permissionsChanged?: (id: string, permissions: Permission[]) => Promise<void>;
+      news?: (news: News[]) => Promise<void>;
     } = {}
   ) {
     this.permissionsChanged = opts.permissionsChanged ?? (async () => {});
+    this.news = opts.news ?? null;
     this.local = !!opts.local;
     this.users = new Users(sql, opts.admins);
     this.identities = new Identities(sql, this.users);
@@ -396,7 +406,9 @@ export class Directory {
       return { doc: (await this.get(doc.id))!, added: true };
     };
     // Someone took the slug (or the id) at the same moment: look again, four times at most.
-    return Effect.runPromise(Effect.tryPromise({ try: once, catch: (e) => e }).pipe(Effect.retry({ times: 4, while: unique })));
+    const r = await Effect.runPromise(Effect.tryPromise({ try: once, catch: (e) => e }).pipe(Effect.retry({ times: 4, while: unique })));
+    if (r.added) await this.docChanged(doc.id);
+    return r;
   }
 
   /**
@@ -409,7 +421,10 @@ export class Directory {
     if (!doc) return null;
     if (at.modified != null) await this.sql.run("UPDATE documents SET modified = ?2, expires = NULL WHERE id = ?1", id, at.modified);
     const title = clip(at.pageTitle ?? "") || UNTITLED;
-    if (doc.titleSet || title == doc.title) return { doc: (await this.get(id)) ?? doc, renamed: false };
+    if (doc.titleSet || title == doc.title) {
+      if (at.modified != null && at.modified != doc.modified) await this.docChanged(id);
+      return { doc: (await this.get(id)) ?? doc, renamed: false };
+    }
     return this.write(doc, { title, titleSet: false, slug: doc.slugSet ? null : slugify(title) || "untitled", slugSet: doc.slugSet, explicit: false });
   }
 
@@ -471,7 +486,7 @@ export class Directory {
       return { doc: now, renamed: now.title != doc.title || now.slug != doc.slug };
     };
     // Someone took the slug at the same moment: look again (four times at most), unless they asked for that one.
-    return Effect.runPromise(
+    const r = await Effect.runPromise(
       Effect.tryPromise({ try: once, catch: (e) => e }).pipe(
         Effect.retry({ times: 4, while: (e) => unique(e) && !next.explicit }),
         Effect.mapError((e) =>
@@ -479,6 +494,8 @@ export class Directory {
         )
       )
     );
+    await this.docChanged(doc.id);
+    return r;
   }
 
   /**
@@ -515,15 +532,18 @@ export class Directory {
   /** Its kind, as its object says (it keeps the kind, and checks it): made a project, or decided as it opened. */
   async setKind(id: string, kind: DocKind): Promise<void> {
     await this.sql.run("UPDATE documents SET kind = ?2 WHERE id = ?1", id, kind);
+    await this.docChanged(id);
   }
 
   async setExpires(id: string, expires: number | null): Promise<void> {
     await this.sql.run("UPDATE documents SET expires = ?2 WHERE id = ?1", id, expires);
+    await this.docChanged(id);
   }
 
   /** Takes a document out of the directory (its content is its host's to delete). */
   async remove(id: string): Promise<void> {
     this.routes.delete(id);
+    const had = await this.readers(id);
     await this.sql.batch([
       ["DELETE FROM slug_history WHERE doc_id = ?1", id],
       ["DELETE FROM permissions WHERE doc_id = ?1", id],
@@ -531,18 +551,25 @@ export class Directory {
     ]);
     // Nobody may do anything with it now: whatever was decided about it goes.
     await this.tell(id, []);
+    await this.docChanged(id, had);
   }
 
   /**
    * The documents someone has a permission of their own on (test documents
    * aside), most recently edited first, with their role and how many
-   * permissions besides the owner's each has (`shared`; "*" counts as one).
+   * permissions besides the owner's each has (`shared`; "*" counts as one). With `ids`, only those of them.
    */
-  async list(login: string): Promise<(DocRow & { role: Role; shared: number })[]> {
+  async list(login: string, ids?: readonly string[]): Promise<(DocRow & { role: Role; shared: number })[]> {
+    const only = ids ? ids.filter((id) => ID.test(id) || TEST_ID.test(id)) : null;
+    if (only && !only.length) return [];
     const rows = await this.sql.all<Row & { role: Role; shared: number }>(
       `SELECT d.*, p.role, (SELECT COUNT(*) FROM permissions q WHERE q.doc_id = d.id AND q.role != 'owner') AS shared
        FROM permissions p JOIN documents d ON d.id = p.doc_id
-       WHERE p.login = ?1 AND d.test = 0 ORDER BY COALESCE(d.modified, d.created) DESC`, login.toLowerCase());
+       WHERE p.login = ?1 AND d.test = 0${only ? ` AND d.id IN (${only.map((_, i) => `?${i + 2}`).join(", ")})` : ""}
+       ORDER BY COALESCE(d.modified, d.created) DESC`,
+      login.toLowerCase(),
+      ...(only ?? [])
+    );
     return rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
   }
 
@@ -789,7 +816,38 @@ export class Directory {
       id, login, role, Date.now(), who.login.toLowerCase(), who.via ?? null);
     const now = await this.permissions(id);
     await this.tell(id, now);
+    await this.docChanged(id, [login]);
     return now;
+  }
+
+  /** Who has a permission of their own on a document: whose lists show it ("*" has no list). */
+  private async readers(id: string): Promise<string[]> {
+    if (!this.news) return [];
+    return (await this.sql.all<{ login: string }>("SELECT login FROM permissions WHERE doc_id = ?1 AND login != ?2", id, ANYONE)).map(
+      (r) => r.login
+    );
+  }
+
+  /** Document `id`'s row changed (or went): the lists that show it hear, and `also`, who just lost it. A failure is logged. */
+  private async docChanged(id: string, also: string[] = []): Promise<void> {
+    if (!this.news) return;
+    const to = [...new Set([...(await this.readers(id)), ...also])].filter((l) => l != ANYONE);
+    await this.publish([{ key: `doc:${id}`, to }]);
+  }
+
+  /** Tells the open pages (the news hub); a failure is logged: the pages catch up on their next change or reconnect. */
+  private async publish(news: News[]): Promise<void> {
+    const send = this.news;
+    if (!send || !news.some((n) => n.to == "admins" || n.to.length)) return;
+    await Effect.runPromise(
+      Effect.tryPromise(() => send(news)).pipe(
+        Effect.catch((e) =>
+          Effect.log(
+            `couldn't tell the open pages of ${news.map((n) => n.key).join(", ")}: ${e.cause instanceof Error ? e.cause.message : e.cause}`
+          )
+        )
+      )
+    );
   }
 
   /** The document's host hears its permissions now (it keeps a copy, and decides with it); a failure is logged, and its copy is read afresh in a while. */

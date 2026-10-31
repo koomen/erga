@@ -82,7 +82,7 @@ test("document_access says who a document is shared with, to its owner only; the
   expect(sharedWith.permissions.map((x) => `${x.login}:${x.role}`)).toEqual([`${p.login}:owner`, "ada:viewer"]);
   expect(Array.isArray(sharedWith.notUsers)).toBe(true);
   expect((await p.tool("document_access", { document: id }, "Ada")).status).toBe(403);
-  const row = (await p.docs()).split("<li>").find((li) => li.includes(`/${p.login}/untitled"`)) ?? "";
+  const row = (await p.docs()).split(/<li[ >]/).find((li) => li.includes(`/${p.login}/untitled"`)) ?? "";
   expect(row).toContain(">Shared<");
   expect(row).toContain(`class="act share"`);
 });

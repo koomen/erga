@@ -40,6 +40,10 @@ export function directoryOf(env: Env): Directory {
       github: githubAccounts((env.DEV_LOGIN && env.ERGA_GITHUB_ORIGIN?.trim().replace(/\/+$/, "")) || "https://github.com"),
       changed,
       permissionsChanged,
+      // An open page's rows follow every change (server/news/).
+      news: async (news) => {
+        await env.NEWS?.getByName("news").publish(news);
+      },
       credentialSecret: factoryKey(env),
       fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim(),
     });

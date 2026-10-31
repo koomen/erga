@@ -2,6 +2,7 @@
 // document picker, a question before deleting, the share dialog, and each document's pages beneath its row.
 
 import { fastClick } from "../common/fast-click";
+import { liveList } from "../common/live-rows";
 import { newDocPicker } from "../common/new-doc";
 import { runTool } from "../common/tools";
 import type { TreeHandle } from "../pages/pages-tree";
@@ -38,7 +39,8 @@ export default function docs(c: DocsConfig): void {
   newDocPicker(document);
   // The chevrons, Share and the share card's buttons act as the press starts (client/common/fast-click.ts). Delete keeps its click.
   fastClick(document, "button.twist, button.share, #share .copy, #share .done");
-  for (const f of document.querySelectorAll<HTMLFormElement>("form[data-title]")) {
+  /** A row's Delete: a question first, then the operation delete_document, as an agent's is; the row goes at once. */
+  function wireDelete(f: HTMLFormElement) {
     const q =
       "disk" in f.dataset
         ? "Take “" + f.dataset.title + "” off your list? Its files stay where they are."
@@ -49,13 +51,16 @@ export default function docs(c: DocsConfig): void {
       if (!confirm(q)) return;
       try {
         await runTool("delete_document", { document: (f.elements.namedItem("id") as HTMLInputElement).value });
-        location.reload();
+        const row = f.closest("li")!;
+        removing(row);
+        row.remove();
+        counted();
       } catch (err) {
         alert((err as Error).message);
       }
     });
   }
-  // Sharing: each change is saved as it's made (the operation share_document), and the list follows when the dialog closes.
+  // Sharing: each change is saved as it's made (the operation share_document); the row follows, as any change does.
   const share = document.getElementById("share") as HTMLDialogElement,
     me = share.dataset.me;
   const people = share.querySelector(".people")!,
@@ -67,8 +72,7 @@ export default function docs(c: DocsConfig): void {
     shareHint.classList.toggle("error", !!error);
   };
   const field = (name: string) => adder.elements.namedItem(name) as HTMLInputElement;
-  let doc: { id: string; title: string; address: string } | null = null,
-    changed = false;
+  let doc: { id: string; title: string; address: string } | null = null;
   const el = (tag: string, props: Record<string, unknown> = {}, ...kids: (Node | string)[]): any => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids);
@@ -137,7 +141,6 @@ export default function docs(c: DocsConfig): void {
     tell("Saving…");
     try {
       render(await call({ login, role }));
-      changed = true;
       tell("");
       return true;
     } catch (e) {
@@ -145,7 +148,8 @@ export default function docs(c: DocsConfig): void {
       return false;
     }
   }
-  for (const b of document.querySelectorAll<HTMLElement>("button.share"))
+  /** A row's Share: the dialog, with who it's shared with. */
+  const wireShare = (b: HTMLElement) =>
     b.addEventListener("click", async () => {
       doc = { id: b.dataset.id!, title: b.dataset.title!, address: b.dataset.address! };
       share.querySelector("h2")!.textContent = "Share “" + doc.title + "”";
@@ -177,9 +181,6 @@ export default function docs(c: DocsConfig): void {
     }
   });
   share.querySelector(".done")!.addEventListener("click", () => share.close());
-  share.addEventListener("close", () => {
-    if (changed) location.reload();
-  });
   // A document's pages, beneath its row: the tree. The script loads once the list is up and the tab is idle, and a
   // document's pages are read as the pointer heads for its row, together, so a click shows them at once. Each document's last
   // answer is kept for the tab: opened again, or on the next visit, its pages show straight away, and are read again behind.
@@ -329,7 +330,8 @@ export default function docs(c: DocsConfig): void {
       for (const href of c.editor) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
     }
   };
-  for (const b of document.querySelectorAll<HTMLElement>("button.twist")) {
+  /** A row's chevron: its pages beneath it, read ahead as the pointer rests on the row. */
+  function wireTwist(b: HTMLElement) {
     // The pointer resting on a row (or the chevron or the title focused, or touched): its pages are read, the script fetched,
     // and the document's page fetched ahead (warm).
     let rest: ReturnType<typeof setTimeout> | undefined;
@@ -356,6 +358,44 @@ export default function docs(c: DocsConfig): void {
     b.addEventListener("click", () => showPages(b, b.getAttribute("aria-expanded") != "true"));
     if (opened.has(b.dataset.id!)) showPages(b, true);
   }
+  /** A row's listeners: as the page loads, and for each row that changes while it's open. */
+  function wire(row: HTMLElement) {
+    const f = row.querySelector<HTMLFormElement>("form[data-title]"),
+      s = row.querySelector<HTMLElement>("button.share"),
+      t = row.querySelector<HTMLElement>("button.twist");
+    if (f) wireDelete(f);
+    if (s) wireShare(s);
+    if (t) wireTwist(t);
+  }
+  /** A row going: its pages beneath it go with it. */
+  function removing(row: HTMLElement) {
+    const id = row.dataset.live?.slice("doc:".length);
+    if (id) {
+      document.getElementById("pages-" + id)?.remove();
+      trees.delete(id);
+    }
+  }
+  /** The count, the column labels and the empty list's words, as the rows are now. */
+  function counted() {
+    const n = list.querySelectorAll(":scope > li[data-live]").length;
+    const count = document.getElementById("docs-count")!;
+    count.textContent = n + (n == 1 ? " document" : " documents");
+    count.hidden = list.hidden = !n;
+    document.querySelector<HTMLElement>(".labels")!.hidden = !n;
+    document.querySelector<HTMLElement>("p.empty")!.hidden = !!n;
+  }
+  // Every row, and the rows that change while the page is open: whoever changes them (another tab, an agent, someone
+  // who shares one with you), the list follows (client/common/live-rows.ts).
+  const list = document.querySelector<HTMLElement>("ol.rows")!;
+  for (const row of list.querySelectorAll<HTMLElement>(":scope > li[data-live]")) wire(row);
+  liveList(list, {
+    wire: (row) => {
+      wire(row);
+      times();
+    },
+    changed: counted,
+    removing,
+  });
   // Changes made elsewhere (another tab, an agent) show here too: the open trees are read again when the tab comes back,
   // and every few seconds while it's in view. Quietly: never while someone is naming, moving or deleting something in one.
   const refreshOpen = () => {

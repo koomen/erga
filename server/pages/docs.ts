@@ -27,23 +27,25 @@ function sharedNote(d: Listed): string {
   return `<span class="note shared" title="Shared with ${d.shared} besides you">Shared</span>`;
 }
 
-/** The documents view: yours and those shared with you, with new, open, share and delete. */
-export function docsPage(session: Session, docs: Listed[], now: number, hours: number | null): string {
-  const rows = docs.map((d) => {
-    const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
-    const mine = d.role == "owner";
-    const note = !mine ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
-      : d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
-      : left != null ? `<span class="note" title="${hours == null ? "Made when unedited documents were deleted: it still goes unless someone edits it" : `A document nobody edits is deleted ${hours} hours after it's made`}">Unedited · deleted in ${left}h</span>` : "";
-    const when = new Date(d.modified).toISOString();
-    // One opened from disk only comes off the list: its files stay where they are.
-    const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
-    // A project's row opens to its pages (the chevron); a document has one page, so its row has none (one from
-    // before kinds that hasn't opened since has it, as before).
-    const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
-      : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button>`;
-    // The whole row opens the document (the link stretches over it); its buttons sit on top.
-    return `  <li>
+/**
+ * One document's row on the list: the full page's, and the one an open list fetches when the row changes
+ * (server/news/: data-live is its key, data-sort its place, the latest edit first).
+ */
+export function docRow(session: Session, d: Listed, now: number, hours: number | null): string {
+  const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
+  const mine = d.role == "owner";
+  const note = !mine ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
+    : d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
+    : left != null ? `<span class="note" title="${hours == null ? "Made when unedited documents were deleted: it still goes unless someone edits it" : `A document nobody edits is deleted ${hours} hours after it's made`}">Unedited · deleted in ${left}h</span>` : "";
+  const when = new Date(d.modified).toISOString();
+  // One opened from disk only comes off the list: its files stay where they are.
+  const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
+  // A project's row opens to its pages (the chevron); a document has one page, so its row has none (one from
+  // before kinds that hasn't opened since has it, as before).
+  const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
+    : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button>`;
+  // The whole row opens the document (the link stretches over it); its buttons sit on top.
+  return `  <li data-live="doc:${esc(d.id)}" data-sort="${d.modified}">
     <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(`/${d.owner}/${d.slug}`, session)))}"><span class="title">${esc(d.title)}</span></a>${d.kind == "project" ? `<span class="note kind" title="A folder of pages, each with its own address">Project</span>` : ""}${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${
@@ -53,22 +55,23 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
         : ""
     }</div>
   </li>`;
-  }).join("\n");
+}
+
+/** The documents view: yours and those shared with you, with new, open, share and delete. */
+export function docsPage(session: Session, docs: Listed[], now: number, hours: number | null): string {
+  const rows = docs.map((d) => docRow(session, d, now, hours)).join("\n");
   const count = plural(docs.length, "document");
   return appPage(
     "Documents",
     inlineStyle("docs"),
     `${crumbs(session, [{ label: "Documents" }])}<main>
   <header>
-    <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
+    <div><h1>Documents</h1><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     ${newDocButton("pill", "New")}
   </header>
-  ${
-    docs.length
-      ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
-  <ol class="rows">\n${rows}\n  </ol>`
-      : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${plural(hours, "hour")} if you never edit it.`}</p>`
-  }
+  <div class="labels" aria-hidden="true"${docs.length ? "" : " hidden"}><span>Name</span><span>Edited</span><span></span></div>
+  <ol class="rows" data-live-kind="doc" data-live-view="docs" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
+  <p class="empty"${docs.length ? " hidden" : ""}>No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${plural(hours, "hour")} if you never edit it.`}</p>
 </main>
 ${newDocMenu((path) => link(path, session), true)}${NEW_DOC_STYLE}
 <dialog id="share" aria-labelledby="share-title" data-me="${esc(session.login.toLowerCase())}">

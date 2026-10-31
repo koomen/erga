@@ -29,6 +29,7 @@
 //                              for the server's admins only, checked here first (adminGate) and by its own routes.
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
 //                              on Cloudflare served without the Worker, kept for a year); /logo.png, Erga's logo
+//   /api/news, /api/news/rows  live pages: an open page's socket, and the rows it asks for when they change
 //   GET /api/release           which of them this release has: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
 //
@@ -59,6 +60,7 @@ import {
   usernameStep,
 } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
+import { newsRoutes } from "./news/index.ts";
 import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
 import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
@@ -162,6 +164,8 @@ const route = (url: URL, outside: Outside): Route =>
     if (isAdminAgentPath(path)) return yield* adminAgentApi;
     // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
     if (path == "/api/release" && read) return yield* releaseApi;
+    // Live pages: an open page's socket, and the rows it asks for when they change.
+    if (path == "/api/news" || path.startsWith("/api/news/")) return yield* newsRoutes;
     // The server's one API (the pages' and every agent's), its guide, and people's agent tokens.
     if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* serverApi;
     if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/"))

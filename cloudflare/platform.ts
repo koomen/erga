@@ -182,6 +182,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     own: { get: (k) => own().get(k), put: (k, v) => own().put(k, v), delete: (k) => own().delete(k) },
     source: control ? controlSource(control) : sourceService(env),
     home: env.HOME.getByName("home"),
+    news: env.NEWS.getByName("news"),
     adminAgent: env.ADMIN_AGENT.getByName("admin"),
     deploys: control ?? env.PIPELINE?.getByName("deploys") ?? noDeploys,
     ...(settings.controlUrl ? { control: { url: settings.controlUrl } } : {}),
@@ -207,8 +208,9 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
       rename: (doc, person, patch) => counted("doc", () => host(doc).rename(person, patch)),
       exists: (doc) => counted("doc", () => host(doc).exists()),
       delete: (doc) => counted("doc", () => host(doc).delete()),
-      list: async (owner) => {
-        return Promise.all((await directory.list(owner)).map(async (d) => {
+      list: async (owner, ids) => {
+        return Promise.all(
+          (await directory.list(owner, ids)).map(async (d) => {
           // In local development a document may be on disk: only it knows where.
           const path = env.ERGA_LINK_SECRET ? await documentOf(env, d.id).diskPath().catch(() => null) : null;
           return {

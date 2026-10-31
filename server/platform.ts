@@ -143,6 +143,8 @@ export interface Platform {
    * Absent in local development and on a server /deploy made, where this server hosts them itself.
    */
   control?: { url: string };
+  /** The news hub (server/news/): the open pages' sockets, which hear which of their rows changed. One object per server. */
+  news: { fetch(request: Request): Promise<Response> };
   /** The homepage's deploys and its snapshot (server/home/deploys.ts), one object per server. */
   home: HomeObject;
   /** What runs at the edge, around a request. */
@@ -196,8 +198,8 @@ export interface Platform {
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
-    /** `owner`'s documents, most recently changed first. */
-    list(owner: string): Promise<Listed[]>;
+    /** `owner`'s documents, most recently changed first; with `ids`, only those of them. */
+    list(owner: string, ids?: readonly string[]): Promise<Listed[]>;
     /** Hands a request to the document's host, its path already the one inside the document. */
     fetch(doc: Route, request: Request): Promise<Response>;
     /**
