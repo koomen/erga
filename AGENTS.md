@@ -131,6 +131,10 @@ Found a new trap? Write it here, in the same change.
   a deleted class; local development uses `cloudflare/dev-entry.ts`.
 - `bun run bench` before and after: one round each. A round is already the
   median of 5 runs.
+- The person's tab may be in the background. Chrome runs a hidden tab's chained
+  timers once a second, after 5 minutes once a minute, and draws no frames. Code
+  that answers the agent from the tab (view_page's render) waits with
+  `client/page-editor/clock.ts`, never with `sleep` or requestAnimationFrame.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 
