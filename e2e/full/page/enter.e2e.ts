@@ -71,3 +71,29 @@ test("composing (IME) into a new paragraph leaves no <br>, and the page shows th
   await expect.poll(() => ed.source()).toMatch(/<\/p>\s*<p class="lede">仮名<\/p>/);
   expect(await ed.frame<string>(`${F}.getSelection().focusNode.parentElement.closest("[data-erga-text]").innerHTML`)).toBe("仮名");
 });
+
+// Found by hand while the keys moved into rules.ts: the blocks after the delete were asked whether they could be edited,
+// and none could, so the split didn't happen.
+test("Enter over a selection to the end of a block deletes it and leaves an empty block to type in, one undo step", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  await ed.type("One");
+  await ed.press("Enter");
+  await ed.type("Two");
+  await ed.press("Shift+ArrowLeft");
+  await ed.press("Shift+ArrowLeft");
+  await ed.press("Shift+ArrowUp");
+  await ed.press("Enter");
+  await ed.type("X");
+  await ed.shows(`
+    O
+
+    X|
+  `);
+  await ed.press("ControlOrMeta+z");
+  await ed.press("ControlOrMeta+z");
+  await ed.shows(`
+    O[ne
+
+    Two]
+  `);
+});

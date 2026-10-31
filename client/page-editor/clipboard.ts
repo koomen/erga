@@ -1,11 +1,10 @@
 // The page editor's paste, cut and copy: plain text and basic formatting, in and out; pasted files go into the document.
 
 import * as M from "../../shared/manuscript";
-import type { ChangeSet } from "@codemirror/state";
 import * as C from "./clipboard-html";
-import { contentIn, escapeAttr, HEADING, SPLITS } from "./source";
+import { escapeAttr, HEADING } from "./source";
 import { EditorMarkdown } from "./markdown";
-import { itemSplit } from "./lists";
+import { editableAt } from "./rules";
 import { LOADING_AGAIN, showDropNote } from "./drop";
 import { pageUrl } from "../../document/pages";
 
@@ -68,90 +67,11 @@ export abstract class EditorClipboard extends EditorMarkdown {
     const r = this.coordsAtPos(at),
       point = { x: r?.left ?? 0, y: r?.bottom ?? 0 };
     if (this.rendering) return this.doc ? showDropNote(this.doc, point, LOADING_AGAIN) : undefined;
-    if (!u || !this.verify(u) || !this.editableAt(u, at)) {
+    if (!u || !this.verify(u) || !editableAt(u, at)) {
       if (this.doc) showDropNote(this.doc, point, "A file can go only into the text you can edit. Put the caret in a paragraph.");
       return;
     }
     this.config.onDropFiles?.(files, at, point);
-  }
-
-  /**
-   * Puts blocks at the selection, in place of the selected text. One
-   * paragraph goes into the block at the caret. More split that block at
-   * the caret: the first paragraph ends its first half, the last starts its
-   * second half, and the others go between as blocks of their own. In a
-   * list item, each paragraph is an item and a list's items join the list.
-   * In a block that can't split (a table cell), the paragraphs are lines.
-   */
-  protected pasteBlocks(blocks: C.Block[]): void {
-    const sel = this.currentSelection();
-    let state = this.state,
-      before: ChangeSet | null = null,
-      units = this.units;
-    if (!sel.empty) {
-      const spec = this.replaceSpec(sel.from, sel.to, "", "input.paste");
-      if (!spec) return;
-      const tr = state.update(spec);
-      before = tr.changes;
-      state = tr.state;
-      units = M.analyzeHtml(state.doc.toString(), this.decoder).units;
-    } else {
-      const at = M.unitAt(units, sel.from);
-      if (!at || !this.verify(at) || !this.editableAt(at, sel.from)) return;
-    }
-    const pos = state.selection.main.from,
-      src = state.doc.toString();
-    const u = M.unitAt(units, pos);
-    if (!u) return;
-    const stack = M.inlineStackAt(src, u, pos);
-    const indent = M.lineIndent(src, u.openFrom);
-    // In a list item, the pieces are items; an item with its text in a <p> splits as an item (lists.ts, itemSplit).
-    const split = itemSplit(src, u);
-    const inList = !!split || (u.tag == "li" && (u.node.parent?.tag == "ul" || u.node.parent?.tag == "ol"));
-    const pieces: { src: string; html: string | null }[] = inList
-      ? C.items(blocks).map((i) => ({ src: C.itemSource(i, indent), html: i.lists.length ? null : i.html }))
-      : blocks.map((b) => ({ src: C.toSource([b], indent), html: b.tag == "p" ? b.html : null }));
-    let insert: string, from: number, to: number, caret: number;
-    if ((!inList && !SPLITS.test(u.tag)) || (pieces.length == 1 && pieces[0].html != null)) {
-      // Into the block, inside the formatting at the caret; a link can't hold another.
-      let inner = pieces.length == 1 && pieces[0].html != null ? pieces[0].html : C.flatHtml(blocks).join("<br>");
-      if (stack.some((t) => t.tag == "a")) inner = inner.replace(/<\/?a\b[^>]*>/g, "");
-      ({ insert, from, to, caret } = { insert: inner, from: pos, to: pos, caret: inner.length });
-    } else {
-      const open = split?.open ?? src.slice(u.openFrom, u.openTo),
-        close = split?.close ?? src.slice(u.contentTo, u.to),
-        sep = "\n" + indent;
-      const hasHead = contentIn(src, u, u.contentFrom, pos),
-        hasTail = contentIn(src, u, pos, u.contentTo);
-      const first = pieces[0].html,
-        last = pieces.length > 1 ? pieces.at(-1)!.html : null;
-      const middle = pieces.slice(first != null ? 1 : 0, last != null ? -1 : undefined);
-      // The block's first half, ended with the first paragraph; it goes if it would be empty.
-      const head = hasHead || first != null ? (hasHead ? M.closeTags(stack) : "") + (first ?? "") + close : "";
-      from = hasHead ? pos : first != null ? u.contentFrom : (split?.from ?? u.from);
-      insert = head;
-      caret = 0;
-      for (const p of middle) {
-        insert += (insert ? sep : "") + p.src;
-        caret = insert.length - (/(\s*<\/[a-z0-9]+>)+\s*$/i.exec(p.src)?.[0].length ?? 0);
-      }
-      // The second half, started with the last paragraph (an item with lists in it keeps one, for them).
-      if (hasTail || last != null || (split && split.to == null)) {
-        insert += (insert ? sep : "") + open + (last ?? "");
-        if (hasTail || last != null) caret = insert.length;
-        insert += hasTail ? M.openTags(stack) : last == null ? "<br>" : "";
-        to = hasTail ? pos : u.contentTo;
-      } else to = split?.to ?? u.to;
-    }
-    const drops = from == pos && to == pos ? this.placeholderDrops(src, [u], pos, pos, true) : [];
-    if (split?.drop && from > u.openFrom) drops.push({ from: split.drop.from, to: split.drop.to ?? split.drop.from });
-    const after = state.changes([{ from, to, insert }, ...drops]);
-    this.dispatch({
-      changes: before ? before.compose(after) : after,
-      selection: { anchor: after.mapPos(from, -1) + caret },
-      userEvent: "input.paste",
-      scrollIntoView: true,
-    });
   }
 
   protected cut(e: ClipboardEvent): void {
