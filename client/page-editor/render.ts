@@ -450,13 +450,24 @@ export abstract class EditorRender extends EditorMarks {
       this.updateEmpty(texts);
       return "text";
     }
-    const oldEls = oldUnits.map((u) => this.elOf(u));
+    // The elements of the units the change touches, before it: one that is no longer a unit's loses the marks below.
+    let lo = Infinity,
+      hi = -Infinity;
+    changes.iterChangedRanges((fa, ta) => {
+      lo = Math.min(lo, fa);
+      hi = Math.max(hi, ta);
+    });
+    const touched = oldUnits.filter((u) => u.to >= lo && u.from <= hi);
+    const oldEls = touched.map((u) => this.elOf(u));
     // The units in the element the change is in (or the unit that holds it), found by the old tree's shape.
     const e = mirror.reconcile(changes, oldSrc, src, this.decoder);
     if (!e) return false;
     let region = e;
-    const unitNodes = new Set(oldUnits.map((u) => u.node));
-    for (let a: M.ElementNode | null = e; a; a = a.parent) if (unitNodes.has(a)) region = a;
+    const isUnit = (a: M.ElementNode) => {
+      const el = mirror.nodeOf(a);
+      return !!el && this.unitByEl.get(el as Element)?.node == a;
+    };
+    for (let a: M.ElementNode | null = e; a; a = a.parent) if (isUnit(a)) region = a;
     const inRegion = (n: M.ElementNode) => {
       for (let a: M.ElementNode | null = n; a; a = a.parent) if (a == region) return true;
       return false;
@@ -483,16 +494,14 @@ export abstract class EditorRender extends EditorMarks {
     };
     after.forEach(map);
     const units = [...before, ...fresh, ...after];
-    const els: (Element | undefined)[] = [];
-    // Each unit's element, through the binding, marked: a block added near the top changes nothing below it.
-    units.forEach((u, i) => {
-      const el = this.elOf(u);
-      u.id = i;
-      els[i] = el;
-      if (el) this.markUnit(u, el);
-    });
+    units.forEach((u, i) => (u.id = i));
+    // The new units' elements, through the binding, marked; the others keep theirs: a block added near the top changes
+    // nothing below it.
+    const els = new Map(fresh.map((u) => [u, this.elOf(u)]));
+    for (const [u, el] of els) if (el) this.markUnit(u, el);
     // An element that is no longer a text block (a list item whose text went into a <p>) loses the unit's marks.
-    const now = new Set(els);
+    const now = new Set(els.values());
+    for (const u of touched) if (!inRegion(u.node)) now.add(this.elOf(u));
     for (const el of oldEls) {
       if (!el || now.has(el) || !el.isConnected) continue;
       if (el.classList.contains("erga-locked")) el.removeAttribute("contenteditable");
@@ -504,7 +513,7 @@ export abstract class EditorRender extends EditorMarks {
     this.units = units;
     const ids = new Set<number>();
     for (const u of fresh) {
-      const el = els[u.id];
+      const el = els.get(u);
       if (!el) continue;
       ids.add(u.id);
       el.classList.remove("erga-locked");
