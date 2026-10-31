@@ -243,11 +243,15 @@ export class Directory {
     // A user's role and the group rules decide who may sign in (Users.allowed, Users.signedIn): read or write.
     this.users.gate = async (user) => (await this.accessOf(user)) != "none";
     this.users.accessChanged = () => this.rules.forget();
+    this.users.pagesChanged = (keys) => this.adminChanged(keys);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       defaults: opts.defaults,
-      changed: opts.changed,
+      changed: async (key) => {
+        await opts.changed?.(key);
+        await this.adminChanged([`setting:${key}`]);
+      },
       // The homepage shows a document or project to everyone, and runs its scripts on this site itself: an admin
       // puts any of the server's there (config.set checks they're one), but only if everyone who may edit it is an admin.
       // Kept by id, which a rename never changes.
@@ -835,8 +839,23 @@ export class Directory {
     await this.publish([{ key: `doc:${id}`, to }]);
   }
 
+  /**
+   * A change the admin pages show, to every admin: its rows' keys; for a user, every admin's row too (a row says
+   * whether its admin is the last); and the change log's newest line.
+   */
+  private async adminChanged(keys: string[]): Promise<void> {
+    if (!this.news) return;
+    const [{ n }] = await this.sql.all<{ n: number | null }>("SELECT MAX(n) AS n FROM server_config_versions");
+    const admins = keys.some((k) => k.startsWith("user:"))
+      ? (await this.sql.all<{ login: string }>("SELECT login FROM users WHERE role = 'admin'")).map((r) => `user:${r.login}`)
+      : [];
+    await this.publish(
+      [...new Set([...keys, ...admins, ...(n != null ? [`change:${n}`] : [])])].map((key) => ({ key, to: "admins" as const }))
+    );
+  }
+
   /** Tells the open pages (the news hub); a failure is logged: the pages catch up on their next change or reconnect. */
-  private async publish(news: News[]): Promise<void> {
+  async publish(news: News[]): Promise<void> {
     const send = this.news;
     if (!send || !news.some((n) => n.to == "admins" || n.to.length)) return;
     await Effect.runPromise(

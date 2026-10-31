@@ -125,6 +125,11 @@ export class Users {
   gate: (user: User) => Promise<boolean> = async () => true;
   /** Called after a user's access changed here: the directory forgets the access it remembered. */
   accessChanged: () => void = () => {};
+  /**
+   * Called after a change the admin pages show (a user, a waiting person, a rule, an API key, a setting), with the keys
+   * of their rows ("user:<login>"): the directory tells the open pages (server/news/). The other parts call it too.
+   */
+  pagesChanged: (keys: string[]) => Promise<void> = async () => {};
   private seenAt = new Map<string, number>();
 
   /** `admins`: the bootstrap admins (the ADMINS binding), always admins and always allowed in. */
@@ -212,6 +217,7 @@ export class Users {
     ]);
     if (opts.create && !user) this.accessChanged();
     this.known.delete(login);
+    if (!user || user.created == 0) await this.pagesChanged([`user:${login}`]);
     return this.get(login);
   }
 
@@ -285,6 +291,7 @@ export class Users {
     ]);
     this.known.delete(login);
     this.accessChanged();
+    await this.pagesChanged([`user:${login}`]);
     return (await this.get(login))!;
   }
 
@@ -310,6 +317,7 @@ export class Users {
     ]);
     this.known.delete(login);
     this.accessChanged();
+    await this.pagesChanged([`user:${login}`]);
     return (await this.get(login))!;
   }
 
@@ -325,6 +333,7 @@ export class Users {
     await this.sql.batch([["UPDATE users SET role = ?2 WHERE login = ?1", login, role], this.logged(by, Date.now(), { login, event: "role", role })]);
     this.known.delete(login);
     this.accessChanged();
+    await this.pagesChanged([`user:${login}`]);
     return (await this.get(login))!;
   }
 
@@ -338,6 +347,7 @@ export class Users {
     if (user.created == 0) await this.sql.run("INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'admin', ?2) ON CONFLICT (login) DO NOTHING", login, Date.now());
     await this.sql.batch([["UPDATE users SET deploy = ?2 WHERE login = ?1", login, deploy ? 1 : 0], this.logged(by, Date.now(), { login, event: "deploy", deploy })]);
     this.known.delete(login);
+    await this.pagesChanged([`user:${login}`]);
     return (await this.get(login))!;
   }
 
@@ -351,6 +361,7 @@ export class Users {
     await this.sql.batch([["DELETE FROM users WHERE login = ?1", login], this.logged(by, Date.now(), { login, event: "removed" })]);
     this.known.delete(login);
     this.accessChanged();
+    await this.pagesChanged([`user:${login}`]);
   }
 
   /** Throws NotAllowed if `login` is the server's last admin (bootstrap admins count, signed in or not). */

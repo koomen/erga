@@ -7,6 +7,7 @@
 .part > .sub { margin-bottom: 16px; }
 .part .sub a { color: inherit; text-decoration-color: var(--rule); text-underline-offset: 0.2em; }
 .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 7rem 7rem 40px; align-items: center; column-gap: 16px; }
+.labels[hidden], ol.rows[hidden], .empty[hidden] { display: none; }
 .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
 ol.rows > li, ol.rows > li:first-child { border: 0; }
 ol.rows > li.expired { opacity: 0.55; }

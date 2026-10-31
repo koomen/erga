@@ -9,9 +9,9 @@ import {
   type Settings,
   type SettingsVersion,
 } from "../directory/index.ts";
-import { link, TIMES_SCRIPT } from "../pages/index.ts";
+import { inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { avatarHtml, shown } from "./parts.ts";
@@ -127,22 +127,19 @@ function changeRow(
           : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`
     )
     .join("");
-  return `  <li class="change" data-n="${v.n}">
+  return `  <li class="change" data-n="${v.n}" data-live="change:${v.n}" data-sort="${v.n}">
     ${byHtml(v.by, v.via, avatars)}<ul class="what">${what}</ul><time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>
   </li>`;
 }
 
-/** /admin/changes: the change log, every change to the settings, factory task added or merged, and production deploy, newest first (`before`: only those older than version n). */
-export async function changesPage(platform: Platform, session: Session, before?: number) {
-  const who = whoOf(session),
-    config = platform.directory.config;
-  const history = await config.history(who, { before, limit: CHANGES });
-  // A setting that names a document shows it by its address now, as /admin does.
+/** These versions' rows, newest first: each setting that names a document shows it by its address now, as /admin does. */
+async function changeRows(platform: Platform, versions: SettingsVersion[]): Promise<{ n: number; html: string }[]> {
+  const config = platform.directory.config;
   const kinds: Record<string, string | undefined> = Object.fromEntries(
     Object.entries(config.settings as Settings).map(([k, s]) => [k, s.kind])
   );
   const ids = new Set(
-    history.versions
+    versions
       .flatMap((v) => v.changes.filter((c) => kinds[c.key] == "document").flatMap((c) => [c.from, c.to]))
       .filter((x) => x != null)
       .map(String)
@@ -157,7 +154,14 @@ export async function changesPage(platform: Platform, session: Session, before?:
       )
     ).flat()
   );
-  const avatars = await platform.directory.users.avatars(history.versions.map((v) => v.by).filter((by) => by && by != SYSTEM));
+  const avatars = await platform.directory.users.avatars(versions.map((v) => v.by).filter((by) => by && by != SYSTEM));
+  return versions.map((v) => ({ n: v.n, html: changeRow(v, kinds, docs, avatars) }));
+}
+
+/** /admin/changes: the change log, every change to the settings, factory task added or merged, and production deploy, newest first (`before`: only those older than version n). */
+export async function changesPage(platform: Platform, session: Session, before?: number) {
+  const history = await platform.directory.config.history(whoOf(session), { before, limit: CHANGES });
+  const rows = await changeRows(platform, history.versions);
   const last = history.versions.at(-1);
   const older = last && last.n > 1 && history.versions.length == CHANGES;
   return adminPage({
@@ -167,16 +171,25 @@ export async function changesPage(platform: Platform, session: Session, before?:
     wide: true,
     body: `
   <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${plural(history.total, "change")}.` : ""}</p>
-  ${
-    history.versions.length
-      ? `<ol class="changes">
-${history.versions.map((v) => changeRow(v, kinds, docs, avatars)).join("\n")}
-  </ol>`
-      : `<p class="changes-empty">${before ? "No older changes." : "Nothing has changed yet."}</p>`
-  }
+  <ol class="changes"${before ? "" : ` data-live-kind="change" data-live-view="changes" data-live-at="${Date.now()}"`}${rows.length ? "" : " hidden"}>
+${rows.map((r) => r.html).join("\n")}
+  </ol>
+  <p class="changes-empty"${rows.length ? " hidden" : ""}>${before ? "No older changes." : "Nothing has changed yet."}</p>
   ${before || older ? `<p class="changes-more">${before ? `<a href="${esc(link("/admin/changes", session))}">Newest</a>` : ""}${before && older ? " · " : ""}${older ? `<a href="${esc(link(`/admin/changes?before=${last!.n}`, session))}">Older changes</a>` : ""}</p>` : ""}
 <script>
-  ${TIMES_SCRIPT}
+  ${TIMES_SCRIPT}${before ? "" : inlineCall("admin-changes")}
 </script>`,
   });
 }
+
+/** The rows of /admin/changes that `keys` name ("change:<n>"), among the newest, for an open page (server/news/). */
+export const changesRows: LiveRows = async (platform, session, keys) => {
+  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  const { versions } = await platform.directory.config.history(whoOf(session), { limit: CHANGES });
+  for (const r of await changeRows(
+    platform,
+    versions.filter((v) => `change:${v.n}` in out)
+  ))
+    out[`change:${r.n}`] = { html: r.html, sort: r.n };
+  return out;
+};

@@ -169,7 +169,24 @@ export class Tokens {
       info.expires,
       info.created
     );
+    await this.changed(info.login, [info.id]);
     return { token, info };
+  }
+
+  /** Their open /settings shows these tokens as they are now, or without them (server/news/). */
+  private async changed(login: string, ids: string[]): Promise<void> {
+    if (ids.length) await this.dir.publish(ids.map((id) => ({ key: `token:${id}`, to: [login] })));
+  }
+
+  /** Deletes the tokens `where` picks (SQL, with ?1: login), and tells their open /settings. */
+  private async drop(login: string, where: string, ...params: (string | number)[]): Promise<void> {
+    const gone = await this.sql.all<{ id: string }>(`SELECT id FROM agent_tokens WHERE login = ?1 AND ${where}`, login, ...params);
+    if (!gone.length) return;
+    await this.sql.run(`DELETE FROM agent_tokens WHERE login = ?1 AND ${where}`, login, ...params);
+    await this.changed(
+      login,
+      gone.map((r) => r.id)
+    );
   }
 
   /**
@@ -181,7 +198,7 @@ export class Tokens {
     // Not ours (another server's row): a new one in its place, as with rotate.
     const own = row && !rotate ? await this.ownToken(row.id) : null;
     if (own) return { token: own, info: fromRow(row) };
-    if (row) await this.sql.run("DELETE FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope != 'admin'", who.login.toLowerCase());
+    if (row) await this.drop(who.login.toLowerCase(), "kind = 'share' AND scope != 'admin'");
     return this.mint(who, "Share button", { scope: "documents" }, "share");
 
   }
@@ -201,8 +218,8 @@ export class Tokens {
       const own = await this.ownToken(row.id);
       if (own) return { token: own, info: fromRow(row) };
     }
-    if (rotate) await this.sql.run("DELETE FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope = 'admin'", login);
-    else await this.sql.run("DELETE FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope = 'admin' AND expires <= ?2", login, now);
+    if (rotate) await this.drop(login, "kind = 'share' AND scope = 'admin'");
+    else await this.drop(login, "kind = 'share' AND scope = 'admin' AND expires <= ?2", now);
     const ms = Math.round(Math.max(1, Math.min(SHARE_ADMIN_HOURS, Number(hours) || SHARE_ADMIN_HOURS)) * 3600_000);
     return this.mint(who, SHARE_ADMIN_LABEL, { scope: "admin", expires: now + ms }, "share");
   }
@@ -260,6 +277,9 @@ export class Tokens {
       ["DELETE FROM agent_tokens WHERE id = ?1", id],
       changeLogEntry(Date.now(), login, via, [{ key: "token", from: null, to: null, token: { id, label: row.label, event: "revoked", of: login } }]),
     ]);
+    await this.changed(login, [id]);
+    // The change log's new line, on the open admin pages.
+    await this.dir.users.pagesChanged([]);
     return true;
   }
 

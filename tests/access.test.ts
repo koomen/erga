@@ -92,7 +92,7 @@ test("users added before their first sign-in: a GitHub account by its id, a Goog
   const join = async (name: string, v: Vouched) => {
     const { may, person } = await dir.joining(v);
     expect(may).toBe(true);
-    return dir.identities.createAccount(name, v, person ? { role: person.role, extra: [dir.people.claimed(person.id)] } : {});
+    return dir.identities.createAccount(name, v, person ? { role: person.role, waited: person.id } : {});
   };
   // GitHub: the login resolved to GitHub's id now; a login GitHub doesn't know is refused.
   const { person: jo } = await dir.addUser(ADMIN, { provider: "github", handle: "Jo" }, "read");

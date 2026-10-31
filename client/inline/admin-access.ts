@@ -2,11 +2,13 @@
 // group rules: add one, change its access, remove one.
 
 import { reload, runTool, say } from "../common/admin-post";
+import { liveList } from "../common/live-rows";
 
 export default function adminAccess(): void {
-  const publicBox = document.getElementById("public-sharing") as HTMLInputElement,
-    publicHint = document.getElementById("public-hint")!;
-  publicBox.addEventListener("change", async () => {
+  const publicHint = document.getElementById("public-hint")!;
+  /** The switch for sharing publicly (its row comes again when it changes elsewhere). */
+  const wirePublic = (publicBox: HTMLInputElement) =>
+    publicBox.addEventListener("change", async () => {
     if (
       publicBox.checked &&
       !confirm(
@@ -44,7 +46,8 @@ export default function adminAccess(): void {
       say(rulesHint, (err as Error).message, true);
     }
   });
-  for (const li of document.querySelectorAll<HTMLElement>("ol.rules > li")) {
+  /** A rule's row: its access, and Remove. */
+  function wire(li: HTMLElement) {
     const select = li.querySelector<HTMLSelectElement>("select.access")!;
     let was = select.value;
     select.addEventListener("change", async () => {
@@ -68,4 +71,15 @@ export default function adminAccess(): void {
       }
     });
   }
+  const rules = document.querySelector<HTMLElement>("ol.rules")!;
+  for (const li of rules.querySelectorAll<HTMLElement>(":scope > li")) wire(li);
+  wirePublic(document.getElementById("public-sharing") as HTMLInputElement);
+  // Changes made elsewhere (another admin, an agent) show here as they're made (client/common/live-rows.ts).
+  const signal = window.ergaView?.signal;
+  liveList(rules, { wire }, signal);
+  liveList(
+    document.querySelector<HTMLElement>("section.public-sharing")!,
+    { wire: (row) => wirePublic(row.querySelector("input")!) },
+    signal
+  );
 }

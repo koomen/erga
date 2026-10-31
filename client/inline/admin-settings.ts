@@ -3,6 +3,8 @@
 // wrong.
 
 import { reload, runTool, say } from "../common/admin-post";
+import { liveList } from "../common/live-rows";
+import times from "./times";
 import { esc } from "../../shared/html";
 
 export interface SettingsConfig {
@@ -20,14 +22,15 @@ interface Found {
 
 export default function adminSettings(c: SettingsConfig): void {
   const chipHtml = c.chip;
-  for (const li of document.querySelectorAll<HTMLElement>("li.setting")) {
+  /** A setting's row: its control, Save and Reset. */
+  function wire(li: HTMLElement) {
     const form = li.querySelector("form")!,
       input = form.elements.namedItem("value") as HTMLInputElement,
       mode = li.querySelector<HTMLSelectElement>("select.mode"),
       save = li.querySelector<HTMLButtonElement>(".save"),
       reset = li.querySelector(".reset"),
       hint = li.querySelector(".hint")!;
-    if (input.disabled) continue;
+    if (input.disabled) return;
     const instant = li.dataset.control == "switch" || li.dataset.control == "choice" || li.dataset.control == "document";
     const state = () => (mode ? mode.value + ":" : "") + (input.type == "checkbox" ? input.checked : input.value);
     const was = state();
@@ -246,4 +249,8 @@ export default function adminSettings(c: SettingsConfig): void {
       }
     });
   }
+  const list = document.querySelector<HTMLElement>("ol[data-live-kind]")!;
+  for (const li of list.querySelectorAll<HTMLElement>(":scope > li.setting")) wire(li);
+  // Changes made elsewhere (another admin, an agent) show here as they're made; a setting being typed in waits (client/common/live-rows.ts).
+  liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);
 }

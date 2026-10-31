@@ -167,6 +167,7 @@ export class Credentials {
       ],
       this.logged(n, had ? "replaced" : "set", at, login, by.via),
     ]);
+    await this.users.pagesChanged([`apikey:${n}`]);
     return (await this.list(by)).find((e) => e.name == n)!;
   }
 
@@ -177,6 +178,7 @@ export class Credentials {
     if (await this.has(n)) {
       const at = Date.now(), login = by.login.toLowerCase();
       await this.sql.batch([["DELETE FROM credentials WHERE name = ?1", n], this.logged(n, "cleared", at, login, by.via)]);
+      await this.users.pagesChanged([`apikey:${n}`]);
     }
     return (await this.list(by)).find((e) => e.name == n)!;
   }

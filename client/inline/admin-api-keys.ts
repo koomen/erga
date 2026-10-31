@@ -2,15 +2,18 @@
 // removes it. The answer never holds the key; the page reloads to show what it is now.
 
 import { post, reload, runTool, say } from "../common/admin-post";
+import { liveList } from "../common/live-rows";
+import times from "./times";
 
 export default function adminApiKeys(): void {
-  for (const li of document.querySelectorAll<HTMLElement>("li.credential")) {
+  /** A key's row: Save, and Clear. */
+  function wire(li: HTMLElement) {
     const form = li.querySelector("form")!,
       input = form.elements.namedItem("value") as HTMLInputElement,
       save = li.querySelector<HTMLButtonElement>(".save")!,
       clear = li.querySelector(".clear"),
       hint = li.querySelector(".hint")!;
-    if (input.disabled) continue;
+    if (input.disabled) return;
     input.addEventListener("input", () => {
       save.disabled = !input.value.trim();
       say(hint, "");
@@ -47,4 +50,8 @@ export default function adminApiKeys(): void {
       }
     });
   }
+  const list = document.querySelector<HTMLElement>("ol[data-live-kind]")!;
+  for (const li of list.querySelectorAll<HTMLElement>(":scope > li.credential")) wire(li);
+  // Changes made elsewhere (another admin, an agent) show here as they're made (client/common/live-rows.ts).
+  liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);
 }

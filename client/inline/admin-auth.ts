@@ -2,6 +2,7 @@
 // Discard and Clear.
 
 import { post, reload, runTool, say } from "../common/admin-post";
+import { liveList } from "../common/live-rows";
 
 export default function adminAuth(): void {
   // A change shows the page again in place (reload), and its message under the provider's card in the new page: it
@@ -44,8 +45,10 @@ export default function adminAuth(): void {
       sessionStorage.removeItem(RETRIES);
     } catch {}
   }
-  // Each provider's switch, in its section's header: on or off, with the server's rules (it says why it refuses, in place).
-  for (const box of document.querySelectorAll<HTMLInputElement>("section.provider > header input[data-provider]"))
+  /** A provider's section: its switch, and its card's buttons. */
+  function wire(section: HTMLElement) {
+    // The switch, in the section's header: on or off, with the server's rules (it says why it refuses, in place).
+    const box = section.querySelector<HTMLInputElement>(":scope > header input[data-provider]")!;
     box.addEventListener("change", async () => {
       const hint = box.closest("section.provider")!.querySelector(".provider-hint")!;
       say(hint, "Saving…");
@@ -57,7 +60,9 @@ export default function adminAuth(): void {
         say(hint, (err as Error).message, true);
       }
     });
-  for (const card of document.querySelectorAll<HTMLElement>("section.server")) {
+    for (const card of section.querySelectorAll<HTMLElement>("section.server")) wireCard(card);
+  }
+  function wireCard(card: HTMLElement) {
     const hint = card.querySelector(".hint")!,
       provider = card.dataset.provider!;
     for (const b of card.querySelectorAll<HTMLButtonElement>("button.copy"))
@@ -112,4 +117,8 @@ export default function adminAuth(): void {
       }
     });
   }
+  const auth = document.querySelector<HTMLElement>("section.auth")!;
+  for (const section of auth.querySelectorAll<HTMLElement>(":scope > section.provider")) wire(section);
+  // Changes made elsewhere (another admin, an agent) show here as they're made (client/common/live-rows.ts).
+  liveList(auth, { wire }, window.ergaView?.signal);
 }

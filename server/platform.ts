@@ -61,6 +61,15 @@ export interface Listed {
 }
 
 /**
+ * A row of a page as an open page fetches it after it changed (live pages: server/news/): its HTML, made by the page's
+ * own row function, and its place (data-sort); null: the person no longer sees it.
+ */
+export type LiveRow = { html: string; sort: number | string } | null;
+
+/** The rows `keys` name, as `session` sees them now (`origin`: the site's): what a page gives live pages for each list it keeps live. */
+export type LiveRows = (platform: Platform, session: Session, keys: string[], origin: string) => Promise<Record<string, LiveRow>>;
+
+/**
  * What the app needs from the platform it runs on. The layers above server/ add the parts that are theirs, each
  * where it is defined (a `declare module` of this file): control/ adds `source` (control/source/routes.ts) and
  * `deploys` (control/deploys/api.ts); agents/ adds `agentSettings` (agents/models.ts) and `adminAgent`

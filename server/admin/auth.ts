@@ -2,10 +2,10 @@
 
 import { inlineCall, link } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import type { Session } from "../platform.ts";
+import { type LiveRows, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
-import { PROVIDERS, type AuthOps, type AuthStatus, type CheckState, type Provider, type ProvidersOn } from "../identity/index.ts";
+import { authOps, PROVIDERS, type AuthOps, type AuthStatus, type CheckState, type Provider, type ProvidersOn } from "../identity/index.ts";
 import { setAt } from "./parts.ts";
 
 const STATE_LABEL: Record<CheckState, string> = {
@@ -98,7 +98,7 @@ function providerSection(p: Provider, on: ProvidersOn, cards: string): string {
     other = PROVIDERS[p == "github" ? "google" : "github"].label;
   const last = on[p] && !on[p == "github" ? "google" : "github"];
   const why = last ? `${label} is the only sign-in that's on, so it can't be turned off: turn on ${other} first.` : "";
-  return `<section class="provider" data-provider="${p}">
+  return `<section class="provider" data-provider="${p}" data-live="auth:${p}" data-sort="${p == "github" ? 0 : 1}">
     <header><h3 class="provider-head">${label}</h3>
       <label class="switch" title="${esc(why || `Sign-in with ${label}: ${on[p] ? "on" : "off"}`)}"><input type="checkbox" role="switch" data-provider="${p}" aria-label="Sign-in with ${label}"${on[p] ? " checked" : ""}${last ? " disabled" : ""}><span class="track" aria-hidden="true"></span><span class="state">${on[p] ? "On" : "Off"}</span></label>
     </header>
@@ -107,20 +107,50 @@ function providerSection(p: Provider, on: ProvidersOn, cards: string): string {
   </section>`;
 }
 
-/** /admin/auth: how people sign in on this server. */
-export function authPage(session: Session, status: Awaited<ReturnType<AuthOps["status"]>>) {
+type Status = Awaited<ReturnType<AuthOps["status"]>>;
+
+/** Each provider's section, as its status is now. */
+function sections(session: Session, status: Status): Record<Provider, string> {
   const { here, google, providers } = status;
   const label = (s: AuthStatus) => (s.target ? `${s.target[0].toUpperCase()}${s.target.slice(1)} (this server)` : "This server");
+  return {
+    github: providerSection(
+      "github",
+      providers,
+      serverCard(here, { label: label(here), editable: here.canStore, session, on: providers.github })
+    ),
+    google: providerSection(
+      "google",
+      providers,
+      serverCard(google, { label: label(google), editable: google.canStore, session, on: providers.google })
+    ),
+  };
+}
+
+/** /admin/auth: how people sign in on this server. */
+export function authPage(session: Session, status: Status) {
+  const s = sections(session, status);
   return adminPage({
     session,
     title: "Authentication",
     here: "auth",
     body: `
-  <section aria-labelledby="auth-head" class="auth">
+  <section aria-labelledby="auth-head" class="auth" data-live-kind="auth" data-live-view="auth" data-live-order="asc" data-live-at="${Date.now()}">
     <h2 id="auth-head">Authentication</h2>
-    ${providerSection("github", providers, serverCard(here, { label: label(here), editable: here.canStore, session, on: providers.github }))}
-    ${providerSection("google", providers, serverCard(google, { label: label(google), editable: google.canStore, session, on: providers.google }))}
+    ${s.github}
+    ${s.google}
   </section>
 <script>${inlineCall("admin-auth")}</script>`,
   });
 }
+
+/** The sections of /admin/auth that `keys` name ("auth:github", "auth:google"), as they are now, for an open page (server/news/). */
+export const authRows: LiveRows = async (platform, session, keys, origin) => {
+  const now = sections(session, await authOps(platform, origin).status(whoOf(session)));
+  return Object.fromEntries(
+    keys.map((k) => {
+      const p = k.slice("auth:".length) as Provider;
+      return [k, p in now ? { html: now[p], sort: p == "github" ? 0 : 1 } : null];
+    })
+  );
+};

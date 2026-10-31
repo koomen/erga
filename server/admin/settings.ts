@@ -4,7 +4,7 @@
 import { ACCESS_SETTINGS, type ConfigEntry, type Settings } from "../directory/index.ts";
 import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { setAt, shown } from "./parts.ts";
@@ -80,7 +80,7 @@ function controlOf(e: Shown): "switch" | "choice" | "users" | "document" | "type
 const chip = (login: string, locked: boolean) =>
   `<li class="chip" data-login="${esc(login)}">${esc(login)}${locked ? "" : `<button type="button" class="unpick" aria-label="Take out ${esc(login)}" title="Take out ${esc(login)}">${ICON.close}</button>`}</li>`;
 
-export function settingRow(e: Shown, session: Session, never: boolean): string {
+export function settingRow(e: Shown, session: Session, never: boolean, place: number): string {
   const def = `default ${shown(e.default, e.kind)}`;
   const control = controlOf(e);
   const meta = e.locked
@@ -102,7 +102,7 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
     e.locked || control == "switch" || control == "choice"
       ? ""
       : `${control == "document" ? "" : `<button class="pill save" disabled>Save</button>`}${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(e.kind == "document" ? "the repo's demo page" : shown(e.default, e.kind))}">Reset</button>` : ""}`;
-  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}">
+  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}" data-live="setting:${esc(e.key)}" data-sort="${place}">
     <div class="about">
       <div class="head"><label class="key${e.label ? " named" : ""}" for="${control == "document" ? "find-" : "set-"}${esc(e.key)}"${e.label ? ` title="${esc(e.key)}"` : ""}>${esc(e.label ?? e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
       <p class="desc">${esc(e.description)}</p>
@@ -117,10 +117,10 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
   </li>`;
 }
 
-/** /admin: the server's settings. */
-export async function settingsPage(platform: Platform, session: Session) {
-  const who = whoOf(session);
-  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+/** The settings /admin shows, in its order, each with what its row needs: the document it names; whether it takes never. */
+async function shownSettings(platform: Platform, session: Session, fresh = false) {
+  if (fresh) platform.directory.config.forget();
+  const entries = await platform.directory.config.list(whoOf(session));
   // A setting naming a document shows it by its address now, linked.
   // The Access page's settings are set there.
   const settings: Shown[] = await Promise.all(
@@ -140,6 +140,12 @@ export async function settingsPage(platform: Platform, session: Session) {
       return false;
     }
   };
+  return settings.map((e, place) => ({ key: e.key, html: settingRow(e, session, takesNever(e.key), place), place }));
+}
+
+/** /admin: the server's settings. */
+export async function settingsPage(platform: Platform, session: Session) {
+  const [rows, users] = await Promise.all([shownSettings(platform, session), platform.directory.users.list(whoOf(session))]);
   return adminPage({
     session,
     title: "Settings",
@@ -147,11 +153,19 @@ export async function settingsPage(platform: Platform, session: Session) {
     body: `
   <section aria-labelledby="settings-head">
     <h2 id="settings-head">Settings</h2>
-    <ol class="rows">
-${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
+    <ol class="rows" data-live-kind="setting" data-live-view="settings" data-live-order="asc" data-live-at="${Date.now()}">
+${rows.map((r) => r.html).join("\n")}
     </ol>
     <datalist id="user-logins">${users.map((u) => `<option value="${esc(u.login)}">`).join("")}</datalist>
   </section>
 <script>${TIMES_SCRIPT}${inlineCall("admin-settings", { chip: chip("LOGIN", false) })}</script>`,
   });
 }
+
+/** The rows of /admin that `keys` name ("setting:<key>"), as they are now, for an open page (server/news/). */
+export const settingsRows: LiveRows = async (platform, session, keys) => {
+  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  for (const r of await shownSettings(platform, session, true))
+    if (`setting:${r.key}` in out) out[`setting:${r.key}`] = { html: r.html, sort: r.place };
+  return out;
+};

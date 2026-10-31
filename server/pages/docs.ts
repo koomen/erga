@@ -1,6 +1,6 @@
 // The documents list page (/docs): a person's documents, latest edit first.
 
-import type { Listed, Session } from "../platform.ts";
+import type { Listed, LiveRow, LiveRows, Session } from "../platform.ts";
 import { asset, assetScripts } from "./assets.ts";
 import { appPage, crumbs, ICON, link, withEdit } from "./chrome.ts";
 import { esc } from "../../shared/html.ts";
@@ -93,3 +93,16 @@ ${newDocMenu((path) => link(path, session), true)}${NEW_DOC_STYLE}
 ${inlineScript("docs", { close: ICON.close, tree: asset("pages-tree.js"), query: session.as ? `?user=${encodeURIComponent(session.as)}` : "", editor: assetScripts("page.js") })}`
   );
 }
+
+/** The rows of /docs that `keys` name ("doc:<id>"), as the person's list has them now (null: off it), for an open list (server/news/). */
+export const docsRows: LiveRows = async (platform, session, keys) => {
+  const ids = keys.map((k) => k.slice("doc:".length));
+  const [docs, hours] = await Promise.all([
+    platform.docs.list(session.login, ids),
+    platform.directory.config.get("delete_docs_after_hours"),
+  ]);
+  const now = Date.now();
+  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  for (const d of docs) out[`doc:${d.id}`] = { html: docRow(session, d, now, hours), sort: d.modified };
+  return out;
+};

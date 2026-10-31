@@ -3,7 +3,7 @@
 import { type Identity, type Person, ROLE_LABEL, type User, USER_ROLES, type UserRole } from "../directory/index.ts";
 import { ICON, inlineCall, TIMES_SCRIPT } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
-import { type Platform, type Session, whoOf } from "../platform.ts";
+import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { avatarHtml } from "./parts.ts";
@@ -44,7 +44,7 @@ function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean)
       ? `${me ? "You're" : "The"} last admin: make someone else an admin first`
       : "";
   const role: UserRole | "none" = u.role == "admin" ? "admin" : (u.access ?? "none");
-  return `  <li data-login="${esc(u.login)}">
+  return `  <li data-login="${esc(u.login)}" data-live="user:${esc(u.login)}" data-sort="${esc(u.login)}">
     <div class="who">${avatarHtml(u.login, u.avatar)}<span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}<span class="added">${esc(`${accountOf(u, ids)} · ${added}`)}</span></div>
     ${joined}
     ${seen}
@@ -54,10 +54,13 @@ function userRow(u: User, ids: Identity[], session: Session, lastAdmin: boolean)
   </li>`;
 }
 
+/** A waiting person's place: after the users (the list's order: by login, then by provider and handle). */
+const personSort = (p: Person) => `~${p.provider}:${p.handle}`;
+
 /** Someone an admin added who hasn't signed in yet: their provider account and its role. */
 function personRow(p: Person): string {
   const label = `${p.provider == "github" ? "GitHub" : "Google"} ${p.handle}`;
-  return `  <li data-person="${p.id}" class="waiting">
+  return `  <li data-person="${p.id}" class="waiting" data-live="person:${p.id}" data-sort="${esc(personSort(p))}">
     <div class="who"><span class="title handle">${esc(p.handle)}</span><span class="added">${p.provider == "github" ? "GitHub" : "Google"} account · hasn't signed in yet · Added by ${esc(byLine(p.addedBy ?? "an admin", p.addedVia))}</span></div>
     <time class="joined never">not yet</time>
     <time class="seen never">never</time>
@@ -88,7 +91,7 @@ export async function usersPage(platform: Platform, session: Session) {
     </form>
     <p class="hint" id="users-hint" role="status"></p>
     <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span>Role</span><span class="c">Deploy</span><span></span></div>
-    <ol class="rows users">
+    <ol class="rows users" data-live-kind="user person" data-live-view="users" data-live-order="asc" data-live-at="${Date.now()}">
 ${users.map((u) => userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1)).join("\n")}
 ${people.map(personRow).join("\n")}
     </ol>
@@ -96,3 +99,20 @@ ${people.map(personRow).join("\n")}
 <script>${TIMES_SCRIPT}${inlineCall("admin-users", { me: session.login.toLowerCase() })}</script>`,
   });
 }
+
+/** The rows of /admin/users that `keys` name ("user:<login>", "person:<id>"), as they are now, for an open page (server/news/). */
+export const usersRows: LiveRows = async (platform, session, keys) => {
+  const who = whoOf(session),
+    dir = platform.directory;
+  const [users, people, ids] = await Promise.all([dir.users.list(who), dir.people.list(who), dir.identities.byLogin()]);
+  const admins = users.filter((u) => u.role == "admin");
+  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  for (const u of users)
+    if (`user:${u.login}` in out)
+      out[`user:${u.login}`] = {
+        html: userRow(u, ids.get(u.login) ?? [], session, u.role == "admin" && admins.length == 1),
+        sort: u.login,
+      };
+  for (const p of people) if (`person:${p.id}` in out) out[`person:${p.id}`] = { html: personRow(p), sort: personSort(p) };
+  return out;
+};

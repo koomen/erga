@@ -424,7 +424,16 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * already, as `by`.
    */
   async record(by: string, changes: SettingChange[], at = Date.now(), via: string | null = null): Promise<void> {
-    if (changes.length) await this.sql.run("INSERT INTO server_config_versions (at, by, changes, via) VALUES (?1, ?2, ?3, ?4)", at, by.toLowerCase(), JSON.stringify(changes), via);
+    if (!changes.length) return;
+    await this.sql.run(
+      "INSERT INTO server_config_versions (at, by, changes, via) VALUES (?1, ?2, ?3, ?4)",
+      at,
+      by.toLowerCase(),
+      JSON.stringify(changes),
+      via
+    );
+    // The open admin pages: the change log's new line, and the sign-in page's cards for a change to sign-in.
+    await this.users.pagesChanged(changes.some((c) => c.signIn) ? ["auth:github", "auth:google"] : []);
   }
 
   /** A key's value as a row's JSON makes it (null: no row), as `entry` reads it: its default when there's none, or it won't parse. */
@@ -482,6 +491,11 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     if (!s)
       throw new ConfigError({ message: `There's no setting "${key}". The settings are: ${Object.keys(this.settings).sort().join(", ")}.` });
     return s;
+  }
+
+  /** Forgets the table remembered: the next read is the database's (an open page asks for a row that just changed elsewhere). */
+  forget(): void {
+    this.rows = null;
   }
 
   /** The table, remembered for a few seconds (it's small, and read on ordinary requests). */
