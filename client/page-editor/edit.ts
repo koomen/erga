@@ -102,12 +102,10 @@ export abstract class EditorEdit extends EditorRender {
     this.state = tr.state;
     if (tr.docChanged) {
       this.mapMarks(tr.changes);
-      this.recordAuthorship(tr.changes, this.config.self ?? null);
       this.applyChanges(tr, oldUnits, oldSrc);
       // A change the page can't show in place (a script or a style changed): the page is made afresh.
       if (this.unshown) this.render();
-      if (this.tracking) this.queueDiff();
-      else this.paintMarks();
+      this.paintMarks();
       this.caretInText();
     }
     this.syncDOMSelection(true);

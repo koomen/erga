@@ -174,7 +174,7 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 }
 /* Its card or menu is open, where the tooltip would be. */
 .icon-btn[aria-expanded="true"][data-tip]::after, .avatar[aria-expanded="true"][data-tip]::before { display: none; }
-/* A control that's on (tracking, paused, editing, its card open) is blue, and keeps the same hover as the others: in the editor and on /admin/ops. */
+/* A control that's on (paused, editing, its card open) is blue, and keeps the same hover as the others: in the editor and on /admin/ops. */
 .chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]) { color: var(--caret); }
 
 .stat {

@@ -61,7 +61,6 @@ export class PageEditor extends EditorInput {
     this.carrySrc(changes, tr.startState.doc, tr.newDoc);
     this.state = tr.state;
     this.mapMarks(changes);
-    this.recordAuthorship(changes, author);
     // (Read first: a change that replaces the block with the caret takes the focus with it, and this puts it back.)
     const hadFocus = this.hasFocus;
     this.keepView(() => this.applyChanges(tr, oldUnits, oldSrc), changes);
@@ -71,14 +70,11 @@ export class PageEditor extends EditorInput {
     if (this.staleSince == null && this.unshown) this.staleSince = oldSrc;
     // The view stays where the reader put it: a change off screen is marked, not followed (reveal finds a peer on request).
     const found = marksFor(changes, gone, this.units, 0, author);
-    if (!this.tracking) {
-      this.marks.push(...found.marks);
-      this.startFade();
-    }
+    this.marks.push(...found.marks);
+    this.startFade();
     if (this.rendering) { this.pendingFlash = found.unmarked; return; }
     if (found.unmarked.length) this.flash(found.unmarked);
-    if (this.tracking) this.queueDiff();
-    else this.paintMarks();
+    this.paintMarks();
   }
 
   /**
@@ -95,8 +91,7 @@ export class PageEditor extends EditorInput {
     const clicked = this.holding && this.pointerSeq != this.heldPointer && this.doc && !this.rendering ? this.readSelection() : null;
     this.state = clicked ? state.update({ selection: changes ? clicked.map(changes) : clicked, annotations: noHistory() }).state : state;
     this.srcOf = { doc: this.state.doc, src };
-    if (this.tracking) this.queueDiff();
-    else this.marks = [];
+    this.marks = [];
     if (!this.doc || this.rendering) { this.render(); return; }
     if (changes) this.keepView(() => this.applyChanges({ changes }, oldUnits, oldSrc), changes);
     if (this.unshown) this.render();
@@ -107,6 +102,6 @@ export class PageEditor extends EditorInput {
     if (this.hasFocus) this.syncDOMSelection(true);
     if (changes) this.changed();
     this.notify({ docChanged: !!changes, selectionSet: true, rendered: false, changes: null, remote: false });
-    if (!this.tracking) this.paintMarks();
+    this.paintMarks();
   }
 }

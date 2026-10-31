@@ -18,7 +18,7 @@ test("a disk edit reaches the page, patched in place, with the change marked exa
   expect(m.added.join("|")).toBe("went");
   expect(m.gone.join("|")).toBe("Edited on diskgo");
   expect(await ed.textOf("figcaption")).toBe("Where the leads went.");
-  // With tracking off, the marks fade: 3.2 s of the editor's time.
+  // The marks fade: 3.2 s of the editor's time.
   await expect.poll(async () => { const m = await ed.marks(); return m.added.length + m.gone.length; }, { timeout: 3200 * TIMESCALE + 3000 }).toBe(0);
 });
 

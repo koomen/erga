@@ -9,8 +9,8 @@ test("on a phone the tree fits the screen", async ({ tab }) => {
   await page.setViewportSize({ width: 390, height: 760 });
   const doc = await multi(await servers.main());
   await openTreeEditor(tab, doc.base);
-  // Near its left edge: at 390 px the controls on the right (pause, track changes) cover the title's middle (a bug,
-  // client/styles/editor.css's .nav-title max-width leaves 236 px for them, and they take about 320).
+  // Near its left edge: at 390 px the controls on the right (pause, share, settings) cover the title's middle (a bug,
+  // client/styles/editor.css's .nav-title max-width leaves 236 px for them, and they take more).
   const r = await page.evaluate(`(() => { const r = document.getElementById("doc-title").getBoundingClientRect(); return { x: r.left + 8, y: r.top + r.height / 2 }; })()`) as { x: number; y: number };
   await page.mouse.click(r.x, r.y);
   await until(() => page.evaluate(`!document.getElementById("pages").hidden && document.querySelectorAll("#pages .et-row[data-path]").length >= 4`), 5000, "the tree shows");

@@ -72,7 +72,6 @@ class Keys extends EditorInput {
   syncDOMSelection() {}
   protected scrollCaretIntoView() {}
   protected mapMarks() {}
-  recordAuthorship() {}
   protected paintMarks() {}
   protected notify() {}
   render() {}

@@ -71,8 +71,6 @@ export interface PageEditorConfig {
    * caller adds them to the document's files, then puts them on the page (insertFiles), or says why not (dropError).
    */
   onDropFiles?: (files: File[], at: number, point: { x: number; y: number }) => void;
-  /** Whoever is using this editor, for the marks on their own edits while tracking. */
-  self?: MarkAuthor;
   /** The page is paused (it loaded again while it was: setPaused). */
   paused?: boolean;
   /** Checks after each change that the page shows its HTML, and logs a difference as an error (the tests: check.ts). */
