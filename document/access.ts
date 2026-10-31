@@ -24,6 +24,9 @@ const AskerHeader = Schema.fromJsonString(
 );
 const askerOf = Schema.decodeUnknownOption(AskerHeader);
 
+/** Who a request is from, as the app said (x-erga-who); null if it said no one. */
+export const askerFrom = (headers: Headers): Asker | null => Option.getOrNull(askerOf(headers.get("x-erga-who") ?? "null")) as Asker | null;
+
 /** One person's role, as the document keeps it. */
 export interface PersonRole {
   login: string;
@@ -83,7 +86,7 @@ export class DocumentAccess {
       if (read && url.pathname.startsWith("/doc/") && !headers.get("upgrade")) return new Request(request, { headers });
       return new Response("Not allowed", { status: 403 });
     }
-    const who = Option.getOrNull(askerOf(headers.get("x-erga-who") ?? "null")) as Asker | null;
+    const who = askerFrom(headers);
     if (!who) return new Response("Sign in first", { status: 401 });
     const info = await this.o.info();
     if (!info) return new Response("No such document", { status: 404 });

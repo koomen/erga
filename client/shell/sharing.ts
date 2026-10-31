@@ -154,7 +154,12 @@ Once you've read the guide, await further instructions.`;
     if (!ok) { tellSharing(url); return; }
     showCopied(copyLink, closeAfterCopy);
   });
-  return { toggleSharing };
+  /** Its sharing changed (anyone's doing: another tab, an agent): an open card reads it again. */
+  function accessChanged() {
+    if (sharing.hidden || !shareAt) return;
+    shareCall().then(renderSharing, () => {});
+  }
+  return { toggleSharing, accessChanged };
 }
 
 export type Sharing = ReturnType<typeof mountSharing>;
