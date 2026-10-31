@@ -40,11 +40,16 @@ export function crumbs(session: Session | null, trail: Crumb[], here = "span", h
 /** The breadcrumbs' type (Inter, as the editor's), for a page that shows them (viewCrumbs) but has none of the app's style: its rules only, which wait for nothing. */
 export const crumbsFont = (session: Session | null) => session && !session.agent ? fontTags() : "";
 
-export function viewCrumbs(session: Session | null, title: string | null): string {
+export function viewCrumbs(session: Session | null, title: string | null, project = false): string {
   if (!session || session.agent) return "";
   const docs = session.test ? "" : `<a class="erga-crumb" href="${esc(link("/docs", session))}">Documents</a>`;
-  const here = title == null ? "" : `${docs}<span class="erga-here" aria-current="page"><span>${esc(title)}</span></span>`;
-  return `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link("/", session))}"><span>${WORDMARK}</span></a>${here}</nav>`;
+  // A project's crumb opens its tree (the card after the crumbs: client/inline/viewer-tree.ts), as the editor's does.
+  const crumb = project
+    ? `<button type="button" class="erga-here erga-tree-btn" aria-expanded="false" aria-controls="erga-tree" aria-label="${esc(title ?? "")}: its pages"><span>${esc(title ?? "")}</span><svg class="erga-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></button>`
+    : `<span class="erga-here" aria-current="page"><span>${esc(title ?? "")}</span></span>`;
+  const here = title == null ? "" : docs + crumb;
+  const card = project && title != null ? `<div id="erga-tree" class="erga-tree-card" role="dialog" aria-label="Pages" hidden></div>` : "";
+  return `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link("/", session))}"><span>${WORDMARK}</span></a>${here}</nav>${card}`;
 }
 
 /** Every <time datetime> in the reader's own language and zone (client/inline/times.ts): a statement, inside a page's script. */

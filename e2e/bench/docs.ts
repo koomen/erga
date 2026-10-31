@@ -22,8 +22,12 @@ export function lineLength(html: string): number {
   return m ? m[1].replace(/<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x").length : -1;
 }
 
-/** A document kind: its files. */
-export interface DocKind { name: string; files: Record<string, string> }
+/** A document kind: its files, and whether it is a project (pages) rather than a document (one page). */
+export interface DocKind {
+  name: string;
+  files: Record<string, string>;
+  project?: boolean;
+}
 
 const STYLE = `body { font: 17px/1.6 Georgia, serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
 h1 { font: 700 2.4rem/1.15 system-ui, sans-serif; letter-spacing: -.02em; } h2 { font: 600 1.4rem/1.2 system-ui, sans-serif; margin-top: 2.2em; }
@@ -48,15 +52,15 @@ const section = (i: number) => `<h2>Section ${i + 1}</h2>
 <figure><svg viewBox="0 0 400 120"><rect x="10" y="10" width="380" height="100" rx="12" fill="#e8eefc"/><text x="200" y="68" text-anchor="middle" font-size="22">Diagram ${i + 1}</text></svg></figure>` : ""}
 <p><button data-count>Click me</button></p>`;
 
-/** A page with a stylesheet, a script and `sections` sections of text. */
-const page = (sections: number) => `<!doctype html>
+/** A page with a stylesheet, a script and `sections` sections of text (from section `from` on: each page's own text). */
+const page = (sections: number, from = 0) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A field guide to loading fast</title><link rel="stylesheet" href="style.css"></head>
 <body>
 <h1 elementtiming="erga-bench">${MARK}</h1>
 <p data-bench="type">${LINE}</p>
 <p class="card"><b>Summary.</b> ${PARA}</p>
-${Array.from({ length: sections }, (_, i) => section(i)).join("\n")}
+${Array.from({ length: sections }, (_, i) => section(from + i)).join("\n")}
 <script src="widget.js"></script>
 </body></html>
 `;
@@ -65,6 +69,17 @@ ${Array.from({ length: sections }, (_, i) => section(i)).join("\n")}
 export const SMALL: DocKind = { name: "small", files: { "style.css": STYLE, "widget.js": SCRIPT, "index.html": page(12) } };
 /** About 200 kB of HTML. */
 export const LARGE: DocKind = { name: "large", files: { "style.css": STYLE, "widget.js": SCRIPT, "index.html": page(256) } };
+/** A project of 30 pages of about 10 kB each: about 300 kB of text, as Pete's largest (erga-designs). Its home page is the small one. */
+export const PROJECT: DocKind = {
+  name: "project",
+  project: true,
+  files: {
+    "style.css": STYLE,
+    "widget.js": SCRIPT,
+    ...Object.fromEntries(Array.from({ length: 29 }, (_, i) => [`notes/page-${i + 1}.html`, page(12, (i + 1) * 12)])),
+    "index.html": page(12),
+  },
+};
 
 // ---------------------------------------------------------------- the server
 
@@ -75,9 +90,13 @@ const newId = () => "b" + Array.from(crypto.getRandomValues(new Uint8Array(7)), 
 const stored = (root: string, id: string, path: string) => `${root}/d/${id}/api/stored/${path}`;
 
 /** Makes a document (POST /new): its id and its address (no ?edit). `from`: a copy of that document. */
-async function make(root: string, from?: string): Promise<{ id: string; address: string }> {
+async function make(root: string, from?: string, project = false): Promise<{ id: string; address: string }> {
   const id = newId();
-  const r = await fetch(`${root}/new?id=${id}${from ? `&from=${from}` : ""}`, { method: "POST", headers: { Origin: root }, redirect: "manual" });
+  const r = await fetch(`${root}/new?id=${id}${from ? `&from=${from}` : ""}${project ? "&kind=project" : ""}`, {
+    method: "POST",
+    headers: { Origin: root },
+    redirect: "manual",
+  });
   const at = r.headers.get("location");
   if (r.status != 302 || !at) throw new Error(`/new answered ${r.status}: ${(await r.text()).slice(0, 300)}`);
   return { id, address: at.replace(/[?&]edit=?$/, "") };
@@ -95,7 +114,7 @@ export class Docs {
   private source(kind: DocKind): Promise<string> {
     let p = this.sources.get(kind.name);
     if (!p) this.sources.set(kind.name, p = (async () => {
-      const { id } = await make(this.root);
+          const { id } = await make(this.root, undefined, kind.project);
       // index.html last: the page's files are there when it changes.
       for (const [path, text] of Object.entries(kind.files).sort(([a], [b]) => (a == "index.html" ? 1 : b == "index.html" ? -1 : 0))) {
         const r = await fetch(stored(this.root, id, path), { method: "PUT", body: text });

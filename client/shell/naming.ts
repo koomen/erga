@@ -116,10 +116,10 @@ export function mountNaming(shell: Shell) {
   });
 
 
-  // The document's pages: the title opens them, as a tree (document/pages.ts, built on
-  // its own as pages-tree.js, so viewing never pays for it). Its first row is
-  // the document itself, whose pencil renames it (the naming card above); the
-  // rest are its other pages, folders and files. Pages open in the editor; the
+  // The document's pages: the title opens them, as a tree (pages-tree.ts, built on
+  // its own as pages-tree.js, so viewing never pays for it), the same tree as on
+  // Documents and in the viewer. Its first row is index.html, whose pencil renames
+  // the document (the naming card above); the rest are its folders, pages and files. Pages open in the editor; the
   // tree follows changes from other tabs and agents (a "tree" event, or a file
   // coming or going in the room) and the titles of the pages as they're edited.
   // So the title opens it at once, the editor loads the script and mounts the
@@ -150,8 +150,17 @@ export function mountNaming(shell: Shell) {
       if (tree) return tree;
       slot.replaceChildren();
       return (tree = t.mountTree(slot, {
-        id: shell.docName!.id, base: shell.docName!.address, editing: true, query: shell.as, showRoot: true, label: "Pages",
-        rootTitle: shell.docName!.title, titleOf: pageTitle, current: shell.info!.path, hasRelativeLinks, initial: kept(), onChange: keep,
+        id: shell.docName!.id,
+        base: shell.docName!.address,
+        editing: true,
+        query: shell.as,
+        label: "Pages",
+        rootTitle: shell.docName!.title,
+        titleOf: pageTitle,
+        current: shell.info!.path,
+        hasRelativeLinks,
+        initial: kept(),
+        onChange: keep,
         onRenameRoot: () => toggleNaming(true),
         navigate: (url, o) => { if (o.replace || !o.path || !shell.swapPage(o.path)) shell.goTo(url, o.replace); },
       }));

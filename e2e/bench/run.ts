@@ -21,7 +21,8 @@
 //   --waterfall       prints the requests of each case's last run
 //   --headed          shows the browser
 //
-// The cases, for a small document (10 kB of HTML) and a large one (200 kB):
+// The cases, for a small document (10 kB of HTML) and a large one (200 kB), and
+// "project editor cold" for a project of 30 such small pages (300 kB of text):
 //
 //   viewer cold   the document's address in a new browser profile (nothing
 //                 cached), the document a new copy (its Durable Object has its
@@ -43,7 +44,7 @@ import { dirname, join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { ROOT } from "../helpers/env";
 import { startServer, type Server } from "../helpers/server";
-import { Docs, LARGE, SMALL, type DocKind } from "./docs";
+import { Docs, LARGE, PROJECT, SMALL, type DocKind } from "./docs";
 import { keystrokes, load, Tab, type Keys, type Load } from "./measure";
 import { startProxy, type Hit } from "./proxy";
 import { compare, summarize, table, type Results } from "./report";
@@ -126,18 +127,33 @@ async function editor(kind: DocKind, keep: boolean) {
   } finally { await tab.close(); }
 }
 
+/** The editor, cold only, on a new copy of a project: every page's text comes with the room. */
+async function editorCold(kind: DocKind, keep: boolean) {
+  const doc = await docs.fresh(kind);
+  const tab = await Tab.open(newContext, proxy);
+  try {
+    const cold = await load(tab, proxy, docs, { id: doc.id, url: `${proxy.root}${doc.address}?edit` }, { edit: true });
+    if (keep) record(`${kind.name} editor cold`, cold);
+  } finally {
+    await tab.close();
+  }
+}
+
 let failed = false;
 try {
   const kinds = [SMALL, LARGE].filter((k) => wanted(`${k.name} viewer`) || wanted(`${k.name} editor`) || wanted(`${k.name} keys`));
   // Once, not counted: the dev server compiles the Worker's modules on first use.
   log("warming the server up...");
   for (const kind of kinds) { await viewer(kind, false); await editor(kind, false); }
+  const project = wanted("project editor");
+  if (project) await editorCold(PROJECT, false);
   for (let i = 0; i < RUNS; i++) {
     log(`run ${i + 1} of ${RUNS}...`);
     for (const kind of kinds) {
       if (wanted(`${kind.name} viewer`)) await viewer(kind, true);
       if (wanted(`${kind.name} editor`) || wanted(`${kind.name} keys`)) await editor(kind, true);
     }
+    if (project) await editorCold(PROJECT, true);
   }
 } catch (e) {
   failed = true;

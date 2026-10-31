@@ -1,10 +1,10 @@
-// The root row's pencil renames the document; Escape closes the tree, back on the title ("the editor").
+// index.html's pencil, in the editor, renames the document; Escape closes the tree, back on the title ("the editor").
 import { expect, servers, test } from "../../helpers/fixtures";
 import { act, multi, openCard, openTreeEditor, press, js } from "./tree";
 
 await servers.main();
 
-test("the root row's pencil opens the title and address card", async ({ tab }) => {
+test("index.html's pencil opens the title and address card", async ({ tab }) => {
   const page = tab.page;
   const doc = await multi(await servers.main());
   await openTreeEditor(tab, doc.base);

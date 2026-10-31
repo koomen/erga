@@ -145,6 +145,9 @@ Found a new trap? Write it here, in the same change.
   and a changed row is a new element. Attach a row's listeners in its
   `wire(row)` (client/common/live-rows.ts), never in a loop over the rows at
   load: a row that comes later would have none.
+- Test files share a dev server, so another file's new document reaches an
+  open /docs page as a live row, and the rows can change under a test. Read a
+  row's place with `until`, not once.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

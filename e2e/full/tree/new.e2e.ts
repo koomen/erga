@@ -18,12 +18,14 @@ test("New folder (the foot) asks for its name in place and makes it; its + menu'
   await act(page, "notes", "add");
   await menuItem(page, "New page");
   await type(page, "Ideas");
-  // No .html anywhere: they're pages, not files.
-  expect(await js(page, `document.getElementById("pages").textContent`)).not.toContain(".html");
+  // No .html anywhere but index.html's own row: they're pages, not files.
+  expect(
+    await js(page, `[...document.querySelectorAll("#pages .et-row:not([data-path='index.html'])")].map((r) => r.textContent).join(" ")`)
+  ).not.toContain(".html");
   await press(page, "Enter");
   await until(async () => (await doc.tree()).includes("notes/ideas.html"), 5000, "the page is made: its name as an address, then .html");
   // Inside the folder, which opened, by its name.
-  await expect.poll(async () => (await rows(page)).some((x) => x[0] == "notes/ideas.html" && x[1] == "Ideas" && x[2] == 3)).toBe(true);
+  await expect.poll(async () => (await rows(page)).some((x) => x[0] == "notes/ideas.html" && x[1] == "Ideas" && x[2] == 2)).toBe(true);
 });
 
 test("a taken name says so, in place, before it goes anywhere; Escape drops it", async ({ tab }) => {
