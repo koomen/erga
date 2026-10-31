@@ -5,11 +5,11 @@
 //
 // | Block | Enter | Backspace at its start | Tab, Shift+Tab |
 // |---|---|---|---|
-// | paragraph | splits it (edit.ts) | joins it to the block before (edit.ts) | indents it one step, or back |
+// | paragraph | splits it (rules.ts) | joins it to the block before (rules.ts) | indents it one step, or back |
 // | heading | splits it; at the end, a paragraph after | a paragraph (the next Backspace joins) | indents it |
 // | list item | lists.ts | the list's first: a paragraph; a later one joins the item above | lists.ts |
 // | quote's paragraph | empty: leaves the quote | first in the quote: leaves the quote | indents it |
-// | code block | a new line; at the end, one that shows | joins | two spaces (edit.ts) |
+// | code block | a new line; at the end, one that shows | joins | two spaces (rules.ts) |
 // | summary | at the end: a paragraph in the open details, or after the closed one | joins | nothing |
 
 import * as M from "../../shared/manuscript";
@@ -79,7 +79,7 @@ function unquote(src: string, p: M.ElementNode, quote: M.ElementNode): Change[] 
 /**
  * Backspace at the start of `u`'s text: a quote's first paragraph leaves the quote; a heading, and the first item of a
  * list at the top level, become a paragraph (Pete's decision, as Notion and Typora do). The next Backspace joins it.
- * Null for a join (edit.ts, join).
+ * Null for a join (rules.ts, joinBlocks).
  */
 export function backspaceBlock(src: string, u: M.Unit, pos: number): ListEdit | null {
   const q = quoteOf(u);
@@ -101,7 +101,7 @@ export function backspaceBlock(src: string, u: M.Unit, pos: number): ListEdit | 
 }
 
 /**
- * Enter at `pos` in `u`, before the split that any block makes (edit.ts, enterAt): an empty paragraph of a quote leaves
+ * Enter at `pos` in `u`, before the split that any block makes (rules.ts, enterAt): an empty paragraph of a quote leaves
  * the quote; in a code block, a new line (at the end of its text, with a <br> that holds the new line open: a <pre>
  * shows no last line break); at the end of a summary, a paragraph in its details if they are `open` on the page, else
  * after them (a details has one summary); elsewhere in a summary, a line break.
