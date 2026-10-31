@@ -443,8 +443,7 @@ function mount(host: SettingsHost): Settings {
     const t = e.target as Node;
     if (!pop.hidden && !contains(t) && !host.anchor.contains(t)) toggle(false);
   }, true);
-  // A click into the page (another document, out of reach of pointerdown here) closes it too.
-  window.addEventListener("blur", () => setTimeout(() => { if (!pop.hidden && document.activeElement?.tagName == "IFRAME") toggle(false); }, 0));
+  // A click into the page (another document, out of reach of pointerdown here) closes it too: the shell's onPointer (main.ts).
   window.addEventListener("resize", () => { if (!pop.hidden) position(); });
 
   const pending: Record<string, number> = {};
