@@ -59,7 +59,7 @@ export function mountPeople(shell: Shell) {
     cursorQueued = true;
     requestAnimationFrame(() => {
       cursorQueued = false;
-      const sel = shell.currentState().selection.main;
+      const sel = shell.currentSelection().main;
       shell.collab.setCursor(sel.anchor, sel.head);
     });
   }

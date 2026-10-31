@@ -1,11 +1,12 @@
 // The shell's hold on the page editor, which runs in the page, in the shell's
-// frame on the document's own origin (frame.ts; why, in bridge.ts). It keeps the shell's
-// copy of the text (the room's, exactly) and numbers every change, takes the
-// frame's edits when they fit, and mirrors the page's state for the shell's
-// controls. Everything the frame sends is checked: the page itself could
+// frame on the document's own origin (frame.ts; why, in bridge.ts). It keeps no
+// text of its own: the text is the tab's replica of the room's (collab.ts,
+// `room`). It numbers every change, checks each of the frame's edits against the
+// replica (the replica takes it: onLocal), and mirrors the page's state for the
+// shell's controls. Everything the frame sends is checked: the page itself could
 // have sent it.
 
-import { EditorState, Transaction, type ChangeSet, type Extension, type StateField } from "@codemirror/state";
+import { EditorSelection, EditorState, Transaction, type ChangeSet, type Extension, type StateField } from "@codemirror/state";
 import {
   Authority,
   changesFrom,
@@ -30,12 +31,13 @@ export interface RemotePageConfig {
   origin: string;
   /** The address of the document's files there (with the token that opens them): another of its pages is at its path under it. */
   files: string;
-  text: string;
+  /** The page's text: the tab's replica of the room's (collab.ts), which takes each edit the frame makes (onLocal). */
+  room: { text(): string; length(): number };
   self: MarkAuthor;
   tracking: boolean;
-  /** An edit made on the page, accepted: the shell's text has it now. */
+  /** An edit made on the page, accepted: the replica takes it now. */
   onLocal: (changes: ChangeSet) => void;
-  /** The page's caret moved (the shell's state has the new selection). */
+  /** The page's caret moved (`selection` has it). */
   onSelection: () => void;
   /** The page's state changed (`rendered`: it was drawn afresh). */
   onUpdate: (rendered: boolean) => void;
@@ -75,8 +77,8 @@ const EMPTY: Snapshot = {
 };
 
 export class RemotePage {
-  /** The text and the page's selection, as the shell (and the room) has them. */
-  state: EditorState;
+  /** The page's selection, in the room's text. */
+  selection: EditorSelection;
   private readonly frame: HTMLIFrameElement;
   private readonly authority = new Authority();
   private snapshot: Snapshot = EMPTY;
@@ -103,8 +105,8 @@ export class RemotePage {
   constructor(private readonly config: RemotePageConfig) {
     this.frame = config.frame;
     this.tracking = config.tracking;
-    const sel = config.selection && selectionFrom(config.selection.anchor, config.selection.head, config.text.length);
-    this.state = EditorState.create({ doc: config.text, ...(sel ? { selection: sel } : {}) });
+    const sel = config.selection && selectionFrom(config.selection.anchor, config.selection.head, config.room.length());
+    this.selection = sel ?? EditorSelection.single(0);
     window.addEventListener("message", (e) => {
       if (e.source != this.frame.contentWindow || e.origin != config.origin || typeof e.data?.type != "string") return;
       // A page in the frame (again: it loaded again, or went to another page): its editor, if in the editor.
@@ -140,15 +142,15 @@ export class RemotePage {
   }
 
   /**
-   * Another of the document's pages, in place of this one (the shell went to it without a reload): the shell's state
-   * is its text from now on, and the frame goes to it (its address under the document's files, in place of this one's:
+   * Another of the document's pages, in place of this one (the shell went to it without a reload; the replica is its
+   * text from now on: collab.ts, setPath), and the frame goes to it (its address under the document's files, in place of this one's:
    * no new entry in the tab's history), whose editor starts from that state, with an undo history of its own. Its
    * numbering moves on by one, so an edit of the last page still on its way from the frame never fits the new one.
    */
-  load(page: { path: string; text: string }): void {
+  load(path: string): void {
     const c = this.config;
     c.scroll = undefined;
-    this.state = EditorState.create({ doc: page.text });
+    this.selection = EditorSelection.single(0);
     this.authority.reset(this.authority.version + 1);
     this.snapshot = EMPTY;
     this.detached = false;
@@ -157,7 +159,7 @@ export class RemotePage {
     this.ready = false;
     // What was queued for the last page is of no use.
     this.queue = [];
-    this.frame.contentWindow?.location.replace(c.files + page.path.split("/").map(encodeURIComponent).join("/"));
+    this.frame.contentWindow?.location.replace(c.files + path.split("/").map(encodeURIComponent).join("/"));
   }
 
   // ------------------------------------------------------------ messages
@@ -185,14 +187,14 @@ export class RemotePage {
     const c = this.config;
     switch (m.type) {
       case "ready": {
-        // A frame that (re)loads starts from the shell's state (once: it may say so twice.
+        // A frame that (re)loads starts from the room's text and the page's selection (once: it may say so twice).
         if (this.ready) return;
         this.ready = true;
         this.authority.reset();
         const { __ergaTimescale: timescale, __ergaCheck: check } = globalThis as { __ergaTimescale?: number; __ergaCheck?: boolean };
         this.post({
           type: "init",
-          state: this.state.toJSON(),
+          state: this.state().toJSON(),
           version: this.authority.version,
           self: c.self,
           tracking: this.tracking,
@@ -226,10 +228,10 @@ export class RemotePage {
       }
       case "push": {
         if (this.detached || m.version != this.authority.version) { this.post({ type: "reject" }); return; }
-        const changes = changesFrom(m.changes, this.state.doc.length);
-        // An edit that doesn't fit isn't one the editor made: start the frame again from the shell's text.
+        const changes = changesFrom(m.changes, c.room.length());
+        // An edit that doesn't fit isn't one the editor made: start the frame again from the room's text.
         if (!changes) { this.resync(); return; }
-        this.state = this.state.update({ changes }).state;
+        this.selection = this.selection.map(changes);
         this.authority.record(changes);
         this.post({ type: "ack" });
         c.onLocal(changes);
@@ -237,8 +239,11 @@ export class RemotePage {
       }
       case "selection": {
         if (this.detached || m.version != this.authority.version) return;
-        const sel = selectionFrom(m.anchor, m.head, this.state.doc.length);
-        if (sel) { this.state = this.state.update({ selection: sel }).state; c.onSelection(); }
+        const sel = selectionFrom(m.anchor, m.head, c.room.length());
+        if (sel) {
+          this.selection = sel;
+          c.onSelection();
+        }
         return;
       }
       case "update":
@@ -331,22 +336,27 @@ export class RemotePage {
     sink.focus({ preventScroll: true });
   }
 
-  /** Starts the frame afresh from the shell's text (it loses its undo history, which no longer fits). */
+  /** Starts the frame afresh from the room's text (it loses its undo history, which no longer fits). */
   private resync(): void {
     console.warn("page editor: the frame is out of step with the room; resyncing");
     this.authority.reset();
-    this.post({ type: "attach", state: this.state.toJSON(), version: this.authority.version });
+    this.post({ type: "attach", state: this.state().toJSON(), version: this.authority.version });
+  }
+
+  /** The room's text and the page's selection, as a state for the frame (made only for a start: the text whole). */
+  private state(): EditorState {
+    return EditorState.create({ doc: this.config.room.text(), selection: this.selection });
   }
 
   // ------------------------------------------------------------ the text
 
-  /** Someone else's edit, from the room: the shell's copy takes it now, the page as soon as it can. */
+  /** Someone else's edit, which the replica has taken: the page takes it as soon as it can. */
   applyExternal(changes: ChangeSet, author: MarkAuthor | null): void {
     // Set aside, the source view has the text; the frame gets it back whole (`attach`).
     if (changes.empty || this.detached) return;
-    this.state = this.state.update({ changes }).state;
+    this.selection = this.selection.map(changes);
     this.authority.record(changes);
-    this.post({ type: "external", changes: changes.toJSON(), author, length: this.state.doc.length });
+    this.post({ type: "external", changes: changes.toJSON(), author, length: this.config.room.length() });
   }
 
   /** An edit the page didn't make (the source view's), for the change marks. */
@@ -357,32 +367,44 @@ export class RemotePage {
   /**
    * Hands the text to the source view: the frame's state, undo history and
    * all, once its edits are in, made with the source view's extensions and its history's field (source-view.ts, which
-   * loads the first time the view opens). Until `attach`, the shell's text is the source view's.
+   * loads the first time the view opens). Until `attach`, the source view edits the replica.
    */
   async detach(source: SourceState): Promise<{ state: EditorState }> {
     const id = this.nextId++;
     const reply = await this.request<Extract<FromFrame, { type: "detached" }>>({ type: "detach", id }, 3000);
     this.detached = true;
-    const fallback = () => EditorState.create({ doc: this.state.doc, selection: this.state.selection, extensions: source.extensions });
+    const room = this.config.room.text();
+    const fallback = () => EditorState.create({ doc: room, selection: this.selection, extensions: source.extensions });
     if (!reply) return { state: fallback() };
     let state: EditorState;
     try { state = EditorState.fromJSON(reply.state, { extensions: source.extensions }, { history: source.history }); } catch { return { state: fallback() }; }
     // Anything the frame hadn't seen yet when it answered.
     const missed = typeof reply.version == "number" ? this.authority.since(reply.version) : null;
-    if (missed) for (const changes of missed) {
-      if (changes.length != state.doc.length) { state = fallback(); break; }
-      state = state.update({ changes, annotations: Transaction.addToHistory.of(false) }).state;
-    }
-    if (!missed || !state.doc.eq(this.state.doc)) {
-      // Out of step: keep the history if the text can be brought in line, else start from the shell's text.
-      try { state = state.update({ changes: changesBetween(state.doc.toString(), this.state.doc.toString()), annotations: Transaction.addToHistory.of(false) }).state; } catch { state = fallback(); }
+    if (missed)
+      for (const changes of missed) {
+        if (changes.length != state.doc.length) {
+          state = fallback();
+          break;
+        }
+        state = state.update({ changes, annotations: Transaction.addToHistory.of(false) }).state;
+      }
+    if (!missed || state.doc.toString() != room) {
+      // Out of step: keep the history if the text can be brought in line, else start from the room's text.
+      try {
+        state = state.update({
+          changes: changesBetween(state.doc.toString(), room),
+          annotations: Transaction.addToHistory.of(false),
+        }).state;
+      } catch {
+        state = fallback();
+      }
     }
     return { state };
   }
 
   /** Back from the source view: the page carries on from its state (`history`: the field its undo history is in). */
   attach(state: EditorState, history: StateField<unknown>): void {
-    this.state = EditorState.create({ doc: state.doc, selection: state.selection });
+    this.selection = state.selection;
     this.detached = false;
     this.authority.reset();
     this.post({ type: "attach", state: stateJSON(state, history), version: this.authority.version });
@@ -467,7 +489,7 @@ export class RemotePage {
 
   /** The page's text as this tab has it now. */
   source(): string {
-    return this.state.doc.toString();
+    return this.config.room.text();
   }
 
   /**
@@ -480,7 +502,7 @@ export class RemotePage {
         type: "capture",
         id: this.nextId++,
         req,
-        ...(text != null || this.detached ? { text: text ?? this.state.doc.toString() } : {}),
+        ...(text != null || this.detached ? { text: text ?? this.config.room.text() } : {}),
         ...(dir != null ? { dir } : {}),
       },
       viewWait(req)
