@@ -25,6 +25,8 @@ export interface LiveList {
 
 const lists = new Map<HTMLElement, LiveList>();
 const pending = new Set<string>();
+/** The rows the page's own change asked for (refresh): they come in even where its field has the focus. */
+const own = new Set<string>();
 let since = 0,
   socket: WebSocket | null = null,
   tries = 0,
@@ -106,10 +108,15 @@ function connect() {
 
 /**
  * The page's own change: these rows as they are now, asked for at once (not waiting for the socket, nor needing it).
- * Settles once they're in (or waiting: someone is typing in one).
+ * Settles once they're in. Each comes in even where its field has the focus: the field holds what was just saved (a
+ * document chosen in a picker, with the focus still in its box), and the focus goes to the same field in the new row.
  */
 export function refresh(...keys: string[]): Promise<void> {
-  for (const k of keys) if (listOf(k)) pending.add(k);
+  for (const k of keys)
+    if (listOf(k)) {
+      pending.add(k);
+      own.add(k);
+    }
   return ask();
 }
 
@@ -190,10 +197,14 @@ const ahead = (el: HTMLElement, r: HTMLElement, s: number | string) => {
   return el.dataset.liveOrder == "asc" ? c < 0 : c > 0;
 };
 
-/** Puts `key`'s row in `el` as it is now, in its place; null takes it out. False: not now (someone is typing in it). */
+/**
+ * Puts `key`'s row in `el` as it is now, in its place; null takes it out. False: not now (someone is typing in it, and
+ * it isn't the page's own change).
+ */
 function put(el: HTMLElement, o: LiveList, key: string, row: Row): boolean {
   const old = el.querySelector<HTMLElement>(`:scope > [data-live="${CSS.escape(key)}"]`);
-  if (old && typing(old)) return false;
+  if (old && typing(old) && !own.has(key)) return false;
+  own.delete(key);
   if (!row) {
     if (old) {
       o.removing?.(old);
