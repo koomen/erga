@@ -98,7 +98,8 @@ ${owner}'s documents too, as they could work with them themselves:
 
 - list_documents, create_document, delete_document, document_access, share_document,
   rename_document and update_files: the documents list (/docs) and sharing. whoami says
-  who you act for.
+  who you act for. site_pages lists the pages of this Erga (not documents) they may open,
+  as the quick search (⌘K) finds them.
 - Inside a document, as the editor has them: get_title and rename_document (its name),
   list_pages, ls, new_page, mkdir, mv, cp, rm, make_project and make_document (its pages,
   files and kind; cp and mv with to_document copy or move into another document),

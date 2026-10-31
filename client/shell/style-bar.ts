@@ -7,7 +7,7 @@ export function mountStyleBar(shell: Shell) {
 
   // Select text in the page and a small bar floats above it: bold, italic,
   // code, link, clear formatting. Buttons that can't apply say why (title), and so does a click.
-  // The link button (⌘K) turns it into the link bar: the link's text, its address, where it opens. A caret
+  // The link button (⌘⇧K) turns it into the link bar: the link's text, its address, where it opens. A caret
   // in a link (a click in one) shows the link bar too, with the focus left in the page, so typing goes on.
   const fmt = $("fmt");
   const fmtPanes = $("fmt-panes"), fmtStyle = $("fmt-style"), fmtLinkPane = $("fmt-link");
@@ -119,7 +119,7 @@ export function mountStyleBar(shell: Shell) {
     linkRemove.hidden = !link;
     setLinkTab(!link?.self);
   }
-  /** The link button, or ⌘K: the link bar for the selection, or the focus to the address of the caret's link. */
+  /** The link button, or ⌘⇧K: the link bar for the selection, or the focus to the address of the caret's link. */
   function openLink() {
     if (linking) { linkUrl.focus(); linkUrl.select(); return; }
     const why = shell.page.styleBlocker();

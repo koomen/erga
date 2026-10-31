@@ -61,6 +61,9 @@ const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }
   { key: "ops", label: "Ops", path: "/admin/ops", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="6" rx="2"/><rect x="3.5" y="13.5" width="17" height="6" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/></svg>` },
 ];
 
+/** Each section's name and address, for the quick search (server/operations/pages.ts). */
+export const ADMIN_PAGES = SECTIONS.map(({ label, path }) => ({ label, path }));
+
 /** The sidebar: the toggle and a link for each section, each at the address `hrefOf` gives (another host's, for the control Worker). */
 export function adminSidebar(here: AdminSection | undefined, hrefOf: (path: string) => string): string {
   const links = SECTIONS.map((s) => `<li><a href="${esc(hrefOf(s.path))}"${s.key == here ? ` aria-current="page"` : ""}>${s.icon}<span class="label">${s.label}</span></a></li>`).join("");
