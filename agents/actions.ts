@@ -93,6 +93,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "DELETE /api/agent/conversation", domain: "none", action: "A new conversation with your agent", exempt: PANEL },
   { route: "GET /api/agent/prefs", domain: "none", action: "Your agent's panel, as you left it", exempt: PANEL },
   { route: "PUT /api/agent/prefs", domain: "none", action: "Keep your agent's panel layout", exempt: PANEL },
+  { route: "POST /api/agent/keys", domain: "none", action: "Add or replace your own API key (Settings, Agent)", exempt: SECRET },
 
   // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys. Its actions are
   // operations (control/operations.ts), at the end with the others; these are the routes that stay routes.

@@ -509,7 +509,7 @@ const claimsOf = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(
  * another server's data it moves to: the copy's rows (the other server's,
  * encrypted with its FACTORY_KEY, so they don't open here) go, and the rows of
  * the copy it was on (`from`; none on its first copy) come in. Without this,
- * each new copy would drop staging's Anthropic key, and its agents would stop.
+ * each new copy would drop staging's Anthropic key, and its agents would stop. The same for each person's own keys.
  */
 export async function ownCredentials(cf: Cloudflare, acc: string, from: string | null, to: string): Promise<string> {
   const rows = from ? (await d1(cf, acc, from, "SELECT * FROM credentials", [], "read the API keys this server stored")) ?? [] : [];
@@ -518,7 +518,23 @@ export async function ownCredentials(cf: Cloudflare, acc: string, from: string |
     const cols = Object.keys(r).filter((c) => /^\w+$/.test(c));
     await d1(cf, acc, to, `INSERT INTO credentials (${cols.join(", ")}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(", ")})`, cols.map((c) => r[c] as string | number | null), `keep the API key ${String(r.name)}`);
   }
-  return rows.length ? `its own API keys kept (${rows.map((r) => String(r.name)).join(", ")})` : "no API keys of its own to keep";
+  // Each person's own keys too (server/migrations/0290_person_keys.sql): production's people's keys never stay in the
+  // copy, and the copy it was on keeps its own (none if its copy is older than the table).
+  const theirs = from
+    ? ((await d1(cf, acc, from, "SELECT * FROM person_keys", [], "read the people's own API keys this server stored").catch(() => null)) ??
+      [])
+    : [];
+  await d1(cf, acc, to, "DELETE FROM person_keys", [], "remove the other server's people's API keys from the copy");
+  for (const r of theirs)
+    await d1(
+      cf,
+      acc,
+      to,
+      "INSERT INTO person_keys (login, name, iv, data, last4, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      ["login", "name", "iv", "data", "last4", "updated"].map((c) => r[c] as string | number | null),
+      "keep a person's own API key"
+    );
+  return `${rows.length ? `its own API keys kept (${rows.map((r) => String(r.name)).join(", ")})` : "no API keys of its own to keep"}; ${theirs.length} of its people's own keys kept`;
 }
 
 export async function d1(

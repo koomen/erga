@@ -5,7 +5,7 @@
 // host (a DocumentObject Durable Object, named by the document's id). The server's
 // users and admins and its settings are on the same
 // database, and reached through the directory: `dir.users`, `dir.config`,
-// and the API keys admins enter, `dir.credentials`.
+// and the API keys admins enter, `dir.credentials`, and each person's own, `dir.personKeys`.
 //
 // Addresses: /d/<id> always works. /<owner>/<slug> is the pretty, canonical
 // one; /<owner>/<id> and /<owner>/<an old slug> lead to it. A slug is unique
@@ -49,7 +49,7 @@ import { type Access, AccessRules, type Facts, higher } from "./access.ts";
 import { type GithubLookup, People, type Person, personHandle } from "./people.ts";
 import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users.ts";
 
-import { Credentials } from "./api-keys.ts";
+import { Credentials, PersonKeys } from "./api-keys.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
 import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
@@ -103,6 +103,8 @@ export class Directory {
   readonly config: ServerConfig;
   /** The API keys admins enter, encrypted. */
   readonly credentials: Credentials;
+  /** Each person's own API keys, for their own agent. */
+  readonly personKeys: PersonKeys;
   /** How each account signs in (its GitHub and Google identities), and usernames. */
   readonly identities: Identities;
   /** Who may use the server, by group: the access rules (the Access page). */
@@ -154,6 +156,7 @@ export class Directory {
     this.users.accessChanged = () => this.rules.forget();
     this.users.pagesChanged = (keys) => this.adminChanged(keys);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
+    this.personKeys = new PersonKeys(sql, opts.credentialSecret ?? null);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       defaults: opts.defaults,

@@ -115,6 +115,7 @@ export class CredentialError extends Schema.TaggedError<CredentialError>()("Cred
 interface Row { name: string; iv: string; data: string; last4: string; updated: number; updated_by: string; updated_via?: string | null }
 
 const enc = new TextEncoder();
+const NO_FACTORY_KEY = "This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts makes it.";
 
 /** Checks and tidies a key as pasted: its own provider's, one line, no spaces. */
 export function checkKey(name: CredentialName, value: string): string {
@@ -135,8 +136,41 @@ export function checkKey(name: CredentialName, value: string): string {
   return key;
 }
 
+/**
+ * AES-GCM under a key derived from the deploy-time secret: a value sealed with a fresh IV, bound to its `label` (the
+ * additional data), so a row opens only under the same label: a key's name, or a person and a provider.
+ */
+class KeyBox {
+  private key: Promise<CryptoKey>;
+  constructor(secret: string) {
+    this.key = (async () =>
+      crypto.subtle.importKey("raw", await sha256(`erga-credentials:${secret}`), "AES-GCM", false, ["encrypt", "decrypt"]))();
+  }
+  async seal(label: string, value: string): Promise<{ iv: string; data: string }> {
+    const iv = randomBytes(12);
+    const data = new Uint8Array(
+      await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(label) }, await this.key, enc.encode(value))
+    );
+    return { iv: Base64.encode(iv), data: Base64.encode(data) };
+  }
+  /** The value, or null if it doesn't open (sealed under another secret, or another label). */
+  async open(label: string, r: { iv: string; data: string }): Promise<string | null> {
+    try {
+      return new TextDecoder().decode(
+        await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: Result.getOrThrow(Base64.decode(r.iv)) as Uint8Array<ArrayBuffer>, additionalData: enc.encode(label) },
+          await this.key,
+          Result.getOrThrow(Base64.decode(r.data)) as Uint8Array<ArrayBuffer>
+        )
+      );
+    } catch {
+      return null;
+    }
+  }
+}
+
 export class Credentials {
-  private aesKey: Promise<CryptoKey> | null;
+  private box: KeyBox | null;
 
   /**
    * `secret`: the deploy-time secret the keys are encrypted with (null: this
@@ -144,21 +178,35 @@ export class Credentials {
    * by name (e.g. ANTHROPIC_API_KEY), so the page can say one stands in.
    */
   constructor(private sql: Sql, private users: Users, secret: string | null, private fallback: (env: string) => boolean = () => false) {
-    this.aesKey = secret ? (async () => {
-          const raw = await sha256(`erga-credentials:${secret}`);
-      return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
-    })() : null;
+    this.box = secret ? new KeyBox(secret) : null;
   }
 
   /** Every key, as an admin sees it. Admins only. */
   async list(by: Actor): Promise<CredentialEntry[]> {
     await this.users.mustAdmin(by);
     const rows = new Map((await this.sql.all<Row>("SELECT name, iv, data, last4, updated, updated_by, updated_via FROM credentials")).map((r) => [r.name, r]));
-    return Promise.all((Object.keys(CREDENTIALS) as CredentialName[]).map(async (name) => {
-      const c = CREDENTIALS[name], r = rows.get(name);
-      const unreadable = !!r && (await this.decrypt(name, r)) == null;
-      return { name, env: c.env, label: c.label, service: c.service, description: c.description, set: !!r, last4: r?.last4 ?? null, updated: r ? Number(r.updated) : null, updatedBy: r?.updated_by ?? null, updatedVia: r?.updated_via ?? null, fallback: this.fallback(c.env), canStore: !!this.aesKey, unreadable };
-    }));
+    return Promise.all(
+      (Object.keys(CREDENTIALS) as CredentialName[]).map(async (name) => {
+        const c = CREDENTIALS[name],
+          r = rows.get(name);
+        const unreadable = !!r && (await this.decrypt(name, r)) == null;
+        return {
+          name,
+          env: c.env,
+          label: c.label,
+          service: c.service,
+          description: c.description,
+          set: !!r,
+          last4: r?.last4 ?? null,
+          updated: r ? Number(r.updated) : null,
+          updatedBy: r?.updated_by ?? null,
+          updatedVia: r?.updated_via ?? null,
+          fallback: this.fallback(c.env),
+          canStore: !!this.box,
+          unreadable,
+        };
+      })
+    );
   }
 
   /** The secrets only the deploy sets, and whether this server has each (never a value). Admins only. */
@@ -166,26 +214,24 @@ export class Credentials {
     await this.users.mustAdmin(by);
     return DEPLOY_SECRETS.map((s) => {
       const set = this.fallback(s.env);
-      return { ...s, set, standIn: !set && s.env == "FACTORY_KEY" && !!this.aesKey };
+      return { ...s, set, standIn: !set && s.env == "FACTORY_KEY" && !!this.box };
     });
   }
 
   /** Stores a key, in place of the one there was. Admins only. Answers it as `list` shows it. */
   async set(by: Actor, name: string, value: string): Promise<CredentialEntry> {
     await this.users.mustAdmin(by);
-    const n = this.nameOf(name);
+    const n = nameOf(name);
     const key = checkKey(n, value);
-    if (!this.aesKey)
-      throw new CredentialError({ message: "This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts makes it." });
-    const iv = randomBytes(12);
-    const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(n) }, await this.aesKey, enc.encode(key)));
+    if (!this.box) throw new CredentialError({ message: NO_FACTORY_KEY });
+    const { iv, data } = await this.box.seal(n, key);
     const had = await this.has(n), at = Date.now(), login = by.login.toLowerCase();
     await this.sql.batch([
       [`INSERT INTO credentials (name, iv, data, last4, updated, updated_by, updated_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         ON CONFLICT (name) DO UPDATE SET iv = excluded.iv, data = excluded.data, last4 = excluded.last4, updated = excluded.updated, updated_by = excluded.updated_by, updated_via = excluded.updated_via`,
         n,
-        Base64.encode(iv),
-        Base64.encode(data),
+        iv,
+        data,
         key.slice(-4),
         at,
         login,
@@ -200,7 +246,7 @@ export class Credentials {
   /** Removes a key: the server goes back to the Worker secret, if there is one. Admins only. */
   async clear(by: Actor, name: string): Promise<CredentialEntry> {
     await this.users.mustAdmin(by);
-    const n = this.nameOf(name);
+    const n = nameOf(name);
     if (await this.has(n)) {
       const at = Date.now(), login = by.login.toLowerCase();
       await this.sql.batch([["DELETE FROM credentials WHERE name = ?1", n], this.logged(n, "cleared", at, login, by.via)]);
@@ -229,32 +275,122 @@ export class Credentials {
 
   /** A row's key, or null if it doesn't open with this server's secret (or the server has none). */
   private async decrypt(name: CredentialName, r: Pick<Row, "iv" | "data">): Promise<string | null> {
-    if (!this.aesKey) return null;
-    try {
-      return new TextDecoder().decode(
-        await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: Result.getOrThrow(Base64.decode(r.iv)) as Uint8Array<ArrayBuffer>, additionalData: enc.encode(name) },
-          await this.aesKey,
-          Result.getOrThrow(Base64.decode(r.data)) as Uint8Array<ArrayBuffer>
-        )
-      );
-    } catch {
-      return null;
-    }
+    return this.box ? this.box.open(name, r) : null;
   }
 
   private async has(name: CredentialName): Promise<boolean> {
     return (await this.sql.all("SELECT 1 FROM credentials WHERE name = ?1", name)).length > 0;
   }
 
-  private nameOf(name: string): CredentialName {
-    if (!isCredentialName(name))
-      throw new CredentialError({ message: `There's no key "${name}": the keys are ${Object.keys(CREDENTIALS).join(", ")}.` });
-    return name;
-  }
-
   /** The change log's line for it (server/directory/settings.ts's server_config_versions): what happened to which key, never the key. */
   private logged(name: CredentialName, what: "set" | "replaced" | "cleared", at: number, by: string, via?: string): Statement {
     return changeLogEntry(at, by, via, [{ key: CREDENTIALS[name].env, from: null, to: null, credential: what }]);
   }
+}
+
+/** A person's own key, as they see it: never the key itself. */
+export interface PersonKeyEntry {
+  name: CredentialName;
+  label: string;
+  service: string;
+  /** A key of theirs is stored. */
+  set: boolean;
+  last4: string | null;
+  updated: number | null;
+  /** Stored, but it doesn't open here (another server's FACTORY_KEY: staging's copy of production's data). */
+  unreadable: boolean;
+  /** This server can store a key. */
+  canStore: boolean;
+}
+
+/**
+ * Each person's own API keys, for their own agent only (server/migrations/0290_person_keys.sql). Kept as the server's
+ * keys are, each bound to its person and provider; every call reads and changes only the caller's own (`by.login`).
+ * Nothing here answers a key to a page; `opened` is for that person's agent. Not in the change log: it is the person's,
+ * not the server's. A key is set only on its page (POST /api/agent/keys), never by an agent.
+ */
+export class PersonKeys {
+  private box: KeyBox | null;
+  constructor(
+    private sql: Sql,
+    secret: string | null
+  ) {
+    this.box = secret ? new KeyBox(secret) : null;
+  }
+
+  private label = (login: string, name: CredentialName) => `person:${login.toLowerCase()}:${name}`;
+
+  private rows(login: string) {
+    return this.sql.all<{ name: string; iv: string; data: string; last4: string; updated: number }>(
+      "SELECT name, iv, data, last4, updated FROM person_keys WHERE login = ?1",
+      login.toLowerCase()
+    );
+  }
+
+  /** The person's own keys, one entry for each provider. */
+  async list(by: Actor): Promise<PersonKeyEntry[]> {
+    const rows = new Map((await this.rows(by.login)).map((r) => [r.name, r]));
+    return Promise.all(
+      (Object.keys(CREDENTIALS) as CredentialName[]).map(async (name) => {
+        const c = CREDENTIALS[name],
+          r = rows.get(name);
+        const unreadable = !!r && (!this.box || (await this.box.open(this.label(by.login, name), r)) == null);
+        return {
+          name,
+          label: c.label,
+          service: c.service,
+          set: !!r,
+          last4: r?.last4 ?? null,
+          updated: r ? Number(r.updated) : null,
+          unreadable,
+          canStore: !!this.box,
+        };
+      })
+    );
+  }
+
+  /** Stores the person's key for a provider, in place of the one there was. */
+  async set(by: Actor, name: string, value: string): Promise<PersonKeyEntry> {
+    const n = nameOf(name),
+      key = checkKey(n, value);
+    if (!this.box) throw new CredentialError({ message: NO_FACTORY_KEY });
+    const { iv, data } = await this.box.seal(this.label(by.login, n), key);
+    await this.sql.run(
+      `INSERT INTO person_keys (login, name, iv, data, last4, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        ON CONFLICT (login, name) DO UPDATE SET iv = excluded.iv, data = excluded.data, last4 = excluded.last4, updated = excluded.updated`,
+      by.login.toLowerCase(),
+      n,
+      iv,
+      data,
+      key.slice(-4),
+      Date.now()
+    );
+    return (await this.list(by)).find((e) => e.name == n)!;
+  }
+
+  /** Removes the person's key for a provider. */
+  async clear(by: Actor, name: string): Promise<PersonKeyEntry> {
+    const n = nameOf(name);
+    await this.sql.run("DELETE FROM person_keys WHERE login = ?1 AND name = ?2", by.login.toLowerCase(), n);
+    return (await this.list(by)).find((e) => e.name == n)!;
+  }
+
+  /** The person's keys that open here, decrypted, by provider: for their own agent's calls, never for a page. */
+  async opened(login: string): Promise<Partial<Record<CredentialName, string>>> {
+    const box = this.box;
+    if (!box) return {};
+    const out: Partial<Record<CredentialName, string>> = {};
+    for (const r of await this.rows(login)) {
+      if (!isCredentialName(r.name)) continue;
+      const key = await box.open(this.label(login, r.name), r);
+      if (key) out[r.name] = key;
+    }
+    return out;
+  }
+}
+
+function nameOf(name: string): CredentialName {
+  if (!isCredentialName(name))
+    throw new CredentialError({ message: `There's no key "${name}": the keys are ${Object.keys(CREDENTIALS).join(", ")}.` });
+  return name;
 }
