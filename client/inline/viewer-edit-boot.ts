@@ -51,7 +51,9 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     for (const href of scripts.slice(1))
       document.head.append(Object.assign(document.createElement("link"), { rel: "modulepreload", href }));
     ergaShellStyle();
-    body.append(ergaControls());
+    // (Made and put in the page the first time, then left in place: moved, its parts would start again, and the editor's
+    // own actions would not open out of the pencil the next time in.)
+    ergaControls();
     sync();
     body.append(Object.assign(document.createElement("script"), { type: "module", src: script }));
   };
@@ -71,6 +73,10 @@ export default function viewerEditBoot(scripts: string[], built: Record<string, 
     if (edit == editing() && push !== null) return;
     clearTimeout(closing);
     body.classList.remove("erga-closing");
+    // Out: the title as the editor has it (renamed there meanwhile), so the viewer's breadcrumbs take over unmoved.
+    const title = ready && !edit && document.getElementById("doc-title-text")?.textContent;
+    const here = document.querySelector(".erga-crumbs .erga-here > span");
+    if (title && here) here.textContent = title;
     if (!edit && ready && body.classList.contains("erga-editing") && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
       // Out of the editor: its own actions close back into the pencil first (client/styles/editor.css, .edit-group, 420ms), with the editor's
       // row still up; then the viewer's, the same buttons in the same places, takes over.

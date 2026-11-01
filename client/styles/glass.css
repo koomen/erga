@@ -1,36 +1,15 @@
-/* The editor's glass, after client/styles/editor.css (client/editor.html; the build puts both into the editor's page). */
+/* The editor's glass, after client/styles/editor.css (client/editor.html; the build puts both into the editor's page): the
+   agent and its "e" circle, and the editor's cards (.help). The glass itself, the bars and the menus are the viewer's and
+   the editor's alike (client/inline/bars.css). In the source view the glass is the editor's own colour. */
 
-/* The glass: the bars, the agent and its "e" circle, the cards. The page's colour (the editor's own in the source view) at
-   76% (the cards: 90%), a blur of what is under it, a white shine on the top half, a white edge inside, and a soft
-   shadow. On a white or near-white page (main.ts: page-white) the glass is tinted 3.5% and its shadow halved, so it still
-   reads as a surface; on a dark page it is dark glass. Not a filter on a wrapper: a filter stops the blur. */
-:root {
-  --glass-pg: var(--page-bg, var(--bg)); --glass-tint: 0; --glass-sh: 1;
-  --glass-blur: blur(7px) saturate(1.8);
-  --glass-tinted: linear-gradient(rgba(0, 0, 0, var(--glass-tint)), rgba(0, 0, 0, var(--glass-tint)));
-  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(255, 255, 255, 0.6);
-  --glass-shadow: 0 2px 8px rgba(0, 0, 0, calc(0.05 * var(--glass-sh))), 0 0.5px 1px rgba(0, 0, 0, calc(0.06 * var(--glass-sh)));
-}
-html.page-white, html:has(body.source) { --glass-tint: 0.035; --glass-sh: 0.5; }
-html:has(body.source) { --glass-pg: var(--bg); }
-.chrome-nav, .chrome-top, .agent-glass, .help, body.erga-editing .erga-new-menu { -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
-.chrome-nav, .chrome-top, .help, body.erga-editing .erga-new-menu { border: 0.5px solid rgba(0, 0, 0, 0.07); }
-.chrome-nav, .chrome-top {
-  top: max(8px, env(safe-area-inset-top)); height: 42px; border-radius: 14px;
-  background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%), var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 76%, transparent);
-  box-shadow: var(--glass-edge), var(--glass-shadow);
-}
-.help, body.erga-editing .erga-new-menu {
+html:has(body.source) { --glass-tint: 0.035; --glass-sh: 0.5; --glass-pg: var(--bg); }
+.agent-glass, .help { -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+.help {
+  border: 0.5px solid rgba(0, 0, 0, 0.07);
   background: var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 90%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), var(--glass-shadow);
 }
-html.page-dark body:not(.source) :is(.chrome-nav, .chrome-top, .help, .erga-new-menu) {
+html.page-dark body:not(.source) .help {
   border-color: rgba(255, 255, 255, 0.12); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
+  background: color-mix(in srgb, #1c1c1f 92%, transparent);
 }
-html.page-dark body:not(.source) :is(.chrome-nav, .chrome-top) { background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 55%), color-mix(in srgb, var(--glass-pg) 70%, transparent); }
-html.page-dark body:not(.source) :is(.help, .erga-new-menu) { background: color-mix(in srgb, #1c1c1f 92%, transparent); }
-/* The New menu while editing (server/pages/templates.ts): its glass (above), and Clone last, under a line, once main.ts gave it its address. */
-body.erga-editing .erga-new-menu { --nm-ring: rgba(0, 0, 0, 0.08); }
-html.page-dark body.erga-editing .erga-new-menu { --nm-ring: rgba(255, 255, 255, 0.1); }
-body.erga-editing .erga-new-menu.erga-has-clone .erga-new-sep { display: block; }
-body.erga-editing .erga-new-menu.erga-has-clone .erga-new-clone { display: grid; }

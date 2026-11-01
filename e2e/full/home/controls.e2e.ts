@@ -5,7 +5,7 @@ import { deployed, fresh, openHome, resetLanding } from "./home";
 await servers.short();
 test.afterEach(async () => { await resetLanding(await servers.short()); });
 
-test("Clone for everyone, Edit for its editors, and who you are, with its menu", async ({ tab }) => {
+test("Clone (the New menu's last item) for everyone, Edit for its editors, and who you are, with its menu", async ({ tab }) => {
   const server = await servers.short();
   const { address } = await fresh(server);
   await deployed(server);
@@ -14,7 +14,12 @@ test("Clone for everyone, Edit for its editors, and who you are, with its menu",
   await openHome(p, server.root);
   const controls = () => p.evaluate(() => {
     const r = document.querySelector("erga-controls")?.shadowRoot;
-    return { clone: r?.querySelector(".erga-clone-button")?.getAttribute("href") ?? null, edit: r?.querySelector(".erga-edit-button")?.getAttribute("href") ?? null, account: (r?.querySelector(".erga-account") as HTMLElement | null)?.dataset.ergaAccount ?? null, inBody: !!document.body.querySelector("erga-controls") };
+    return {
+      clone: r?.querySelector(".erga-new-clone")?.getAttribute("href") ?? null,
+      edit: r?.querySelector(".erga-edit-button")?.getAttribute("href") ?? null,
+      account: (r?.querySelector(".erga-account") as HTMLElement | null)?.dataset.ergaAccount ?? null,
+      inBody: !!document.body.querySelector("erga-controls"),
+    };
   });
   expect(await controls()).toEqual({ clone: "/new?from=landing", edit: `${address}?edit`, account: "in", inBody: false });
   const menuHidden = () => p.evaluate(() => (document.querySelector("erga-controls")!.shadowRoot!.querySelector(".erga-account-menu") as HTMLElement).hidden);

@@ -37,12 +37,7 @@ html.page-dark body:not(.source) :is(.agent, .fmt, .refresh-pill, .ds-menu, .hel
   --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
-html.page-light body:not(.source) .chrome {
-  --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46; --caret: #3b7cf0;
-}
-html.page-dark body:not(.source) .chrome {
-  --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2; --caret: #6aa1ff;
-}
+/* (The controls' tones on the page's colour are client/inline/bars.css's.) */
 /* (Your avatar's ring, which parts it from the others', is the page's colour.) */
 html:is(.page-light, .page-dark) body:not(.source) .chrome { --bg: var(--page-bg, var(--band)); }
 body.source :is(#frame, .erga-canvas) { visibility: hidden; }
@@ -296,11 +291,9 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 /* Who's here: you, then everyone else and their agents, in their colours. */
 .people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
 .people:empty { display: none; }
-/* You, at the far right, apart from the others. */
-.me-slot { display: flex; align-items: center; margin-left: 10px; margin-right: 2px; }
+/* You, at the far right, apart from the others (.me-slot: client/inline/bars.css). */
 /* Your avatar is the size and place it is on every other page, so the eye here and the viewer's pencil swap in place. */
 .me-slot .avatar { width: 30px; height: 30px; font-size: 13px; }
-.me-slot:empty { display: none; }
 .avatar {
   position: relative; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
   display: grid; place-items: center; font: 600 12px/1 var(--font-text); color: #fff; background: var(--c);
@@ -374,24 +367,9 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 .naming-status.error { color: #c2410c; }
 .naming .share-actions { margin-top: 6px; }
 
-/* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (#quick: the others, and who's
-   here) open out of it to its left as its menu opens under it, on the curve the editor's own actions open on, and close
-   back into it (chrome.ts, toggleQuick). Moving or closed, they clip sideways only. The breadcrumbs' bar ends before the
-   buttons' bar (--nav-room) and keeps its end in sight: as the quick actions open, its start (erga, Documents) slides out
-   on the left. Avatars overlap, and notes that would cover the row sit under it. */
-.quick, .quick-inner { display: contents; }
-@media (max-width: 759.98px) {
-  .quick { display: grid; grid-template-columns: 0fr; transition: grid-template-columns 420ms var(--agent-ease); }
-  body.quick-open .quick { grid-template-columns: 1fr; }
-  .quick-inner { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: clip; }
-  .quick-inner > * { flex-shrink: 0; }
-  .me-slot { transition: margin 420ms var(--agent-ease); }
-  body:not(.quick-open) .me-slot { margin-left: 0; }
-  .chrome-nav { max-width: var(--nav-room, none); box-sizing: border-box; overflow: hidden; justify-content: flex-end; }
-  .chrome-nav > * { flex: none; }
-  .nav-title { max-width: none; }
-}
-@media (prefers-reduced-motion: reduce) { .quick, .me-slot { transition: none; } }
+/* Phones (narrower than 760px): the bars' layout is client/inline/bars.css's (the quick actions open out of your avatar);
+   the title takes the room the breadcrumbs' bar has. */
+@media (max-width: 759.98px) { .nav-title { max-width: none; } }
 @media (max-width: 520px) {
   .people { gap: 0; }
   .people > * + * { margin-left: -5px; }

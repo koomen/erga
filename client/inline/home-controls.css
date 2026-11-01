@@ -6,6 +6,8 @@
   right: calc(-1 * var(--erga-scrollbar, 0px)) !important; width: auto !important; height: 0 !important; margin: 0 !important; padding: 0 !important;
   z-index: 2147483647 !important; contain: none !important; transform: none !important; filter: none !important; visibility: visible !important; opacity: 1 !important; }
 @media (max-width: 640px), (max-height: 480px) { :host { position: absolute !important; } }
+/* The bars' glass is the page's colour (client/inline/bars.css), as the band's. */
+:host { --band: var(--erga-band); }
 /* The band the controls sit in, above the page (which starts below it by the same height: BAND, server/home/render.ts),
    in the page's own background (the script sets it; until then it's see-through, over the page's padding, which shows
    the same colour). */

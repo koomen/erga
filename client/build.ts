@@ -222,6 +222,7 @@ async function build(): Promise<void> {
     editor = editor.replace(from, () => to);
   };
   swap(`<link rel="stylesheet" href="/fonts/inter.css">`, `<style id="erga-fonts">${fontCss}</style>`);
+  swap(`<link rel="stylesheet" href="/bars.css">`, `<style>${readFileSync(join(ROOT, "client/inline/bars.css"), "utf8")}</style>`);
   swap(`<link rel="stylesheet" href="/editor.css">`, `<style>${readFileSync(join(ROOT, "client/styles/editor.css"), "utf8")}</style>`);
   swap(`<link rel="stylesheet" href="/glass.css">`, `<style>${readFileSync(join(ROOT, "client/styles/glass.css"), "utf8")}</style>`);
   swap(`<link rel="stylesheet" href="/style.css">`, `<link rel="stylesheet" href="${files["style.css"]}">`);

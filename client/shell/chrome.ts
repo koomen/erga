@@ -3,6 +3,7 @@
 
 import type { Settings } from "../pages/settings";
 import { live } from "../live/client";
+import { mountQuick } from "../common/quick";
 import { $, isMac, type Shell } from "./shell";
 
 export function mountChrome(shell: Shell) {
@@ -46,32 +47,17 @@ export function mountChrome(shell: Shell) {
     vv.addEventListener("scroll", keyboard);
   }
 
-  // On a phone (narrower than 760px) the buttons' bar is your avatar alone: a tap on it opens the quick actions out of it,
-  // to its left, and its menu under it (editor.css, .quick). A card opened from them keeps them open; a tap anywhere
-  // else (the page too, while editing: main.ts, onPointer) closes them. The breadcrumbs' bar makes way: it ends
-  // 8px before the buttons' bar, its end in sight (--nav-room).
-  const phone = matchMedia("(max-width: 759.98px)"),
-    quick = $("quick"),
-    body = document.body;
-  function toggleQuick(force?: boolean) {
-    const open = typeof force == "boolean" ? force : !body.classList.contains("quick-open");
-    body.classList.toggle("quick-open", open);
-    quick.inert = phone.matches && !open;
-  }
-  toggleQuick(false);
-  phone.addEventListener("change", () => toggleQuick(false));
-  // (After the avatar's own click, which opened or closed its menu: people.ts.)
-  $("me").addEventListener("click", () => toggleQuick(shell.people.accountLinks ? !$("account").hidden : undefined));
-  document.addEventListener("pointerdown", (e) => {
-    if (body.classList.contains("quick-open") && !(e.target as Element).closest?.(".chrome-top, .help, .ds-menu, .erga-new-menu"))
-      toggleQuick(false);
+  // On a phone (narrower than 760px) the quick actions open out of your avatar (client/common/quick.ts), as in the viewer;
+  // a tap on the page closes them too, while editing (main.ts, onPointer).
+  const toggleQuick = mountQuick({
+    quick: $("quick"),
+    me: $("me"),
+    nav: $("nav-docs"),
+    bar: document.querySelector<HTMLElement>(".chrome-top")!,
+    // (After the avatar's own click, which opened or closed its menu: people.ts.)
+    menuOpen: () => (shell.people.accountLinks ? !$("account").hidden : undefined),
+    keep: ".erga-bar-r, .help, .ds-menu, .erga-new-menu",
   });
-  const nav = $("nav-docs"),
-    top = document.querySelector(".chrome-top")!;
-  const navRoom = () =>
-    nav.style.setProperty("--nav-room", `${Math.max(0, top.getBoundingClientRect().left - nav.getBoundingClientRect().left - 8)}px`);
-  new ResizeObserver(navRoom).observe(top);
-  addEventListener("resize", navRoom);
 
   const help = $("help");
   function toggleHelp(force?: boolean) {

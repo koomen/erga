@@ -1,10 +1,11 @@
 // The homepage's controls (server/home/render.ts, homeHeader), in the script after their host: it moves the host out of
-// the page's <body> (so nothing the page does to its body moves it), gives the band the page's background, and runs
-// the account menu, the New document picker, the fade and the tooltips.
+// the page's <body> (so nothing the page does to its body moves it), gives the band and the bars the page's background
+// and its tone, and runs the account menu, the New document picker, the bars' buttons (client/common/bars.ts) and the
+// tooltips.
 
+import { mountBars } from "../common/bars";
 import { imgFallback } from "../common/img-fallback";
 import { newDocPicker } from "../common/new-doc";
-import ergaFade from "../common/fade";
 import { installQuickSearch } from "../common/quick-search";
 
 export default function homeControls(): void {
@@ -37,6 +38,17 @@ export default function homeControls(): void {
       }
     }
     host.style.setProperty("--erga-band", c || "Canvas");
+    // The bars' tone, as on a document's page (viewer-band-head.ts, main.ts): dark glass on a dark page, tinted on a white one.
+    const rgb = c.match(/[\d.]+/g)?.map(Number);
+    const lum =
+      rgb && rgb.length >= 3
+        ? (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255
+        : matchMedia("(prefers-color-scheme: dark)").matches
+          ? 0
+          : 1;
+    host.classList.toggle("page-dark", lum < 0.45);
+    host.classList.toggle("page-light", lum >= 0.45);
+    host.classList.toggle("page-white", lum > 0.95);
   };
   band();
   addEventListener("load", band);
@@ -71,29 +83,8 @@ export default function homeControls(): void {
   }
   // New document's picker.
   newDocPicker(root);
-  // The controls fade once the page is scrolled, as on any document's page: on the host, whose own opacity
-  // the page can't touch; the band stays as it is.
-  const fade = ergaFade(host, root);
-  const scrolled = () => fade.scroll(scrollY);
-  addEventListener("scroll", scrolled, { passive: true });
-  scrolled();
-  document.addEventListener(
-    "pointermove",
-    (e) => {
-      if (e.pointerType == "mouse") fade.pointer(e.clientX, e.clientY, false);
-    },
-    { capture: true, passive: true }
-  );
-  document.addEventListener(
-    "pointerdown",
-    (e) => {
-      if (e.pointerType != "mouse") fade.pointer(e.clientX, e.clientY, true);
-    },
-    { capture: true, passive: true }
-  );
-  document.addEventListener("mouseout", (e) => {
-    if (!e.relatedTarget) fade.leave();
-  });
+  // The bars' buttons: the quick actions on a phone, and Share with an agent.
+  mountBars(root, host);
   // Tooltips follow the pointer while it's on a control.
   root.addEventListener(
     "pointermove",

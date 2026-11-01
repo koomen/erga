@@ -17,11 +17,16 @@ test("in a browser, once its first deploy is done, / is the landing document its
   await deployed(server);
   await tab.page.setViewportSize({ width: 1200, height: 800 });
   await openHome(tab.page, server.root);
-  expect(await tab.page.evaluate((address) => {
+  const shown = await tab.page.evaluate((address) => {
     const controls = document.querySelector("erga-controls")?.shadowRoot;
-    return document.querySelector("h1")?.textContent == "Erga" && !document.querySelector("iframe#frame")
-      && !!controls?.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!controls?.querySelector(`a.erga-edit-button[href='${address}?edit']`);
-  }, address)).toBe(true);
+    return (
+      document.querySelector("h1")?.textContent == "Erga" &&
+      !document.querySelector("iframe#frame") &&
+      !!controls?.querySelector("a.erga-new-clone[href='/new?from=landing']") &&
+      !!controls?.querySelector(`a.erga-edit-button[href='${address}?edit']`)
+    );
+  }, address);
+  expect(shown).toBe(true);
 });
 
 // The edit is cut into a version once edits pause (SHORT.idle), and deployed SHORT.homeDelay after.
@@ -56,7 +61,7 @@ test("someone who isn't an admin sees it with Clone, without Edit; /new?from=lan
   const ada = await front(server, "Ada");
   expect(docOf(ada.html)).toBe(id);
   expect(ada.html).not.toContain("erga-edit-button");
-  expect(ada.html).toContain("erga-clone-button");
+  expect(ada.html).toContain("erga-new-clone");
   const made = await get(server, "/new?from=landing");
   const to = made.headers.get("location") ?? "";
   expect(made.status).toBe(302);

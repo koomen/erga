@@ -64,7 +64,7 @@ interface EditorKept {
  * the others. (Only those this script sets afresh as it starts, never adds to: not the agent's conversation.)
  */
 interface ShellKept { width: number; height: number; html: string[]; body: string[]; style: string; parts: Record<string, string> }
-const SHELL_HTML = ["page-dark", "page-light", "page-white", "erga-faded"],
+const SHELL_HTML = ["page-dark", "page-light", "page-white"],
   SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
 const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-model", "agent-input", "agent-voice", "agent-send"];
 
@@ -215,13 +215,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   $("btn-docs").hidden = $("nav-back").hidden;
   ($("btn-docs") as HTMLAnchorElement).href = `/docs${as}`;
   ($("nav-brand") as HTMLAnchorElement).href = `/${as}`;
-  // Clone, the New menu's last item (server/pages/templates.ts), as the viewer's: the same address.
-  const viewerClone = document.querySelector<HTMLAnchorElement>(".erga-clone-button"),
-    menuClone = document.querySelector<HTMLAnchorElement>(".erga-new-clone");
-  if (viewerClone && menuClone) {
-    menuClone.href = viewerClone.href;
-    menuClone.closest(".erga-new-menu")!.classList.add("erga-has-clone");
-  }
   // The editor's own page actions (client/editor.html, .edit-group) open out of the pencil while editing and close back into it: they
   // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
   const editGroup = $("edit-group"), body = document.body;

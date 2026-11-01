@@ -19,6 +19,7 @@ const frameOf = (editable: boolean, editing = false) => {
     landing: false,
     clone: "",
     edit: "",
+    corner: "",
   });
   return { tag: /<iframe id="frame"[^>]*><\/iframe>/.exec(before)![0], page: before + after };
 };

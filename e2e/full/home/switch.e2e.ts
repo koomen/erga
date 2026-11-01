@@ -56,13 +56,23 @@ test("the page's styles can't reach the controls, nor theirs the page; its files
   await tab.page.setViewportSize({ width: 1200, height: 800 });
   await openHome(tab.page, server.root);
   await expect.poll(() => tab.page.evaluate(() => document.body.dataset.data ?? null)).toBe("yes");
+  // (The bars take the page's tone once the script has its colour: the icons ease to it.)
+  await expect
+    .poll(() =>
+      tab.page.evaluate(
+        () => getComputedStyle(document.querySelector("erga-controls")!.shadowRoot!.querySelector(".erga-agent-share")!).color
+      )
+    )
+    .toBe("rgb(154, 154, 162)");
   const iso = await tab.page.evaluate(() => {
     const host = document.querySelector("erga-controls")!, r = host.shadowRoot!;
     const rect = (e: Element) => { const b = e.getBoundingClientRect(); return [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)]; };
     const probe = getComputedStyle(document.getElementById("probe")!);
     return {
-      hostShown: getComputedStyle(host).display, hostPosition: getComputedStyle(host).position,
-      clone: rect(r.querySelector(".erga-clone-button")!), cloneColor: getComputedStyle(r.querySelector(".erga-clone-button")!).color,
+      hostShown: getComputedStyle(host).display,
+      hostPosition: getComputedStyle(host).position,
+      agent: rect(r.querySelector(".erga-agent-share")!),
+      agentColor: getComputedStyle(r.querySelector(".erga-agent-share")!).color,
       account: rect(r.querySelector(".erga-account-btn")!),
       probePosition: probe.position,
       h1: getComputedStyle(document.querySelector("h1")!).color,
@@ -72,8 +82,8 @@ test("the page's styles can't reach the controls, nor theirs the page; its files
     };
   });
   expect(iso).toMatchObject({ hostShown: "block", hostPosition: "fixed" });
-  // Where the viewer has them: Clone, Edit, then the avatar.
-  expect(iso).toMatchObject({ clone: [1074, 12, 34, 34], cloneColor: "rgb(161, 161, 169)", account: [1154, 14, 30, 30] });
+  // Where the viewer has them: Share with an agent, then Documents, then the avatar.
+  expect(iso).toMatchObject({ agent: [1072, 12, 34, 34], agentColor: "rgb(154, 154, 162)", account: [1154, 14, 30, 30] });
   expect(iso.probePosition).toBe("static");
   expect(iso.h1).toBe("rgb(1, 2, 3)");
   expect(iso.bg).toMatch(/\/_home\/[a-z0-9]+\/img\/dot\.svg/);
