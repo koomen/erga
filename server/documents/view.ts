@@ -293,13 +293,10 @@ async function render(
   const meta = `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` + (canEdit && session
       ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent, deploy)}`
     : "");
-  // The page's own address there: its file, under the token.
-  const src = files + d.file.split("/").map(encodeURIComponent).join("/");
   const shell = viewerPage({
     title: d.title,
     docId: d.id,
     pages: origin,
-    src,
     meta,
     session,
     editable: canEdit,

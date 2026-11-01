@@ -8,7 +8,18 @@ import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX, readerPage } from "../server/pa
 import { FIX_REPORTED, pageReport } from "../shared/page-report.ts";
 
 const frameOf = (editable: boolean, editing = false) => {
-  const { before, after } = viewerPage({ title: "T", docId: "abcd1234", pages: "https://abcd1234-ada.erga-pages.dev", src: "https://abcd1234-ada.erga-pages.dev/t/x/index.html", meta: "", session: null, editable, editing, landing: false, clone: "", edit: "" });
+  const { before, after } = viewerPage({
+    title: "T",
+    docId: "abcd1234",
+    pages: "https://abcd1234-ada.erga-pages.dev",
+    meta: "",
+    session: null,
+    editable,
+    editing,
+    landing: false,
+    clone: "",
+    edit: "",
+  });
   return { tag: /<iframe id="frame"[^>]*><\/iframe>/.exec(before)![0], page: before + after };
 };
 
@@ -19,13 +30,13 @@ test("the document's page is in one frame on its pages origin, for everyone: nev
     expect(f.tag, "never the tab itself").not.toMatch(/allow-top-navigation|allow-popups-to-escape-sandbox/);
   }
   // Its address waits for the page's place in the tab's address (#3) to go with it (frameSrc).
-  expect(viewer.tag).toContain('data-src="https://abcd1234-ada.erga-pages.dev/t/x/index.html"');
+  expect(viewer.tag).not.toContain("src=");
   expect(viewer.tag).toContain(`allow="${PAGE_ALLOW}"`);
   expect(editor.tag).toContain(`allow="${PAGE_ALLOW}"`);
   // Opened in the editor, its address waits for the editor's half to start with the page (frameSrc).
-  expect(editing.tag).toContain('data-src="https://abcd1234-ada.erga-pages.dev/t/x/index.html"');
+  expect(editing.tag).not.toContain("src=");
   expect(editing.tag).toContain(`allow="${EDITOR_ALLOW}"`);
-  expect(editing.page).toMatch(/\.src\s*=\s*[\w$]+\.dataset\.src\s*\+/);
+  expect(editing.page).toMatch(/\.src\s*=\s*[\w$.]*ergaFrames\.src\(\)\s*\+/);
   expect(editing.page).toContain('"?erga-edit"');
   expect(EDITOR_ALLOW, "no full screen").toContain("fullscreen 'none'");
   expect(PAGE_SANDBOX).not.toMatch(/allow-top-navigation|allow-popups-to-escape-sandbox/);

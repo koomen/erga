@@ -34,7 +34,7 @@ export default function viewerLive(base: string, ver: string): void {
     last = Date.now();
     shown = wanted;
     const f = window.ergaFrames.frame;
-    f.src = f.dataset.src + (y > 0 ? "?erga-y=" + y : "") + location.hash;
+    f.src = window.ergaFrames.src() + (y > 0 ? "?erga-y=" + y : "") + location.hash;
   }
   document.addEventListener("visibilitychange", show);
   function connect() {
