@@ -73,14 +73,16 @@ test("admins only, with admin power; a key that isn't one, or a server with no s
   await expect(dir.credentials.set({ login: "mallory" }, "anthropic", ANTHROPIC)).rejects.toThrow(NotAllowed);
   await expect(dir.credentials.list({ login: "ada" })).rejects.toThrow(/no admin power/);
   await expect(dir.credentials.set(ada, "gemini", ANTHROPIC)).rejects.toThrow(/no key "gemini"/);
-  await expect(dir.credentials.set(ada, "openai", OPENAI)).rejects.toThrow(/no key "openai"/);
+  // An OpenAI key starts with sk-, as Anthropic's does: one pasted in the wrong row is named.
+  await expect(dir.credentials.set(ada, "openai", ANTHROPIC)).rejects.toThrow(/That is an Anthropic API key, not an OpenAI API key/);
+  expect(checkKey("openai", OPENAI)).toBe(OPENAI);
   expect(() => checkKey("anthropic", "sk-ant-oat01-" + "z".repeat(40))).toThrow(/Claude plan token/);
   expect(() => checkKey("anthropic", OPENAI)).toThrow(/starts with sk-ant-/);
   expect(() => checkKey("anthropic", "sk-ant-has a space in it xxxxxxxxxxxx")).toThrow(CredentialError);
   expect(() => checkKey("anthropic", "")).toThrow(/Paste/);
   const none = fresh(null, ["ANTHROPIC_API_KEY"]).dir;
   await expect(none.credentials.set(ada, "anthropic", ANTHROPIC)).rejects.toThrow(/no FACTORY_KEY/);
-  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])).toEqual([["anthropic", false, true]]);
+  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])[0]).toEqual(["anthropic", false, true]);
 });
 
 test("the deploy's own secrets only as set or not", async () => {
@@ -123,7 +125,7 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect(text).not.toContain(ANTHROPIC.slice(0, 20));
   expect(JSON.parse(text).credential).toMatchObject({ name: "anthropic", set: true, last4: "Ab12" });
   expect((await post({ name: "anthropic", value: "nope" })).status).toBe(400);
-  expect((await post({ name: "openai", value: OPENAI })).status).toBe(400);
+  expect((await post({ name: "gemini", value: OPENAI })).status).toBe(400);
   const html = await (await fetch(`${origin}/admin/api-keys`)).text();
   expect(html).not.toContain(ANTHROPIC.slice(0, 20));
   expect(html).toContain(`ends in <span class="last4">…Ab12</span>`);
@@ -134,7 +136,13 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
   expect(await (await fetch(`${origin}/admin`)).text()).not.toContain("li class=\"setting credential");
   expect(html).toContain(`data-name="anthropic"`);
-  for (const name of ["openai", "cloudflare_deploy"]) expect(html).not.toContain(`data-name="${name}"`);
+  for (const name of ["openai", "google", "openrouter"]) expect(html).toContain(`data-name="${name}"`);
+  expect(html).not.toContain(`data-name="cloudflare_deploy"`);
+  // The agents' settings (whose keys, the models off for server keys) are here, not on Settings.
+  for (const key of ["agent_keys", "agent_models_off"]) {
+    expect(html).toContain(`data-key="${key}"`);
+    expect(await (await fetch(`${origin}/admin`)).text()).not.toContain(`data-key="${key}"`);
+  }
   for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN"])
     expect(html).toContain(`data-env="${env}"`);
   expect(html).not.toContain("DEPLOY_HOOK_SECRET");

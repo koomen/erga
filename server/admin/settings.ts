@@ -1,7 +1,8 @@
 // /admin, the Settings page: each of the server's settings, with the control it's set with (client/inline/admin-settings.ts
 // saves it).
 
-import { ACCESS_SETTINGS, type ConfigEntry, type Settings } from "../directory/index.ts";
+import { ACCESS_SETTINGS, AGENT_SETTINGS, type ConfigEntry, type Settings } from "../directory/index.ts";
+import { MODELS, PROVIDER_LABEL, type ModelChoice } from "../../shared/models.ts";
 import { ICON, inlineCall, link, TIMES_SCRIPT } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform.ts";
@@ -45,6 +46,15 @@ function valueInput(e: Shown, never: boolean): string {
         <input type="hidden" ${attrs} data-kind="users" value="${esc(JSON.stringify(list))}">
       </div>`;
   }
+  if (control == "models") {
+    // The short list, a box for each model: ticked, a server key runs it. The value is the list of those not ticked.
+    const off = Array.isArray(e.value) ? (e.value as string[]) : [];
+    const boxes = (Object.keys(MODELS) as ModelChoice[]).map(
+      (m) =>
+        `<label class="model-pick"><input type="checkbox" value="${esc(m)}"${off.includes(m) ? "" : " checked"}${locked ? " disabled" : ""}> ${esc(MODELS[m].label)} <small>${esc(PROVIDER_LABEL[MODELS[m].provider])}</small></label>`
+    );
+    return `<div class="models">${boxes.join("")}</div><input type="hidden" ${attrs} data-kind="json" value="${esc(JSON.stringify(off))}">`;
+  }
   if (e.kind == "document") {
     // Find as you type: any of the server's documents and projects, by title, owner or address (the operation search_documents);
     // choosing one saves it. The value is its address, kept by id.
@@ -69,8 +79,9 @@ function valueInput(e: Shown, never: boolean): string {
 }
 
 /** How a setting is set: "switch", "choice" and "document" save as soon as they change; the rest have Save. */
-function controlOf(e: Shown): "switch" | "choice" | "users" | "document" | "typed" {
+function controlOf(e: Shown): "switch" | "choice" | "users" | "models" | "document" | "typed" {
   if (e.kind == "users") return "users";
+  if (e.kind == "models") return "models";
   if (e.kind == "document") return "document";
   if (typeof e.default == "boolean" || (e.choices?.length == 2 && e.choices.includes("off") && e.choices.includes("on"))) return "switch";
   if (e.choices?.length) return "choice";
@@ -100,7 +111,7 @@ export function settingRow(e: Shown, session: Session, never: boolean, place: nu
       : "";
   // Save for what's typed in (a document saves as it's chosen); Reset where the control can't simply pick the default (a switch, a choice can).
   const buttons =
-    e.locked || control == "switch" || control == "choice"
+    e.locked || control == "switch" || control == "choice" || control == "models"
       ? ""
       : `${control == "document" ? "" : `<button class="pill save" disabled>Save</button>`}${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(e.kind == "document" ? "the repo's demo page" : shown(e.default, e.kind))}">Reset</button>` : ""}`;
   return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}" data-live="setting:${esc(e.key)}" data-sort="${place}">
@@ -119,14 +130,19 @@ export function settingRow(e: Shown, session: Session, never: boolean, place: nu
 }
 
 /** The settings /admin shows, in its order, each with what its row needs: the document it names; whether it takes never. */
-async function shownSettings(platform: Platform, session: Session, fresh = false) {
+async function shownSettings(
+  platform: Platform,
+  session: Session,
+  fresh = false,
+  pick = (key: string) => !ACCESS_SETTINGS.includes(key) && !AGENT_SETTINGS.includes(key)
+) {
   if (fresh) platform.directory.config.forget();
   const entries = await platform.directory.config.list(whoOf(session));
   // A setting naming a document shows it by its address now, linked.
-  // The Access page's settings are set there.
+  // The Access page's settings are set there, and the agents' on the API keys page.
   const settings: Shown[] = await Promise.all(
     entries
-      .filter((e) => !ACCESS_SETTINGS.includes(e.key))
+      .filter((e) => pick(e.key))
       .map(async (e) => {
         if (e.kind != "document" || e.value == null) return e;
         const doc = await platform.directory.find(String(e.value));
@@ -167,6 +183,18 @@ ${rows.map((r) => r.html).join("\n")}
 export const settingsRows: LiveRows = async (platform, session, keys) => {
   const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
   for (const r of await shownSettings(platform, session, true))
+    if (`setting:${r.key}` in out) out[`setting:${r.key}`] = { html: r.html, sort: r.place };
+  return out;
+};
+
+/** The agents' settings (whose keys they use, the models off for server keys), as rows of /admin/api-keys. */
+export const agentSettingRows = async (platform: Platform, session: Session, fresh = false) =>
+  shownSettings(platform, session, fresh, (key) => AGENT_SETTINGS.includes(key));
+
+/** The rows of /admin/api-keys' agents' settings that `keys` name ("setting:<key>"), as they are now, for an open page. */
+export const agentSettingsRows: LiveRows = async (platform, session, keys) => {
+  const out: Record<string, LiveRow> = Object.fromEntries(keys.map((k) => [k, null]));
+  for (const r of await agentSettingRows(platform, session, true))
     if (`setting:${r.key}` in out) out[`setting:${r.key}`] = { html: r.html, sort: r.place };
   return out;
 };

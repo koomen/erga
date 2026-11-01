@@ -1,6 +1,6 @@
-// The API keys an admin enters on /admin/api-keys: Anthropic's,
-// for each person's agent and version descriptions. They
-// are kept so:
+// The API keys an admin enters on /admin/api-keys: one for each provider of
+// models (Anthropic, OpenAI, Google, OpenRouter), for each person's agent
+// (agents/models.ts), and Anthropic's for version descriptions. They are kept so:
 //
 //   - Each key is encrypted with AES-GCM, a fresh IV each time, its name as
 //     the additional data, under a key derived from a deploy-time secret
@@ -40,7 +40,28 @@ export const CREDENTIALS = {
     label: "Anthropic API key",
     service: "Anthropic",
     prefixes: ["sk-ant-"],
-    description: "Each person's agent and the descriptions of versions call Anthropic's API with it.",
+    description: "Each person's agent can use Claude with it, and the descriptions of versions call Anthropic's API with it.",
+  },
+  openai: {
+    env: "OPENAI_API_KEY",
+    label: "OpenAI API key",
+    service: "OpenAI",
+    prefixes: ["sk-"],
+    description: "Each person's agent can use OpenAI's GPT models with it.",
+  },
+  google: {
+    env: "GEMINI_API_KEY",
+    label: "Google Gemini API key",
+    service: "Google",
+    prefixes: ["AIza"],
+    description: "Each person's agent can use Google's Gemini models with it.",
+  },
+  openrouter: {
+    env: "OPENROUTER_API_KEY",
+    label: "OpenRouter API key",
+    service: "OpenRouter",
+    prefixes: ["sk-or-"],
+    description: "Each person's agent can use the models Erga lists from OpenRouter (Grok, Kimi, DeepSeek) with it.",
   },
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 
@@ -101,6 +122,11 @@ export function checkKey(name: CredentialName, value: string): string {
   if (!key) throw new CredentialError({ message: `Paste the ${c.label}, or use Clear to remove it.` });
   if (name == "anthropic" && key.startsWith("sk-ant-oat"))
     throw new CredentialError({ message: `That is a Claude plan token (sk-ant-oat…), not an API key. An API key starts with sk-ant-api.` });
+  // An OpenAI key starts with sk-, as Anthropic's and OpenRouter's do: one of those is pasted in the wrong row.
+  const other = (Object.keys(CREDENTIALS) as CredentialName[]).find(
+    (n) => n != name && CREDENTIALS[n].prefixes.some((p) => p.length > 3 && key.startsWith(p))
+  );
+  if (other) throw new CredentialError({ message: `That is ${aOrAn(CREDENTIALS[other].label)}, not ${aOrAn(c.label)}.` });
   const prefixes: readonly string[] = c.prefixes;
   if (prefixes.length && !prefixes.some((p) => key.startsWith(p)))
     throw new CredentialError({ message: `That isn't ${aOrAn(c.label)}: one starts with ${prefixes.join(" or ")}.` });

@@ -21,6 +21,7 @@ The direct dependencies (`package.json`), and their licenses:
 | --- | --- | --- |
 | `@codemirror/commands`, `@codemirror/lang-html`, `@codemirror/language`, `@codemirror/state`, `@codemirror/view`, `@lezer/highlight` | MIT | yes |
 | `effect`, `@effect/ai-anthropic` | MIT | yes |
+| `@earendil-works/pi-ai` (with `openai` and `@google/genai`, Apache 2.0, which it bundles) | MIT | yes |
 | `diff` | BSD-3-Clause | yes |
 | `lib0`, `yjs`, `y-protocols`, `y-websocket` | MIT | yes |
 | `modern-screenshot`, `pdf-lib`, `unpdf` | MIT | yes |
@@ -54,6 +55,11 @@ Notes:
 - `ai-docs` has no license field. It is not a dependency: it is a folder of
   examples inside the `effect` package (`node_modules/effect/ai-docs`), under
   Effect's MIT license. Erga does not import it, and the build does not bundle it.
+
+- The counts above are from before `@earendil-works/pi-ai` (2026-11-01). It
+  adds about 80 packages, MIT and Apache 2.0 for the most part. Of them the build
+  bundles only the OpenAI and Google SDKs: Erga does not import its other providers
+  (the AWS SDK of Bedrock, Mistral's).
 
 To list the licenses again, read the `license` field of each
 `node_modules/**/package.json`.

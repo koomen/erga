@@ -28,6 +28,7 @@
     "@codemirror/language": "6.12.4",
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.13",
+    "@earendil-works/pi-ai": "1.4.0",
     "@effect/ai-anthropic": "4.1.0",
     "@lezer/highlight": "1.2.5",
     "diff": "8.0.2",

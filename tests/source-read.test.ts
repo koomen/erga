@@ -167,7 +167,12 @@ test("the agent's tools: each checks the admin first, and says the text is infor
 
   // On the scripted model, as the panel runs it: the call and its outcome go on the transcript.
   locked = false;
-  const agent = startAgent({ cfg: { apiKey: Redacted.make(""), model: "script", effort: "medium" }, owner: "root", admin: true, tools });
+  const agent = startAgent({
+    cfg: { own: {}, server: {}, mode: "server" as const, off: [], model: "script", effort: "medium" },
+    owner: "root",
+    admin: true,
+    tools,
+  });
   const seen = await new Promise<{ name: string; status: string; path: string | null }[]>((resolve) => {
     const s: { name: string; status: string; path: string | null }[] = [];
     const off = agent.subscribe((ev) => {

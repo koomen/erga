@@ -61,16 +61,16 @@ test("a stored key that doesn't open here (another server's FACTORY_KEY): the ag
     all: async <T>(q: string, ...params: Param[]) => db.query(q).all(...(params as (string | number | null)[])) as T[],
     run: async () => {}, batch: async () => {},
   }, { admins: ["ada"], credentialSecret: "staging's factory key" });
-  expect(await agentSettingsFrom({}, staging.credentials)).toEqual({ missing: UNREADABLE_KEY });
+  expect(await agentSettingsFrom({}, staging)).toMatchObject({ missing: UNREADABLE_KEY });
   expect((await staging.credentials.list(ada)).find((c) => c.name == "anthropic")).toMatchObject({ set: true, unreadable: true });
   // A Worker secret still stands in for it.
-  expect("missing" in (await agentSettingsFrom({ ANTHROPIC_API_KEY: KEY2 }, staging.credentials))).toBe(false);
+  expect("missing" in (await agentSettingsFrom({ ANTHROPIC_API_KEY: KEY2 }, staging))).toBe(false);
 });
 
 test("the admin agent: a key replaced after its session started reaches its next turn", async () => {
   sent.length = 0;
   const agent = startAgent({
-    cfg: { apiKey: Redacted.make(KEY1), model: "sonnet", effort: "medium" },
+    cfg: { own: {}, server: { anthropic: Redacted.make(KEY1) }, mode: "server", off: [], model: "sonnet", effort: "medium" },
     owner: "ada",
     admin: true,
     tools: [],
@@ -78,7 +78,7 @@ test("the admin agent: a key replaced after its session started reaches its next
   agent.prompt("hello", null);
   expect(await requests(1)).toEqual([KEY1]);
   // agents/person/sessions.ts reads the settings at each turn and gives them to the session it keeps.
-  agent.configure({ apiKey: Redacted.make(KEY2), model: "sonnet", effort: "medium" });
+  agent.configure({ own: {}, server: { anthropic: Redacted.make(KEY2) }, mode: "server", off: [], model: "sonnet", effort: "medium" });
   await new Promise((r) => setTimeout(r, 50));
   agent.prompt("again", null);
   expect((await requests(2)).at(-1)).toBe(KEY2);

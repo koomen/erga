@@ -31,7 +31,7 @@ export default function adminSettings(c: SettingsConfig): void {
       reset = li.querySelector(".reset"),
       hint = li.querySelector(".hint")!;
     if (input.disabled) return;
-    const instant = li.dataset.control == "switch" || li.dataset.control == "choice" || li.dataset.control == "document";
+    const instant = ["switch", "choice", "document", "models"].includes(li.dataset.control ?? "");
     const state = () => (mode ? mode.value + ":" : "") + (input.type == "checkbox" ? input.checked : input.value);
     const was = state();
     const asJson = () => {
@@ -123,6 +123,13 @@ export default function adminSettings(c: SettingsConfig): void {
       });
       form.addEventListener("submit", () => add(), { capture: true });
     }
+    // A models setting (the API keys page's): a box for each model; the value is the list of those not ticked.
+    const boxes = [...li.querySelectorAll<HTMLInputElement>(".models input[type=checkbox]")];
+    for (const box of boxes)
+      box.addEventListener("change", () => {
+        input.value = JSON.stringify(boxes.filter((b) => !b.checked).map((b) => b.value));
+        input.dispatchEvent(new Event("change"));
+      });
     // A document setting: find as you type, among all the server's documents and projects; choosing one saves it.
     const find = li.querySelector<HTMLInputElement>("input.find");
     if (find) {
@@ -251,7 +258,7 @@ export default function adminSettings(c: SettingsConfig): void {
       }
     });
   }
-  const list = document.querySelector<HTMLElement>("ol[data-live-kind]")!;
+  const list = document.querySelector<HTMLElement>("ol[data-live-kind=setting]")!;
   for (const li of list.querySelectorAll<HTMLElement>(":scope > li.setting")) wire(li);
   // Changes made elsewhere (another admin, an agent) show here as they're made; a setting being typed in waits (client/common/live-rows.ts).
   liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);

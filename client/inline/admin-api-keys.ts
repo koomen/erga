@@ -51,7 +51,7 @@ export default function adminApiKeys(): void {
       }
     });
   }
-  const list = document.querySelector<HTMLElement>("ol[data-live-kind]")!;
+  const list = document.querySelector<HTMLElement>("ol[data-live-kind=apikey]")!;
   for (const li of list.querySelectorAll<HTMLElement>(":scope > li.credential")) wire(li);
   // Changes made elsewhere (another admin, an agent) show here as they're made (client/common/live-rows.ts).
   liveList(list, { wire: (row) => (wire(row), times()) }, window.ergaView?.signal);

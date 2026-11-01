@@ -8,7 +8,7 @@
 //                                     context is the page note (the page open, what is selected there), doc the id
 //                                     of the document open, for the document tools that name none
 //   POST   /api/agent/abort|reset     stops the turn; starts a new conversation
-//   POST   /api/agent/model           { model }: sonnet or opus-fast, from the next message
+//   POST   /api/agent/model           { model }: one of the models the person can use (shared/models.ts), from the next turn
 //   GET    /api/agent/events          a WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that
 //                                     person's pages only: { type: "agent", ev }
 //   GET    /api/agent/conversation    { log: { items, busy, undoable } }: the conversation
@@ -27,7 +27,7 @@ import { restoredLog } from "../checkpoint.ts";
 import { agentTools, toolsFor } from "../tools.ts";
 import { callDocument, type Caller } from "../../server/operations/index.ts";
 import type { Route as DocRoute } from "../../server/directory/index.ts";
-import { isModelChoice, MODELS } from "../models.ts";
+import { isModelChoice } from "../models.ts";
 import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
 import { VIA } from "../../shared/attribution.ts";
@@ -39,6 +39,13 @@ import * as Schema from "effect/Schema";
 import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
 
 const enc = new TextEncoder();
+
+/** The model menu's state: the model it's on, and the models the person can use now (with whose key runs each). */
+const modelState = (agent: AgentSession) => ({
+  model: agent.model,
+  choice: agent.modelChoice,
+  models: agent.models.map((u) => ({ id: u.choice, label: u.label, key: u.key })),
+});
 
 /**
  * What the agents need from where they run: their SQLite, the Platform (the
@@ -110,6 +117,7 @@ export class PersonAgents {
       store,
       stored: this.chats.load(scope),
       meta: { origin, name: state.name },
+      modelChanged: () => this.event({ type: "model", ...modelState(agent) }, login),
     });
     // Its turn done: each document it worked in hears so at once (its presence ends, and the turn is one version there).
     agent.subscribe((ev) => {
@@ -132,8 +140,7 @@ export class PersonAgents {
   async agentState(login: string, origin: string, name?: string) {
     const s = await this.session(login, origin, name);
     if (typeof s == "string") return { enabled: false as const, reason: s };
-    const models = s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [];
-    return { enabled: true as const, model: s.agent.model, choice: s.agent.modelChoice, models, log: s.agent.log() };
+    return { enabled: true as const, ...modelState(s.agent), log: s.agent.log() };
   }
 
   /** A message, from a page (`doc`: the id of the document it has open, if any: the document tools' own, unnamed). */
@@ -204,12 +211,8 @@ export class PersonAgents {
     if (op == "abort") s.agent.abort();
     else if (op == "reset") await this.clearConversation(login);
     else if (!model || !isModelChoice(model) || !s.agent.setModel(model))
-      return { ok: false, reason: "that model isn't one of the choices" };
-    const state = {
-      model: s.agent.model,
-      choice: s.agent.modelChoice,
-      models: s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [],
-    };
+      return { ok: false, reason: "that model isn't one you can use now" };
+    const state = modelState(s.agent);
     // The person's other tabs follow.
     if (op == "model") this.event({ type: "model", ...state }, login);
     return { ok: true, ...state };
