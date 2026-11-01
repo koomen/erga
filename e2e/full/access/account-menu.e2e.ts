@@ -47,7 +47,7 @@ test("dark, it opens; at phone width it fits clear of the page's header, and its
   expect(await page.evaluate(() => { const r = document.querySelector(".erga-account-menu")!.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })).toBe(true);
 });
 
-test("on the homepage, the avatar sits right of the Edit and Clone buttons, level with them", async ({ tab }) => {
+test("on the homepage, the avatar sits at the right of the buttons' bar, right of its buttons, level with them", async ({ tab }) => {
   const page = tab.page;
   await page.setViewportSize({ width: 1100, height: 720 });
   await openHome(page, (await servers.main()).root);
@@ -55,7 +55,9 @@ test("on the homepage, the avatar sits right of the Edit and Clone buttons, leve
   await until(async () => (await page.evaluate(() => document.querySelector("h1")?.textContent ?? "")) == "Erga" || (await inPage<string>(page, `document.querySelector("h1")?.textContent ?? ""`)).includes("Erga"), 10_000, "the landing page renders");
   expect(await page.evaluate(() => {
     const r = document.querySelector("erga-controls")?.shadowRoot ?? document;
-    const a = r.querySelector("[data-erga-account] button")!.getBoundingClientRect(), e = r.querySelector(".erga-view-buttons")!.getBoundingClientRect();
-    return e.right <= a.left - 4 && Math.abs((e.top + e.bottom) / 2 - (a.top + a.bottom) / 2) < 3;
+    const a = r.querySelector("[data-erga-account] button")!.getBoundingClientRect(),
+      e = r.querySelector(".erga-view-buttons .quick-inner > :last-child")!.getBoundingClientRect();
+    const bar = r.querySelector(".erga-view-buttons")!.getBoundingClientRect();
+    return e.right <= a.left - 4 && a.right <= bar.right && Math.abs((e.top + e.bottom) / 2 - (a.top + a.bottom) / 2) < 3;
   })).toBe(true);
 });

@@ -57,7 +57,7 @@ test("/new?template=<id> makes each template's document, Document (id page) firs
   expect((await newDoc(s, "demo")).status).toBe(404);
 });
 
-test("the viewer's + opens the picker, in one typeface; Escape closes it; Document makes a blank document and opens it in the editor", async ({
+test("the viewer's + opens the picker, in one typeface, with Clone last; Escape closes it; Document makes a blank document and opens it in the editor", async ({
   tab,
 }) => {
   const s = await servers.main();
@@ -66,7 +66,7 @@ test("the viewer's + opens the picker, in one typeface; Escape closes it; Docume
   await openTab(tab, address);
   await clickOn(page, ".erga-view-buttons .erga-new-btn");
   const m = await picker(page);
-  expect(m).toEqual({ open: true, rows: ROWS, expanded: "New document" });
+  expect(m).toEqual({ open: true, rows: [...ROWS, "Clone"], expanded: "New document" });
   // No icons: names and their lines only.
   const icons = (await page.evaluate(
     `[...${ROOT_OF}.querySelectorAll(".erga-new-menu a")].some((a) => a.querySelector("svg"))`
@@ -91,9 +91,6 @@ test("the editor's + opens the picker under it, in the window, in one typeface, 
   const page = tab.page;
   await openTab(tab, `${address}?edit`);
   await editorReady(page);
-  // The viewer's controls fade out over the editor's for 200 ms after it is ready, and take clicks meanwhile
-  // (server/pages/viewer.ts, `.erga-editor-ready :is(.erga-view-buttons, .erga-account)`): a click on + then hits the viewer's
-  // Clone button and makes a copy. Click once + itself is what a click there reaches (the old test paused 500 ms).
   // The editor's own controls open out of the pencil as it comes up, moving the + aside: it's clicked once they're open.
   await expect.poll(() => page.evaluate(() => document.getElementById("edit-group")!.classList.contains("settled"))).toBe(true);
   await expect.poll(() => page.evaluate(() => { const b = document.querySelector("#btn-new")!, r = b.getBoundingClientRect(); return b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); })).toBe(true);
@@ -102,7 +99,7 @@ test("the editor's + opens the picker under it, in the window, in one typeface, 
   expect(m.open).toBe(true);
   expect(m.rows).toEqual([...ROWS, "Clone"]);
   expect(m.expanded).toBe("New document");
-  // Clone: the viewer's Clone address (your own copy of this document), under a line.
+  // Clone: your own copy of this document, under a line.
   const clone = await page.evaluate(() => {
     const a = document.querySelector<HTMLAnchorElement>(".erga-new-clone")!,
       sep = a.previousElementSibling!,
@@ -153,7 +150,9 @@ test("the documents page's New opens the same picker under it, without icons; Pr
   expect(await fileOf(s.root, s.root + new URL(page.url()).pathname)).toBe(template("assets/templates/project"));
 });
 
-test("signed out, the homepage's + opens the menu, and a template goes to sign-in and comes back to make it", async ({ tab }) => {
+test("signed out, the homepage's + opens the menu, with Clone last, and a template goes to sign-in and comes back to make it", async ({
+  tab,
+}) => {
   const s = await servers.main();
   const out = (await fetch(`${s.root}/auth/logout`, { method: "POST", headers: { Origin: s.root }, redirect: "manual" })).headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
   const page = tab.page;
@@ -162,7 +161,7 @@ test("signed out, the homepage's + opens the menu, and a template goes to sign-i
   await clickOn(page, ".erga-view-buttons .erga-new-btn");
   const m = await picker(page);
   expect(m.open).toBe(true);
-  expect(m.rows).toEqual(ROWS);
+  expect(m.rows).toEqual([...ROWS, "Clone"]);
   await sameTypeface(page);
   const href = await page.evaluate(`${ROOT_OF}.querySelector('.erga-new-menu a[data-template="page"]').getAttribute("href")`) as string;
   const r = await fetch(s.root + href, { redirect: "manual", headers: { Cookie: out } });

@@ -1,23 +1,18 @@
 // Share: the document with people (its owner only), and with an external agent (a prompt to copy).
 
 import { colorFor, type Author } from "../../document/content";
-import { showCopied } from "../agent/share-agent";
+import { copyAgentPrompt } from "../common/agent-prompt";
+import { showCopied } from "../common/copied";
 import { runTool } from "../common/tools";
 import { BASE, $, type Shell } from "./shell";
 
 export function mountSharing(shell: Shell) {
 
-  // Share with an agent (#btn-agent-share): a one-line prompt, no token in it, that adds Erga's MCP server to the agent's
-  // app and opens this document there. The agent's app signs in on Erga (MCP's OAuth), so the token stays in that app.
+  // Share with an agent (#btn-agent-share): a one-line prompt, no token in it (client/common/agent-prompt.ts).
   const agentShare = $("btn-agent-share");
   agentShare.addEventListener("click", async () => {
-    const prompt = `Add Erga's MCP server, ${location.origin}/mcp, then open ${location.origin}${shell.docName?.address ?? location.pathname}.`;
-    const ok = await navigator.clipboard.writeText(prompt).then(
-      () => true,
-      () => false
-    );
-    if (ok) showCopied(agentShare);
-    else shell.toast.explain(`Couldn't reach the clipboard. Paste this into your agent: ${prompt}`);
+    const failed = await copyAgentPrompt(agentShare, shell.docName?.address ?? location.pathname);
+    if (failed) shell.toast.explain(`Couldn't reach the clipboard. Paste this into your agent: ${failed}`);
   });
 
   const shareBtn = $("btn-share");

@@ -37,7 +37,6 @@ import { pagesOrigin, pagesToken } from "./pages-origin.ts";
 import {
   accountHtml,
   accountOf,
-  cloneButton,
   editButton,
   link,
   OWN_ACCOUNT,
@@ -286,7 +285,7 @@ async function render(
   const origin = pagesOrigin(d.owner, d.id, url, platform);
   const files = `${origin}/t/${token}/`;
   const address = `/${d.owner}/${d.slug}`;
-  const clone = cloneButton(link(`/new?from=${landing ? "landing" : d.id}`, session));
+  const clone = link(`/new?from=${landing ? "landing" : d.id}`, session);
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;
   const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";
   const canShare = canEdit && !!session && !session.test && roleMay(d.role, "share");
@@ -304,12 +303,13 @@ async function render(
     landing,
     clone,
     edit,
+    corner: accountHtml(accountOf(session, admin, deploy), url.pathname + url.search),
     // The page follows each change while it's open: for someone signed in in their browser, who may open its room.
     ...(session && !session.agent ? { live: d.ver } : {}),
     ...(session && !session.agent && d.kind == "project" ? { project: address } : {}),
   });
-  const corner = accountHtml(accountOf(session, admin, deploy), url.pathname + url.search);
-  const before = shell.before, after = shell.after + corner;
+  const before = shell.before,
+    after = shell.after;
   const build = await pageBuild(before + after);
   const headers: Record<string, string> = {
     "Cache-Control": "private, no-cache",

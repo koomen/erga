@@ -161,6 +161,15 @@ Found a new trap? Write it here, in the same change.
 - A browser that opens `/` by address (`page.goto`) sends `Sec-Fetch-Site: none`, so someone
   signed in lands on /docs (server/app.ts). A test of the landing page opens it as the logo does:
   `openHome(page, root)` (e2e/full/home/home.ts).
+- The viewer, the editor and the homepage draw the same glass bars from one stylesheet,
+  `client/inline/bars.css`. The homepage's copy is in a shadow root, where `html` and `body` match
+  nothing: `SHADOW_BARS` (server/home/render.ts) rewrites them to `:host`, and stops the server
+  at start if a new rule names them in another way. Keep to `html.page-*`, `html `, `:root`,
+  `body.quick-open` and `body:not(.quick-open)`.
+- The viewer's bars and the editor's are two copies in the same places, swapped at once
+  (client/inline/viewer.css). A change to one bar's place or buttons changes the other's too
+  (`e2e/full/viewer/bars.e2e.ts` compares them). Never move `#erga-editor` in the page after it is made:
+  its parts start again, and the editor's own actions stop opening out of the pencil.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

@@ -1,0 +1,67 @@
+/* The two glass bars at the top of a document's page, the same in the viewer (server/pages/viewer.ts) and the editor
+   (client/editor.html, which the build gives this sheet too): the breadcrumbs' bar (.erga-bar-l) on the left, the
+   buttons' bar (.erga-bar-r) with your avatar on the right. Each page puts its bars in place itself (client/inline/viewer.css,
+   client/styles/editor.css), at the same places: this sheet is the look they share, and the phone's layout.
+
+   The glass: the page's colour at 76% (the menus: 90%), a blur of what is under it, a white shine on the top half, a white
+   edge inside, and a soft shadow. On a white or near-white page (page-white) the glass is tinted 3.5% and its shadow
+   halved, so it still reads as a surface; on a dark page it is dark glass. Not a filter on a wrapper: a filter stops the
+   blur. The agent and the editor's cards take the same glass (client/styles/glass.css). */
+:root {
+  --glass-pg: var(--page-bg, var(--band, var(--bg, #fff))); --glass-tint: 0; --glass-sh: 1;
+  --glass-blur: blur(7px) saturate(1.8);
+  --glass-tinted: linear-gradient(rgba(0, 0, 0, var(--glass-tint)), rgba(0, 0, 0, var(--glass-tint)));
+  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(255, 255, 255, 0.6);
+  --glass-shadow: 0 2px 8px rgba(0, 0, 0, calc(0.05 * var(--glass-sh))), 0 0.5px 1px rgba(0, 0, 0, calc(0.06 * var(--glass-sh)));
+}
+html.page-white { --glass-tint: 0.035; --glass-sh: 0.5; }
+.erga-bar {
+  top: max(8px, env(safe-area-inset-top)); height: 42px; box-sizing: border-box; border-radius: 14px; border: 0.5px solid rgba(0, 0, 0, 0.07);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%), var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 76%, transparent);
+  box-shadow: var(--glass-edge), var(--glass-shadow);
+}
+/* The menus out of the bars (New document, your avatar's, a project's pages): glass at 90%. (html: over their own sheets'
+   look, which come later on the page.) */
+html :is(.erga-new-menu, .erga-tree-card), .erga-bar .erga-account-menu {
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border: 0.5px solid rgba(0, 0, 0, 0.07);
+  background: var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 90%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), var(--glass-shadow);
+}
+html .erga-new-menu { --nm-ring: rgba(0, 0, 0, 0.08); }
+/* (In the editor's source view, its own colours: client/styles/glass.css.) */
+html.page-dark body:not(.source) :is(.erga-bar, .erga-new-menu, .erga-account-menu, .erga-tree-card) {
+  border-color: rgba(255, 255, 255, 0.12); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+html.page-dark body:not(.source) .erga-bar { background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 55%), color-mix(in srgb, var(--glass-pg) 70%, transparent); }
+html.page-dark body:not(.source) :is(.erga-new-menu, .erga-bar .erga-account-menu, .erga-tree-card) { background: color-mix(in srgb, #1c1c1f 92%, transparent); }
+html.page-dark body:not(.source) .erga-new-menu { --nm-ring: rgba(255, 255, 255, 0.1); }
+
+/* The controls' tones on the page's colour: dark text on a light page, light on a dark one. */
+html.page-light body:not(.source) :is(.erga-bar, .chrome) {
+  --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46; --caret: #3b7cf0;
+}
+html.page-dark body:not(.source) :is(.erga-bar, .chrome) {
+  --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2; --caret: #6aa1ff;
+}
+
+/* You, at the far right of the buttons' bar, apart from the buttons. */
+.me-slot { display: flex; align-items: center; margin-left: 10px; margin-right: 2px; }
+.me-slot:empty { display: none; }
+
+/* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (.quick: the buttons, and in
+   the editor who's here) open out of it to its left as its menu opens under it, and close back into it (client/common/quick.ts).
+   Moving or closed, they clip sideways only. The breadcrumbs' bar ends before the buttons' bar (--nav-room) and keeps
+   its end in sight: as the quick actions open, its start (erga, Documents) slides out on the left. */
+.quick, .quick-inner { display: contents; }
+@media (max-width: 759.98px) {
+  .quick { display: grid; grid-template-columns: 0fr; transition: grid-template-columns 420ms cubic-bezier(0.45, 0, 0.15, 1); }
+  body.quick-open .quick { grid-template-columns: 1fr; }
+  .quick-inner { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: clip; }
+  .quick-inner > * { flex-shrink: 0; }
+  .me-slot { transition: margin 420ms cubic-bezier(0.45, 0, 0.15, 1); }
+  body:not(.quick-open) .me-slot { margin-left: 0; }
+  .erga-bar-l { max-width: var(--nav-room, none); overflow: hidden; justify-content: flex-end; }
+  .erga-bar-l > * { flex: none; }
+}
+@media (prefers-reduced-motion: reduce) { .quick, .me-slot { transition: none; } }

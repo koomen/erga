@@ -1,7 +1,7 @@
 // The homepage, served directly: the homepage's document (the
 // landing_document setting) rendered on this site itself, with no frame and
 // no pages origin, as close to a static file as it gets, and Erga's controls
-// (Clone, Edit, who you are) on top, in a shadow root of their own. Every
+// (the viewer's glass bars) on top, in a shadow root of their own. Every
 // other document still renders in a frame on its own origin (server/documents/view.ts,
 // pagesRoutes); the homepage may skip that only because only admins may edit
 // it: its script runs on this
@@ -15,17 +15,15 @@ import type { DocRow } from "../directory/index.ts";
 import {
   ACCOUNT_STYLE,
   accountMarkup,
-  cloneButton,
+  barsHtml,
   crumbsFont,
   editButton,
   inlineScript,
   inlineStyle,
   link,
   NEW_DOC_STYLE,
-  newDocButton,
   newDocMenu,
   VIEW_STYLE,
-  viewCrumbs,
   type Account,
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
@@ -166,20 +164,39 @@ export async function renderHome(opts: { index: string; files: Record<string, st
 }
 
 /**
- * The homepage's controls, over the page as on any document's viewer:
- *New document, Clone, Files and Edit for those who may edit it, and who
- * you are. They live in a shadow root (declarative, so they
- * paint as soon as they arrive, before any script), out of the page's
- * styles' reach and the page out of theirs, on a host that resets whatever
- * the page's CSS could give it. The script then moves the host out of the
- * page's <body> (so nothing the page does to its body moves it) and runs the
- * account menu and the tooltips.
+ * The homepage's controls, over the page as on any document's viewer: the same two glass bars (barsHtml), with no Full
+ * screen (there's no frame to fill the screen). They live in a shadow root (declarative, so they paint as soon as they
+ * arrive, before any script), out of the page's styles' reach and the page out of theirs, on a host that resets whatever
+ * the page's CSS could give it. The script then moves the host out of the page's <body> (so nothing the page does to its
+ * body moves it) and runs the bars, the account menu and the tooltips.
  */
 export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
   const session = o.account?.session ?? null;
-  const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session))}`;
+  const bars = barsHtml({
+    session,
+    title: null,
+    project: false,
+    full: false,
+    edit: o.edit ? editButton(o.edit, false) : "",
+    corner: accountMarkup(o.account, o.here),
+  });
   // The font goes outside the shadow root: a font declared inside one isn't used.
-  return `${crumbsFont(session)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("home-controls")}</style><div class="band"></div>${viewCrumbs(session, null)}${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls>${inlineScript("home-controls")}`;
+  return `${crumbsFont(session, true)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${inlineStyle("home-controls")}</style><div class="band"></div>${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}<style>${SHADOW_BARS}</style></template></erga-controls>${inlineScript("home-controls")}`;
 }
+
+/**
+ * The bars' look (client/inline/bars.css) inside the controls' shadow root, where the page's <html> and <body> can't be
+ * named: what it says of them, said of the host (the script gives it the page's tone, page-dark or page-light, and
+ * quick-open).
+ */
+export const SHADOW_BARS = inlineStyle("bars")
+  .replace(/html\.(page-[a-z]+) body:not\(\.source\)/g, ":host(.$1)")
+  .replace(/html\.(page-[a-z]+)/g, ":host(.$1)")
+  .replace(/\bhtml /g, ":host ")
+  .replace(/:root/g, ":host")
+  .replace(/body\.quick-open/g, ":host(.quick-open)")
+  .replace(/body:not\(\.quick-open\)/g, ":host(:not(.quick-open))");
+if (/\b(html|body)\b|:root/.test(SHADOW_BARS))
+  throw new Error("client/inline/bars.css names the page's <html> or <body> in a way SHADOW_BARS doesn't turn into the host");
 
 

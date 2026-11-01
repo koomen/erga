@@ -1,5 +1,5 @@
 // The viewer's scripts and styles (documents/view.ts puts them on the page): the band
-// above the document, the editor's boot, the steps, the fade, the buttons.
+// above the document, the editor's boot, the steps, the glass bars and their buttons.
 //
 // The document's page is in the viewer's frame (#frame), on the document's own pages
 // origin (pages/reader.ts tells this page what it needs from inside it), for readers and
@@ -16,15 +16,38 @@ import { esc } from "../../shared/html.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
 import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
-/** The viewer's Clone button (a copy of your own, at `href`): also the homepage's. */
-export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0345) translate(-12 -13.25)" stroke-width="1.5467"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></g></svg></a>`;
-
 
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
+/** Share with an agent, as the editor's (client/editor.html, #btn-agent-share): it copies a one-line prompt (client/inline/viewer-bars.ts). For anyone who can read the page. */
+export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button erga-agent-share" aria-label="Share with an agent: copy a prompt for it" data-tip="Share with an agent"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.12) translate(-12 -11.5)" stroke-width="1.4"><rect x="3.5" y="9" width="10.5" height="8.5" rx="3"/><path d="M8.75 9V6.5"/><circle cx="8.75" cy="5.5" r="1"/><circle cx="6.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><circle cx="10.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><path d="M2 12.5v1.5M15.5 12.5v1.5"/><path d="M18.75 3.5v6M15.75 6.5h6"/></g></svg></button>`;
+
+/** Documents, as the editor's (client/editor.html, #btn-docs), at `href`: for someone signed in who has documents. */
+export const docsButton = (href: string) =>
+  `<a href="${esc(href)}" class="erga-view-button erga-docs-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
+
 /** The viewer's Full screen button, as the editor's (client/editor.html, #btn-full): the page's frame fills the screen (client/inline/viewer-full.ts), where it can (viewer.css). */
 export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-full-button" aria-label="Full screen" data-tip="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 9.25v-3.5a1 1 0 0 1 1-1h3.5M14.75 4.75h3.5a1 1 0 0 1 1 1v3.5M19.25 14.75v3.5a1 1 0 0 1-1 1h-3.5M9.25 19.25h-3.5a1 1 0 0 1-1-1v-3.5"/></svg></button>`;
+
+/**
+ * The two glass bars (client/inline/bars.css), on a document's page and on the homepage, as the editor's and in the same
+ * places: the breadcrumbs, and the buttons with who you are (`corner`, server/pages/account-menu.ts). Full screen only
+ * where there's a frame to fill the screen (`full`). The editor's own actions (Pause, Share, Document settings) are folded
+ * into the pencil here; Clone is the New menu's last item.
+ */
+export function barsHtml(o: {
+  session: Session | null;
+  title: string | null;
+  project: boolean;
+  full: boolean;
+  edit: string;
+  corner: string;
+}): string {
+  const s = o.session;
+  const docs = s && !s.agent && !s.test ? docsButton(link("/docs", s)) : "";
+  return `${viewCrumbs(s, o.title, o.project, true)}<div class="erga-view-buttons erga-bar erga-bar-r"><div class="quick"><div class="quick-inner">${newDocButton("erga-view-button")}${o.full ? FULL_BUTTON : ""}${o.edit}${AGENT_SHARE_BUTTON}${docs}</div></div><div class="me-slot">${o.corner}</div></div>`;
+}
 
 /** What a page kept for its reload (client/live/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";
@@ -85,8 +108,11 @@ export const STEPS_STYLE = `<style>${inlineStyle("viewer-steps")}</style>`;
 /** Full screen: the page's frame, from the button in the viewer and the editor (client/inline/viewer-full.ts). */
 export const FULL_BOOT = inlineCall("viewer-full");
 
-/** The fade (client/common/fade.ts) on a document's page, from the frame's scroll and pointer (client/inline/viewer-fade.ts). */
-export const FADE_BOOT = inlineCall("viewer-fade");
+/** The glass bars' look, the viewer's and the editor's (client/inline/bars.css). */
+export const BARS_STYLE = `<style>${inlineStyle("bars")}</style>`;
+
+/** The bars' quick actions on a phone, and Share with an agent (client/inline/viewer-bars.ts). */
+export const BARS_BOOT = inlineCall("viewer-bars");
 
 /** The controls and the breadcrumbs on the band (client/inline/viewer.css). */
 export const VIEW_STYLE = `<style>${inlineStyle("viewer")}</style>`;
@@ -106,8 +132,12 @@ export function viewerPage(o: {
   editable: boolean;
   editing: boolean;
   landing: boolean;
+  /** Your own copy's address: the New menu's last item. */
   clone: string;
+  /** The pencil, for whoever may edit (editButton), else nothing. */
   edit: string;
+  /** Who you are (server/pages/account-menu.ts, accountHtml): at the right of the buttons' bar. */
+  corner: string;
   /** The version the page shows, for someone signed in: it follows each change (client/inline/viewer-live.ts). */
   live?: string;
   /** A project's address, for someone signed in: its crumb opens its tree (client/inline/viewer-tree.ts). */
@@ -133,11 +163,12 @@ export function viewerPage(o: {
 ${FAVICON_LINK}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
-${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session)}<style>${BAND_STYLE}</style>${opening}
+${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}<style>${BAND_STYLE}</style>${opening}
 <body>${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
+  const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
   const after = `
-${viewCrumbs(session, o.landing ? null : o.title, !!o.project)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${o.clone}${FULL_BUTTON}${o.edit}</div>${newDocMenu((path) => link(path, session))}${VIEW_STYLE}${NEW_DOC_STYLE}${inlineScript("new-doc")}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

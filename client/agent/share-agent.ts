@@ -2,8 +2,9 @@
 // token in it; Copy prompt, and New token, which turns the old one off. On
 // every admin page (admin-share.ts: an admin token) it's the card under the
 // share button, made here as #share at the end of the body (style.css,
-// .share). (The editor's Share with an agent copies a one-line prompt with no token: client/shell/sharing.ts.)
-// And showCopied, the confirmation every copy button shows.
+// .share). (The editor's and the viewer's Share with an agent copies a one-line prompt with no token: client/common/agent-prompt.ts.)
+
+import { showCopied } from "../common/copied";
 
 export interface ShareOptions {
   /** The button that opens it (#btn-share). */
@@ -26,33 +27,6 @@ export interface ShareOptions {
 export interface SharePanel {
   el: HTMLElement;
   toggle(force?: boolean): void;
-}
-
-/** A copy button confirms on itself: "Copied ✓", with a short pop (style.css, .copied). An icon button keeps its icon and
- *  says it in its tooltip, shown for the moment. With `then` (the card closes), that comes a moment later, so the
- *  confirmation shows first; the label comes back then. */
-export function showCopied(button: HTMLElement, then?: () => void) {
-  const icon = button.classList.contains("icon-btn");
-  const label = (button.dataset.label ??= (icon ? button.dataset.tip : button.textContent) ?? "");
-  if (icon) button.dataset.tip = "Copied ✓";
-  else {
-    button.style.minWidth = `${button.offsetWidth}px`;
-    button.textContent = "Copied ✓";
-  }
-  button.classList.remove("copied");
-  void button.offsetWidth; // the pop again, on a second copy
-  button.classList.add("copied");
-  clearTimeout(Number(button.dataset.timer));
-  const done = () => {
-    then?.();
-    if (icon) button.dataset.tip = label;
-    else {
-      button.textContent = label;
-      button.style.minWidth = "";
-    }
-    button.classList.remove("copied");
-  };
-  button.dataset.timer = String(setTimeout(done, then ? 700 : 1600));
 }
 
 export function shareWithAgent(o: ShareOptions): SharePanel {
