@@ -18,7 +18,6 @@ import type { Toast } from "./toast";
 import type { StyleBar } from "./style-bar";
 import type { Views } from "./views";
 import type { PageRequests } from "./page-requests";
-import type { Agent } from "./agent";
 import type { Pause } from "./pause";
 
 /**
@@ -95,6 +94,5 @@ export interface Shell {
   fmt: StyleBar;
   views: Views;
   requests: PageRequests;
-  agent: Agent;
   pause: Pause;
 }

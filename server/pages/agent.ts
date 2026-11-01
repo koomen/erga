@@ -14,6 +14,7 @@ const PANEL = `<aside id="agent" class="agent" aria-label="Agent"><div class="ag
 <div class="agent-card" inert>
 <div class="agent-head">
 <span class="title">Agent</span><span class="model" id="agent-model"></span>
+<button type="button" class="icon-btn" id="agent-undo" aria-label="Undo the agent's last change" data-tip="Undo the agent's last change" aria-disabled="true" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4.5 9.5 9 5"/><path d="M4.5 9.5H14a5.5 5.5 0 0 1 0 11h-3"/></svg></button>
 <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
 <button type="button" class="icon-btn" id="agent-close" aria-label="Collapse (Esc)" data-tip="Collapse  Esc"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5 10 14M10 14H5.5M10 14v4.5M19.5 4.5 14 10M14 10h4.5M14 10V5.5"/></svg></button>
 </div>
@@ -22,6 +23,7 @@ const PANEL = `<aside id="agent" class="agent" aria-label="Agent"><div class="ag
 <p class="agent-hint" id="agent-hint" role="status" hidden></p>
 <form class="agent-compose" id="agent-form">
 <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
+<button type="button" class="icon-btn agent-voice" id="agent-voice" aria-label="Voice mode" title="Voice mode: talk, and what you say is sent when you pause" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9.5v5"/><path d="M8.25 6.5v11"/><path d="M12 4v16"/><path d="M15.75 6.5v11"/><path d="M19.5 9.5v5"/></svg></button>
 <button type="submit" class="agent-send" id="agent-send">Send</button>
 </form>
 </div></div></aside>`;

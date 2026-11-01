@@ -19,7 +19,9 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
   expect(!(await b.eval<boolean>(`[...document.querySelectorAll(".msg-user, .msg-assistant")].length > 0`)), "Bo's panel shows none of it");
   await until(async () => b.eval<boolean>(`[...document.querySelectorAll(":is(#people, #me) .agent-badge")].some((e) => /Ada, via their agent/.test(e.dataset.tip))`), 5000, "the agent's badge shows on Bo's page");
   const idle = async () => !(await peerNames(b)).includes("Ada, via their agent");
-  await until(idle, 5000, "and no caret of its own once it's idle", async () => peerNames(b));
+  // (Its tools run in the document's host as Ada's agent, which counts it as working until 8 s after its last call:
+  // agents/document/session.ts, EXTERNAL_IDLE_MS.)
+  await until(idle, 12_000, "and no caret of its own once it's idle", async () => peerNames(b));
   noErrors(a, "Ada"); noErrors(b, "Bo");
 });
 

@@ -45,7 +45,10 @@ browserTest("e2e/full/suite/browser-broken.e2e.ts", "a paragraph broken by bad m
   );
   await until(
     async () => {
-      const log = (await (await d.fetch("/api/agent?user=Ada", {}, "Ada")).json()) as {
+      // (Ada's conversation is her agent's, on every page: agents/person/sessions.ts.)
+      const log = (await (
+        await fetch(`${new URL(d.base).origin}/api/agent/conversation?user=Ada`, { headers: d.headersFor("Ada") })
+      ).json()) as {
         log: { items: { kind: string; text?: string }[] };
       };
       return log.log.items.some((i) => i.kind == "user" && i.text == FIX_REPORTED);

@@ -17,7 +17,7 @@ export function mountPeople(shell: Shell) {
     return shell.collab.others().filter((p) => p.user.kind == "agent" && p.busy).map((p) => p.user.name);
   }
   function presenceChanged() {
-    shell.room.setAgentBusy(busyAgents().length > 0 || shell.agent.log.busy);
+    shell.room.setAgentBusy(busyAgents().length > 0 || !!window.ergaAgentPanel?.busy);
     renderPeople();
     queuePeers();
   }

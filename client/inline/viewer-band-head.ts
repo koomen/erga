@@ -21,12 +21,18 @@ export default function viewerBandHead(): void {
     }
     if (color && !(window.CSS && CSS.supports("color", color))) color = "";
     const rgb = color!.match(/[\d.]+/g)?.map(Number);
-    if (color && /^rgba?\(/.test(color) && rgb && rgb.length >= 3)
-      tone = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45 ? "page-dark" : "page-light";
+    // (A white or near-white page: the glass is tinted, as the editor's: client/inline/bars.css.)
+    let white = false;
+    if (color && /^rgba?\(/.test(color) && rgb && rgb.length >= 3) {
+      const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+      tone = lum < 0.45 ? "page-dark" : "page-light";
+      white = lum > 0.95;
+    }
     if (color) root.style.setProperty("--band", color);
     else root.style.removeProperty("--band");
     root.classList.toggle("page-dark", tone == "page-dark");
     root.classList.toggle("page-light", tone == "page-light");
+    root.classList.toggle("page-white", white);
     if (given.length)
       try {
         localStorage.setItem(key, JSON.stringify({ bg: color, tone }));

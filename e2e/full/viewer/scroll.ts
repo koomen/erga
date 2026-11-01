@@ -3,6 +3,7 @@
 
 import { expect, until, type Page, type Server } from "../../helpers/fixtures";
 import { docShows, inPage, openViewer } from "./viewer";
+import { openHome, signedOut } from "../home/home";
 
 export type Mode = "doc" | "home";
 /** Where the controls are: the host page, or the homepage's shadow root. */
@@ -11,21 +12,29 @@ export type Rect = { l: number; t: number; r: number; b: number };
 
 /** The homepage, served directly once its first deploy is done (the first / starts it). */
 export async function homeReady(server: Server) {
-  await fetch(server.root + "/");
-  await until(async () => (await (await fetch(server.root + "/")).text()).includes("<erga-controls"), 20_000, "the homepage is served directly");
+  const out = { headers: signedOut(server) };
+  await fetch(server.root + "/", out);
+  await until(
+    async () => (await (await fetch(server.root + "/", out)).text()).includes("<erga-controls"),
+    20_000,
+    "the homepage is served directly"
+  );
 }
 
 /** Opens the long fixture's document (e2e/fixtures/fade, linked once per server) or the homepage. */
 const docs = new WeakMap<Server, Promise<string>>();
 export async function openLong(page: Page, server: Server, mode: Mode, opts: { width?: number; height?: number } = {}) {
   if (mode == "doc" && !docs.has(server)) docs.set(server, server.fixture("fade").then((f) => f.address));
-  // The homepage as the logo opens it, from inside Erga: opened by address, someone signed in goes to /docs (AGENTS.md).
-  await openViewer(page, mode == "home" ? `${server.root}/docs` : await docs.get(server)!, opts);
   if (mode == "home") {
-    await Promise.all([page.waitForURL((u) => u.pathname == "/"), page.evaluate(() => location.assign("/"))]);
+    // Signed out, as the homepage is served (someone signed in who opens / goes to /docs: server/app.ts).
+    await page.setViewportSize({ width: opts.width ?? 1300, height: opts.height ?? 860 });
+    await openHome(page, server.root);
     await page.evaluate(() => document.fonts.ready.then(() => true));
     expect(await page.evaluate(() => !!document.querySelector("erga-controls"))).toBe(true);
-  } else await docShows(page, "A long page");
+  } else {
+    await openViewer(page, await docs.get(server)!, opts);
+    await docShows(page, "A long page");
+  }
 }
 
 /** The controls' opacities as shown (the computed value, mid-transition too), with their bars', and their boxes. */

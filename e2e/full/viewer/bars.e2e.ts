@@ -203,4 +203,6 @@ for (const mode of ["doc", "home"] as Mode[])
       c.opacity.every((o) => o == 1),
       "the bars whole"
     ).toBe(true);
+    // (The homepage was opened signed out: the tab signs back in for the next test.)
+    await page.context().clearCookies();
   });

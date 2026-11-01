@@ -14,3 +14,11 @@ html.erga-band-wait #frame { opacity: 0; }
 .erga-canvas :is(i, b) { position: absolute; display: block; }
 .erga-canvas b { overflow: hidden; }
 .erga-canvas i { box-sizing: content-box; background-origin: content-box; }
+/* With the app's stylesheet on the page (for your agent: server/pages/agent.ts), the band and the canvas still show
+   through the body. */
+body { background: transparent; }
+/* Your agent (server/pages/agent.ts), viewing: the page sits where the editor puts it (client/inline/viewer-layout-early.ts
+   sets --frame-l and --frame-r as the editor's layout does: the agent's side and width), and slides over on its curve as
+   the agent opens and closes. Editing, client/styles/editor.css places it. */
+body:not(.erga-editing) :is(#frame, .erga-canvas) { left: var(--frame-l, 0px); width: calc(100% - var(--frame-l, 0px) - var(--frame-r, 0px));
+  transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1), width 560ms cubic-bezier(0.45, 0, 0.15, 1); }

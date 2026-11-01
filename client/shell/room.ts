@@ -116,9 +116,8 @@ export function mountRoom(shell: Shell) {
       shell.naming.applyKind(h.tree.kind);
       stillHere(h.tree);
     }
-    else if (msg.type == "agent-state" && msg.state) shell.agent.agentState(msg.state);
-    else if (msg.type == "agent" && msg.ev) shell.agent.agentEvent(msg.ev);
-    else if (msg.type == "model") shell.agent.renderModel(msg as unknown as ModelState);
+    // Your agent's changes to this document (its tools run here, as your agent): Undo's count in its panel.
+    else if (msg.type == "agent" && msg.ev?.t == "undoable") window.dispatchEvent(new Event("erga:agent-tool"));
     else if (msg.type == "view" && msg.id && msg.req?.live) shell.requests.answerLive(msg.id, msg.req.live);
     else if (msg.type == "view" && msg.id) shell.requests.answerView(msg.id, msg.req ?? {});
     else if (msg.type == "name" && msg.name) shell.naming.showName(msg.name);

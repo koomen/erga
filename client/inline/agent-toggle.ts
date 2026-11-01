@@ -5,6 +5,8 @@
 declare global {
   interface Window {
     ergaAgent?: { show(open: boolean): void; open(): boolean };
+    /** On a document's page: the editor's layout put on again, for the agent open or closed (server/pages/viewer.ts). */
+    ergaLayoutEarly?: () => void;
   }
 }
 
@@ -27,10 +29,13 @@ export default function agentToggle(): void {
   };
   const show = (open: boolean) => {
     set(open);
-    if (!narrow.matches)
+    if (!narrow.matches) {
       try {
         localStorage.setItem("erga:settings:v1", JSON.stringify({ ...settings(), agent: open }));
       } catch {}
+      // The page and the bars slide over to make room, or back (the editor's layout keeps up by itself, once it runs).
+      window.ergaLayoutEarly?.();
+    }
     if (open) window.dispatchEvent(new Event("erga:agent-shown"));
     else fab.focus();
   };

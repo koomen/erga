@@ -13,8 +13,12 @@ test("the agent starts on Opus 5.5 fast; picking Sonnet 5.5 switches it, the per
   const other = await tab.page.context().newPage();
   await other.goto(`${ed.address}?edit`);
   await expect.poll(async () => (await select(other))?.value).toBe("opus-fast");
-  await ed.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "sonnet"; s.dispatchEvent(new Event("change")); })()`);
-  await expect.poll(async () => (await (await fetch(`${ed.address}/api/agent`)).json() as { choice: string }).choice).toBe("sonnet");
+  await ed.eval(
+    `(() => { const s = document.getElementById("agent-model-select"); s.value = "sonnet"; s.dispatchEvent(new Event("change")); })()`
+  );
+  await expect
+    .poll(async () => ((await (await fetch(`${new URL(ed.address).origin}/api/agent`)).json()) as { choice: string }).choice)
+    .toBe("sonnet");
   await expect.poll(async () => (await select(other))?.value).toBe("sonnet");
   await other.close();
   await tab.page.reload();
