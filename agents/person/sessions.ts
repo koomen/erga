@@ -13,6 +13,9 @@
 //                                     person's pages only: { type: "agent", ev }
 //   GET    /api/agent/conversation    { log: { items, busy, undoable } }: the conversation
 //   DELETE /api/agent/conversation    a new conversation (the "New conversation" button)
+//   POST   /api/agent/keys            { name, value }: the person's own API key for a provider (Settings, Agent), in place of
+//                                     the one there was; a secret, so set only here (list_my_api_keys, clear_my_api_key
+//                                     list and remove them). The answer has its last four characters, never the key.
 //   GET    /api/agent/prefs           { open?, side?, width? }: their panel, as they left it
 //   PUT    /api/agent/prefs           { open?, side?, width? }: changes what's given
 //
@@ -85,7 +88,9 @@ export class PersonAgents {
     origin: string,
     name?: string
   ): Promise<{ agent: AgentSession; origin: string; here: string | null } | string> {
-    const cfg = await this.platform.agentSettings().catch((e: unknown) => ({ missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment` }));
+    const cfg = await this.platform.agentSettings(login).catch((e: unknown) => ({
+      missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment`,
+    }));
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
     if (s) { s.origin = origin; s.agent.configure(cfg); return s; }
@@ -310,6 +315,7 @@ const Prompt = Schema.Struct({
   doc: Schema.optionalKey(Schema.Unknown),
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
+const KeyBody = Schema.Struct({ name: Schema.optionalKey(Schema.String), value: Schema.optionalKey(Schema.String) });
 
 /** The body as JSON, as `schema` has it; else `fallback` (a body that isn't JSON counts as none, as before). */
 const body = <S extends Schema.Top>(request: Request, schema: S, fallback: S["Type"]) =>
@@ -365,6 +371,17 @@ export const agentApi: Route = Effect.gen(function* () {
   if (path == "/api/agent/conversation") {
     if (m == "GET") return json({ log: yield* call(() => h.conversation(me.login)) });
     if (m == "DELETE") return json({ ok: true, log: yield* call(() => h.clearConversation(me.login)) });
+  }
+  if (path == "/api/agent/keys" && m == "POST") {
+    const b = yield* body(request, KeyBody, {});
+    // A key that isn't one (the wrong provider's, a plan token) is refused, saying why.
+    return yield* Effect.tryPromise({
+      try: () => platform.directory.personKeys.set({ login: me.login }, b.name ?? "", b.value ?? ""),
+      catch: (e) => (e instanceof Error ? e.message : String(e)),
+    }).pipe(
+      Effect.map((key) => json({ ok: true, key })),
+      Effect.catch((error) => Effect.succeed(json({ ok: false, error }, 400)))
+    );
   }
   if (path == "/api/agent/prefs") {
     if (m == "GET") return json(yield* call(() => h.agentPrefs(me.login)));

@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 import { AiError, LanguageModel, type Prompt, type Response } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic";
-import { CREDENTIALS, type Credentials } from "../server/directory/index.ts";
+import { CREDENTIALS, type Credentials, type PersonKeys } from "../server/directory/index.ts";
 import {
   DEFAULT_MODEL,
   fitModel,
@@ -93,8 +93,11 @@ const modelFrom = (
 
 declare module "../server/platform.ts" {
   interface Platform {
-    /** The agents' settings as they are now: the keys (stored, else the deploy's) and the admin's choices; or why there's none. Read at each turn. */
-    agentSettings(): Promise<AgentSettings>;
+    /**
+     * The agents' settings as they are now: the server's keys (stored, else the deploy's), the admin's choices, and
+     * `login`'s own keys (none without one); or why there's none. Read at each turn.
+     */
+    agentSettings(login?: string): Promise<AgentSettings>;
   }
 }
 
@@ -105,21 +108,22 @@ export const UNREADABLE_KEY =
 /** What the agent pane says when no key runs any model. */
 const NO_KEY =
   "no API key is set (an admin pastes the Anthropic API key in their agent's panel, or another provider's on /admin/api-keys; locally, export ANTHROPIC_API_KEY before bun start, or put it in .dev.vars)";
-const OWN_KEYS = "the admin asks each person to bring their own API key, and you have none yet";
+const OWN_KEYS = "the admin asks each person to bring their own API key, and you have none yet. Add one in Settings, Agent";
 
 /** Where the server's keys and the admin's choices are read: the directory's stored keys and its settings. */
 export interface KeySource {
   credentials: Pick<Credentials, "opened">;
+  personKeys: Pick<PersonKeys, "opened">;
   config: { get(key: "agent_keys" | "agent_models_off"): Promise<unknown> };
 }
 
 /**
  * The agents' settings, as they are now: each provider's key an admin stored on /admin/api-keys, else the Worker
- * secret of the same name in `env`; the admin's agent_keys and agent_models_off; and the person's own keys. Read at
+ * secret of the same name in `env`; the admin's agent_keys and agent_models_off; and `login`'s own keys. Read at
  * each turn (a few rows of the database), so a key or a setting that changes reaches every agent at its next turn,
  * with no reload. No directory: the Worker secrets only.
  */
-export async function agentSettingsFrom(env: object, dir: KeySource | null, own: Keys = {}): Promise<AgentSettings> {
+export async function agentSettingsFrom(env: object, dir: KeySource | null, login?: string): Promise<AgentSettings> {
   const vars = env as Record<string, unknown>;
   let unreadable = false;
   const server: Keys = {};
@@ -136,6 +140,14 @@ export async function agentSettingsFrom(env: object, dir: KeySource | null, own:
     const key = stored.key ?? (typeof vars[CREDENTIALS[p].env] == "string" ? (vars[CREDENTIALS[p].env] as string) : "");
     if (key) server[p] = Redacted.make(key);
   }
+  const own: Keys = {};
+  const theirs =
+    dir && login
+      ? await dir.personKeys
+          .opened(login)
+          .catch((e: unknown) => (console.log(`couldn't read ${login}'s own keys: ${e instanceof Error ? e.message : e}`), {}))
+      : {};
+  for (const [p, key] of Object.entries(theirs) as [Provider, string][]) if (key) own[p] = Redacted.make(key);
   const chosen = await Effect.runPromise(modelFrom(ConfigProvider.fromUnknown(env)));
   if ("missing" in chosen) return chosen;
   const [keys, turnedOff] = dir ? await Promise.all([dir.config.get("agent_keys"), dir.config.get("agent_models_off")]) : [];

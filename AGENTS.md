@@ -177,6 +177,10 @@ Found a new trap? Write it here, in the same change.
   server/pages/agent.ts, outside `#erga-editor`, and stay as they are when the editor opens or closes. The editor
   only places it (client/agent/layout.ts). Its conversation is the person's (`/api/agent`), not the document's: a
   test reads it at `${root}/api/agent/conversation`, never at the document's `/d/<id>/api/agent`.
+- Staging's database is a copy of production's. A new table that holds secrets (encrypted under production's
+  FACTORY_KEY) must be emptied in the copy, and staging's own rows kept: `ownCredentials` in
+  control/deploys/account.ts does it for `credentials` and `person_keys`. It runs on the control Worker, so it
+  takes effect one deploy late.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

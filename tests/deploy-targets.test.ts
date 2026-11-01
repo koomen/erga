@@ -61,7 +61,11 @@ describe("staging", () => {
     expect(db.migrations).toEqual([...prod.migrations, ...newer]);
     expect(db.migrations).toEqual(all);
     // The restore point is recorded first (staging's Worker is new here: no version to go back to; the copy's bookmark).
-    expect(steps.find((s) => s.startsWith("migrations:done"))).toMatch(new RegExp(`^${newer.length ? `migrations:done applied ${newer.join(", ")}` : "migrations:done already up to date"}; restore point: no version, database bookmark \\S+; no API keys of its own to keep$`));
+    expect(steps.find((s) => s.startsWith("migrations:done"))).toMatch(
+      new RegExp(
+        `^${newer.length ? `migrations:done applied ${newer.join(", ")}` : "migrations:done already up to date"}; restore point: no version, database bookmark \\S+; no API keys of its own to keep; 0 of its people's own keys kept$`
+      )
+    );
 
     // Its own Worker: bound to its database, its settings, its secrets, the builder; Durable Objects of its own (a new Worker: no tombstone).
     const b = bindingsOf(mock.state, "erga-staging");

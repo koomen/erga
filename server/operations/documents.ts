@@ -311,6 +311,39 @@ export const TOKEN_OPERATIONS: Operation[] = [
       return { revoked: args.id };
     },
   },
+  {
+    name: "list_my_api_keys",
+    label: "List your API keys",
+    activity: "listing your API keys",
+    wide: true,
+    ui: "Settings, Agent: your own API keys",
+    description:
+      "The person's own API keys for their agent's models, one for each provider (anthropic, openai, google, openrouter): whether each is set, its last four characters, when it was set, and whether this server can't open it. Never a key itself. Only the person's own agent uses them; a key of theirs runs every model of its provider and wins over the server's. The person pastes a key only in Settings, Agent, never in a conversation.",
+    parameters: Schema.Struct({}),
+    run: async (_args, { dir, who }) =>
+      (await dir.personKeys.list(who)).map((k) => ({
+        name: k.name,
+        label: k.label,
+        set: k.set,
+        last4: k.last4,
+        updated: iso(k.updated),
+        ...(k.unreadable ? { unreadable: "stored, but this server can't open it: paste it again in Settings, Agent" } : {}),
+      })),
+  },
+  {
+    name: "clear_my_api_key",
+    label: "Remove one of your API keys",
+    activity: "removing one of your API keys",
+    wide: true,
+    ui: "Settings, Agent: Remove a key",
+    description:
+      "Removes one of the person's own API keys, by provider (list_my_api_keys), as Remove in Settings, Agent does: their agent stops running that provider's models with it (the server's key may still run some). Only when the person asks. Adding or replacing a key is done only in Settings, so a key never goes through a conversation.",
+    parameters: Schema.Struct({ name: str("The provider: anthropic, openai, google or openrouter.") }),
+    run: async (args, { dir, who }) => {
+      const k = await dir.personKeys.clear(who, String(args.name ?? ""));
+      return { removed: k.name, label: k.label };
+    },
+  },
 ];
 
 /** Who a document is shared with, as the Share dialogs show it. */
