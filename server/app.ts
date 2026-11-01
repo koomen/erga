@@ -4,9 +4,8 @@
 // Worker's fetch handler, and the unit tests may run it on a Platform in memory.
 //
 //   /                          the homepage: the homepage served from its last deploy, else the viewer on the
-//                              landing document (a setting), with an Edit button for those who may
-//                              Someone signed in who comes from outside Erga (a typed address, a bookmark, another
-//                              site's link) goes to /docs instead (homeGoesToDocs)
+//                              landing document (a setting), with an Edit button for those who may. Someone signed
+//                              in goes to /docs instead (homeGoesToDocs); /_home is the homepage project for them
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
 //   /docs                      your documents (the directory), latest edit first
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
@@ -23,7 +22,7 @@
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
-//   /_home/<gen>/<path>        the homepage's files, as deployed
+//   /_home-files/<gen>/<path>  the homepage's files, as deployed
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
 //                              and /api/events; `outside` answers them (a redirect to the control Worker, or itself in local development)
 //   /admin, /admin/changes, /admin/users, /admin/auth, /admin/api-keys   the server's settings, their change log, its
@@ -47,7 +46,7 @@ import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
 import { serverApi } from "./api.ts";
-import { documentRoutes, isPagesSite } from "./documents/index.ts";
+import { adoptLanding, documentRoutes, isPagesSite } from "./documents/index.ts";
 import { serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
 import {
   adminsOnlyGate,
@@ -69,7 +68,6 @@ import { releaseApi, withLive } from "./live.ts";
 import { newsRoutes } from "./news/index.ts";
 import {
   accountOf,
-  cameFromOutside,
   homeGoesToDocs,
   isAssetPath,
   loadAssets,
@@ -167,13 +165,13 @@ const route = (url: URL, outside: Outside): Route =>
     if (isOAuthPath(path)) return yield* oauthRoutes;
     // The homepage, served directly from its last deploy; the viewer on it until there's one.
     if (path == "/" && read) {
-      // Someone signed in who comes from outside Erga goes to their documents. The session is read only then.
-      if (cameFromOutside(request) && homeGoesToDocs(request, yield* call(() => p.sessionOf(request))))
-        return redirect(`/docs${url.search}`);
+      // Someone signed in goes to their documents; the homepage project is at /_home for them.
+      yield* call(() => adoptLanding(p));
+      if (homeGoesToDocs(yield* call(() => p.sessionOf(request)))) return redirect(`/docs${url.search}`);
       const home = yield* serveHome;
       if (home) return home;
     }
-    if (path.startsWith("/_home/")) return yield* serveHomeFile;
+    if (path.startsWith("/_home-files/")) return yield* serveHomeFile;
     // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
     // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
     if (read && isHomeFilePath(path)) {

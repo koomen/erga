@@ -158,9 +158,12 @@ Found a new trap? Write it here, in the same change.
   again, with its `?erga-edit` if the editor was on then, and that page asks for the editor by
   itself. Only the shell decides "editing" (`client/shell/remote.ts`: `active`); the frame's
   address never does.
-- A browser that opens `/` by address (`page.goto`) sends `Sec-Fetch-Site: none`, so someone
-  signed in lands on /docs (server/app.ts). A test of the landing page opens it as the logo does:
-  `openHome(page, root)` (e2e/full/home/home.ts).
+- `/` sends anyone signed in to /docs (server/app.ts), and the dev server signs in every request
+  without a cookie as DEV_LOGIN. A test of the served homepage opens it signed out: `front(server)`
+  or `openHome(page, root)`, or the cookie `signedOut(server)` (e2e/full/home/home.ts). The cookie's
+  name ends with the port. The homepage project's own page is `/_home`.
+- The homepage project's row has the owner `-home` (document/names.ts), which no account can be.
+  Build a document's address with `addressOf`, never `/${owner}/${slug}`: its address is `/_home`.
 - The viewer, the editor and the homepage draw the same glass bars from one stylesheet,
   `client/inline/bars.css`. The homepage's copy is in a shadow root, where `html` and `body` match
   nothing: `SHADOW_BARS` (server/home/render.ts) rewrites them to `:host`, and stops the server

@@ -2,7 +2,7 @@
 // in this isolate and in the edge's cache, and checked against the home object
 // for a newer one at most every few seconds, after answering
 // (stale-while-revalidate), so / never waits on anything but the snapshot, and
-// usually not even on that. The files are at /_home/<gen>/<path>, cached for
+// usually not even on that. The files are at /_home-files/<gen>/<path>, cached for
 // good. Where there's no edge cache (workers.dev has none) the isolate's
 // memory serves alone.
 
@@ -133,7 +133,7 @@ async function homePage(request: Request, platform: Platform): Promise<Response 
   return new Response(body, { headers });
 }
 
-/** One of a deploy's files, /_home/<gen>/<path>: the same forever, so kept for good, in the browser and the edge's cache. */
+/** One of a deploy's files, /_home-files/<gen>/<path>: the same forever, so kept for good, in the browser and the edge's cache. */
 export const serveHomeFile = Effect.flatMap(ctx, ({ request, platform }) =>
   Effect.map(
     call(() => homeFile(request, platform)),
@@ -144,7 +144,7 @@ export const serveHomeFile = Effect.flatMap(ctx, ({ request, platform }) =>
 /** serveHomeFile's answer, as a web Response (the edge's cache keeps it so). */
 async function homeFile(request: Request, platform: Platform): Promise<Response> {
   const url = new URL(request.url);
-  const [, gen, rest] = /^\/_home\/([a-z0-9]+)\/(.+)$/.exec(url.pathname) ?? [];
+  const [, gen, rest] = /^\/_home-files\/([a-z0-9]+)\/(.+)$/.exec(url.pathname) ?? [];
   let path: string | null = null;
   try { path = rest ? decodeURIComponent(rest) : null; } catch { path = null; }
   if ((request.method != "GET" && request.method != "HEAD") || !gen || !path) return new Response("Not found", { status: 404 });

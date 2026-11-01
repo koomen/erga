@@ -14,7 +14,7 @@
 // and the row goes: from then on they're a user (server/directory/users.ts).
 
 import { changeLogEntry } from "../../shared/attribution.ts";
-import type { Sql, Statement } from "./directory.ts";
+import type { Sql, Statement } from "./model.ts";
 import { label, type SignInProvider, SIGN_IN_PROVIDERS, type Vouched, vouchedEmails } from "./identities.ts";
 import { type Actor, NotAllowed, type UserRole, type Users } from "./users.ts";
 

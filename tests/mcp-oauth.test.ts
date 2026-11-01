@@ -172,12 +172,10 @@ test("a wrong verifier uses the code up; Deny sends the person back to the app w
   expect(await tokens.deny(two.userCode)).toEqual({ oauth: { redirectUri: oauth.redirectUri, state: "s" } });
 });
 
-test("/ sends someone signed in to /docs only when the visit starts outside Erga (Sec-Fetch-Site, not same-origin)", () => {
-  const visit = (site: string | null) => new Request(`${ORIGIN}/`, { headers: site ? { "Sec-Fetch-Site": site } : {} });
+test("/ sends someone signed in to /docs, however they came; not a test person, an agent, or someone signed out", () => {
   const ada: Session = { login: "ada", name: "Ada" };
-  for (const site of ["none", "cross-site", "same-site"]) expect(homeGoesToDocs(visit(site), ada), site).toBe(true);
-  for (const site of [null, "same-origin"]) expect(homeGoesToDocs(visit(site), ada), String(site)).toBe(false);
-  expect(homeGoesToDocs(visit("none"), null)).toBe(false);
-  expect(homeGoesToDocs(visit("none"), { ...ada, test: { by: "koomen" } })).toBe(false);
-  expect(homeGoesToDocs(visit("none"), { ...ada, agent: {} as Session["agent"] })).toBe(false);
+  expect(homeGoesToDocs(ada)).toBe(true);
+  expect(homeGoesToDocs(null)).toBe(false);
+  expect(homeGoesToDocs({ ...ada, test: { by: "koomen" } })).toBe(false);
+  expect(homeGoesToDocs({ ...ada, agent: {} as Session["agent"] })).toBe(false);
 });

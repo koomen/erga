@@ -26,7 +26,7 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { changeLogEntry } from "../../shared/attribution.ts";
-import type { Sql, Statement } from "./directory.ts";
+import type { Sql, Statement } from "./model.ts";
 import type { Actor, Users } from "./index.ts";
 import { randomBytes, sha256 } from "../../shared/bytes.ts";
 

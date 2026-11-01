@@ -16,7 +16,7 @@
 // read to every session and token (Users.allowed), write to every document (Directory.decide) and every new one.
 
 import { changeLogEntry } from "../../shared/attribution.ts";
-import type { Sql } from "./directory.ts";
+import type { Sql } from "./model.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 
 export type Access = "none" | "read" | "write";

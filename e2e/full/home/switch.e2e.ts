@@ -82,14 +82,14 @@ test("the page's styles can't reach the controls, nor theirs the page; its files
     };
   });
   expect(iso).toMatchObject({ hostShown: "block", hostPosition: "fixed" });
-  // Where the viewer has them: Share with an agent, then Documents, then the avatar.
-  expect(iso).toMatchObject({ agent: [1072, 12, 34, 34], agentColor: "rgb(154, 154, 162)", account: [1154, 14, 30, 30] });
+  // Where the viewer has them, signed out: Share with an agent (no Documents), then Sign in.
+  expect(iso).toMatchObject({ agent: [1108, 12, 34, 34], agentColor: "rgb(154, 154, 162)", account: [1154, 14, 30, 30] });
   expect(iso.probePosition).toBe("static");
   expect(iso.h1).toBe("rgb(1, 2, 3)");
-  expect(iso.bg).toMatch(/\/_home\/[a-z0-9]+\/img\/dot\.svg/);
+  expect(iso.bg).toMatch(/\/_home-files\/[a-z0-9]+\/img\/dot\.svg/);
   expect(iso.pic).toBe(4);
-  expect(iso.css).toMatch(/^\/_home\/[a-z0-9]+\/style\.css$/);
-  expect(iso.picSrc).toMatch(/^\/_home\/[a-z0-9]+\/img\/dot\.svg$/);
+  expect(iso.css).toMatch(/^\/_home-files\/[a-z0-9]+\/style\.css$/);
+  expect(iso.picSrc).toMatch(/^\/_home-files\/[a-z0-9]+\/img\/dot\.svg$/);
   const css = await get(server, iso.css!);
   expect(css.ok).toBe(true);
   expect(css.headers.get("cache-control") ?? "").toMatch(/immutable/);
@@ -132,7 +132,7 @@ test("only admins may edit the homepage: not made one while others may edit it, 
   expect(await canEdit()).toBe(true);
   await role("write");
   await expect.poll(canEdit, { timeout: 15_000 }).toBe(false);
-  expect((await front(server, bo)).html).not.toContain("erga-edit-button");
+  expect(await (await get(server, `/d/${id}?user=${bo}`, { redirect: "follow" })).text()).not.toContain("erga-edit-button");
 });
 
 // A deploy SHORT.homeDelay after the last edit, pushed back once.
@@ -140,7 +140,7 @@ test("edits deploy the delay after the last of them, each step told to the docum
   const { server, token, id } = await secondHome();
   const heard = await events(server, id);
   try {
-    const gen = (html: string) => /\/_home\/([a-z0-9]+)\//.exec(html)?.[1];
+    const gen = (html: string) => /\/_home-files\/([a-z0-9]+)\//.exec(html)?.[1];
     const firstGen = gen((await front(server)).html);
     await publish(server, token, { ...files, "index.html": page("Edited once") }, { document: id });
     await expect.poll(async () => (await home(server, id)).deploy.state).toBe("scheduled");

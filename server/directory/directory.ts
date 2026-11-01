@@ -33,7 +33,9 @@
 // this site itself, so while it's the homepage only admins
 // may edit it. It can't be made the homepage while anyone else may
 // (homeBlocked), nobody else can be made its editor (share), and anyone else
-// whose permission says otherwise only views it (homeLimit).
+// whose permission says otherwise only views it (homeLimit). The homepage
+// project (owner HOME_OWNER, at /_home: nobody's) is every admin's to edit,
+// and on their list (`list`).
 //
 // A document's host (its Durable Object) keeps a copy of the document's
 // permissions, so a request to the document needs no query here: it decides
@@ -50,92 +52,30 @@ import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users
 import { Credentials } from "./api-keys.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
-import { NameError, UNTITLED } from "../../document/names.ts";
+import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
 import type { Role } from "../../document/access.ts";
-import { randomString } from "../../shared/bytes.ts";
+import {
+  type Action,
+  ANYONE,
+  type DocFound,
+  type DocRow,
+  ID,
+  idShaped,
+  NO_PUBLIC,
+  NO_WRITE,
+  type NewDoc,
+  type News,
+  type Param,
+  type Permission,
+  RESERVED,
+  type Route,
+  type Sql,
+  type Statement,
+  TEST_ID,
+  type Who,
+  type Grant,
+} from "./model.ts";
 
-
-/** What SQL a platform gives the directory (D1, bun:sqlite). Parameters are `?1`, `?2`... */
-export interface Sql {
-  all<T = Record<string, unknown>>(sql: string, ...params: Param[]): Promise<T[]>;
-  run(sql: string, ...params: Param[]): Promise<void>;
-  /** Runs the statements in order, all or nothing. */
-  batch(statements: Statement[]): Promise<void>;
-}
-export type Param = string | number | null;
-export type Statement = [sql: string, ...params: Param[]];
-
-export interface DocRow {
-  id: string;
-  /** The owner's login, lowercase. */
-  owner: string;
-  slug: string;
-  title: string;
-  /** Someone set the title: it no longer follows the page's first heading. */
-  titleSet: boolean;
-  /** Someone set the slug: it no longer follows the title. */
-  slugSet: boolean;
-  created: number;
-  /** When a file last changed; null if never. */
-  modified: number | null;
-  /** When it goes if nobody edits it; null once someone has. */
-  expires: number | null;
-  test: boolean;
-  /** A document (one page) or a project (pages); null if its row has none. */
-  kind: DocKind | null;
-}
-
-/** A document or project an admin's search finds (Directory.search). */
-export interface DocFound {
-  id: string;
-  title: string;
-  /** The owner's login. */
-  owner: string;
-  /** Its canonical address, "/<owner>/<slug>". */
-  address: string;
-  /** A document (one page) or a project (pages); a document if its row has none. */
-  kind: DocKind;
-}
-
-/** A role that can be given to someone (a document's owner is who made it, and stays so). */
-export type Grant = "editor" | "viewer";
-export type Action = "open" | "edit" | "rename" | "delete" | "share";
-/**
- * Someone asking to do something: a login (lowercase), and whether they're a
- * test person (who may touch only test documents), and if so whose test
- * token signed them in (`by`, lowercase).
- */
-export interface Who {
-  login: string; test?: boolean; by?: string;
-  /** Comes with admin power: a browser session, or an admin token. Set by the app. */
-  admin?: boolean;
-  /** A document token's document: they may touch this one document, and no other. */
-  onlyDoc?: string;
-  /** How they act, when not in person: through one of their agents. Recorded beside their login. */
-  via?: string;
-}
-/** What making a document answers someone the write rule (/admin/users) leaves out. */
-export const NO_WRITE = "Your access on this server is Can authenticate: you may open what is shared with you or public, but not make or edit documents. An admin can give you Can create and edit content on the Users page.";
-
-/** What sharing with anyone with the link answers while the server doesn't let users share content publicly. */
-export const NO_PUBLIC =
-  "This server doesn't let users share content publicly, so this document can't be shared with anyone with the link. An admin can turn on \"Users can share content publicly\" on the Access page (/admin/access). Share it with people by their username instead.";
-
-/** The login a permission for anyone with the link is under: anyone signed in, and, while the server lets users share content publicly, people who aren't signed in too (as viewers). */
-export const ANYONE = "*";
-
-/** A row some open pages show changed: its key ("doc:<id>"), and who may see it ("admins": every admin). server/news/ carries it. */
-export interface News {
-  key: string;
-  to: readonly string[] | "admins";
-}
-
-/** One person's (or anyone's, "*") permission on a document. */
-export interface Permission {
-  login: string; role: Role; granted: number; grantedBy: string | null;
-  /** How `grantedBy` shared it, when not in person: "their agent", "a shared agent (label)". */
-  grantedVia?: string | null;
-}
 
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 };
 const ALLOWS: Record<Action, Role> = { open: "viewer", edit: "editor", rename: "editor", delete: "owner", share: "owner" };
@@ -145,37 +85,6 @@ export const roleMay = (role: Role | null, action: Action): boolean => role != n
 
 export const TITLE_MAX = 200;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-/**
- * Words that can't be slugs: the app's own first path segments (server/documents/routes.ts,
- * server/app.ts) and the document host's, so an
- * address never reads as one of those, and a few kept for later.
- */
-export const RESERVED = new Set([
-  "d", "docs", "new", "auth", "tokens", "api", "fonts", "doc", "t", "delete", "rename",
-  "page.js", "frame.js", "style.css", "assets", "static", "settings", "admin", "login", "logout", "help", "about", "share", "members",
-]);
-
-/** A new document's row. Its slug starts from `slug` (else its title), with -2, -3... if that's taken; `slugSet` fixes it there. */
-export interface NewDoc {
-  id: string;
-  owner: string;
-  title: string;
-  slug?: string;
-  titleSet?: boolean;
-  slugSet?: boolean;
-  created: number;
-  modified?: number | null;
-  expires?: number | null;
-  test?: boolean;
-  /** A role for anyone signed in who has the link, from the start (local development's documents on disk). */
-  everyone?: Grant;
-  /** A document (one page) or a project (pages); left for its object to decide as it opens, if not given. */
-  kind?: DocKind;
-}
-
-/** Where a request's document is: enough to reach its host (named by its id) and decide who may. None of it ever changes. */
-export interface Route { id: string; owner: string; test: boolean }
 
 interface Row { id: string; owner: string; slug: string; title: string; title_set: number; slug_set: number; created: number; modified: number | null; expires: number | null; test: number; kind?: string | null }
 const fromRow = (r: Row): DocRow => ({
@@ -278,6 +187,7 @@ export class Directory {
     let path = ref.trim();
     try { if (/^https?:\/\//i.test(path)) path = new URL(path).pathname; } catch { return null; }
     if (idShaped(path)) return this.get(path);
+    if (/^\/?_home\/?$/.test(path)) return (await this.locate(HOME_OWNER, HOME_SLUG))?.doc ?? null;
     const [, first, second] = /^\/?([^/]+)\/([^/?#]+)\/?$/.exec(path) ?? [];
     if (!first || !second) return null;
     if (first == "d") return idShaped(second) ? this.get(second) : null;
@@ -322,9 +232,12 @@ export class Directory {
    * Anyone else, whatever their permission says (an admin since made a user,
    * or an admin's documents token), only views it while it's the homepage.
    */
-  async homeLimit(who: Who, id: string, role: Role | null): Promise<Role | null> {
+  async homeLimit(who: Who, doc: { id: string; owner: string }, role: Role | null): Promise<Role | null> {
+    // The homepage project is nobody's: every admin (with admin power) edits it, and anyone else signed in views it, as
+    // they view it at /.
+    if (doc.owner == HOME_OWNER) return (await this.users.actsAsAdmin(who)) ? "editor" : "viewer";
     if (role != "owner" && role != "editor") return role;
-    if ((await this.homeId()) != id) return role;
+    if ((await this.homeId()) != doc.id) return role;
     return (await this.users.actsAsAdmin(who)) ? role : "viewer";
   }
 
@@ -383,7 +296,7 @@ export class Directory {
       owner.toLowerCase(), owner == "d" ? segment : segment.toLowerCase(), who.login.toLowerCase(), ANYONE);
     if (!row) return null;
     const role = (Object.keys(RANK) as Role[]).find((r) => RANK[r] == Number(row.rank)) ?? null;
-    return { doc: fromRow(row), role: await this.homeLimit(who, row.id, role) };
+    return { doc: fromRow(row), role: await this.homeLimit(who, row, role) };
   }
 
   /**
@@ -441,6 +354,8 @@ export class Directory {
   async rename(id: string, patch: { title?: string | null; slug?: string | null }, pageTitle: string | null): Promise<{ doc: DocRow; renamed: boolean }> {
     const doc = await this.get(id);
     if (!doc) throw new NameError({ message: "There's no such document." });
+    if (doc.owner == HOME_OWNER && patch.slug !== undefined)
+      throw new NameError({ message: "The homepage's address is /_home: it doesn't change." });
     let { title, titleSet, slugSet } = doc;
     if (patch.title !== undefined) {
       const given = clip(patch.title ?? "");
@@ -534,6 +449,45 @@ export class Directory {
 
   /** When a document nobody has edited goes, now that it's been put off. */
   /** Its kind, as its object says (it keeps the kind, and checks it): made a project, or decided as it opened. */
+  /**
+   * Makes a document the homepage project (server/documents/landing.ts): nobody's (owner HOME_OWNER), at /_home. Its
+   * old address goes to history, so old links still open it. The caller sets its title and kind through its host. Null
+   * when there's no such document, or another one is the homepage project already.
+   */
+  async adoptHome(id: string): Promise<DocRow | null> {
+    const doc = await this.get(id);
+    if (!doc || doc.owner == HOME_OWNER) return doc;
+    if ((await this.sql.all<{ id: string }>("SELECT id FROM documents WHERE owner = ?1", HOME_OWNER)).length) return null;
+    await this.sql.batch([
+      ["INSERT OR REPLACE INTO slug_history (owner, slug, doc_id) VALUES (?1, ?2, ?3)", doc.owner, doc.slug, doc.id],
+      ["UPDATE permissions SET login = ?2 WHERE doc_id = ?1 AND role = 'owner'", id, HOME_OWNER],
+      ["UPDATE documents SET owner = ?2, slug = ?3, slug_set = 1 WHERE id = ?1", id, HOME_OWNER, HOME_SLUG],
+    ]);
+    this.routes.delete(id);
+    await this.tell(id, await this.permissions(id));
+    await this.docChanged(id, [doc.owner]);
+    return this.get(id);
+  }
+
+  /**
+   * The homepage project made again (the setting was reset: server/documents/landing.ts): the one from before, any but
+   * `keep`, becomes an ordinary document of `owner`'s, at its id. Nothing of it is deleted.
+   */
+  async releaseHome(keep: string, owner: string): Promise<void> {
+    const old = await this.sql.all<{ id: string }>("SELECT id FROM documents WHERE owner = ?1 AND id != ?2", HOME_OWNER, keep);
+    for (const { id } of old) {
+      await this.sql.batch([
+        ["DELETE FROM slug_history WHERE doc_id = ?1", id],
+        ["DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, owner.toLowerCase()],
+        ["UPDATE permissions SET login = ?2 WHERE doc_id = ?1 AND role = 'owner'", id, owner.toLowerCase()],
+        ["UPDATE documents SET owner = ?2, slug = ?1, slug_set = 1 WHERE id = ?1", id, owner.toLowerCase()],
+      ]);
+      this.routes.delete(id);
+      await this.tell(id, await this.permissions(id));
+      await this.docChanged(id);
+    }
+  }
+
   async setKind(id: string, kind: DocKind): Promise<void> {
     await this.sql.run("UPDATE documents SET kind = ?2 WHERE id = ?1", id, kind);
     await this.docChanged(id);
@@ -574,7 +528,18 @@ export class Directory {
       login.toLowerCase(),
       ...(only ?? [])
     );
-    return rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
+    const listed = rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
+    // An admin's list has the homepage project too, to edit (homeLimit).
+    if (listed.some((d) => d.owner == HOME_OWNER) || !(await this.users.isAdmin(login))) return listed;
+    const [home] = await this.sql.all<Row>(
+      `SELECT * FROM documents WHERE owner = ?1${only ? ` AND id IN (${only.map((_, i) => `?${i + 2}`).join(", ")})` : ""}`,
+      HOME_OWNER,
+      ...(only ?? [])
+    );
+    if (!home) return listed;
+    const row = { ...fromRow(home), role: "editor" as Role, shared: 0 };
+    const at = listed.findIndex((d) => (d.modified ?? d.created) < (row.modified ?? row.created));
+    return at < 0 ? [...listed, row] : [...listed.slice(0, at), row, ...listed.slice(at)];
   }
 
   /**
@@ -602,9 +567,7 @@ export class Directory {
       like,
       Math.max(1, Math.min(100, Math.floor(limit)))
     );
-    return rows
-      .map(fromRow)
-      .map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: `/${d.owner}/${d.slug}`, kind: d.kind ?? "document" }));
+    return rows.map(fromRow).map((d) => ({ id: d.id, title: d.title, owner: d.owner, address: addressOf(d), kind: d.kind ?? "document" }));
   }
 
   /** The role someone's own permission gives them ("*" for anyone's), not counting anyone's. */
@@ -636,7 +599,7 @@ export class Directory {
     if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
     const login = who.login.toLowerCase();
     const best = permissions.reduce<Role | null>((b, p) => (p.login != login && p.login != ANYONE) || (b && RANK[b] >= RANK[p.role]) ? b : p.role, null);
-    const role = await this.homeLimit(who, doc.id, best);
+    const role = await this.homeLimit(who, doc, best);
     // The access rules: someone without write opens their documents, and those shared with them, as a viewer.
     return (role == "owner" || role == "editor") && !(await this.mayWrite(login)) ? "viewer" : role;
   }
@@ -883,13 +846,3 @@ export class Directory {
 }
 
 const clip = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
-
-/** The shape of an owner (a GitHub login) and of a document's id (8 lowercase letters and digits). */
-export const OWNER = /^[A-Za-z0-9-]{1,39}$/, ID = /^[a-z0-9]{8}$/;
-/** Whether a segment could be an id. */
-export const idShaped = (s: string) => ID.test(s);
-/** Test documents: what test people may open, and where the scripted agent stands in for the model. */
-export const TEST_ID = /^test[a-z0-9]{4}$/;
-export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
-/** A new document's id: 8 characters of ALPHABET. */
-export const newDocId = () => randomString(8, ALPHABET);

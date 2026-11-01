@@ -23,6 +23,7 @@ import {
   platformOf,
   str,
 } from "./operation.ts";
+import { addressOf } from "../../document/names.ts";
 
 /** Files as a caller gives them: by path, each text or base64. */
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
@@ -74,7 +75,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       (await platformOf(caller).docs.list(caller.who.login.toLowerCase())).map((d) => ({
         id: d.id,
         title: d.title,
-        address: `/${d.owner}/${d.slug}`,
+        address: addressOf(d),
         ...(caller.origin ? { url: `${caller.origin}/${d.owner}/${d.slug}` } : {}),
         owner: d.owner,
         role: d.role,

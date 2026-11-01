@@ -48,6 +48,7 @@ import {
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { sha256 } from "../../shared/bytes.ts";
+import { addressOf, HOME_OWNER } from "../../document/names.ts";
 
 /** How long a decision (who may see what at an address) is kept: as long as the directory keeps who's an admin (users.ts). */
 export const DECISION_MS = 10_000;
@@ -168,7 +169,7 @@ async function address(
         "Referrer-Policy": "no-referrer",
       });
     }
-    if (answer.file == null || answer.ver == null) return noPage(`/${name.owner}/${name.slug}`);
+    if (answer.file == null || answer.ver == null) return noPage(addressOf(name));
     d = {
       id,
       owner: name.owner,
@@ -182,7 +183,7 @@ async function address(
     };
     if (answer.quiet) keepDecision(platform, key, d);
   }
-  const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
+  const canonical = `${addressOf(d)}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
   return render(platform, request, session, d, false);
@@ -190,7 +191,7 @@ async function address(
 
 /**
  * The viewer for someone who isn't signed in, at /<owner>/<slug>[/<page>]: a document shared with anyone with the link,
- * while the server lets users share content publicly (Directory.isPublic). They view it only. Null for any other: they
+ * while the server lets users share content publicly (Directory.isPublic), and the homepage project (/_home). They view it only. Null for any other: they
  * sign in first, as before.
  */
 export const viewPublic = (first: string, second: string, wanted: string) =>
@@ -206,11 +207,12 @@ async function publicView(
   const url = new URL(request.url);
   if (first == "d" || !OWNER.test(first)) return null;
   const row = (await platform.directory.locate(first, second))?.doc ?? null;
-  if (!row || !(await platform.directory.isPublic(row.id))) return null;
+  // The homepage project is public, as the homepage is at /.
+  if (!row || (row.owner != HOME_OWNER && !(await platform.directory.isPublic(row.id)))) return null;
   const answer = await platform.docs.view(row.id, null, { page: wanted, anyone: true });
   if (!answer || answer.file == null || answer.ver == null) return null;
   const d: Decision = { id: row.id, owner: row.owner, slug: row.slug, title: row.title, role: "viewer", ver: answer.ver, file: answer.file, canonical: answer.canonical ?? "" };
-  const canonical = `/${d.owner}/${d.slug}${suffix(d.canonical)}`;
+  const canonical = `${addressOf(d)}${suffix(d.canonical)}`;
   if (!samePath(url.pathname, canonical) && !samePath(url.pathname, `${canonical}/`))
     return redirect(canonical + url.search, 302, { "Cache-Control": "no-store" });
   return render(platform, request, null, d, false);
@@ -284,7 +286,7 @@ async function render(
   const token = await pagesToken(platform.secret, d.owner, d.id, url.origin, undefined, { ...(by ? { by } : {}), ...(canEdit ? { edit: true } : {}) });
   const origin = pagesOrigin(d.owner, d.id, url, platform);
   const files = `${origin}/t/${token}/`;
-  const address = `/${d.owner}/${d.slug}`;
+  const address = addressOf(d);
   const clone = link(`/new?from=${landing ? "landing" : d.id}`, session);
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;
   const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";

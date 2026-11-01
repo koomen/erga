@@ -17,7 +17,7 @@ test("on a fresh server the first / is the viewer and starts the first deploy; t
   expect(now.html).toContain(`<h1 class="logo"`);
   expect(now.headers.get("content-security-policy") ?? "").toContain("frame-ancestors 'self'");
   expect(now.headers.get("cache-control")).toBe("private, no-cache");
-  const id = ((await (await fetch(`${server.root}/tester/landing/api/doc`)).json()) as { docName: { id: string } }).docName.id;
+  const id = ((await (await fetch(`${server.root}/_home/api/doc`)).json()) as { docName: { id: string } }).docName.id;
   const status = await home(server, id);
   expect(status).toMatchObject({ isHome: true, canDeploy: true, deploy: { state: "deployed", error: null } });
   expect(status.deploy.at).toBeTruthy();

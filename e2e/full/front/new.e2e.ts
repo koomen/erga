@@ -2,6 +2,7 @@
 // page the server makes, and another site's link or form asking first.
 import { expect, test } from "../../helpers/fixtures";
 import { person, servers, template } from "./front";
+import { signedOut } from "../home/home";
 
 await servers.script();
 
@@ -28,14 +29,14 @@ test("a second Untitled document gets the next free slug, /<you>/untitled-2", as
   expect((await p.nameOf(await p.make())).slug).toBe("untitled-2");
 });
 
-test("/new?from=landing copies the landing page the server makes, and / shows it", async () => {
+test("/new?from=landing copies the landing page the server makes, and / shows it to someone signed out", async () => {
   // (The old harness checked this on a fresh server, before anything asked for the landing document; the worker's
   // server may have made it for an earlier test, which /new?from=landing and / don't tell apart.)
   const p = await person(await servers.script());
   const copy = await p.get("/new?from=landing");
   expect(copy.status).toBe(302);
   expect(copy.headers.get("location") ?? "").toMatch(/[?&]edit=?$/);
-  const front = await (await p.get("/")).text();
+  const front = await (await fetch(`${p.base}/`, { headers: signedOut({ root: p.base }) })).text();
   // The viewer on it until its first deploy is done, then the page itself.
   expect(front.includes('class="erga-view"') || front.includes("<erga-controls"), front.slice(0, 1500)).toBe(true);
   expect(front).toContain('href="/new?from=landing"');

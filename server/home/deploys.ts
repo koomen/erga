@@ -18,6 +18,7 @@
 import { byLine, SYSTEM } from "../../shared/attribution.ts";
 import type { Directory, DocRow } from "../directory/index.ts";
 import { IDLE, renderHome, type DeployStatus } from "./render.ts";
+import { addressOf } from "../../document/names.ts";
 
 /** A deployed snapshot, as serve.ts serves it. */
 export interface LivePage {
@@ -279,8 +280,20 @@ export class HomeDeploys implements HomeObject {
     const encoder = new TextEncoder();
     const entries = Object.entries(now.files).map(([path, data]) => [`${FILE}${gen}:${path}`, typeof data == "string" ? encoder.encode(data) : data] as const);
     for (let i = 0; i < entries.length; i += 64) await this.deps.storage.put(Object.fromEntries(entries.slice(i, i + 64)));
-    if (epoch != this.epoch) { await this.prune(new Set([this.live?.gen ?? ""])); return null; }
-    const live: LivePage = { gen, docId: doc.id, address: `/${doc.owner}/${doc.slug}`, before: rendered.before, after: rendered.after, files: Object.keys(now.files), at: Date.now(), version: now.version };
+    if (epoch != this.epoch) {
+      await this.prune(new Set([this.live?.gen ?? ""]));
+      return null;
+    }
+    const live: LivePage = {
+      gen,
+      docId: doc.id,
+      address: addressOf(doc),
+      before: rendered.before,
+      after: rendered.after,
+      files: Object.keys(now.files),
+      at: Date.now(),
+      version: now.version,
+    };
     const previous = this.live;
     await this.deps.storage.put(LIVE, live);
     this.live = live;

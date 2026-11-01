@@ -1,9 +1,44 @@
 // The homepage's document (the landing_document setting), and making it from the repo's
 // assets/landing/ when there's none (seedLanding). The viewer on it at / is view.ts's.
+//
+// The homepage project: every server has one, the project "Erga Homepage" at /_home, which nobody owns and every admin
+// may edit (document/names.ts, server/directory/ homeLimit). A server made before it had one makes the homepage it has
+// the project, once (adoptLanding): the same files and id, a new address (the old one redirects there).
 
 import { type DocRow, newDocId } from "../directory/index.ts";
 import { type Platform } from "../platform.ts";
 import { makeDoc } from "./make.ts";
+import { HOME_OWNER, HOME_SLUG, HOME_TITLE } from "../../document/names.ts";
+
+/** Where seedLanding put the homepage before the project: /<owner>/landing. */
+const OLD_SLUG = "landing";
+
+/** Adoptions under way or done, by directory (one per database): each isolate checks once. */
+const adopting = new WeakMap<object, Promise<void>>();
+
+/**
+ * Makes the homepage the homepage project, if it's the one the server made before the project (seedLanding put it at
+ * /<owner>/landing) and there's no homepage project yet: a server's first deploy with it. A document an admin chose
+ * as the homepage stays theirs. It becomes nobody's, at /_home, a project
+ * called "Erga Homepage", and deploys again (its snapshot names its address). Its files stay as they are.
+ */
+export function adoptLanding(platform: Platform): Promise<void> {
+  const key = platform.directory;
+  const known = adopting.get(key);
+  if (known) return known;
+  const run = (async () => {
+    const doc = await platform.directory.landing();
+    if (!doc || doc.owner == HOME_OWNER || doc.slug != OLD_SLUG) return;
+    const home = await platform.directory.adoptHome(doc.id);
+    if (home?.owner != HOME_OWNER) return;
+    const route = { id: home.id, owner: home.owner, test: false };
+    await platform.docs.treeOp(route, { op: "make_project" });
+    await platform.docs.rename(route, { id: HOME_OWNER, name: "Erga" }, { title: HOME_TITLE });
+    await platform.home.deploy();
+  })().catch((e) => console.log(`couldn't make the homepage the homepage project: ${e}`));
+  adopting.set(key, run);
+  return run;
+}
 
 /**
  * The document the homepage shows now: the setting's (and, while a seed in this isolate has claimed it but not yet
@@ -28,6 +63,7 @@ export async function landingDocument(platform: Platform): Promise<DocRow | null
 
 /** The homepage's document (landingDocument) and its page: the one round trip to its host tells both that it's there and which file to show. */
 export async function landingPage(platform: Platform): Promise<{ doc: DocRow; index: string } | null> {
+  await adoptLanding(platform);
   const doc = await platform.directory.landing();
   const index = doc && (await platform.docs.index(doc));
   if (doc && index != null) return { doc, index };
@@ -42,13 +78,13 @@ const seeding = new WeakMap<object, Promise<DocRow | null>>();
 /**
  * Makes the homepage from the repo's assets/landing/ (built into the Worker) the
  * first time anyone asks for it, and again when the one it named was deleted
- * or an admin reset the setting: a document of the landing owner's at
- * /<owner>/landing, which the other bootstrap admins may edit too, and sets
- * landing_document to it. No deploy step does this; the server does.
+ * or an admin reset the setting: the homepage project, "Erga Homepage" at /_home,
+ * and sets landing_document to it. A homepage project there already (the setting
+ * was reset) becomes an ordinary document of the landing owner's, at its id. No deploy step does this; the server does.
  * Requests at once in one isolate share one seed; across isolates the setting
  * is claimed compare-and-set (ServerConfig.claim), and a seed that loses
  * deletes its document and takes the winner's. Each seed makes its document
- * at its id (/<owner>/<id>), and only the winner moves to /<owner>/landing,
+ * at its id, and only the winner moves to /_home,
  * once it has won: so a loser never holds "landing" while the winner looks
  * for a free slug, which gave the winner "landing-2". A setting an admin
  * chose (a document that's there) is never touched, nor one the deploy locks.
@@ -70,30 +106,34 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
       const doc = typeof ref == "string" && ref ? await platform.directory.find(ref) : null;
       return doc && !doc.test && (await platform.docs.exists(doc)) ? doc : null;
     };
-    // The winner's document, still at its id, takes its address: landing-2 only if another of the owner's really is at landing.
-    // A loser does it too, so the document it answers with has its address already.
-    const settle = async (doc: DocRow | null) => (doc && doc.slug == doc.id ? ((await platform.directory.reslug(doc.id, "landing")) ?? doc) : doc);
+    // The winner's document, still at its id, takes its address. A loser does it too, so the document it answers with
+    // has its address already.
+    const settle = async (doc: DocRow | null) =>
+      doc && doc.slug == doc.id ? ((await platform.directory.reslug(doc.id, HOME_SLUG)) ?? doc) : doc;
     const stored = await config.stored("landing_document");
     const there = await live(stored);
     if (there) return there;
     const owner = project.owner.toLowerCase();
     let made: DocRow | null = null;
-    for (let tries = 0; !made && tries < 5; tries++) { const id = newDocId(); made = await makeDoc(platform, owner, id, { ...project.files }, { index, slug: id, published: true }); }
+    for (let tries = 0; !made && tries < 5; tries++) {
+      const id = newDocId();
+      made = await makeDoc(
+        platform,
+        HOME_OWNER,
+        id,
+        { ...project.files },
+        { index, slug: id, published: true, kind: "project", title: HOME_TITLE }
+      );
+    }
     if (!made) return null;
     if (!(await config.claim("landing_document", stored, made.id, owner))) {
       // Another seed won: theirs is the homepage, and this one goes.
       if (!(await platform.docs.delete(made))) await platform.directory.remove(made.id);
       return settle(await live(await config.stored("landing_document")));
     }
-    made = (await settle(made)) ?? made;
-    // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin power
-    // (editing the homepage needs that: server/directory/, homeLimit).
-    const server = { login: owner, test: false, admin: true };
-    for (const login of project.editors) {
-      if (login.toLowerCase() == owner) continue;
-      await platform.directory.share(server, made.id, login, "editor").catch(() => {});
-    }
-    return made;
+    // The homepage project from before (the setting was reset) gives up /_home to the new one.
+    await platform.directory.releaseHome(made.id, owner);
+    return (await settle(made)) ?? made;
   })().finally(() => seeding.delete(key));
   seeding.set(key, run);
   return run;

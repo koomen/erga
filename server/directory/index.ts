@@ -9,6 +9,7 @@
 export * from "./access.ts";
 export * from "./api-keys.ts";
 export * from "./directory.ts";
+export * from "./model.ts";
 export * from "./identities.ts";
 export * from "./people.ts";
 export * from "./settings.ts";

@@ -1,7 +1,7 @@
 // The homepage in the settings: a note only on the homepage (chosen on /admin), a new version scheduling a deploy, Redeploy now.
 // These change which document is the server's homepage (landing_document): each puts it back after.
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
-import { setLanding } from "../home/home";
+import { setLanding, signedOut } from "../home/home";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 import { runTool } from "../../helpers/tools";
 
@@ -12,8 +12,11 @@ test.afterEach(async () => {
   await runTool(s.root, "reset_setting", { key: "landing_document" });
 });
 
-/** What / serves now: the homepage's deployed page. */
-const front = async () => (await fetch(`${(await servers.short()).root}/`)).text();
+/** What / serves now (to someone signed out: someone signed in goes to /docs): the homepage's deployed page. */
+const front = async () => {
+  const root = (await servers.short()).root;
+  return (await fetch(`${root}/`, { headers: signedOut({ root }) })).text();
+};
 
 test("the homepage shows only on the homepage: a note, no switch; it comes when /admin makes it the homepage, deployed at once", async ({ tab }) => {
   const server = await servers.short();

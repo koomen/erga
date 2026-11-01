@@ -5,7 +5,6 @@
 
 export {
   appPage,
-  cameFromOutside,
   type Crumb,
   crumbsFont,
   fromElsewhere,

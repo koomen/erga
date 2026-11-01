@@ -23,12 +23,19 @@ export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button
 export const docsButton = (href: string) =>
   `<a href="${esc(href)}" class="erga-view-button erga-docs-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
 
+/** The homepage (the homepage project at /_home: document/names.ts), at `href`: on Documents, where / is for someone signed in. */
+export const homeButton = (href: string) =>
+  `<a href="${esc(href)}" class="erga-view-button erga-home-button" draggable="false" aria-label="Home page" data-tip="Home page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 10.5 12 4.75l7.25 5.75v8a1 1 0 0 1-1 1h-4v-5.5h-4.5v5.5h-4a1 1 0 0 1-1-1z"/></svg></a>`;
+
 /** The bars' look (client/inline/bars.css). */
 export const BARS_STYLE = `<style>${inlineStyle("bars")}</style>`;
 
-/** The breadcrumbs' bar: the wordmark (to `home`'s homepage), then each step (`steps`, made already). */
+/**
+ * The breadcrumbs' bar: the wordmark, then each step (`steps`, made already). The wordmark goes to your documents at
+ * `home` (a test person, who has none, or someone signed out: to its homepage).
+ */
 const crumbsBar = (session: Session | null, home: string, steps: string) =>
-  `<nav class="erga-crumbs erga-bar erga-bar-l" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link(`${home}/`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
+  `<nav class="erga-crumbs erga-bar erga-bar-l" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link(`${home}${session && !session.test ? "/docs" : "/"}`, session))}" draggable="false"><span>${WORDMARK}</span></a>${steps}</nav>`;
 
 /** The buttons' bar: the quick actions (on a phone, they open out of the avatar), then who you are (`corner`). */
 const buttonsBar = (actions: string, corner: string) =>
@@ -68,14 +75,14 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
  * The header of the app's own pages (appPage: Documents, Settings, the admin pages, the start page, sign-in, the error
  * pages; the control Worker's too): erga › each step of `trail` (the last is this page, in a `here` tag: the admin
  * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (not on Documents
- * itself: `docs`), then who you are. The account corner goes in `corner`, or where the Worker puts it (ACCOUNT_SLOT:
- * withAccount). `home`: the app's origin, for a page served elsewhere (the control Worker's); its links go there.
+ * itself: `docs`), then who you are; `lead` goes before them all. The account corner goes in `corner`, or where the
+ * Worker puts it (ACCOUNT_SLOT: withAccount). `home`: the app's origin, for a page served elsewhere (the control Worker's); its links go there.
  * Your agent comes with them, on the app's own origin (server/pages/agent.ts).
  */
 export function pageBars(
   session: Session | null,
   trail: Crumb[],
-  o: { here?: string; home?: string; actions?: string; docs?: boolean; corner?: string } = {}
+  o: { here?: string; home?: string; lead?: string; actions?: string; docs?: boolean; corner?: string } = {}
 ): string {
   const home = (o.home ?? "").replace(/\/+$/, ""),
     here = o.here ?? "span";
@@ -88,7 +95,7 @@ export function pageBars(
     .join("");
   const mine = !!session && !session.agent && !session.test;
   const at = (path: string) => link(home + path, session);
-  const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${mine && o.docs !== false ? docsButton(at("/docs")) : ""}`;
+  const actions = `${o.lead ?? ""}${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${mine && o.docs !== false ? docsButton(at("/docs")) : ""}`;
   return `<script>${PAGE_TONE}</script>${crumbsBar(session, home, steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.home ? "" : agentPanel(session)}`;
 }
 

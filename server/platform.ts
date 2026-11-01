@@ -84,11 +84,12 @@ export interface Platform {
    * The repo's landing project (assets/landing/, built into the Worker), which the
    * server makes the homepage by itself when landing_document is unset or
    * names a document that's gone (seedLanding): its text files by path, whose
-   * document it becomes (locally DEV_LOGIN, else the deploy's first bootstrap
-   * admin), and who else may edit it (the other bootstrap admins). No owner
-   * (no ADMINS, no DEV_LOGIN): nobody to make it for, and / is a plain start page.
+   * document becomes the homepage project (nobody's), and `owner` (locally
+   * DEV_LOGIN, else the deploy's first bootstrap admin) claims the setting, and
+   * gets the homepage project from before when it's made again. No owner
+   * (no ADMINS, no DEV_LOGIN): / is a plain start page.
    */
-  landing?: { files: Record<string, string | Uint8Array>; owner: string | null; editors: string[] };
+  landing?: { files: Record<string, string | Uint8Array>; owner: string | null };
   /** The app's own static files (the editor's page and scripts, their builds, the release): the answer for this request. */
   assets(request: Request): Promise<Response>;
   /**

@@ -89,7 +89,7 @@ const settingsOf = (env: Env) => Effect.runSync(SETTINGS.parse(ConfigProvider.fr
 const landingOf = ({ admins, devLogin }: { admins: string[]; devLogin: string }): NonNullable<Platform["landing"]> => {
   const dev = devLogin.toLowerCase();
   const owner = dev && OWNER.test(dev) ? dev : admins[0] ?? null;
-  return { files: LANDING, owner, editors: admins.filter((l) => l != owner) };
+  return { files: LANDING, owner };
 };
 
 /** The repository as the app reaches it through the control Worker: its object's calls over the binding; no remote of its own (the Git endpoint is the control Worker's). */

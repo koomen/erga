@@ -16,6 +16,7 @@ import { byLine, SYSTEM, VIA } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { avatarHtml, shown } from "./parts.ts";
 import { plural } from "../../shared/time.ts";
+import { addressOf } from "../../document/names.ts";
 
 /** How many changes the change log lists on a page. */
 const CHANGES = 50;
@@ -149,7 +150,7 @@ async function changeRows(platform: Platform, versions: SettingsVersion[]): Prom
       await Promise.all(
         [...ids].map(async (id) => {
           const doc = await platform.directory.find(id);
-          return doc ? [[id, { address: `/${doc.owner}/${doc.slug}`, title: doc.title }] as const] : [];
+          return doc ? [[id, { address: addressOf(doc), title: doc.title }] as const] : [];
         })
       )
     ).flat()

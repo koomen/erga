@@ -1,6 +1,6 @@
 // / looks as the viewer shows its document, moved below the controls' band.
 import { expect, servers, test } from "../../helpers/fixtures";
-import { deployed, fresh, openHome, resetLanding } from "./home";
+import { deployed, fresh, openHome, resetLanding, signedOutCookie } from "./home";
 import { devicePage, diffPng, shoot, steady, VIEWS } from "./shots";
 
 await servers.short();
@@ -18,6 +18,8 @@ for (const v of VIEWS) {
     const { address } = await fresh(server);
     await deployed(server);
     const ctx = tab.page.context();
+    // Both signed out: / is the homepage only then (someone signed in goes to /docs), and the viewer's /_home is public.
+    await ctx.addCookies([{ name: signedOutCookie(server.root), value: "1", url: server.root }]);
     const a = await shoot(ctx, `${server.root}${address}`, v, NO_CRUMBS),
       b = await shoot(ctx, (p) => openHome(p, server.root), v, NO_CRUMBS);
     // Where the viewer's page starts: its frame's top (0: the frame starts behind the bars), and the room the page keeps

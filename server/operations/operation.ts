@@ -29,7 +29,7 @@ import { AuthError, type AgentToken, type AuthOps } from "../identity/index.ts";
 import { forwardedAs } from "../documents/index.ts";
 import type { Platform } from "../platform.ts";
 import type { ToolContent } from "../../document/agent.ts";
-import { nameOf } from "../../document/names.ts";
+import { HOME_OWNER, HOME_SLUG, nameOf } from "../../document/names.ts";
 
 /** An operation's failure, worded for a person or an agent to act on; `status` is the HTTP status the API answers. */
 export class OperationError extends Schema.TaggedError<OperationError>()("OperationError", {
@@ -119,7 +119,7 @@ export const str = (description: string) => Schema.String.annotate({ description
 /** A document, by any of its names; the editor's agent may leave it out for the document it's in. */
 export const DOCUMENT = Schema.optionalKey(
   str(
-    "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours. The editor's agent may leave it out for the document it's in."
+    "The document: its address (/<owner>/<slug>; the homepage project's is /_home), its URL, its id, or the slug of one of yours. The editor's agent may leave it out for the document it's in."
   )
 );
 export const LOGIN = str("A GitHub login");
@@ -149,7 +149,8 @@ export async function findDocument(caller: Caller, ref: unknown, action: Action)
   }
   const parts = path.split("/").filter(Boolean);
   let route: Route | null = null;
-  if (parts.length >= 2)
+  if (parts[0] == "_home") route = await routeAt(dir, HOME_OWNER, HOME_SLUG);
+  else if (parts.length >= 2)
     route = parts[0] == "d" ? (ID.test(parts[1]) ? await dir.route(parts[1]) : null) : await routeAt(dir, parts[0], parts[1]);
   else if (parts.length == 1) {
     route = ID.test(parts[0]) ? await dir.route(parts[0]) : null;
