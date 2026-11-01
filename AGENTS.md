@@ -151,6 +151,9 @@ Found a new trap? Write it here, in the same change.
 - Test files share a dev server, so another file's new document reaches an
   open /docs page as a live row, and the rows can change under a test. Read a
   row's place with `until`, not once.
+- A link in the viewer's frame opens another page with no reload (client/inline/viewer-nav.ts),
+  so the page shown is the meta `erga-page`, not the address the frame opened with. Code that
+  loads the frame again takes the address from `ergaFrames.src()`, never a copy made at load.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

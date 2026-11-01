@@ -6,5 +6,5 @@ export default function viewerFrameSrc(editing: boolean): void {
   const f = document.getElementById("frame") as HTMLIFrameElement,
     kept = window.ergaRestored?.editor,
     y = editing && kept?.mode == "text" ? Math.round(kept.scroll) : 0;
-  f.src = f.dataset.src + (editing ? "?erga-edit" + (y > 0 ? "&erga-y=" + y : "") : "") + location.hash;
+  f.src = window.ergaFrames.src() + (editing ? "?erga-edit" + (y > 0 ? "&erga-y=" + y : "") : "") + location.hash;
 }

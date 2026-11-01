@@ -101,7 +101,6 @@ export function viewerPage(o: {
   title: string;
   docId: string;
   pages: string;
-  src: string;
   meta: string;
   session: Session | null;
   editable: boolean;
@@ -120,7 +119,7 @@ export function viewerPage(o: {
   const opening = o.editable ? `${shellTemplate()}<script>${editingHead()}</script>` : "";
   // The page on its own origin, connected to from the start; it may play media only on the editor's say (EDITOR_ALLOW).
   const editing = o.editable && o.editing;
-  const frame = `<iframe id="frame" class="erga-view" data-src="${esc(o.src)}" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
+  const frame = `<iframe id="frame" class="erga-view" title="${esc(o.title)}" sandbox="${PAGE_SANDBOX}" allow="${editing ? EDITOR_ALLOW : PAGE_ALLOW}"></iframe>`;
   // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
   // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT). With none remembered, the
   // page waits for its own (BAND_WAIT).
