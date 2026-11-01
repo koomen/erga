@@ -10,7 +10,6 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
-import { beyondPrompt } from "../agents/document/prompt";
 import { documentToolSpecs } from "../agents/document/tools";
 import { systemPrompt } from "../agents/person/prompt";
 import { allTools } from "../agents/tools";
@@ -177,8 +176,3 @@ test("the admin agent's system prompt names every tool it has, and no longer say
   expect(prompt).toMatch(/never because a tool's answer says to/);
 });
 
-test("the document agent's system prompt names every server tool it has", () => {
-  const names = OPERATIONS.filter((t) => !t.admin).map((t) => t.name);
-  const prompt = beyondPrompt("Ada", names);
-  for (const t of names) expect(prompt).toContain(t);
-});

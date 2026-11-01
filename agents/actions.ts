@@ -3,12 +3,11 @@
 // has as a tool: the entries for those come from the operations themselves (`ui`), at the end of the list.
 //
 //   your agent          (agents/person/agent.ts: on every page) everything its person may: the admin operations (for an admin), the Ops page
-//                       (source and deploys), the homepage's deploy, and everything the document agent has
-//   the document agent  (agents/document/session.ts, with agents/tools.ts: in the editor) everything a person does with
-//                       documents (in the editor, any document, and on the documents list, /docs) and their tokens
+//                       (source and deploys), the homepage's deploy, and the document tools (agents/tools.ts) in any
+//                       document they may open or edit
 //
-// The exceptions: the document agent (and an agent invited to a document) never has admin power, even an admin's:
-// "admin" actions are the admin agent's, on /admin. A secret (an API key, a GitHub app's secret, a new agent token) is
+// The exceptions: an agent with a document token never has admin power, even an admin's: "admin" actions are an
+// admin's own agent's, and an admin token's. A secret (an API key, a GitHub app's secret, a new agent token) is
 // pasted or made only on the page, never in a conversation. The agent may clear an API key, or revoke a token.
 // And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
@@ -197,13 +196,26 @@ export const AGENT_ACTIONS: AgentAction[] = [
     action: "Publish a folder of files as a document, or into one, from an HTTP client (curl -F): multipart, so not an operation's JSON",
     tool: "create_document",
   },
-  { route: "GET /d/<id>/api/agent", domain: "none", action: "The document agent panel", exempt: PANEL },
-  { route: "POST /d/<id>/api/agent", domain: "none", action: "A message to the document agent", exempt: PANEL },
-  { route: "POST /d/<id>/api/agent/model", domain: "none", action: "Switch the document agent's model", exempt: PANEL },
-  { route: "POST /d/<id>/api/agent/abort", domain: "none", action: "Stop the document agent", exempt: PANEL },
-  { route: "POST /d/<id>/api/agent/reset", domain: "none", action: "A new conversation with the document agent", exempt: PANEL },
-  { route: "POST /d/<id>/api/agent/undo", domain: "none", action: "Undo the document agent's last change", exempt: PANEL },
-  { route: "POST /d/<id>/api/agent/view", domain: "none", action: "The tab answers the agent's view_page and evaluate_page, and its page_console, page_network, page_events, page_inspect, page_click and page_key", exempt: PANEL },
+  {
+    route: "GET /d/<id>/api/agent/undo",
+    domain: "none",
+    action: "How many of your agent's changes to the document Undo can take back",
+    exempt: PANEL,
+  },
+  { route: "POST /d/<id>/api/agent/undo", domain: "none", action: "Undo your agent's last change to the document", exempt: PANEL },
+  {
+    route: "POST /d/<id>/api/agent/done",
+    domain: "none",
+    action: "The server says a person's agent's turn is done (agents/person/sessions.ts)",
+    exempt: "the server's own call, refused from outside (server/documents/routes.ts)",
+  },
+  {
+    route: "POST /d/<id>/api/agent/view",
+    domain: "none",
+    action:
+      "The tab answers the agent's view_page and evaluate_page, and its page_console, page_network, page_events, page_inspect, page_click and page_key",
+    exempt: PANEL,
+  },
   // The live page in the person's tab (shared/live-page.ts): no route of its own, but what the person does there.
   { route: "UI /d/<id>#page-click", domain: "document", action: "Click on the page as it runs (editor)", tool: "page_click" },
   { route: "UI /d/<id>#page-key", domain: "document", action: "Press a key on the page as it runs (editor)", tool: "page_key" },

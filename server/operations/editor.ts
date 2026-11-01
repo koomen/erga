@@ -1,7 +1,7 @@
 // The operations inside one document, as a person does them in the editor: its name and address (the title card),
 // its pages and folders (the page tree), its kind (the settings' Document/Project switch) and
-// its versions (the settings' Versions). Each takes `document`; the editor's agent may leave it out for the one it's
-// in (Caller.here). They reach the document's host through its Durable Object's calls (platform.docs), as the person,
+// its versions (the settings' Versions). Each takes `document`; the person's own agent may leave it out for the one open
+// on their page (Caller.here). They reach the document's host through its Durable Object's calls (platform.docs), as the person,
 // after the directory says they may.
 //
 // The text itself is edited over the room's socket (and by the document tools read, edit, write, grep...:

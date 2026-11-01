@@ -47,74 +47,11 @@ beforeAll(() => {
 });
 afterAll(() => { globalThis.fetch = realFetch; });
 
-async function openDocument(settings: () => Promise<AgentSettings>) {
-  const data = new Map([["index.html", new TextEncoder().encode("<p>Hello</p>")]]);
-  const files = FileStore.of({
-    list: Effect.sync(() => [...data.keys()]),
-    read: (p) => Effect.sync(() => data.get(p) ?? null),
-    write: (p, text) => Effect.sync(() => { data.set(p, new TextEncoder().encode(text)); }),
-  });
-  const scope = Effect.runSync(Scope.make());
-  const room = await Effect.runPromise(Room.make({}).pipe(Effect.provide(StateStore.none.pipe(Layer.provideMerge(Layer.succeed(FileStore, files)))), Scope.provide(scope)));
-  const host = makeHost({
-    room,
-    files,
-    docId: "d1",
-    agents: documentAgents({ settings }),
-    doc: { name: "index.html", path: "index.html", dir: "ada" },
-    personOf: () => ({ id: "ada", name: "Ada" }),
-    agentOf: () => null,
-  });
-  const call = async (method: "GET" | "POST", body?: unknown) => {
-    const r = await host.handler(new Request("http://doc.test/api/agent", { method, ...(body ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } } : {}) }));
-    return { status: r.status, body: (await r.json()) as { ok?: boolean; reason?: string; enabled?: boolean } };
-  };
-  return {
-    prompt: (text: string) => call("POST", { text }),
-    state: () => call("GET"),
-    close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
-  };
-}
-
 /** Waits until the fake Anthropic has had `n` requests. */
 async function requests(n: number) {
   for (let i = 0; i < 400 && sent.length < n; i++) await new Promise((r) => setTimeout(r, 10));
   return sent.slice();
 }
-
-test("a document is open; an admin stores a key, replaces it, clears it: each reaches the open document's agent at its next turn", async () => {
-  sent.length = 0;
-  const { dir } = directory("staging's factory key");
-  const doc = await openDocument(() => agentSettingsFrom({}, dir.credentials));
-  try {
-    // No key yet: the panel says so, and what to do.
-    let st = await doc.state();
-    expect(st.body.enabled).toBe(false);
-    expect(st.body.reason).toContain("an admin pastes the Anthropic API key in their agent's panel");
-    expect((await doc.prompt("hello")).body.reason).toContain("ANTHROPIC_API_KEY is not set");
-
-    // The admin stores a key: the same open document's next turn uses it, with no reload.
-    await dir.credentials.set(ada, "anthropic", KEY1);
-    expect((await doc.state()).body.enabled).toBe(true);
-    expect((await doc.prompt("hello")).body.ok).toBe(true);
-    expect(await requests(1)).toEqual([KEY1]);
-
-    // Replaced: the next turn sends the new key.
-    await dir.credentials.set(ada, "anthropic", KEY2);
-    await new Promise((r) => setTimeout(r, 50));
-    expect((await doc.prompt("again")).body.ok).toBe(true);
-    expect((await requests(2)).at(-1)).toBe(KEY2);
-
-    // Cleared: the agent is off again, and says why.
-    await dir.credentials.clear(ada, "anthropic");
-    const off = await doc.prompt("and again");
-    expect(off.body.ok).toBe(false);
-    expect(off.body.reason).toContain("ANTHROPIC_API_KEY is not set");
-    expect(sent.length).toBe(2);
-  } finally {
-    await doc.close();
-  }
-});
 
 test("a stored key that doesn't open here (another server's FACTORY_KEY): the agent says so, and what to do", async () => {
   const { db, dir } = directory("production's factory key");

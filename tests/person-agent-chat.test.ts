@@ -1,7 +1,6 @@
-// What the admin agents' object keeps of each admin's agent conversation, and
-// the agent going on with it (agents/person/agent.ts, `stored`): the transcript and the
-// model's messages, kept step by step (agents/checkpoint.ts); and the panel's prefs.
-// A run cut off in the middle and resumed: tests/agent-resume.test.ts.
+// What a person's agent object keeps of their agent conversation, and the agent going on with it
+// (agents/person/agent.ts, `stored`): the transcript and the model's messages, kept step by step
+// (agents/checkpoint.ts), a run cut off in the middle and resumed; and the panel's prefs.
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";

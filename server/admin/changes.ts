@@ -32,7 +32,7 @@ function byHtml(by: string, via: string | null | undefined, avatars: Record<stri
 
 /** A via as a short chip, with more on hover: "admin agent", "token" (its name on hover), "factory #12". */
 function viaChip(via: string): { text: string; title: string } {
-  if (via == VIA.agent) return { text: "document agent", title: `via ${via}` };
+  if (via == VIA.agent) return { text: "their agent", title: `via ${via}` };
   if (via == VIA.admin) return { text: "admin agent", title: `via ${via}` };
   const token = /^a shared agent \((.*)\)$/.exec(via);
   if (token) return { text: "token", title: token[1] };

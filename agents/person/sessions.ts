@@ -25,7 +25,8 @@ import { panelPrefs, type PanelPrefs } from "./panel.ts";
 import { ChatTables, tableStore, wakeRuns, type ChatSql } from "../chat-store.ts";
 import { restoredLog } from "../checkpoint.ts";
 import { agentTools, toolsFor } from "../tools.ts";
-import type { Caller } from "../../server/operations/index.ts";
+import { callDocument, type Caller } from "../../server/operations/index.ts";
+import type { Route as DocRoute } from "../../server/directory/index.ts";
 import { isModelChoice, MODELS } from "../models.ts";
 import { emptyLog, type Log } from "../../shared/agent-log.ts";
 import { checkAttachments } from "../../shared/attach.ts";
@@ -72,21 +73,30 @@ export class PersonAgents {
    * tools and prompt (as they are when it starts; each tool call checks again: Users.mustAdmin).
    * The settings are read each time (each turn, each time the panel opens), so a key an admin stores, replaces or clears reaches it.
    */
-  private async session(login: string, origin: string): Promise<{ agent: AgentSession; origin: string; here: string | null } | string> {
+  private async session(
+    login: string,
+    origin: string,
+    name?: string
+  ): Promise<{ agent: AgentSession; origin: string; here: string | null } | string> {
     const cfg = await this.platform.agentSettings().catch((e: unknown) => ({ missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment` }));
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
     if (s) { s.origin = origin; s.agent.configure(cfg); return s; }
-    const state: { origin: string; here: string | null } = { origin, here: null };
+    const state: { origin: string; here: string | null; name: string } = { origin, here: null, name: name ?? login };
+    /** The documents its tools ran in this turn (callDocument): each hears when the turn is done (a version is cut there). */
+    const touched = new Map<string, DocRoute>();
     const admin = await this.platform.directory.users.isAdmin(login);
     // Every tool acts as the person, via their agent: the change log and a document's history name them, and how.
     const as = (): Caller => ({
       dir: this.platform.directory,
       who: { login, ...(admin ? { admin: true } : {}), via: VIA.agent },
-      name: login,
+      name: state.name,
       origin: state.origin,
+      // The document open on their page, as their last message said: the default for a tool's `document`.
+      ...(state.here ? { here: state.here } : {}),
       platform: this.platform,
       auth: authOps(this.platform, state.origin),
+      ranIn: (doc) => touched.set(doc.id, doc),
     });
     const scope = `you:${login}`;
     const store = tableStore(this.chats, scope, (running) => {
@@ -96,10 +106,20 @@ export class PersonAgents {
       cfg,
       owner: login,
       admin,
-      tools: agentTools(await toolsFor(as(), () => state.here), as),
+      tools: agentTools(await toolsFor(as(), true), as),
       store,
       stored: this.chats.load(scope),
-      meta: { origin },
+      meta: { origin, name: state.name },
+    });
+    // Its turn done: each document it worked in hears so at once (its presence ends, and the turn is one version there).
+    agent.subscribe((ev) => {
+      if (ev.t != "busy" || ev.busy) return;
+      for (const doc of touched.values())
+        callDocument(as(), doc, "/api/agent/done", { method: "POST" }).then(
+          (r) => r.body?.cancel(),
+          () => {}
+        );
+      touched.clear();
     });
     agent.subscribe((ev) => this.event({ type: "agent", ev }, login));
     s = Object.assign(state, { agent });
@@ -109,8 +129,8 @@ export class PersonAgents {
     return s;
   }
 
-  async agentState(login: string, origin: string) {
-    const s = await this.session(login, origin);
+  async agentState(login: string, origin: string, name?: string) {
+    const s = await this.session(login, origin, name);
     if (typeof s == "string") return { enabled: false as const, reason: s };
     const models = s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [];
     return { enabled: true as const, model: s.agent.model, choice: s.agent.modelChoice, models, log: s.agent.log() };
@@ -123,9 +143,10 @@ export class PersonAgents {
     text: string,
     context: string | null,
     attached?: unknown,
-    doc?: string | null
+    doc?: string | null,
+    name?: string
   ): Promise<{ ok: boolean; reason?: string }> {
-    const s = await this.session(login, origin);
+    const s = await this.session(login, origin, name);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
     const files = checkAttachments(attached);
     if (typeof files == "string") return { ok: false, reason: files };
@@ -149,7 +170,7 @@ export class PersonAgents {
   async wake(): Promise<boolean> {
     return wakeRuns(this.chats, async (scope, state) => {
       const login = /^you:(.+)$/.exec(scope)?.[1];
-      if (login && state.meta.origin) await this.session(login, state.meta.origin);
+      if (login && state.meta.origin) await this.session(login, state.meta.origin, state.meta.name);
     });
   }
 
@@ -270,10 +291,10 @@ declare module "../../server/platform.ts" {
 
 /** Someone signed in, in person (in a browser: for their own agent panel, which no token reaches). Test people have none. */
 const personOf = (platform: Platform, request: Request) =>
-  call(async (): Promise<{ login: string } | null> => {
+  call(async (): Promise<{ login: string; name: string } | null> => {
     const session = await platform.sessionOf(request);
     if (!session || session.test || session.agent) return null;
-    return { login: session.login.toLowerCase() };
+    return { login: session.login.toLowerCase(), name: session.name };
   });
 
 export const isAgentPath = (path: string) => path == "/api/agent" || path.startsWith("/api/agent/");
@@ -310,7 +331,7 @@ export const agentApi: Route = Effect.gen(function* () {
     path = url.pathname.replace(/\/$/, ""),
     m = request.method;
   if (path == "/api/agent") {
-    if (m == "GET") return json(yield* call(() => h.agentState(me.login, url.origin)));
+    if (m == "GET") return json(yield* call(() => h.agentState(me.login, url.origin, me.name)));
     if (m == "POST") {
       const b = yield* body(request, Prompt, {});
       const r = yield* call(() =>
@@ -320,7 +341,8 @@ export const agentApi: Route = Effect.gen(function* () {
           String(b.text ?? ""),
           typeof b.context == "string" ? b.context : null,
           b.files,
-          typeof b.doc == "string" ? b.doc : null
+          typeof b.doc == "string" ? b.doc : null,
+          me.name
         )
       );
       return json(r, r.ok ? 200 : 409);

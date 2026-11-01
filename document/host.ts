@@ -25,13 +25,9 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import type { AgentSession, DocumentAgents, FilesAccess, OpenResult, VersionsAccess } from "./agent";
 import {
-  AgentOff,
   Api,
-  BadAttachment,
   BadRequest,
   ExplainBadRequests,
-  ModelFixed,
-  NoSuchModel,
   NoSuchTool,
   Person,
   PersonFromRequest,
@@ -39,11 +35,9 @@ import {
   ExternalAgent,
   ToolFailed,
   Unauthorized,
-  type AgentState,
   type DocInfo,
   type DocName,
   type Hello,
-  type ModelState,
 } from "./api";
 import type { Naming } from "./names";
 import { digest, StoreError, type FileStore, type Room } from "./room";
@@ -64,7 +58,6 @@ import {
 } from "./pages";
 import { isTextPath as isTextFile } from "./content";
 import { viewWait, type ViewRequest, type ViewResult } from "../shared/agent-log";
-import { checkAttachments } from "../shared/attach";
 import { encodeStart } from "../shared/room-socket";
 import { blobPointer, byteRange, type BlobStore } from "./blobs";
 import { sha256Hex } from "../shared/bytes";
@@ -83,10 +76,8 @@ export interface HostOptions {
   };
   /** The document's id. */
   readonly docId: string;
-  /** Each person's agent here (DocumentDeps.agents): it reads the agent's settings at each turn and each time a panel opens, so a key an admin stores, replaces or clears reaches every open document's agent. */
+  /** Each person's agent's session here (DocumentDeps.agents), where every agent's document tools run for them. */
   readonly agents: DocumentAgents;
-  /** A test document: its agent is the scripted model. */
-  readonly scripted?: boolean;
   /** Who a request is from. */
   readonly personOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string };
   /**
@@ -108,7 +99,7 @@ export interface HostOptions {
   readonly setKind?: (kind: DocKind) => Effect.Effect<void, StoreError>;
   /** The document's title and address in the directory, read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
-  /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut; answers the version the document is at then. */
+  /** An agent's run of calls ended: a version is cut; answers the version the document is at then. */
   readonly turnEnded?: () => Promise<string | null> | void;
   /** The document's versions, for the agents' tools. */
   readonly versions?: VersionsAccess;
@@ -119,9 +110,6 @@ export interface HostOptions {
   /** Adds or replaces a file from its bytes, as `by`, within the limits an upload has (document.ts); throws why not. */
   readonly putFile?: (path: string, bytes: Uint8Array, by: string) => Promise<{ kind: "text" | "file"; replaced: boolean }>;
 }
-
-/** Why someone who may only view gets no embedded agent: its turns use the server's API key. */
-const VIEWER_OFF = "You can only view this document, so you can't ask its agent.";
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
 interface Tab { user: string; send: (msg: unknown) => void; watch?: boolean }
@@ -192,13 +180,6 @@ export function makeHost(opts: HostOptions) {
   const sendAll = (msg: unknown) => { for (const t of tabs) t.send(msg); };
   /** A document (one page) or a project, as it is now. */
   const kindNow = (): DocKind => opts.kind?.() ?? "project";
-  /** Why someone may not ask the embedded agent (someone who may only view: VIEWER_OFF); null if they may. */
-  const viewerGate = (user: { id: string; name: string }) => ((opts.canEdit?.(user) ?? true) ? null : VIEWER_OFF);
-  /** The agent's state for someone, off (saying why) if they may only view. */
-  const offForViewer = (user: { id: string; name: string }, state: AgentState): AgentState => {
-    const why = state.enabled && viewerGate(user);
-    return why ? { enabled: false, reason: why, log: state.log } : state;
-  };
   // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
   room.onTree(() => sendAll({ type: "tree" }));
   /** The latest moves, for a tab that missed one while it was loading (its hello, list_pages). */
@@ -315,19 +296,14 @@ export function makeHost(opts: HostOptions) {
   };
 
   const sessions = new Map<string, Promise<AgentSession>>();
-  /**
-   * A person's agent session, started the first time they open the panel. With
-   * the embedded agent off it still exists, for an external agent's tool calls.
-   */
+  /** A person's agent session, started the first time one of their agents' tools runs here (or they ask Undo's count). */
   const sessionFor = (user: { id: string; name: string }) => {
     let s = sessions.get(user.id);
     if (!s) {
       s = agents.start({
-        docId: opts.docId,
         room,
         owner: user,
         docName: doc.name,
-        scripted: opts.scripted,
         only: opts.only,
         kind: opts.kind,
         canEdit: () => opts.canEdit?.(user) ?? true,
@@ -337,40 +313,24 @@ export function makeHost(opts: HostOptions) {
         versions: opts.versions,
         open: openFor(user),
         files: filesAccess,
-        blobs: opts.blobs,
       });
-      // Its events reach the person's tabs; then a run a restart cut off goes on (from its last checkpoint).
-      s.then((session) => {
-        session.subscribe((ev) => sendTo(user.id, { type: "agent", ev }));
-        session.resume().catch((e: unknown) => console.log(`couldn't resume ${user.id}'s agent: ${e}`));
-      }, () => sessions.delete(user.id));
+      // Its events (Undo's count) reach the person's tabs.
+      s.then(
+        (session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })),
+        () => sessions.delete(user.id)
+      );
       sessions.set(user.id, s);
     }
     return s;
   };
   /** The person's agent session, or why it didn't start. */
   const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user));
-  /** Gives the session the settings there are now; answers why the embedded agent is off ("" if it's on). */
-  const configured = (s: AgentSession) => Effect.promise(() => s.refresh());
-  /** For the panel's endpoints: their session, with the settings there are now, unless the embedded agent is off. */
-  const agentSession = Person.use((user) => Effect.gen(function* () {
-    const s = yield* Effect.mapError(session(user), () => new AgentOff({ ok: false, reason: "the agent did not start" }));
-    const off = yield* configured(s);
-    if (off) return yield* new AgentOff({ ok: false, reason: off });
-    return s;
-  }));
-  /** For an external agent: the session's tools work even with the embedded agent off. */
+  /** For an agent's tools: the person's session. */
   const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
 
   // An external agent (Claude Code, Codex...) holds one of the person's
   // agent tokens (server/identity/tokens.ts; the share button makes one), which the app
   // checks; the server runs that person's agent tools here for it (/api/tools/<name>), as their agent.
-
-  const modelState = (s: AgentSession): ModelState => ({
-    model: s.model,
-    choice: s.modelChoice,
-    models: s.modelChoice == null ? [] : [...agents.models],
-  });
 
   // ---------------------------------------------------------- the API
 
@@ -391,38 +351,9 @@ export function makeHost(opts: HostOptions) {
     const docName = await Effect.runPromise(nameFor(user));
     return { name: doc.name, path: doc.path, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
   };
-  /** The person's agent: on or off, its model, its conversation (GET /api/agent, and a tab's socket once its session is up). */
-  const agentStateFor = (user: { id: string; name: string }): Promise<AgentState> => Effect.runPromise(session(user).pipe(
-    Effect.flatMap((s) => Effect.map(configured(s), (off): AgentState => off ? { enabled: false, reason: off, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })),
-    Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
-  ));
-
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h.handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user)))));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
-    .handle("state", () => Person.use((user) => Effect.promise(() => agentStateFor(user).then((state) => offForViewer(user, state)))))
-    .handle("prompt", ({ payload }) => Effect.gen(function* () {
-      const s = yield* agentSession;
-      // Someone who may only view never asks it.
-      const why = yield* Person.use((user) => Effect.succeed(viewerGate(user)));
-      if (why) return yield* new AgentOff({ ok: false, reason: why });
-      // The sender's last keystrokes travel over its WebSocket; let them land first.
-      const files = checkAttachments(payload.files);
-      if (typeof files == "string") return yield* new BadAttachment({ ok: false, reason: files });
-      if (payload.after) yield* room.waitFor(payload.after);
-      s.prompt(payload.text, payload.context ?? null, files);
-      return { ok: true as const };
-    }))
-    .handle("model", ({ payload }) => Effect.gen(function* () {
-      const s = yield* agentSession;
-      if (!agents.models.some((m) => m.id == payload.model))
-        return yield* new NoSuchModel({ ok: false, reason: `there's no model "${payload.model}"` });
-      if (!s.setModel(payload.model)) return yield* new ModelFixed({ ok: false, reason: "this agent's model can't be changed" });
-      const state = modelState(s);
-      sendTo((yield* Person).id, { type: "model", ...state });
-      return { ok: true as const, ...state };
-      })
-    )
     .handle("view", ({ payload: { id, errors, fonts, pending, shots, ...result } }) =>
       Effect.sync(() => {
         views.get(id)?.({
@@ -433,13 +364,25 @@ export function makeHost(opts: HostOptions) {
           ...(shots ? { shots: [...shots] } : {}),
         });
       return { ok: true as const };
-    }))
-    .handle("abort", () => Person.use((user) => session(user).pipe(
-      Effect.map((s) => s.abort()), Effect.ignore, Effect.as({ ok: true as const }))))
-    .handle("reset", () => Person.use((user) => session(user).pipe(
-      Effect.flatMap((s) => Effect.promise(() => s.reset())), Effect.ignore, Effect.as({ ok: true as const }))))
-    .handle("undo", () => Person.use((user) => session(user).pipe(
-      Effect.map((s) => ({ ok: s.undo() })), Effect.orElseSucceed(() => ({ ok: false }))))));
+      })
+    )
+    .handle("undoable", () =>
+      Person.use((user) =>
+        session(user).pipe(
+          Effect.map((s) => ({ count: s.undoable() })),
+          Effect.orElseSucceed(() => ({ count: 0 }))
+        )
+      )
+    )
+    .handle("undo", () =>
+      Person.use((user) =>
+        session(user).pipe(
+          Effect.map((s) => ({ ok: s.undo() })),
+          Effect.orElseSucceed(() => ({ ok: false }))
+        )
+      )
+    )
+);
 
   const toolsApi = HttpApiBuilder.group(Api, "tools", (h) =>
     h.handle("run", ({ params: { name }, payload }) =>
@@ -466,7 +409,15 @@ export function makeHost(opts: HostOptions) {
       }
       const content = yield* Effect.tryPromise({ try: () => s.runTool(name, payload, user.via), catch: (e) => new ToolFailed({ ok: false, error: (e as Error).message }) });
       return { ok: true as const, content };
-    })));
+        })
+      )
+      .handle("done", () =>
+        Effect.map(extSession, (s) => {
+          s.done();
+          return { ok: true as const };
+        })
+      )
+  );
 
   const api = HttpApiBuilder.layer(Api).pipe(Layer.provide([
     docApi.pipe(Layer.provide([personFromRequest, explainBadRequests])),
@@ -605,15 +556,12 @@ export function makeHost(opts: HostOptions) {
     },
     /** What a tab hears first: the document's details as its person sees them, and its tree (`canEdit`: theirs to change). */
     hello: helloFor,
-    agentState: (user: { id: string; name: string }) => agentStateFor(user).then((state) => offForViewer(user, state)),
     /** Tells every open tab, whoever's (a new version, a restore: { type: "versions" }). */
     broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
     renamed,
     /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: server/home/deploys.ts). */
     notify: (msg: unknown) => { for (const t of tabs) t.send(msg); },
-    /** A person's agent session, started if it isn't: a run a restart cut off goes on (the person's object asks, cloudflare/objects/person-agent.ts). */
-    resumeAgent: async (user: { id: string; name: string }) => { await sessionFor(user); },
     calls,
   };
 }

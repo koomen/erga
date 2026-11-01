@@ -3,8 +3,8 @@
 // and how they did it is recorded beside it, as `via`, a short phrase:
 //
 //   (none)                      in person: their browser session
-//   their agent                 the document agent, in one of their documents
-//   their admin agent           the agent on the admin pages
+//   their agent                 their own agent (agents/person/), on any page
+//   their admin agent           the admin pages' agent before each person had one (the change log's older rows)
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
 //                               API (/api/tools), MCP, Git pushes
 //   the factory (task #<n>)     a factory VM, working on a task they added
@@ -16,9 +16,9 @@
 
 /** How a person did something, when not in person. */
 export const VIA = {
-  /** The document agent. */
+  /** Their own agent (agents/person/). */
   agent: "their agent",
-  /** The admin agent. */
+  /** The admin pages' agent, before each person had one: the change log's older rows say so. */
   admin: "their admin agent",
   /** An agent with one of their tokens: its label. */
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,

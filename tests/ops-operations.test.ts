@@ -245,14 +245,14 @@ describe("on the control Worker: the same POST /api/tools/<name>, from its own O
 
 test("the admin agent has each of them in its tool list, and runs them as its admin, via their agent", async () => {
   const { platform, dir } = await app();
-  const caller = { dir, who: { login: "ada", admin: true, via: VIA.admin }, name: "Ada", origin: ORIGIN, platform };
+  const caller = { dir, who: { login: "ada", admin: true, via: VIA.agent }, name: "Ada", origin: ORIGIN, platform };
   const tools = await toolsFor(caller);
   for (const op of CONTROL_OPERATIONS) expect(tools.map((t) => t.name)).toContain(op.name);
   const redeploy = agentTools(tools, caller).find((t) => t.name == "redeploy")!;
   const out = await redeploy.execute("x", { target: "staging" } as never);
   expect((out.content[0] as { text: string }).text).toContain("staging redeploys now");
-  expect(asked).toEqual([`redeploy staging: redeploy by ada, via ${VIA.admin}`]);
-  // The editor's agent (no admin power) has none of them.
+  expect(asked).toEqual([`redeploy staging: redeploy by ada, via ${VIA.agent}`]);
+  // An agent with no admin power has none of them.
   const editor = await toolsFor({ ...caller, who: { login: "ada", via: "their agent" } });
   for (const op of CONTROL_OPERATIONS) expect(editor.map((t) => t.name)).not.toContain(op.name);
 });

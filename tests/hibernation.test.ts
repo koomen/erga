@@ -7,7 +7,6 @@
 
 import { Database } from "bun:sqlite";
 import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import * as Y from "yjs";
@@ -146,9 +145,8 @@ test("idle, the document closes and tabs stay; presence passes between them with
   expect(b.text()).toBe("<p>one Hi</p>");
   // Each tab now holds this history: it's kept with its socket.
   expect(a.tab.epoch).toBeTruthy();
-  // An editor's tab hears first who it is and what the document holds, then its agent's state.
+  // An editor's tab hears first who it is and what the document holds.
   expect(events.events[0]).toMatchObject({ type: "hello", info: { userId: "ada", path: "index.html" }, tree: { entries: [{ path: "index.html" }] } });
-  expect(events.events.some((e) => (e as { type: string }).type == "agent-state")).toBe(true);
   // Its hello names the room's history, which the tab's start (GET /api/start) must be of.
   expect((events.events[0] as { epoch: string }).epoch).toBe(a.tab.epoch!);
   // The start: the same hello and the room's whole state, in one answer.
@@ -214,21 +212,4 @@ test("a tab holding another history (the document's was lost) is closed as the d
   expect(b.closed).toBe(4409);
   expect(a.closed).toBeNull();
   expect(a.text()).toBe("<p>xHi</p>");
-});
-
-test("an editor's tab that joins as the document wakes keeps its agent: the new object asks no request who may edit", async () => {
-  const w = await made(async () => ({ apiKey: Redacted.make("sk-test"), model: "script", effort: "medium" }));
-  const events = await w.connect(true);
-  const state = () =>
-    events.events.filter((e) => (e as { type: string }).type == "agent-state").at(-1) as { state: { enabled: boolean; reason?: string } };
-  await w.settle();
-  expect(state().state.enabled).toBe(true);
-  await sleep(250);
-  expect(w.document.isOpen()).toBe(false);
-  w.boot();
-  events.events.length = 0;
-  events.type(3, "x");
-  await w.settle();
-  await sleep(20);
-  expect(state().state).toMatchObject({ enabled: true });
 });

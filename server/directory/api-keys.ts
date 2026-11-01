@@ -1,5 +1,5 @@
 // The API keys an admin enters on /admin/api-keys: Anthropic's,
-// for the document agent, the admin's agent and version descriptions. They
+// for each person's agent and version descriptions. They
 // are kept so:
 //
 //   - Each key is encrypted with AES-GCM, a fresh IV each time, its name as
@@ -40,7 +40,7 @@ export const CREDENTIALS = {
     label: "Anthropic API key",
     service: "Anthropic",
     prefixes: ["sk-ant-"],
-    description: "The document agent, the admin's agent and the descriptions of versions call Anthropic's API with it.",
+    description: "Each person's agent and the descriptions of versions call Anthropic's API with it.",
   },
 } as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
 

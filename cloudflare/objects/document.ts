@@ -27,8 +27,6 @@ import type { Who } from "../../server/directory/index.ts";
 import { askerFrom, type Role } from "../../document/access";
 import type { NamedRow } from "../../document/names";
 import { documentAgents } from "../../agents/document/session";
-import { agentToolsFor, elsewhere } from "../../agents/tools";
-import type { Caller } from "../../server/operations/index.ts";
 import { VIA } from "../../shared/attribution";
 import type { RestoreResult, VersionsState } from "../../document/versions";
 import type { DocSnapshot, Page } from "../../document/snapshot";
@@ -94,18 +92,8 @@ export class DocumentObject extends DurableObject<Env> {
         attach: (opened) => this.tabs.attachAll(opened),
         detach: () => this.tabs.detachAll(),
       },
-      agents: documentAgents({
-        settings: () => platform(env).agentSettings(),
-        // Every operation the person may use (agents/tools.ts), as their agent: never with admin power, even an admin's.
-        serverTools: (person, here) => agentToolsFor(this.agentCaller(person, here)),
-        // The agent's own tools in another document the person may open or edit: run there, as their agent.
-        elsewhere: (person, here, ref, name, args) => elsewhere(this.agentCaller(person, here), ref, name, args),
-        // Each person's conversation here, kept in their own object (cloudflare/objects/person-agent.ts).
-        chats: (person, docId) => {
-          const agents = env.AGENTS.getByName(person.id), scope = `doc:${docId}`;
-          return { load: () => agents.load(scope), save: (change) => agents.save(scope, change), clear: () => agents.clear(scope) };
-        },
-      }),
+      // Each person's agent's session here, and the key the versions' descriptions are written with.
+      agents: documentAgents({ settings: () => platform(env).agentSettings() }),
       home: {
         forget: (docId) => env.HOME.getByName("home").forget(docId),
         // A new version: if it is the homepage, its next deploy is scheduled.
@@ -129,17 +117,6 @@ export class DocumentObject extends DurableObject<Env> {
       pageTemplate: TEMPLATE || undefined,
       // Each person's picture, as the app sent it (their users row: shared/avatars.ts); none: their initial shows.
       avatarOf: (person) => safeAvatar(person.avatar) ?? undefined,
-    };
-  }
-
-  /** The person's editor agent here, as the operations take it: the person, via their agent, with no admin power. */
-  private agentCaller(person: { id: string; name: string }, here: string): Caller {
-    return {
-      dir: directoryOf(this.env),
-      who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent },
-      name: person.name,
-      here,
-      platform: platform(this.env),
     };
   }
 
@@ -241,10 +218,6 @@ export class DocumentObject extends DurableObject<Env> {
   /** A viewer's page in one call (Document.view): what they may do, which file, the version, its text. */
   view(who: Who | null, opts: { page: string; anyone?: boolean }): Promise<ViewAnswer | null> {
     return run(this.document.view(who, opts));
-  }
-  /** A person's agent run that a restart cut off goes on (their object's alarm asks). */
-  resumeAgent(person: { id: string; name: string }): Promise<void> {
-    return run(this.document.hold(this.document.resumeAgent(person)));
   }
 
   /** Its unedited time is up (document.wake says what then). */

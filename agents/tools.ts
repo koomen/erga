@@ -4,17 +4,14 @@
 // of agents/document/tools.ts) for any document the caller names, run in that
 // document's host as the person's agent (`documentTools`).
 //
-//   the editor's agent   (agents/document/session.ts) every operation its person may use but the admin ones, and
-//                        its own document tools, which take a `document` too: another document's run there
-//   the admin agent      (agents/person/sessions.ts) every operation, with admin power (the Ops page's too), the
-//                        document tools for any document
+//   a person's own agent (agents/person/sessions.ts) every operation its person may use (the admin ones, with admin
+//                        power, for an admin: the Ops page's too), and the document tools for any document
 //   an outside agent     (server/api.ts: /api/tools, /mcp, /llms.txt) every operation its token's person may use (the admin
 //                        ones only with an admin token; none that reach beyond one document with a document token),
 //                        and the document tools for any document
 //
-// The one exception to "an agent can do what its person can": the editor's agent, and an agent invited to a
-// document, never has admin power, even an admin's (their Who has no `admin`): the admin's agent is on /admin. A
-// secret is set only on its page, never in a conversation. The directory checks again on every call
+// The one exception to "an agent can do what its person can": an agent with a document token never has admin power,
+// even an admin's (its Who has no `admin`). A secret is set only on its page, never in a conversation. The directory checks again on every call
 // (Users.mustAdmin), so a tool list that's gone stale still can't do anything.
 
 import { argumentsSchema, type AgentTool, type ToolOutput } from "./run.ts";
@@ -41,7 +38,7 @@ import { CONTROL_OPERATIONS } from "../control/operations.ts";
  */
 export const ALL_OPERATIONS: Operation[] = [...OPERATIONS, ...CONTROL_OPERATIONS];
 
-/** A tool, for any agent: an operation, a document tool for any document, or one of the admin agent's own. */
+/** A tool, for any agent: an operation, or a document tool for any document. */
 export type Tool = Omit<Operation, "ui"> & { readonly ui?: string };
 
 const DOCUMENT = "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.";
@@ -50,48 +47,31 @@ const ANY_DOCUMENT = Schema.String.annotate({ description: DOCUMENT });
 /** The document tools, for any document: a `document` argument, and they run in its host, as the person's agent. */
 let docTools: Tool[] | null = null;
 export function documentTools(): Tool[] {
-  return (docTools ??= documentToolSpecs().map((spec): Tool => docTool(spec, ANY_DOCUMENT, () => null)));
+  return (docTools ??= documentToolSpecs().map((spec): Tool => docTool(spec, ANY_DOCUMENT)));
 }
 
 /**
- * The same, for a person's own agent (agents/person/): `document` may be left out for the document their page has
- * open (`here`: its id, or null where none is).
+ * The same, for a person's own agent (agents/person/): `document` may be left out for the document open on their page
+ * (Caller.here, as their message said).
  */
-export function documentToolsHere(here: () => string | null): Tool[] {
+let docToolsHere: Tool[] | null = null;
+export function documentToolsHere(): Tool[] {
   const optional = Schema.optionalKey(
     Schema.String.annotate({ description: `${DOCUMENT} Leave it out for the document open on the page.` })
   );
-  return documentToolSpecs().map((spec): Tool => docTool(spec, optional, here));
+  return (docToolsHere ??= documentToolSpecs().map((spec): Tool => docTool(spec, optional)));
 }
 
-function docTool(spec: ReturnType<typeof documentToolSpecs>[number], document: Schema.Top, here: () => string | null): Tool {
+function docTool(spec: ReturnType<typeof documentToolSpecs>[number], document: Schema.Top): Tool {
   return {
     name: spec.name,
     loose: true,
     description: `${spec.description} (In any document you may ${CHANGES.has(spec.name) ? "edit" : "open"}: name it with "document"; paths are relative to its folder.)`,
     parameters: Schema.Struct({ document, ...spec.parameters.fields }),
-    run: async (args, caller) => {
-      const { document: named, ...rest } = args as { document?: string } & Record<string, unknown>;
-      const ref = named || here();
-      if (!ref) throw new OperationError({ message: 'Name the document ("document"): no document is open on the page.', status: 400 });
-      return runInDocument(
-        caller,
-        await findDocument({ ...caller, here: undefined }, ref, CHANGES.has(spec.name) ? "edit" : "open"),
-        spec.name,
-        rest
-      );
-    },
+    // (No `document`: the one open on the person's page, if their agent has one: findDocument.)
+    run: async ({ document: ref, ...rest }, caller) =>
+      runInDocument(caller, await findDocument(caller, ref, CHANGES.has(spec.name) ? "edit" : "open"), spec.name, rest),
   };
-}
-
-/**
- * The editor's agent's tool `name` in another document, if `ref` names one: found as the person may (edit for a
- * tool that changes it, else open), and run in its host as their agent. Null when `ref` is the agent's own document.
- */
-export async function elsewhere(caller: Caller, ref: string, name: string, args: Record<string, unknown>): Promise<ToolContent[] | null> {
-  const doc = await findDocument({ ...caller, here: undefined }, ref, CHANGES.has(name) ? "edit" : "open");
-  if (doc.id == caller.here) return null;
-  return runInDocument(caller, doc, name, args);
 }
 
 /** A document tool, run in the document's host as the caller's agent (POST /api/tools/<name> there, which only the server reaches). */
@@ -124,14 +104,13 @@ export const allTools = (): Tool[] => [...ALL_OPERATIONS, ...documentTools()];
 
 /**
  * The tools a caller may use: the operations it's offered (the admin ones only with admin power; none that reach
- * beyond one document for a document token), and the document tools for any document, but for the editor's agent
- * (caller.here), whose own document tools take a `document` themselves. A person's agent passes `here`: the
- * document open on their page, for a tool that names none.
+ * beyond one document for a document token), and the document tools for any document (`open`: a person's own agent's,
+ * which may leave `document` out for the one open on their page).
  */
-export async function toolsFor(caller: Caller, here?: () => string | null): Promise<Tool[]> {
+export async function toolsFor(caller: Caller, open = false): Promise<Tool[]> {
   const ops: Tool[] = [];
   for (const op of ALL_OPERATIONS) if (await offered(op, caller)) ops.push(op);
-  return caller.here ? ops : [...ops, ...(here ? documentToolsHere(here) : documentTools())];
+  return [...ops, ...(open ? documentToolsHere() : documentTools())];
 }
 
 /** What a tool that needs no one runs with: nothing of the directory. */
@@ -173,8 +152,6 @@ export function agentTools(tools: Tool[], caller: Caller | (() => Caller) | null
   }));
 }
 
-/** The tools the editor's agent has beyond its own document's, for its person there. */
-export const agentToolsFor = async (caller: Caller) => agentTools(await toolsFor(caller), caller);
 
 /** A tool's answer as the agent loop takes it: the text for the model; content items as they are; an `offer` in it (a button for the person) goes to the panel too. */
 export function toolResult(out: unknown): ToolOutput {

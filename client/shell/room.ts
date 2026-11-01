@@ -5,7 +5,7 @@ import { Transaction, type ChangeSet } from "@codemirror/state";
 import type { MarkAuthor } from "../page-editor/editor";
 import type { SocketEvent } from "./collab";
 import type { Author } from "../../document/content";
-import type { AgentState, DocName, Hello, ModelState } from "../../document/api";
+import type { DocName, Hello } from "../../document/api";
 import type { LogEvent, ViewRequest } from "../../shared/agent-log";
 import { live } from "../live/client";
 import { ms } from "../page-editor/timescale";
@@ -105,7 +105,17 @@ export function mountRoom(shell: Shell) {
   // state with its transcript, which this catches up from.
   let greeted = false;
   function socketEvent(m: SocketEvent) {
-    const msg = m as { type: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string; path?: string; state?: AgentState; kind?: "document" | "project" };
+    const msg = m as {
+      type: string;
+      ev?: LogEvent;
+      id?: string;
+      req?: ViewRequest;
+      name?: DocName;
+      moved?: { from: string; to: string };
+      deleted?: string;
+      path?: string;
+      kind?: "document" | "project";
+    };
     if (msg.type == "hello") {
       const h = m as Hello;
       // The body's erga-listening class: this tab hears its agent (and open_page counts it). Tests wait on it.

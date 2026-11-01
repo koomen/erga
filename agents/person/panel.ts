@@ -1,6 +1,6 @@
 // Each admin's agent panel, as they left it: open or closed, its side and its
 // width (agent_prefs, in the admin agents' object). Their conversation is kept
-// step by step, as the document agent's is: agents/checkpoint.ts.
+// step by step: agents/checkpoint.ts.
 
 /** An admin's agent panel, as they left it: open or closed (on a wide window), which side, how wide. */
 export interface PanelPrefs { open?: boolean; side?: "left" | "right"; width?: number }
