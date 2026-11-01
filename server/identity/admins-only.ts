@@ -25,6 +25,16 @@
 //   /api/snapshot/...               the deploy copying production's documents in, and staging reading a blob its copy
 //                                   lacks (/api/snapshot/blob/<sha-256>), both with SNAPSHOT_TOKEN
 //   /__erga/...                     local development only, behind the dev server's secret
+//   MCP's sign-in (oauth.ts)        an agent's app signs in with no cookie, so it must reach these without one:
+//                                   GET /.well-known/oauth-protected-resource[/mcp] and
+//                                   /.well-known/oauth-authorization-server (the metadata, made from the code: no data);
+//                                   POST /oauth/register (it signs a client_id, and keeps nothing); POST /oauth/token
+//                                   (its own credential: a code and its PKCE verifier, made only once a person approved on
+//                                   /tokens/approve, which is behind this guard, so only an admin's); and POST /mcp with
+//                                   no Authorization header, which answers only the 401 that starts the sign-in. The
+//                                   person's own step, /oauth/authorize, is not exempt: it needs an admin, signed in
+//   GET /llms.txt with no token     the guide, made from the code (no data): MCP's instructions send agents to it without
+//                                   a token
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
 //                                   must work here as on production: /llms.txt, /mcp, /api/publish,
@@ -58,6 +68,17 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   if (path == "/api/deploys/version" || path == "/api/health") return method == "GET" || method == "HEAD";
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/__erga/")) return true;
+  const read = method == "GET" || method == "HEAD" || method == "OPTIONS";
+  if (
+    path == "/.well-known/oauth-protected-resource" ||
+    path == "/.well-known/oauth-protected-resource/mcp" ||
+    path == "/.well-known/oauth-authorization-server"
+  )
+    return read;
+  if (path == "/oauth/register" || path == "/oauth/token") return method == "POST" || method == "OPTIONS";
+  const token = request.headers.has("authorization");
+  if (path == "/mcp") return !token && method == "POST";
+  if (path == "/llms.txt") return !token && (method == "GET" || method == "HEAD");
   return false;
 }
 

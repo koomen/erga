@@ -5,10 +5,12 @@
 
 export {
   appPage,
+  cameFromOutside,
   confirmAction,
   crumbs,
   crumbsFont,
   fromElsewhere,
+  homeGoesToDocs,
   ICON,
   link,
   page,

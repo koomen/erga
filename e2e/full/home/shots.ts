@@ -34,11 +34,16 @@ export async function steady(p: Page) {
   await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 }
 
-/** A picture of `url` as `view` shows it, once it's steady. */
-export async function shoot(context: BrowserContext, url: string, view: View, script?: string): Promise<Buffer> {
+/** A picture of `url` (or of what `url` opens) as `view` shows it, once it's steady. */
+export async function shoot(
+  context: BrowserContext,
+  url: string | ((p: Page) => Promise<unknown>),
+  view: View,
+  script?: string
+): Promise<Buffer> {
   const p = await devicePage(context, view);
   try {
-    await p.goto(url);
+    await (typeof url == "string" ? p.goto(url) : url(p));
     await steady(p);
     if (script) await p.evaluate(script);
     const shot = (await p.cdp.send("Page.captureScreenshot", { format: "png" })) as { data: string };

@@ -150,7 +150,7 @@ health checks and rollbacks work.
       directory/      the database: documents, owners and permissions (directory.ts), users, sign-in identities,
                       access rules, settings and their change log, the API keys admins store
       identity/       who is asking: sessions (session.ts), agent tokens (tokens.ts) and their page (tokens-page.ts:
-                      /tokens, /settings), sign-in with GitHub or Google (sign-in.ts, accounts.ts) and its settings
+                      /tokens, /settings), MCP's sign-in for agents' apps (oauth.ts), sign-in with GitHub or Google (sign-in.ts, accounts.ts) and its settings
                       (settings.ts, apps.ts), cookies, the staging guard (admins-only.ts)
       documents/      the app for documents: a document's address and access (routes.ts), the pages origin
                       and its tokens (pages-origin.ts), the viewer (view.ts), new documents and the list (make.ts),

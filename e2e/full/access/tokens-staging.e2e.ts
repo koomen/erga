@@ -64,7 +64,7 @@ test("on staging an admin's document token reads and edits its document (API, MC
   // The Share card's prompt, step by step: the guide, then the tools, with the document's address as "document".
   const guide = await get("/llms.txt", { headers: { Authorization: `Bearer ${share}` } });
   expect(guide.status).toBe(200);
-  expect(await guide.text()).toContain(`curl -s -X POST ${root}/api/tools/read`);
+  expect(await guide.text()).toContain(`claude mcp add --transport http erga ${root}/mcp`);
   const document = root + one.address;
   expect((await tool(root, share, "read", { document, path: "index.html" })).text).toContain("Edited on staging");
   const edit = { document, path: "index.html", edits: [{ oldText: "Edited on staging", newText: "Edited by the Share prompt" }] };

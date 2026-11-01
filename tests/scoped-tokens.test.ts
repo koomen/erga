@@ -152,7 +152,7 @@ test("the device flow carries the scope, the document and the expiry; the person
   expect(waiting?.grant).toEqual({ scope: "document", docId: "/ada/oneoneon", expires: expires });
   // Bo can't open Ada's document, so he can't approve it; Ada can.
   await expect(tokens.approve(one.user_code, bo)).rejects.toBeInstanceOf(ScopeError);
-  const info = await tokens.approve(one.user_code, ada);
+  const info = (await tokens.approve(one.user_code, ada))?.info;
   expect([info?.scope, info?.docId, info?.expires]).toEqual(["document", "oneoneon", expires]);
   const got = await tokens.collect(one.code);
   expect(got.status).toBe("ready");
@@ -160,7 +160,7 @@ test("the device flow carries the scope, the document and the expiry; the person
   // An admin token asked of a user can't be approved by them; denied, the agent hears it's gone.
   const admin = (await ask({ label: "Git", scope: "admin" })).body;
   await expect(tokens.approve(admin.user_code, bo)).rejects.toThrow(/Only an admin/);
-  expect(await tokens.deny(admin.user_code)).toBe(true);
+  expect(await tokens.deny(admin.user_code)).toEqual({ oauth: null });
   expect((await tokens.collect(admin.code)).status).toBe("gone");
 });
 
