@@ -100,7 +100,11 @@ test("a reader's viewer holds the page in one frame on its own origin (allow-sam
   expect(frame).toContain('sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"');
   expect(frame).toContain(`allow="autoplay 'none'; fullscreen 'none'"`);
   expect(frame).not.toContain("srcdoc");
-  const src = /src="([^"]+)"/.exec(frame)![1].replace(/&amp;/g, "&");
+  // The frame's address is made in the page from its metas, as ergaFrames.src() does (client/inline/viewer-frames.ts):
+  // the frame has no src of its own.
+  expect(frame).not.toContain(" src=");
+  const meta = (name: string) => new RegExp(`<meta name="${name}" content="([^"]*)"`).exec(html)?.[1].replace(/&amp;/g, "&") ?? "";
+  const src = meta("erga-pages") + meta("erga-page").split("/").map(encodeURIComponent).join("/");
   expect(new URL(src).origin).not.toBe(p.origin);
   expect(new URL(src).pathname).toMatch(/^\/t\/[^/]+\/index\.html$/);
   expect(html).not.toContain('name="erga-base"');
