@@ -3,7 +3,6 @@
 
 import { fastClick } from "../common/fast-click";
 import { liveList } from "../common/live-rows";
-import { newDocPicker } from "../common/new-doc";
 import { runTool } from "../common/tools";
 import type { TreeHandle } from "../pages/pages-tree";
 import times from "./times";
@@ -35,8 +34,7 @@ interface ShareAnswer {
 export default function docs(c: DocsConfig): void {
   // Times in the reader's own language and zone, and a question before deleting.
   times();
-  // New: the picker the viewer's and the editor's + open (client/common/new-doc.ts).
-  newDocPicker(document);
+  // (New: the picker comes with the page's bars, server/pages/bars.ts.)
   // The chevrons, Share and the share card's buttons act as the press starts (client/common/fast-click.ts). Delete keeps its click.
   fastClick(document, "button.twist, button.share, #share .copy, #share .done");
   /** A row's Delete: a question first, then the operation delete_document, as an agent's is; the row goes at once. */

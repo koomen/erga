@@ -94,7 +94,8 @@ function swap(doc: Document, next: HTMLElement) {
   // Which code the page now shown carries: live.js asks the server about this one from now on.
   const build = document.querySelector('meta[name="erga-build"]'), nextBuild = doc.querySelector('meta[name="erga-build"]');
   if (build && nextBuild) build.setAttribute("content", nextBuild.getAttribute("content") ?? "");
-  const crumb = document.querySelector(".crumbs .here"), nextCrumb = doc.querySelector(".crumbs .here");
+  const crumb = document.querySelector(".erga-crumbs .erga-here"),
+    nextCrumb = doc.querySelector(".erga-crumbs .erga-here");
   if (crumb && nextCrumb) crumb.replaceChildren(...[...nextCrumb.childNodes].map((n) => n.cloneNode(true)));
   const marked = doc.querySelector('.admin-side a[aria-current="page"]')?.getAttribute("href");
   for (const a of document.querySelectorAll(".admin-side a")) {

@@ -1,7 +1,8 @@
 // The start page: what Erga is, when there's no landing document and none can be made.
 
 import { type Platform, type Session, whoOf } from "../platform.ts";
-import { appPage, crumbs, link } from "./chrome.ts";
+import { appPage, link } from "./chrome.ts";
+import { pageBars } from "./bars.ts";
 import { esc } from "../../shared/html.ts";
 import { html, NO_STORE } from "../http.ts";
 
@@ -24,7 +25,7 @@ export async function startPage(platform: Platform, session: Session | null) {
     appPage(
       "Erga",
       style,
-      `${signedIn ? crumbs(session, []) : ""}<main class="start">
+      `${pageBars(session, [])}<main class="start">
   <header><h1>Erga</h1></header>
   <p>Pages you edit where they're rendered, together with your agents.</p>
   <div class="actions">${actions}</div>

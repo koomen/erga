@@ -4,7 +4,7 @@
 // beside it, which keeps it up to date. One page; its script asks
 // /deploy/api/* and redraws.
 
-import { appPage, crumbs, inlineScript, inlineStyle } from "../../server/pages/index.ts";
+import { appPage, inlineScript, inlineStyle, pageBars } from "../../server/pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { TARGETS } from "../../deploy/targets.ts";
 
@@ -28,7 +28,7 @@ export interface DeployPageConfig {
 
 export function deployPage(c: DeployPageConfig): string {
   const perms = c.permissions.map((p) => `<li><b>${esc(label(p.key))}</b> (${p.type == "read" ? "read" : "edit"}): ${esc(p.why)}</li>`).join("");
-  const body = `${crumbs(null, [{ label: "Deploy" }])}<main>
+  const body = `${pageBars(null, [{ label: "Deploy" }])}<main>
   <header><div><h1>Install your own Erga</h1><p class="sub">Erga on your own Cloudflare account, with you (${esc(c.login)}) as its admin: the app, and a small control Worker beside it that keeps it up to date with Erga's releases${c.release ? ` (release <code>${esc(c.release.version)}</code>, ${esc(c.release.from == "stable" ? "the latest on stable" : `from ${c.release.from}`)})` : ""}.</p></div></header>
   ${c.release ? "" : `<p class="error">There's no release to install yet: an admin promotes one to stable on the Ops page first.</p>`}
   <p class="error" id="top-error">${esc(c.error)}</p>

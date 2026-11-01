@@ -5,7 +5,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { nameOf } from "../../document/names.ts";
-import { appPage, crumbs, ICON, inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
+import { appPage, ICON, pageBars, inlineScript, inlineStyle, page, safeNext } from "../pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from "../platform";
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
@@ -224,7 +224,7 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   const body = appPage(
     title,
     inlineStyle("tokens"),
-    `${crumbs(session, [{ label: title }])}<main>
+    `${pageBars(session, [{ label: title }])}<main>
   <header><div><h1>${title}</h1></div></header>
   ${o.notice ?? ""}
   ${made}

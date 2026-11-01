@@ -45,6 +45,48 @@ html.page-dark body:not(.source) :is(.erga-bar, .chrome) {
   --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2; --caret: #6aa1ff;
 }
 
+/* The breadcrumbs and the buttons (server/pages/bars.ts), as the editor's look (client/style.css, .icon-btn; client/styles/editor.css,
+   .chrome-nav, .nav-brand, .nav-back, .nav-title), in the same places: the bars 6px and 8px from the sides, with the
+   same padding, your avatar at the right of the buttons' bar and its menu under it, where the editor's is. */
+:is(.erga-view-buttons, .erga-crumbs) { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73;
+  position: fixed; z-index: 1000; display: flex; align-items: center;
+  font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+.erga-view-buttons { right: max(8px, env(safe-area-inset-right)); gap: 2px; padding: 0 5px 0 7.5px; }
+.erga-crumbs { left: max(6px, env(safe-area-inset-left)); min-width: 0; max-width: calc(100vw - 200px); margin: 0; padding: 3.5px 8px; font-size: 13.5px; }
+/* Each step's box and arrow as the editor's, so going into the editor and out moves nothing. */
+.erga-crumbs, .erga-crumbs > * { align-items: baseline; line-height: 34px; }
+.erga-crumbs > * { display: flex; height: 34px; text-decoration: none; }
+.erga-crumbs > :not(:last-child)::after { content: "›"; color: var(--chrome); opacity: 0.55; font-size: 13.5px; font-weight: 400; letter-spacing: normal; }
+.erga-brand { flex: none; padding: 0 6px; font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
+.erga-brand::after { margin: 0 -6px 0 10px; }
+.erga-crumbs a.erga-crumb { flex: none; padding: 0 10px; color: var(--soft); }
+.erga-crumb::after { margin: 0 -6px 0 12px; }
+.erga-crumbs .erga-here { padding: 0 8px; }
+.erga-crumbs a:hover { opacity: 0.7; }
+.erga-crumbs a:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 1px; border-radius: 8px; }
+.erga-crumbs .erga-here { min-width: 0; color: var(--fg); }
+.erga-crumbs .erga-here span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 760px) { .erga-bar .erga-here { max-width: min(42vw, 420px); } }
+.erga-bar .erga-account { position: relative; top: auto; right: auto; z-index: auto; }
+.erga-bar .erga-account-menu { top: calc(100% + 14px); }
+.erga-bar .erga-account-who { font-size: 12.5px; }
+.erga-bar .erga-account-who b { font-size: 13.5px; }
+.erga-bar .erga-account-menu a { padding: 6px 10px; line-height: 1.55; }
+html.page-dark .erga-bar .erga-account-menu a { color: #cacad2; }
+.erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
+  transition: color 150ms ease, background-color 150ms ease; }
+.erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+/* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
+.erga-view-button[aria-pressed="true"] { color: var(--caret, #3b7cf0); }
+.erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
+  font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
+@media (hover: hover) { .erga-view-button:hover::after { opacity: 1; } }
+/* Share with an agent copied its prompt (client/common/copied.ts), or couldn't reach the clipboard: its tooltip says so. */
+.erga-view-button.copied::after { opacity: 1; color: #16a34a; }
+.erga-view-button.copy-failed::after { opacity: 1; color: #c2410c; }
+button.erga-view-button { margin: 0; padding: 0; border: 0; background-color: transparent; font: inherit; cursor: pointer; }
+
 /* You, at the far right of the buttons' bar, apart from the buttons. */
 .me-slot { display: flex; align-items: center; margin-left: 10px; margin-right: 2px; }
 .me-slot:empty { display: none; }
@@ -65,3 +107,5 @@ html.page-dark body:not(.source) :is(.erga-bar, .chrome) {
   .erga-bar-l > * { flex: none; }
 }
 @media (prefers-reduced-motion: reduce) { .quick, .me-slot { transition: none; } }
+/* (The admin pages' own crumb is their <h1>: the crumbs' type, not a heading's.) */
+.erga-crumbs h1.erga-here { margin: 0; font-size: 13.5px; font-weight: 500; line-height: 34px; letter-spacing: normal; color: var(--fg); }

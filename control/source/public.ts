@@ -9,7 +9,7 @@
 // Ops page: no merge, deploys, logs, mirror or settings. Git itself (clone,
 // fetch) is routes.ts's sourceGit, which also needs no sign-in.
 
-import { appPage, crumbs, inlineScript, inlineStyle } from "../../server/pages/index.ts";
+import { appPage, inlineScript, inlineStyle, pageBars } from "../../server/pages/index.ts";
 import { dateTag, esc } from "../../shared/html.ts";
 import type { Platform } from "../../server/platform.ts";
 import type { SourceView } from "./browse.ts";
@@ -115,7 +115,7 @@ function shell(app: string, title: string, body: string): string {
   return appPage(
     title,
     inlineStyle("source"),
-    `${crumbs(null, [{ label: "Source" }], "h1", app)}
+    `${pageBars(null, [{ label: "Source" }], { here: "h1", home: app })}
 <main class="src">
   ${body}
 </main>

@@ -1,5 +1,5 @@
-// The glass bars' buttons (server/pages/viewer.ts, barsHtml), on a document's page (client/inline/viewer-bars.ts) and on
-// the homepage (client/inline/home-controls.ts): the quick actions on a phone, as the editor's (quick.ts), and Share
+// The glass bars' buttons (server/pages/bars.ts), on a document's page (client/inline/viewer-bars.ts), on the homepage
+// (client/inline/home-controls.ts) and on the app's own pages (client/inline/page-bars.ts): the quick actions on a phone, as the editor's (quick.ts), and Share
 // with an agent (agent-prompt.ts). `root`: the page, or the homepage's shadow root; `on`: what carries quick-open.
 
 import { copyAgentPrompt } from "./agent-prompt";
@@ -21,8 +21,9 @@ export function mountBars(root: Document | ShadowRoot, on: HTMLElement) {
     keep: ".erga-bar-r, .erga-new-menu",
     on,
   });
-  const share = bar.querySelector<HTMLElement>(".erga-agent-share")!;
-  share.addEventListener("click", async () => {
+  // (Only a document's page has it.)
+  const share = bar.querySelector<HTMLElement>(".erga-agent-share");
+  share?.addEventListener("click", async () => {
     const address = document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname;
     if (!(await copyAgentPrompt(share, address))) return;
     // No clipboard: the button says so, where the person looks.

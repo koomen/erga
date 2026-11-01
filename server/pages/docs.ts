@@ -2,9 +2,10 @@
 
 import type { Listed, LiveRow, LiveRows, Session } from "../platform.ts";
 import { asset, assetScripts } from "./assets.ts";
-import { appPage, crumbs, ICON, link, withEdit } from "./chrome.ts";
+import { appPage, ICON, link, withEdit } from "./chrome.ts";
+import { pageBars } from "./bars.ts";
 import { esc } from "../../shared/html.ts";
-import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
+import { newDocButton } from "./templates.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
 import { plural } from "../../shared/time.ts";
 
@@ -64,7 +65,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   return appPage(
     "Documents",
     inlineStyle("docs"),
-    `${crumbs(session, [{ label: "Documents" }])}<main>
+    `${pageBars(session, [{ label: "Documents" }], { docs: false })}<main>
   <header>
     <div><h1>Documents</h1><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     ${newDocButton("pill", "New")}
@@ -73,7 +74,6 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   <ol class="rows" data-live-kind="doc" data-live-view="docs" data-live-at="${now}"${docs.length ? "" : " hidden"}>\n${rows}\n  </ol>
   <p class="empty"${docs.length ? " hidden" : ""}>No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${plural(hours, "hour")} if you never edit it.`}</p>
 </main>
-${newDocMenu((path) => link(path, session))}${NEW_DOC_STYLE}
 <dialog id="share" aria-labelledby="share-title" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">
