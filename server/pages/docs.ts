@@ -3,11 +3,12 @@
 import type { Listed, LiveRow, LiveRows, Session } from "../platform.ts";
 import { asset, assetScripts } from "./assets.ts";
 import { appPage, ICON, link, withEdit } from "./chrome.ts";
-import { pageBars } from "./bars.ts";
+import { homeButton, pageBars } from "./bars.ts";
 import { esc } from "../../shared/html.ts";
 import { newDocButton } from "./templates.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
 import { plural } from "../../shared/time.ts";
+import { addressOf, HOME_ADDRESS, HOME_OWNER } from "../../document/names.ts";
 
 /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "12 days ago", or the date (the page's script redoes it in the reader's zone). */
 export function ago(t: number, now: number): string {
@@ -35,23 +36,30 @@ function sharedNote(d: Listed): string {
 export function docRow(session: Session, d: Listed, now: number, hours: number | null): string {
   const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
   const mine = d.role == "owner";
-  const note = !mine ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
-    : d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
-    : left != null ? `<span class="note" title="${hours == null ? "Made when unedited documents were deleted: it still goes unless someone edits it" : `A document nobody edits is deleted ${hours} hours after it's made`}">Unedited · deleted in ${left}h</span>` : "";
+  const note =
+    d.owner == HOME_OWNER
+      ? `<span class="note" title="This site's homepage, at /: every admin may edit it">Homepage</span>`
+      : !mine
+        ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
+        : d.path != null
+          ? `<span class="note" title="${esc(d.path)}">On disk</span>`
+          : left != null
+            ? `<span class="note" title="${hours == null ? "Made when unedited documents were deleted: it still goes unless someone edits it" : `A document nobody edits is deleted ${hours} hours after it's made`}">Unedited · deleted in ${left}h</span>`
+            : "";
   const when = new Date(d.modified).toISOString();
   // One opened from disk only comes off the list: its files stay where they are.
   const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
   // A project's row opens to its pages (the chevron); a document has one page, so its row has none (one from
   // before kinds that hasn't opened since has it, as before).
   const twist = d.kind == "document" ? `<span class="twist none" aria-hidden="true"></span>`
-    : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button>`;
+      : `<button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="${esc(addressOf(d))}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button>`;
   // The whole row opens the document (the link stretches over it); its buttons sit on top.
   return `  <li data-live="doc:${esc(d.id)}" data-sort="${d.modified}">
-    <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(`/${d.owner}/${d.slug}`, session)))}"><span class="title">${esc(d.title)}</span></a>${d.kind == "project" ? `<span class="note kind" title="A folder of pages, each with its own address">Project</span>` : ""}${note}${mine ? sharedNote(d) : ""}</div>
+    <div class="name">${twist}<a class="doc" href="${esc(withEdit(link(addressOf(d), session)))}"><span class="title">${esc(d.title)}</span></a>${d.kind == "project" ? `<span class="note kind" title="A folder of pages, each with its own address">Project</span>` : ""}${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${
       mine
-        ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
+        ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="${esc(addressOf(d))}">${ICON.share}</button>
     <form data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" data-tip="${remove}">${ICON.delete}</button></form>`
         : ""
     }</div>
@@ -65,7 +73,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   return appPage(
     "Documents",
     inlineStyle("docs"),
-    `${pageBars(session, [{ label: "Documents" }], { docs: false })}<main>
+    `${pageBars(session, [{ label: "Documents" }], { docs: false, lead: homeButton(link(HOME_ADDRESS, session)) })}<main>
   <header>
     <div><h1>Documents</h1><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     ${newDocButton("pill", "New")}

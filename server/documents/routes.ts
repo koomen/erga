@@ -15,6 +15,7 @@
 //                              Clone, and Edit for those who may edit it
 //   /<owner>/<slug>?edit       the editor on it, under Documents (its breadcrumbs): the same page, which
 //                              goes into the editor (the pencil goes there and back without a reload)
+//   /_home[/<page>]            the homepage project (nobody's: document/names.ts), as /<owner>/<slug>[/<page>] above
 //   /<owner>/<slug>/<page>     another of its pages (document/pages.ts: blog is blog.html, else blog/index.html), ?edit
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
@@ -44,7 +45,9 @@ import * as Effect from "effect/Effect";
 import { adminRoutes } from "../admin/index.ts";
 import { ID, OWNER, type Route, type Who } from "../directory/index.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
+import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
 import { listDocs, newDoc, shareToken } from "./make.ts";
+import { adoptLanding, landingDocument } from "./landing.ts";
 import { pagesRoutes, pagesHost } from "./pages-origin.ts";
 import { viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
@@ -74,7 +77,16 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
   )
     return yield* adminRoutes;
 
-  const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
+  // The homepage project's address, /_home[/<page>], is its row's /<HOME_OWNER>/<HOME_SLUG> (document/names.ts).
+  const home = /^\/_home(\/.*)?$/.exec(path);
+  // There's one from the first time anyone asks (made, or the homepage from before made the project: landing.ts).
+  if (home)
+    yield* call(async () => {
+      await adoptLanding(platform);
+      if (!(await platform.directory.locate(HOME_OWNER, HOME_SLUG))) await landingDocument(platform);
+    });
+  const routed = home ? `/${HOME_OWNER}/${HOME_SLUG}${home[1] ?? ""}` : path;
+  const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(routed) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
   if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const session = yield* call(() => platform.sessionOf(request));

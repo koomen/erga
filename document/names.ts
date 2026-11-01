@@ -13,6 +13,19 @@ export class NameError extends Schema.TaggedError<NameError>()("NameError", { me
 
 export const UNTITLED = "Untitled";
 
+/**
+ * The homepage project (server/documents/landing.ts): every server has one, and nobody owns it. Its row's owner is
+ * HOME_OWNER, which no account can be (a username starts with a letter or a digit). Its address is /_home, and
+ * /_home/<page> for its other pages; every admin may edit it (server/directory/, homeLimit).
+ */
+export const HOME_OWNER = "-home";
+export const HOME_SLUG = "home";
+export const HOME_ADDRESS = "/_home";
+export const HOME_TITLE = "Erga Homepage";
+
+/** A document's address: /<owner>/<slug>, and /_home for the homepage project. */
+export const addressOf = (d: { owner: string; slug: string }) => (d.owner == HOME_OWNER ? HOME_ADDRESS : `/${d.owner}/${d.slug}`);
+
 /** What a name is made from: a document's row in the directory. */
 export interface NamedRow {
   id: string;
@@ -28,7 +41,7 @@ export const nameOf = (d: NamedRow): DocName => ({
   owner: d.owner,
   title: d.title,
   slug: d.slug,
-  address: `/${d.owner}/${d.slug}`,
+  address: addressOf(d),
   titleSet: d.titleSet,
   slugSet: d.slugSet,
 });

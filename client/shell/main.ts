@@ -214,7 +214,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
   $("btn-docs").hidden = $("nav-back").hidden;
   ($("btn-docs") as HTMLAnchorElement).href = `/docs${as}`;
-  ($("nav-brand") as HTMLAnchorElement).href = `/${as}`;
+  // The wordmark goes to your documents too (a test person's to /, as they have none).
+  ($("nav-brand") as HTMLAnchorElement).href = $("nav-back").hidden ? `/${as}` : `/docs${as}`;
   // The editor's own page actions (client/editor.html, .edit-group) open out of the pencil while editing and close back into it: they
   // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
   const editGroup = $("edit-group"), body = document.body;

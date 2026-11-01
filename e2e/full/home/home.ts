@@ -20,14 +20,25 @@ export const get = (server: Server, path: string, init: RequestInit = {}) => fet
 export const post = (server: Server, path: string, body?: unknown, user?: string) =>
   get(server, `${path}${user ? `?user=${user}` : ""}`, { method: "POST", headers: { Origin: server.root, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
-/** / as served: directly (from a deploy, with its controls), or the viewer's frame. */
-export async function front(server: Server, user?: string) {
-  const r = await get(server, `/${user ? `?user=${user}` : ""}`);
+/**
+ * Signed out, on the dev server (where a request without a cookie is DEV_LOGIN's): / is the homepage only then. The
+ * cookie's name carries the server's port (server/identity/cookies.ts).
+ */
+export const signedOutCookie = (root: string) => `erga_signed_out_${new URL(root).port}`;
+export const signedOut = (server: Pick<Server, "root">) => ({ Cookie: `${signedOutCookie(server.root)}=1` });
+
+/** / as served to someone signed out: directly (from a deploy, with its controls), or the viewer's frame. */
+export async function front(server: Server) {
+  const r = await get(server, "/", { headers: signedOut(server) });
   const html = await r.text();
   return { html, direct: html.includes("<erga-controls"), timing: r.headers.get("server-timing") ?? "", headers: r.headers };
 }
-/** The viewer's document, and its owner, as its page names them: [, id, owner]. */
-export const frameOf = (html: string) => { const id = /<meta name="erga-doc" content="([a-z0-9]{8})">/.exec(html)?.[1], owner = /<meta name="erga-address" content="\/([a-z0-9-]+)\//.exec(html)?.[1]; return id && owner ? [html, id, owner] as const : null; };
+/** The viewer's document, and its owner, as its page names them: [, id, owner] (the homepage project's: "_home"). */
+export const frameOf = (html: string) => {
+  const id = /<meta name="erga-doc" content="([a-z0-9]{8})">/.exec(html)?.[1],
+    owner = /<meta name="erga-address" content="\/([a-z0-9-]+\/|_home")/.exec(html)?.[1].replace(/[/"]$/, "");
+  return id && owner ? ([html, id, owner] as const) : null;
+};
 /** The document / shows: in the viewer's frame, or served directly (its controls name it). */
 export const docOf = (html: string) => frameOf(html)?.[1] ?? /<erga-controls data-doc="([a-z0-9]{8})"/.exec(html)?.[1];
 /** Edit's address on a page, if it has Edit. */
@@ -45,14 +56,16 @@ export const setLanding = async (server: Server, id: string) => {
 /** Unsets landing_document: the next / makes a fresh homepage from assets/landing/. */
 export const resetLanding = (server: Server) => runTool(server.root, "reset_setting", { key: "landing_document" });
 
-/** A fresh homepage from assets/landing/ (made by the first / after the reset): its id and address. */
+/** The homepage project's page (/_home, the viewer on it), as `user` (the dev server's ?user=; none: DEV_LOGIN). */
+export const homeView = async (server: Server, user?: string) => (await get(server, `/_home${user ? `?user=${user}` : ""}`)).text();
+
+/** A fresh homepage project from assets/landing/ (made by the first / after the reset): its id and address (/_home). */
 export async function fresh(server: Server) {
   await resetLanding(server);
   const html = (await front(server)).html;
   const id = docOf(html);
-  const address = editOf(html);
-  if (!id || !address) throw new Error(`no landing document on /: ${html.slice(0, 600)}`);
-  return { id, address };
+  if (!id) throw new Error(`no landing document on /: ${html.slice(0, 600)}`);
+  return { id, address: "/_home" };
 }
 
 /** Once / is served directly (the first deploy, which the first / started, is done). */
@@ -84,11 +97,8 @@ export async function publish(server: Server, token: string, files: Record<strin
   return body as { ok: true; id: string; url: string };
 }
 
-/**
- * Opens / as the erga logo does, from inside Erga (Sec-Fetch-Site: same-origin): a typed address sends someone signed
- * in to /docs instead (server/app.ts). `query` goes on both (the dev server's ?user=).
- */
-export async function openHome(page: Page, root: string, query = "") {
-  await page.goto(`${root}/docs${query}`);
-  await Promise.all([page.waitForURL((u) => u.pathname == "/"), page.evaluate((q) => location.assign(`/${q}`), query)]);
+/** Opens / signed out, as the homepage is served: someone signed in goes to /docs (server/app.ts). The tab stays signed out. */
+export async function openHome(page: Page, root: string) {
+  await page.context().addCookies([{ name: signedOutCookie(root), value: "1", url: root }]);
+  await page.goto(`${root}/`);
 }

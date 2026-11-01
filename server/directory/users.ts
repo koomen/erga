@@ -24,7 +24,7 @@
 
 import * as Schema from "effect/Schema";
 import { changeLogEntry } from "../../shared/attribution.ts";
-import type { Sql, Statement } from "./directory.ts";
+import type { Sql, Statement } from "./model.ts";
 import { safeAvatar } from "../../shared/avatars.ts";
 
 export type ServerRole = "user" | "admin";

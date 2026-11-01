@@ -28,8 +28,8 @@ import {
 } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 
-/** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
-export const HOME_FILES = "/_home/";
+/** Where a deploy's files are served: /_home-files/<gen>/<path> (/_home is the homepage project's address), each address never reused, so browsers keep them for good. */
+export const HOME_FILES = "/_home-files/";
 
 /** The deploy's state, as GET /api/docs/<id>/home gives it (homeApi). A document that isn't the homepage is "idle". */
 export interface DeployStatus {
@@ -100,7 +100,7 @@ function rewriteSrcset(srcset: string, to: (v: string) => string | null): string
  * The homepage's page, rendered for a deploy: the document's page as it is,
  * except that what the viewer's own page would give it is given here (its
  * viewport, its title, a page that doesn't bounce), and its files are linked
- * where this deploy serves them (/_home/<gen>/<path>): every relative URL in
+ * where this deploy serves them (/_home-files/<gen>/<path>): every relative URL in
  * an attribute that loads something, in srcset, and in CSS, that names one of
  * the document's files. Links to its other pages stay relative (they're
  * served at the root too: serve.ts). Throws if the page isn't HTML.

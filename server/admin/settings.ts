@@ -8,6 +8,7 @@ import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from 
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { setAt, shown } from "./parts.ts";
+import { addressOf } from "../../document/names.ts";
 
 /** A setting that names a document (Setting.kind), with the document it names now, if there is one. */
 type Shown = ConfigEntry & { doc?: { address: string; title: string } | null };
@@ -129,7 +130,7 @@ async function shownSettings(platform: Platform, session: Session, fresh = false
       .map(async (e) => {
         if (e.kind != "document" || e.value == null) return e;
         const doc = await platform.directory.find(String(e.value));
-        return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
+        return { ...e, doc: doc && { address: addressOf(doc), title: doc.title } };
       })
   );
   // Whether a setting takes null (never) as well as its kind of value.

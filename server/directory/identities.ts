@@ -12,8 +12,8 @@
 // address) nor one the app's routes or test people use. The accounts from
 // before identities keep their GitHub login as their username.
 
-import type { Sql, Statement } from "./directory.ts";
-import { RESERVED } from "./directory.ts";
+import type { Sql, Statement } from "./model.ts";
+import { RESERVED } from "./model.ts";
 import { avatarFor } from "../../shared/avatars.ts";
 import { type Actor, NotAllowed, type Users } from "./users.ts";
 

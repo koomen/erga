@@ -65,6 +65,11 @@ the MCP server's tools are the ones listed below.
 A document is always named by the \`document\` argument: its address
 (/<owner>/<slug>), its URL, its id, or the slug of one of your person's own.
 
+Every server has one homepage project, "Erga Homepage", at /_home: nobody owns
+it, every admin may edit it (with an admin token), and it is on their
+list_documents. Its last deploy is the page people see at /. Someone signed in
+who opens / goes to /docs instead, and the Home page button there opens /_home.
+
 Most tools answer JSON, as text. A document tool (read, edit, write, ...)
 answers text and images, and a PDF's pages as a resource. A tool that fails
 answers an error that says why: fix the call as it says. "Outside the token's

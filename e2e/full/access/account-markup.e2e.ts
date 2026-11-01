@@ -2,6 +2,7 @@
 // it, the editor has its own, a document has none.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { getter, githubPicture, newDoc } from "./access";
+import { signedOut } from "../home/home";
 
 await servers.main();
 
@@ -9,7 +10,8 @@ test("every page of the site's own has your avatar in its corner", async () => {
   const root = (await servers.main()).root,
     get = getter(root);
   const picture = await githubPicture(root);
-  for (const path of ["/", "/docs", "/admin", "/settings", "/nobody-here"]) {
+  // (/ is /docs for someone signed in; the homepage project's page is /_home.)
+  for (const path of ["/_home", "/docs", "/admin", "/settings", "/nobody-here"]) {
     const html = await (await get(path)).text();
     expect(html, path).toContain('data-erga-account="in"');
     expect(html, path).toContain(`<img src="${picture}" alt="" draggable="false"`);
@@ -31,8 +33,9 @@ test("a document's own files, and the homepage's document on its pages origin, h
   const root = (await servers.main()).root, get = getter(root);
   const { id } = await newDoc(root);
   expect(await (await get(`/d/${id}/doc/index.html`)).text()).not.toContain("data-erga-account");
-  // The homepage: the viewer's frame until its first deploy is done, then the page itself, whose one corner is in its controls.
-  const front = await (await get("/")).text();
+  // The homepage (signed out: someone signed in goes to /docs): the viewer's frame until its first deploy is done, then
+  // the page itself, whose one corner is in its controls.
+  const front = await (await get("/", { headers: signedOut({ root }) })).text();
   const frameSrc = /<iframe id="frame" class="erga-view" (?:data-)?src="([^"]+)"/.exec(front)?.[1].replaceAll("&amp;", "&");
   if (frameSrc) {
     const framed = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();

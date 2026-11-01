@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import type { FileData } from "../../document/document.ts";
 import { kindOf, titleOf, type DocKind } from "../../document/pages.ts";
 import { type DocRow, type Grant, ID, newDocId, NO_WRITE, NotAllowed, type Permission, TEST_ID, type Who } from "../directory/index.ts";
-import { UNTITLED } from "../../document/names.ts";
+import { addressOf, UNTITLED } from "../../document/names.ts";
 import { type Platform, type Session, whoOf } from "../platform.ts";
 import { landingDocument } from "./landing.ts";
 import {
@@ -98,7 +98,7 @@ export const newDoc = Effect.gen(function* () {
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newDocId();
     const made = yield* call(() => makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index, kind }));
-    if (made) return redirect(withEdit(link(`/${made.owner}/${made.slug}`, session)));
+    if (made) return redirect(withEdit(link(addressOf(made), session)));
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
 });
