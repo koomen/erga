@@ -22,7 +22,7 @@ import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../page-editor/zoom";
 import { fastClick } from "../common/fast-click";
-import { NARROW } from "../agent/layout";
+import { mountLayout } from "../agent/layout";
 import { BASE, $, editing, isMac, store, type Shell } from "./shell";
 import { mountNaming } from "./naming";
 import { mountRoom } from "./room";
@@ -33,7 +33,7 @@ import { mountToast } from "./toast";
 import { mountStyleBar } from "./style-bar";
 import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
-import { mountAgent } from "./agent";
+import { editorContext } from "./agent-context";
 import { mountPause } from "./pause";
 import { addFiles } from "./uploads";
 import { sleep } from "../../shared/time";
@@ -66,7 +66,7 @@ interface EditorKept {
 interface ShellKept { width: number; height: number; html: string[]; body: string[]; style: string; parts: Record<string, string> }
 const SHELL_HTML = ["page-dark", "page-light", "page-white"],
   SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
-const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-model", "agent-input", "agent-voice", "agent-send"];
+const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
 
 
 (async () => {
@@ -94,16 +94,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   // root's, or its body's when the root has none, as the browser itself would
   // paint it. The page reports its colour: for one that's only a
   // gradient, the gradient's colour at the top.
-  // The first one is what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
-  // It lands at once, as every later one does: the band above the page shows it too, and must keep
-  // up with the page.
-  let backdropKnown!: () => void;
-  const backdropReady = new Promise<void>((done) => (backdropKnown = done));
-  let backdropSeen = false;
+  // Each lands at once: the band above the page shows it too, and must keep up with the page.
   function applyBackdrop(b: Backdrop) {
     if (!shell.info) return;
-    const first = !backdropSeen;
-    backdropSeen = true;
     const color = b.color && CSS.supports("color", b.color) ? b.color : "#ffffff";
     const root = document.documentElement.style;
     root.setProperty("--page-bg", color);
@@ -116,7 +109,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
     document.documentElement.classList.toggle("page-white", lum > 0.95);
     // Remembered so the next load paints it before the page arrives, not white first.
     store.set("erga:backdrop:v1", JSON.stringify({ bg: color, tone: dark ? "page-dark" : "page-light" }));
-    if (first) backdropKnown();
   }
 
   // ---------------------------------------------------------------- load
@@ -385,7 +377,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   shell.fmt = mountStyleBar(shell);
   shell.views = mountViews(shell);
   shell.requests = mountPageRequests(shell);
-  shell.agent = mountAgent(shell);
+  // Your agent (server/pages/agent.ts: the page has it, viewing and editing): here, where it sits around the page, and how wide.
+  mountLayout($("agent"), $("agent").querySelector<HTMLElement>(".agent-head")!);
+  const agentPanel = () => window.ergaAgentPanel;
 
   // ---------------------------------------------------------------- shortcuts & wiring
 
@@ -398,8 +392,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
       shell.views.toggleSource();
       return true;
     }
-    if (mod && !e.shiftKey && key == "j") {
-      shell.agent.toggleAgent();
+    // (In the shell itself, the agent's own script hears ⌘J: client/inline/agent-toggle.ts.)
+    if (fromPage && mod && !e.shiftKey && key == "j") {
+      window.ergaAgent?.show(!window.ergaAgent.open());
       return true;
     }
     if (mod && e.shiftKey && key == "k" && shell.mode == "text") {
@@ -436,7 +431,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
         shell.sharing.toggleSharing(false);
         if (shell.mode == "text") page.focus();
       } else if (!$("pause-card").hidden) shell.pause.showPauseCard(false);
-      else if ($("agent").contains(document.activeElement)) shell.agent.toggleAgent(false);
       else if (shell.mode != "text") shell.views.setMode("text");
       else {
         shell.chrome.hideChrome();
@@ -483,27 +477,14 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   });
 
   // Out of the editor and back in, without leaving the page: the
-  // controls go out of sight, with anything open among them, and come back as they were.
-  // Into the editor (or loading in it), the editor shows first, then the agent
-  // grows out of its button, unless the user keeps it closed (or on a phone, where it would cover the page). The first time,
-  // that's once the editor is ready (this runs before main.ts calls
-  // ergaShell.ready) and the page has said what its background is, so the
-  // room the page slides over to make is its colour, never the editor's white
-  // (applyBackdrop); a page that never says gives up waiting after a moment.
-  let entering = 0;
-  function openAgentOnEntry() {
-    if (!settings.agent || innerWidth < NARROW) return;
-    const mine = ++entering;
-    void Promise.race([backdropReady, sleep(2000)]).then(() =>
-      requestAnimationFrame(() => requestAnimationFrame(() => { if (mine == entering && editing()) shell.agent.showAgent(true); })));
-  }
+  // controls go out of sight, with anything open among them, and come back as they were. Your agent stays as it is:
+  // it's the page's, viewing and editing alike (server/pages/agent.ts).
   function setEditing(on: boolean) {
     syncZoom(on);
     if (on) {
       // The editor in the page (it stopped on the way out: the page stays as it was).
       page.start();
       page.focus();
-      openAgentOnEntry();
       return;
     }
     if (shell.mode != "text") shell.views.setMode("text");
@@ -516,17 +497,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
     shell.chrome.toggleQuick(false);
     shell.pause.showPauseCard(false);
     shell.fmt.hideFmt();
-    shell.agent.showAgent(false);
-    shell.agent.stopVoice();
     shell.chrome.showChrome();
   }
-  // Loaded in the editor (opened with ?edit: a link, a reload, back or forward), the pane is as it was left from the
-  // page's first frame (server/pages/viewer.ts, LAYOUT_EARLY), unanimated, and stays so: nothing moves as this runs.
-  // Switched into the editor from viewing is coming into it, and the agent grows out as above
-  // (server/pages/viewer.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
-  else if (window.ergaShell?.loadedEditing !== false) shell.agent.showAgent(settings.agent && innerWidth >= NARROW);
-  else openAgentOnEntry();
 
   // ---------------------------------------------------------------- a new release
 
@@ -538,13 +511,29 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   // before this script has loaded.
   live((l) => {
     l.flush(() => collab.flushed());
-    l.hold(() => shell.fmt.pointerDown ? "a pointer is down on the page" : shell.agent.voice ? "voice mode is on" : shell.agent.files.reading ? "files are being read" : null);
-    l.keep("editor", (): EditorKept => {
+    l.hold(() =>
+      shell.fmt.pointerDown
+        ? "a pointer is down on the page"
+        : agentPanel()?.voice
+          ? "voice mode is on"
+          : agentPanel()?.files.reading
+            ? "files are being read"
+            : null
+    );
+    l.keep(
+      "editor",
+      (): EditorKept => {
         const sel = currentSelection().main;
       return {
-        path: shell.pagePath, selection: { anchor: sel.anchor, head: sel.head }, scroll: shell.mode == "text" ? page.scrollY : 0, mode: shell.mode,
-        pages: !$("pages").hidden, settings: !!shell.docSettings?.isOpen(), help: !$("help").hidden,
-        files: shell.agent.files.files, held: collab.held() ?? undefined,
+        path: shell.pagePath,
+        selection: { anchor: sel.anchor, head: sel.head },
+        scroll: shell.mode == "text" ? page.scrollY : 0,
+        mode: shell.mode,
+        pages: !$("pages").hidden,
+        settings: !!shell.docSettings?.isOpen(),
+        help: !$("help").hidden,
+        files: agentPanel()?.files.files ?? [],
+        held: collab.held() ?? undefined,
       };
     }, { everyReload: true });
     l.keep("shell", (): ShellKept | null => {
@@ -567,7 +556,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
     if (back.pages) requestAnimationFrame(() => shell.naming.togglePages(true));
     if (back.settings) void shell.chrome.loadSettings().then((s) => s?.toggle(true));
     if (back.help) shell.chrome.toggleHelp(true);
-    if (back.files?.length) shell.agent.files.restore(back.files);
+    if (back.files?.length) agentPanel()?.files.restore(back.files);
   }
   // ---------------------------------------------------------------- another page
 
@@ -623,6 +612,20 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   shell.room.connectionChanged(collab.connected);
   // What came on the socket while the shell was being set up (its hello, the agent's state), in order.
   for (const m of pending.splice(0)) shell.room.socketEvent(m);
-  window.ergaPage = { page, collab, toggleSource: shell.views.toggleSource, captureView: shell.requests.captureView, agentContext: shell.agent.editorContext, setEditing, get pagePath() { return shell.pagePath; }, openPage, get state() { return currentState(); } };
+  window.ergaPage = {
+    page,
+    collab,
+    toggleSource: shell.views.toggleSource,
+    captureView: shell.requests.captureView,
+    agentContext: () => editorContext(shell),
+    setEditing,
+    get pagePath() {
+      return shell.pagePath;
+    },
+    openPage,
+    get state() {
+      return currentState();
+    },
+  };
   window.ergaShell?.ready();
 })();

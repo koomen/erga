@@ -52,3 +52,8 @@ body.erga-editing .erga-tree-card { display: none; }
 /* On the page's colour, as the bars (client/inline/bars.css gives it their glass). */
 html.page-light .erga-tree-card { --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46; --caret: #3b7cf0; --rule: #e6e6ea; --bg: #fff; }
 html.page-dark .erga-tree-card { --fg: #cacad2; --fg-strong: #ececf1; --soft: #8f8f99; --chrome: #6c6c75; --chrome-hover: #d4d4da; --caret: #6aa1ff; --rule: #2c2c31; --bg: #18181b; }
+/* Your agent open on a wide window: the bars 14px from it, on its side, as the editor's (--frame-l, --frame-r:
+   viewer-layout-early.ts, then the editor's layout). On a phone it covers the page, the bars too. */
+.erga-crumbs.erga-bar { left: max(6px, env(safe-area-inset-left), calc(var(--frame-l, 0px) - 2px)); transition: left 560ms cubic-bezier(0.45, 0, 0.15, 1); }
+.erga-view-buttons.erga-bar { right: max(8px, env(safe-area-inset-right), calc(var(--frame-r, 0px) - 2px)); transition: right 560ms cubic-bezier(0.45, 0, 0.15, 1); }
+.agent { z-index: 1001; }

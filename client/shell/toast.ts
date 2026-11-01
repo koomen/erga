@@ -1,6 +1,8 @@
 // The toast: a short confirmation, an explanation, or a problem with the page, with a way to have the agent fix it.
 
 import { ms } from "../page-editor/timescale";
+import { FIX_REPORTED, pageReport } from "../../shared/page-report";
+import { editorContext } from "./agent-context";
 import { $, type Shell } from "./shell";
 
 export function mountToast(shell: Shell) {
@@ -34,9 +36,15 @@ export function mountToast(shell: Shell) {
       b.className = "toast-fix";
       b.textContent = "Fix with agent";
       b.addEventListener("click", () => {
-        if (shell.agent.off) { explain(shell.agent.off); return; }
+        const agent = window.ergaAgentPanel;
+        if (!agent || agent.off) {
+          explain(agent?.off ?? "Your agent isn't here yet: try again in a moment.");
+          return;
+        }
         hideExplanation();
-        shell.agent.fixReported(fix, key);
+        // The page editor's report goes to your agent as data, in the page note (shared/page-report.ts).
+        if (key) shell.room.shownProblems.delete(key);
+        agent.ask(FIX_REPORTED, `${editorContext(shell)}\n${pageReport(fix)}`);
       });
       toast.append(b);
       syncFix();
@@ -62,7 +70,7 @@ export function mountToast(shell: Shell) {
   function syncFix() {
     const b = toast.querySelector<HTMLButtonElement>(".toast-fix");
     if (!b) return;
-    const off = shell.agent.off;
+    const off = window.ergaAgentPanel ? window.ergaAgentPanel.off : "Connecting to the agent…";
     // aria-disabled, not disabled: it can still say why it can't.
     if (off) b.setAttribute("aria-disabled", "true");
     else b.removeAttribute("aria-disabled");

@@ -173,6 +173,10 @@ Found a new trap? Write it here, in the same change.
   (client/inline/viewer.css). A change to one bar's place or buttons changes the other's too
   (`e2e/full/viewer/bars.e2e.ts` compares them). Never move `#erga-editor` in the page after it is made:
   its parts start again, and the editor's own actions stop opening out of the pencil.
+- Each person's agent (agents/person/) is the page's, on every page: its circle and panel come from
+  server/pages/agent.ts, outside `#erga-editor`, and stay as they are when the editor opens or closes. The editor
+  only places it (client/agent/layout.ts). Its conversation is the person's (`/api/agent`), not the document's: a
+  test reads it at `${root}/api/agent/conversation`, never at the document's `/d/<id>/api/agent`.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

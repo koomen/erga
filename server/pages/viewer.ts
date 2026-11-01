@@ -9,10 +9,11 @@
 
 import { FAVICON_LINK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
-import { asset, assetScripts, editorShell } from "./assets.ts";
-import { inlineCall, inlineScript, inlineStyle } from "./inline.ts";
+import { asset, assetScripts, editorShell, styleTag } from "./assets.ts";
+import { inlineCall, inlineFunction, inlineScript, inlineStyle } from "./inline.ts";
 import { crumbsFont, link } from "./chrome.ts";
 import { barsHtml } from "./bars.ts";
+import { agentPanel, hasAgent } from "./agent.ts";
 import { esc } from "../../shared/html.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
 import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
@@ -35,6 +36,10 @@ export const editingHead = () => inlineCall("viewer-editing-head", assetScripts(
 
 /** The editor's layout as this browser keeps it, as the page's body starts (client/inline/viewer-layout-early.ts). */
 export const LAYOUT_EARLY = inlineCall("viewer-layout-early");
+
+/** The same, viewing, for someone with an agent: the agent, the page and the bars where the editor has them, from the
+ *  first frame; again each time the agent opens or closes (window.ergaLayoutEarly: client/inline/agent-toggle.ts). */
+const AGENT_LAYOUT = `window.ergaLayoutEarly = ${inlineFunction("viewer-layout-early")}; ergaLayoutEarly();`;
 
 /** ... and as its body starts: editing from the first frame, with the editor's controls and layout (client/inline/viewer-editing-body.ts). */
 export const EDITING_BODY = inlineCall("viewer-editing-body");
@@ -135,12 +140,12 @@ export function viewerPage(o: {
 ${FAVICON_LINK}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
-${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}<style>${BAND_STYLE}</style>${opening}
-<body>${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
+${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${hasAgent(session) ? styleTag() : ""}<style>${BAND_STYLE}</style>${opening}
+<body>${hasAgent(session) ? `<script>${AGENT_LAYOUT}</script>` : ""}${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
   const after = `
-${bars}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${bars}${agentPanel(session)}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

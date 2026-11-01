@@ -13,7 +13,7 @@ async function toggleEditing(ed: Editor) {
   await ed.settle();
 }
 
-test("leaving the editor collapses the pane; back in, it opens again only if it was left open", async ({ tab }) => {
+test("your agent is the page's: out of the editor and back in, the pane stays as it was, closed or open", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.agent(), "page");
   expect(await paneOpen(ed)).toBe(false);
   await toggleEditing(ed);
@@ -22,7 +22,7 @@ test("leaving the editor collapses the pane; back in, it opens again only if it 
   await ed.press("ControlOrMeta+j");
   await expect.poll(() => paneOpen(ed)).toBe(true);
   await toggleEditing(ed);
-  await expect.poll(() => paneOpen(ed)).toBe(false);
+  await expect.poll(() => paneOpen(ed)).toBe(true);
   await toggleEditing(ed);
   await expect.poll(() => paneOpen(ed)).toBe(true);
 });

@@ -95,7 +95,10 @@ test("Send takes the files: the model gets the pictures as images (the big one s
   expect(got.files).toEqual(["data.csv"]);
   const want = ["img:true", "data.csv (38 B)", "img:true"];
   expect((await sent(ed)).files).toEqual(want);
-  const log = await (await fetch(`${ed.address}/api/agent`)).json() as { log: { items: { kind: string; files?: { thumb?: string }[] }[] } };
+  // (The conversation is the person's, kept by their agent: agents/person/sessions.ts.)
+  const log = (await (await fetch(`${new URL(ed.address).origin}/api/agent/conversation`)).json()) as {
+    log: { items: { kind: string; files?: { thumb?: string }[] }[] };
+  };
   const item = log.log.items.find((i) => i.kind == "user" && i.files);
   expect(item?.files?.filter((f) => f.thumb).map((f) => f.thumb!.length < 60_000)).toEqual([true, true]);
   await ed.page.reload();
@@ -104,10 +107,13 @@ test("Send takes the files: the model gets the pictures as images (the big one s
   await expect.poll(async () => (await sent(ed)).files).toEqual(want);
 });
 
-test("the host refuses what the panel would: a PDF sent straight to the API, with a reason", async () => {
+test("the server refuses what the panel would: a PDF sent straight to the agent's API, with a reason", async () => {
   const s = await servers.script();
-  const { address } = await s.fixture("page");
-  const r = await fetch(`${address}/api/agent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "hi", files: [{ name: "x.pdf", kind: "pdf", mimeType: "application/pdf", data: "", size: 1 }] }) });
-  expect(r.status).toBe(400);
+  const r = await fetch(`${s.root}/api/agent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: s.root },
+    body: JSON.stringify({ text: "hi", files: [{ name: "x.pdf", kind: "pdf", mimeType: "application/pdf", data: "", size: 1 }] }),
+  });
+  expect(r.status).toBe(409);
   expect(((await r.json()) as { reason?: string }).reason).toContain("neither an image nor a text file");
 });

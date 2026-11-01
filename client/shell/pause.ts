@@ -35,8 +35,9 @@ export function mountPause(shell: Shell) {
     shell.chrome.showChrome(); shell.chrome.toggleHelp(false); shell.sharing.toggleSharing(false);
     const fix = $("pause-fix");
     // aria-disabled, not disabled: it can still say why it can't.
-    fix.setAttribute("aria-disabled", String(!!shell.agent.off));
-    fix.title = shell.agent.off ?? "";
+    const off = window.ergaAgentPanel ? window.ergaAgentPanel.off : "Connecting to the agent…";
+    fix.setAttribute("aria-disabled", String(!!off));
+    fix.title = off ?? "";
   }
   // Hovering the disabled button opens the card; it stays while the pointer moves into it.
   // (A mouse only: a tap opens and closes it with the click below.)
@@ -52,9 +53,13 @@ export function mountPause(shell: Shell) {
     shell.toast.flash(shell.page.isPaused ? "Paused: the page ignores clicks and keys while you edit" : "Resumed: the page responds again");
   });
   $("pause-fix").addEventListener("click", () => {
-    if (shell.agent.off) { shell.toast.explain(shell.agent.off); return; }
+    const agent = window.ergaAgentPanel;
+    if (!agent || agent.off) {
+      shell.toast.explain(agent?.off ?? "Your agent isn't here yet: try again in a moment.");
+      return;
+    }
     showPauseCard(false);
-    shell.agent.fixWithAgent(PAUSE_FIX);
+    agent.ask(PAUSE_FIX, null);
   });
   syncPause();
   return { syncPause, showPauseCard };

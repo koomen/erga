@@ -4,8 +4,9 @@
 // SQLite and forwards the calls.
 //
 //   GET    /api/agent                 { enabled, reason?, model, models, choice, log }
-//   POST   /api/agent                 { text, context, files? }: a message (it steers a turn that is running); context
-//                                     is the page note: the page open, what is selected there
+//   POST   /api/agent                 { text, context, files?, doc? }: a message (it steers a turn that is running);
+//                                     context is the page note (the page open, what is selected there), doc the id
+//                                     of the document open, for the document tools that name none
 //   POST   /api/agent/abort|reset     stops the turn; starts a new conversation
 //   POST   /api/agent/model           { model }: sonnet or opus-fast, from the next message
 //   GET    /api/agent/events          a WebSocket (Upgrade: websocket, as the panel asks) or server-sent events, to that
@@ -53,8 +54,8 @@ export class PersonAgents {
   /** The event streams open, each with the person it's for. */
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string>();
   private sockets = new Map<(text: string) => void, string>();
-  /** Each person's agent (one, in their object), with where the server is, as their page said last. */
-  private agents = new Map<string, { agent: AgentSession; origin: string }>();
+  /** Each person's agent (one, in their object), with where the server is and the document open, as their page said last. */
+  private agents = new Map<string, { agent: AgentSession; origin: string; here: string | null }>();
   private beat: Fiber.Fiber<void> | null = null;
   /** Each person's conversation, kept step by step (agents/checkpoint.ts), scope "you:<login>". */
   private chats: ChatTables;
@@ -71,12 +72,12 @@ export class PersonAgents {
    * tools and prompt (as they are when it starts; each tool call checks again: Users.mustAdmin).
    * The settings are read each time (each turn, each time the panel opens), so a key an admin stores, replaces or clears reaches it.
    */
-  private async session(login: string, origin: string): Promise<{ agent: AgentSession; origin: string } | string> {
+  private async session(login: string, origin: string): Promise<{ agent: AgentSession; origin: string; here: string | null } | string> {
     const cfg = await this.platform.agentSettings().catch((e: unknown) => ({ missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment` }));
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
     if (s) { s.origin = origin; s.agent.configure(cfg); return s; }
-    const state = { origin };
+    const state: { origin: string; here: string | null } = { origin, here: null };
     const admin = await this.platform.directory.users.isAdmin(login);
     // Every tool acts as the person, via their agent: the change log and a document's history name them, and how.
     const as = (): Caller => ({
@@ -95,7 +96,7 @@ export class PersonAgents {
       cfg,
       owner: login,
       admin,
-      tools: agentTools(await toolsFor(as()), as),
+      tools: agentTools(await toolsFor(as(), () => state.here), as),
       store,
       stored: this.chats.load(scope),
       meta: { origin },
@@ -115,12 +116,21 @@ export class PersonAgents {
     return { enabled: true as const, model: s.agent.model, choice: s.agent.modelChoice, models, log: s.agent.log() };
   }
 
-  async agentPrompt(login: string, origin: string, text: string, context: string | null, attached?: unknown): Promise<{ ok: boolean; reason?: string }> {
+  /** A message, from a page (`doc`: the id of the document it has open, if any: the document tools' own, unnamed). */
+  async agentPrompt(
+    login: string,
+    origin: string,
+    text: string,
+    context: string | null,
+    attached?: unknown,
+    doc?: string | null
+  ): Promise<{ ok: boolean; reason?: string }> {
     const s = await this.session(login, origin);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
     const files = checkAttachments(attached);
     if (typeof files == "string") return { ok: false, reason: files };
     if (!text.trim() && !files.length) return { ok: false, reason: "say something" };
+    s.here = typeof doc == "string" && /^[a-z0-9-]{1,64}$/.test(doc) ? doc : null;
     s.agent.prompt(text.slice(0, 20000), context ? context.slice(0, 4000) : null, files);
     return { ok: true };
   }
@@ -172,8 +182,16 @@ export class PersonAgents {
     }
     if (op == "abort") s.agent.abort();
     else if (op == "reset") await this.clearConversation(login);
-    else if (!model || !isModelChoice(model) || !s.agent.setModel(model)) return { ok: false, reason: "that model isn't one of the choices" };
-    return { ok: true, model: s.agent.model, choice: s.agent.modelChoice, models: s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [] };
+    else if (!model || !isModelChoice(model) || !s.agent.setModel(model))
+      return { ok: false, reason: "that model isn't one of the choices" };
+    const state = {
+      model: s.agent.model,
+      choice: s.agent.modelChoice,
+      models: s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [],
+    };
+    // The person's other tabs follow.
+    if (op == "model") this.event({ type: "model", ...state }, login);
+    return { ok: true, ...state };
   }
 
   // -- live updates: the event stream of one person's pages
@@ -265,6 +283,7 @@ const Prompt = Schema.Struct({
   text: Schema.optionalKey(Schema.Unknown),
   context: Schema.optionalKey(Schema.Unknown),
   files: Schema.optionalKey(Schema.Unknown),
+  doc: Schema.optionalKey(Schema.Unknown),
 });
 const ModelBody = Schema.Struct({ model: Schema.optionalKey(Schema.String) });
 
@@ -295,7 +314,14 @@ export const agentApi: Route = Effect.gen(function* () {
     if (m == "POST") {
       const b = yield* body(request, Prompt, {});
       const r = yield* call(() =>
-        h.agentPrompt(me.login, url.origin, String(b.text ?? ""), typeof b.context == "string" ? b.context : null, b.files)
+        h.agentPrompt(
+          me.login,
+          url.origin,
+          String(b.text ?? ""),
+          typeof b.context == "string" ? b.context : null,
+          b.files,
+          typeof b.doc == "string" ? b.doc : null
+        )
       );
       return json(r, r.ok ? 200 : 409);
     }

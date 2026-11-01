@@ -22,13 +22,27 @@ export class PersonAgent extends DurableObject<Env> implements PersonAgentObject
   private chats = new ChatTables(this.sql);
   private agents = new PersonAgents({ sql: this.sql, platform: platform(this.env), watch: () => void this.watch() });
 
-  agentState(login: string, origin: string) { return this.agents.agentState(login, origin); }
-  agentPrompt(login: string, origin: string, text: string, context: string | null, attached?: unknown) { return this.agents.agentPrompt(login, origin, text, context, attached); }
-  agentControl(login: string, op: "abort" | "reset" | "model", model?: string) { return this.agents.agentControl(login, op, model); }
-  conversation(login: string) { return this.agents.conversation(login); }
-  clearConversation(login: string) { return this.agents.clearConversation(login); }
-  agentPrefs(login: string) { return this.agents.agentPrefs(login); }
-  setAgentPrefs(login: string, body: unknown) { return this.agents.setAgentPrefs(login, body); }
+  agentState(login: string, origin: string) {
+    return this.agents.agentState(login, origin);
+  }
+  agentPrompt(login: string, origin: string, text: string, context: string | null, attached?: unknown, doc?: string | null) {
+    return this.agents.agentPrompt(login, origin, text, context, attached, doc);
+  }
+  agentControl(login: string, op: "abort" | "reset" | "model", model?: string) {
+    return this.agents.agentControl(login, op, model);
+  }
+  conversation(login: string) {
+    return this.agents.conversation(login);
+  }
+  clearConversation(login: string) {
+    return this.agents.clearConversation(login);
+  }
+  agentPrefs(login: string) {
+    return this.agents.agentPrefs(login);
+  }
+  setAgentPrefs(login: string, body: unknown) {
+    return this.agents.setAgentPrefs(login, body);
+  }
   /** The panel's events: a WebSocket (Upgrade: websocket), else server-sent events. */
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() != "websocket") return this.agents.fetch(request);

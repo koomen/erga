@@ -23,12 +23,31 @@ import { sleep } from "../../shared/time";
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
 
 const $ = (id: string) => document.getElementById(id)!;
+/** An address of the agent's API, as whoever this tab is (local development's ?user=, kept). */
+const USER = new URLSearchParams(location.search).get("user")?.trim();
+const asUser = (path: string) => (USER ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(USER)}` : path);
+/** A request to the agent's API, as whoever this tab is. */
+const call = (path: string, init?: RequestInit) => fetch(asUser(path), init);
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k: string, v: string | null) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch { /* private window */ } },
 };
 
 const VERBS: Record<string, [string, string]> = {
+  read: ["Reading", "Read"],
+  edit: ["Editing", "Edited"],
+  write: ["Writing", "Wrote"],
+  ls: ["Listing", "Listed"],
+  find: ["Finding files", "Found files"],
+  grep: ["Searching", "Searched"],
+  view_page: ["Looking at the page", "Looked at the page"],
+  evaluate_page: ["Inspecting the page", "Inspected the page"],
+  page_console: ["Reading the page's console", "Read the page's console"],
+  page_network: ["Reading the page's requests", "Read the page's requests"],
+  page_events: ["Reading the page's events", "Read the page's events"],
+  page_inspect: ["Inspecting the live page", "Inspected the live page"],
+  page_click: ["Clicking on the page", "Clicked on the page"],
+  page_key: ["Pressing a key on the page", "Pressed a key on the page"],
   list_settings: ["Reading the settings", "Read the settings"],
   set_setting: ["Changing", "Changed"],
   reset_setting: ["Resetting", "Reset"],
@@ -45,10 +64,24 @@ const VERBS: Record<string, [string, string]> = {
   source_log: ["Reading the log of", "Read the log of"],
 };
 
-const input = $("agent-input") as HTMLTextAreaElement, send = $("agent-send") as HTMLButtonElement, hint = $("agent-hint");
-const talk = chat({ logEl: $("agent-log"), jump: $("agent-jump") as HTMLButtonElement, verbs: VERBS, imageAlt: "The screenshot the agent looked at" });
+/** The document the page has open, if any: the document tools' own when the agent names none. */
+const DOC = document.querySelector<HTMLMetaElement>('meta[name="erga-doc"]')?.content ?? null;
+/** Its host, for someone who may edit it (meta erga-base): the agent's edits there, which Undo takes back. */
+const BASE = document.querySelector<HTMLMetaElement>('meta[name="erga-base"]')?.content ?? null;
+const input = $("agent-input") as HTMLTextAreaElement,
+  send = $("agent-send") as HTMLButtonElement,
+  hint = $("agent-hint");
+const talk = chat({
+  logEl: $("agent-log"),
+  jump: $("agent-jump") as HTMLButtonElement,
+  verbs: VERBS,
+  imageAlt: "The screenshot the agent looked at",
+  externalTip: "An agent you shared this page with, working as your agent",
+});
 const log = talk.log;
 let off: string | null = "Connecting to the agent…";
+/** The live voice session (voice mode, below), or null when it's off. `sent` counts the session's results already sent, of `results` heard so far. */
+let voice: { rec: Recognition; before: string; sent: number; results: number; heard: string; partial: boolean; timer: number } | null = null;
 let hintTimer = 0;
 // Files to go with the next message: dropped on the panel, pasted, or picked.
 const att = attachments({ pane: $("agent"), form: $("agent-form"), input, hint: (t) => showHint(t), changed: () => renderBusy() });
@@ -69,19 +102,27 @@ function hideHint() {
 /** Why Send can't send right now, or null if it can. Never a silent no. */
 function blocker(): string | null {
   if (off) return off;
+  if (voice) return "Voice mode is on: what you say is sent when you pause.";
   if (att.reading) return "Reading the attached files…";
   if (!log.busy && !input.value.trim() && !att.files.length) return "Type a message to send it.";
   return null;
 }
 function renderBusy() {
-  const stop = log.busy && !input.value.trim() && !att.files.length && !att.reading;
+  // In voice mode the button can't send, so while the agent works it's Stop.
+  const stop = log.busy && (!!voice || (!input.value.trim() && !att.files.length && !att.reading));
   const why = off ?? (stop ? null : blocker());
   send.textContent = stop ? "Stop" : "Send";
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-disabled", String(!!why));
   send.title = why ?? (stop ? "Stop the agent" : log.busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
   $("agent-fab").classList.toggle("busy", log.busy);
-  input.placeholder = off ? "The agent is off" : log.busy ? "Add to what the agent is doing…" : "Ask the agent…";
+  input.placeholder = off
+    ? "The agent is off"
+    : voice
+      ? "Listening… pause to send"
+      : log.busy
+        ? "Add to what the agent is doing…"
+        : "Ask the agent…";
   // (Drawn again only when it changed: the key field below it keeps what's typed.)
   if (off) { if (hint.dataset.off != off || hint.hidden) { showHint(off, true); hint.dataset.off = off; } keyField(); }
   else if (hint.classList.contains("sticky")) hideHint();
@@ -116,7 +157,7 @@ function keyField() {
   hint.append(form);
 }
 
-/** The page note: what the person has open (the breadcrumbs, the document's address), so "this" means something. */
+/** The page note: what the person has open (the breadcrumbs, the document's address; in the editor, the selection), so "this" means something. */
 function context(): string | null {
   const trail = [...document.querySelectorAll(".erga-crumbs > :not(.erga-brand)")]
     .map((e) => e.textContent?.trim())
@@ -124,7 +165,9 @@ function context(): string | null {
     .join(" › ");
   const doc = document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content;
   const page = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content;
-  return `Open: ${trail || document.title} (${location.pathname}).${doc ? ` The document ${doc}${page ? `, its file ${page}` : ""}.` : ""}`;
+  const editor = window.ergaPage as { agentContext?: () => string | null } | undefined;
+  const editing = document.body.classList.contains("erga-editing") ? editor?.agentContext?.() : null;
+  return `Open: ${trail || document.title} (${location.pathname}).${doc ? ` The document ${doc}${page ? `, its file ${page}` : ""}${editing ? ", in the editor" : ""}.` : ""}${editing ? `\n${editing}` : ""}`;
 }
 
 async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
@@ -132,10 +175,10 @@ async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   // While the server restarts (a redeploy) it doesn't answer, or its gateway says so: the message waits and goes once it's back.
   let res: Response | Error = new Error("not sent");
   for (let i = 0, until = Date.now() + 45_000; ; i++) {
-    res = await fetch("/api/agent", {
+    res = await call("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, context: ctx, files }),
+      body: JSON.stringify({ text, context: ctx, files, doc: DOC }),
       signal: AbortSignal.timeout(files.length ? 60_000 : 15_000),
     }).catch((e: Error) => e);
     if (res instanceof Response ? res.ok || !transient(res) : res.name == "TimeoutError" || !transient(res)) break;
@@ -177,11 +220,11 @@ input.addEventListener("input", () => { if (!hint.classList.contains("sticky")) 
 input.addEventListener("keydown", (e) => { if (e.key == "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendNow(); } });
 $("agent-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (send.classList.contains("stop")) fetch("/api/agent/abort", { method: "POST" });
+  if (send.classList.contains("stop")) call("/api/agent/abort", { method: "POST" });
   else sendNow();
 });
 $("agent-reset").addEventListener("click", () => {
-  fetch("/api/agent/conversation", { method: "DELETE" }).then(
+  call("/api/agent/conversation", { method: "DELETE" }).then(
     (r) => {
       if (!r.ok) showHint("Couldn't start a new conversation.");
     },
@@ -198,13 +241,14 @@ function renderModel(m: AgentState | null) {
   if (!m || !m.enabled) { el.textContent = "off"; return; }
   if (!m.models?.length || !m.choice) { el.textContent = m.model ?? ""; return; }
   const sel = document.createElement("select");
+  sel.id = "agent-model-select";
   sel.setAttribute("aria-label", "Model");
   for (const o of m.models) sel.append(new Option(o.label, o.id, false, o.id == m.choice));
   sel.title = "The model your agent runs on; a switch applies from your next message";
   sel.addEventListener("pointerdown", () => sel.classList.add("by-pointer"));
   sel.addEventListener("keydown", () => sel.classList.remove("by-pointer"));
   sel.addEventListener("change", async () => {
-    const r = (await fetch("/api/agent/model", {
+    const r = (await call("/api/agent/model", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: sel.value }),
@@ -227,11 +271,11 @@ async function load(tries = 0): Promise<void> {
   const was = heard;
   clearTimeout(downTimer);
   // The conversation from where the server keeps it, whether the agent is on or not.
-  const kept = fetch("/api/agent/conversation")
+  const kept = call("/api/agent/conversation")
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null) as Promise<{ log?: Log } | null>;
   let again = false;
-  const a = (await fetch("/api/agent")
+  const a = (await call("/api/agent")
     .then(
       async (r) => {
         again = transient(r);
@@ -268,7 +312,7 @@ async function load(tries = 0): Promise<void> {
 // restarts) is made again, a little later each time.
 let tries = 0;
 function connect() {
-  const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}/api/agent/events`);
+  const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${asUser("/api/agent/events")}`);
   ws.onopen = () => {
     tries = 0;
     live((l) => l.connection("agent", true));
@@ -279,9 +323,17 @@ function connect() {
     setTimeout(connect, backoff(tries++));
   };
   ws.onmessage = (e) => {
-    let m: { type?: string; ev?: LogEvent };
+    let m: { type?: string; ev?: LogEvent } & Partial<AgentState>;
     try { m = JSON.parse(String(e.data)); } catch { return; }
-    if (m.type == "agent" && m.ev) { heard++; talk.apply(m.ev); renderBusy(); }
+    // The model switched, from another tab of the person's.
+    if (m.type == "model") renderModel({ ...m, enabled: true });
+    if (m.type == "agent" && m.ev) {
+      heard++;
+      talk.apply(m.ev);
+      renderBusy();
+      // A tool call done: the document open may have changed (Undo's count).
+      if (m.ev.t == "tool" && m.ev.status != "running") window.dispatchEvent(new Event("erga:agent-tool"));
+    }
   };
 }
 load().then(connect);
@@ -295,3 +347,169 @@ live((l) => {
 });
 const back = restoredFor<Kept>("agent");
 if (back?.files?.length) att.restore(back.files);
+
+// ---------------------------------------------------------------- the document open
+
+// Undo takes back the agent's last change to the document open (one tool call), whoever has typed since: your own ⌘Z
+// never undoes the agent's edits. The document's host keeps each person's agent's changes (document/host.ts).
+const undoBtn = $("agent-undo") as HTMLButtonElement;
+let undoable = 0;
+function renderUndo() {
+  const why = !undoable ? "Your agent hasn't changed this document since it opened" : null;
+  undoBtn.setAttribute("aria-disabled", String(!!why));
+  undoBtn.dataset.tip = why ?? `Undo the agent's last change (${undoable} to go)`;
+}
+async function readUndo() {
+  if (!BASE) return;
+  const a = (await fetch(`${BASE}${asUser("/api/agent")}`).then(
+    (r) => (r.ok ? r.json() : null),
+    () => null
+  )) as { log?: Log } | null;
+  undoable = a?.log?.undoable ?? 0;
+  renderUndo();
+}
+undoBtn.hidden = !BASE;
+if (BASE) {
+  undoBtn.addEventListener("click", async () => {
+    if (!undoable) {
+      showHint(undoBtn.dataset.tip ?? "");
+      return;
+    }
+    const r = await fetch(`${BASE}${asUser("/api/agent/undo")}`, { method: "POST" }).catch(() => null);
+    if (!r?.ok) showHint("Couldn't undo the agent's change. Try again.");
+    void readUndo();
+  });
+  // After each of the agent's tool calls, and as the panel opens.
+  window.addEventListener("erga:agent-tool", () => void readUndo());
+  window.addEventListener("erga:agent-shown", () => void readUndo());
+  void readUndo();
+}
+
+// ---------------------------------------------------------------- voice mode
+
+// What you say is dictated into the box and sent when you pause, through the browser's speech recognition (Chrome
+// sends the audio to Google; Safari to Apple). While the agent works, each send steers it, as typing does. The
+// browser's own final results come at every breath, so a pause is our own: no new words for PAUSE_MS. Then everything
+// heard is sent, words not yet final included, and if there were any the session is restarted so they can't arrive
+// again later.
+type Recognition = EventTarget & {
+  continuous: boolean; interimResults: boolean; lang: string;
+  start(): void; stop(): void; abort(): void;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onend: (() => void) | null;
+};
+const Speech = ((window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition ??
+  (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition) as (new () => Recognition) | undefined;
+const PAUSE_MS = 1000;
+const voiceBtn = $("agent-voice") as HTMLButtonElement;
+voiceBtn.hidden = !Speech;
+function listenVoice(before: string) {
+  const rec = new Speech!();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = navigator.language;
+  const v = (voice = { rec, before, sent: 0, results: 0, heard: "", partial: false, timer: 0 });
+  rec.onresult = (e) => {
+    if (voice != v) return;
+    let heard = "", partial = false;
+    for (let i = v.sent; i < e.results.length; i++) {
+      heard += e.results[i][0].transcript;
+      if (!e.results[i].isFinal) partial = true;
+    }
+    Object.assign(v, { heard, partial, results: e.results.length });
+    input.value = (v.before + " " + heard).trim();
+    sizeInput();
+    clearTimeout(v.timer);
+    v.timer = window.setTimeout(voiceSend, PAUSE_MS * ((window as unknown as { ergaTimescale?: number }).ergaTimescale ?? 1));
+  };
+  rec.onerror = (e) => {
+    if (voice != v) return;
+    if (e.error == "not-allowed" || e.error == "service-not-allowed") { stopVoice(); showHint("Voice mode needs the microphone: allow it for this site, then try again.", true); }
+    else if (e.error == "network") { stopVoice(); showHint("Voice mode couldn't reach the browser's speech service."); }
+    else if (e.error == "audio-capture") { stopVoice(); showHint("Voice mode couldn't find a microphone."); }
+    // "no-speech" and "aborted": the session ends and onend starts another.
+  };
+  // Recognition ends on its own (silence, a time limit); keep listening.
+  rec.onend = () => { if (voice == v) listenVoice((v.before + " " + v.heard).trim()); };
+  try { rec.start(); } catch { stopVoice(); }
+}
+function voiceSend() {
+  const v = voice;
+  if (!v) return;
+  const text = (v.before + " " + v.heard).trim();
+  if (!text) return;
+  if (off) {
+    showHint(off, true);
+    return;
+  } // kept in the box until the agent's back
+  v.before = "";
+  v.heard = "";
+  input.value = "";
+  store.set(DRAFT, null);
+  const files = att.files;
+  att.clear();
+  sizeInput();
+  void ask(text, context(), files);
+  // Words sent before they were final would come back final: start afresh.
+  if (v.partial) { v.partial = false; v.rec.abort(); }
+  else v.sent = v.results;
+}
+function startVoice() {
+  if (!Speech || voice) return;
+  voiceBtn.setAttribute("aria-pressed", "true");
+  input.readOnly = true;
+  listenVoice(input.value.trim());
+  renderBusy();
+}
+/** Leaves voice mode; anything heard since the last send stays in the box, to edit or send. */
+function stopVoice() {
+  const v = voice;
+  if (!v) return;
+  voice = null;
+  clearTimeout(v.timer);
+  v.rec.abort();
+  voiceBtn.setAttribute("aria-pressed", "false");
+  input.readOnly = false;
+  store.set(DRAFT, input.value || null);
+  renderBusy();
+  if (document.body.classList.contains("agent-open")) input.focus();
+}
+voiceBtn.addEventListener("click", () => (voice ? stopVoice() : startVoice()));
+// The mic never listens behind a closed panel.
+new MutationObserver(() => {
+  if (!document.body.classList.contains("agent-open")) stopVoice();
+}).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+
+// ---------------------------------------------------------------- for the editor
+
+declare global {
+  interface Window {
+    /** The panel, for the editor's own "Fix with agent" buttons and its reload (client/shell/). */
+    ergaAgentPanel?: {
+      ask(text: string, context: string | null): void;
+      readonly off: string | null;
+      readonly busy: boolean;
+      readonly voice: boolean;
+      stopVoice(): void;
+      files: typeof att;
+    };
+  }
+}
+window.ergaAgentPanel = {
+  ask: (text, ctx) => {
+    window.ergaAgent?.show(true);
+    void ask(text, ctx ?? context());
+  },
+  get off() {
+    return off;
+  },
+  get busy() {
+    return log.busy;
+  },
+  get voice() {
+    return !!voice;
+  },
+  stopVoice,
+  files: att,
+};

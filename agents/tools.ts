@@ -44,30 +44,44 @@ export const ALL_OPERATIONS: Operation[] = [...OPERATIONS, ...CONTROL_OPERATIONS
 /** A tool, for any agent: an operation, a document tool for any document, or one of the admin agent's own. */
 export type Tool = Omit<Operation, "ui"> & { readonly ui?: string };
 
-const ANY_DOCUMENT = Schema.String.annotate({
-  description: "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.",
-});
+const DOCUMENT = "The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.";
+const ANY_DOCUMENT = Schema.String.annotate({ description: DOCUMENT });
 
 /** The document tools, for any document: a `document` argument, and they run in its host, as the person's agent. */
 let docTools: Tool[] | null = null;
 export function documentTools(): Tool[] {
-  return (docTools ??= documentToolSpecs().map(
-    (spec): Tool => ({
-      name: spec.name,
-      loose: true,
-      description: `${spec.description} (In any document you may ${CHANGES.has(spec.name) ? "edit" : "open"}: name it with "document"; paths are relative to its folder.)`,
-      parameters: Schema.Struct({ document: ANY_DOCUMENT, ...spec.parameters.fields }),
-      run: async (args, caller) => {
-        const { document: ref, ...rest } = args;
-        return runInDocument(
-          caller,
-          await findDocument({ ...caller, here: undefined }, ref, CHANGES.has(spec.name) ? "edit" : "open"),
-          spec.name,
-          rest
-        );
-      },
-    })
-  ));
+  return (docTools ??= documentToolSpecs().map((spec): Tool => docTool(spec, ANY_DOCUMENT, () => null)));
+}
+
+/**
+ * The same, for a person's own agent (agents/person/): `document` may be left out for the document their page has
+ * open (`here`: its id, or null where none is).
+ */
+export function documentToolsHere(here: () => string | null): Tool[] {
+  const optional = Schema.optionalKey(
+    Schema.String.annotate({ description: `${DOCUMENT} Leave it out for the document open on the page.` })
+  );
+  return documentToolSpecs().map((spec): Tool => docTool(spec, optional, here));
+}
+
+function docTool(spec: ReturnType<typeof documentToolSpecs>[number], document: Schema.Top, here: () => string | null): Tool {
+  return {
+    name: spec.name,
+    loose: true,
+    description: `${spec.description} (In any document you may ${CHANGES.has(spec.name) ? "edit" : "open"}: name it with "document"; paths are relative to its folder.)`,
+    parameters: Schema.Struct({ document, ...spec.parameters.fields }),
+    run: async (args, caller) => {
+      const { document: named, ...rest } = args as { document?: string } & Record<string, unknown>;
+      const ref = named || here();
+      if (!ref) throw new OperationError({ message: 'Name the document ("document"): no document is open on the page.', status: 400 });
+      return runInDocument(
+        caller,
+        await findDocument({ ...caller, here: undefined }, ref, CHANGES.has(spec.name) ? "edit" : "open"),
+        spec.name,
+        rest
+      );
+    },
+  };
 }
 
 /**
@@ -111,12 +125,13 @@ export const allTools = (): Tool[] => [...ALL_OPERATIONS, ...documentTools()];
 /**
  * The tools a caller may use: the operations it's offered (the admin ones only with admin power; none that reach
  * beyond one document for a document token), and the document tools for any document, but for the editor's agent
- * (`here`), whose own document tools take a `document` themselves.
+ * (caller.here), whose own document tools take a `document` themselves. A person's agent passes `here`: the
+ * document open on their page, for a tool that names none.
  */
-export async function toolsFor(caller: Caller): Promise<Tool[]> {
+export async function toolsFor(caller: Caller, here?: () => string | null): Promise<Tool[]> {
   const ops: Tool[] = [];
   for (const op of ALL_OPERATIONS) if (await offered(op, caller)) ops.push(op);
-  return caller.here ? ops : [...ops, ...documentTools()];
+  return caller.here ? ops : [...ops, ...(here ? documentToolsHere(here) : documentTools())];
 }
 
 /** What a tool that needs no one runs with: nothing of the directory. */

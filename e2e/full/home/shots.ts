@@ -19,6 +19,13 @@ export type View = (typeof VIEWS)[number];
  */
 export async function devicePage(context: BrowserContext, view: View): Promise<Page & { cdp: CDPSession }> {
   const p = await context.newPage();
+  // Signed in, a document's page has your agent (server/pages/agent.ts): closed here, as the homepage served directly
+  // (signed out) has none, so the two show the page alike.
+  await p.addInitScript(() => {
+    try {
+      localStorage.setItem("erga:settings:v1", '{"agent":false}');
+    } catch {}
+  });
   // (A picture is taken through the same session: the emulation belongs to the session that set it.)
   const cdp = await context.newCDPSession(p);
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: view.width, height: view.height, deviceScaleFactor: view.scale, mobile: view.mobile });
