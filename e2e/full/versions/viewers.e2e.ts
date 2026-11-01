@@ -19,10 +19,12 @@ async function shared() {
 
 /** What the viewer's page shows `who` (the page on the document's origin, as its frame has it), each time afresh; and a file of its. */
 function viewerOf(who: Get, id: string) {
-  const src = async () =>
-    /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/
-      .exec(await (await who(`/d/${id}`, { redirect: "follow" })).text())![1]
-      .replace(/&amp;/g, "&");
+  // The frame's address, as the page makes it from its metas (ergaFrames.src(), client/inline/viewer-frames.ts).
+  const src = async () => {
+    const html = await (await who(`/d/${id}`, { redirect: "follow" })).text();
+    const meta = (name: string) => new RegExp(`<meta name="${name}" content="([^"]*)"`).exec(html)?.[1].replace(/&amp;/g, "&") ?? "";
+    return meta("erga-pages") + meta("erga-page").split("/").map(encodeURIComponent).join("/");
+  };
   return {
     text: async () => (await framed(await src())).text(),
     file: async (path: string) => (await pagesFetch(new URL(path, await src()).href)).text(),
