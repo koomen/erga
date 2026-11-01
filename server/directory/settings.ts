@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import type { Sql, Statement } from "./model.ts";
 import type { SignInProvider } from "./identities.ts";
 import { NotAllowed, type Actor, type Users } from "./index.ts";
+import { isModelChoice, MODELS } from "../../shared/models.ts";
 
 /** A write another write came in on the middle of: it tries again. */
 class Interleaved extends Data.TaggedError("Interleaved") {}
@@ -37,7 +38,7 @@ export interface Setting<T = unknown> {
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
   parse(value: unknown): T;
   /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id), "users" (a list of logins). */
-  kind?: "document" | "users";
+  kind?: "document" | "users" | "models";
   /** The values the admin page offers, as a select (as a switch when they're "off" and "on"). The parser may take others too. */
   choices?: string[];
 }
@@ -76,6 +77,8 @@ const setting = <T>(s: Setting<T>) => s;
 
 /** The settings the Access page sets (/admin/access), not the Settings page. */
 export const ACCESS_SETTINGS: readonly string[] = ["public_sharing"];
+/** The settings the API keys page sets (/admin/api-keys), not the Settings page. */
+export const AGENT_SETTINGS: readonly string[] = ["agent_keys", "agent_models_off"];
 
 /** Every setting the server has. */
 export const SETTINGS = {
@@ -113,6 +116,32 @@ export const SETTINGS = {
     default: false,
     parse: boolean,
   }),
+  agent_keys: setting<"server" | "own">({
+    label: "Agents' keys",
+    description:
+      'Whose API keys the agents use. "server": the keys on /admin/api-keys work for everyone, and a person\'s own key wins for its provider. "own": each person brings their own keys (Settings, Agent), and the agents never use a server key.',
+    default: "server",
+    parse: (v) => {
+      const s = typeof v == "string" ? v.trim().toLowerCase() : v;
+      if (s === "server" || s === "own") return s;
+      throw new ConfigError({ message: 'must be "server" or "own"' });
+    },
+    choices: ["server", "own"],
+  }),
+  agent_models_off: setting<string[]>({
+    kind: "models",
+    label: "Models off for server keys",
+    description: `Models of the agent's list that a server key doesn't run (a person's own key still does): a list of ${Object.keys(MODELS).join(", ")}.`,
+    default: [],
+    parse: (v) => {
+      const list = typeof v == "string" ? v.split(/[\s,]+/).filter(Boolean) : v;
+      if (!Array.isArray(list) || list.some((m) => typeof m != "string"))
+        throw new ConfigError({ message: "must be a list of model names" });
+      const bad = (list as string[]).find((m) => !isModelChoice(m));
+      if (bad) throw new ConfigError({ message: `has "${bad}", which isn't one of the models: ${Object.keys(MODELS).join(", ")}` });
+      return [...new Set(list as string[])];
+    },
+  }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
     default: "users",
@@ -140,7 +169,7 @@ export interface ConfigEntry {
   /** Fixed by the deploy: nobody can set or reset it here (show it read-only). */
   locked: boolean;
   /** What the value names, if it isn't plain (Setting.kind). */
-  kind?: "document" | "users";
+  kind?: "document" | "users" | "models";
   /** Its name on the admin page, where it isn't the key (Setting.label). */
   label?: string;
   /** The values the admin page offers (Setting.choices). */

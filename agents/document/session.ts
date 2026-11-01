@@ -28,7 +28,7 @@ import { CHANGES, makeTools, toolPath } from "./tools";
 
 /**
  * A document's agents, as the server gives them to it (DocumentDeps.agents): each person's session, and the key the
- * versions' descriptions are written with (`settings`: the key an admin stored, else the Worker's).
+ * versions' descriptions are written with (`settings`: the Anthropic key an admin stored, else the Worker's).
  */
 export function documentAgents(o: { settings: () => Promise<AgentSettings> }): DocumentAgents {
   return {
@@ -36,7 +36,10 @@ export function documentAgents(o: { settings: () => Promise<AgentSettings> }): D
     changes: CHANGES,
     async descriptionKey() {
       const cfg = await o.settings();
-      return !("missing" in cfg) && cfg.model != "script" ? Redacted.value(cfg.apiKey) : "";
+      // The server's Anthropic key, whose ever keys the agents use (the agent_keys setting).
+      if (!("missing" in cfg) && cfg.model == "script") return "";
+      const key = cfg.server?.anthropic;
+      return key ? Redacted.value(key) : "";
     },
   };
 }

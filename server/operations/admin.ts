@@ -104,7 +104,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
     activity: "reading the API keys' status",
     admin: true,
     description:
-      "Admins only. The server's API keys (Anthropic's), as /admin/api-keys shows them: whether each is stored, its last four characters, who set it and when, whether a Worker secret stands in, and whether a stored key doesn't open on this server. Never the key itself. An admin sets, replaces or clears a key only on /admin/api-keys, so a key never goes through a conversation.",
+      "Admins only. The server's API keys (Anthropic's, OpenAI's, Google's and OpenRouter's: the models of each person's agent), as /admin/api-keys shows them: whether each is stored, its last four characters, who set it and when, whether a Worker secret stands in, and whether a stored key doesn't open on this server. Never the key itself. An admin sets, replaces or clears a key only on /admin/api-keys, so a key never goes through a conversation.",
     parameters: Schema.Struct({}),
     run: async (_args, { dir, who }) =>
       (await dir.credentials.list(who)).map((c) => ({
@@ -133,7 +133,7 @@ export const ADMIN_OPERATIONS: Operation[] = [
     activity: "clearing an API key",
     admin: true,
     description:
-      "Admins only. Clears one of the server's API keys (list_api_keys lists them), as Clear on /admin/api-keys does: the server goes back to its Worker secret, if one stands in, else does without (the Anthropic key: the agents stop). The change log says who cleared it. Setting or replacing a key is done only on /admin/api-keys, so a key never goes through a conversation.",
+      "Admins only. Clears one of the server's API keys (list_api_keys lists them), as Clear on /admin/api-keys does: the server goes back to its Worker secret, if one stands in, else does without (the agents stop running that provider's models on the server's key). The change log says who cleared it. Setting or replacing a key is done only on /admin/api-keys, so a key never goes through a conversation.",
     parameters: Schema.Struct({ name: Schema.String.annotate({ description: "The key's name: anthropic" }) }),
     run: async (args, { dir, who }) => {
       const c = await dir.credentials.clear(who, String(args.name ?? ""));

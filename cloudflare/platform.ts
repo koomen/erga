@@ -186,7 +186,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     personAgent: (login: string) => env.AGENTS.getByName(login),
     deploys: control ?? env.PIPELINE?.getByName("deploys") ?? noDeploys,
     ...(settings.controlUrl ? { control: { url: settings.controlUrl } } : {}),
-    agentSettings: () => agentSettingsFrom(env, env.DB ? directoryOf(env).credentials : null),
+    agentSettings: () => agentSettingsFrom(env, env.DB ? directoryOf(env) : null),
     edge: {
       cache: edgeCache(),
       background: (work) => { if (ctx) ctx.waitUntil(work); else work.catch(() => {}); },

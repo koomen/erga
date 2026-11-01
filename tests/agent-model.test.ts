@@ -93,7 +93,7 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
   };
   const events: LogEvent[] = [];
   const loop = startLoop({
-    cfg: { apiKey: Redacted.make("sk-test"), model: "opus-fast", effort: "high" },
+    cfg: { own: {}, server: { anthropic: Redacted.make("sk-test") }, mode: "server", off: [], model: "opus-fast", effort: "high" },
     stored: null,
     store: null,
     meta: {},
@@ -167,7 +167,7 @@ test("Sonnet has no fast mode; an API error shows in the transcript in the API's
   answer = () => Response.json({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, { status: 529 });
   const events: LogEvent[] = [];
   const loop = startLoop({
-    cfg: { apiKey: Redacted.make("sk-test"), model: "sonnet", effort: "medium" },
+    cfg: { own: {}, server: { anthropic: Redacted.make("sk-test") }, mode: "server", off: [], model: "sonnet", effort: "medium" },
     stored: null,
     store: null,
     meta: {},

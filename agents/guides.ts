@@ -173,6 +173,11 @@ with the header: it is then written for that token.
   deploy locks shows as \`"locked": true\` and can't be changed here. Users are
   everyone who may sign in; an admin by the deploy (\`"bootstrap": true\`) can't
   be demoted or removed here.
+- The models of each person's agent run on the API keys (list_api_keys: one for
+  each provider) and two settings: agent_keys ("server": the server's keys work
+  for everyone; "own": each person brings their own) and agent_models_off (the
+  models a server key doesn't run). A person's own key always runs its provider's
+  models.
 - Erga's repository is ${origin}/git/erga.git: anyone may clone it, and a push
   takes an admin token as the password (any username). A push to staging deploys
   staging. Production (main) moves only when your person asks.

@@ -7,6 +7,7 @@ import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from 
 import { byLine } from "../../shared/attribution.ts";
 import { adminPage } from "./layout.ts";
 import { setAt } from "./parts.ts";
+import { agentSettingRows } from "./settings.ts";
 
 /**
  * An API key's row: its name, what uses it, whether it is set (its last four
@@ -63,9 +64,10 @@ function deploySecretRow(d: DeploySecretEntry): string {
  */
 export async function apiKeysPage(platform: Platform, session: Session) {
   const who = whoOf(session);
-  const [credentials, deployed] = await Promise.all([
+  const [credentials, deployed, agents] = await Promise.all([
     platform.directory.credentials.list(who),
     platform.directory.credentials.deployed(who),
+    agentSettingRows(platform, session),
   ]);
   const rows = credentials.map((c, place) => credentialRow(c, session, place));
   return adminPage({
@@ -80,6 +82,13 @@ export async function apiKeysPage(platform: Platform, session: Session) {
 ${rows.join("\n")}
     </ol>
   </section>
+  <section aria-labelledby="agents-head" class="agent-keys">
+    <h2 id="agents-head">Agents</h2>
+    <p class="lede">The models in each person's agent: whose keys run them, and which of them a server key may run. A person's own key always runs every model of its provider.</p>
+    <ol class="rows" data-live-kind="setting" data-live-view="agent-settings" data-live-order="asc" data-live-at="${Date.now()}">
+${agents.map((r) => r.html).join("\n")}
+    </ol>
+  </section>
   <section aria-labelledby="deploy-head" class="deploy-secrets">
     <h2 id="deploy-head">Set in the deploy <small>read-only</small></h2>
     <p class="lede">These secrets are Worker secrets only. A wrong value here could lock every admin out, or break the other server, so this page doesn't change them. Set one with <span class="mono">bunx cf workers secrets update NAME</span>, or with <span class="mono">bun deploy/setup.ts</span>.</p>
@@ -87,7 +96,7 @@ ${rows.join("\n")}
 ${deployed.map(deploySecretRow).join("\n")}
     </ol>
   </section>
-<script>${TIMES_SCRIPT}${inlineCall("admin-api-keys")}</script>`,
+<script>${TIMES_SCRIPT}${inlineCall("admin-api-keys")}${inlineCall("admin-settings", { chip: "" })}</script>`,
   });
 }
 

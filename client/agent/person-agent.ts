@@ -20,7 +20,14 @@ import { backoff, live, transient } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
 
-interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
+interface AgentState {
+  enabled: boolean;
+  reason?: string;
+  model?: string | null;
+  choice?: string | null;
+  models?: { id: string; label: string; key?: "own" | "server" }[];
+  log?: Log;
+}
 
 const $ = (id: string) => document.getElementById(id)!;
 /** An address of the agent's API, as whoever this tab is (local development's ?user=, kept). */
@@ -243,7 +250,8 @@ function renderModel(m: AgentState | null) {
   const sel = document.createElement("select");
   sel.id = "agent-model-select";
   sel.setAttribute("aria-label", "Model");
-  for (const o of m.models) sel.append(new Option(o.label, o.id, false, o.id == m.choice));
+  // A model the person's own key runs says so; the others run on the server's keys.
+  for (const o of m.models) sel.append(new Option(o.key == "own" ? `${o.label} (your key)` : o.label, o.id, false, o.id == m.choice));
   sel.title = "The model your agent runs on; a switch applies from your next message";
   sel.addEventListener("pointerdown", () => sel.classList.add("by-pointer"));
   sel.addEventListener("keydown", () => sel.classList.remove("by-pointer"));

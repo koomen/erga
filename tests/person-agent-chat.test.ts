@@ -12,7 +12,7 @@ import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } 
 import * as Schema from "effect/Schema";
 import type { AgentTool } from "../agents/run";
 
-const script = { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" as const };
+const script = { own: {}, server: {}, mode: "server" as const, off: [], model: "script" as const, effort: "medium" as const };
 
 /** Runs one message to the end of its turn. */
 function turn(agent: ReturnType<typeof startAgent>, text: string) {

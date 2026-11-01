@@ -32,7 +32,8 @@ import {
   type StoredChat,
   type ToolResultMessage,
 } from "./checkpoint";
-import { isModelChoice, isScript, languageModel, modelError, MODELS, type AgentConfig, type ModelChoice } from "./models";
+import { fit, isModelChoice, languageModel, messagesFor, modelError, MODELS, usable, type AgentConfig, type ModelChoice } from "./models";
+import type { Usable } from "../shared/models";
 
 /** What a tool answers: content for the model (and the panel), and an `offer` (a button for the person) for the panel. */
 export interface ToolOutput {
@@ -61,6 +62,8 @@ export interface LoopHooks {
   toolEnded?(): void;
   /** A run started, or ended (done, stopped or failed): before the transcript says so. */
   busy?(on: boolean): void;
+  /** The model changed by itself: the one it was on can't be used now (its key went, or the admin turned it off). */
+  modelChanged?(): void;
 }
 
 export interface LoopOptions {
@@ -92,8 +95,10 @@ export interface AgentLoop {
   readonly cfg: AgentConfig | null;
   /** The model's name, or null while the agent is off. */
   readonly model: string | null;
-  /** The model it's on, of MODELS; null when off or scripted (nothing to switch). */
+  /** The model it's on, of MODELS; null when off, or scripted with no keys (nothing to switch). */
   readonly modelChoice: ModelChoice | null;
+  /** The models the person can switch between now (none when there's nothing to switch). */
+  readonly models: Usable[];
   emit(ev: LogEvent): void;
   subscribe(listener: (ev: LogEvent) => void): () => void;
   /** Makes the model's side, with its first settings, prompt and tools. */
@@ -158,12 +163,12 @@ function toolkitOf(tools: AgentTool[]): Toolkit.WithHandler<Record<string, Tool.
 
 const CACHED = { anthropic: { cacheControl: { type: "ephemeral" } } } as const;
 
-/** The prompt for a turn: the system prompt, then the messages; both ends marked for the prompt cache. */
-function promptOf(side: ModelSide, messages: readonly ChatMessage[]): Prompt.RawInput {
+/** The prompt for a turn, as the model of `choice` takes it: the system prompt, then the messages; both ends marked for the prompt cache. */
+function promptOf(side: ModelSide, messages: readonly ChatMessage[], choice: ModelChoice | null): Prompt.RawInput {
   const last = messages.length - 1;
   return [
     { role: "system", content: side.systemPrompt, options: CACHED },
-    ...messages.map((m, i) => (i == last ? ({ ...m, options: CACHED } as ChatMessage) : m)),
+    ...messagesFor(choice, messages).map((m, i) => (i == last ? ({ ...m, options: CACHED } as ChatMessage) : m)),
   ];
 }
 
@@ -175,7 +180,8 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   let cfg = opts.cfg;
   /** The model the store kept, if it's one of MODELS. */
   const kept = stored && isModelChoice(stored.state.model ?? "") ? (stored.state.model as ModelChoice) : null;
-  let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : (kept ?? cfg.model);
+  /** The model it's on: the one kept, if the person can use it now; null with no model to use (or scripted with no keys). */
+  let choice: ModelChoice | null = cfg ? fit(cfg, kept) : null;
   let side: ModelSide | null = null;
   let messages: ChatMessage[] = stored?.messages ?? [];
   /** Messages sent while a run goes on: the model has them at its next turn. */
@@ -270,7 +276,7 @@ export function startLoop(opts: LoopOptions): AgentLoop {
   const turn = (s: ModelSide, c: AgentConfig): Effect.Effect<boolean, string> =>
     Effect.gen(function* () {
       const parts: Response.AnyPart[] = [];
-      const prompt = promptOf(s, messages);
+      const prompt = promptOf(s, messages, choice);
       const stream = s.tools.length
         ? LanguageModel.streamText({ prompt, toolkit: toolkitOf(s.tools), disableToolCallResolution: true, toolCallValidation: "deferred" })
         : LanguageModel.streamText({ prompt });
@@ -307,6 +313,9 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       const s = side,
         c = cfg;
       if (!s || !c) return;
+      // The model may not be usable now (its key went, the admin turned it off): never run it then.
+      refit(c);
+      if (choice == null && c.model != "script") return;
       const calls = yield* turn(s, c).pipe(
         Effect.catch((text) =>
           Effect.sync(() => {
@@ -339,6 +348,26 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     )
   );
 
+  /**
+   * Moves to a model the person can use now, if the one it's on isn't: says so in the transcript, and the menus follow.
+   * Answers whether it moved.
+   */
+  const refit = (c: AgentConfig | null): boolean => {
+    if (!c || choice == null) return false;
+    const next = fit(c, choice);
+    if (next == choice) return false;
+    const was = MODELS[choice].label;
+    choice = next;
+    emit({
+      t: "error",
+      text: next
+        ? `${was} can't be used now: its key is gone, or the admin turned it off. The agent goes on with ${MODELS[next].label}.`
+        : `${was} can't be used now: no key runs it.`,
+    });
+    hooks.modelChanged?.();
+    return true;
+  };
+
   /** Starts a run unless one goes on. */
   const go = () => {
     if (run) return;
@@ -362,10 +391,13 @@ export function startLoop(opts: LoopOptions): AgentLoop {
     },
     get model() {
       if (!side || !cfg) return null;
-      return isScript(cfg) || choice == null ? "script (test model)" : MODELS[choice].label;
+      return choice == null ? "script (test model)" : MODELS[choice].label;
     },
     get modelChoice() {
       return choice;
+    },
+    get models() {
+      return cfg && choice != null ? usable(cfg) : [];
     },
     emit,
     subscribe(listener) {
@@ -373,15 +405,17 @@ export function startLoop(opts: LoopOptions): AgentLoop {
       return () => listeners.delete(listener);
     },
     start(first, systemPrompt, tools) {
-      choice = first.model == "script" ? null : (kept ?? first.model);
+      choice = fit(first, kept);
       side = { systemPrompt, tools };
       return side;
     },
     configure(next) {
       cfg = next;
+      if (choice == null && next) choice = fit(next, kept);
+      else refit(next);
     },
     setModel(next) {
-      if (!side || choice == null || !isModelChoice(next)) return false;
+      if (!side || !cfg || choice == null || !isModelChoice(next) || !usable(cfg).some((u) => u.choice == next)) return false;
       choice = next;
       return true;
     },

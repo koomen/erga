@@ -18,6 +18,7 @@
 // (/llms.txt: agents/guides.ts).
 
 import type { AgentConfig, ModelChoice } from "../models";
+import type { Usable } from "../../shared/models";
 import type { Attachment } from "../../shared/attach";
 import type { Log, LogEvent } from "../../shared/agent-log";
 import type { ChatMessage, ChatStore, StoredChat } from "../checkpoint";
@@ -28,6 +29,8 @@ import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../serv
 export interface AgentSession {
   readonly model: string | null;
   readonly modelChoice: ModelChoice | null;
+  /** The models the person can switch between now, with whose key runs each. */
+  readonly models: Usable[];
   setModel(choice: ModelChoice): boolean;
   /** The settings now (a key an admin stored, replaced or cleared since it started): the next model call uses them. */
   configure(cfg: AgentConfig): void;
@@ -84,6 +87,8 @@ export function startAgent(opts: {
   store?: ChatStore;
   stored?: StoredChat | null;
   meta?: Record<string, string>;
+  /** The model changed by itself (the one it was on can't be used now): the person's menus follow. */
+  modelChanged?: () => void;
 }): AgentSession {
   const { owner } = opts;
   const loop = startLoop({
@@ -92,7 +97,7 @@ export function startAgent(opts: {
     store: opts.store ?? null,
     meta: { login: owner, ...opts.meta },
     tag: "page",
-    hooks: { about },
+    hooks: { about, modelChanged: () => opts.modelChanged?.() },
   });
   loop.start(opts.cfg, systemPrompt(owner, opts.admin), opts.tools);
   return {
@@ -101,6 +106,9 @@ export function startAgent(opts: {
     },
     get modelChoice() {
       return loop.modelChoice;
+    },
+    get models() {
+      return loop.models;
     },
     setModel: loop.setModel,
     configure: loop.configure,
