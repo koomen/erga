@@ -1,5 +1,5 @@
 // The agent loop both embedded agents run (the document agent,
-// agents/document/session.ts, and the admin agent, agents/admin/agent.ts): the
+// agents/document/session.ts, and the admin agent, agents/person/agent.ts): the
 // model a conversation is on (the one its store kept, else the settings'),
 // the transcript and its listeners, the checkpoints that keep each step
 // (agents/checkpoint.ts: a restart neither loses nor repeats work), and the

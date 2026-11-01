@@ -185,23 +185,6 @@ test("kept in storage, and read back", () => {
   expect(() => save(broken, DEFAULT)).not.toThrow();
 });
 
-test("the admin pages' early script puts the agent where mountPaneLayout will (no shift once admin-agent.js runs)", async () => {
-  const { PANE_EARLY_SCRIPT } = await import("../server/admin/layout.ts");
-  const { PANE_KEY, loadPane, paneWidth } = await import("../client/agent/layout");
-  const body = /<script>([\s\S]*)<\/script>/.exec(PANE_EARLY_SCRIPT)![1];
-  const cases: [unknown, number][] = [[null, 1200], [{ side: "right", width: 520 }, 1400], [{ side: "left", width: 900 }, 1000], [{ width: 100 }, 1600], ["broken", 1200]];
-  for (const [kept, room] of cases) {
-    const vars: Record<string, string> = {}, classes = new Set<string>();
-    const w = { clientWidth: room, classList: { add: (c: string) => classes.add(c) }, style: { setProperty: (k: string, v: string) => { vars[k] = v; } } };
-    const storage = { getItem: (k: string) => (k == PANE_KEY ? (typeof kept == "string" ? "{" : JSON.stringify(kept)) : null) };
-    new Function("document", "localStorage", body)({ currentScript: { parentElement: w } }, storage);
-    const want = loadPane(storage);
-    expect(classes.has("agent-right")).toBe(want.side == "right");
-    if (kept && typeof kept != "string") expect(vars["--agent-w"]).toBe(`${paneWidth(want, room)}px`);
-    else expect(vars["--agent-w"]).toBeUndefined();
-  }
-});
-
 test("the editor's early layout puts on what mountLayout will (the document doesn't move once main.ts runs)", async () => {
   const { LAYOUT_EARLY } = await import("../server/pages/viewer.ts");
   const { KEY, layoutVars, load } = await import("../client/agent/layout");

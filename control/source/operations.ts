@@ -281,7 +281,7 @@ export const SOURCE_OPERATIONS: Operation[] = [
     description: `Reads a file of Erga's own source, with line numbers: all of it, or lines from to to (1-based, both included). At most ${MAX_LINES} lines at a time; the answer says how to read on. README.md maps the repository; AGENTS.md says how work is done. Read-only.`,
     parameters: Schema.Struct({
       ref: REF,
-      path: str("The file, from the repository's root, e.g. agents/admin/agent.ts"),
+      path: str("The file, from the repository's root, e.g. agents/person/agent.ts"),
       from: Schema.optionalKey(Schema.Int.annotate({ description: "The first line (default 1)" })),
       to: Schema.optionalKey(Schema.Int.annotate({ description: "The last line (default: the end)" })),
     }),

@@ -470,3 +470,77 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-jump[hidden] { display: none; }
 .agent-log { overflow-anchor: none; }
 .agent-log:focus { outline: none; } /* focusable only so it can scroll by keyboard; the ring on a click is noise */
+
+/* ---------- Each person's agent ----------
+   On every page for someone signed in (server/pages/agent.ts): it floats beside the page as a panel of glass (the glass:
+   client/inline/bars.css). Collapsed, it is the round "e" button in the lower corner on its side; the same element grows
+   into the panel and shrinks back into it, and the page slides over to make room, on the same curve. In the editor,
+   which side and how wide is the user's (layout.ts sets --agent-x, --agent-w, --fab-x, the frame's --frame-l and
+   --frame-r, and the bottom row's --cb-l and --cb-r); these defaults are its usual place. */
+:root {
+  --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+  --agent-w: min(380px, calc(100vw - 32px));
+  --agent-inset: 16px;
+  --agent-left: max(var(--agent-inset), var(--safe-l));
+  --agent-fab: 44px;
+  --agent-ease: cubic-bezier(0.45, 0, 0.15, 1);
+  --agent-ms: 560ms;
+  --agent-x: var(--agent-left); --fab-x: var(--agent-left);
+  --frame-l: var(--safe-l); --frame-r: var(--safe-r);
+  --cb-l: calc(var(--agent-left) + var(--agent-fab) + 14px); --cb-r: 22px;
+  --agent-top: max(8px, env(safe-area-inset-top));
+  --agent-bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
+}
+/* The agent's box (#agent) is where the open panel goes, top to bottom, and takes clicks only while it's open. Its glass
+   (.agent-glass) is the one element that moves: 44px round, at the corner on the agent's side, closed; the whole box, open.
+   It eases its width, height and corners (560ms), and keeps its shadow all the way. The panel's insides (.agent-card) keep
+   the open panel's size, anchored at the same corner, and the glass crops them. Opening, the "e" fades out at once (120ms),
+   then the insides fade in (200ms, from 120ms); closing, the insides fade out (240 to 440ms), then the "e" fades in, whole
+   when the glass is the circle again. */
+.agent {
+  position: fixed; z-index: 20; left: var(--agent-x); top: var(--agent-top); bottom: var(--agent-bottom); width: var(--agent-w);
+  container-type: size; pointer-events: none;
+  transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease);
+}
+body.agent-open .agent { pointer-events: auto; }
+body:not(.agent-open) .agent-resize { display: none; }
+.agent-glass {
+  position: absolute; left: 0; bottom: 0; width: var(--agent-fab); height: var(--agent-fab); border-radius: calc(var(--agent-fab) / 2);
+  overflow: hidden; pointer-events: auto;
+  background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 90px), var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 76%, transparent);
+  /* (Its 0.5px edge is a ring inside it, not a border: the "e" and the insides start at its very edge.) */
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07), var(--glass-edge), var(--glass-shadow);
+  transition: width var(--agent-ms) var(--agent-ease), height var(--agent-ms) var(--agent-ease), border-radius var(--agent-ms) var(--agent-ease);
+}
+html.page-dark body:not(.source) .agent-glass {
+  background: linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 90px), color-mix(in srgb, var(--glass-pg) 70%, transparent);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+body.agent-open .agent-glass { width: 100%; height: 100%; border-radius: 18px; }
+/* Right of the page, it grows out of the lower-right corner. */
+body.agent-right :is(.agent-glass, .agent-card, .agent-fab) { left: auto; right: 0; }
+.agent-card {
+  position: absolute; left: 0; bottom: 0; width: 100cqw; height: 100cqh;
+  display: flex; flex-direction: column;
+  font: 14px/1.55 var(--font-text); color: var(--fg);
+  opacity: 0; visibility: hidden;
+  transition: opacity 200ms ease 240ms, visibility 0s linear 440ms;
+}
+body.agent-open .agent-card { opacity: 1; visibility: visible; transition: opacity 200ms ease 120ms, visibility 0s; }
+.agent-fab {
+  position: absolute; left: 0; bottom: 0; width: var(--agent-fab); height: var(--agent-fab);
+  display: grid; place-items: center; padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--chrome-hover); transition: opacity 120ms ease 440ms;
+}
+.agent-fab svg { width: 22px; height: 22px; }
+.agent-fab.busy::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
+@keyframes agent-spin { to { transform: rotate(360deg); } }
+body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+@media (prefers-reduced-motion: reduce) { :is(.agent-card, .agent-fab) { transition: none !important; } }
+/* Its insides on the glass: the box and your messages as faint fills of it, not white cards. */
+.agent .agent-compose { border-top: 0; }
+.agent .agent-compose textarea { background: rgba(255, 255, 255, 0.6); border-color: rgba(0, 0, 0, 0.08); }
+.agent :is(.msg-user, .agent-voice:not([aria-pressed="true"])) { background: rgba(0, 0, 0, 0.045); }
+html.page-dark body:not(.source) .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); }
+html.page-dark body:not(.source) .agent :is(.msg-user, .agent-voice:not([aria-pressed="true"])) { background: rgba(255, 255, 255, 0.08); }
+body.no-motion, body.no-motion * { transition: none !important; }

@@ -1,13 +1,13 @@
 // What the admin agents' object keeps of each admin's agent conversation, and
-// the agent going on with it (agents/admin/agent.ts, `stored`): the transcript and the
+// the agent going on with it (agents/person/agent.ts, `stored`): the transcript and the
 // model's messages, kept step by step (agents/checkpoint.ts); and the panel's prefs.
 // A run cut off in the middle and resumed: tests/agent-resume.test.ts.
 
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
-import { panelPrefs } from "../agents/admin/panel";
-import { startAdminAgent } from "../agents/admin/agent";
+import { panelPrefs } from "../agents/person/panel";
+import { startAgent } from "../agents/person/agent";
 import { ChatTables, tableStore } from "../agents/chat-store";
 import { restoredLog, STOPPED, STOPPED_SHOWN, type ChatStore, type StoredChat } from "../agents/checkpoint";
 import * as Schema from "effect/Schema";
@@ -16,7 +16,7 @@ import type { AgentTool } from "../agents/run";
 const script = { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" as const };
 
 /** Runs one message to the end of its turn. */
-function turn(agent: ReturnType<typeof startAdminAgent>, text: string) {
+function turn(agent: ReturnType<typeof startAgent>, text: string) {
   return new Promise<void>((resolve) => {
     const off = agent.subscribe((ev) => { if (ev.t == "busy" && !ev.busy) { off(); resolve(); } });
     agent.prompt(text, null);
@@ -30,11 +30,11 @@ function tables() {
 
 test("a conversation stored and restored goes on where it was: the transcript and what the model remembers", async () => {
   const t = tables(), store = tableStore(t, "admin:root");
-  const a = startAdminAgent({ cfg: script, owner: "root", tools: [], store });
+  const a = startAgent({ cfg: script, owner: "root", admin: true, tools: [], store });
   await turn(a, `@script [{"text":"Hello, root."}]`);
   await new Promise((r) => setTimeout(r, 10));
 
-  const b = startAdminAgent({ cfg: script, owner: "root", tools: [], store, stored: t.load("admin:root") });
+  const b = startAgent({ cfg: script, owner: "root", admin: true, tools: [], store, stored: t.load("admin:root") });
   expect(b.log().items).toEqual([{ kind: "user", text: `@script [{"text":"Hello, root."}]` }, { kind: "assistant", text: "Hello, root." }]);
   expect(b.messages().map((m) => (m as { role: string }).role)).toEqual(["user", "assistant"]);
   expect(await b.resume()).toBe(false);
@@ -67,13 +67,24 @@ test("the admin agent, killed while a tool call ran, goes on after the restart w
     save: async (c) => { if (dead) return new Promise<void>(() => {}); t.save("admin:root", c); if (Object.values(c.state.calls).some((x) => !x.result)) dead = true; },
     clear: async () => t.clear("admin:root"),
   };
-  const a = startAdminAgent({ cfg: script, owner: "root", tools: [count], store: dying });
+  const a = startAgent({ cfg: script, owner: "root", admin: true, tools: [count], store: dying });
   a.prompt(`@script [{"tool":"count","args":{}},{"text":"Done."}]`, null);
   for (let i = 0; i < 200 && !(dead && runs.n == 1); i++) await new Promise((r) => setTimeout(r, 10));
   expect(runs.n).toBe(1);
 
-  const b = startAdminAgent({ cfg: script, owner: "root", tools: [count], store: tableStore(t, "admin:root"), stored: t.load("admin:root") });
-  const done = new Promise<void>((resolve) => b.subscribe((ev) => { if (ev.t == "busy" && !ev.busy) resolve(); }));
+  const b = startAgent({
+    cfg: script,
+    owner: "root",
+    admin: true,
+    tools: [count],
+    store: tableStore(t, "admin:root"),
+    stored: t.load("admin:root"),
+  });
+  const done = new Promise<void>((resolve) =>
+    b.subscribe((ev) => {
+      if (ev.t == "busy" && !ev.busy) resolve();
+    })
+  );
   expect(await b.resume()).toBe(true);
   await done;
   expect(runs.n).toBe(1);
@@ -147,7 +158,14 @@ test("a conversation pi kept (before the agents ran on Effect AI) loads in Effec
     state,
   });
 
-  const b = startAdminAgent({ cfg: script, owner: "root", tools: [], store: tableStore(t, "admin:root"), stored: t.load("admin:root") });
+  const b = startAgent({
+    cfg: script,
+    owner: "root",
+    admin: true,
+    tools: [],
+    store: tableStore(t, "admin:root"),
+    stored: t.load("admin:root"),
+  });
   expect(b.messages()).toEqual([
     { role: "user", content: [{ type: "text", text: "Read a.pdf" }] },
     {

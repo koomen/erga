@@ -183,7 +183,7 @@ export const platform = (env: Env, ctx?: ExecutionContext): Platform => {
     source: control ? controlSource(control) : sourceService(env),
     home: env.HOME.getByName("home"),
     news: env.NEWS.getByName("news"),
-    adminAgent: env.ADMIN_AGENT.getByName("admin"),
+    personAgent: (login: string) => env.AGENTS.getByName(login),
     deploys: control ?? env.PIPELINE?.getByName("deploys") ?? noDeploys,
     ...(settings.controlUrl ? { control: { url: settings.controlUrl } } : {}),
     agentSettings: () => agentSettingsFrom(env, env.DB ? directoryOf(env).credentials : null),

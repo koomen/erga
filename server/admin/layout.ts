@@ -1,22 +1,11 @@
 // The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/ops,
-// /admin/api-keys, /admin/auth): a breadcrumb in the upper left (Erga › Admin › the page),
-// Share with agent in the header bar upper right (the editor's button and
-// card: admin-share.js, built from client/admin/admin-share.ts), the admin's agent
-// (agents/admin/agent.ts: its panel is admin-agent.js, built from
-// client/admin/admin-agent.ts) in a column left of the page, and, on the left, a
-// sidebar that links to Settings, API keys, Authentication, Access, Change log, Users and Ops.
+// /admin/api-keys, /admin/auth): the bars of every page (server/pages/bars.ts: Erga › Admin › the page upper
+// left; upper right the quick actions, with Share with an agent, whose card is admin-share.js, built from
+// client/admin/admin-share.ts), the person's agent in the lower left (server/pages/agent.ts, as on every page),
+// and, on the left, a sidebar that links to Settings, API keys, Authentication, Access, Change log, Users and Ops.
 //
-// As in the editor, the user drags the agent by its head to the right of the
-// page, and its inner edge to resize it (client/agent/layout.ts, mountPaneLayout;
-// kept in this browser). It collapses to a round button in the lower corner
-// on its side, as the editor's does (its own button, Esc in the panel, or
-// ⌘J), and expands from it again;
-// this browser remembers which (localStorage "erga:admin-agent"), set before
-// it paints. Narrower than 1000px it covers the page while it's open, and
-// starts collapsed. The sidebar
-// collapses to a rail of icons and expands again, with an animation, and
-// this browser remembers which (localStorage "erga:admin-sidebar"), set
-// before the sidebar paints, so it doesn't jump. On a phone it is a row of
+// The sidebar collapses to a rail of icons and expands again, with an animation, and this browser remembers which
+// (localStorage "erga:admin-sidebar"), set before the sidebar paints, so it doesn't jump. On a phone it is a row of
 // links above the page.
 //
 // In the browser the admin pages are one page (admin-nav.js, built from
@@ -34,7 +23,6 @@ import { call, ctx, html, NO_STORE, plainJson, redirect } from "../http.ts";
 import { appPage, asset, AGENT_ICON, inlineScript, link, pageBars, page, scriptTag } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
-import { MARK } from "../../assets/logo/logo.ts";
 import { actingAdmin } from "../identity/index.ts";
 
 export type AdminSection = "settings" | "keys" | "auth" | "access" | "changes" | "users" | "ops";
@@ -75,27 +63,6 @@ export interface AdminLayout {
   wide?: boolean;
 }
 
-/** The agent's panel: the editor's markup, with a button that collapses it. admin-agent.js runs it. */
-const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent" id="agent" aria-label="Agent"><div class="agent-card">
-    <div class="agent-head">
-      <span class="title">Agent</span><span class="model" id="agent-model"></span>
-      <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
-      <button type="button" class="icon-btn" id="agent-close" aria-label="Collapse (Esc)" data-tip="Collapse  Esc" aria-controls="agent">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5 10 14M10 14H5.5M10 14v4.5M19.5 4.5 14 10M14 10h4.5M14 10V5.5"/></svg>
-      </button>
-    </div>
-    <div class="agent-log" id="agent-log" data-empty="Say what to change on the server. The agent reads and changes the settings and users, deploys staging and production, and reads the source for you: each change is in the change log under your name." aria-live="polite" tabindex="-1"></div>
-    <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
-    <p class="agent-hint" id="agent-hint" role="status" hidden></p>
-    <form class="agent-compose" id="agent-form">
-      <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
-      <button type="submit" class="agent-send" id="agent-send">Send</button>
-    </form>
-  </div></aside></div>
-<button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${MARK}</button>`;
-
 /** The admin pages' one stylesheet (client/styles/admin.css and ops.css, built as admin.css): the same file on every admin page, the control Worker's too. */
 export const adminStyleTag = () => `<link rel="stylesheet" id="erga-admin-style" href="${asset("admin.css")}">`;
 
@@ -103,12 +70,7 @@ export const adminStyleTag = () => `<link rel="stylesheet" id="erga-admin-style"
 export const SIDEBAR_EARLY_SCRIPT = inlineScript("admin-sidebar-early");
 /** The first page's view (window.ergaView): what its scripts stop when it goes. Every page's scripts read it (the Ops page's too). */
 export const VIEW_SCRIPT = inlineScript("admin-view");
-/** The agent's side and width as this browser keeps them, on the workspace as it's parsed (in it: client/inline/admin-pane-early.ts). */
-export const PANE_EARLY_SCRIPT = inlineScript("admin-pane-early");
-const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}${inlineScript("img-fallback")}${inlineScript("admin-agent-early")}`;
-
-/** The agent's collapse and expand, and the buttons that act as the press starts (client/inline/admin-agent.ts). */
-const AGENT_SCRIPT = inlineScript("admin-agent");
+const EARLY_SCRIPT = `${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}${inlineScript("img-fallback")}`;
 /** The sidebar's toggle (client/inline/admin-sidebar.ts). */
 export const SIDEBAR_SCRIPT = inlineScript("admin-sidebar");
 
@@ -122,17 +84,12 @@ export function adminLayout(o: AdminLayout): string {
 ${bars}
 <div class="admin-body">
 ${side}
-<div class="admin-work" id="workspace">${PANE_EARLY_SCRIPT}
-${AGENT}
 <main class="admin-main${o.wide ? " wide" : ""}" id="admin-panes">
 ${o.body}
 </main>
 </div>
-</div>
 ${SIDEBAR_SCRIPT}
-${AGENT_SCRIPT}
 ${scriptTag("admin-share.js")}
-${scriptTag("admin-agent.js")}
 ${scriptTag("admin-nav.js")}`, false);
 }
 

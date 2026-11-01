@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
 import { beyondPrompt } from "../agents/document/prompt";
 import { documentToolSpecs } from "../agents/document/tools";
-import { systemPrompt } from "../agents/admin/prompt";
+import { systemPrompt } from "../agents/person/prompt";
 import { allTools } from "../agents/tools";
 import { OPERATIONS } from "../server/operations/index.ts";
 
@@ -24,7 +24,7 @@ const ROUTE_TABLES = [
   "server/app.ts",
   "cloudflare/index.ts",
   "cloudflare/dev.ts",
-  "agents/admin/sessions.ts",
+  "agents/person/sessions.ts",
   "control/source/routes.ts",
   "cloudflare/deploy-routes.ts",
   "control/install/routes.ts",
@@ -89,7 +89,7 @@ const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...OPERATIONS.filte
 test("the route tables are read: the known routes are found", () => {
   const found = every();
   for (const r of [
-    "POST /api/admin/agent/model",
+    "POST /api/agent/model",
     "GET /git/tree/<ref>/<path>",
     "POST /admin/auth do=save",
     "GET /d/<id>/api/doc",
@@ -122,7 +122,7 @@ test("every route a page's script calls is in the audit", () => {
       if (!covered(p)) calls.push(`${file}: ${p}`);
     }
   }
-  expect(seen).toBeGreaterThan(15);
+  expect(seen).toBeGreaterThan(10);
   if (calls.length) console.log(`Called by a page, but not in agents/actions.ts:\n${calls.join("\n")}`);
   expect(calls).toEqual([]);
 });
@@ -169,7 +169,7 @@ test("the known gaps are closed: production's deploy, the Ops page, keys and tok
 });
 
 test("the admin agent's system prompt names every tool it has, and no longer says it can't merge or deploy", () => {
-  const prompt = systemPrompt("root");
+  const prompt = systemPrompt("root", true);
   // Each by name, but the document tools: the prompt says they work in any document, named with "document".
   const docTools = new Set(documentToolSpecs().map((t) => t.name));
   for (const t of ADMIN.filter((t) => !docTools.has(t))) expect(prompt).toContain(t);

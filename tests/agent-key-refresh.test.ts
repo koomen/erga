@@ -11,7 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
-import { startAdminAgent } from "../agents/admin/agent.ts";
+import { startAgent } from "../agents/person/agent.ts";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { makeHost } from "../document/host.ts";
 import { FileStore, Room, StateStore } from "../document/room.ts";
@@ -90,7 +90,7 @@ test("a document is open; an admin stores a key, replaces it, clears it: each re
     // No key yet: the panel says so, and what to do.
     let st = await doc.state();
     expect(st.body.enabled).toBe(false);
-    expect(st.body.reason).toContain("an admin pastes the Anthropic API key in the admin agent's panel");
+    expect(st.body.reason).toContain("an admin pastes the Anthropic API key in their agent's panel");
     expect((await doc.prompt("hello")).body.reason).toContain("ANTHROPIC_API_KEY is not set");
 
     // The admin stores a key: the same open document's next turn uses it, with no reload.
@@ -132,10 +132,15 @@ test("a stored key that doesn't open here (another server's FACTORY_KEY): the ag
 
 test("the admin agent: a key replaced after its session started reaches its next turn", async () => {
   sent.length = 0;
-  const agent = startAdminAgent({ cfg: { apiKey: Redacted.make(KEY1), model: "sonnet", effort: "medium" }, owner: "ada", tools: [] });
+  const agent = startAgent({
+    cfg: { apiKey: Redacted.make(KEY1), model: "sonnet", effort: "medium" },
+    owner: "ada",
+    admin: true,
+    tools: [],
+  });
   agent.prompt("hello", null);
   expect(await requests(1)).toEqual([KEY1]);
-  // agents/admin/sessions.ts reads the settings at each turn and gives them to the session it keeps.
+  // agents/person/sessions.ts reads the settings at each turn and gives them to the session it keeps.
   agent.configure({ apiKey: Redacted.make(KEY2), model: "sonnet", effort: "medium" });
   await new Promise((r) => setTimeout(r, 50));
   agent.prompt("again", null);

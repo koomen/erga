@@ -2,7 +2,7 @@
 // does is an operation (server/operations/), which the front end calls over POST /api/tools/<name> and every agent
 // has as a tool: the entries for those come from the operations themselves (`ui`), at the end of the list.
 //
-//   the admin agent     (agents/admin/agent.ts: on every /admin page) everything: the admin operations, the Ops page
+//   your agent          (agents/person/agent.ts: on every page) everything its person may: the admin operations (for an admin), the Ops page
 //                       (source and deploys), the homepage's deploy, and everything the document agent has
 //   the document agent  (agents/document/session.ts, with agents/tools.ts: in the editor) everything a person does with
 //                       documents (in the editor, any document, and on the documents list, /docs) and their tokens
@@ -15,7 +15,7 @@
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
 // is none. tests/agent-actions.test.ts reads the routes from each file's own route table (the comments at the
-// top of agents/admin/sessions.ts, server/admin/routes.ts, server/api.ts, ...), the document API and the file tree's
+// top of agents/person/sessions.ts, server/admin/routes.ts, server/api.ts, ...), the document API and the file tree's
 // operations, and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 
@@ -84,16 +84,16 @@ export const AGENT_ACTIONS: AgentAction[] = [
     exempt: SECRET,
   },
 
-  // ------------------------------------------------------------ the admin agent's panel
-  { route: "GET /api/admin/agent", domain: "none", action: "The admin agent's panel", exempt: PANEL },
-  { route: "POST /api/admin/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
-  { route: "POST /api/admin/agent/abort|reset", domain: "none", action: "Stop the admin agent, or start a new conversation", exempt: PANEL },
-  { route: "POST /api/admin/agent/model", domain: "none", action: "Switch the admin agent's model", exempt: PANEL },
-  { route: "GET /api/admin/agent/events", domain: "none", action: "The admin agent's live updates", exempt: STREAM },
-  { route: "GET /api/admin/agent/conversation", domain: "none", action: "The admin agent's conversation, kept", exempt: PANEL },
-  { route: "DELETE /api/admin/agent/conversation", domain: "none", action: "A new conversation with the admin agent", exempt: PANEL },
-  { route: "GET /api/admin/agent/prefs", domain: "none", action: "The admin agent's panel, as the admin left it", exempt: PANEL },
-  { route: "PUT /api/admin/agent/prefs", domain: "none", action: "Keep the admin agent's panel layout", exempt: PANEL },
+  // ------------------------------------------------------------ your agent's panel
+  { route: "GET /api/agent", domain: "none", action: "Your agent's panel", exempt: PANEL },
+  { route: "POST /api/agent", domain: "none", action: "A message to your agent", exempt: PANEL },
+  { route: "POST /api/agent/abort|reset", domain: "none", action: "Stop your agent, or start a new conversation", exempt: PANEL },
+  { route: "POST /api/agent/model", domain: "none", action: "Switch your agent's model", exempt: PANEL },
+  { route: "GET /api/agent/events", domain: "none", action: "Your agent's live updates", exempt: STREAM },
+  { route: "GET /api/agent/conversation", domain: "none", action: "Your agent's conversation, kept", exempt: PANEL },
+  { route: "DELETE /api/agent/conversation", domain: "none", action: "A new conversation with your agent", exempt: PANEL },
+  { route: "GET /api/agent/prefs", domain: "none", action: "Your agent's panel, as you left it", exempt: PANEL },
+  { route: "PUT /api/agent/prefs", domain: "none", action: "Keep your agent's panel layout", exempt: PANEL },
 
   // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys. Its actions are
   // operations (control/operations.ts), at the end with the others; these are the routes that stay routes.

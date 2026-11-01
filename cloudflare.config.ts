@@ -69,9 +69,9 @@ export default defineConfig(({ mode }) => ({
       NewsHub: exports.durableObject({ storage: "sqlite" }),
       // Each document's site on its person's own Cloudflare account (a document at a domain of its own): gone, with what it held.
       SiteHost: exports.durableObject({ state: "deleted" }),
-      // Each admin's agent, its conversation and panel: one object, "admin".
-      AdminAgentHost: exports.durableObject({ storage: "sqlite" }),
-      // Each person's conversations with the document agent, kept step by step: one object per person, named by their login.
+      // The admins' agents before each person had one (PersonAgent): gone, with their conversations (2026-11-01).
+      AdminAgentHost: exports.durableObject({ state: "deleted" }),
+      // Each person's agent (agents/person/), and their conversations with the document agent: one object per person, named by their login.
       PersonAgent: exports.durableObject({ storage: "sqlite" }),
       // The factory (its task queue) and its VMs: gone, with what they held.
       Factory: exports.durableObject({ state: "deleted" }),
@@ -92,7 +92,6 @@ export default defineConfig(({ mode }) => ({
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       OWN: bindings.durableObject({ worker: PROD.worker, exportName: "OwnStorage" }),
       NEWS: bindings.durableObject({ worker: PROD.worker, exportName: "NewsHub" }),
-      ADMIN_AGENT: bindings.durableObject({ worker: PROD.worker, exportName: "AdminAgentHost" }),
       AGENTS: bindings.durableObject({ worker: PROD.worker, exportName: "PersonAgent" }),
       // The server's database: users, settings and the directory. The deploy pipeline finds it by name, or
       // makes it, and applies server/migrations/ before each deploy. Locally (vite dev) it's a database of its own, at a fixed made-up id that
