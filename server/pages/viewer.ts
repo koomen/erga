@@ -11,7 +11,8 @@ import { FAVICON_LINK } from "../../assets/logo/logo.ts";
 import type { Session } from "../platform.ts";
 import { asset, assetScripts, editorShell } from "./assets.ts";
 import { inlineCall, inlineScript, inlineStyle } from "./inline.ts";
-import { crumbsFont, link, viewCrumbs } from "./chrome.ts";
+import { crumbsFont, link } from "./chrome.ts";
+import { barsHtml } from "./bars.ts";
 import { esc } from "../../shared/html.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
 import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
@@ -19,35 +20,6 @@ import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
-
-/** Share with an agent, as the editor's (client/editor.html, #btn-agent-share): it copies a one-line prompt (client/inline/viewer-bars.ts). For anyone who can read the page. */
-export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button erga-agent-share" aria-label="Share with an agent: copy a prompt for it" data-tip="Share with an agent"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.12) translate(-12 -11.5)" stroke-width="1.4"><rect x="3.5" y="9" width="10.5" height="8.5" rx="3"/><path d="M8.75 9V6.5"/><circle cx="8.75" cy="5.5" r="1"/><circle cx="6.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><circle cx="10.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><path d="M2 12.5v1.5M15.5 12.5v1.5"/><path d="M18.75 3.5v6M15.75 6.5h6"/></g></svg></button>`;
-
-/** Documents, as the editor's (client/editor.html, #btn-docs), at `href`: for someone signed in who has documents. */
-export const docsButton = (href: string) =>
-  `<a href="${esc(href)}" class="erga-view-button erga-docs-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
-
-/** The viewer's Full screen button, as the editor's (client/editor.html, #btn-full): the page's frame fills the screen (client/inline/viewer-full.ts), where it can (viewer.css). */
-export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-full-button" aria-label="Full screen" data-tip="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 9.25v-3.5a1 1 0 0 1 1-1h3.5M14.75 4.75h3.5a1 1 0 0 1 1 1v3.5M19.25 14.75v3.5a1 1 0 0 1-1 1h-3.5M9.25 19.25h-3.5a1 1 0 0 1-1-1v-3.5"/></svg></button>`;
-
-/**
- * The two glass bars (client/inline/bars.css), on a document's page and on the homepage, as the editor's and in the same
- * places: the breadcrumbs, and the buttons with who you are (`corner`, server/pages/account-menu.ts). Full screen only
- * where there's a frame to fill the screen (`full`). The editor's own actions (Pause, Share, Document settings) are folded
- * into the pencil here; Clone is the New menu's last item.
- */
-export function barsHtml(o: {
-  session: Session | null;
-  title: string | null;
-  project: boolean;
-  full: boolean;
-  edit: string;
-  corner: string;
-}): string {
-  const s = o.session;
-  const docs = s && !s.agent && !s.test ? docsButton(link("/docs", s)) : "";
-  return `${viewCrumbs(s, o.title, o.project, true)}<div class="erga-view-buttons erga-bar erga-bar-r"><div class="quick"><div class="quick-inner">${newDocButton("erga-view-button")}${o.full ? FULL_BUTTON : ""}${o.edit}${AGENT_SHARE_BUTTON}${docs}</div></div><div class="me-slot">${o.corner}</div></div>`;
-}
 
 /** What a page kept for its reload (client/live/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";

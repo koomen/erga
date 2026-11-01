@@ -31,16 +31,7 @@
 
 import * as Effect from "effect/Effect";
 import { call, ctx, html, NO_STORE, plainJson, redirect } from "../http.ts";
-import {
-  appPage,
-  asset,
-  crumbs as trail,
-  ICON,
-  inlineScript,
-  link,
-  page,
-  scriptTag,
-} from "../pages/index.ts";
+import { appPage, asset, AGENT_ICON, inlineScript, link, pageBars, page, scriptTag } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import type { Platform, Session } from "../platform.ts";
 import { MARK } from "../../assets/logo/logo.ts";
@@ -123,12 +114,12 @@ export const SIDEBAR_SCRIPT = inlineScript("admin-sidebar");
 
 /** An admin page, whole: the header, the sidebar and the page's own body. */
 export function adminLayout(o: AdminLayout): string {
-  const crumbs = trail(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], "h1");
-  // Share with agent: the editor's icon button (client/editor.html, .chrome-top), the card from admin-share.js.
-  const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
+  // Share with an agent among the quick actions: the editor's icon, the card from admin-share.js (a prompt with an admin token).
+  const share = `<button type="button" class="erga-view-button" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${AGENT_ICON}</button>`;
+  const bars = pageBars(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], { here: "h1", actions: share });
   const side = adminSidebar(o.here, (path) => link(path, o.session));
   return appPage(o.title, "", `${adminStyleTag()}${EARLY_SCRIPT}
-${crumbs}${bar}
+${bars}
 <div class="admin-body">
 ${side}
 <div class="admin-work" id="workspace">${PANE_EARLY_SCRIPT}

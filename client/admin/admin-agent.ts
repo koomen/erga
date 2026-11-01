@@ -140,7 +140,7 @@ function keyField() {
 
 /** What the admin has open, so "this page" means something to the agent. */
 function context(): string | null {
-  const here = document.querySelector(".crumbs .here")?.textContent?.trim();
+  const here = document.querySelector(".erga-crumbs .erga-here")?.textContent?.trim();
   return `The admin has the ${here ?? "admin"} page open (${location.pathname}).`;
 }
 

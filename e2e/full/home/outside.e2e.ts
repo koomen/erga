@@ -10,7 +10,7 @@ test("signed in, a typed address of / opens /docs; the erga logo there opens the
   const page = tab.page;
   await page.goto(`${server.root}/`);
   expect(new URL(page.url()).pathname).toBe("/docs");
-  await Promise.all([page.waitForURL((u) => u.pathname == "/"), page.click("a.brand")]);
+  await Promise.all([page.waitForURL((u) => u.pathname == "/"), page.click("a.erga-brand")]);
   expect(new URL(page.url()).pathname).toBe("/");
   await page.goto(`${server.root}/auth/logout`);
   await page.goto(`${server.root}/`);

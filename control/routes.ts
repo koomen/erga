@@ -108,7 +108,7 @@ import {
 import { openRelay, relayNonce, relayOrigin, relayState, sealRelay } from "../shared/relay.ts";
 import { byLine } from "../shared/attribution.ts";
 import { adminSidebar, adminStyleTag, SIDEBAR_EARLY_SCRIPT, SIDEBAR_SCRIPT, VIEW_SCRIPT, type AdminLayout } from "../server/admin/index.ts";
-import { accountHtml, accountOf, appPage, crumbs, webPage as page } from "../server/pages/index.ts";
+import { accountHtml, accountOf, appPage, pageBars, webPage as page } from "../server/pages/index.ts";
 import { esc, jsonInScript } from "../shared/html.ts";
 import { randomToken } from "../shared/bytes.ts";
 import type { Platform } from "../server/platform.ts";
@@ -828,25 +828,28 @@ function installBody(s: CredentialStatus, c: Control, url: URL, ops: string): st
 }
 
 /**
- * The control Worker's own page shell: the admin pages' look (server/admin/layout.ts), their one stylesheet (admin.css) too. The breadcrumbs upper left
- * (Erga › Admin › the page; the wordmark and Admin go to the app), the account corner upper right, the same sidebar (its
+ * The control Worker's own page shell: the admin pages' look (server/admin/layout.ts), their one stylesheet (admin.css) too. The bars
+ * (Erga › Admin › the page; the wordmark and Admin go to the app), the same sidebar (its
  * links to the app's admin pages, Ops here), and the page in a column, or the whole width (Ops).
  * No agent: the admin's agent lives in the app.
  */
 export function controlLayout(app: string): (o: AdminLayout) => Response {
   return (o) => {
-    const trail = crumbs(o.session, [{ label: "Admin", href: `${app}/admin` }, { label: o.title }], "h1", app);
-    const side = adminSidebar(o.here, (path) => (path == "/admin/ops" ? "/" : `${app}${path}`));
     const corner = accountHtml(accountOf(o.session, true), "/");
+    const bars = pageBars(o.session, [{ label: "Admin", href: `${app}/admin` }, { label: o.title }], { here: "h1", home: app, corner });
+    const side = adminSidebar(o.here, (path) => (path == "/admin/ops" ? "/" : `${app}${path}`));
     return new Response(appPage(o.title, "", `${adminStyleTag()}${SIDEBAR_EARLY_SCRIPT}${VIEW_SCRIPT}
-${trail}
+${bars}
 <div class="admin-body">
 ${side}
 <main class="admin-main${o.wide ? " wide" : ""}" id="admin-panes">
 ${o.body}
 </main>
 </div>
-${SIDEBAR_SCRIPT}
-${corner}`, false), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+${SIDEBAR_SCRIPT}`,
+        false
+      ),
+      { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } }
+    );
   };
 }

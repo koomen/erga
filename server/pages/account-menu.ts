@@ -17,6 +17,9 @@ import { inlineScript, inlineStyle } from "./inline.ts";
 import type { Session } from "../platform.ts";
 import { colorFor } from "../../document/content.ts";
 
+/** Where a page's header (pageBars, server/pages/bars.ts) wants the corner: at the right of its buttons' bar. */
+export const ACCOUNT_SLOT = "<!--erga-account-->";
+
 /** A response header: this page shows the account itself (the editor), so leave it be. */
 export const OWN_ACCOUNT = "x-erga-own-account";
 
@@ -79,8 +82,8 @@ ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 
 /**
  * A page with the corner added, unless it shows it itself. Pages are small,
- * so it's read whole: before </body> if there is one, else </html>, else
- * at the end.
+ * so it's read whole: in the page's header (ACCOUNT_SLOT), else before </body>
+ * if there is one, else </html>, else at the end.
  */
 export async function withAccount(response: Response, account: () => Promise<Account | null>, here: string): Promise<Response> {
   if (response.headers.has(OWN_ACCOUNT)) {
@@ -91,8 +94,10 @@ export async function withAccount(response: Response, account: () => Promise<Acc
   if (!/^text\/html\b/i.test(response.headers.get("content-type") ?? "") || !response.body || response.status == 101) return response;
   const html = await response.text();
   const corner = accountHtml(await account(), here);
-  const at = html.lastIndexOf("</body>") >= 0 ? html.lastIndexOf("</body>") : html.lastIndexOf("</html>");
-  const body = at >= 0 ? html.slice(0, at) + corner + html.slice(at) : html + corner;
+  // In the page's header if it has one (ACCOUNT_SLOT), else at its end.
+  const slot = html.indexOf(ACCOUNT_SLOT);
+  const at = slot >= 0 ? slot : html.lastIndexOf("</body>") >= 0 ? html.lastIndexOf("</body>") : html.lastIndexOf("</html>");
+  const body = at >= 0 ? html.slice(0, at) + corner + html.slice(slot >= 0 ? at + ACCOUNT_SLOT.length : at) : html + corner;
   const headers = new Headers(response.headers);
   headers.delete("content-length");
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
