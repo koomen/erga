@@ -52,8 +52,10 @@ test("blog.html wins over blog/index.html; a page or folder may be called edit, 
 test("on the pages origin, a page's address goes to its file, relatively, so relative links and assets resolve", async () => {
   const s = await site(await servers.short(), { pages: true });
   const viewer = await (await s.get(`${s.address}/blog`)).text();
-  const frameSrc = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(viewer)?.[1]?.replace(/&amp;/g, "&") ?? "";
-  // The frame's address is the page's file, under the token that opens the document's files.
+  // The frame's address is the page's file, under the token that opens the document's files (the metas erga-pages
+  // and erga-page: ergaFrames.src(), client/inline/viewer-frames.ts).
+  const meta = (name: string) => new RegExp(`<meta name="${name}" content="([^"]*)"`).exec(viewer)?.[1]?.replace(/&amp;/g, "&") ?? "";
+  const frameSrc = meta("erga-pages") + meta("erga-page");
   const frame = new URL(frameSrc);
   expect(frame.pathname).toMatch(/^\/t\/[^/]+\/blog\/index\.html$/);
   const prefix = frame.pathname.slice(0, -"blog/index.html".length);

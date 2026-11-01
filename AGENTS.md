@@ -154,6 +154,10 @@ Found a new trap? Write it here, in the same change.
 - A link in the viewer's frame opens another page with no reload (client/inline/viewer-nav.ts),
   so the page shown is the meta `erga-page`, not the address the frame opened with. Code that
   loads the frame again takes the address from `ergaFrames.src()`, never a copy made at load.
+- The frame has its own history. Back after a link in the frame loads the frame's old address
+  again, with its `?erga-edit` if the editor was on then, and that page asks for the editor by
+  itself. Only the shell decides "editing" (`client/shell/remote.ts`: `active`); the frame's
+  address never does.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 
