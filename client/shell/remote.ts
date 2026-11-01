@@ -184,7 +184,9 @@ export class RemotePage {
     switch (m.type) {
       case "ready": {
         // A frame that (re)loads starts from the room's text and the page's selection (once: it may say so twice).
-        if (this.ready) return;
+        // Only in the editor: a page whose address still asks for the editor (?erga-edit, from the frame's own history
+        // with Back) stays as it is in the viewer, until the pencil asks for the editor (start).
+        if (this.ready || !this.active) return;
         this.ready = true;
         this.authority.reset();
         const { __ergaTimescale: timescale, __ergaCheck: check } = globalThis as { __ergaTimescale?: number; __ergaCheck?: boolean };
