@@ -220,7 +220,9 @@ test("the editor's early layout puts on what mountLayout will (the document does
     };
     const computed = () => ({ paddingLeft: `${safe}px`, paddingRight: `${safe}px` });
     new Function("document", "localStorage", "getComputedStyle", "innerWidth", LAYOUT_EARLY)(document, storage, computed, width);
-    const open = agent !== false, want = layoutVars(load(storage), { width, safeL: safe, safeR: safe }, { agent: open, picker: false });
+    // (On a phone the agent starts closed: main.ts, openAgentOnEntry.)
+    const open = agent !== false && width >= 760,
+      want = layoutVars(load(storage), { width, safeL: safe, safeR: safe }, { agent: open, picker: false });
     const what = `${JSON.stringify(kept)}, agent ${agent}, ${width}px, notch ${safe}px`;
     expect(vars, what).toEqual(Object.fromEntries(Object.entries(want).map(([k, n]) => [k, `${Math.round(n)}px`])));
     expect(classes.has("agent-open"), what).toBe(open);

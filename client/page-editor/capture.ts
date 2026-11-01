@@ -13,6 +13,7 @@ import {
 } from "../../shared/agent-log";
 import { findStep, stepNumber, stepSpec } from "../../shared/steps";
 import { FRAMES_BY_CLOCK, frames, wait } from "./clock";
+import { topRoom } from "../common/top-room";
 
 // The agent asks to see the page. This frame renders the latest version
 // (edits still waiting for the end of the agent's turn included) in a
@@ -119,6 +120,8 @@ export async function captureView(req: ViewRequest, html: string, hash: string):
       win = shot.contentWindow as (Window & { __ergaErrors?: string[] }) | null;
     const errors = () => [...(win?.__ergaErrors ?? [])];
     if (forced) forceScheme(d, scheme);
+    // The room a scrolling page keeps at its top for the bars, as the person's view has it (client/common/top-room.ts).
+    topRoom(d).update();
     const unread = await embeddableFonts(d);
     const pending = await settle(d, Date.now() + LOAD_WAIT);
     const notes: string[] = [];

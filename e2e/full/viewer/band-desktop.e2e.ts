@@ -1,6 +1,6 @@
 // The band's layout and colour on a desktop (1. "Layout and colour"): on pages whose first line sits
-// at their very top edge, viewing and editing, no control covers the document's text, the controls sit on the band
-// above the document, the band is the document's colour at its top edge, and the controls' tone suits the page.
+// at their very top edge, viewing and editing, no control covers the document's text, the controls sit above
+// its first line (the page keeps room for them at its top), the band is the document's colour at its top edge, and the controls' tone suits the page.
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { layout, layoutOk, topDoc, type Layout } from "./band";
 import { diff, docShows, openViewer } from "./viewer";
@@ -21,7 +21,7 @@ for (const doc of ["light", "dark", "gradient"] as const) for (const mode of ["v
     expect(last!.controls, "found the controls").toBeGreaterThanOrEqual(2);
     expect(last!.text, "found the document's first line").toBeGreaterThanOrEqual(3);
     expect(last!.overlaps, "controls that cover the document's text").toEqual([]);
-    expect(last!.lowest, "the controls sit on the band, above the document").toBeLessThanOrEqual(last!.top);
+    expect(last!.lowest, "the controls sit above the document's first line").toBeLessThanOrEqual(last!.top);
     expect(diff(last!.band, last!.edge), `the band (${last!.band}) is the document's colour at its top edge (${last!.edge})`).toBeLessThanOrEqual(12);
     expect(diff(last!.band2, last!.edge), `the band beside the document (${last!.band2}) too`).toBeLessThanOrEqual(12);
     expect(last!.tone).toBe(tone);

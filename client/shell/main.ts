@@ -22,6 +22,7 @@ import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../page-editor/zoom";
 import { fastClick } from "../common/fast-click";
+import { NARROW } from "../agent/layout";
 import { BASE, $, editing, isMac, store, type Shell } from "./shell";
 import { mountNaming } from "./naming";
 import { mountRoom } from "./room";
@@ -337,6 +338,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
       if (!$("sharing").hidden) shell.sharing.toggleSharing(false);
       if (shell.docSettings?.isOpen()) shell.docSettings.toggle(false);
       shell.pause.showPauseCard(false);
+      shell.people.toggleAccount(false);
+      shell.chrome.toggleQuick(false);
     },
     onActivity: (kind) => {
       activate();
@@ -425,9 +428,13 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
     if (e.key == "Escape") {
       // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs to cancel.
       if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
-      if (shell.docSettings?.escape()) { /* its menu, or itself, closed */ }
-      else if (!$("account").hidden) { shell.people.toggleAccount(false); shell.people.accountBtn?.focus(); }
-      else if (!$("help").hidden) shell.chrome.toggleHelp(false);
+      if (shell.docSettings?.escape()) {
+        /* its menu, or itself, closed */
+      } else if (!$("account").hidden) {
+        shell.people.toggleAccount(false);
+        shell.chrome.toggleQuick(false);
+        shell.people.accountBtn?.focus();
+      } else if (!$("help").hidden) shell.chrome.toggleHelp(false);
       else if (!$("naming").hidden) shell.naming.toggleNaming(false);
       else if (!$("pages").hidden) { shell.naming.togglePages(false); $("doc-title").focus(); }
       // (Its box had the focus: the caret goes back to the text.)
@@ -484,14 +491,14 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   // Out of the editor and back in, without leaving the page: the
   // controls go out of sight, with anything open among them, and come back as they were.
   // Into the editor (or loading in it), the editor shows first, then the agent
-  // grows out of its button, unless the user keeps it closed. The first time,
+  // grows out of its button, unless the user keeps it closed (or on a phone, where it would cover the page). The first time,
   // that's once the editor is ready (this runs before main.ts calls
   // ergaShell.ready) and the page has said what its background is, so the
   // room the page slides over to make is its colour, never the editor's white
   // (applyBackdrop); a page that never says gives up waiting after a moment.
   let entering = 0;
   function openAgentOnEntry() {
-    if (!settings.agent) return;
+    if (!settings.agent || innerWidth < NARROW) return;
     const mine = ++entering;
     void Promise.race([backdropReady, sleep(2000)]).then(() =>
       requestAnimationFrame(() => requestAnimationFrame(() => { if (mine == entering && editing()) shell.agent.showAgent(true); })));
@@ -507,7 +514,13 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
     }
     if (shell.mode != "text") shell.views.setMode("text");
     void page.stop();
-    shell.chrome.toggleHelp(false); shell.sharing.toggleSharing(false); shell.naming.toggleNaming(false); shell.naming.togglePages(false); shell.people.toggleAccount(false); shell.pause.showPauseCard(false);
+    shell.chrome.toggleHelp(false);
+    shell.sharing.toggleSharing(false);
+    shell.naming.toggleNaming(false);
+    shell.naming.togglePages(false);
+    shell.people.toggleAccount(false);
+    shell.chrome.toggleQuick(false);
+    shell.pause.showPauseCard(false);
     shell.fmt.hideFmt();
     shell.agent.showAgent(false);
     shell.agent.stopVoice();
@@ -518,7 +531,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-
   // Switched into the editor from viewing is coming into it, and the agent grows out as above
   // (server/pages/viewer.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
-  else if (window.ergaShell?.loadedEditing !== false) shell.agent.showAgent(settings.agent);
+  else if (window.ergaShell?.loadedEditing !== false) shell.agent.showAgent(settings.agent && innerWidth >= NARROW);
   else openAgentOnEntry();
 
   // ---------------------------------------------------------------- a new release

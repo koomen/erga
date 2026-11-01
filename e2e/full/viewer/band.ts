@@ -11,7 +11,7 @@ export const topDoc = async (server: Server, name: "light" | "dark" | "gradient"
 /** The controls on the band, viewing and editing. */
 const CONTROLS = {
   view: `.erga-view-buttons > *, .erga-account-btn, .erga-crumbs > *`,
-  edit: `#nav-docs > :not([hidden]), .chrome-top > :not(.people), .people > *, .me-slot > *`,
+  edit: `#nav-docs > :not([hidden]), .quick-inner > :not(.people), .people > *, .me-slot > *`,
 };
 
 type Box = { name?: string; l: number; t: number; r: number; b: number };
@@ -21,10 +21,10 @@ export interface Layout {
   text: number;
   /** Controls whose box covers a line of the document's text. */
   overlaps: string[];
-  /** The lowest control's bottom, and the document's top edge, in the tab. */
+  /** The lowest control's bottom, and the top of the document's first line, in the tab. */
   lowest: number;
   top: number;
-  /** The band (top middle and just above the document's left edge) and the document's top edge. */
+  /** The band (top middle, and just above the frame's left edge, or at the window's top when the frame starts there) and the page's top edge. */
   band: RGB;
   band2: RGB;
   edge: RGB;
@@ -46,9 +46,35 @@ export async function layout(page: Page, mode: "view" | "edit"): Promise<Layout>
   const width = page.viewportSize()!.width;
   const scale = await page.evaluate(() => devicePixelRatio);
   const mid = (frame.x + (width - frame.x) / 2) * scale;
-  const [[band, band2, edge]] = await sample(page, [await screenshot(page)], [[mid, 3 * scale], [frame.x * scale + 4, frame.y * scale - 3], [mid, (frame.y + 2) * scale]]);
-  const tone = await page.evaluate(() => document.documentElement.classList.contains("page-dark") ? "dark" : document.documentElement.classList.contains("page-light") ? "light" : "");
-  return { controls: controls.length, text: text.length, overlaps, lowest: Math.max(...controls.map((c) => c.b)), top: frame.y, band, band2, edge, tone };
+  // (A scrolling page's frame starts at the top of the window, behind the controls: the page keeps room for them.)
+  const top = Math.min(...text.map((t) => t.t));
+  const [[band, band2, edge]] = await sample(
+    page,
+    [await screenshot(page)],
+    [
+      [mid, 3 * scale],
+      [frame.x * scale + 4, Math.max(2, frame.y - 3) * scale],
+      [mid, (frame.y + 2) * scale],
+    ]
+  );
+  const tone = await page.evaluate(() =>
+    document.documentElement.classList.contains("page-dark")
+      ? "dark"
+      : document.documentElement.classList.contains("page-light")
+        ? "light"
+        : ""
+  );
+  return {
+    controls: controls.length,
+    text: text.length,
+    overlaps,
+    lowest: Math.max(...controls.map((c) => c.b)),
+    top,
+    band,
+    band2,
+    edge,
+    tone,
+  };
 }
 
 /** Whether a layout is right: the controls clear of the text and above it, the band the document's colour, the tone right. */

@@ -46,7 +46,8 @@ async function seams(ed: Editor) {
   const [px] = await sample(ed.page, [await screenshot(ed.page)], points);
   await ed.eval(`document.getElementById("agent").style.opacity = ""`);
   const pairs: { what: string; room: RGB; page: RGB }[] = ys.map((y, i) => ({ what: `behind the card at ${Math.round(y)}px`, room: px[2 * i], page: px[2 * i + 1] }));
-  pairs.push({ what: "the band above the page", room: px[6], page: px[7] });
+  // (A scrolling page's frame starts at the window's top, behind the bars: its own top is the band.)
+  if (g.top >= 8) pairs.push({ what: "the band above the page", room: px[6], page: px[7] });
   return pairs;
 }
 

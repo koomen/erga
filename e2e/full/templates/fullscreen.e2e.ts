@@ -20,8 +20,15 @@ const escape = (page: Page) => page.evaluate(() => document.exitFullscreen());
 /** The frame fills the window. */
 const fills = (page: Page) =>
   page.evaluate(() => {
+    // (Full screen, not a scrolling page's frame, which starts at the window's top too.)
     const r = document.getElementById("frame")!.getBoundingClientRect();
-    return r.left == 0 && r.top == 0 && r.width == innerWidth && r.height == innerHeight;
+    return (
+      document.documentElement.classList.contains("erga-full") &&
+      r.left == 0 &&
+      r.top == 0 &&
+      r.width == innerWidth &&
+      r.height == innerHeight
+    );
   });
 /** The step controls: on top where they are (over the page's frame), and faded while the pointer is still. */
 const controls = (page: Page) =>

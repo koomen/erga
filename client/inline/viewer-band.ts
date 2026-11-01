@@ -128,8 +128,34 @@ export default function viewerBand(): void {
     const kept = JSON.parse(localStorage.getItem(KEY) || "null");
     if (kept) paintCanvas(kept, []);
   } catch {}
+  // The room a scrolling page keeps at its top for the bars (client/common/top-room.ts): the band's height, in the page's
+  // own pixels (the editor's zoom), told to the page as it starts and when either changes (in full screen too: the page
+  // doesn't move as it goes in and out). A page that fills the window says so, and its frame stays below the band (viewer-band.css, erga-fills), here and next time.
+  const root = document.documentElement,
+    probe = document.createElement("div");
+  probe.style.cssText = "position: fixed; top: 0; width: 0; height: var(--band-h); visibility: hidden; pointer-events: none";
+  document.body.append(probe);
+  let roomSaid = -1;
+  function tellRoom(again?: boolean) {
+    const r = Math.round((probe.offsetHeight / ergaFrames.scale()) * 100) / 100;
+    if (!again && r == roomSaid) return;
+    roomSaid = r;
+    ergaFrames.send({ type: "erga-room", px: r });
+  }
+  new MutationObserver(() => tellRoom()).observe(root, { attributes: true, attributeFilter: ["style", "class"] });
+  addEventListener("resize", () => tellRoom());
   addEventListener("message", (e) => {
     if (!ergaFrames.from(e)) return;
+    if (e.data?.type == "erga-hello") return tellRoom(true);
+    if (e.data?.type == "erga-fills") {
+      const fills = e.data.fills === true;
+      root.classList.toggle("erga-fills", fills);
+      try {
+        if (fills) localStorage.setItem("erga:fills:v1:" + id, "1");
+        else localStorage.removeItem("erga:fills:v1:" + id);
+      } catch {}
+      return;
+    }
     if (e.data?.type == "erga-scroll") {
       sx = Number(e.data.sx) || 0;
       sy = Number(e.data.sy) || 0;

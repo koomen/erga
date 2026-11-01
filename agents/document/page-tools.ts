@@ -36,7 +36,7 @@ export function pageTools(view: (req: ViewRequest) => Promise<ViewResult>): Agen
     {
       name: "view_page",
       label: "Look at the page",
-      description: `See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw, the fonts its text rendered in, and the size and light or dark mode it rendered at. By default one screenful from the top, at the user's own window size and mode; full_page for the whole page (up to 4000px tall); selector for one element; width, height and color_scheme to see it as someone else would. ${AT_STEP} ${PREVIEW_WORDS} It renders in a hidden copy: the user's own view doesn't move.`,
+      description: `See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw, the fonts its text rendered in, and the size and light or dark mode it rendered at. By default one screenful from the top, at the user's own window size and mode; full_page for the whole page (up to 4000px tall); selector for one element; width, height and color_scheme to see it as someone else would. ${AT_STEP} ${PREVIEW_WORDS} It renders in a hidden copy: the user's own view doesn't move. A page that scrolls has 56px more padding at the top of its <html> in every view, where Erga's bars float over it; it isn't in the page's files.`,
       parameters: Schema.Struct({
         selector: Schema.optionalKey(
           Schema.String.annotate({ description: 'CSS selector of an element to capture, e.g. "#chart" or "figure:nth-of-type(2)".' })

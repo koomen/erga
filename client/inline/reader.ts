@@ -8,6 +8,7 @@
 import type { ReaderConfig } from "../../shared/page-html";
 import { copyOf } from "../page-editor/clipboard-html";
 import { linkTarget, placeOf } from "../common/link-target";
+import { topRoom } from "../common/top-room";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
 type Canvas = {
@@ -70,7 +71,9 @@ export default function reader(C: ReaderConfig): void {
       said = "";
       tellSteps();
     },
+    // (The editor puts the page back where it was: with its room for the bars.)
     placed: () => {
+      keepRoom();
       placed();
     },
   };
@@ -86,6 +89,35 @@ export default function reader(C: ReaderConfig): void {
   still.setAttribute("data-erga", "");
   still.textContent = "html { overscroll-behavior: none; }";
   (document.head || root).append(still);
+  // The room for the bars at the top of a scrolling page (client/common/top-room.ts), measured again when the page's
+  // styles may have changed (its head, its root's attributes), as it loads, the window's size, or the room the viewer asks for (its
+  // band's height at its zoom); and whether the page fills the window, for the viewer, which keeps its frame below the
+  // bars then.
+  const room = topRoom(document);
+  let roomDirty = true,
+    fillsSaid: boolean | null = null;
+  const dirty = () => {
+    roomDirty = true;
+  };
+  const styles = new MutationObserver(dirty);
+  styles.observe(root, { attributes: true, attributeFilter: ["style", "class"] });
+  addEventListener("resize", dirty);
+  addEventListener("load", dirty);
+  // (At once as the page is parsed, before its deferred scripts and the editor run and measure it.)
+  document.addEventListener("readystatechange", () => {
+    dirty();
+    keepRoom();
+  });
+  function keepRoom() {
+    if (!roomDirty || !ready()) return;
+    roomDirty = false;
+    if (document.head) styles.observe(document.head, { childList: true, subtree: true, characterData: true, attributes: true });
+    const fills = room.update();
+    if (fills !== fillsSaid) {
+      fillsSaid = fills;
+      tell({ type: "erga-fills", fills });
+    }
+  }
   // Reloaded in the editor scrolled down the page (?erga-y=, viewer.ts): it opens where it was, out of sight until it's
   // there (its content may still be coming), or as far as it goes once it has loaded (a shorter page now), or after a moment.
   let startY = Number((/[?&]erga-y=(\d+)/.exec(location.search) || [])[1]) || 0,
@@ -317,6 +349,7 @@ export default function reader(C: ReaderConfig): void {
     hash: string | null = null;
   (function watch() {
     try {
+      keepRoom();
       if (startY) place();
       const c = colour(),
         cv = c != null ? canvas() : null;
@@ -470,6 +503,10 @@ export default function reader(C: ReaderConfig): void {
     if (type == "erga-step") step(e.data);
     else if (type == "erga-step-image") stepImage(e.data);
     else if (type == "erga-edit") load();
+    else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {
+      room.room = e.data.px;
+      dirty();
+    }
     // The document's public address, for the links in a copy: on the viewer's origin, as the token names it.
     else if (type == "erga-address" && typeof e.data.address == "string" && e.data.address.indexOf(C.shell + "/") == 0)
       C.address = e.data.address;
