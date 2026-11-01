@@ -62,12 +62,13 @@ export const newDocButton = (cls: string, label = "") =>
  * The picker, one on each page (or shadow root) whatever + buttons it has:
  * each template a link to /new?template=<id> (`href` adds what the page's
  * links keep, ?user=). /new asks someone signed out to sign in first, and
- * comes back to make it.
+ * comes back to make it. Last, under a line, Clone: the editor gives it the
+ * viewer's Clone address and shows it while editing (client/shell/main.ts).
  */
 export function newDocMenu(href: (path: string) => string): string {
   const item = (t: Template) =>
     `<a role="menuitem" href="${esc(href(`/new?template=${encodeURIComponent(t.id)}`))}" data-template="${esc(t.id)}"><b>${esc(t.name)}</b><span>${esc(t.description)}</span></a>`;
-  return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" data-fonts="${esc(asset("inter.css"))}" hidden><p class="erga-new-title">New document</p>${TEMPLATES.map(item).join("")}</div>`;
+  return `<div class="erga-new-menu" id="erga-new-menu" role="menu" aria-label="New document" data-fonts="${esc(asset("inter.css"))}" hidden><p class="erga-new-title">New document</p>${TEMPLATES.map(item).join("")}<hr class="erga-new-sep"><a role="menuitem" class="erga-new-clone" href=""><b>Clone</b><span>Your own copy of this document.</span></a></div>`;
 }
 
 /** The menu's look (client/inline/new-doc.css). */

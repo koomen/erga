@@ -19,10 +19,11 @@
     })();
   </script>
   <!-- The build (client/build.ts) puts this build's files here: the typeface's @font-face rules and the editor's own
-       styles (client/styles/editor.css) in the page itself, the stylesheet and the script (below) at their hashed addresses. -->
+       styles (client/styles/editor.css, glass.css) in the page itself, the stylesheet and the script (below) at their hashed addresses. -->
   <link rel="stylesheet" href="/fonts/inter.css">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/editor.css">
+  <link rel="stylesheet" href="/glass.css">
 </head>
 <body>
   <iframe id="frame" title="Document" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups" allow="autoplay"></iframe>
@@ -49,10 +50,6 @@
     <button type="button" class="icon-btn erga-new-btn" id="btn-new" aria-label="New document" data-tip="New document" aria-haspopup="menu" aria-expanded="false" aria-controls="erga-new-menu">
       <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.1538) translate(-12 -12)" stroke-width="1.3867"><path d="M12 5.5v13M5.5 12h13"/></g></svg>
     </button>
-    <!-- Clone: a copy of your own, as the viewer's, which main.ts takes its address from. -->
-    <a class="icon-btn" id="btn-clone" href="" draggable="false" aria-label="Clone: make your own copy" data-tip="Clone" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0345) translate(-12 -13.25)" stroke-width="1.5467"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></g></svg>
-    </a>
     <!-- Full screen, as the viewer's (server/pages/viewer.ts, fullButton; client/inline/viewer-full.ts runs it). -->
     <button type="button" class="icon-btn erga-full-button" id="btn-full" aria-label="Full screen" data-tip="Full screen">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 9.25v-3.5a1 1 0 0 1 1-1h3.5M14.75 4.75h3.5a1 1 0 0 1 1 1v3.5M19.25 14.75v3.5a1 1 0 0 1-1 1h-3.5M9.25 19.25h-3.5a1 1 0 0 1-1-1v-3.5"/></svg>
@@ -72,6 +69,13 @@
     <a class="icon-btn" id="btn-edit" href="" draggable="false" aria-label="Editing: stop, and view the page" aria-pressed="true" data-tip="Edit" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg>
     </a>
+    <!-- Share with an agent: copies a one-line prompt that names Erga's MCP server and this document (sharing.ts). -->
+    <button type="button" class="icon-btn" id="btn-agent-share" aria-label="Share with an agent: copy a prompt for it" data-tip="Share with an agent">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.12) translate(-12 -11.5)" stroke-width="1.4"><rect x="3.5" y="9" width="10.5" height="8.5" rx="3"/><path d="M8.75 9V6.5"/><circle cx="8.75" cy="5.5" r="1"/><circle cx="6.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><circle cx="10.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><path d="M2 12.5v1.5M15.5 12.5v1.5"/><path d="M18.75 3.5v6M15.75 6.5h6"/></g></svg>
+    </button>
+    <a class="icon-btn" id="btn-docs" href="/docs" draggable="false" aria-label="Documents" data-tip="Documents">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg>
+    </a>
     <div class="me-slot" id="me" aria-label="You"></div>
   </header>
 
@@ -88,7 +92,7 @@
     <a role="menuitem" id="account-out" href="/auth/logout">Sign out</a>
   </div>
 
-  <!-- Share: one card, two halves. With people (its owner only: main.ts, from meta erga-share), and with an agent (share-agent.ts fills it). -->
+  <!-- Share: with people (its owner only: sharing.ts, from meta erga-share). Sharing with an agent is its own button (#btn-agent-share). -->
   <div id="sharing" class="help share sharing" hidden role="dialog" aria-label="Share">
     <section id="sharing-people" aria-labelledby="sharing-title">
       <h2 id="sharing-title">Share with people</h2>
@@ -106,8 +110,6 @@
       </div>
       <p id="sharing-status" class="share-status sharing-status" role="status" aria-live="polite"></p>
     </section>
-    <section id="sharing-agent"></section>
-  </div>
   </div>
 
   <div id="pages" class="help naming pages" hidden role="dialog" aria-label="Pages">
@@ -153,10 +155,12 @@
     <p>Others editing the page show as carets with their names, and their edits are marked in their colour. ⌘Z only undoes your own edits; the agent panel has its own undo for your agent's.</p>
   </div>
 
-  <button type="button" class="agent-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="false" aria-controls="agent">
-    <svg class="erga-mark" viewBox="-66 -1107 1240 1240" aria-hidden="true"><path fill="currentColor" d="M1026 -209Q1026 -182 1018 -163Q1009 -144 996 -129Q982 -114 965 -101Q947 -88 929 -73Q915 -61 904 -55Q893 -49 883 -45Q872 -41 861 -37Q849 -33 834 -26Q814 -16 801 -7Q787 1 774 8Q760 15 744 20Q728 24 704 27Q664 32 624 39Q583 46 543 46Q535 46 527 43Q518 39 507 36Q496 32 483 29Q469 25 450 25Q430 25 418 19Q406 13 397 5Q387 -3 377 -12Q367 -22 351 -29Q291 -56 249 -94Q207 -132 177 -179Q147 -226 127 -281Q107 -336 93 -396Q82 -438 82 -480Q82 -535 108 -582Q98 -610 98 -636Q98 -655 109 -692Q120 -730 138 -768Q155 -806 176 -836Q196 -867 214 -874Q228 -879 234 -882Q239 -886 239 -902Q239 -914 249 -922Q258 -930 272 -935Q285 -940 299 -944Q312 -948 321 -952Q358 -970 392 -982Q425 -995 459 -1003Q492 -1012 528 -1016Q564 -1020 605 -1020Q627 -1020 648 -1014Q669 -1008 689 -998Q708 -989 727 -977Q746 -966 764 -955L763 -955Q778 -953 792 -946Q805 -940 820 -938Q834 -921 857 -905Q879 -890 901 -873Q922 -856 938 -836Q953 -817 953 -792Q953 -788 953 -784Q952 -780 951 -775L955 -780Q959 -777 963 -770Q966 -763 969 -754Q972 -746 974 -737Q976 -729 977 -724Q985 -711 999 -703Q1012 -695 1020 -681Q1010 -671 1010 -655Q1010 -638 1017 -621Q1024 -605 1024 -588Q1024 -568 1022 -549Q1020 -531 1020 -511Q1020 -496 1009 -488Q997 -480 984 -474Q970 -468 959 -462Q948 -456 948 -445Q948 -437 939 -437Q929 -438 923 -438Q879 -438 836 -449Q792 -460 749 -460Q702 -460 656 -453Q610 -447 563 -447Q528 -447 494 -449Q459 -451 424 -451Q415 -451 390 -447Q365 -444 338 -438Q310 -433 285 -425Q260 -418 250 -411Q249 -406 249 -397Q249 -350 277 -300Q304 -250 349 -209Q394 -168 450 -141Q506 -114 563 -114Q596 -114 629 -111Q661 -109 692 -97Q719 -110 742 -127Q764 -144 785 -163Q806 -182 826 -202Q846 -222 867 -242Q871 -246 887 -249Q902 -253 920 -255Q938 -258 955 -259Q971 -261 977 -261Q1000 -261 1020 -254Q1026 -231 1026 -209ZM876 -615Q876 -630 871 -644Q866 -658 863 -673Q858 -701 858 -727Q858 -754 850 -781L849 -781Q849 -775 845 -769Q841 -764 834 -764Q822 -764 811 -770Q800 -776 792 -785Q754 -802 724 -817Q693 -832 663 -843Q632 -855 598 -861Q563 -868 518 -868Q514 -868 511 -867Q507 -867 504 -864L509 -853L501 -851Q474 -846 457 -841Q439 -837 425 -829Q411 -821 398 -809Q384 -798 363 -780Q353 -771 342 -766Q330 -762 319 -758Q307 -755 297 -751Q286 -747 279 -738Q272 -713 259 -689Q245 -666 245 -640Q245 -625 258 -613Q270 -602 290 -594Q309 -586 333 -580Q356 -574 379 -571Q402 -568 422 -566Q441 -565 452 -565Q490 -565 527 -572Q564 -580 602 -580Q641 -580 680 -576Q719 -573 758 -573Q768 -573 788 -574Q808 -575 828 -579Q847 -584 862 -592Q876 -601 876 -615Z"/></svg>
-  </button>
-  <aside id="agent" class="agent" inert aria-label="Agent"><div class="agent-card">
+  <!-- The agent: one glass element (.agent-glass), the "e" circle closed, which grows into the panel (client/styles/editor.css). -->
+  <aside id="agent" class="agent" aria-label="Agent"><div class="agent-glass">
+    <button type="button" class="agent-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="false" aria-controls="agent">
+      <svg class="erga-mark" viewBox="-66 -1107 1240 1240" aria-hidden="true"><path fill="currentColor" d="M1026 -209Q1026 -182 1018 -163Q1009 -144 996 -129Q982 -114 965 -101Q947 -88 929 -73Q915 -61 904 -55Q893 -49 883 -45Q872 -41 861 -37Q849 -33 834 -26Q814 -16 801 -7Q787 1 774 8Q760 15 744 20Q728 24 704 27Q664 32 624 39Q583 46 543 46Q535 46 527 43Q518 39 507 36Q496 32 483 29Q469 25 450 25Q430 25 418 19Q406 13 397 5Q387 -3 377 -12Q367 -22 351 -29Q291 -56 249 -94Q207 -132 177 -179Q147 -226 127 -281Q107 -336 93 -396Q82 -438 82 -480Q82 -535 108 -582Q98 -610 98 -636Q98 -655 109 -692Q120 -730 138 -768Q155 -806 176 -836Q196 -867 214 -874Q228 -879 234 -882Q239 -886 239 -902Q239 -914 249 -922Q258 -930 272 -935Q285 -940 299 -944Q312 -948 321 -952Q358 -970 392 -982Q425 -995 459 -1003Q492 -1012 528 -1016Q564 -1020 605 -1020Q627 -1020 648 -1014Q669 -1008 689 -998Q708 -989 727 -977Q746 -966 764 -955L763 -955Q778 -953 792 -946Q805 -940 820 -938Q834 -921 857 -905Q879 -890 901 -873Q922 -856 938 -836Q953 -817 953 -792Q953 -788 953 -784Q952 -780 951 -775L955 -780Q959 -777 963 -770Q966 -763 969 -754Q972 -746 974 -737Q976 -729 977 -724Q985 -711 999 -703Q1012 -695 1020 -681Q1010 -671 1010 -655Q1010 -638 1017 -621Q1024 -605 1024 -588Q1024 -568 1022 -549Q1020 -531 1020 -511Q1020 -496 1009 -488Q997 -480 984 -474Q970 -468 959 -462Q948 -456 948 -445Q948 -437 939 -437Q929 -438 923 -438Q879 -438 836 -449Q792 -460 749 -460Q702 -460 656 -453Q610 -447 563 -447Q528 -447 494 -449Q459 -451 424 -451Q415 -451 390 -447Q365 -444 338 -438Q310 -433 285 -425Q260 -418 250 -411Q249 -406 249 -397Q249 -350 277 -300Q304 -250 349 -209Q394 -168 450 -141Q506 -114 563 -114Q596 -114 629 -111Q661 -109 692 -97Q719 -110 742 -127Q764 -144 785 -163Q806 -182 826 -202Q846 -222 867 -242Q871 -246 887 -249Q902 -253 920 -255Q938 -258 955 -259Q971 -261 977 -261Q1000 -261 1020 -254Q1026 -231 1026 -209ZM876 -615Q876 -630 871 -644Q866 -658 863 -673Q858 -701 858 -727Q858 -754 850 -781L849 -781Q849 -775 845 -769Q841 -764 834 -764Q822 -764 811 -770Q800 -776 792 -785Q754 -802 724 -817Q693 -832 663 -843Q632 -855 598 -861Q563 -868 518 -868Q514 -868 511 -867Q507 -867 504 -864L509 -853L501 -851Q474 -846 457 -841Q439 -837 425 -829Q411 -821 398 -809Q384 -798 363 -780Q353 -771 342 -766Q330 -762 319 -758Q307 -755 297 -751Q286 -747 279 -738Q272 -713 259 -689Q245 -666 245 -640Q245 -625 258 -613Q270 -602 290 -594Q309 -586 333 -580Q356 -574 379 -571Q402 -568 422 -566Q441 -565 452 -565Q490 -565 527 -572Q564 -580 602 -580Q641 -580 680 -576Q719 -573 758 -573Q768 -573 788 -574Q808 -575 828 -579Q847 -584 862 -592Q876 -601 876 -615Z"/></svg>
+    </button>
+    <div class="agent-card" inert>
     <div class="agent-head">
       <span class="title">Agent</span><span class="model" id="agent-model"></span>
       <button type="button" class="icon-btn" id="agent-undo" aria-label="Undo the agent's last change" data-tip="Undo the agent's last change" aria-disabled="true">
@@ -179,7 +183,7 @@
       </button>
       <button type="submit" class="agent-send" id="agent-send">Send</button>
     </form>
-  </div></aside>
+  </div></div></aside>
 
   <div id="fmt" class="fmt" hidden role="toolbar" aria-label="Text style">
     <div class="fmt-panes" id="fmt-panes">

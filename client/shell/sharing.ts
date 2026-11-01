@@ -1,48 +1,29 @@
-// Share: the document with people (its owner only), and with an external agent.
+// Share: the document with people (its owner only), and with an external agent (a prompt to copy).
 
 import { colorFor, type Author } from "../../document/content";
-import { shareWithAgent, showCopied } from "../agent/share-agent";
+import { showCopied } from "../agent/share-agent";
 import { runTool } from "../common/tools";
 import { BASE, $, type Shell } from "./shell";
 
 export function mountSharing(shell: Shell) {
 
-  // Share with an external agent: a prompt carrying this document's address and your
-  // agent token (server/identity/tokens.ts: the share button's, the same until rotated), which
-  // lets the agent call the server's API (server/api.ts, /api/tools) as you: this document's
-  // tools, with it as "document", and the rest of the server.
-  const shareBtn = $("btn-share");
-  function promptFor(token: string): string {
-    const doc = `${location.origin}${BASE}`;
-    return `I'd like your help editing "${shell.info?.path ?? shell.info?.name ?? "the document"}", an Erga document I have open in my editor. You can read and change it through Erga's API, working as my agent: your edits show up in my editor as you make them.
-
-Document: ${doc}
-Token: ${token}
-
-Send the token on every request, as the header "Authorization: Bearer ${token}". Name the document in each tool call as "document": "${doc}". Start by reading the API guide, which explains the tools, how to call them, and the rules for pages:
-
-curl -s -H "Authorization: Bearer ${token}" ${location.origin}/llms.txt
-
-The same token works for the rest of Erga as me (my other documents, new ones, publishing a site), if I ask for that.
-
-Once you've read the guide, await further instructions.`;
-  }
-  const { toggle: loadAgentShare } = shareWithAgent({
-    into: $("sharing-agent"),
-    title: "Share with an agent",
-    intro: "Paste it into Claude Code, Codex or another agent. It edits this page as you.",
-    note: `Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/settings" target="_blank">your settings</a> lists and revokes them all.`,
-    token: (rotate) => fetch(shell.api("/api/share"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }), signal: AbortSignal.timeout(10_000) })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`the host answered ${r.status}`))) as Promise<{ token: string }>)
-      .then((r) => r.token, (e: Error) => Promise.reject(e.name == "TimeoutError" ? new Error("the editor's host didn't answer") : e)),
-    prompt: promptFor,
-    onCopied: () => closeAfterCopy(),
+  // Share with an agent (#btn-agent-share): a one-line prompt, no token in it, that adds Erga's MCP server to the agent's
+  // app and opens this document there. The agent's app signs in on Erga (MCP's OAuth), so the token stays in that app.
+  const agentShare = $("btn-agent-share");
+  agentShare.addEventListener("click", async () => {
+    const prompt = `Add Erga's MCP server, ${location.origin}/mcp, then open ${location.origin}${shell.docName?.address ?? location.pathname}.`;
+    const ok = await navigator.clipboard.writeText(prompt).then(
+      () => true,
+      () => false
+    );
+    if (ok) showCopied(agentShare);
+    else shell.toast.explain(`Couldn't reach the clipboard. Paste this into your agent: ${prompt}`);
   });
 
-  // Share (#btn-share, the Share card): with people, then with an agent (above). With people: who may view or edit the
-  // document, and anyone signed in with the link. Only its owner may (the app says where, meta erga-share), so the
-  // card's people half shows for them alone; each change is saved as it's made (the operation share_document, as on My
-  // Documents' share dialog).
+  const shareBtn = $("btn-share");
+  // Share (#btn-share, the Share card): who may view or edit the document, and anyone signed in with the link. Only its
+  // owner may (the app says where, meta erga-share), so the button shows for them alone; each change is saved as it's made
+  // (the operation share_document, as on My Documents' share dialog).
   const sharing = $("sharing");
   const sharingList = $("sharing-list"),
     sharingAdd = $("sharing-add") as HTMLFormElement;
@@ -51,7 +32,7 @@ Once you've read the guide, await further instructions.`;
     linkHint = $("sharing-hint"),
     anyoneLabel = document.querySelector<HTMLLabelElement>("label[for=sharing-anyone]")!;
   const shareAt = !!document.querySelector<HTMLMetaElement>('meta[name="erga-share"]');
-  $("sharing-people").hidden = !shareAt;
+  shareBtn.hidden = !shareAt;
   type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[]; avatars?: Record<string, string>; publicSharing?: boolean };
   const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
   const shareCall = (change?: { login: string; role: string }): Promise<Shared> =>
@@ -125,7 +106,6 @@ Once you've read the guide, await further instructions.`;
     shareBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
     shell.chrome.showChrome(); shell.chrome.toggleHelp(false); shell.naming.toggleNaming(false); shell.naming.togglePages(false); shell.people.toggleAccount(false); shell.docSettings?.toggle(false); shell.pause.showPauseCard(false);
-    loadAgentShare(true);
     if (!shareAt) return;
     sharingAdd.reset();
     tellSharing("Loading…");
@@ -140,7 +120,7 @@ Once you've read the guide, await further instructions.`;
     if (login && (await changeSharing(login, (sharingAdd.elements.namedItem("role") as HTMLSelectElement).value))) input.value = "";
   });
   sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
-  // Copy link and Copy prompt: the button confirms (showCopied), then the card closes and focus goes back.
+  // Copy link: the button confirms (showCopied), then the card closes and focus goes back.
   function closeAfterCopy() {
     if (sharing.hidden) return;
     toggleSharing(false);

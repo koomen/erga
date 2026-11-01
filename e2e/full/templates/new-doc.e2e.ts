@@ -19,7 +19,7 @@ const picker = (page: Page) => page.evaluate(`(() => {
   const r = ${ROOT_OF}, menu = r.querySelector(".erga-new-menu");
   return { open: !!menu && !menu.hidden,
     expanded: r.querySelector('.erga-new-btn[aria-expanded="true"]')?.getAttribute("aria-label") ?? null,
-    rows: [...(menu?.querySelectorAll("a b") ?? [])].map((e) => e.textContent.trim()) };
+    rows: [...(menu?.querySelectorAll("a") ?? [])].filter((a) => a.getClientRects().length).map((a) => a.querySelector("b").textContent.trim()) };
 })()`) as Promise<{ open: boolean; rows: string[]; expanded: string | null }>;
 
 /** Clicks the middle of the first visible element matching `selector` (in the picker's root). */
@@ -83,7 +83,7 @@ test("the viewer's + opens the picker, in one typeface; Escape closes it; Docume
   expect(await fileOf(s.root, s.root + await page.evaluate(() => location.pathname))).toBe(template("assets/templates/doc"));
 });
 
-test("the editor's + opens the picker under it, in the window, in one typeface; Document makes a blank document and opens it", async ({
+test("the editor's + opens the picker under it, in the window, in one typeface, with Clone last under a line; Document makes a blank document and opens it", async ({
   tab,
 }) => {
   const s = await servers.main();
@@ -100,8 +100,20 @@ test("the editor's + opens the picker under it, in the window, in one typeface; 
   await clickOn(page, "#btn-new");
   const m = await picker(page);
   expect(m.open).toBe(true);
-  expect(m.rows).toEqual(ROWS);
+  expect(m.rows).toEqual([...ROWS, "Clone"]);
   expect(m.expanded).toBe("New document");
+  // Clone: the viewer's Clone address (your own copy of this document), under a line.
+  const clone = await page.evaluate(() => {
+    const a = document.querySelector<HTMLAnchorElement>(".erga-new-clone")!,
+      sep = a.previousElementSibling!,
+      u = new URL(a.href);
+    return {
+      href: u.pathname + u.search,
+      line: sep.matches("hr") && sep.getClientRects().length > 0,
+      text: a.querySelector("span")!.textContent,
+    };
+  });
+  expect(clone).toEqual({ href: `/new?from=${await idOf(address)}`, line: true, text: "Your own copy of this document." });
   await sameTypeface(page);
   const place = await page.evaluate(() => ({ menu: document.querySelector(".erga-new-menu")!.getBoundingClientRect().toJSON(), btn: document.querySelector("#btn-new")!.getBoundingClientRect().toJSON(), w: innerWidth }));
   expect(place.menu.top).toBeGreaterThan(place.btn.bottom);

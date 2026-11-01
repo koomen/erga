@@ -1,5 +1,5 @@
-// The Share button: its card, with people (one line for each) and with an agent (a prompt with this page's address, the
-// API guide and a working token); Copy link and Copy prompt confirm on the button, then the card closes.
+// The Share button: its card, with people (one line for each); Copy link confirms on the button, then the card closes.
+// Share with an agent, its own button: it copies a one-line prompt (Erga's MCP server, then this document), with no token.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { openEditor, type Editor } from "../../helpers/editor";
 
@@ -23,21 +23,35 @@ const clickOn = async (ed: Editor, selector: string) => {
 };
 const cardOpen = (ed: Editor) => ed.eval<boolean>(`!document.getElementById("sharing").hidden`);
 
-test("the Share button opens a card whose agent half has a prompt naming the document, the API guide and a token that works; Escape closes it", async ({
+test("Share with an agent copies one line, Erga's MCP server and then this document, says Copied in its tooltip, and opens no card", async ({
   tab,
 }) => {
+  const ed = await openEditor(tab, await servers.main(), "empty");
+  const origin = new URL(ed.address).origin;
+  await tab.page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
+  await ed.idle();
+  await clickOn(ed, "#btn-agent-share");
+  await expect.poll(() => ed.eval<string>(`document.getElementById("btn-agent-share").dataset.tip`)).toBe("Copied ✓");
+  expect(await tab.page.evaluate(() => navigator.clipboard.readText())).toBe(
+    `Add Erga's MCP server, ${origin}/mcp, then open ${ed.address}.`
+  );
+  // Its icon stays, and its tooltip has its name back after the moment; the Share card stays closed.
+  expect(await ed.eval<boolean>(`!!document.querySelector("#btn-agent-share svg") && document.getElementById("sharing").hidden`)).toBe(
+    true
+  );
+  await expect.poll(() => ed.eval<string>(`document.getElementById("btn-agent-share").dataset.tip`)).toBe("Share with an agent");
+  // The caret stays in the text: typing goes on.
+  await ed.type("x");
+  await ed.shows("x|");
+});
+
+test("the Share button opens only Share with people; Escape closes it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "noedit");
   await ed.eval(`document.getElementById("btn-share").click()`);
   expect(await ed.eval<boolean>(`!document.getElementById("sharing").hidden && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`)).toBe(true);
-  await expect.poll(() => ed.eval<string>(`document.getElementById("share-prompt").value`)).toContain("Token: erga_");
-  const prompt = await ed.eval<string>(`document.getElementById("share-prompt").value`);
-  const token = /Token: (\S+)/.exec(prompt)?.[1],
-    doc = /Document: (\S+)/.exec(prompt)?.[1],
-    guide = /(\S+\/llms\.txt)/.exec(prompt)?.[1];
-  expect(doc).toMatch(new RegExp(`^${new URL(ed.address).origin}/d/\\w+$`));
-  expect(guide).toBe(`${new URL(ed.address).origin}/llms.txt`);
-  for (const url of [guide!, `${new URL(ed.address).origin}/api/tools`])
-    expect((await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).ok).toBe(true);
+  expect(await ed.eval<string[]>(`[...document.querySelectorAll("#sharing h2")].map((h) => h.textContent)`)).toEqual(["Share with people"]);
+  expect(await ed.eval<boolean>(`!document.getElementById("share-prompt")`)).toBe(true);
   await ed.press("Escape");
   // With the caret on the page, the key reaches the shell from the frame, by message: a moment later.
   await expect.poll(() => cardOpen(ed)).toBe(false);
@@ -61,7 +75,6 @@ test("the owner's card: one line for each person and for the link, Copy link at 
 });
 
 for (const [what, button, expected] of [
-  ["Copy prompt", "#share-copy", (ed: Editor, text: string) => expect(text).toContain("Token: erga_")],
   ["Copy link", "#sharing-copy", (ed: Editor, text: string) => expect(text).toBe(ed.address)],
 ] as const)
   test(`${what} says "Copied ✓" on its button, puts it on the clipboard, then the card closes and the caret is back on the page`, async ({
@@ -72,7 +85,6 @@ for (const [what, button, expected] of [
     await ed.clickEnd("[data-erga-text]:not(.erga-locked)");
     await ed.idle();
     await clickOn(ed, "#btn-share");
-    await expect.poll(() => ed.eval<string>(`document.getElementById("share-prompt").value`)).toContain("Token: erga_");
     await clickOn(ed, button);
     await expect.poll(() => ed.eval<string>(`document.querySelector(${JSON.stringify(button)}).textContent`)).toBe("Copied ✓");
     // The confirmation shows first: the card is still open.

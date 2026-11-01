@@ -32,6 +32,7 @@ test("on a page with a dark background, the popover is the editor's own dark car
   await s.open();
   const look = await s.eval<string[]>(`(() => { const cs = getComputedStyle(document.getElementById("doc-settings")); return [cs.backgroundColor, cs.color]; })()`);
   const lum = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).reduce((a, n) => a + n, 0) / 3;
-  expect(look[0], "its background is the dark card's").toBe("rgba(32, 32, 36, 0.94)");
+  // The cards' dark glass: #1c1c1f at 92%, over a blur of the page.
+  expect(look[0], "its background is the dark glass").toBe("color(srgb 0.109804 0.109804 0.121569 / 0.92)");
   expect(lum(look[1]), `its text (${look[1]})`).toBeGreaterThan(180);
 });
