@@ -7,7 +7,8 @@
 //   POST /api/tools/<name>         runs one, the body its arguments: {"ok": true, "result": ...} or {"ok": false, "error"}.
 //                                  A person's session acts from this site's own pages only; a token from anywhere
 //   POST /mcp                      the same list and the same calls over MCP (stateless, Streamable HTTP, JSON answers),
-//                                  for a token: an adapter, with no logic of its own
+//                                  for a token: an adapter, with no logic of its own. Without one, a 401 that starts an
+//                                  MCP app's sign-in in the browser (server/identity/oauth.ts)
 //   POST /api/publish              a folder of files as a document (multipart or JSON), or into one: for an HTTP client
 //                                  (curl -F), whose multipart body isn't an operation's JSON arguments
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
@@ -31,7 +32,16 @@ import { call, json, platform as currentPlatform, text, webRequest, type Route }
 import { allTools, jsonSchemaOf, runTool, toolsFor, type Tool } from "../agents/tools";
 import { addFile, type Caller, cleanFilePath, offered, OperationError } from "./operations/index.ts";
 import type { ToolContent, ToolSpec } from "../document/agent";
-import { authOps, expiryOf, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./identity/index.ts";
+import {
+  authOps,
+  expiryOf,
+  REQUEST_MINUTES,
+  resourceMetadataUrl,
+  SCOPES,
+  ScopeError,
+  type AgentToken,
+  type Scope,
+} from "./identity/index.ts";
 import { Base64 } from "effect/encoding";
 import { serverGuide } from "../agents/guides";
 
@@ -85,7 +95,15 @@ const runNamed = Effect.fnUntraced(function* (name: string, args: unknown, ctx: 
 const failure = (error: string, status: number) =>
   json({ ok: false, error }, status, status == 401 ? { "WWW-Authenticate": 'Bearer realm="erga"' } : {});
 const NO_TOKEN = (origin: string) =>
-  `This needs an agent token, sent as "Authorization: Bearer <token>". Your person can make one at ${origin}/tokens, or you can ask for one: POST ${origin}/api/auth/request (see ${origin}/llms.txt). If yours stopped working it expired or was revoked.`;
+  `This needs Erga's sign-in. Add Erga's MCP server, ${origin}/mcp, to your app (Claude Code, Codex): it signs you in through your person's browser (see ${origin}/llms.txt). If you had a token, it expired or was revoked.`;
+/**
+ * No token, or one that doesn't work: a 401 that names /mcp's metadata, where an MCP app finds how to sign in
+ * (server/identity/oauth.ts).
+ */
+const unauthorized = (origin: string, sent: boolean) =>
+  json({ ok: false, error: NO_TOKEN(origin) }, 401, {
+    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl(origin)}"${sent ? ', error="invalid_token"' : ""}`,
+  });
 
 /** The body as JSON, as `schema` has it; or None, when it isn't JSON or isn't that. */
 const body = <S extends Schema.Top>(schema: S) =>
@@ -110,7 +128,7 @@ export const serverApi: Route = Effect.gen(function* () {
 
   // The guide: for anyone; with a token, written for it (what it may do). A token that doesn't work is told so.
   if (path == "/llms.txt" && (method == "GET" || method == "HEAD")) {
-    if (request.headers.get("authorization") && !agent) return failure(NO_TOKEN(origin), 401);
+    if (request.headers.get("authorization") && !agent) return unauthorized(origin, true);
     const guide = serverGuide(origin, agent, agent ? yield* adminStatus(platform, agent) : true);
     return HttpServerResponse.text(guide, {
       contentType: "text/markdown; charset=utf-8",
@@ -121,7 +139,7 @@ export const serverApi: Route = Effect.gen(function* () {
   if (path == "/api/auth/request" && method == "POST") return yield* askForToken(platform, origin);
   // The one API: the person's own pages (their session), and every agent (a token).
   if (path == "/api/tools" || path.startsWith("/api/tools/")) {
-    if (!session) return failure(request.headers.get("authorization") ? NO_TOKEN(origin) : "Sign in first.", 401);
+    if (!session) return request.headers.get("authorization") ? unauthorized(origin, true) : failure("Sign in first.", 401);
     const caller = callerOf(platform, session, origin);
     if (path == "/api/tools" && (method == "GET" || method == "HEAD"))
       return json({ ok: true, tools: (yield* listed(caller)).map(specOf) });
@@ -141,7 +159,7 @@ export const serverApi: Route = Effect.gen(function* () {
   }
   if (path == "/api/auth/poll" && method == "POST") return yield* pollForToken(platform);
   if (path == "/api/publish" && method == "POST") {
-    if (!ctx) return failure(NO_TOKEN(origin), 401);
+    if (!ctx) return unauthorized(origin, !!request.headers.get("authorization"));
     return yield* publish(ctx).pipe(
       Effect.map((r) => json({ ok: true, ...r })),
       Effect.catchTag("OperationError", (e) =>
@@ -234,8 +252,9 @@ const decodeRpc = Schema.decodeUnknownOption(RpcMessage);
  */
 const mcp = Effect.fnUntraced(function* (ctx: ToolContext | null, origin: string) {
   const request = yield* webRequest;
+  // No token: the 401 that starts an MCP app's sign-in.
+  if (!ctx) return unauthorized(origin, !!request.headers.get("authorization"));
   if (request.method != "POST") return text("This MCP server answers POSTs only (stateless, no event stream).", 405, { Allow: "POST" });
-  if (!ctx) return failure(NO_TOKEN(origin), 401);
   const parsed = yield* body(Schema.Unknown);
   if (parsed._tag == "None") return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
   const batch = Array.isArray(parsed.value);
@@ -275,7 +294,7 @@ const rpc = Effect.fnUntraced(function* (raw: unknown, ctx: ToolContext) {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "erga", title: "Erga", version: "1.0.0" },
-        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${admin ? ", and, as they're an admin with an admin token, run the server: its settings, users, source and deploys" : ""}.${ctx.session.onlyDoc != null ? ` This token reaches one document only (id ${ctx.session.onlyDoc}).` : ""} Read the guide first (GET ${ctx.origin}/llms.txt with the same token): it has the rules for pages people can keep editing by hand.`,
+        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${admin ? ", and, as they're an admin with an admin token, run the server: its settings, users, source and deploys" : ""}.${ctx.session.onlyDoc != null ? ` This token reaches one document only (id ${ctx.session.onlyDoc}).` : ""} Read the guide first (GET ${ctx.origin}/llms.txt, no token needed): it has the rules for pages people can keep editing by hand.`,
       });
     }
     case "ping":

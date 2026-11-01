@@ -11,7 +11,9 @@
 // and, if its maker chose one, an expiry, after which it stops working. The
 // share button in the editor makes a documents token, /tokens makes and
 // revokes them, and an agent on the command line can ask for one (a device
-// flow: it gets a link for the person to approve, and polls). Share with
+// flow: it gets a link for the person to approve, and polls), or an agent's app
+// asks through the browser (MCP's OAuth sign-in, oauth.ts: the same request,
+// approved on the same page, handed back with a code). Share with
 // agent on the admin pages makes an admin token that ends within 12 hours
 // (shareAdmin). Only a person signed in in a browser makes a token: an agent
 // never can, whatever its scope. The app
@@ -32,7 +34,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
 import type { Directory, Sql } from "../directory/index.ts";
 import { changeLogEntry } from "../../shared/attribution";
-import { randomString, randomToken, sha256Hex } from "../../shared/bytes.ts";
+import { base64url, randomString, randomToken, sha256, sha256Hex } from "../../shared/bytes.ts";
 
 /** A token as its person's list shows it (never the token itself). */
 export interface AgentToken {
@@ -67,6 +69,21 @@ export interface Grant { scope: Scope; docId?: string | null; expires?: number |
 
 /** Why a token can't be made (a wrong scope, a document that isn't the person's to open): the message says so. */
 export class ScopeError extends Schema.TaggedError<ScopeError>()("ScopeError", { message: Schema.String }) {}
+
+/** An OAuth request's own parts (oauth.ts): the client, where its person goes back, its PKCE challenge (S256) and state. */
+export interface OAuthAsk {
+  client: string;
+  redirectUri: string;
+  challenge: string;
+  state: string | null;
+}
+/** Where an OAuth request sends its person back, and the client's state to send with them. */
+export interface OAuthBack {
+  redirectUri: string;
+  state: string | null;
+}
+/** How long an OAuth request's authorization code works, once approved. */
+export const CODE_MINUTES = 10;
 
 /** Whom a token is for: a login and name, and for a test person, who minted their test token. */
 export interface Who { login: string; name: string; testBy?: string | null }
@@ -289,7 +306,12 @@ export class Tokens {
    * An agent asks for a token: `code` is its secret to poll with, and
    * `userCode` goes in the link the person opens to approve it.
    */
-  async request(label: string | null | undefined, grant: Grant): Promise<{ code: string; userCode: string; label: string; expires: number }> {
+  /** `oauth`: an agent's app asking through the browser (oauth.ts), which gets its token back with a code, not by polling. */
+  async request(
+    label: string | null | undefined,
+    grant: Grant,
+    oauth?: OAuthAsk
+  ): Promise<{ code: string; userCode: string; label: string; expires: number }> {
     if (!SCOPES.includes(grant.scope)) throw new ScopeError({ message: `"${grant.scope}" isn't a scope: document, documents or admin.` });
     if (grant.scope == "document" && !grant.docId)
       throw new ScopeError({ message: "A document token needs a document: give doc (its address, URL or id)." });
@@ -303,7 +325,7 @@ export class Tokens {
     const expires = now + REQUEST_MINUTES * 60 * 1000;
     const clipped = clipLabel(label, "An agent");
     await this.sql.run(
-      "INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8)",
+      "INSERT INTO token_requests (code_hash, user_code, label, created, expires, login, token_id, scope, doc_id, token_expires, oauth_client, redirect_uri, code_challenge, oauth_state) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
       await sha256Hex(code),
       userCode,
       clipped,
@@ -311,43 +333,119 @@ export class Tokens {
       expires,
       grant.scope,
       grant.scope == "document" ? String(grant.docId).slice(0, 300) : null,
-      grant.expires == null ? null : Number(grant.expires)
+      grant.expires == null ? null : Number(grant.expires),
+      oauth?.client ?? null,
+      oauth?.redirectUri ?? null,
+      oauth?.challenge ?? null,
+      oauth?.state ?? null
     );
 
     return { code, userCode, label: clipped, expires };
   }
 
-  /** A request still waiting for someone to approve it: what it asks for (`docId` as the agent named it), and when it lapses. */
-  async pending(userCode: string): Promise<{ label: string; expires: number; grant: Required<Grant> } | null> {
-    const [row] = await this.sql.all<{ label: string; expires: number; scope: string; doc_id: string | null; token_expires: number | null }>(
-      "SELECT label, expires, scope, doc_id, token_expires FROM token_requests WHERE user_code = ?1 AND login IS NULL AND expires >= ?2", normalCode(userCode), Date.now());
-    return row ? { label: row.label, expires: Number(row.expires), grant: { scope: scopeOf(row.scope), docId: row.doc_id ?? null, expires: row.token_expires == null ? null : Number(row.token_expires) } } : null;
+  /**
+   * A request still waiting for someone to approve it: what it asks for (`docId` as the agent named it), when it
+   * lapses, and for an OAuth request, where its person goes back.
+   */
+  async pending(userCode: string): Promise<{ label: string; expires: number; grant: Required<Grant>; oauth: OAuthBack | null } | null> {
+    const [row] = await this.sql.all<{
+      label: string;
+      expires: number;
+      scope: string;
+      doc_id: string | null;
+      token_expires: number | null;
+      redirect_uri: string | null;
+      oauth_state: string | null;
+    }>(
+      "SELECT label, expires, scope, doc_id, token_expires, redirect_uri, oauth_state FROM token_requests WHERE user_code = ?1 AND login IS NULL AND expires >= ?2",
+      normalCode(userCode),
+      Date.now()
+    );
+    return row
+      ? {
+          label: row.label,
+          expires: Number(row.expires),
+          grant: {
+            scope: scopeOf(row.scope),
+            docId: row.doc_id ?? null,
+            expires: row.token_expires == null ? null : Number(row.token_expires),
+          },
+          oauth: row.redirect_uri ? { redirectUri: row.redirect_uri, state: row.oauth_state ?? null } : null,
+        }
+      : null;
   }
 
   /**
    * Approves a request as `who`: mints their token, as the request asks
    * (check: ScopeError if they can't have it), for the agent to collect.
+   * For an OAuth request, also its authorization code (good for CODE_MINUTES), to send its person back with.
    * Null if there's no such request waiting.
    */
-  async approve(userCode: string, who: Who): Promise<AgentToken | null> {
+  async approve(userCode: string, who: Who): Promise<{ info: AgentToken; oauth: (OAuthBack & { code: string }) | null } | null> {
     const waiting = await this.pending(userCode);
     if (!waiting) return null;
     const { info } = await this.mint(who, waiting.label, waiting.grant);
-    await this.sql.run("UPDATE token_requests SET login = ?2, token_id = ?3 WHERE user_code = ?1 AND login IS NULL", normalCode(userCode), info.login, info.id);
-    return info;
+    if (!waiting.oauth) {
+      await this.sql.run("UPDATE token_requests SET login = ?2, token_id = ?3 WHERE user_code = ?1 AND login IS NULL", normalCode(userCode), info.login, info.id);
+      return { info, oauth: null };
+    }
+    const code = "ergacode_" + randomToken(24);
+    await this.sql.run(
+      "UPDATE token_requests SET login = ?2, token_id = ?3, code_hash = ?4, expires = ?5 WHERE user_code = ?1 AND login IS NULL",
+      normalCode(userCode),
+      info.login,
+      info.id,
+      await sha256Hex(code),
+      Date.now() + CODE_MINUTES * 60 * 1000
+    );
+    return { info, oauth: { ...waiting.oauth, code } };
   }
 
-  /** Denies a request: the agent's next poll hears it's gone. False if there's no such request waiting. */
-  async deny(userCode: string): Promise<boolean> {
-    if (!(await this.pending(userCode))) return false;
+  /**
+   * Denies a request: the agent's next poll hears it's gone; an OAuth request's person goes back to say so (`oauth`).
+   * Null if there's no such request waiting.
+   */
+  async deny(userCode: string): Promise<{ oauth: OAuthBack | null } | null> {
+    const waiting = await this.pending(userCode);
+    if (!waiting) return null;
     await this.sql.run("DELETE FROM token_requests WHERE user_code = ?1 AND login IS NULL", normalCode(userCode));
-    return true;
+    return { oauth: waiting.oauth };
+  }
+
+  /**
+   * An agent's app trades its authorization code for the token (oauth.ts, /oauth/token): once, before the code
+   * expires, from the client the code was made for, with the same redirect URI and the PKCE verifier of its
+   * challenge. Null for anything else. A code tried is used up, right or wrong.
+   */
+  async exchange(code: string, client: string, redirectUri: string, verifier: string): Promise<{ token: string; info: AgentToken } | null> {
+    const hash = await sha256Hex(code);
+    const [row] = await this.sql.all<{
+      expires: number;
+      token_id: string | null;
+      oauth_client: string;
+      redirect_uri: string;
+      code_challenge: string;
+    }>(
+      "SELECT expires, token_id, oauth_client, redirect_uri, code_challenge FROM token_requests WHERE code_hash = ?1 AND redirect_uri IS NOT NULL AND login IS NOT NULL",
+      hash
+    );
+    if (!row) return null;
+    await this.sql.run("DELETE FROM token_requests WHERE code_hash = ?1", hash);
+    if (!row.token_id || Number(row.expires) < Date.now() || row.oauth_client != client || row.redirect_uri != redirectUri) return null;
+    if (!(await pkceMatches(verifier, row.code_challenge))) return null;
+    // Revoked before it was collected: nothing to hand over.
+    const [token] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE id = ?1`, row.token_id);
+    return token ? { token: await this.tokenFor(token.id), info: fromRow(token) } : null;
   }
 
   /** The agent polls: its token once approved (handed over once), "pending" until then, "gone" if it expired or was collected. */
   async collect(code: string): Promise<{ status: "pending" } | { status: "gone" } | { status: "ready"; token: string; login: string }> {
     const hash = await sha256Hex(code);
-    const [row] = await this.sql.all<{ expires: number; login: string | null; token_id: string | null }>("SELECT expires, login, token_id FROM token_requests WHERE code_hash = ?1", hash);
+    // Not an OAuth request's code: that one is traded only with its PKCE verifier (exchange).
+    const [row] = await this.sql.all<{ expires: number; login: string | null; token_id: string | null }>(
+      "SELECT expires, login, token_id FROM token_requests WHERE code_hash = ?1 AND redirect_uri IS NULL",
+      hash
+    );
     if (!row) return { status: "gone" };
     if (row.token_id && row.login) {
       await this.sql.run("DELETE FROM token_requests WHERE code_hash = ?1", hash);
@@ -367,4 +465,10 @@ export class Tokens {
 export function normalCode(s: string): string {
   const c = s.toUpperCase().replace(/[^A-Z]/g, "");
   return c.length == 8 ? `${c.slice(0, 4)}-${c.slice(4)}` : s.trim().toUpperCase();
+}
+
+/** PKCE (RFC 7636, S256): the verifier is 43 to 128 of its characters, and its SHA-256, in base64url, is the challenge. */
+export async function pkceMatches(verifier: string, challenge: string): Promise<boolean> {
+  if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) return false;
+  return base64url(await sha256(verifier)) == challenge;
 }

@@ -1,7 +1,7 @@
 // Making another document the homepage: its deploys, its files, isolation from the controls, and who may.
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { events, someone } from "../versions/versions";
-import { adminToken, deployed, fresh, front, get, home, publish, redeploy, resetLanding, setLanding } from "./home";
+import { adminToken, deployed, fresh, front, get, home, openHome, publish, redeploy, resetLanding, setLanding } from "./home";
 import { runTool } from "../../helpers/tools";
 
 await servers.short();
@@ -54,7 +54,7 @@ test("landing_document makes another document the homepage, deployed at once, an
 test("the page's styles can't reach the controls, nor theirs the page; its files load from the deploy, and at the root, never over the app's", async ({ tab }) => {
   const { server } = await secondHome();
   await tab.page.setViewportSize({ width: 1200, height: 800 });
-  await tab.page.goto(`${server.root}/`);
+  await openHome(tab.page, server.root);
   await expect.poll(() => tab.page.evaluate(() => document.body.dataset.data ?? null)).toBe("yes");
   const iso = await tab.page.evaluate(() => {
     const host = document.querySelector("erga-controls")!, r = host.shadowRoot!;

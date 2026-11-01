@@ -97,6 +97,22 @@ export const fromElsewhere = (request: Request) => {
 };
 
 /**
+ * A visit that starts outside Erga: a typed address or a bookmark ("none"), or another site's link. The browser says
+ * so (Sec-Fetch-Site). A click inside Erga ("same-origin") or a client that doesn't say (a script, a test) doesn't.
+ */
+export const cameFromOutside = (request: Request) => {
+  const site = request.headers.get("sec-fetch-site");
+  return site != null && site != "same-origin";
+};
+
+/**
+ * / sends someone signed in to their documents when they come from outside Erga; the erga logo, a click inside
+ * Erga, still shows the landing page. Not an agent's token, nor a test person; signed out, always the landing page.
+ */
+export const homeGoesToDocs = (request: Request, session: Session | null) =>
+  cameFromOutside(request) && !!session && !session.agent && !session.test;
+
+/**
  * For an action another site may not take on someone's behalf: asks them to
  * confirm it with a button, which posts back from this site.
  */

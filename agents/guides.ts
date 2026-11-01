@@ -1,10 +1,11 @@
 // The one guide an outside agent reads first, at GET /llms.txt (server/api.ts): for anyone, and, with a token,
-// written for that token (who it acts as, its scope, and only the tools it has). It says how to get and send a
-// token, how to call the tools (POST /api/tools/<name>, or MCP), how to work in a document, and what the tools are:
+// written for that token (who it acts as, its scope, and only the tools it has). It says how to connect (MCP, with
+// its sign-in in the browser: server/identity/oauth.ts), how to call the tools, how to work in a document, and what
+// the tools are:
 // that part is made from the operations and the document tools themselves (agents/tools.ts), so it can't go stale.
 
 import type { Session } from "../server/platform.ts";
-import { REQUEST_MINUTES, type AgentToken } from "../server/identity/index.ts";
+import type { AgentToken } from "../server/identity/index.ts";
 import { DOCUMENT_RULES, FILES_PROMPT, PAGES_PROMPT } from "./document/prompt";
 import { ALL_OPERATIONS, documentTools, jsonSchemaOf, type Tool } from "./tools";
 
@@ -23,7 +24,7 @@ export function serverGuide(origin: string, session: (Session & { agent: AgentTo
   const one = session?.onlyDoc != null;
   const you = session
     ? `You're signed in as **${session.name}** (${session.login}), with the token "${session.agent.label}" (scope: ${session.agent.scope}${session.agent.expires ? `, until ${new Date(session.agent.expires).toISOString()}` : ""}). Everything below acts as them.${one ? ` This token reaches one document only (id ${session.onlyDoc}): name it as "document" in every call. The tools that reach beyond it (list_documents, create_document, the token tools) aren't yours, and every other document is refused.` : ""}${admin ? " They're an admin of this server, and this is an admin token, so the admin tools are yours too." : locked ? " They're an admin of this server, but the admin tools need an admin token (below)." : ""}`
-    : `Nothing here works without a token: get one first (below).`;
+    : `Connect through MCP first (below): your app signs you in.`;
   const ops = ALL_OPERATIONS.filter((t) => !(one && t.wide));
   return `# Erga
 
@@ -39,87 +40,49 @@ export function serverGuide(origin: string, session: (Session & { agent: AgentTo
 
 ${you}
 
-## Getting a token
+## Connecting
 
-Every call carries a token that stands for one person:
+Erga is an MCP server, at ${origin}/mcp (Streamable HTTP). That is the one way
+in. Add it to your app once:
 
-    Authorization: Bearer erga_...
+    claude mcp add --transport http erga ${origin}/mcp       # Claude Code
+    codex mcp add erga --url ${origin}/mcp                    # Codex
 
-Each token has a scope: \`document\` (one document, with the person's rights
-there, and nothing else), \`documents\` (everything they can do with documents,
-but no admin power) or \`admin\` (everything they can do, admin power included,
-while they're an admin; only admins can have one). It may also have an expiry,
-after which it stops working. Ask for the smallest scope that does the job.
+Then sign in: the app opens Erga in your person's browser (in Claude Code, run
+/mcp and choose erga; in Codex, \`codex mcp login erga\`). They sign in to Erga
+if they aren't, see what the app asks for, and approve. The app keeps the
+token: it never goes through the conversation, and you never need to see it.
+Any MCP app with MCP's standard sign-in (OAuth, with dynamic client
+registration) works the same way.
 
-Your person may give you one (they make it at ${origin}/tokens, or with the
-share button in the editor or on the admin pages). If you don't have one, ask
-for it: no sign-in needed on your side.
+The sign-in gives the \`documents\` scope: everything your person can do with
+documents, but no admin power. It works until your person revokes it at
+${origin}/tokens. Read this guide without a token (\`GET ${origin}/llms.txt\`);
+the MCP server's tools are the ones listed below.
 
-    curl -s -X POST ${origin}/api/auth/request -H "Content-Type: application/json" -d '{"label": "Claude Code", "scope": "documents"}'
-
-For one document, \`"scope": "document", "doc": "<its address, URL or id>"\`; for
-an expiry, \`"expires": "2026-12-31T00:00:00Z"\` (or a date). Your person sees
-the scope, the document and the expiry, and approves or denies.
-
-The answer has an \`approve_url\` and a \`code\`. Show your person the
-\`approve_url\` (and the \`user_code\`) and ask them to open it and approve.
-Meanwhile poll, every couple of seconds:
-
-    curl -s -X POST ${origin}/api/auth/poll -H "Content-Type: application/json" -d '{"code": "<code>"}'
-
-It answers 202 while they haven't approved yet, then 200 with \`{"token": "erga_..."}\`
-(once), or 410 if they denied it. The request lasts ${REQUEST_MINUTES} minutes. Keep the token somewhere
-safe (an environment variable, ERGA_TOKEN; never in a document, a commit or a log):
-it works until it expires or your person revokes it at ${origin}/tokens. Read
-this guide again with it (\`GET ${origin}/llms.txt\` with the header): it is then
-written for your token.
-
-## Calling the API
-
-One API, two ways in, the same tools.
-
-**HTTP.** \`GET ${origin}/api/tools\` lists the tools your token has, as JSON (name,
-description, and the arguments as JSON Schema). Run one by POSTing its arguments as JSON:
-
-    curl -s -X POST ${origin}/api/tools/list_documents -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{}'
-    curl -s -X POST ${origin}/api/tools/read -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"document": "<id>", "path": "index.html"}'
-
-The answer is \`{"ok": true, "result": ...}\`. For most tools \`result\` is JSON. A
-document tool (read, edit, write, ...) answers a list of content items: \`{"type":
-"text", "text": "..."}\`, \`{"type": "image", "mimeType": "image/png", "data":
-"<base64>"}\`, or a PDF's pages, \`{"type": "document", "mimeType":
-"application/pdf", "data": "<base64>"}\`. A failure is \`{"ok": false, "error":
-"..."}\` with 400 (fix the call as the error says), 401 (no token, or one that
-expired or was revoked), 403 (not allowed, or outside the token's scope), 404
-(no such tool or document), 409 (it can't be done now) or 413 (too big).
+## Calling the tools
 
 A document is always named by the \`document\` argument: its address
 (/<owner>/<slug>), its URL, its id, or the slug of one of your person's own.
 
-**MCP.** \`${origin}/mcp\` is a stateless MCP server (Streamable HTTP, JSON
-answers) with the same tools and the same arguments. In Claude Code:
-
-    claude mcp add --transport http erga ${origin}/mcp --header "Authorization: Bearer $ERGA_TOKEN"
+Most tools answer JSON, as text. A document tool (read, edit, write, ...)
+answers text and images, and a PDF's pages as a resource. A tool that fails
+answers an error that says why: fix the call as it says. "Outside the token's
+scope" means your person must give more (an admin token for the admin tools).
 
 ## Publishing a folder (a static site) as a document
 
-To put a local static web app or page on Erga, send its folder: it needs an
-index.html at the top. From the folder (the build output, if it
-has one):
-
-    args=(); while IFS= read -r f; do args+=(-F "\${f#./}=@\$f"); done < <(find . -type f ! -path '*/.*' ! -path '*/node_modules/*')
-    curl -s -X POST ${origin}/api/publish -H "Authorization: Bearer $ERGA_TOKEN" -F "title=My app" "\${args[@]}"
-
-Each file part is named by its path in the site. The answer's \`url\` is the
-document, which opens in the editor (give it to your person); \`id\` is for
-working on it. To publish the folder again into the same document, add
-\`-F document=<id>\`: the files are replaced (merged as edits, so open editors
-follow) and files that are gone are deleted. JSON works too: \`{"title": "...",
-"files": {"index.html": "<!doctype html>...", "logo.png": {"base64": "..."}}}\`,
-which is what the create_document and update_files tools take. Files can be at
-most 2MB each, 50MB in all. The page runs as it would anywhere (its scripts
-too), on an origin of its own; relative links between its files work, and links to Erga
-addresses (/<owner>/<slug>) open in Erga.
+To put a local static web app or page on Erga, call create_document with its
+files: text as strings, other files (images, fonts) as \`{"base64": "..."}\`,
+with an index.html at the top (the build output, if it has one):
+\`create_document {"title": "My app", "files": {"index.html": "<!doctype html>...", "logo.png": {"base64": "..."}}}\`.
+The answer's \`url\` is the document, which opens in the editor (give it to
+your person); \`id\` is for working on it. To publish the folder again into
+the same document, call update_files with \`"replace": true\`: the files are
+replaced (merged as edits, so open editors follow) and files that are gone are
+deleted. Files can be at most 2MB each, 50MB in all. The page runs as it would
+anywhere (its scripts too), on an origin of its own; relative links between its
+files work, and links to Erga addresses (/<owner>/<slug>) open in Erga.
 
 ## Working in a document
 
@@ -187,11 +150,17 @@ make_document, list_versions, read_version, restore_version and open_page.
 ## Admin
 
 For the server's admins only, with an admin token: ${session ? (admin ? "yours is one, so the admin tools are listed for you and work while your person is an admin." : locked ? `${session.login} is an admin, but this token's scope is ${session.agent.scope}, so the admin tools aren't listed for it and are refused.` : `${session.login} isn't one, so the admin tools aren't listed for your token and are refused.`) : "they work only with an admin token."}
-Your person makes one at ${origin}/tokens (scope: Admin), with Share with agent
-on any admin page (it lasts 12 hours), or approves your request for one
-(\`"scope": "admin"\`). It works only while they're an admin. With it you do what
+The MCP sign-in never gives one. Your person makes one with Share with agent on
+any admin page (it lasts 12 hours), or at ${origin}/tokens (scope: Admin). It
+works only while they're an admin. With it you do what
 they do on the admin pages (${origin}/admin) and the Ops page, and each change
 goes in the logs under their name.
+
+Send an admin token as the header \`Authorization: Bearer <token>\`. The same
+tools are at \`POST ${origin}/api/tools/<name>\`, with the arguments as JSON
+(\`GET ${origin}/api/tools\` lists them), and the answer is \`{"ok": true,
+"result": ...}\` or \`{"ok": false, "error": "..."}\`. Read this guide again
+with the header: it is then written for that token.
 
 - The settings are the server's own (list_settings says what each does); one the
   deploy locks shows as \`"locked": true\` and can't be changed here. Users are

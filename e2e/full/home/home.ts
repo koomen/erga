@@ -9,6 +9,7 @@
 // one still holds /tester/landing).
 
 import { until, type Server } from "../../helpers/fixtures";
+import type { Page } from "playwright-core";
 import type { HomeState } from "../versions/versions";
 import { postForm } from "../../helpers/form-post";
 import { runTool } from "../../helpers/tools";
@@ -81,4 +82,13 @@ export async function publish(server: Server, token: string, files: Record<strin
   const body = (await r.json()) as { ok: boolean; id?: string; url?: string; error?: string };
   if (!body.ok) throw new Error(`publishing: ${body.error}`);
   return body as { ok: true; id: string; url: string };
+}
+
+/**
+ * Opens / as the erga logo does, from inside Erga (Sec-Fetch-Site: same-origin): a typed address sends someone signed
+ * in to /docs instead (server/app.ts). `query` goes on both (the dev server's ?user=).
+ */
+export async function openHome(page: Page, root: string, query = "") {
+  await page.goto(`${root}/docs${query}`);
+  await Promise.all([page.waitForURL((u) => u.pathname == "/"), page.evaluate((q) => location.assign(`/${q}`), query)]);
 }

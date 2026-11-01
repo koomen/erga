@@ -239,6 +239,33 @@ export const AGENT_ACTIONS: AgentAction[] = [
   },
   { route: "POST /api/auth/request", domain: "none", action: "An outside agent asks for a token", exempt: "an outside agent's sign-in" },
   { route: "POST /api/auth/poll", domain: "none", action: "An outside agent collects its token", exempt: "an outside agent's sign-in" },
+  // MCP's sign-in (server/identity/oauth.ts): an agent's app gets a token through its person's browser.
+  {
+    route: "GET /.well-known/oauth-protected-resource",
+    domain: "none",
+    action: "An MCP app reads how /mcp signs in",
+    exempt: "an outside agent's sign-in",
+  },
+  {
+    route: "GET /.well-known/oauth-protected-resource/mcp",
+    domain: "none",
+    action: "The same, where an MCP app looks for /mcp's own",
+    exempt: "an outside agent's sign-in",
+  },
+  {
+    route: "GET /.well-known/oauth-authorization-server",
+    domain: "none",
+    action: "An MCP app reads the sign-in's endpoints",
+    exempt: "an outside agent's sign-in",
+  },
+  { route: "POST /oauth/register", domain: "none", action: "An MCP app registers itself", exempt: "an outside agent's sign-in" },
+  {
+    route: "GET /oauth/authorize",
+    domain: "none",
+    action: "The person, in their browser, lets an MCP app act for them (approved on /tokens/approve)",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
+  { route: "POST /oauth/token", domain: "none", action: "An MCP app trades its code for its token", exempt: "an outside agent's sign-in" },
 
   // ------------------------------------------------------------ signing in (server/identity/accounts.ts)
   { route: "GET /auth/username", domain: "none", action: "A new account's first sign-in: choose a username", exempt: SIGN_IN },

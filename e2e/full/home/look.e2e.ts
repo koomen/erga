@@ -1,6 +1,6 @@
 // / looks as the viewer shows its document, moved below the controls' band.
 import { expect, servers, test } from "../../helpers/fixtures";
-import { deployed, fresh, resetLanding } from "./home";
+import { deployed, fresh, openHome, resetLanding } from "./home";
 import { devicePage, diffPng, shoot, steady, VIEWS } from "./shots";
 
 await servers.short();
@@ -18,7 +18,8 @@ for (const v of VIEWS) {
     const { address } = await fresh(server);
     await deployed(server);
     const ctx = tab.page.context();
-    const a = await shoot(ctx, `${server.root}${address}`, v, NO_CRUMBS), b = await shoot(ctx, `${server.root}/`, v, NO_CRUMBS);
+    const a = await shoot(ctx, `${server.root}${address}`, v, NO_CRUMBS),
+      b = await shoot(ctx, (p) => openHome(p, server.root), v, NO_CRUMBS);
     // Where the viewer's page starts (0 while its frame fills the window).
     const q = await devicePage(ctx, v);
     await q.goto(`${server.root}${address}`);
@@ -43,7 +44,7 @@ for (const v of [VIEWS[0], VIEWS[2]]) {
     const layout = `JSON.stringify([...document.body.querySelectorAll("main, header, footer, section, article, nav, figure, h1, h2, h3, h4, p, ul, ol, blockquote, table")].filter((e) => !e.closest("erga-controls")).map((e) => { const r = e.getBoundingClientRect(); return [e.tagName, Math.round(r.x), Math.round(r.y + scrollY), Math.round(r.width), Math.round(r.height)]; }))`;
     const pv = await devicePage(ctx, v), pd = await devicePage(ctx, v);
     await pv.goto(`${server.root}${address}`);
-    await pd.goto(`${server.root}/`);
+    await openHome(pd, server.root);
     await steady(pv);
     await steady(pd);
     // Measured in the viewer's frame, its blocks start at 0 wherever the frame sits: on the page, they're BAND lower.

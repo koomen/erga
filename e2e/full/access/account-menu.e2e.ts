@@ -2,6 +2,7 @@
 // dark and a phone, and its place on the homepage.
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { clickOn, corner, inPage } from "./access";
+import { openHome } from "../home/home";
 
 await servers.main();
 
@@ -49,7 +50,7 @@ test("dark, it opens; at phone width it fits clear of the page's header, and its
 test("on the homepage, the avatar sits right of the Edit and Clone buttons, level with them", async ({ tab }) => {
   const page = tab.page;
   await page.setViewportSize({ width: 1100, height: 720 });
-  await page.goto(`${(await servers.main()).root}/`);
+  await openHome(page, (await servers.main()).root);
   // The page itself once deployed, its controls in their own shadow root; the viewer's frame before.
   await until(async () => (await page.evaluate(() => document.querySelector("h1")?.textContent ?? "")) == "Erga" || (await inPage<string>(page, `document.querySelector("h1")?.textContent ?? ""`)).includes("Erga"), 10_000, "the landing page renders");
   expect(await page.evaluate(() => {

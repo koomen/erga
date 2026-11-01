@@ -11,6 +11,7 @@ import { type LiveRow, type LiveRows, type Platform, type Session, whoOf } from 
 import { LABEL_MAX, normalCode, ScopeError, type AgentToken, type Scope } from "./tokens.ts";
 import { mintTestToken } from "./sign-in.ts";
 import { type Note, noteOf, readOnce, seeOther } from "./flash.ts";
+import { callbackUrl, whereBack } from "./oauth.ts";
 import { call, ctx, Field, form, html, NO_STORE, redirect, text, type Route } from "../http.ts";
 
 /** A token's expiry as given: an ISO 8601 time, a date (the end of that day, UTC), milliseconds since the epoch, or nothing (never). */
@@ -75,12 +76,25 @@ export const tokensRoutes: Route = Effect.gen(function* () {
     if (post) {
       if (!waiting) return yield* back(`/tokens/approve?code=${encodeURIComponent(code)}`, {});
       if (f.answer == "deny") {
-        yield* call(() => platform.tokens.deny(code));
+        const denied = yield* call(() => platform.tokens.deny(code));
+        // An agent's app that asked through the browser (MCP's sign-in) hears it from the person's browser.
+        if (denied?.oauth)
+          return redirect(
+            callbackUrl(denied.oauth.redirectUri, {
+              error: "access_denied",
+              error_description: "The person denied it.",
+              state: denied.oauth.state,
+            }),
+            303
+          );
         return yield* back("/tokens", { denied: waiting.label });
       }
       const r = yield* scoped(() => platform.tokens.approve(code, who));
       if ("refused" in r) return yield* back(`/tokens/approve?code=${encodeURIComponent(code)}`, { refused: r.refused });
-      return yield* back("/tokens", r.value ? { approved: r.value.label } : { error: "That request has expired." });
+      // MCP's sign-in: back to the app, with the code it trades for the token.
+      if (r.value?.oauth)
+        return redirect(callbackUrl(r.value.oauth.redirectUri, { code: r.value.oauth.code, state: r.value.oauth.state }), 303);
+      return yield* back("/tokens", r.value ? { approved: r.value.info.label } : { error: "That request has expired." });
     }
     if (!waiting)
       return yield* show({
@@ -125,7 +139,12 @@ async function docLabel(platform: Platform, ref: string | null): Promise<string>
 const day = (t: number) => dateTag(t, "day");
 
 /** The card on /tokens/approve: what the agent asks for, and Approve (if the person may give it) or Deny. */
-async function approvalCard(platform: Platform, session: Session, code: string, waiting: { label: string; grant: { scope: Scope; docId: string | null; expires: number | null } }): Promise<string> {
+async function approvalCard(
+  platform: Platform,
+  session: Session,
+  code: string,
+  waiting: { label: string; grant: { scope: Scope; docId: string | null; expires: number | null }; oauth: { redirectUri: string } | null }
+): Promise<string> {
   const g = waiting.grant;
   const may = await platform.tokens.check({ login: session.login, name: session.name }, g).then(() => null, (e) => (e instanceof ScopeError ? e.message : "This request can't be approved."));
   const what = g.scope == "document" ? `one document: ${await docLabel(platform, g.docId)}. It can do there what you can do, and nothing anywhere else.`
@@ -134,8 +153,12 @@ async function approvalCard(platform: Platform, session: Session, code: string, 
   return `<section class="card approve"><h2>An agent asks to act as you</h2>
 <p><b>${esc(waiting.label)}</b> wants a token for ${what}</p>
 <dl class="grant"><dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd><dt>Expires</dt><dd>${g.expires ? day(g.expires) : "Never (until you revoke it)"}</dd></dl>
-<p>Approve only if you started this and the code matches:</p>
-<p class="code">${esc(code)}</p>
+${
+  waiting.oauth
+    ? `<p>Approve only if you just added Erga to this app. Approve sends you back to <b>${esc(whereBack(waiting.oauth.redirectUri))}</b>, and the app gets the token.</p>`
+    : `<p>Approve only if you started this and the code matches:</p>
+<p class="code">${esc(code)}</p>`
+}
 ${may ? `<p class="notice error">${esc(may)}</p>` : ""}
 <form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></form></section>`;
 }

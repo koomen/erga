@@ -5,6 +5,8 @@
 //
 //   /                          the homepage: the homepage served from its last deploy, else the viewer on the
 //                              landing document (a setting), with an Edit button for those who may
+//                              Someone signed in who comes from outside Erga (a typed address, a bookmark, another
+//                              site's link) goes to /docs instead (homeGoesToDocs)
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the homepage's
 //   /docs                      your documents (the directory), latest edit first
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with), the editor at ?edit; /d/<id>,
@@ -18,6 +20,8 @@
 //   /auth/username             a new account's first sign-in: its person chooses a username (server/identity/accounts.ts)
 //   /auth/dev?provider=&...    local development only: a pretend provider's sign-in (server/identity/accounts.ts)
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent, and its guide
+//   /.well-known/oauth-..., /oauth/...
+//                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /_home/<gen>/<path>        the homepage's files, as deployed
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
@@ -51,7 +55,9 @@ import {
   devSignIn,
   finishGoogleSignIn,
   finishSignIn,
+  isOAuthPath,
   mayDeploy,
+  oauthRoutes,
   startGoogleSignIn,
   signOut,
   startSignIn,
@@ -61,11 +67,20 @@ import {
 } from "./identity/index.ts";
 import { releaseApi, withLive } from "./live.ts";
 import { newsRoutes } from "./news/index.ts";
-import { accountOf, isAssetPath, loadAssets, OWN_ACCOUNT, serveAsset, withAccount } from "./pages/index.ts";
+import {
+  accountOf,
+  cameFromOutside,
+  homeGoesToDocs,
+  isAssetPath,
+  loadAssets,
+  OWN_ACCOUNT,
+  serveAsset,
+  withAccount,
+} from "./pages/index.ts";
 import { whoOf } from "./platform.ts";
 import { withSecurity } from "./security.ts";
 import { HttpServerResponse } from "effect/http";
-import { call, fromWeb, platform, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
+import { call, fromWeb, platform, redirect, text, toWeb, webRequest, type Needs, type Route } from "./http.ts";
 
 /** The routes that live outside the app (on Cloudflare, or in the dev server): the answer, or null for a path that isn't theirs. */
 export type Outside = (url: URL) => Effect.Effect<HttpServerResponse.HttpServerResponse | null, never, Needs>;
@@ -148,8 +163,13 @@ const route = (url: URL, outside: Outside): Route =>
     const there = yield* elsewhere;
     if (there) return there;
     const read = request.method == "GET" || request.method == "HEAD";
+    // MCP's sign-in: the metadata, an app's registration, the person's approval, the token.
+    if (isOAuthPath(path)) return yield* oauthRoutes;
     // The homepage, served directly from its last deploy; the viewer on it until there's one.
     if (path == "/" && read) {
+      // Someone signed in who comes from outside Erga goes to their documents. The session is read only then.
+      if (cameFromOutside(request) && homeGoesToDocs(request, yield* call(() => p.sessionOf(request))))
+        return redirect(`/docs${url.search}`);
       const home = yield* serveHome;
       if (home) return home;
     }

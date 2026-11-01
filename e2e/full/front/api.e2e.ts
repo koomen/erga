@@ -21,17 +21,18 @@ async function publish(p: Person, token: string, title = "Published app") {
   return { res, pub: (await res.json()) as { ok: boolean; id: string; address: string; url: string; files: string[] } };
 }
 
-test("/llms.txt explains getting a token, publishing and the tools, to anyone; the tools need a real token", async () => {
+test("/llms.txt explains connecting over MCP, publishing and the tools, to anyone; the tools need a real token", async () => {
   const s = await servers.script();
   const guide = await (await fetch(`${s.root}/llms.txt`)).text();
+  const origin = new URL(s.root).origin;
   for (const want of [
-    "/api/auth/request",
-    "/api/publish",
+    `claude mcp add --transport http erga ${origin}/mcp`,
+    `codex mcp add erga --url ${origin}/mcp`,
     "### create_document",
-    `${new URL(s.root).origin}/mcp`,
-    `${new URL(s.root).origin}/api/tools/`,
   ])
     expect(guide, want).toContain(want);
+  // One way in: no token to ask for and no curl.
+  for (const gone of ["/api/auth/request", "curl "]) expect(guide, gone).not.toContain(gone);
   // Without a token, a request from another site is refused (in local development it is the dev person's, from elsewhere).
   expect([401, 403]).toContain((await fetch(`${s.root}/api/tools/whoami`, { method: "POST", body: "{}" })).status);
   expect(

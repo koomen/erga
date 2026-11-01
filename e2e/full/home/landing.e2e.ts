@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect, servers, SHORT, test } from "../../helpers/fixtures";
 import { ROOT } from "../../helpers/env";
 import { editor, F } from "../../helpers/editor";
-import { deployed, docOf, editOf, fresh, front, get, resetLanding } from "./home";
+import { deployed, docOf, editOf, fresh, front, get, openHome, resetLanding } from "./home";
 import { runTool } from "../../helpers/tools";
 
 await servers.short();
@@ -16,7 +16,7 @@ test("in a browser, once its first deploy is done, / is the landing document its
   const { address } = await fresh(server);
   await deployed(server);
   await tab.page.setViewportSize({ width: 1200, height: 800 });
-  await tab.page.goto(`${server.root}/`);
+  await openHome(tab.page, server.root);
   expect(await tab.page.evaluate((address) => {
     const controls = document.querySelector("erga-controls")?.shadowRoot;
     return document.querySelector("h1")?.textContent == "Erga" && !document.querySelector("iframe#frame")

@@ -158,6 +158,9 @@ Found a new trap? Write it here, in the same change.
   again, with its `?erga-edit` if the editor was on then, and that page asks for the editor by
   itself. Only the shell decides "editing" (`client/shell/remote.ts`: `active`); the frame's
   address never does.
+- A browser that opens `/` by address (`page.goto`) sends `Sec-Fetch-Site: none`, so someone
+  signed in lands on /docs (server/app.ts). A test of the landing page opens it as the logo does:
+  `openHome(page, root)` (e2e/full/home/home.ts).
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 
