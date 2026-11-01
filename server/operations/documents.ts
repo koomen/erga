@@ -181,13 +181,13 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     activity: "deleting a document",
     ui: "Documents (/docs): Delete",
     description:
-      "Deletes one of the person's documents for good, as Delete on the documents list does (only its owner may). A document that's a folder on disk (local development) only comes off the list. The editor's agent can't delete the document it's in: the person deletes that one on the documents list (/docs). Only delete when the person asks, naming the document.",
+      "Deletes one of the person's documents for good, as Delete on the documents list does (only its owner may). A document that's a folder on disk (local development) only comes off the list. Your own agent can't delete the document open on the person's page: they delete that one on the documents list (/docs). Only delete when the person asks, naming the document.",
     parameters: Schema.Struct({ document: ANY_DOCUMENT }),
     run: async (args, caller) => {
       const doc = await findDocument({ ...caller, here: undefined }, args.document, "delete");
       if (doc.id == caller.here)
         throw new OperationError({
-          message: "That's the document you're in: the person deletes it on the documents list (/docs).",
+          message: "That's the document open on the person's page: they delete it on the documents list (/docs).",
           status: 409,
         });
       const platform = platformOf(caller);

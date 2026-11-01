@@ -188,9 +188,6 @@ export class RemoteTarget implements Target {
       const r = await doc.push(p, text);
       if (!r.ok) throw new Error(`resetting ${p}: ${r.status} ${await r.text()}`);
     }
-    // Agent sessions from earlier tests start over (a fresh document has none,
-    // and asking would start them, as extra participants).
-    if (!this.newDocUrl) for (const user of ["Ada", "Bo", "Cy"]) await doc.fetch(`/api/agent/reset?user=${user}`, { method: "POST" }, user).catch(() => {});
     return doc;
   }
 

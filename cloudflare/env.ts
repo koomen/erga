@@ -19,7 +19,7 @@ export interface Env {
   /** The server's own small storage (server/platform.ts `own`): one Durable Object, "own". */
   OWN: DurableObjectNamespace<OwnStorage>;
   /** Each admin's agent, its conversation and panel: one Durable Object, "admin". */
-  /** Each person's conversations with the document agent: one Durable Object per person, named by their login. */
+  /** Each person's agent (agents/person/): one Durable Object per person, named by their login. */
   AGENTS: DurableObjectNamespace<PersonAgent>;
   /**
    * The server's key (a Worker secret, named for the factory it once served): it encrypts the API keys and sign-in

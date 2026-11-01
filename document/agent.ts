@@ -1,13 +1,10 @@
-// What a document needs of its agents, and what it gives them: the contract
-// the document agent (agents/document/session.ts, `documentAgents`) fulfils.
-// The document's host (host.ts) starts each person's session through
-// `DocumentAgents`, and passes in how the agent's tools reach the document
-// (`SessionOptions`). The agent itself, its model and its tools are in
-// agents/: the document only holds this side of it.
+// What a document needs of its agents, and what it gives them: the contract agents/document/session.ts
+// (`documentAgents`) fulfils. The document's host (host.ts) starts each person's session through `DocumentAgents`,
+// and passes in how the agents' tools reach the document (`SessionOptions`). Every agent's document tools run in that
+// session for its person: their own agent's (agents/person/) and an outside agent's. The agents themselves, their
+// models and their tools are in agents/: the document only holds this side of it.
 
-import type { Attachment } from "../shared/attach.ts";
-import type { Log, LogEvent, ViewRequest, ViewResult } from "../shared/agent-log.ts";
-import type { BlobStore } from "./blobs.ts";
+import type { LogEvent, ViewRequest, ViewResult } from "../shared/agent-log.ts";
 import type { DocKind } from "./pages.ts";
 import type { Room } from "./room.ts";
 import type { RestoreResult, Version, VersionsState } from "./versions.ts";
@@ -53,14 +50,10 @@ export interface OpenResult {
 
 /** A person's agent session in one document, as its host starts it. */
 export interface SessionOptions {
-  /** The document's id: where the person's conversation here is kept, and the document the agent's server tools are in. */
-  docId: string;
   room: Room;
   /** The person this session works for. */
   owner: { id: string; name: string };
   docName: string;
-  /** A test document: its agent is the scripted model, free and the same every run. */
-  scripted?: boolean;
   /** A document that's a single file opened from disk: its path (the agent can't make other files). */
   only?: string;
   /** A document (one page: no other page can be made) or a project (pages), now; a project if not given. */
@@ -72,53 +65,29 @@ export interface SessionOptions {
   readAsset: (path: string) => Promise<Uint8Array | null>;
   /** Switches the owner's open editor tabs to a page (open_page). */
   open?: (path: string) => Promise<OpenResult>;
-  /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
+  /** An agent's run of calls ended: the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
   turnEnded?: () => Promise<string | null> | void;
   /** The document's versions; without it those tools are left out. */
   versions?: VersionsAccess;
   /** Every file's size, time and kind, PDFs' text, and writes of bytes (host.ts); without it the file tools see text and names only. */
   files?: FilesAccess;
-  /** Where the document's files kept whole are: the conversation keeps its big pictures and PDFs there too, by hash. */
-  blobs?: BlobStore;
 }
 
 export interface AgentSession {
-  /** The model's name, or null when the embedded agent is off (its tools still work). */
-  readonly model: string | null;
-  /** The model it's on (DocumentAgents.models); null when off or scripted (nothing to switch). */
-  readonly modelChoice: string | null;
-  /** Switches model from the next turn on (a running turn finishes on the old one). */
-  setModel(choice: string): boolean;
-  /**
-   * Gives the session the agent's settings as they are now (a key an admin
-   * stored, replaced or cleared since it started): the next model call uses
-   * them. Answers why the embedded agent is off ("" if it's on).
-   */
-  refresh(): Promise<string>;
-  /** The transcript so far (for a tab that just loaded). */
-  log(): Log;
-  /** Sends a message, with any files attached; while a turn is running it steers the current one. */
-  prompt(text: string, context: string | null, files?: Attachment[]): void;
-  abort(): void;
-  reset(): Promise<void>;
   /** Takes back the agent's most recent change (one tool call), if any. */
   undo(): boolean;
+  /** How many of its changes Undo can take back. */
+  undoable(): number;
+  /** The person's agent's turn is done: it's no longer working here, and the document cuts a version of its edits. */
+  done(): void;
+  /** Its events for the person's tabs: Undo's count as it changes. */
   subscribe(listener: (ev: LogEvent) => void): () => void;
-  /**
-   * Goes on with a run that a restart cut off, from its last checkpoint (the
-   * first call only; call it once the session's events reach its tabs).
-   * Answers whether a run goes on.
-   */
-  resume(): Promise<boolean>;
-  /** The tools, for an external agent. */
+  /** The tools, as the person may use them. */
   tools(): ToolSpec[];
   /**
-   * Runs one tool for an external agent, exactly as the embedded agent would:
-   * same replica of the doc, same attribution, presence and undo history. The
-   * call shows in the transcript, marked as external. Throws with a message
-   * the caller can act on (unknown tool, bad arguments, the tool's own error).
-   * `via`: how the person acts through the outside agent (shared/attribution.ts:
-   * "a shared agent (label)"); its edits are theirs, via it.
+   * Runs one tool for the person's agent: the session's replica of the doc, attribution, presence and undo history.
+   * Throws with a message the caller can act on (unknown tool, bad arguments, the tool's own error). `via`: how the
+   * person acts through a shared agent (shared/attribution.ts: "a shared agent (label)"); its edits are theirs, via it.
    */
   runTool(name: string, args: unknown, via?: string): Promise<ToolContent[]>;
   /** Leaves the room and stops its timers (the document closed: it starts again the next time it's needed). */
@@ -127,10 +96,8 @@ export interface AgentSession {
 
 /** A document's agents: what the server around it gives it (DocumentDeps.agents). */
 export interface DocumentAgents {
-  /** A person's session, with the agent's settings as they are now (off, with no key: its tools still work for an outside agent). */
+  /** A person's session. */
   start(opts: SessionOptions): Promise<AgentSession>;
-  /** The models a person may switch between. */
-  models: readonly { id: string; label: string }[];
   /** The tools that change the document: someone who may only view it has none of them. */
   changes: ReadonlySet<string>;
   /** The key the versions' descriptions are written with ("" for none: a plain description). */

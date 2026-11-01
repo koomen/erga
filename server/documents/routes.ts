@@ -109,8 +109,8 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
       : yield* call(() => documentRoute(platform, first, second));
   if (!route) return text("No such document", 404);
   // A document's tools are the server's one API's (POST /api/tools/<name>, with "document"): the host's own route for
-  // them is the server's to call (forwardedAs), never reached from outside.
-  if (/^\/api\/tools(\/|$)/.test(rest))
+  // them is the server's to call (forwardedAs), never reached from outside; so is a person's agent's "turn done".
+  if (/^\/api\/tools(\/|$)|^\/api\/agent\/done$/.test(rest))
     return plainJson(
       {
         ok: false,

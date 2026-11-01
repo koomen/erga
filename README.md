@@ -83,11 +83,11 @@ flowchart LR
   document keeps its files and versions in the object's storage, and large
   files in R2. Its room is a shared Yjs document: each editor tab joins it
   over a WebSocket, and each agent session joins it in the same process.
-- **The agents.** The document agent (`agents/document/`) edits the files of
-  one document for one person, in the same room as the people. The admin
-  agent (`agents/person/agent.ts`) does what an admin does on the admin pages. An
-  outside agent uses the same tools with a person's agent token, over the
-  HTTP API or MCP (`server/api.ts`).
+- **The agents.** Each person has one agent (`agents/person/`), on every
+  page: it does what they can, and edits a document's files in its room as
+  they would (`agents/document/`: one session per person per document, where
+  every agent's document tools run). An outside agent uses the same tools with
+  a person's agent token, over the HTTP API or MCP (`server/api.ts`).
 - **The database** is D1: the users, the server's settings, and each
   document's address, owner and permissions (`server/directory/`).
 - **The control Worker** (`control/`) is apart from the app. It holds
@@ -165,18 +165,18 @@ health checks and rollbacks work.
                       tokens (documents.ts), the admin pages' settings, keys, sign-in, users and rules (admin.ts).
                       The pages call them over POST /api/tools/<name>; every agent has them as tools
       migrations/     the database's schema, one file for each change (AGENTS.md, rule 3)
-    agents/       both embedded agents, their tools, and the guides for outside agents
-      run.ts          the agent loop both agents run, on Effect AI: the model, the transcript, the checkpoints
+    agents/       each person's agent, the tools, and the guides for outside agents
+      run.ts          the agent loop, on Effect AI: the model, the transcript, the checkpoints
       tools.ts        the one tool set: the server's operations and the document tools for any document, for every
-                      agent as its person (the editor's agent never with admin power); actions.ts, the audit of
+                      agent as its person (a document token never with admin power); actions.ts, the audit of
                       every action and its tool
       guides.ts       what an outside agent reads first: the server's guide, a document's and the admin pages'
       models.ts       the models (Effect AI's Anthropic provider), the agent's configuration and the scripted test model
       checkpoint.ts   an agent's conversation, kept step by step (chat-store.ts, in a Durable Object's SQLite)
-      document/       the document agent: session.ts (one session per person per document), workspace.ts, tools.ts,
-                      prompt.ts, PROMPT.md
-      admin/          the admin agent: agent.ts (its session), tools.ts (its own tool: the homepage's deploy), prompt.ts, sessions.ts (one
-                      session per admin, and its routes), panel.ts (the panel's preferences)
+      document/       every agent's hands in a document: session.ts (one session per person per document, where the
+                      document tools run), workspace.ts, tools.ts, prompt.ts and PROMPT.md (what a prompt says of documents)
+      person/         each person's agent: agent.ts (its session), prompt.ts, sessions.ts (one session per person, in
+                      their object, and its routes), panel.ts (the panel's preferences)
     shared/       code the server and the browser bundles both use: the agent's transcript (agent-log.ts), attached
                   files (attach.ts), who did something (attribution.ts), a page's text and its source (manuscript.ts,
                   page-html.ts), the room's socket (room-socket.ts), ... The browser's bundles may have shared/, and of

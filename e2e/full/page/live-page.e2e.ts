@@ -115,13 +115,28 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   expect(key.text).toMatch(/Pressed a key on <p>: keydown \(default prevented\), keyup\./);
   expect((await tool("page_events", { since: "10s" })).text).toMatch(/keydown on <p>, sent by the agent, untrusted: the editor called preventDefault \(its listener on document, bubble phase\)/);
 
-  // The embedded agent has the same tools.
-  const turn = await owner.get(`/d/${doc.id}/api/agent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `Why is it quiet? @script ${JSON.stringify([{ tool: "page_console", args: { pattern: "playing" } }, { text: "It plays." }])}` }) });
+  // The owner's own agent has the same tools, in the document open on their page.
+  const turn = await owner.get("/api/agent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: owner.origin },
+    body: JSON.stringify({
+      text: `Why is it quiet? @script ${JSON.stringify([{ tool: "page_console", args: { pattern: "playing" } }, { text: "It plays." }])}`,
+      doc: doc.id,
+    }),
+  });
   expect(turn.ok).toBe(true);
-  const log = await until(async () => {
-    const l = ((await (await owner.get(`/d/${doc.id}/api/agent`)).json()) as { log: { busy: boolean; items: { kind: string; name?: string; status?: string }[] } }).log;
+  const log = await until(
+    async () => {
+      const l = (
+        (await (await owner.get("/api/agent/conversation")).json()) as {
+          log: { busy: boolean; items: { kind: string; name?: string; status?: string }[] };
+        }
+      ).log;
     return !l.busy && l.items.some((i) => i.kind == "tool" && i.name == "page_console") ? l : null;
-  }, 10_000, "the embedded agent's turn");
+    },
+    10_000,
+    "the agent's turn"
+  );
   expect(log!.items.find((i) => i.name == "page_console")?.status).toBe("done");
 
 });

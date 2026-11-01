@@ -6,8 +6,8 @@
 //
 // Who calls is a Caller: the person (Who), and how they act (in person, or `via`
 // one of their agents). Admin power (Who.admin) comes with a person's own
-// session and an admin-scope token, and with the admin agent; never with the
-// editor's agent, nor with a document token. An operation marked `admin` is only
+// session and an admin-scope token, and with an admin's own agent (agents/person/);
+// never with a document token. An operation marked `admin` is only
 // for a caller with it, and the directory checks again on every call
 // (Users.mustAdmin).
 
@@ -43,7 +43,7 @@ export interface Caller {
   readonly who: Who;
   /** The person's name, for a request to a document's host. */
   readonly name?: string;
-  /** The document the editor's agent works in: the default for a `document` argument. */
+  /** The document open on the person's page, as their own agent's message said (agents/person/): the default for a `document` argument. */
   readonly here?: string;
   /** The server's origin, for URLs in answers (else addresses only). */
   readonly origin?: string;
@@ -53,6 +53,8 @@ export interface Caller {
   readonly auth?: AuthOps;
   /** An outside agent's token, when it calls with one. */
   readonly token?: AgentToken;
+  /** A person's own agent hears each document its tools ran in (callDocument), to say when its turn is done there. */
+  readonly ranIn?: (doc: Route) => void;
 }
 
 /** One operation, for the front end and every agent alike. */
@@ -60,7 +62,7 @@ export interface Operation {
   readonly name: string;
   /** For the agent panel (the name, if not given). */
   readonly label?: string;
-  /** What the agent is doing while it runs ("sharing the document"): the document agent's presence shows it. */
+  /** What the agent is doing while it runs ("sharing the document"): the agent's panel shows it. */
   readonly activity?: string;
   readonly description: string;
   /** Its arguments (outside agents get their JSON Schema). */
@@ -116,10 +118,10 @@ export async function runOperation(op: Operation, args: Record<string, unknown>,
 // ---------------------------------------------------------------- what the operations share
 
 export const str = (description: string) => Schema.String.annotate({ description });
-/** A document, by any of its names; the editor's agent may leave it out for the document it's in. */
+/** A document, by any of its names; the person's own agent may leave it out for the document open on their page. */
 export const DOCUMENT = Schema.optionalKey(
   str(
-    "The document: its address (/<owner>/<slug>; the homepage project's is /_home), its URL, its id, or the slug of one of yours. The editor's agent may leave it out for the document it's in."
+    "The document: its address (/<owner>/<slug>; the homepage project's is /_home), its URL, its id, or the slug of one of yours. Your own agent may leave it out for the document open on the person's page."
   )
 );
 export const LOGIN = str("A GitHub login");
@@ -134,7 +136,7 @@ export function platformOf(caller: Caller): Platform {
 
 /**
  * The document a caller names (an address, a URL, an id, or one of the
- * person's slugs; nothing for the one the editor's agent is in), if they may do `action` with it.
+ * person's slugs; nothing for the one open on the page of the person's own agent), if they may do `action` with it.
  */
 export async function findDocument(caller: Caller, ref: unknown, action: Action): Promise<DocRow> {
   const { dir, who } = caller;
@@ -201,5 +203,6 @@ export async function callDocument(caller: Caller, doc: Route, path: string, ini
     origin = caller.origin ?? "https://erga.invalid";
   const url = new URL(path, origin);
   const person = { login: caller.who.login, name: caller.name ?? caller.who.login };
+  caller.ranIn?.(doc);
   return platform.docs.fetch(doc, forwardedAs(new Request(url, init), url, path, person, caller.who));
 }

@@ -1,4 +1,4 @@
-// The document agent's tools: the files' text (read, edit, write, find, grep), the page (page-tools.ts), and diff_versions.
+// The document tools every agent has in a document (run in its host: agents/document/session.ts): the files' text (read, edit, write, find, grep), the page (page-tools.ts), and diff_versions.
 // What a person does with the document as a whole (its name, pages, folders, files' list and versions) is an
 // operation (server/operations/editor.ts), which the agent has as a tool too.
 

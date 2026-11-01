@@ -31,7 +31,10 @@ export async function person(server: Server, as: string) {
   const get: Get = (path, init = {}) => fetch(server.root + path, { redirect: "manual", ...init, headers: { Cookie: cookie, ...(init.headers as Record<string, string>) } });
   const origin = server.root;
   return {
-    login: as.toLowerCase(), cookie, get,
+    login: as.toLowerCase(),
+    cookie,
+    get,
+    origin,
     /** A blank document of theirs (/new): its address and id. */
     async newDoc() {
       const at = (await get("/new")).headers.get("location")!.replace(/(\/edit|[?&]edit)$/, "");
@@ -115,6 +118,10 @@ export async function cut(owner: Person, id: string, ada: Participant, edit: (t:
 /** Text put into the page's heading. */
 export const intoHeading = (text: string) => (t: Y.Text) => t.insert(t.toString().indexOf("</h1>"), text);
 
-/** Sends the document's agent a scripted turn (the script model: `@script [steps]`), as `who`. */
+/** Sends `who`'s agent a scripted turn (the script model: `@script [steps]`) from document `id`'s page, as `who`. */
 export const scripted = (who: Person, id: string, steps: unknown[], text = "") =>
-  who.get(`/d/${id}/api/agent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `${text}@script ${JSON.stringify(steps)}` }) });
+  who.get("/api/agent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: who.origin },
+    body: JSON.stringify({ text: `${text}@script ${JSON.stringify(steps)}`, doc: id }),
+  });

@@ -1,8 +1,8 @@
-// The document agent as a participant, driven by the scripted model (agents/document/session.ts:
-// a message with `@script [...]` plays tool calls in order), so every run is
-// the same and free. Checks the agent's edits are attributed and visible to
-// others, that stale aim fails cleanly, that `write` keeps edits made since
-// its read, its undo, its presence, and that conversations stay private.
+// Each person's agent as a participant in a document, driven by the scripted model (agents/models.ts: a message with
+// `@script [...]` plays tool calls in order), so every run is the same and free. Its document tools run in the
+// document's host as the person's agent (agents/document/session.ts). Checks the agent's edits are attributed and
+// visible to others, that stale aim fails cleanly, that `write` keeps edits made since its read, its undo, its
+// presence, and that conversations stay private.
 
 import { converged, Participant } from "../client";
 import { expect, type Test } from "../harness";
@@ -11,24 +11,58 @@ import { until } from "../../../helpers/fixtures";
 import type { Doc } from "../target";
 
 type Item = { kind: string; text?: string; name?: string; status?: string; detail?: string; image?: string };
-interface Log { items: Item[]; busy: boolean; undoable: number }
-
-async function agentLog(d: Doc, user: string): Promise<Log> {
-  const r = await d.fetch(`/api/agent?user=${encodeURIComponent(user)}`, {}, user);
-  const j = (await r.json()) as { enabled: boolean; reason?: string; log?: Log };
-  expect(j.enabled, `the agent is on for ${user}`, j.reason);
-  return j.log!;
+interface Log {
+  items: Item[];
+  busy: boolean;
 }
 
-/** Sends a script and waits for the run to end; returns the log. */
+/** A request to the person's agent (agents/person/sessions.ts: on the app, not the document), as `user`. */
+function agentApi(d: Doc, user: string, path: string, init: RequestInit = {}) {
+  const origin = new URL(d.base).origin;
+  return fetch(`${origin}${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(user)}`, {
+    ...init,
+    headers: { ...d.headersFor(user), Origin: origin, ...(init.headers as Record<string, string> | undefined) },
+  });
+}
+
+/** The document's id: the document a message names, for the agent's tools that name none. */
+const ids = new WeakMap<Doc, Promise<string>>();
+const docId = (d: Doc) => {
+  if (!ids.has(d))
+    ids.set(
+      d,
+      d.fetch("/api/doc").then(async (r) => ((await r.json()) as { docName: { id: string } }).docName.id)
+    );
+  return ids.get(d)!;
+};
+
+async function agentLog(d: Doc, user: string): Promise<Log> {
+  const j = (await (await agentApi(d, user, "/api/agent")).json()) as { enabled: boolean; reason?: string };
+  expect(j.enabled, `the agent is on for ${user}`, j.reason);
+  return ((await (await agentApi(d, user, "/api/agent/conversation")).json()) as { log: Log }).log;
+}
+
+/** How many of `user`'s agent's changes to the document Undo can take back (the document's host keeps them). */
+const undoable = async (d: Doc, user: string) =>
+  ((await (await d.fetch(`/api/agent/undo?user=${encodeURIComponent(user)}`, {}, user)).json()) as { count: number }).count;
+
+/** A new conversation for each of `users` (the agent is the person's, across documents and tests). */
+const fresh = (d: Doc, ...users: string[]) =>
+  Promise.all(users.map((u) => agentApi(d, u, "/api/agent/conversation", { method: "DELETE" })));
+
+/** Sends a script and waits for the run to end; returns the log of this run (the conversation goes on across tests). */
 async function runScript(d: Doc, user: string, steps: unknown[], opts: { wait?: boolean; text?: string } = {}): Promise<Log> {
   const before = (await agentLog(d, user)).items.length;
-  const r = await d.fetch(`/api/agent?user=${encodeURIComponent(user)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `${opts.text ?? "Test"} @script ${JSON.stringify(steps)}` }) }, user);
+  const r = await agentApi(d, user, "/api/agent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: `${opts.text ?? "Test"} @script ${JSON.stringify(steps)}`, doc: await docId(d) }),
+  });
   expect(r.ok, `the prompt is accepted (${r.status})`);
   if (opts.wait === false) return agentLog(d, user);
   let log: Log = await agentLog(d, user);
   await until(async () => { log = await agentLog(d, user); return !log.busy && log.items.length > before + 1; }, 20_000, `${user}'s agent finishes`, () => log);
-  return log;
+  return { ...log, items: log.items.slice(before) };
 }
 
 const edit = (path: string, oldText: string, newText: string, extra: object = {}) => ({ tool: "edit", args: { path, edits: [{ oldText, newText }] }, ...extra });
@@ -117,7 +151,7 @@ export const agent: Test[] = [
       await until(() => b.str().includes("ONE") && b.str().includes("TWO"), 3000, "both edits landed");
       b.insertAfter("<h1>", "BO ");
       await sleep(200);
-      expect((await agentLog(d, "Ada")).undoable == 2, "two changes to undo");
+      expect((await undoable(d, "Ada")) == 2, "two changes to undo");
       let r = await (await d.fetch("/api/agent/undo?user=Ada", { method: "POST" }, "Ada")).json() as { ok: boolean };
       expect(r.ok, "undo succeeds");
       await until(() => !b.str().includes("TWO"), 3000, "the last change is gone");
@@ -167,9 +201,7 @@ export const agent: Test[] = [
       const bad = await run("edit", { path: d.path });
       expect(bad.status == 400 && /edits/.test(bad.body.error ?? ""), "bad arguments say what's wrong", bad);
       expect((await run("nope", {})).status == 404, "an unknown tool is a 404");
-      const log = await agentLog(d, "Ada");
-      expect(log.items.some((i) => i.kind == "tool" && i.name == "edit" && i.status == "done" && (i as { via?: string }).via == "external"), "the call is in Ada's transcript, marked external", log.items);
-      expect(log.undoable == 1, "and Ada can undo it");
+      expect((await undoable(d, "Ada")) == 1, "and Ada can undo it");
       await d.fetch("/api/agent/undo?user=Ada", { method: "POST" }, "Ada");
       await until(() => !b.str().includes("EXT"), 3000, "the undo takes it back");
       const fresh = await share(true);
@@ -184,6 +216,7 @@ export const agent: Test[] = [
     needs: ["scriptedAgent"],
     async run(ctx) {
       const d = await ctx.doc();
+      await fresh(d, "Ada", "Bo");
       // Bo's event channel, listening the whole time.
       let boEvents = "";
       const headers = d.headersFor("Bo");
@@ -266,19 +299,14 @@ export const agent: Test[] = [
       await d.share!("Dee", "viewer");
       const b = await Participant.join(d, "Bo");
       ctx.defer(() => b.destroy());
-      // Someone who may only view has no agent here (its turns use the server's key): it's off, saying why, and a prompt is refused.
-      const state = (await (await d.fetch("/api/agent?user=Dee", {}, "Dee")).json()) as { enabled: boolean; reason?: string };
-      expect(!state.enabled && /only view/.test(state.reason ?? ""), "the viewer's agent is off, saying why", state);
-      const asked = await d.fetch(
-        "/api/agent?user=Dee",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: `Tried @script ${JSON.stringify([edit(d.path, "<h1>Launch notes", "<h1>Dee's notes")])}` }),
-        },
-        "Dee"
+      // Someone who may only view: their agent can't change the document (it changes others only): its edit is refused.
+      const tried = await runScript(d, "Dee", [edit(d.path, "<h1>Launch notes", "<h1>Dee's notes"), { text: "Tried." }]);
+      expect(
+        tried.items.some((i) => i.kind == "tool" && i.status == "error" && !!i.detail),
+        "the viewer's agent's edit is refused, saying why",
+        tried.items.slice(-3)
       );
-      expect(!asked.ok, "the viewer's prompt is refused", asked.status);
+      expect(!(await d.stored(d.path))!.text.includes("Dee's notes"), "the document is as it was");
       // Nor do the viewer's own edits, in the room or as a publish, go anywhere.
       const v = await Participant.join(d, "Dee");
       ctx.defer(() => v.destroy());

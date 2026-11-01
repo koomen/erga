@@ -3,8 +3,7 @@
 // imports its types only, so none of this lands in the
 // browser bundle.
 //
-// Failures keep the shape callers already know ({ ok: false, reason } from
-// the agent's endpoints, { ok: false, error } from the external agent's),
+// Failures keep the shape callers already know ({ ok: false, error } from the agents' tools),
 // plus a _tag naming which failure it was. A body or parameter that doesn't
 // decode is a 400 saying what's wrong (BadRequest).
 //
@@ -18,7 +17,6 @@
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
-import type { Log } from "../shared/agent-log";
 
 // ------------------------------------------------------------ failures
 
@@ -28,13 +26,6 @@ const failed = { ok: Schema.Literal(false) };
 export class BadRequest extends Schema.TaggedError<BadRequest>()("BadRequest", { ...failed, error: Schema.String }, { httpApiStatus: 400 }) {}
 /** No agent token, or one that's been revoked. */
 export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", { ...failed, error: Schema.String }, { httpApiStatus: 401 }) {}
-/** The embedded agent is off (no key), or its session didn't start. */
-export class AgentOff extends Schema.TaggedError<AgentOff>()("AgentOff", { ...failed, reason: Schema.String }, { httpApiStatus: 503 }) {}
-export class NoSuchModel extends Schema.TaggedError<NoSuchModel>()("NoSuchModel", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
-/** A message's attachments that can't be sent (shared/attach.ts says why). */
-export class BadAttachment extends Schema.TaggedError<BadAttachment>()("BadAttachment", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
-/** The scripted test model can't be switched. */
-export class ModelFixed extends Schema.TaggedError<ModelFixed>()("ModelFixed", { ...failed, reason: Schema.String }, { httpApiStatus: 409 }) {}
 /** The person's agent session didn't start, so its tools can't run. */
 export class SessionFailed extends Schema.TaggedError<SessionFailed>()("SessionFailed", { ...failed, error: Schema.String }, { httpApiStatus: 503 }) {}
 export class NoSuchTool extends Schema.TaggedError<NoSuchTool>()("NoSuchTool", { ...failed, error: Schema.String }, { httpApiStatus: 404 }) {}
@@ -97,27 +88,6 @@ export const DocInfo = Schema.Struct({
 });
 export type DocInfo = typeof DocInfo.Type;
 
-/** The model a person's agent runs on, and what it can switch to (nothing when scripted). */
-export const ModelState = Schema.Struct({
-  model: Schema.NullOr(Schema.String),
-  choice: Schema.NullOr(Schema.String),
-  models: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
-});
-export type ModelState = typeof ModelState.Type;
-
-/**
- * The agent's transcript, passed through as the
- * session keeps it (Any, not Unknown: its items leave optional fields
- * undefined, which JSON drops).
- */
-const LogField = Schema.Any as unknown as Schema.Codec<Log>;
-
-export const AgentState = Schema.Union([
-  Schema.Struct({ enabled: Schema.Literal(true), ...ModelState.fields, log: LogField }),
-  Schema.Struct({ enabled: Schema.Literal(false), reason: Schema.String, log: Schema.optional(LogField) }),
-]);
-export type AgentState = typeof AgentState.Type;
-
 /**
  * The start of GET /api/start's answer, and the first message on a tab's socket (/api/room?events=1, a text frame),
  * again each time the document opens for it: the document's details as its person sees them, and its tree as GET
@@ -138,19 +108,6 @@ export const Api = HttpApi.make("erga")
     .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
     .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("agent")
-    .add(HttpApiEndpoint.get("state", "/api/agent", { success: AgentState }))
-    /** A message for the person's agent; `after` is the sender's state vector, so its last keystrokes land first. */
-    .add(HttpApiEndpoint.post("prompt", "/api/agent", {
-      payload: Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)), after: Schema.optional(Schema.String), files: Schema.optional(Schema.Array(Schema.Unknown)) }),
-      success: Ok,
-      error: [AgentOff, BadAttachment],
-    }))
-    /** Switches the person's agent to another model, from its next turn; their other tabs follow. */
-    .add(HttpApiEndpoint.post("model", "/api/agent/model", {
-      payload: Schema.Struct({ model: Schema.String }),
-      success: Schema.Struct({ ok: Schema.Literal(true), ...ModelState.fields }),
-      error: [AgentOff, NoSuchModel, ModelFixed],
-    }))
     /** A tab's answer to the agent's view_page request. */
     .add(HttpApiEndpoint.post("view", "/api/agent/view", {
       payload: Schema.Struct({
@@ -177,8 +134,8 @@ export const Api = HttpApi.make("erga")
       }),
       success: Ok,
     }))
-    .add(HttpApiEndpoint.post("abort", "/api/agent/abort", { success: Ok }))
-    .add(HttpApiEndpoint.post("reset", "/api/agent/reset", { success: Ok }))
+    /** How many of the person's agent's changes here Undo can take back. */
+    .add(HttpApiEndpoint.get("undoable", "/api/agent/undo", { success: Schema.Struct({ count: Schema.Number }) }))
     /** Undoes the agent's last change; ok is false when there was nothing to undo. */
     .add(HttpApiEndpoint.post("undo", "/api/agent/undo", { success: Schema.Struct({ ok: Schema.Boolean }) }))
     .middleware(PersonFromRequest))
@@ -194,5 +151,7 @@ export const Api = HttpApi.make("erga")
       success: Schema.Struct({ ok: Schema.Literal(true), content: Schema.Any }),
       error: [SessionFailed, NoSuchTool, ToolFailed],
     }))
+    /** The person's own agent's turn is done (agents/person/sessions.ts): its presence here ends, and a version is cut. */
+    .add(HttpApiEndpoint.post("done", "/api/agent/done", { success: Ok, error: [SessionFailed] }))
     .middleware(ExternalAgent))
   .middleware(ExplainBadRequests);

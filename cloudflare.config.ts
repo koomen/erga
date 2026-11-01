@@ -71,7 +71,7 @@ export default defineConfig(({ mode }) => ({
       SiteHost: exports.durableObject({ state: "deleted" }),
       // The admins' agents before each person had one (PersonAgent): gone, with their conversations (2026-11-01).
       AdminAgentHost: exports.durableObject({ state: "deleted" }),
-      // Each person's agent (agents/person/), and their conversations with the document agent: one object per person, named by their login.
+      // Each person's agent (agents/person/): one object per person, named by their login.
       PersonAgent: exports.durableObject({ storage: "sqlite" }),
       // The factory (its task queue) and its VMs: gone, with what they held.
       Factory: exports.durableObject({ state: "deleted" }),

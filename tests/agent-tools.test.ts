@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql, type Who } from "../server/directory/index.ts";
-import { agentToolsFor, allTools, elsewhere, runTool, toolsFor } from "../agents/tools";
+import { agentTools, allTools, documentTools, documentToolsHere, runTool, toolsFor } from "../agents/tools";
 import { type Caller, OPERATIONS, OperationError } from "../server/operations/index.ts";
 import { VIA } from "../shared/attribution";
 import type { Platform } from "../server/platform";
@@ -44,14 +44,19 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   await dir.users.add({ login: "root", admin: true }, "bo");
   const names = async (who: Who) => (await toolsFor({ dir, who, here: "aaaaaaaa" })).map((t) => t.name);
   expect(await names({ login: "root", admin: true })).toContain("set_setting");
-  expect(await names({ login: "bo" })).toEqual(OPERATIONS.filter((o) => !o.admin).map((o) => o.name));
+  expect(await names({ login: "bo" })).toEqual([
+    ...OPERATIONS.filter((o) => !o.admin).map((o) => o.name),
+    ...documentTools().map((t) => t.name),
+  ]);
   expect(await names({ login: "root", test: true })).not.toContain("list_users");
   const e = await failure(run({ dir, who: { login: "bo" } }, "list_settings"));
   expect(e).toBeInstanceOf(OperationError);
   expect(e.status).toBe(403);
-  // The document agent gets the same, as its loop runs them.
-  expect((await agentToolsFor({ dir, who: { login: "bo" }, here: "aaaaaaaa" })).map((t) => t.name)).toEqual(await names({ login: "bo" }));
-  const forRoot = await agentToolsFor({ dir, who: { login: "root", admin: true } });
+  // A person's own agent gets the same, as its loop runs them.
+  const bo = { dir, who: { login: "bo" }, here: "aaaaaaaa" };
+  expect(agentTools(await toolsFor(bo, true), bo).map((t) => t.name)).toEqual(await names({ login: "bo" }));
+  const root = { dir, who: { login: "root", admin: true } };
+  const forRoot = agentTools(await toolsFor(root, true), root);
   const out = await forRoot.find((t) => t.name == "list_settings")!.execute("x", {});
   expect(JSON.parse((out.content[0] as { text: string }).text).map((e: { key: string }) => e.key)).toContain("delete_docs_after_hours");
 });
@@ -231,7 +236,7 @@ test("the documents list: the document agent lists, makes (blank, a template, a 
   expect((await failure(run(ada, "delete_document", {}))).status).toBe(400);
   // A test person makes no documents.
   expect((await failure(run({ ...ada, who: { login: "test-ada", test: true } }, "create_document"))).status).toBe(403);
-  expect((await agentToolsFor(ada)).map((t) => t.name)).toContain("delete_document");
+  expect((await toolsFor(ada, true)).map((t) => t.name)).toContain("delete_document");
 });
 
 test("API keys: an admin clears one (the change log says who), and is never offered a tool to set one", async () => {
@@ -256,31 +261,27 @@ test("API keys: an admin clears one (the change log says who), and is never offe
   ).toEqual([]);
 });
 
-test("one set of tools for every agent: the editor's agent has every operation but the admin ones, even an admin's; the admin agent and an admin token have them all; a document token none that reach beyond it", async () => {
+test("one set of tools for every agent: a person's own agent has what they may (an admin's, every operation); an admin token all; a document token none that reach beyond it", async () => {
   const dir = fresh({ admins: ["root"] });
+  await dir.users.add({ login: "root", admin: true }, "bo");
   const names = async (c: Caller) => (await toolsFor(c)).map((t) => t.name);
   const all = OPERATIONS.map((o) => o.name);
-  // The editor's agent of an admin: their agent has no admin power. Its own document tools are its session's.
-  expect(await names({ dir, who: { login: "root", via: VIA.agent }, here: "aaaaaaaa" })).toEqual(
-    OPERATIONS.filter((o) => !o.admin).map((o) => o.name)
-  );
-  // An admin operation asked of it says where to go.
-  expect((await failure(run({ dir, who: { login: "root", via: VIA.agent }, here: "aaaaaaaa" }, "list_users"))).message).toMatch(
-    /admin pages/
-  );
-  // The admin agent, and an admin token: every operation, and the document tools for any document.
-  for (const via of [VIA.admin, VIA.token("CI")]) {
+  // A person's own agent: an admin's has admin power (agents/person/sessions.ts), and every operation; the document tools for any document.
+  for (const via of [VIA.agent, VIA.token("CI")]) {
     const tools = await names({ dir, who: { login: "root", admin: true, via } });
     expect(tools.slice(0, all.length)).toEqual(all);
     expect(tools).toContain("edit");
   }
+  // Someone who isn't an admin: their agent has no admin operation, and one asked of it is refused.
+  expect(await names({ dir, who: { login: "bo", via: VIA.agent } })).not.toContain("list_users");
+  expect((await failure(run({ dir, who: { login: "bo", via: VIA.agent } }, "list_users"))).status).toBe(403);
   // A document token: nothing that reaches beyond its document.
   const one = await names({ dir, who: { login: "root", onlyDoc: "aaaaaaaa", via: VIA.token("one") } });
   for (const op of OPERATIONS.filter((o) => o.wide)) expect(one).not.toContain(op.name);
   expect(one).toContain("share_document");
 });
 
-test("the editor's agent works in another document: run in its host as the person's agent, never with admin power; here stays here", async () => {
+test("a person's agent's document tools: the document open on their page, or another named, in its host as their agent, never with admin power", async () => {
   const dir = fresh({ admins: ["root"] });
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
   await dir.add({ id: "bbbbbbbb", owner: "ada", title: "Notes", created: 1 });
@@ -296,13 +297,15 @@ test("the editor's agent works in another document: run in its host as the perso
     },
   } as unknown as Platform;
   const agent: Caller = { dir, who: { login: "ada", via: VIA.agent }, name: "Ada", here: "aaaaaaaa", platform };
-  // Its own document: null, so the tool runs here, in its session.
-  expect(await elsewhere(agent, "/ada/plan", "edit", { path: "index.html" })).toBeNull();
-  expect(sent).toEqual([]);
-  // Another of Ada's: there, as her agent.
-  const out = await elsewhere(agent, "/ada/notes", "edit", { path: "index.html", edits: [] });
+  const edit = documentToolsHere().find((t) => t.name == "edit")!,
+    read = documentToolsHere().find((t) => t.name == "read")!;
+  // No document named: the one open on her page (Caller.here), in its host, as her agent.
+  await runTool(edit, { path: "index.html", edits: [] }, agent);
+  expect(new URL(sent[0].url).pathname).toBe("/api/tools/edit");
+  // Another of Ada's, named: there, as her agent.
+  const out = await runTool(edit, { document: "/ada/notes", path: "index.html", edits: [] }, agent);
   expect(out).toEqual([{ type: "text", text: "Edited notes.html" }]);
-  const r = sent[0];
+  const r = sent[1];
   expect(new URL(r.url).pathname).toBe("/api/tools/edit");
   expect(JSON.parse(await r.text())).toEqual({ path: "index.html", edits: [] });
   expect(r.headers.get("x-erga-agent")).toBeTruthy();
@@ -311,6 +314,6 @@ test("the editor's agent works in another document: run in its host as the perso
   expect(JSON.parse(r.headers.get("x-erga-who")!)).toEqual({ login: "ada", via: VIA.agent });
   expect(JSON.parse(r.headers.get("x-erga-person")!)).toMatchObject({ id: "ada", name: "Ada" });
   // Someone else's, not shared with her: refused, as it would be to her.
-  expect((await failure(elsewhere(agent, "cccccccc", "read", { path: "index.html" }))).status).toBe(403);
-  expect(sent.length).toBe(1);
+  expect((await failure(runTool(read, { document: "cccccccc", path: "index.html" }, agent))).status).toBe(403);
+  expect(sent.length).toBe(2);
 });

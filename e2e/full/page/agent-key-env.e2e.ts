@@ -8,6 +8,6 @@ await own();
 test("the environment's key turns the agent on past a placeholder in .dev.vars, and nothing is written back", async () => {
   const s = await own();
   const { address } = await s.fixture("page");
-  const info = await (await fetch(`${address}/api/agent`)).json() as { enabled: boolean };
+  const info = (await (await fetch(`${new URL(address).origin}/api/agent`)).json()) as { enabled: boolean };
   expect(info.enabled).toBe(true);
 });

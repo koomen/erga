@@ -361,11 +361,11 @@ function renderUndo() {
 }
 async function readUndo() {
   if (!BASE) return;
-  const a = (await fetch(`${BASE}${asUser("/api/agent")}`).then(
+  const a = (await fetch(`${BASE}${asUser("/api/agent/undo")}`).then(
     (r) => (r.ok ? r.json() : null),
     () => null
-  )) as { log?: Log } | null;
-  undoable = a?.log?.undoable ?? 0;
+  )) as { count?: number } | null;
+  undoable = a?.count ?? 0;
   renderUndo();
 }
 undoBtn.hidden = !BASE;

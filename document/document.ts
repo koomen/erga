@@ -51,7 +51,7 @@ import { DocumentView, type ViewAnswer } from "./view.ts";
 import type { DocumentAgents } from "./agent.ts";
 import { docFile, makeHost, typeOf, type EditorCalls } from "./host.ts";
 import { blobPointer, isBlobRef, storeBlob, TEXT_MAX, type BlobRef, type BlobStore } from "./blobs.ts";
-import type { AgentState, DocName, Hello } from "./api.ts";
+import type { DocName, Hello } from "./api.ts";
 import { FileStore, NoSuchDocument, Room, StateStore, StoreError, type Connection } from "./room.ts";
 
 export { NoSuchDocument };
@@ -887,29 +887,6 @@ export class Document {
   }
 
   /**
-   * A person's agent run that a restart cut off goes on (their object's alarm
-   * asks: cloudflare/objects/person-agent.ts). Until the person comes back,
-   * what they may do is what the directory says now.
-   */
-  resumeAgent(person: Person): Effect.Effect<void, StoreError> {
-    const self = this;
-    return Effect.gen(function* () {
-      const info = yield* io(() => self.readInfo());
-      const opened = info && (yield* io(() => self.room()));
-      if (!info || !opened) {
-        if (!opened) self.open = null;
-        return;
-      }
-      if (!self.editors.has(person.id)) {
-        const test = person.id.startsWith("test-");
-        const role = yield* self.roleOf(test ? { login: person.id, test, by: info.owner } : { login: person.id });
-        self.editors.set(person.id, role == "owner" || role == "editor");
-      }
-      yield* io(() => opened.resumeAgent(person));
-    });
-  }
-
-  /**
    * A tab joins the room over a socket the adapter holds: `send` carries the
    * room's messages to it. Returns what to do with the tab's messages and
    * its going, or null when the tab holds another epoch's history (it is
@@ -935,7 +912,6 @@ export class Document {
       if (!this.editors.has(person.id)) this.editors.set(person.id, !o.readOnly);
       void opened.hello(person, !o.readOnly).then(json, (e: unknown) => this.deps.log(`couldn't greet ${person.id}'s tab: ${e}`));
       tab = opened.addTab(person.id, json);
-      void opened.agentState(person).then((state) => json({ type: "agent-state", state }), () => {});
     }
     const conn: Connection | null = opened.room.connect(o.send, { epoch: o.epoch, readOnly: o.readOnly });
     if (!conn) { tab?.(); return null; }
@@ -1488,8 +1464,6 @@ export class Document {
       files,
       docId: info.id,
       agents: this.deps.agents,
-      // A test document's agent is the scripted one: free, and the same every run.
-      scripted: !!info.test,
       doc: { name: info.index, path: info.index, dir: info.disk?.path ?? info.owner },
       only: info.disk?.only ? info.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
@@ -1577,8 +1551,6 @@ export class Document {
       notify: host.notify,
       addTab: host.addTab,
       hello: host.hello,
-      agentState: host.agentState,
-      resumeAgent: host.resumeAgent,
       room,
       // Back in touch with disk: every file there, and every one the room holds, is looked at again.
       catchUp: async () => {
@@ -1617,16 +1589,12 @@ export interface Opened {
   addTab: (user: string, send: (msg: unknown) => void, watch?: boolean) => () => void;
   /** What a tab hears first ({ type: "hello" }): the document's details as the person sees them, and its tree. */
   hello: (person: Person, canEdit: boolean) => Promise<Hello>;
-  /** The person's agent: on or off, its model and its conversation (as GET /api/agent answers). */
-  agentState: (person: Person) => Promise<AgentState>;
   room: Room;
   catchUp: () => Promise<void>;
   /** Tells every open tab the document's new title and address. */
   renamed: (name: DocName) => void;
   /** A message for every open tab. */
   notify: (msg: unknown) => void;
-  /** A person's agent session, started if it isn't (a run a restart cut off goes on). */
-  resumeAgent: (person: Person) => Promise<void>;
   close: () => Promise<void>;
 }
 

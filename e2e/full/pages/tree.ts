@@ -54,13 +54,22 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
       return { status: r.status, body: (r.ok ? r.result : { error: r.error }) as { entries?: Entry[]; error?: string } };
     },
     async write(path: string, content: string) { const w = await tool("write", { path, content }); if (!w.ok) throw new Error(`write ${path}: ${w.text}`); },
-    /** The document agent's log (GET /d/<id>/api/agent). */
-    agentLog: async () => ((await (await owner.get(`/d/${doc.id}/api/agent`)).json()) as { log: { busy: boolean; items: { kind: string; name?: string; status?: string; detail?: string; text?: string }[] } }).log,
-    /** A scripted turn of the document agent; the tool calls it made, once it's done. */
+    /** The owner's agent's log (its conversation, agents/person/sessions.ts). */
+    agentLog: async () =>
+      (
+        (await (await owner.get("/api/agent/conversation")).json()) as {
+          log: { busy: boolean; items: { kind: string; name?: string; status?: string; detail?: string; text?: string }[] };
+        }
+      ).log,
+    /** A scripted turn of the owner's agent, from the document's page; the tool calls it made, once it's done. */
     async agentTurn(text: string, steps: unknown[], context?: string) {
       const before = (await s.agentLog()).items.length;
       const tools = steps.filter((x) => (x as { tool?: string }).tool).length;
-      const sent = await owner.get(`/d/${doc.id}/api/agent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `${text} @script ${JSON.stringify(steps)}`, ...(context ? { context } : {}) }) });
+      const sent = await owner.get("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: server.root },
+        body: JSON.stringify({ text: `${text} @script ${JSON.stringify(steps)}`, doc: doc.id, ...(context ? { context } : {}) }),
+      });
       if (!sent.ok) throw new Error(`the agent didn't take the prompt: ${sent.status}`);
       const log = await until(async () => { const l = await s.agentLog(); return !l.busy && l.items.slice(before).filter((i) => i.kind == "tool").length >= tools ? l : null; }, 10_000, "the agent's turn ends") as Awaited<ReturnType<typeof s.agentLog>>;
       return log.items.slice(before).filter((i) => i.kind == "tool");

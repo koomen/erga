@@ -1,5 +1,4 @@
-// The agent loop both embedded agents run (the document agent,
-// agents/document/session.ts, and the admin agent, agents/person/agent.ts): the
+// The agent loop each person's agent runs (agents/person/agent.ts): the
 // model a conversation is on (the one its store kept, else the settings'),
 // the transcript and its listeners, the checkpoints that keep each step
 // (agents/checkpoint.ts: a restart neither loses nor repeats work), and the
@@ -7,11 +6,10 @@
 // to the transcript as they come), the loop runs the turn's tool calls one
 // by one, and goes on until the model answers with no calls and no message
 // waits. A message sent while a run goes on steers it: the model has it at
-// its next turn. Each agent adds its own through `LoopHooks`: what a tool
-// call is about, and (the document agent) its presence in the room while it works.
+// its next turn. The agent adds its own through `LoopHooks`: what a tool call is about.
 //
-// The sessions are the Promise edge (document/host.ts and the admin agents'
-// object call them); a run is a fiber, so `abort` interrupts it.
+// The sessions are the Promise edge (the person's object calls them: agents/person/sessions.ts); a run is a fiber,
+// so `abort` interrupts it.
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";

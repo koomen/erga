@@ -4,7 +4,7 @@
 
 import * as Effect from "effect/Effect";
 import { expect, test } from "bun:test";
-import { agentToolsFor, allTools, runTool } from "../agents/tools";
+import { agentTools, allTools, runTool, toolsFor } from "../agents/tools";
 import type { Caller } from "../server/operations/index.ts";
 import type { Platform } from "../server/platform";
 import { VIA } from "../shared/attribution";
@@ -37,14 +37,14 @@ async function world() {
 }
 
 /** An agent's tool call, as its loop makes it: the text it reads back. */
-const ask = async (tools: Awaited<ReturnType<typeof agentToolsFor>>, name: string, args: Record<string, unknown> = {}) => {
+const ask = async (tools: ReturnType<typeof agentTools>, name: string, args: Record<string, unknown> = {}) => {
   const tool = tools.find((t) => t.name == name);
   if (!tool) throw new Error(`no tool ${name}`);
   const out = await tool.execute("call", args);
   return (out.content[0] as { text: string }).text;
 };
 
-test("the editor's agent renames its document, lists, makes, moves and deletes pages, and restores a version, from its tool list", async () => {
+test("a person's agent renames the document open on their page, lists, makes, moves and deletes pages, and restores a version, from its tool list", async () => {
   const { platform, dir, doc } = await world();
   const agent: Caller = {
     dir,
@@ -54,7 +54,7 @@ test("the editor's agent renames its document, lists, makes, moves and deletes p
     platform,
     origin: "https://erga.test",
   };
-  const tools = await agentToolsFor(agent);
+  const tools = agentTools(await toolsFor(agent, true), agent);
   for (const t of [
     "get_title",
     "rename_document",
