@@ -1,5 +1,4 @@
 import type { ArtifactsBinding } from "../control/cloudflare";
-import type { AdminAgentHost } from "./objects/admin-agent";
 import type { Deployer } from "../control/install/session";
 import type { DocumentObject } from "./objects/document";
 import type { SourceHost } from "../control/source/source-host";
@@ -20,7 +19,6 @@ export interface Env {
   /** The server's own small storage (server/platform.ts `own`): one Durable Object, "own". */
   OWN: DurableObjectNamespace<OwnStorage>;
   /** Each admin's agent, its conversation and panel: one Durable Object, "admin". */
-  ADMIN_AGENT: DurableObjectNamespace<AdminAgentHost>;
   /** Each person's conversations with the document agent: one Durable Object per person, named by their login. */
   AGENTS: DurableObjectNamespace<PersonAgent>;
   /**

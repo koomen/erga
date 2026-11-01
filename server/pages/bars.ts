@@ -11,6 +11,7 @@ import { html, NO_STORE } from "../http.ts";
 import { inlineScript, inlineStyle } from "./inline.ts";
 import { ACCOUNT_SLOT } from "./account-menu.ts";
 import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
+import { agentPanel } from "./agent.ts";
 
 /** Share with an agent's icon, as the editor's (client/editor.html, #btn-agent-share). */
 export const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.12) translate(-12 -11.5)" stroke-width="1.4"><rect x="3.5" y="9" width="10.5" height="8.5" rx="3"/><path d="M8.75 9V6.5"/><circle cx="8.75" cy="5.5" r="1"/><circle cx="6.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><circle cx="10.75" cy="13.25" r=".9" fill="currentColor" stroke="none"/><path d="M2 12.5v1.5M15.5 12.5v1.5"/><path d="M18.75 3.5v6M15.75 6.5h6"/></g></svg>`;
@@ -69,6 +70,7 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
  * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (not on Documents
  * itself: `docs`), then who you are. The account corner goes in `corner`, or where the Worker puts it (ACCOUNT_SLOT:
  * withAccount). `home`: the app's origin, for a page served elsewhere (the control Worker's); its links go there.
+ * Your agent comes with them, on the app's own origin (server/pages/agent.ts).
  */
 export function pageBars(
   session: Session | null,
@@ -87,7 +89,7 @@ export function pageBars(
   const mine = !!session && !session.agent && !session.test;
   const at = (path: string) => link(home + path, session);
   const actions = `${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${mine && o.docs !== false ? docsButton(at("/docs")) : ""}`;
-  return `<script>${PAGE_TONE}</script>${crumbsBar(session, home, steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}`;
+  return `<script>${PAGE_TONE}</script>${crumbsBar(session, home, steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.home ? "" : agentPanel(session)}`;
 }
 
 /**

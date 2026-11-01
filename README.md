@@ -85,7 +85,7 @@ flowchart LR
   over a WebSocket, and each agent session joins it in the same process.
 - **The agents.** The document agent (`agents/document/`) edits the files of
   one document for one person, in the same room as the people. The admin
-  agent (`agents/admin/agent.ts`) does what an admin does on the admin pages. An
+  agent (`agents/person/agent.ts`) does what an admin does on the admin pages. An
   outside agent uses the same tools with a person's agent token, over the
   HTTP API or MCP (`server/api.ts`).
 - **The database** is D1: the users, the server's settings, and each

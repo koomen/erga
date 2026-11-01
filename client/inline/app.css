@@ -64,3 +64,13 @@ dialog button.act { height: 30px; padding: 0; border: 0; }
 @media (max-width: 520px) { .note { display: none; } main { padding: 88px 16px 64px; } h1 { font-size: 26px; } }
 /* Touch: room for a finger. */
 @media (pointer: coarse) { .new, .pill, .input { height: 40px; } .act { width: 40px; height: 40px; } }
+/* Your agent (server/pages/agent.ts), open on a wide window, takes the left: the page and the breadcrumbs' bar slide
+   over on its curve, as in the editor (the bar 14px right of the panel). Narrower, it covers the page. */
+@media (min-width: 760px) {
+  body { transition: padding-left var(--agent-ms) var(--agent-ease); }
+  body.agent-open { padding-left: calc(var(--agent-x) + var(--agent-w)); }
+  .erga-crumbs.erga-bar { transition: left var(--agent-ms) var(--agent-ease); }
+  body.agent-open .erga-crumbs.erga-bar { left: calc(var(--agent-x) + var(--agent-w) + 14px); }
+}
+/* Open, the agent is over the bars, as in the editor (on a phone it covers the page). */
+.agent { z-index: 1001; }

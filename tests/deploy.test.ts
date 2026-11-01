@@ -121,7 +121,6 @@ describe("deploying", () => {
       OwnStorage: { type: "durable-object", storage: "sqlite" },
       NewsHub: { type: "durable-object", storage: "sqlite" },
       Home: { type: "durable-object", storage: "sqlite" },
-      AdminAgentHost: { type: "durable-object", storage: "sqlite" },
       PersonAgent: { type: "durable-object", storage: "sqlite" },
     });
     // Not one of Erga's own branch-deploy targets, and no secrets kept from before: its own, new.

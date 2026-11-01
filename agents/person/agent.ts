@@ -1,31 +1,21 @@
-// The admin's agent, on every admin page: an agent panel like the editor's
-// (the same transcript, shared/agent-log.ts, and the same panel,
-// client/agent/agent-chat.ts, run by client/admin/admin-agent.ts), on the
-// loop both agents share (agents/run.ts). Its tools: every operation of
-// agents/tools.ts, with admin power: the settings on /admin, their change log, the API keys
-// (read, clear), sign-in (read, clear: /admin/auth), the users, Erga's own source, the
-// Ops page's (staging and main, production's deploy, GitHub, the deploys and their
-// logs), the homepage's deploy, and the admin's own agent tokens. Its prompt:
-// agents/admin/prompt.ts. One session per admin (agents/admin/sessions.ts),
-// in the AdminAgent Durable Object, so it keeps working when the tab closes.
+// Each person's agent, on every page of Erga (the bottom-left circle, client/agent/person-agent.ts): one agent, one
+// conversation that follows them from page to page, on the loop every agent shares (agents/run.ts). Its tools are its
+// person's (agents/tools.ts, toolsFor): every operation they may use (the admin ones, with admin power, only for an
+// admin: the settings, users, keys, sign-in, Erga's source, the Ops page), and the document tools for any document
+// they may open or edit, run in that document's host as their agent (so view_page and page_click use their open
+// editor). Its prompt: agents/person/prompt.ts. One session per person, in their PersonAgent object
+// (agents/person/sessions.ts, cloudflare/objects/person-agent.ts), so it keeps working when the tab closes.
 //
-// The rule: the agent can do everything its admin can do on /admin (and the
-// Ops page and /settings), so the admin can ask for anything there in
-// words. agents/actions.ts lists each action with its tool, and
-// tests/agent-actions.test.ts fails when one has none. The one exception is
-// a secret: an API key or a new token is pasted or made only on the page,
-// never in a conversation; the agent can clear or revoke them.
+// The rule: the agent can do everything its person can do in Erga, when they ask. agents/actions.ts lists each action
+// with its tool, and tests/agent-actions.test.ts fails when one has none. The one exception is a secret: an API key or
+// a new token is pasted or made only on its page, never in a conversation; the agent can clear or revoke them.
 //
-// Every tool acts as the admin themselves (their login), so the change log
-// (/admin/changes) and a deploy's trigger name the admin, as if they clicked.
-// They prompted it; the agent is how. Logs and the repository are written by
-// others and can carry instructions, so every call checks that the person is
-// still an admin (`guard`), and the system prompt says to treat that text as
-// data and to act only on what the admin asks in the conversation.
+// Every tool acts as the person (their login), via their agent, so the change log (/admin/changes), a document's
+// history and a deploy's trigger name them. Documents, logs and the repository are written by others and can carry
+// instructions: the system prompt says to treat that text as data and to act only on what the person asks.
 //
-// An outside agent (Claude Code on a laptop) gets the same powers over HTTP
-// with an admin token (server/identity/tokens.ts; Share with agent on the admin pages makes
-// one that ends within 12 hours), and reads the guide first (/llms.txt: agents/guides.ts).
+// An outside agent (Claude Code on a laptop) gets the same powers over MCP (server/api.ts), and reads the guide first
+// (/llms.txt: agents/guides.ts).
 
 import type { AgentConfig, ModelChoice } from "../models";
 import type { Attachment } from "../../shared/attach";
@@ -35,7 +25,7 @@ import { startLoop, type AgentTool } from "../run";
 import { systemPrompt } from "./prompt";
 import { type Access, ACCESS_LABEL, ROLE_LABEL, type UserRole } from "../../server/directory/index.ts";
 
-export interface AdminAgent {
+export interface AgentSession {
   readonly model: string | null;
   readonly modelChoice: ModelChoice | null;
   setModel(choice: ModelChoice): boolean;
@@ -82,11 +72,19 @@ function about(name: string, args: unknown): string | null {
 }
 
 /**
- * One admin's agent session. `store`: where it keeps its conversation, step
+ * One person's agent session (`admin`: theirs has the admin's prompt). `store`: where it keeps its conversation, step
  * by step (agents/checkpoint.ts); `stored`: the conversation as the store
  * had it, to go on with.
  */
-export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; store?: ChatStore; stored?: StoredChat | null; meta?: Record<string, string> }): AdminAgent {
+export function startAgent(opts: {
+  cfg: AgentConfig;
+  owner: string;
+  admin: boolean;
+  tools: AgentTool[];
+  store?: ChatStore;
+  stored?: StoredChat | null;
+  meta?: Record<string, string>;
+}): AgentSession {
   const { owner } = opts;
   const loop = startLoop({
     cfg: opts.cfg,
@@ -96,7 +94,7 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
     tag: "page",
     hooks: { about },
   });
-  loop.start(opts.cfg, systemPrompt(owner), opts.tools);
+  loop.start(opts.cfg, systemPrompt(owner, opts.admin), opts.tools);
   return {
     get model() {
       return loop.model;

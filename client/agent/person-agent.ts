@@ -1,34 +1,26 @@
-// The admin's agent panel, on every admin page (server/admin/layout.ts has its markup, and collapses it to a round
-// button in the lower left). The panel is the editor's (the same markup, styles and conversation,
-// agent-chat.ts), talking to the admin's own agent session in the AdminAgent object (agents/admin/agent.ts,
-// agents/admin/sessions.ts):
+// Each person's agent panel, on every page for someone signed in (server/pages/agent.ts has its markup; the circle grows
+// into it: client/inline/agent-toggle.ts). The panel is the editor's (the same markup, styles and conversation,
+// agent-chat.ts), talking to the person's own agent in their PersonAgent object (agents/person/agent.ts,
+// agents/person/sessions.ts):
 //
-//   GET  /api/admin/agent              the state: on or off (and why), the model, the conversation so far
-//   POST /api/admin/agent              { text, context }: a message; context says which admin page is open
-//   POST /api/admin/agent/abort|reset|model
-//   /api/admin/agent/events            { type: "agent", ev } for this admin's agent (a WebSocket)
-//   GET|DELETE /api/admin/agent/conversation   the conversation, kept on the server (read on mount); a new one
-//   GET|PUT    /api/admin/agent/prefs          the panel as the admin left it: open, side, width
+//   GET  /api/agent              the state: on or off (and why), the model, the conversation so far
+//   POST /api/agent              { text, context }: a message; context is the page note (the page open, what is selected)
+//   POST /api/agent/abort|reset|model
+//   /api/agent/events            { type: "agent", ev } for this person's agent (a WebSocket)
+//   GET|DELETE /api/agent/conversation   the conversation, kept on the server (read on mount); a new one
 //
-// The conversation and the panel follow the admin from page to page, browser to browser and sign-in to
-// sign-in: the server keeps them. This browser keeps a copy of
-// the panel's state, so a page paints it at once.
-//
-// Share with agent is in every admin page's header. Built
-// by client/build.ts to admin-agent.js.
+// The conversation follows the person from page to page, browser to browser and sign-in to sign-in: the server keeps
+// it. Built by client/build.ts to agent.js.
 
-import { chat } from "../agent/agent-chat";
+import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "../../shared/attach";
-import { attachments } from "../agent/attach-ui";
+import { attachments } from "./attach-ui";
 import type { Log, LogEvent } from "../../shared/agent-log";
-import { mountPaneLayout, type PaneLayout } from "../agent/layout";
 import { backoff, live, transient } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
-// (window.ergaAgent: client/inline/admin-agent.ts.)
-interface Prefs { open?: boolean; side?: "left" | "right"; width?: number }
 
 const $ = (id: string) => document.getElementById(id)!;
 const store = {
@@ -52,20 +44,6 @@ const VERBS: Record<string, [string, string]> = {
   search_source: ["Searching the source for", "Searched the source for"],
   source_log: ["Reading the log of", "Read the log of"],
 };
-
-// Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor.
-// Off on a narrow window, where the agent covers the page instead.
-// Each change goes to the server too, and the server's (the admin's last, from any browser) is put on at load,
-// unless the admin changed that part here while the server's answer was on its way (it's older than theirs).
-const savePrefs = (p: Prefs) => { fetch("/api/admin/agent/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p), keepalive: true }).catch(() => {}); };
-const changedHere = { open: false, layout: false };
-const panes = mountPaneLayout($("workspace"), $("agent-dock"), $("admin-panes"), $("agent").querySelector<HTMLElement>(".agent-head")!, matchMedia("(max-width: 999.98px)"), (l: PaneLayout) => { changedHere.layout = true; savePrefs({ side: l.side, width: l.width }); });
-window.addEventListener("erga:agent-toggled", (e) => { changedHere.open = true; savePrefs({ open: !!(e as CustomEvent<{ open: boolean }>).detail?.open }); });
-fetch("/api/admin/agent/prefs").then((r) => (r.ok ? r.json() : null)).then((p: Prefs | null) => {
-  if (!p) return;
-  if ((p.side || p.width) && !changedHere.layout) panes.set({ side: p.side ?? panes.layout.side, width: p.width ?? panes.layout.width });
-  if (typeof p.open == "boolean" && !changedHere.open) window.ergaAgent?.set(p.open);
-}).catch(() => {});
 
 const input = $("agent-input") as HTMLTextAreaElement, send = $("agent-send") as HTMLButtonElement, hint = $("agent-hint");
 const talk = chat({ logEl: $("agent-log"), jump: $("agent-jump") as HTMLButtonElement, verbs: VERBS, imageAlt: "The screenshot the agent looked at" });
@@ -138,10 +116,15 @@ function keyField() {
   hint.append(form);
 }
 
-/** What the admin has open, so "this page" means something to the agent. */
+/** The page note: what the person has open (the breadcrumbs, the document's address), so "this" means something. */
 function context(): string | null {
-  const here = document.querySelector(".erga-crumbs .erga-here")?.textContent?.trim();
-  return `The admin has the ${here ?? "admin"} page open (${location.pathname}).`;
+  const trail = [...document.querySelectorAll(".erga-crumbs > :not(.erga-brand)")]
+    .map((e) => e.textContent?.trim())
+    .filter(Boolean)
+    .join(" › ");
+  const doc = document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content;
+  const page = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content;
+  return `Open: ${trail || document.title} (${location.pathname}).${doc ? ` The document ${doc}${page ? `, its file ${page}` : ""}.` : ""}`;
 }
 
 async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
@@ -149,7 +132,12 @@ async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   // While the server restarts (a redeploy) it doesn't answer, or its gateway says so: the message waits and goes once it's back.
   let res: Response | Error = new Error("not sent");
   for (let i = 0, until = Date.now() + 45_000; ; i++) {
-    res = await fetch("/api/admin/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context: ctx, files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
+    res = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, context: ctx, files }),
+      signal: AbortSignal.timeout(files.length ? 60_000 : 15_000),
+    }).catch((e: Error) => e);
     if (res instanceof Response ? res.ok || !transient(res) : res.name == "TimeoutError" || !transient(res)) break;
     if (Date.now() + backoff(i) > until) break;
     await sleep(backoff(i));
@@ -189,11 +177,16 @@ input.addEventListener("input", () => { if (!hint.classList.contains("sticky")) 
 input.addEventListener("keydown", (e) => { if (e.key == "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendNow(); } });
 $("agent-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (send.classList.contains("stop")) fetch("/api/admin/agent/abort", { method: "POST" });
+  if (send.classList.contains("stop")) fetch("/api/agent/abort", { method: "POST" });
   else sendNow();
 });
 $("agent-reset").addEventListener("click", () => {
-  fetch("/api/admin/agent/conversation", { method: "DELETE" }).then((r) => { if (!r.ok) showHint("Couldn't start a new conversation."); }, () => showHint("Couldn't start a new conversation."));
+  fetch("/api/agent/conversation", { method: "DELETE" }).then(
+    (r) => {
+      if (!r.ok) showHint("Couldn't start a new conversation.");
+    },
+    () => showHint("Couldn't start a new conversation.")
+  );
   input.focus();
 });
 window.addEventListener("erga:agent-shown", () => { talk.follow(true); input.focus(); });
@@ -211,8 +204,18 @@ function renderModel(m: AgentState | null) {
   sel.addEventListener("pointerdown", () => sel.classList.add("by-pointer"));
   sel.addEventListener("keydown", () => sel.classList.remove("by-pointer"));
   sel.addEventListener("change", async () => {
-    const r = await fetch("/api/admin/agent/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: sel.value }) }).then((r) => r.json()).catch(() => ({ ok: false })) as AgentState & { ok: boolean };
-    if (!r.ok) { sel.value = m.choice!; showHint("Couldn't switch models."); return; }
+    const r = (await fetch("/api/agent/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: sel.value }),
+    })
+      .then((r) => r.json())
+      .catch(() => ({ ok: false }))) as AgentState & { ok: boolean };
+    if (!r.ok) {
+      sel.value = m.choice!;
+      showHint("Couldn't switch models.");
+      return;
+    }
     showHint(log.busy ? `${sel.selectedOptions[0]?.text}: from your next message` : `Switched to ${sel.selectedOptions[0]?.text}`);
   });
   el.append(sel);
@@ -224,9 +227,29 @@ async function load(tries = 0): Promise<void> {
   const was = heard;
   clearTimeout(downTimer);
   // The conversation from where the server keeps it, whether the agent is on or not.
-  const kept = fetch("/api/admin/agent/conversation").then((r) => (r.ok ? r.json() : null)).catch(() => null) as Promise<{ log?: Log } | null>;
+  const kept = fetch("/api/agent/conversation")
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null) as Promise<{ log?: Log } | null>;
   let again = false;
-  const a = await fetch("/api/admin/agent").then(async (r) => { again = transient(r); return r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error?.replace(/\.$/, "") ?? `the server answered ${r.status}`)); }, (e: Error) => { again = transient(e); throw e; }).catch((e: Error) => ({ enabled: false, reason: e.message })) as AgentState;
+  const a = (await fetch("/api/agent")
+    .then(
+      async (r) => {
+        again = transient(r);
+        return r.ok
+          ? r.json()
+          : Promise.reject(
+              new Error(
+                ((await r.json().catch(() => null)) as { error?: string } | null)?.error?.replace(/\.$/, "") ??
+                  `the server answered ${r.status}`
+              )
+            );
+      },
+      (e: Error) => {
+        again = transient(e);
+        throw e;
+      }
+    )
+    .catch((e: Error) => ({ enabled: false, reason: e.message }))) as AgentState;
   // The server restarting (a redeploy): ask again shortly, as the panel was, rather than call the agent off.
   if (!a.enabled && again && down < 8) { downTimer = window.setTimeout(() => load(), backoff(down++)); return; }
   down = 0;
@@ -239,16 +262,20 @@ async function load(tries = 0): Promise<void> {
   renderBusy();
 }
 
-// The agent's events, to this admin only; a reconnect reads the whole conversation again. They come over a
+// The agent's events, to this person only; a reconnect reads the whole conversation again. They come over a
 // WebSocket, not an EventSource: over HTTP/1.1 an EventSource holds one of the browser's six connections to the host
-// while the page is open, and with a few admin tabs open every later request waits. A socket that closes (the server
+// while the page is open, and with a few tabs open every later request waits. A socket that closes (the server
 // restarts) is made again, a little later each time.
 let tries = 0;
 function connect() {
-  const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}/api/admin/agent/events`);
-  ws.onopen = () => { tries = 0; live((l) => l.connection("admin-agent", true)); load(); };
+  const ws = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}/api/agent/events`);
+  ws.onopen = () => {
+    tries = 0;
+    live((l) => l.connection("agent", true));
+    load();
+  };
   ws.onclose = () => {
-    live((l) => l.connection("admin-agent", false));
+    live((l) => l.connection("agent", false));
     setTimeout(connect, backoff(tries++));
   };
   ws.onmessage = (e) => {
@@ -264,7 +291,7 @@ load().then(connect);
 interface Kept { files?: Attachment[] }
 live((l) => {
   l.hold(() => (att.reading ? "files are being read" : null));
-  l.keep("admin-agent", (): Kept => ({ files: att.files }));
+  l.keep("agent", (): Kept => ({ files: att.files }));
 });
-const back = restoredFor<Kept>("admin-agent");
+const back = restoredFor<Kept>("agent");
 if (back?.files?.length) att.restore(back.files);

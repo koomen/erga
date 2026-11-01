@@ -45,7 +45,7 @@
 
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
-import { adminAgentApi, isAdminAgentPath } from "../agents/admin/sessions.ts";
+import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
 import { serverApi } from "./api.ts";
 import { documentRoutes, isPagesSite } from "./documents/index.ts";
 import { serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
@@ -180,8 +180,8 @@ const route = (url: URL, outside: Outside): Route =>
       const file = yield* serveHomeRoot;
       if (file) return file;
     }
-    // Each admin's agent, its conversation and panel: before the server's API, which has the rest of /api/.
-    if (isAdminAgentPath(path)) return yield* adminAgentApi;
+    // Each person's agent, its conversation and panel: before the server's API, which has the rest of /api/.
+    if (isAgentPath(path)) return yield* agentApi;
     // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
     if (path == "/api/release" && read) return yield* releaseApi;
     // Live pages: an open page's socket, and the rows it asks for when they change.

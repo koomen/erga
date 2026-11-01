@@ -14,7 +14,7 @@ import { localToken } from "../dev/git-server.ts";
 import { lsRefs } from "../control/source/remote.ts";
 import { SourceRepo } from "../control/source/repo.ts";
 import type { SourceRead } from "../control/source/browse.ts";
-import { startAdminAgent } from "../agents/admin/agent.ts";
+import { startAgent } from "../agents/person/agent.ts";
 import { SOURCE_OPERATIONS } from "../control/source/operations.ts";
 import type { Caller } from "../server/operations/index.ts";
 import { agentTools } from "../agents/tools.ts";
@@ -167,7 +167,7 @@ test("the agent's tools: each checks the admin first, and says the text is infor
 
   // On the scripted model, as the panel runs it: the call and its outcome go on the transcript.
   locked = false;
-  const agent = startAdminAgent({ cfg: { apiKey: Redacted.make(""), model: "script", effort: "medium" }, owner: "root", tools });
+  const agent = startAgent({ cfg: { apiKey: Redacted.make(""), model: "script", effort: "medium" }, owner: "root", admin: true, tools });
   const seen = await new Promise<{ name: string; status: string; path: string | null }[]>((resolve) => {
     const s: { name: string; status: string; path: string | null }[] = [];
     const off = agent.subscribe((ev) => {

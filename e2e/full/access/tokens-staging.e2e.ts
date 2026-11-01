@@ -21,7 +21,7 @@ const ADMINS = (doc: { id: string; address: string }) =>
     ["GET", "/admin/users"],
     ["GET", "/admin/ops"],
     ["POST", "/api/tools/set_setting"],
-    ["GET", "/api/admin/agent"],
+    ["GET", "/api/agent"],
     ["POST", "/api/tools/list_deploys"],
     ["POST", "/api/tools/list_branches"],
     ["GET", "/api/events"],

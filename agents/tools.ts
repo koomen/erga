@@ -6,7 +6,7 @@
 //
 //   the editor's agent   (agents/document/session.ts) every operation its person may use but the admin ones, and
 //                        its own document tools, which take a `document` too: another document's run there
-//   the admin agent      (agents/admin/sessions.ts) every operation, with admin power (the Ops page's too), the
+//   the admin agent      (agents/person/sessions.ts) every operation, with admin power (the Ops page's too), the
 //                        document tools for any document
 //   an outside agent     (server/api.ts: /api/tools, /mcp, /llms.txt) every operation its token's person may use (the admin
 //                        ones only with an admin token; none that reach beyond one document with a document token),

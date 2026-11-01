@@ -1,7 +1,11 @@
 // The admin sidebar's toggle (server/admin/layout.ts): it collapses to a rail of icons and expands again, and this
-// browser remembers which.
+// browser remembers which. The toggle, Share and Copy act as the press starts (client/common/fast-click.ts), on every
+// page admin-nav.js brings in too; Save, Clear, Remove and the rest keep a deliberate click.
+
+import { fastClick } from "../common/fast-click";
 
 export default function adminSidebar(): void {
+  fastClick(document, "#agent-fab, #agent-close, #side-toggle, #btn-share, button.copy");
   const root = document.documentElement,
     toggle = document.getElementById("side-toggle")!;
   const sync = () => {

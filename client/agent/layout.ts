@@ -9,9 +9,7 @@
  *
  * The first half is the layout's state and geometry, pure;
  * mountLayout puts it on the page, as CSS variables client/styles/editor.css's rules read.
- *
- * The admin pages' agent panel has the same grip and drag (mountGrip,
- * dragToDock), in a grid of two: mountPaneLayout, PaneLayout.
+
  */
 
 export type Panel = "agent" | "picker";
@@ -151,43 +149,6 @@ export function load(storage: Pick<Storage, "getItem"> | null): Layout {
 
 export function save(storage: Pick<Storage, "setItem"> | null, layout: Layout) {
   try { storage?.setItem(KEY, JSON.stringify(layout)); } catch {}
-}
-
-// ---------------------------------------------------------------- the admin pages' agent panel
-
-/**
- * The admin pages' agent panel: the
- * same grip and drag as the document agent, in a grid of two, the agent and
- * the board's column, either way round. Kept in this browser (PANE_KEY).
- */
-export const PANE_KEY = "erga:admin-pane:v1";
-export interface PaneLayout { side: Side; width: number }
-export const PANE_DEFAULT: PaneLayout = { side: "left", width: AGENT_DEFAULT };
-/** The narrowest the board and the Ops page get while the agent is resized, and the gap between them and the agent. */
-export const PANES_MIN = 480, PANE_GAP = 20;
-
-export function normalizePane(raw: unknown): PaneLayout {
-  const r = (raw && typeof raw == "object" ? raw : {}) as Partial<PaneLayout>;
-  const side = r.side == "right" ? "right" : "left";
-  const width = typeof r.width == "number" && Number.isFinite(r.width) ? clamp(Math.round(r.width), AGENT_MIN, AGENT_MAX) : PANE_DEFAULT.width;
-  return { side, width };
-}
-
-/** The agent's widest in a workspace `room` wide: the board keeps PANES_MIN. */
-export function paneMax(room: number): number {
-  return Math.max(AGENT_MIN, Math.min(AGENT_MAX, room - PANE_GAP - PANES_MIN));
-}
-
-export function paneWidth(layout: PaneLayout, room: number): number {
-  return clamp(layout.width, AGENT_MIN, paneMax(room));
-}
-
-export function loadPane(storage: Pick<Storage, "getItem"> | null): PaneLayout {
-  try { return normalizePane(JSON.parse(storage?.getItem(PANE_KEY) || "null")); } catch { return normalizePane(null); }
-}
-
-export function savePane(storage: Pick<Storage, "setItem"> | null, layout: PaneLayout) {
-  try { storage?.setItem(PANE_KEY, JSON.stringify(layout)); } catch {}
 }
 
 // ---------------------------------------------------------------- on the page
@@ -457,73 +418,3 @@ function slide(el: HTMLElement, from: DOMRect) {
   el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 420, easing: "cubic-bezier(0.45, 0, 0.15, 1)" });
 }
 
-/**
- * Puts PaneLayout on the admin pages: --agent-w on the workspace (a grid of
- * the agent's `dock` and the board's column, `panes`), .agent-right on it when
- * the agent is right of the board, the grip on the dock's inner edge, and the
- * dock dragged by the agent's head. Off where the window is `narrow` (tabs).
- * `saved` hears each layout the admin leaves it in (the server keeps it too:
- * admin-agent.ts); `set` puts one on (the server's, on another browser).
- */
-export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes: HTMLElement, head: HTMLElement, narrow: MediaQueryList, saved?: (layout: PaneLayout) => void) {
-  const storage = localStore();
-  let layout = loadPane(storage);
-  const room = () => workspace.clientWidth;
-  const grip = mountGrip(dock, {
-    start: () => narrow.matches ? null : { width: paneWidth(layout, room()), side: layout.side },
-    max: () => paneMax(room()),
-    set: (width) => { layout = { ...layout, width }; apply(); },
-    done: () => { savePane(storage, layout); saved?.(layout); },
-  });
-  const ghost = mountGhost();
-  function apply(l: PaneLayout = layout) {
-    const w = paneWidth(l, room());
-    workspace.style.setProperty("--agent-w", px(w));
-    // The board slides across when the agent changes sides.
-    const before = workspace.classList.contains("agent-right") != (l.side == "right") ? panes.getBoundingClientRect() : null;
-    workspace.classList.toggle("agent-right", l.side == "right");
-    if (before) slide(panes, before);
-    grip.show(l.side, w, paneMax(room()));
-    return w;
-  }
-  head.addEventListener("pointerdown", (e) => {
-    if (narrow.matches) return;
-    const from = layout, box = () => workspace.getBoundingClientRect();
-    const b = box();
-    dragToDock(e, {
-      el: dock, handle: head, ghost,
-      marks: [b.left, b.right], slot: from.side == "right" ? 1 : 0,
-      lift: () => {
-        // Out of the grid while dragged, where it was; the ghost the same height.
-        const r = dock.getBoundingClientRect();
-        Object.assign(dock.style, { top: px(r.top), height: px(r.height), width: px(r.width) });
-        Object.assign(ghost.style, { top: px(r.top), height: px(r.height) });
-      },
-      preview: (slot) => {
-        const w = apply({ ...from, side: slot == 1 ? "right" : "left" }), b = box();
-        return { x: slot == 1 ? b.right - w : b.left, w };
-      },
-      drop: (slot) => {
-        layout = slot == null ? from : { ...from, side: slot == 1 ? "right" : "left" };
-        apply();
-        savePane(storage, layout);
-        if (slot != null) saved?.(layout);
-      },
-      land: (from) => {
-        Object.assign(dock.style, { top: "", height: "", width: "" });
-        slide(dock, from);
-      },
-    });
-  });
-  new ResizeObserver(() => apply()).observe(workspace);
-  apply();
-  return {
-    get layout() { return layout; },
-    set(l: PaneLayout) {
-      if (l.side == layout.side && l.width == layout.width) return;
-      layout = normalizePane(l);
-      apply();
-      savePane(storage, layout);
-    },
-  };
-}

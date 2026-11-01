@@ -1,7 +1,7 @@
 // An agent's conversation, kept step by step, so a restart (a deploy) loses
 // nothing and repeats nothing. Both embedded agents use it: the document
 // agent (agents/document/session.ts, its store in the person's own object,
-// cloudflare/objects/person-agent.ts) and the admin agent (agents/admin/agent.ts,
+// cloudflare/objects/person-agent.ts) and the admin agent (agents/person/agent.ts,
 // its store in the admin agents' object).
 //
 // The session saves a checkpoint after each step of a run: each message (the
