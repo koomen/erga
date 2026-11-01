@@ -6,7 +6,8 @@ export function newDocPicker(root: Document | ShadowRoot): void {
   const menu = root.querySelector<HTMLElement>(".erga-new-menu");
   if (!menu) return;
   let btn: HTMLElement | null = null;
-  const items = () => [...menu.querySelectorAll("a")];
+  // (Only those it shows: Clone shows only in the editor.)
+  const items = () => [...menu.querySelectorAll("a")].filter((a) => a.getClientRects().length);
   // The app's typeface, on a page that hasn't it (the viewer, the homepage, signed out): its rules (the menu names them) fetched
   // as the pointer or focus comes to a + button. A page with them has them as #erga-fonts (server/pages/assets.ts).
   const font = () => {

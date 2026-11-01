@@ -130,11 +130,12 @@ button { font: inherit; color: inherit; }
 }
 .chrome-bottom > * { pointer-events: auto; }
 
-/* While you type the controls fade out and ignore the pointer; any deliberate
-   mouse movement, hover or keyboard focus brings them back. */
-body.chrome-hidden .chrome { opacity: 0; pointer-events: none; transition-duration: var(--hide-ms); }
+/* While you type the controls fade to a quiet 55%, and stay where a click reaches them; any deliberate mouse movement or
+   keyboard focus brings them back. The status line at the bottom goes out of sight (on touch, it stays at 55% too). */
+body.chrome-hidden .chrome { opacity: 0.55; transition-duration: var(--hide-ms); }
+body.chrome-hidden .chrome-bottom { opacity: 0; }
 body.chrome-hidden .chrome-bottom > * { pointer-events: none; }
-body.chrome-hidden .chrome:focus-within { opacity: 1; pointer-events: auto; }
+body.chrome-hidden .chrome:focus-within { opacity: 1; }
 /* A save failure is never hidden. */
 body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 
@@ -214,7 +215,7 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 .help dt { color: var(--soft); }
 .help dd { margin: 0; display: flex; gap: 3px; align-items: center; color: var(--soft); }
 .help p { margin: 14px 0 0; color: var(--soft); font-size: 12.5px; }
-/* The share cards: Share with an agent, in the editor and on /admin/ops, and the editor's Share with people. */
+/* The share cards: Share with an agent on the admin pages, and the editor's Share with people. */
 .help.share { width: min(400px, calc(100vw - 32px)); }
 .help.share h2 { margin: 0 0 6px; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .help.share p { margin: 0 0 10px; }
@@ -231,16 +232,17 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 .share-actions .share-primary { background: var(--caret); border-color: var(--caret); color: #fff; }
 .share-actions button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
 .share-status { font-size: 12px; color: var(--soft); }
-/* A copy that worked: the button says so (share-agent.ts, showCopied), green, with a short pop. */
+/* A copy that worked: the button says so (share-agent.ts, showCopied), green, with a short pop. An icon button says it in
+   its tooltip, shown for the moment. */
 .share-actions .share-primary.copied { background: #16a34a; border-color: #16a34a; }
 .text-btn.copied { color: #16a34a; }
+.icon-btn.copied[data-tip]::after { opacity: 1; color: #16a34a; }
 button.copied { animation: copied-pop 260ms ease-out; }
 @keyframes copied-pop { 0% { transform: scale(0.94); } 55% { transform: scale(1.05); } 100% { transform: scale(1); } }
 .help.share .share-note { margin: 10px 0 0; font-size: 12px; }
 .help.share .share-note a { color: inherit; }
-/* Share (#sharing): two halves, as Document settings' sections, one line between them. Every row of "Share with people" (the
-   box to add someone, each person, the link) is one line on one grid: face, who, the role menu, and a last column (Add, ×,
-   Copy link), so the menus line up and the row ends share one right edge. The lower half, Share with an agent, is share-agent.ts's. */
+/* Share (#sharing): Share with people. Every row (the box to add someone, each person, the link) is one line on one grid:
+   face, who, the role menu, and a last column (Add, ×, Copy link), so the menus line up and the row ends share one right edge. */
 .help.sharing { width: min(380px, calc(100vw - 32px)); padding: 0; }
 .sharing section { padding: 12px 14px; }
 .sharing section + section { border-top: 1px solid var(--rule); }
@@ -275,20 +277,10 @@ button.copied { animation: copied-pop 260ms ease-out; }
 .sharing select.role { width: 96px; height: 28px; padding: 0 22px 0 8px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: 12.5px var(--font-text); cursor: pointer;
   appearance: none; -webkit-appearance: none; background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 6px center / 13px; }
 .sharing select.role:hover { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
-.sharing :is(select.role, .text-btn, .sharing-add button, .share-show):focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+.sharing :is(select.role, .text-btn, .sharing-add button):focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .sharing-status { margin: 6px 0 0 !important; }
 .sharing-status:empty { display: none; }
 .sharing-status.error { color: #c2410c; }
-.sharing .share-lede { margin: 0 0 10px; color: var(--soft); font-size: 12.5px; line-height: 1.4; }
-.sharing .share-actions { margin: 0; }
-.sharing .share-actions button { padding: 5px 12px; white-space: nowrap; }
-.sharing .share-actions .share-show { border: 0; padding: 0 4px; background: none; color: var(--soft); font: 500 12.5px var(--font-text); cursor: pointer; }
-.sharing .share-show:hover { color: var(--fg-strong, var(--fg)); }
-.sharing .share-status:empty { display: none; }
-.sharing .share-more { margin-top: 10px; }
-.sharing .share-more[hidden] { display: none; }
-.sharing .share-more .share-actions { margin-top: 8px; }
-.help.sharing .share-more textarea { height: 120px; }
 
 kbd {
   font-family: var(--font-text);
@@ -329,8 +321,7 @@ kbd {
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
 
 @media (hover: none) {
-  /* Touch: there is no mouse to summon the controls, so keep them quietly present. */
-  body.chrome-hidden .chrome { opacity: 0.55; pointer-events: auto; }
+  body.chrome-hidden .chrome-bottom { opacity: 0.55; }
   body.chrome-hidden .chrome-bottom > * { pointer-events: auto; }
 }
 

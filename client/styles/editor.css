@@ -27,13 +27,10 @@ html { background: var(--page-bg, var(--band, var(--bg))); }
 body { background: transparent; }
 html:has(body.source) { background: var(--bg); }
 
-/* The floating cards (the agent, its button, the style bar, the pages
-   list and the rest) are the editor's own: its light cards, or on a dark
-   page its dark ones (style.css's dark theme). No colour of the page's
-   reaches them. Only the controls on the band (the header: breadcrumbs
-   and icons) sit on the page itself, so their text and icons are dark
-   or light to suit its colour; they have no background of their own. */
-html.page-dark body:not(.source) :is(.agent, .agent-fab, .fmt, .refresh-pill, .ds, .ds-menu, .help.pages) {
+/* The floating cards (the style bar, the menus and cards under the controls) take the editor's light text, or on a dark
+   page its dark theme's (style.css). The bars, the agent and the cards are glass of the page's own colour (below); the
+   style bar and the notes are the editor's own cards, with no colour of the page's. */
+html.page-dark body:not(.source) :is(.agent, .fmt, .refresh-pill, .ds-menu, .help) {
   --bg: #18181b; --fg: #cacad2; --fg-strong: #ececf1; --mark: #55555e; --list-mark: #6c6c75; --soft: #8f8f99;
   --chrome: #6c6c75; --chrome-hover: #d4d4da; --rule: #2c2c31; --code-bg: #232327; --caret: #6aa1ff; --link: #7aa9ff;
   --selection: rgba(106, 161, 255, 0.24); --panel-bg: rgba(32, 32, 36, 0.94); --panel-border: #2f2f35;
@@ -81,7 +78,8 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 #btn-pause[aria-disabled="true"]:hover { background: transparent; color: var(--chrome); }
 /* The breadcrumbs, top left: Erga › Documents › the title, as on every page (server/pages/chrome.ts, crumbs; the viewer's, VIEW_STYLE,
    sit just here). Documents is hidden for test people, who have none. */
-.chrome-nav { top: max(12px, env(safe-area-inset-top)); left: max(14px, var(--safe-l), calc(var(--frame-l) + 6px)); transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
+/* Its bar starts 14px right of a panel on the left (or 6px from the window's edge); the text inside where it was without one. */
+.chrome-nav { left: max(6px, var(--safe-l), calc(var(--frame-l) - 2px)); padding: 3.5px 8px; transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
 .chrome-nav[hidden] { display: none; }
 /* Documents, its arrow and the title sit on one baseline: each text fills its 34px box as its line, so descenders (g, y) aren't clipped. */
 .chrome-nav, .nav-brand, .nav-back, .nav-title { align-items: baseline; }
@@ -109,13 +107,13 @@ body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-
 .pause-card p { margin: 0; color: var(--soft); }
 .pause-card .toast-fix { margin-top: 12px; }
 
-/* The agent floats beside the page as a rounded card. Collapsed, it is a round
-   button in the lower corner on its side; expanding grows the card out of that
-   button (a clip-path from the button's circle to the full card), and the
-   page slides over to make room, on the same curve. Which side, and how wide,
-   is the user's (layout.ts sets --agent-x, --agent-w, --fab-x, the frame's
-   --frame-l and --frame-r, the steps list's --picker-x and --picker-w, and
-   the bottom row's --cb-l and --cb-r); these defaults are its usual place. */
+/* The agent floats beside the page as a panel of glass. Collapsed, it is the
+   round "e" button in the lower corner on its side; the same element grows
+   into the panel and shrinks back into it, and the page slides over to make
+   room, on the same curve. Which side, and how wide, is the user's (layout.ts
+   sets --agent-x, --agent-w, --fab-x, the frame's --frame-l and --frame-r,
+   the steps list's --picker-x and --picker-w, and the bottom row's --cb-l and
+   --cb-r); these defaults are its usual place. */
 :root {
   --agent-w: min(380px, calc(100vw - 32px));
   --agent-inset: 16px;
@@ -126,6 +124,8 @@ body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-
   --agent-x: var(--agent-left); --fab-x: var(--agent-left);
   --frame-l: var(--safe-l); --frame-r: var(--safe-r);
   --cb-l: calc(var(--agent-left) + var(--agent-fab) + 14px); --cb-r: 22px;
+  --agent-top: max(8px, env(safe-area-inset-top));
+  --agent-bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
 }
 :is(#frame, .erga-canvas) { left: var(--frame-l); width: calc(100% - var(--frame-l) - var(--frame-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
 /* The editor's zoom (zoom.ts): the page's frame drawn larger, with a viewport that much smaller, as the browser's own
@@ -133,64 +133,73 @@ body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-
 html.erga-zoomed #frame { width: calc((100% - var(--frame-l) - var(--frame-r)) / var(--erga-zoom)); height: calc((100% - var(--band-h) - var(--kb, 0px)) / var(--erga-zoom)); transform: scale(var(--erga-zoom)); transform-origin: 0 0; }
 #source { left: var(--frame-l); right: var(--frame-r); transition: left var(--agent-ms) var(--agent-ease), right var(--agent-ms) var(--agent-ease); }
 .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding var(--agent-ms) var(--agent-ease); padding-left: var(--cb-l); padding-right: var(--cb-r); }
-/* The top row and its cards keep clear of a panel on the right. */
-.chrome-top { right: max(14px, var(--safe-r), calc(var(--frame-r) + 6px)); transition: opacity var(--show-ms) var(--ease), right var(--agent-ms) var(--agent-ease); }
+/* The buttons' bar and its cards keep clear of a panel on the right, 14px from it, as the breadcrumbs' bar on the left. */
+.chrome-top { right: max(8px, var(--safe-r), calc(var(--frame-r) - 2px)); padding: 0 5px 0 7.5px; transition: opacity var(--show-ms) var(--ease), right var(--agent-ms) var(--agent-ease); }
 /* Narrower, the agent covers the page instead, and the style bar with it. */
 @media (max-width: 759.98px) { body.agent-open .fmt { display: none; } }
-.agent-fab {
-  position: fixed; left: var(--fab-x); bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset))); z-index: 21;
-  width: var(--agent-fab); height: var(--agent-fab); border-radius: 50%; border: 1px solid var(--panel-border);
-  display: grid; place-items: center; padding: 0; cursor: pointer;
-  background: var(--panel-bg); color: var(--chrome-hover); box-shadow: var(--shadow);
-  transition: transform var(--agent-ms) var(--agent-ease), opacity 200ms ease 160ms, box-shadow 200ms ease, left var(--agent-ms) var(--agent-ease);
-}
-.agent-fab:hover { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.06); }
-.agent-fab svg { width: 22px; height: 22px; }
-.agent-fab.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
-@keyframes agent-spin { to { transform: rotate(360deg); } }
-body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
-/* The wrapper carries the shadow as a filter, so it follows the clipped,
-   rounded card mid-animation instead of being cut off by the clip. */
+/* The agent's box (#agent) is where the open panel goes, top to bottom, and takes clicks only while it's open. Its glass
+   (.agent-glass) is the one element that moves: 44px round, at the corner on the agent's side, closed; the whole box, open.
+   It eases its width, height and corners (560ms), and keeps its shadow all the way. The panel's insides (.agent-card) keep
+   the open panel's size, anchored at the same corner, and the glass crops them. Opening, the "e" fades out at once (120ms),
+   then the insides fade in (200ms, from 120ms); closing, the insides fade out (240 to 440ms), then the "e" fades in, whole
+   when the glass is the circle again. */
 .agent {
-  position: fixed; z-index: 20;
-  left: var(--agent-x); top: max(var(--agent-inset), env(safe-area-inset-top));
-  bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
-  width: var(--agent-w);
-  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.11)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.06));
-  visibility: hidden;
-  transition: visibility 0s linear var(--agent-ms), left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease);
+  position: fixed; z-index: 20; left: var(--agent-x); top: var(--agent-top); bottom: var(--agent-bottom); width: var(--agent-w);
+  container-type: size; pointer-events: none;
+  transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease);
 }
-body.agent-open .agent { visibility: visible; transition: visibility 0s, left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
-.agent-card {
-  position: absolute; inset: 0;
-  display: flex; flex-direction: column;
-  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 18px;
-  font: 14px/1.55 var(--font-text); color: var(--fg);
-  clip-path: inset(calc(100% - var(--agent-fab)) calc(100% - var(--agent-fab)) 0 0 round calc(var(--agent-fab) / 2));
-  opacity: 0;
-  transition: clip-path var(--agent-ms) var(--agent-ease), opacity 180ms ease 140ms;
+body.agent-open .agent { pointer-events: auto; }
+body:not(.agent-open) .agent-resize { display: none; }
+.agent-glass {
+  position: absolute; left: 0; bottom: 0; width: var(--agent-fab); height: var(--agent-fab); border-radius: calc(var(--agent-fab) / 2);
+  overflow: hidden; pointer-events: auto;
+  background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 90px), var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 76%, transparent);
+  /* (Its 0.5px edge is a ring inside it, not a border: the "e" and the insides start at its very edge.) */
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07), var(--glass-edge), var(--glass-shadow);
+  transition: width var(--agent-ms) var(--agent-ease), height var(--agent-ms) var(--agent-ease), border-radius var(--agent-ms) var(--agent-ease);
 }
+html.page-dark body:not(.source) .agent-glass {
+  background: linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 90px), color-mix(in srgb, var(--glass-pg) 70%, transparent);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+body.agent-open .agent-glass { width: 100%; height: 100%; border-radius: 18px; }
 /* Right of the page, it grows out of the lower-right corner. */
-body.agent-right:not(.agent-open) .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) 0 0 calc(100% - var(--agent-fab)) round calc(var(--agent-fab) / 2)); }
-body.agent-open .agent-card {
-  clip-path: inset(0 0 0 0 round 18px);
-  opacity: 1;
-  transition: clip-path var(--agent-ms) var(--agent-ease), opacity 0s;
+body.agent-right :is(.agent-glass, .agent-card, .agent-fab) { left: auto; right: 0; }
+.agent-card {
+  position: absolute; left: 0; bottom: 0; width: 100cqw; height: 100cqh;
+  display: flex; flex-direction: column;
+  font: 14px/1.55 var(--font-text); color: var(--fg);
+  opacity: 0; visibility: hidden;
+  transition: opacity 200ms ease 240ms, visibility 0s linear 440ms;
 }
-.agent-card > * { opacity: 0; transform: translateY(6px); transition: opacity 160ms ease, transform var(--agent-ms) var(--agent-ease); }
-body.agent-open .agent-card > * { opacity: 1; transform: none; transition: opacity 280ms ease 220ms, transform var(--agent-ms) var(--agent-ease) 120ms; }
+body.agent-open .agent-card { opacity: 1; visibility: visible; transition: opacity 200ms ease 120ms, visibility 0s; }
+.agent-fab {
+  position: absolute; left: 0; bottom: 0; width: var(--agent-fab); height: var(--agent-fab);
+  display: grid; place-items: center; padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--chrome-hover); transition: opacity 120ms ease 440ms;
+}
+.agent-fab svg { width: 22px; height: 22px; }
+.agent-fab.busy::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
+@keyframes agent-spin { to { transform: rotate(360deg); } }
+body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+@media (prefers-reduced-motion: reduce) { :is(.agent-card, .agent-fab) { transition: none !important; } }
+/* Its insides on the glass: the box and your messages as faint fills of it, not white cards. */
+.agent .agent-compose { border-top: 0; }
+.agent .agent-compose textarea { background: rgba(255, 255, 255, 0.6); border-color: rgba(0, 0, 0, 0.08); }
+.agent :is(.msg-user, .agent-voice:not([aria-pressed="true"])) { background: rgba(0, 0, 0, 0.045); }
+html.page-dark body:not(.source) .agent .agent-compose textarea { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); }
+html.page-dark body:not(.source) .agent :is(.msg-user, .agent-voice:not([aria-pressed="true"])) { background: rgba(255, 255, 255, 0.08); }
 body.no-motion, body.no-motion * { transition: none !important; }
 
 /* Resizing and docking (layout.ts; the grip, the ghost and the drag's look are style.css's): the editor's parts. */
 body.layout-narrow .agent-resize { display: none; }
-body.layout-resizing :is(#frame, .erga-canvas, #source, .agent, .agent-fab, .chrome-nav, .chrome-top, .chrome-bottom, .erga-steps-panel) { transition: none !important; }
+body.layout-resizing :is(#frame, .erga-canvas, #source, .agent, .chrome-nav, .chrome-top, .chrome-bottom, .erga-steps-panel) { transition: none !important; }
 body.layout-resizing #frame, body.layout-dragging #frame { pointer-events: none; }
 
 /* Docking: a panel dragged by its head (the agent's, the steps list's) follows the pointer, lifted; the ghost shows the slot
    it will land in, and the page and the other panel slide aside to make room. Let go, it eases into the ghost's place. */
 body:not(.layout-narrow) .agent-head, body.erga-editing .erga-steps-panel.erga-docked .erga-steps-head { cursor: grab; user-select: none; touch-action: none; }
-.agent.layout-dragged { filter: drop-shadow(0 24px 48px rgba(0, 0, 0, 0.2)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.08)); }
-.agent.layout-dragged .agent-card { transform: scale(0.985); transition: transform 200ms var(--agent-ease) !important; }
+.agent.layout-dragged .agent-glass { box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07), var(--glass-edge), 0 24px 48px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08); transform: scale(0.985); transition: transform 200ms var(--agent-ease) !important; }
 .erga-steps-panel.layout-dragged { box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 24px 48px rgba(0, 0, 0, .2); }
 .dock-ghost {
   top: max(var(--agent-inset), env(safe-area-inset-top));
@@ -269,9 +278,9 @@ body.erga-editing .erga-steps-panel.erga-docked .erga-steps-head { padding: 13px
 }
 /* The agent panel's insides (its head, the conversation, the box) are style.css's: the admin pages' panel has them too. */
 
-/* The editor's own page actions, between Clone and the pencil. While editing (and the editor is up), the group's column is
+/* The editor's own page actions, between Full screen and the pencil. While editing (and the editor is up), the group's column is
    its full width; else nothing. It eases between the two, and its actions keep to its left edge: as it narrows they all
-   slide right into the pencil, New document and Clone with them, and each fades over its last 14px at the pencil's edge,
+   slide right into the pencil, New document and Full screen with them, and each fades over its last 14px at the pencil's edge,
    a line it vanishes at; as it widens they come out of the pencil. Leaving the editor, editBoot holds the
    editor's row up while they go (erga-closing). Moving, it clips sideways only, so tooltips below still show; open and
    at rest (settled), nothing clips. The others here fade in and out with it, at the far left. */
@@ -288,7 +297,7 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 .people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
 .people:empty { display: none; }
 /* You, at the far right, apart from the others. */
-.me-slot { display: flex; align-items: center; margin-left: 8px; margin-right: 2px; }
+.me-slot { display: flex; align-items: center; margin-left: 10px; margin-right: 2px; }
 /* Your avatar is the size and place it is on every other page, so the eye here and the viewer's pencil swap in place. */
 .me-slot .avatar { width: 30px; height: 30px; font-size: 13px; }
 .me-slot:empty { display: none; }
@@ -370,6 +379,8 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
    that would cover the row sit under it. */
 @media (max-width: 520px) {
   .nav-brand { display: none; }
+  /* (Documents is the breadcrumbs' arrow here; Share with an agent waits for the phone's own layout.) */
+  #btn-docs, #btn-agent-share { display: none; }
   .nav-back { padding: 0 8px 0 4px; }
   .chrome-nav, .nav-back { align-items: center; } /* only the arrow left of Documents: no text to share a baseline with */
   .nav-back svg { display: block; }

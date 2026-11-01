@@ -63,8 +63,9 @@ interface EditorKept {
  * the others. (Only those this script sets afresh as it starts, never adds to: not the agent's conversation.)
  */
 interface ShellKept { width: number; height: number; html: string[]; body: string[]; style: string; parts: Record<string, string> }
-const SHELL_HTML = ["page-dark", "page-light", "erga-faded"], SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
-const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent-model", "agent-input", "agent-voice", "agent-send"];
+const SHELL_HTML = ["page-dark", "page-light", "page-white", "erga-faded"],
+  SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
+const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me", "agent-model", "agent-input", "agent-voice", "agent-send"];
 
 
 (async () => {
@@ -104,13 +105,16 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
     backdropSeen = true;
     const color = b.color && CSS.supports("color", b.color) ? b.color : "#ffffff";
     const root = document.documentElement.style;
-    if (color) root.setProperty("--page-bg", color); else root.removeProperty("--page-bg");
-    const rgb = (color || getComputedStyle(document.documentElement).getPropertyValue("--bg")).match(/[\d.]+/g)?.map(Number);
-    const dark = !!rgb && rgb.length >= 3 && (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45;
-    document.documentElement.classList.toggle("page-dark", !!color && dark);
-    document.documentElement.classList.toggle("page-light", !!color && !dark);
+    root.setProperty("--page-bg", color);
+    const rgb = color == "#ffffff" ? [255, 255, 255] : color.match(/[\d.]+/g)?.map(Number);
+    const lum = rgb && rgb.length >= 3 ? (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 : 1;
+    const dark = lum < 0.45;
+    document.documentElement.classList.toggle("page-dark", dark);
+    document.documentElement.classList.toggle("page-light", !dark);
+    // On a white or near-white page the glass of the bars and the agent is tinted, and its shadow halved (client/styles/glass.css).
+    document.documentElement.classList.toggle("page-white", lum > 0.95);
     // Remembered so the next load paints it before the page arrives, not white first.
-    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
+    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, tone: dark ? "page-dark" : "page-light" }));
     if (first) backdropKnown();
   }
 
@@ -207,10 +211,16 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent
   // Your documents to go back to (test people have none), as whoever this tab is.
   $("nav-back").hidden = me.user.startsWith("test-");
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
+  $("btn-docs").hidden = $("nav-back").hidden;
+  ($("btn-docs") as HTMLAnchorElement).href = `/docs${as}`;
   ($("nav-brand") as HTMLAnchorElement).href = `/${as}`;
-  // Clone, as the viewer's: the same address.
-  const viewerClone = document.querySelector<HTMLAnchorElement>(".erga-clone-button");
-  if (viewerClone) { ($("btn-clone") as HTMLAnchorElement).href = viewerClone.href; $("btn-clone").hidden = false; }
+  // Clone, the New menu's last item (server/pages/templates.ts), as the viewer's: the same address.
+  const viewerClone = document.querySelector<HTMLAnchorElement>(".erga-clone-button"),
+    menuClone = document.querySelector<HTMLAnchorElement>(".erga-new-clone");
+  if (viewerClone && menuClone) {
+    menuClone.href = viewerClone.href;
+    menuClone.closest(".erga-new-menu")!.classList.add("erga-has-clone");
+  }
   // The editor's own page actions (client/editor.html, .edit-group) open out of the pencil while editing and close back into it: they
   // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
   const editGroup = $("edit-group"), body = document.body;

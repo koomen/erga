@@ -14,8 +14,8 @@ import { $, store, type Shell } from "./shell";
 import { sleep } from "../../shared/time";
 
 export function mountAgent(shell: Shell) {
-
-  const agentPanel = $("agent");
+  const agentPanel = $("agent"),
+    agentCard = agentPanel.querySelector<HTMLElement>(".agent-card")!;
   // Where the agent and the steps list sit around the document, and how wide the agent is.
   mountLayout(agentPanel, agentPanel.querySelector<HTMLElement>(".agent-head")!);
   const agentLog = $("agent-log");
@@ -267,9 +267,9 @@ export function mountAgent(shell: Shell) {
     if (!fieldSized) { agentField.style.transition = "none"; agentField.style.height = h + "px"; void agentField.offsetHeight; agentField.style.transition = ""; fieldSized = true; }
     else agentField.style.height = h + "px";
   }).observe(agentInput);
-  /** Opens or closes the pane, animated, without remembering it (toggleAgent remembers). */
+  /** Opens or closes the pane, animated, without remembering it (toggleAgent remembers). (Its "e" button is in it, not inert.) */
   function showAgent(open: boolean) {
-    agentPanel.inert = !open;
+    agentCard.inert = !open;
     document.body.classList.toggle("agent-open", open);
     $("agent-fab").setAttribute("aria-expanded", String(open));
   }

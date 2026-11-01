@@ -223,6 +223,7 @@ async function build(): Promise<void> {
   };
   swap(`<link rel="stylesheet" href="/fonts/inter.css">`, `<style id="erga-fonts">${fontCss}</style>`);
   swap(`<link rel="stylesheet" href="/editor.css">`, `<style>${readFileSync(join(ROOT, "client/styles/editor.css"), "utf8")}</style>`);
+  swap(`<link rel="stylesheet" href="/glass.css">`, `<style>${readFileSync(join(ROOT, "client/styles/glass.css"), "utf8")}</style>`);
   swap(`<link rel="stylesheet" href="/style.css">`, `<link rel="stylesheet" href="${files["style.css"]}">`);
   swap(`<script src="/page.js"></script>`, `<script type="module" src="${files["page.js"]}"></script>`);
   // (Not fetched by any page: the server puts the shell into the document's page, below. Its address names this build of
