@@ -24,9 +24,13 @@ export async function homeReady(server: Server) {
 const docs = new WeakMap<Server, Promise<string>>();
 export async function openFade(page: Page, server: Server, mode: Mode, opts: { width?: number; height?: number } = {}) {
   if (mode == "doc" && !docs.has(server)) docs.set(server, server.fixture("fade").then((f) => f.address));
-  await openViewer(page, mode == "home" ? `${server.root}/` : await docs.get(server)!, opts);
-  if (mode == "home") expect(await page.evaluate(() => !!document.querySelector("erga-controls"))).toBe(true);
-  else await docShows(page, "A long page");
+  // The homepage as the logo opens it, from inside Erga: opened by address, someone signed in goes to /docs (AGENTS.md).
+  await openViewer(page, mode == "home" ? `${server.root}/docs` : await docs.get(server)!, opts);
+  if (mode == "home") {
+    await Promise.all([page.waitForURL((u) => u.pathname == "/"), page.evaluate(() => location.assign("/"))]);
+    await page.evaluate(() => document.fonts.ready.then(() => true));
+    expect(await page.evaluate(() => !!document.querySelector("erga-controls"))).toBe(true);
+  } else await docShows(page, "A long page");
 }
 
 /** The controls' opacities as shown (the computed value, mid-transition too), and their boxes. */

@@ -40,7 +40,9 @@ test("every kind of the site's own page sends frame-ancestors 'self', X-Frame-Op
   }
   // The document's page, on its pages origin: only its viewer may frame it, and nothing of the site's is added.
   const viewer = await (await fetch(address)).text();
-  const src = /<iframe id="frame"[^>]*\bsrc="([^"]+)"/.exec(viewer)?.[1].replaceAll("&amp;", "&");
+  // The frame's address, as the page makes it from its metas (ergaFrames.src(), client/inline/viewer-frames.ts).
+  const meta = (name: string) => new RegExp(`<meta name="${name}" content="([^"]*)"`).exec(viewer)?.[1].replaceAll("&amp;", "&");
+  const src = meta("erga-pages") && meta("erga-pages")! + (meta("erga-page") ?? "").split("/").map(encodeURIComponent).join("/");
   expect(src, "the viewer's frame").toBeTruthy();
   const page = await framed(src!);
   expect(page.status).toBe(200);
