@@ -4,19 +4,35 @@
 import { expect, servers, test, until } from "../../helpers/fixtures";
 import { openEditor } from "../../helpers/editor";
 import { framed } from "../../helpers/pages-fetch";
+import { signedOut } from "../home/home";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
 await servers.main();
 
-/** The pages of the site's own, one of each kind (the local server's person is signed in, and an admin). */
-const PAGES = ["/", "/docs", "/settings", "/tokens", "/admin", "/admin/users", "/admin/auth", "/admin/ops", "/git", "/no/such-page"];
+/**
+ * The pages of the site's own, one of each kind (the local server's person is signed in, and an admin; / is the
+ * homepage only signed out: signed in, it goes to /docs, and the homepage project's page is /_home).
+ */
+const PAGES = [
+  "/",
+  "/_home",
+  "/docs",
+  "/settings",
+  "/tokens",
+  "/admin",
+  "/admin/users",
+  "/admin/auth",
+  "/admin/ops",
+  "/git",
+  "/no/such-page",
+];
 
 test("every kind of the site's own page sends frame-ancestors 'self', X-Frame-Options, and its policy; a document's page names its viewer", async () => {
   const s = await servers.main();
   const { address } = await s.fixture("page");
   for (const path of [...PAGES, new URL(address).pathname, `${new URL(address).pathname}?edit`]) {
-    const res = await fetch(s.root + path, { headers: { Accept: "text/html" }, redirect: "manual" });
+    const res = await fetch(s.root + path, { headers: { Accept: "text/html", ...(path == "/" ? signedOut(s) : {}) }, redirect: "manual" });
     expect([200, 404], path).toContain(res.status);
     expect(res.headers.get("content-type"), path).toMatch(/^text\/html/);
     expect(res.headers.get("x-frame-options"), path).toBe("SAMEORIGIN");
