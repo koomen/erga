@@ -45,6 +45,8 @@
   </nav>
 
   <header class="chrome chrome-top" aria-label="Controls">
+    <!-- The quick actions: in the bar on a wide window; on a phone they open out of your avatar, to its left (main.ts). -->
+    <div class="quick" id="quick"><div class="quick-inner">
     <div class="people" id="people" aria-label="Who's here"></div>
     <!-- New document: the document's page has its picker and opens it. -->
     <button type="button" class="icon-btn erga-new-btn" id="btn-new" aria-label="New document" data-tip="New document" aria-haspopup="menu" aria-expanded="false" aria-controls="erga-new-menu">
@@ -76,6 +78,7 @@
     <a class="icon-btn" id="btn-docs" href="/docs" draggable="false" aria-label="Documents" data-tip="Documents">
       <svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg>
     </a>
+    </div></div>
     <div class="me-slot" id="me" aria-label="You"></div>
   </header>
 

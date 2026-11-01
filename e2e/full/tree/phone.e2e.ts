@@ -9,10 +9,17 @@ test("on a phone the tree fits the screen", async ({ tab }) => {
   await page.setViewportSize({ width: 390, height: 760 });
   const doc = await multi(await servers.main());
   await openTreeEditor(tab, doc.base);
-  // Near its left edge: at 390 px the controls on the right (pause, share, settings) cover the title's middle (a bug,
-  // client/styles/editor.css's .nav-title max-width leaves 236 px for them, and they take more).
-  const r = await page.evaluate(`(() => { const r = document.getElementById("doc-title").getBoundingClientRect(); return { x: r.left + 8, y: r.top + r.height / 2 }; })()`) as { x: number; y: number };
-  await page.mouse.click(r.x, r.y);
+  // Near the left edge of what shows of it: the breadcrumbs' bar keeps the title's end in sight, and its start may be cut off.
+  // (Once the viewer's own controls have gone from over it: client/inline/viewer.css.)
+  const r = await until(
+    () =>
+      page.evaluate(
+        `(() => { const t = document.getElementById("doc-title"), r = t.getBoundingClientRect(), nav = document.getElementById("nav-docs").getBoundingClientRect(); const p = { x: Math.max(r.left, nav.left + 8) + 8, y: r.top + r.height / 2 }; return t.contains(document.elementFromPoint(p.x, p.y)) ? p : null; })()`
+      ) as Promise<{ x: number; y: number } | null>,
+    5000,
+    "the title can be clicked"
+  );
+  await page.mouse.click(r!.x, r!.y);
   await until(() => page.evaluate(`!document.getElementById("pages").hidden && document.querySelectorAll("#pages .et-row[data-path]").length >= 4`), 5000, "the tree shows");
   // It pops in: measured once it has stopped moving.
   await expect.poll(() => js(page, `document.getAnimations().filter((a) => document.getElementById("pages").contains(a.effect?.target)).every((a) => a.playState != "running")`)).toBe(true);

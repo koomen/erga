@@ -1,5 +1,5 @@
 // The quiet chrome: the controls go out of sight while you type and come back as the pointer moves; the on-screen
-// keyboard; the help card; and the document's settings, behind the gear.
+// keyboard; the quick actions on a phone; the help card; and the document's settings, behind the gear.
 
 import type { Settings } from "../pages/settings";
 import { live } from "../live/client";
@@ -45,6 +45,33 @@ export function mountChrome(shell: Shell) {
     vv.addEventListener("resize", keyboard);
     vv.addEventListener("scroll", keyboard);
   }
+
+  // On a phone (narrower than 760px) the buttons' bar is your avatar alone: a tap on it opens the quick actions out of it,
+  // to its left, and its menu under it (editor.css, .quick). A card opened from them keeps them open; a tap anywhere
+  // else (the page too, while editing: main.ts, onPointer) closes them. The breadcrumbs' bar makes way: it ends
+  // 8px before the buttons' bar, its end in sight (--nav-room).
+  const phone = matchMedia("(max-width: 759.98px)"),
+    quick = $("quick"),
+    body = document.body;
+  function toggleQuick(force?: boolean) {
+    const open = typeof force == "boolean" ? force : !body.classList.contains("quick-open");
+    body.classList.toggle("quick-open", open);
+    quick.inert = phone.matches && !open;
+  }
+  toggleQuick(false);
+  phone.addEventListener("change", () => toggleQuick(false));
+  // (After the avatar's own click, which opened or closed its menu: people.ts.)
+  $("me").addEventListener("click", () => toggleQuick(shell.people.accountLinks ? !$("account").hidden : undefined));
+  document.addEventListener("pointerdown", (e) => {
+    if (body.classList.contains("quick-open") && !(e.target as Element).closest?.(".chrome-top, .help, .ds-menu, .erga-new-menu"))
+      toggleQuick(false);
+  });
+  const nav = $("nav-docs"),
+    top = document.querySelector(".chrome-top")!;
+  const navRoom = () =>
+    nav.style.setProperty("--nav-room", `${Math.max(0, top.getBoundingClientRect().left - nav.getBoundingClientRect().left - 8)}px`);
+  new ResizeObserver(navRoom).observe(top);
+  addEventListener("resize", navRoom);
 
   const help = $("help");
   function toggleHelp(force?: boolean) {
@@ -103,7 +130,17 @@ export function mountChrome(shell: Shell) {
     }
     for (const b of document.querySelectorAll<HTMLElement>("[data-tip]")) b.dataset.tip = b.dataset.tip!.replace("⌘⇧", "Ctrl+Shift+").replace("⌘", "Ctrl+");
   }
-  return { hideChrome, showChrome, pointerMoved, toggleHelp, loadSettings, keyPressed() { lastKeyAt = performance.now(); } };
+  return {
+    hideChrome,
+    showChrome,
+    pointerMoved,
+    toggleHelp,
+    toggleQuick,
+    loadSettings,
+    keyPressed() {
+      lastKeyAt = performance.now();
+    },
+  };
 }
 
 export type Chrome = ReturnType<typeof mountChrome>;

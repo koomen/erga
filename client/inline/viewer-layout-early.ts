@@ -24,8 +24,7 @@ export default function viewerLayoutEarly(): void {
       px = (n: number) => Math.round(n) + "px";
     const order: Panel[] = l && Array.isArray(l.order) && l.order.length == 3 && items.every((i) => l.order.includes(i)) ? l.order : items;
     const kept = l && typeof l.agentWidth == "number" && Number.isFinite(l.agentWidth) ? clamp(Math.round(l.agentWidth), 300, 760) : 380;
-    const open = !(s && s.agent === false),
-      right = order.indexOf("agent") > order.indexOf("doc");
+    const right = order.indexOf("agent") > order.indexOf("doc");
     const probe = document.createElement("div");
     probe.style.cssText = "position: fixed; visibility: hidden; padding-left: var(--safe-l, 0px); padding-right: var(--safe-r, 0px)";
     body.append(probe);
@@ -35,6 +34,8 @@ export default function viewerLayoutEarly(): void {
       W = root.clientWidth || innerWidth;
     probe.remove();
     const narrow = W < 760;
+    // (On a phone the agent starts closed: open, it covers the page.)
+    const open = !(s && s.agent === false) && !narrow;
     const w = narrow ? Math.max(0, Math.min(kept, W - 32)) : clamp(kept, 300, Math.max(300, Math.min(760, W - sl - sr - 360 - 32)));
     // Each panel's box: those before the document from the left edge, those after it from the right, each 16px from the next.
     const box = { agent: 0, picker: 0 },

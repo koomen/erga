@@ -1,12 +1,15 @@
 /* The band at the top of a document's page (server/pages/viewer.ts, BAND_STYLE), where the controls are, and the
-   frame and canvas below it. */
+   frame and canvas. A scrolling page's frame starts at the top of the window, behind the controls, and the page keeps
+   room for them at its top (client/common/top-room.ts); a page that fills the window (erga-fills, as the page says:
+   client/inline/viewer-band.ts) has its frame below the band (--frame-t). */
 
-:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
+:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); --frame-t: 0px; }
+:root.erga-fills { --frame-t: var(--band-h); }
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
 html { background: var(--page-bg, var(--band, #fff)); }
-#frame { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); border: 0; display: block; background: transparent; }
+#frame { position: fixed; left: 0; top: var(--frame-t); width: 100%; height: calc(100% - var(--frame-t)); border: 0; display: block; background: transparent; }
 html.erga-band-wait #frame { opacity: 0; }
-.erga-canvas { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); pointer-events: none; }
+.erga-canvas { position: fixed; left: 0; top: var(--frame-t); width: 100%; height: calc(100% - var(--frame-t)); pointer-events: none; }
 .erga-canvas > div { position: absolute; left: 0; top: 0; }
 .erga-canvas :is(i, b) { position: absolute; display: block; }
 .erga-canvas b { overflow: hidden; }

@@ -130,6 +130,21 @@ export function settings(p: Page) {
     focused: () => p.evaluate(() => document.activeElement?.id ?? ""),
     /** Opens the popover, once the gear can be clicked (the editor's controls fade in as it comes up), and its versions are in. */
     async open() {
+      // On a phone the gear is among the quick actions, which open out of the avatar.
+      if (await p.evaluate(() => matchMedia("(max-width: 759.98px)").matches && !document.body.classList.contains("quick-open"))) {
+        // (Once the viewer's own controls have gone from over it: client/inline/viewer.css.)
+        await until(
+          () =>
+            p.evaluate(() => {
+              const a = document.querySelector(".me-slot .avatar"),
+                r = a?.getBoundingClientRect();
+              return !!r?.width && !!a?.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+            }),
+          10_000,
+          "the avatar can be clicked"
+        );
+        await s.clickOn(".me-slot .avatar");
+      }
       await until(() => p.evaluate(() => { const g = document.getElementById("btn-settings"), r = g?.getBoundingClientRect(); return !!r?.width && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest("#btn-settings") == g && getComputedStyle(g!.closest(".chrome")!).opacity == "1"; }), 10_000, "the gear can be clicked");
       if (!(await s.isOpen())) await s.clickOn("#btn-settings");
       await until(() => s.isOpen(), 5_000, "the settings open");

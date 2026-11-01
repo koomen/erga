@@ -1,6 +1,6 @@
 // The band's colour on a document's page (server/pages/viewer.ts), set before it paints: ergaBand(id, colour) sets it
-// and remembers it for document `id`, ergaBand(id) sets the one remembered; and the controls' tone to suit. It answers
-// the tone.
+// and remembers it for document `id`, ergaBand(id) sets the one remembered, and where the frame was; and the controls'
+// tone to suit. It answers the tone.
 
 export default function viewerBandHead(): void {
   // (`given`: whether a colour was passed at all, as ergaBand(id) remembers nothing.)
@@ -13,6 +13,8 @@ export default function viewerBandHead(): void {
       if (color === undefined) {
         const b = JSON.parse(localStorage.getItem(key) || "null");
         color = b && typeof b.bg == "string" ? (b.bg as string) : "";
+        // And whether the page filled the window last time (its frame below the band: viewer-band.ts).
+        root.classList.toggle("erga-fills", localStorage.getItem("erga:fills:v1:" + id) == "1");
       }
     } catch {
       color = "";

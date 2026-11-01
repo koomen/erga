@@ -20,10 +20,14 @@ for (const v of VIEWS) {
     const ctx = tab.page.context();
     const a = await shoot(ctx, `${server.root}${address}`, v, NO_CRUMBS),
       b = await shoot(ctx, (p) => openHome(p, server.root), v, NO_CRUMBS);
-    // Where the viewer's page starts (0 while its frame fills the window).
+    // Where the viewer's page starts: its frame's top (0: the frame starts behind the bars), and the room the page keeps
+    // at its top for them (client/common/top-room.ts).
     const q = await devicePage(ctx, v);
     await q.goto(`${server.root}${address}`);
-    const top = await q.evaluate(() => Math.round(document.getElementById("frame")!.getBoundingClientRect().top));
+    const frameTop = await q.evaluate(() => document.getElementById("frame")!.getBoundingClientRect().top);
+    const inFrame = q.frames().find((f) => f.parentFrame() == q.mainFrame())!;
+    await expect.poll(() => inFrame.evaluate(() => getComputedStyle(document.documentElement).paddingTop)).not.toBe("0px");
+    const top = Math.round(frameTop + parseFloat(await inFrame.evaluate(() => getComputedStyle(document.documentElement).paddingTop)));
     await q.close();
     const shift = BAND - top, s = v.scale;
     // Text a frame draws comes out a shade softer or sharper: blurred a little, only what moved or changed colour counts.
@@ -47,12 +51,14 @@ for (const v of [VIEWS[0], VIEWS[2]]) {
     await openHome(pd, server.root);
     await steady(pv);
     await steady(pd);
-    // Measured in the viewer's frame, its blocks start at 0 wherever the frame sits: on the page, they're BAND lower.
+    // Measured in the viewer's frame, its blocks start below the room the page keeps for the bars (client/common/top-room.ts):
+    // on the page, they're BAND lower than without it.
     const inner = pv.frames().find((f) => f.parentFrame() == pv.mainFrame())!;
+    const room = parseFloat(await inner.evaluate(() => getComputedStyle(document.documentElement).paddingTop));
     const viewer = JSON.parse(await inner.evaluate(layout) as string) as [string, number, number, number, number][];
     const direct = JSON.parse(await pd.evaluate(layout) as string) as unknown[][];
     expect(viewer.length).toBeGreaterThan(5);
-    expect(viewer.map(([t, x, y, w, h]) => [t, x, y + BAND, w, h])).toEqual(direct);
+    expect(viewer.map(([t, x, y, w, h]) => [t, x, y - room + BAND, w, h])).toEqual(direct);
     await pv.close();
     await pd.close();
   });

@@ -121,7 +121,9 @@ make_document, list_versions, read_version, restore_version and open_page.
   path renders another page of the document instead (\`"path": "notes.html"\`).
   evaluate_page runs a JavaScript expression in that same render and answers its
   result as JSON. Neither changes the document, nor moves your person's view: they
-  render a hidden copy, once the page loaded and its scripts ran.
+  render a hidden copy, once the page loaded and its scripts ran. A page that
+  scrolls gets 56px more padding at the top of its <html> in every view, where
+  Erga's bars float over it; it isn't in the page's files, so don't add room for them.
 - For a presentation (window.ergaSteps), view_page and evaluate_page take step:
   its number as the steps' list shows it, as a string ("3.2": slide 3, its second
   part; "4": slide 4), or a hash ("#3.2"). at_ms waits that long after the step (default 1000 ms);

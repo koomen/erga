@@ -13,11 +13,11 @@
   --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
 }
 body { overflow: hidden; }
-/* The page starts below the band the top controls sit on (--band-h, server/pages/viewer.ts's BAND_STYLE), as in the viewer. */
-:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
-#frame { position: fixed; top: var(--band-h); left: 0; width: 100%; height: calc(100% - var(--band-h) - var(--kb, 0px)); border: 0; background: transparent; }
+/* The page's frame is where the viewer has it (--frame-t, server/pages/viewer.ts's BAND_STYLE): from the top of the window,
+   behind the bars, for a scrolling page; below the band for one that fills the window. */
+#frame { position: fixed; top: var(--frame-t); left: 0; width: 100%; height: calc(100% - var(--frame-t) - var(--kb, 0px)); border: 0; background: transparent; }
 /* The page's gradient or image, painted out from the frame's box over the band and beside the page: it has the frame's box. */
-.erga-canvas { top: var(--band-h); height: calc(100% - var(--band-h) - var(--kb, 0px)); }
+.erga-canvas { top: var(--frame-t); height: calc(100% - var(--frame-t) - var(--kb, 0px)); }
 
 /* The shell's canvas is the page's own background (main.ts reads it from
    the page; its gradient or image, .erga-canvas, above), so the band and
@@ -100,7 +100,7 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 .nav-back svg { display: none; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 /* A paused page stays in sight (its button) while the rest of the controls hide. */
 body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) { opacity: 1; }
-body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) > :not(.edit-group),
+body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) :is(.me-slot, .quick-inner > :not(.edit-group)),
 body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-inner > :not(#btn-pause) { opacity: 0; pointer-events: none; }
 .pause-card { width: min(340px, calc(100vw - 32px)); }
 .pause-card h2 { margin: 0 0 6px; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
@@ -130,7 +130,7 @@ body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-
 :is(#frame, .erga-canvas) { left: var(--frame-l); width: calc(100% - var(--frame-l) - var(--frame-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
 /* The editor's zoom (zoom.ts): the page's frame drawn larger, with a viewport that much smaller, as the browser's own
    zoom would (remote.ts, setZoom; from the first frame, server/pages/viewer.ts, LAYOUT_EARLY). */
-html.erga-zoomed #frame { width: calc((100% - var(--frame-l) - var(--frame-r)) / var(--erga-zoom)); height: calc((100% - var(--band-h) - var(--kb, 0px)) / var(--erga-zoom)); transform: scale(var(--erga-zoom)); transform-origin: 0 0; }
+html.erga-zoomed #frame { width: calc((100% - var(--frame-l) - var(--frame-r)) / var(--erga-zoom)); height: calc((100% - var(--frame-t) - var(--kb, 0px)) / var(--erga-zoom)); transform: scale(var(--erga-zoom)); transform-origin: 0 0; }
 #source { left: var(--frame-l); right: var(--frame-r); transition: left var(--agent-ms) var(--agent-ease), right var(--agent-ms) var(--agent-ease); }
 .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding var(--agent-ms) var(--agent-ease); padding-left: var(--cb-l); padding-right: var(--cb-r); }
 /* The buttons' bar and its cards keep clear of a panel on the right, 14px from it, as the breadcrumbs' bar on the left. */
@@ -374,20 +374,25 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 .naming-status.error { color: #c2410c; }
 .naming .share-actions { margin-top: 6px; }
 
-/* Phones. The top row keeps to what fits beside the controls: the breadcrumbs shrink to an arrow back to
-   Documents and the title (no wordmark: the controls leave no room for it), avatars overlap, and notes
-   that would cover the row sit under it. */
+/* Phones (narrower than 760px). The buttons' bar is your avatar alone, and the quick actions (#quick: the others, and who's
+   here) open out of it to its left as its menu opens under it, on the curve the editor's own actions open on, and close
+   back into it (chrome.ts, toggleQuick). Moving or closed, they clip sideways only. The breadcrumbs' bar ends before the
+   buttons' bar (--nav-room) and keeps its end in sight: as the quick actions open, its start (erga, Documents) slides out
+   on the left. Avatars overlap, and notes that would cover the row sit under it. */
+.quick, .quick-inner { display: contents; }
+@media (max-width: 759.98px) {
+  .quick { display: grid; grid-template-columns: 0fr; transition: grid-template-columns 420ms var(--agent-ease); }
+  body.quick-open .quick { grid-template-columns: 1fr; }
+  .quick-inner { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: clip; }
+  .quick-inner > * { flex-shrink: 0; }
+  .me-slot { transition: margin 420ms var(--agent-ease); }
+  body:not(.quick-open) .me-slot { margin-left: 0; }
+  .chrome-nav { max-width: var(--nav-room, none); box-sizing: border-box; overflow: hidden; justify-content: flex-end; }
+  .chrome-nav > * { flex: none; }
+  .nav-title { max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) { .quick, .me-slot { transition: none; } }
 @media (max-width: 520px) {
-  .nav-brand { display: none; }
-  /* (Documents is the breadcrumbs' arrow here; Share with an agent waits for the phone's own layout.) */
-  #btn-docs, #btn-agent-share { display: none; }
-  .nav-back { padding: 0 8px 0 4px; }
-  .chrome-nav, .nav-back { align-items: center; } /* only the arrow left of Documents: no text to share a baseline with */
-  .nav-back svg { display: block; }
-  .nav-back span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .nav-back::after { display: none; }
-  .nav-back + .nav-title { margin-left: -6px; }
-  .nav-title { padding: 0 6px; }
   .people { gap: 0; }
   .people > * + * { margin-left: -5px; }
   .refresh-pill { top: calc(var(--top-clear) - 6px); left: 16px; right: 16px; width: fit-content; max-width: none; margin: 0 auto; transform: none; }
