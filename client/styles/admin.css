@@ -9,8 +9,8 @@
 
 /* The header is every page's bars (server/pages/bars.ts); your agent is every page's (server/pages/agent.ts). */
 /* The sidebar beside the page. */
-.admin-body { flex: 1; display: flex; align-items: flex-start; min-width: 0; padding: 62px 0 0 max(8px, env(safe-area-inset-left)); }
-.admin-side { position: sticky; top: 62px; flex: none; box-sizing: border-box; width: 196px; padding: 0 12px 0 4px; overflow: hidden;
+.admin-body { flex: 1; display: flex; align-items: flex-start; min-width: 0; padding: calc(var(--bars-bottom) + 12px) 0 0 max(8px, env(safe-area-inset-left)); }
+.admin-side { position: sticky; top: calc(var(--bars-bottom) + 12px); flex: none; box-sizing: border-box; width: 196px; padding: 0 12px 0 4px; overflow: hidden;
   transition: width 240ms cubic-bezier(0.2, 0.7, 0.2, 1), padding 240ms cubic-bezier(0.2, 0.7, 0.2, 1); }
 .admin-side ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .admin-side a, .side-toggle { box-sizing: border-box; display: flex; align-items: center; gap: 11px; height: 34px; padding: 0 9px; border-radius: 8px; white-space: nowrap;

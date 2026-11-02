@@ -112,7 +112,7 @@
 #source-pane .dot.upstream { background: var(--bg); border: 2px dashed var(--upstream); }
 #source-pane .legend .up-only[hidden] { display: none; }
 #source-pane .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 80px 116px 116px 116px; align-items: center; }
-#source-pane .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 58px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
+#source-pane .grid > .head { position: sticky; top: var(--bars-bottom); z-index: 2; background: var(--bg); height: 58px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
     font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
 #source-pane .grid > .head.deploy { justify-content: flex-start; padding-left: 2px; }
 #source-pane .target { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; max-width: 100%; border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
