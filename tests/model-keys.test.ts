@@ -17,11 +17,16 @@ const names = (k: Partial<KeySetup>) => usableModels(setup(k)).map((u) => `${u.c
 test("the models a person can use, for each key setup", () => {
   expect(names({})).toEqual([]);
   // A server key opens its provider's models, for everyone.
-  expect(names({ server: ["anthropic"] })).toEqual(["opus-fast:server", "sonnet:server", "haiku:server"]);
+  expect(names({ server: ["anthropic"] })).toEqual(["opus-fast:server", "opus:server", "sonnet:server", "haiku:server"]);
   // The admin turned one off: a server key doesn't run it.
-  expect(names({ server: ["anthropic"], off: ["opus-fast"] })).toEqual(["sonnet:server", "haiku:server"]);
+  expect(names({ server: ["anthropic"], off: ["opus-fast"] })).toEqual(["opus:server", "sonnet:server", "haiku:server"]);
   // The person's own key wins, and runs every model of its provider, the ones turned off too.
-  expect(names({ server: ["anthropic"], own: ["anthropic"], off: ["opus-fast"] })).toEqual(["opus-fast:own", "sonnet:own", "haiku:own"]);
+  expect(names({ server: ["anthropic"], own: ["anthropic"], off: ["opus-fast"] })).toEqual([
+    "opus-fast:own",
+    "opus:own",
+    "sonnet:own",
+    "haiku:own",
+  ]);
   // Own keys only: the server's keys run nothing.
   expect(names({ server: ["anthropic", "openai"], mode: "own" })).toEqual([]);
   expect(names({ server: ["anthropic"], own: ["openrouter"], mode: "own" })).toEqual(["grok:own", "kimi-k3:own", "deepseek-v4-pro:own"]);

@@ -162,12 +162,12 @@ test("a turn on Opus in fast mode: the request, the streamed text and thinking, 
   expect(loop.model).toBe("Opus 5.5 fast");
 });
 
-test("Sonnet has no fast mode; an API error shows in the transcript in the API's words, and the run ends", async () => {
+test("Opus 5.5 at normal speed has no fast mode; an API error shows in the transcript in the API's words, and the run ends", async () => {
   requests.length = 0;
   answer = () => Response.json({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, { status: 529 });
   const events: LogEvent[] = [];
   const loop = startLoop({
-    cfg: { own: {}, server: { anthropic: Redacted.make("sk-test") }, mode: "server", off: [], model: "sonnet", effort: "medium" },
+    cfg: { own: {}, server: { anthropic: Redacted.make("sk-test") }, mode: "server", off: [], model: "opus", effort: "medium" },
     stored: null,
     store: null,
     meta: {},
@@ -183,7 +183,7 @@ test("Sonnet has no fast mode; an API error shows in the transcript in the API's
   );
   loop.prompt("Hi", null, []);
   await done;
-  expect(requests[0].body.model).toBe("claude-sonnet-5-5");
+  expect(requests[0].body.model).toBe("claude-opus-5-5");
   expect(requests[0].body.speed).toBeUndefined();
   expect(requests[0].headers.get("anthropic-beta") ?? "").not.toContain("fast-mode");
   const error = events.find((e) => e.t == "error") as { text: string } | undefined;

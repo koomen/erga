@@ -28,6 +28,7 @@ export interface ModelInfo {
 /** Our short list, by key: the current models of each provider. The keys are kept in conversations: don't rename one. */
 export const MODELS = {
   "opus-fast": { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true },
+  opus: { provider: "anthropic", id: "claude-opus-5-5", label: "Opus 5.5" },
   sonnet: { provider: "anthropic", id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
   haiku: { provider: "anthropic", id: "claude-haiku-5-5", label: "Haiku 5.5" },
   "gpt-6.1-sol": { provider: "openai", id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },

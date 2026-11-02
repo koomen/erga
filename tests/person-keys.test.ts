@@ -88,6 +88,7 @@ test("the agent's settings: only that person's own keys, and the admin's choices
   const adas = (await agentSettingsFrom(env, dir, "ada")) as AgentConfig;
   expect(usable(bobs).map((u) => `${u.choice}:${u.key}`)).toEqual([
     "opus-fast:server",
+    "opus:server",
     "sonnet:server",
     "haiku:server",
     "grok:own",
@@ -95,7 +96,7 @@ test("the agent's settings: only that person's own keys, and the admin's choices
     "deepseek-v4-pro:own",
   ]);
   expect(Redacted.value(keyFor(bobs, "kimi-k3")!)).toBe(OPENROUTER);
-  expect(usable(adas).map((u) => u.choice)).toEqual(["opus-fast", "sonnet", "haiku"]);
+  expect(usable(adas).map((u) => u.choice)).toEqual(["opus-fast", "opus", "sonnet", "haiku"]);
   expect(keyFor(adas, "kimi-k3")).toBeNull();
   // Own keys only: the server's key runs nothing; a person with none has their agent off, and is told what to do.
   await dir.config.set(ada, "agent_keys", "own");

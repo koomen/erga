@@ -9,7 +9,7 @@ const select = (p: Page) => p.evaluate(`(() => { const s = document.getElementBy
 test("the agent starts on Opus 5.5 fast; picking Sonnet 5.5 switches it, the person's other tab follows, and a reload keeps it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.agent(), "noedit");
   await expect.poll(async () => (await select(tab.page))?.value).toBe("opus-fast");
-  expect((await select(tab.page))!.options).toEqual(["Opus 5.5 fast", "Sonnet 5.5", "Haiku 5.5"]);
+  expect((await select(tab.page))!.options).toEqual(["Opus 5.5 fast", "Opus 5.5", "Sonnet 5.5", "Haiku 5.5"]);
   const other = await tab.page.context().newPage();
   await other.goto(`${ed.address}?edit`);
   await expect.poll(async () => (await select(other))?.value).toBe("opus-fast");
