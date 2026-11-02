@@ -71,6 +71,12 @@ let editing = false;
 function edit() {
   if (editing || (window.__ergaReader?.mode as { mode?: string } | undefined)?.mode != "edit") return;
   editing = true;
+  // The slide with the caret shows: after an undo or a redo, the caret is where the change was.
+  document.addEventListener("selectionchange", () => {
+    const n = document.getSelection()?.focusNode;
+    const slide = n && (n.nodeType == 1 ? (n as Element) : n.parentElement)?.closest<HTMLElement>("section.slide");
+    if (slide?.hidden) show(slides().indexOf(slide));
+  });
   void import("../../text/ui/frame");
   void import("./bar").then((b) => b.mountBar(steps));
 }

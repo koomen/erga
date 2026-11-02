@@ -98,3 +98,18 @@ test("the slide bar's ↓, layout and Delete keep the caret, collapsed, in the s
     For the team
   `);
 });
+
+test("undo of the slide bar's ↓ shows the slide back in its place, with the caret in it", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "slides");
+  await ed.clickEnd("h1");
+  await clickBar(ed, "down");
+  await expect.poll(() => ed.frame<boolean[]>(shown)).toEqual([false, true]);
+  await ed.press("ControlOrMeta+z");
+  await expect.poll(() => ed.source()).toContain(`<section class="slide" data-layout="title">\n    <h1>Launch plan</h1>`);
+  await expect.poll(() => ed.frame<boolean[]>(shown)).toEqual([true, false]);
+  await ed.shows(`
+    # Launch plan|
+
+    For the team
+  `);
+});
