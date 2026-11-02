@@ -20,6 +20,8 @@
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
 //                              redirect there
+//   POST /d/<id>/api/key       an edit key for the document's page (edit-key.ts): it opens /d/<id>/api/room?key=<key>
+//                              from the pages origin, as the person the key names
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets; the
 //                              editor uses this address, which never changes. Under any of the
 //                              addresses above it works too (older tabs and share links use them).
@@ -48,7 +50,8 @@ import { type Platform, type Session, whoOf } from "../platform.ts";
 import { HOME_OWNER, HOME_SLUG } from "../../document/names.ts";
 import { listDocs, newDoc, shareToken } from "./make.ts";
 import { adoptLanding, landingDocument } from "./landing.ts";
-import { pagesRoutes, pagesHost } from "./pages-origin.ts";
+import { pagesOrigin, pagesRoutes, pagesHost } from "./pages-origin.ts";
+import { editKey, type KeyPerson, keyWho, readEditKey } from "./edit-key.ts";
 import { viewAddress, viewLanding, viewPublic } from "./view.ts";
 import { OWN_ACCOUNT, page, signInFirst } from "../pages/index.ts";
 import { call, ctx, fromWeb, plainJson, text, type Route as HttpRoute } from "../http.ts";
@@ -118,7 +121,38 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
       },
       404
     );
+  // A socket from the document's own page, on its pages origin (which has no cookies), with an edit key (edit-key.ts): as
+  // the person the key names, never as a cookie that came with it. The document decides what they may do.
+  const key = url.searchParams.get("key");
+  if (key != null && rest == "/api/room" && request.headers.get("upgrade")?.toLowerCase() == "websocket") {
+    const doc = yield* call(() => platform.directory.route(route.id));
+    const person = doc && (yield* call(() => readEditKey(platform.secret, key, doc.owner, doc.id)));
+    if (!doc || !person) return text("This key has expired: reload the page.", 403);
+    if (request.headers.get("origin") != pagesOrigin(doc.owner, doc.id, url, platform)) return text("Not from this document's page", 403);
+    const headers = new Headers(request.headers);
+    headers.delete("cookie");
+    const inner = new URL(url);
+    inner.searchParams.delete("key");
+    const answer = yield* call(() =>
+      platform.docs.fetch(route, forwardedAs(new Request(inner, { headers }), inner, rest, person, keyWho(person, doc.id)))
+    );
+    return fromWeb(answer);
+  }
   if (!session) return text("Sign in first", 401);
+  // The edit key for the document's page (edit-key.ts): for whoever may open the document, asked by this site's own page.
+  if (rest == "/api/key" && request.method == "POST") {
+    const origin = request.headers.get("origin");
+    if (session.agent || (origin && origin != url.origin)) return text("Not allowed", 403);
+    const doc = yield* call(() => platform.directory.route(route.id));
+    if (!doc || !(yield* call(() => platform.directory.access(whoOf(session), doc)))) return text("Not allowed", 403);
+    const person = {
+      login: session.login,
+      name: session.name,
+      ...(session.avatar && !session.test ? { avatar: session.avatar } : {}),
+      ...(session.test ? { testBy: session.test.by } : {}),
+    };
+    return plainJson(yield* call(() => editKey(platform.secret, doc.owner, doc.id, person)), 200, { "Cache-Control": "no-store" });
+  }
   // The share button's token is the app's, not the document's: for whoever may open the document.
   if (rest == "/api/share" && request.method == "POST") {
     const doc = yield* call(() => platform.directory.route(route.id));
@@ -145,6 +179,16 @@ export const documentRoutes: HttpRoute = Effect.gen(function* () {
 });
 
 
+
+/** The person a socket's edit key names (/<owner or d>/<doc>/api/room?key=...), if it's good: for the staging guard. */
+export async function keySocketPerson(platform: Platform, request: Request, url: URL): Promise<KeyPerson | null> {
+  const [, first, second] = /^\/([^/]+)\/([^/]+)\/api\/room$/.exec(url.pathname) ?? [];
+  const key = url.searchParams.get("key");
+  if (!first || !second || key == null || request.headers.get("upgrade")?.toLowerCase() != "websocket") return null;
+  const route = await documentRoute(platform, first, second);
+  const doc = route && (await platform.directory.route(route.id));
+  return doc ? readEditKey(platform.secret, key, doc.owner, doc.id) : null;
+}
 
 /**
  * How to reach the document at /<first>/<second>, for the requests under

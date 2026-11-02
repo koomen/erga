@@ -51,7 +51,7 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
 
 /** The signing key, imported once per secret (per isolate): every file of a document's page checks its token. */
 /** Whether two strings (MACs) are the same, in a time that doesn't say where they differ. */
-const sameText = (a: string, b: string) => {
+export const sameText = (a: string, b: string) => {
   if (a.length != b.length) return false;
   let d = 0;
   for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -60,7 +60,7 @@ const sameText = (a: string, b: string) => {
 
 const hmacKeys = new Map<string, Promise<CryptoKey>>();
 
-const hmac = async (secret: string, value: string) => {
+export const hmac = async (secret: string, value: string) => {
   let key = hmacKeys.get(secret);
   if (!key) {
     key = crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-pages:${secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

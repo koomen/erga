@@ -44,6 +44,9 @@
 //                                   own scope decides, as on production: no admin
 //                                   power, so no /admin, settings, users, deploys, credentials, Ops page or Git
 //
+//   a document's socket with an edit key   the page's editor opens it from the pages origin, with no cookie; the key
+//                                   (documents/edit-key.ts) names its person, who must be an admin at each socket
+//
 // Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new, /deploy,
 // /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
 // (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
@@ -52,7 +55,7 @@
 
 
 import * as Effect from "effect/Effect";
-import { isPagesSite, pagesHost, readPagesClaims } from "../documents/index.ts";
+import { isPagesSite, keySocketPerson, pagesHost, readPagesClaims } from "../documents/index.ts";
 import { isAssetPath, page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { whoOf, type Platform } from "../platform.ts";
@@ -106,6 +109,14 @@ async function refusal(request: Request, base: Platform, url: URL) {
     const token = /^\/t\/([^/]+)\//.exec(url.pathname)?.[1];
     const claims = doc && token ? await readPagesClaims(base.secret, token, doc.owner, doc.id) : null;
     if (claims?.by && (await users.isAdmin({ login: claims.by }))) return null;
+    return text("Staging is for Erga's admins only.", 403, { "Cache-Control": "no-store" });
+  }
+
+  // A document's socket from its page on the pages origin, with an edit key (documents/edit-key.ts): no cookie, only the
+  // key, which names its person. They must be an admin now, as for the pages origin's token.
+  const keyed = await keySocketPerson(base, request, url);
+  if (keyed) {
+    if (!keyed.testBy && (await users.isAdmin({ login: keyed.login }))) return null;
     return text("Staging is for Erga's admins only.", 403, { "Cache-Control": "no-store" });
   }
 
