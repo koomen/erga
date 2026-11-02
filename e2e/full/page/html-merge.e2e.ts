@@ -4,7 +4,7 @@ import { DISK_MS, openEditor } from "../../helpers/editor";
 
 await servers.main();
 
-test("typing and a disk edit at once: both survive, marked; ⌘Z takes back the typing only, ⌘⇧Z brings it back", {
+test("typing and a disk edit at once: both survive, unmarked; ⌘Z takes back the typing only, ⌘⇧Z brings it back", {
   timeout: 45_000,
 }, async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
@@ -12,15 +12,15 @@ test("typing and a disk edit at once: both survive, marked; ⌘Z takes back the 
   await expect.poll(() => ed.textOf("figcaption"), { timeout: DISK_MS }).toBe("Where the leads went.");
   await ed.clickEnd("h1");
   await ed.type(" now");
-  // Marks are brief (the timescale makes them briefer): each one is kept as it shows.
   await ed.watchMarks();
   ed.write(ed.disk().replace("Where the leads went.", "Where the leads go now."));
   await until(
-    async () => (await ed.seenMarks()).some((x) => /go now/.test(x)),
+    async () => (await ed.textOf("figcaption")) == "Where the leads go now.",
     DISK_MS,
-    "the disk's edit shows marked",
-    async () => ({ seen: await ed.seenMarks(), now: await ed.marks(), caption: await ed.textOf("figcaption"), h1: await ed.textOf("h1") })
+    "the disk's edit shows",
+    async () => ({ caption: await ed.textOf("figcaption"), h1: await ed.textOf("h1") })
   );
+  expect(await ed.seenMarks()).toEqual([]);
   await expect.poll(() => ed.disk(), { timeout: DISK_MS }).toMatch(/ now<\/h1>[\s\S]*leads go now\./);
   expect(await ed.textOf("h1")).toMatch(/ now$/);
   expect(await ed.textOf("figcaption")).toBe("Where the leads go now.");

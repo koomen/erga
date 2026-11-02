@@ -266,14 +266,12 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
         else await page.keyboard.insertText(ch);
       }
     },
-    /** Added text (the highlights, by name) and removed text (the notches' hover text). */
-    marks: () => ed.frame<{ added: string[]; gone: string[]; names: string[] }>(`(() => { const w = ${W}; const added = [], names = []; for (const [name, h] of w.CSS.highlights) { if (!/^erga-(add|a\\d+)-\\d$/.test(name)) continue; for (const r of h) { added.push(r.toString()); names.push(name); } } return { added, names, gone: [...${F}.querySelectorAll("erga-del erga-tip")].map((e) => e.textContent) }; })()`),
-    /** From now on, every marked text the page shows, kept as it shows: a mark fades fast, and a poll can miss it under load. */
+    /** From now on, every mark the page shows on changed text: a CSS highlight, or an element or class that marks it. */
     watchMarks: () =>
       ed.frame<boolean>(
-        `(() => { const w = ${W}, seen = w.__ergaMarks = new Set(); const look = () => { for (const [name, h] of w.CSS.highlights) if (/^erga-(add|a\\d+)-\\d$/.test(name)) for (const r of h) seen.add(r.toString()); w.requestAnimationFrame(look); }; look(); return true; })()`
+        `(() => { const w = ${W}, seen = w.__ergaMarks = new Set(); const look = () => { for (const name of w.CSS.highlights.keys()) seen.add("highlight " + name); for (const el of ${F}.querySelectorAll("erga-marks, erga-del, .erga-flash, #erga-authors")) seen.add("element " + (el.id || el.localName)); w.requestAnimationFrame(look); }; look(); return true; })()`
       ),
-    /** What watchMarks has seen marked. */
+    /** What watchMarks has seen. */
     seenMarks: () => ed.frame<string[]>(`[...(${W}.__ergaMarks ?? [])]`),
     /** The toast: its text and whether it shows. */
     toast: () => page.evaluate(() => { const t = document.getElementById("toast")!; return { text: t.textContent ?? "", shown: t.classList.contains("show") }; }),

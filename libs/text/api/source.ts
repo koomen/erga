@@ -72,13 +72,6 @@ export function balanceWhitespace(text: string): string {
 /** A unit's positions and text as they are now (patching moves the live ones: see M.editRuns). */
 export const copyUnit = (u: M.Unit): M.Unit => ({ ...u, runs: u.runs.map((r) => ({ ...r })) });
 
-/** Copies of the units a change takes text from, in the text before it: all that marksFor reads of the old units. */
-export function touched(units: M.Unit[], changes: ChangeSet): M.Unit[] {
-  const out = new Set<M.Unit>();
-  changes.iterChangedRanges((fromA, toA) => { if (toA > fromA) for (const u of unitsIn(units, fromA, toA)) out.add(u); });
-  return [...out].map(copyUnit);
-}
-
 /** The units that overlap [from, to] (content, ends included), in order. */
 export function unitsIn(units: M.Unit[], from: number, to: number): M.Unit[] {
   let lo = 0, hi = units.length;

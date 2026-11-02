@@ -92,12 +92,7 @@ export abstract class EditorRender extends EditorMarks {
       this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
     }
     this.notify({ docChanged: false, selectionSet: false, rendered: true, changes: null, remote: false });
-    if (this.pendingFlash.length) {
-      this.flash(this.pendingFlash);
-      this.pendingFlash = [];
-    }
     this.markObserver?.disconnect();
-    this.overlay = null;
     this.peerLayer = null;
     const win = this.win as Window & typeof globalThis;
     this.markObserver = new win.ResizeObserver(() => this.queuePaint());
@@ -173,13 +168,12 @@ export abstract class EditorRender extends EditorMarks {
     this.markObserver = null;
     this.ownership?.stop();
     this.ownership = null;
-    clearTimeout(this.fadeTimer);
+    clearInterval(this.typingTimer);
+    this.typingTimer = 0;
     const doc = this.doc;
     if (!doc) return;
-    this.overlay?.remove();
     this.peerLayer?.remove();
-    this.overlay = this.peerLayer = null;
-    doc.getElementById("erga-authors")?.remove();
+    this.peerLayer = null;
     doc.querySelector('style[data-erga="page"]')?.remove();
     const registry = (this.win as Window & typeof globalThis).CSS?.highlights as Map<string, unknown> | undefined;
     if (registry) for (const name of [...registry.keys()]) if (/^erga-/.test(name)) registry.delete(name);
@@ -190,8 +184,7 @@ export abstract class EditorRender extends EditorMarks {
       else el.setAttribute("spellcheck", spell);
     }
     this.own.clear();
-    for (const el of doc.querySelectorAll(".erga-locked, .erga-empty, .erga-flash"))
-      el.classList.remove("erga-locked", "erga-empty", "erga-flash");
+    for (const el of doc.querySelectorAll(".erga-locked, .erga-empty")) el.classList.remove("erga-locked", "erga-empty");
     for (const el of doc.querySelectorAll(`[${TEXT_ATTR}]`)) el.removeAttribute(TEXT_ATTR);
     doc.documentElement.removeAttribute("data-erga-editing");
     this.win.dispatchEvent(new Event("erga-editing"));
@@ -480,7 +473,7 @@ export abstract class EditorRender extends EditorMarks {
       if (el.classList.contains("erga-locked")) el.removeAttribute("contenteditable");
       el.removeAttribute(TEXT_ATTR);
       this.unitByEl.delete(el);
-      el.classList.remove("erga-empty", "erga-locked", "erga-flash");
+      el.classList.remove("erga-empty", "erga-locked");
       if (!el.classList.length) el.removeAttribute("class");
     }
     this.units = units;

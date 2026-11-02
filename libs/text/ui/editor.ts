@@ -26,14 +26,12 @@
 import type { ChangeSet, EditorState } from "@codemirror/state";
 import * as M from "../../../shared/manuscript";
 import { changesBetween } from "../../../document/merge";
-import type { HeldInput, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageUpdate, Peer } from "./types";
+import type { HeldInput, LinkEdit, LinkInfo, TypingAgent, PageEditorConfig, PageUpdate, Peer } from "./types";
 import type { InlineStyle } from "../api/source";
-import { touched } from "../api/source";
-import { marksFor } from "./marks";
 import { noHistory } from "./core";
 import { EditorInput } from "./input";
 
-export type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageUpdate, Peer };
+export type { HeldInput, InlineStyle, LinkEdit, LinkInfo, TypingAgent, PageEditorConfig, PageUpdate, Peer };
 
 export class PageEditor extends EditorInput {
   constructor(config: PageEditorConfig) {
@@ -48,18 +46,16 @@ export class PageEditor extends EditorInput {
 
   /**
    * Applies changes made elsewhere (a collaborator, an agent, an edit on
-   * disk) on top of the current document, and marks them (see `marks`) in
-   * their author's colour; a change with no visible text (markup only)
-   * flashes its paragraph instead. The caret stays where it was, and focus
+   * disk) on top of the current document, with no highlight: an agent's new
+   * text plays as typing behind its caret (marks.ts). The caret stays where it was, and focus
    * stays wherever it is. They stay out of this editor's undo history, which
    * is mapped over them: ⌘Z only ever undoes your own edits.
    */
-  applyExternal(changes: ChangeSet, author: MarkAuthor | null = null): void {
+  applyExternal(changes: ChangeSet, agent: TypingAgent | null = null): void {
     if (changes.empty) return;
     const tr = this.state.update({ changes, annotations: noHistory(), userEvent: "external" });
     const oldSrc = this.src;
-    // Patching may move the units in place (see M.editRuns): the marks read the text the change took from a copy.
-    const oldUnits = this.units, gone = touched(oldUnits, changes);
+    const oldUnits = this.units;
     this.carrySrc(changes, tr.startState.doc, tr.newDoc);
     this.state = tr.state;
     this.mapMarks(changes);
@@ -70,13 +66,8 @@ export class PageEditor extends EditorInput {
     this.changed();
     this.notify({ docChanged: true, selectionSet: false, rendered: false, changes, remote: true });
     if (this.staleSince == null && this.unshown) this.staleSince = oldSrc;
-    // The view stays where the reader put it: a change off screen is marked, not followed (reveal finds a peer on request).
-    const found = marksFor(changes, gone, this.units, 0, author);
-    this.marks.push(...found.marks);
-    if (author?.agent) this.playTyping(found.marks);
-    this.startFade();
-    if (this.rendering) { this.pendingFlash = found.unmarked; return; }
-    if (found.unmarked.length) this.flash(found.unmarked);
+    // The view stays where the reader put it: a change off screen is not followed (reveal finds a peer on request).
+    if (agent) this.playTyping(changes, agent);
     this.paintMarks();
   }
 
@@ -94,7 +85,7 @@ export class PageEditor extends EditorInput {
     const clicked = this.holding && this.pointerSeq != this.heldPointer && this.doc && !this.rendering ? this.readSelection() : null;
     this.state = clicked ? state.update({ selection: changes ? clicked.map(changes) : clicked, annotations: noHistory() }).state : state;
     this.srcOf = { doc: this.state.doc, src };
-    this.marks = [];
+    this.typing = [];
     if (!this.doc || this.rendering) { this.render(); return; }
     if (changes) this.keepView(() => this.applyChanges({ changes }, oldUnits, oldSrc), changes);
     if (this.unshown) this.render();
