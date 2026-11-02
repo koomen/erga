@@ -73,7 +73,7 @@ export function docsPage(session: Session, docs: Listed[], now: number, hours: n
   return appPage(
     "Documents",
     inlineStyle("docs"),
-    `${pageBars(session, [{ label: "Documents" }], { docs: false, lead: homeButton(link(HOME_ADDRESS, session)) })}<main>
+    `${pageBars(session, [{ label: "Documents" }], { docs: homeButton(link(HOME_ADDRESS, session)) })}<main>
   <header>
     <div><h1>Documents</h1><p class="sub" id="docs-count"${docs.length ? "" : " hidden"}>${count}</p></div>
     ${newDocButton("pill", "New")}

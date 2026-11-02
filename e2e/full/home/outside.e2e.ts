@@ -14,12 +14,12 @@ test("signed in, / opens /docs; its Home page button opens the homepage project;
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto(`${server.root}/`);
   expect(new URL(page.url()).pathname).toBe("/docs");
-  // The Home page button sits just left of the quick actions (New first among them).
+  // The Home page button is the last quick action, in the place where other pages have Documents.
   const order = await page.evaluate(() =>
     [...document.querySelectorAll(".erga-view-buttons .quick-inner > *")].map((e) => e.getAttribute("aria-label") ?? e.className)
   );
-  expect(order[0]).toBe("Home page");
-  expect(order.length).toBeGreaterThan(1);
+  expect(order.at(-1)).toBe("Home page");
+  expect(order).not.toContain("Documents");
   await Promise.all([page.waitForURL((u) => u.pathname == "/_home"), page.click(".erga-home-button")]);
   await expect.poll(() => page.evaluate(() => document.querySelector(".erga-crumbs .erga-here")?.textContent ?? "")).toBe("Erga Homepage");
   await Promise.all([page.waitForURL((u) => u.pathname == "/docs"), page.click(".erga-crumbs .erga-brand")]);
