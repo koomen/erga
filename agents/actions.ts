@@ -159,8 +159,24 @@ export const AGENT_ACTIONS: AgentAction[] = [
 
   // ------------------------------------------------------------ the documents list (/docs, server/documents/make.ts)
   { route: "GET /docs", domain: "document", action: "Read your documents (Documents)", tool: "list_documents" },
-  { route: "GET /new", domain: "document", action: "Make a document: blank, from a template, or a copy (Documents, New; the viewer's Clone)", tool: "create_document" },
-  { route: "POST /d/<id>/api/share", domain: "document", action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)", exempt: SECRET },
+  {
+    route: "GET /new",
+    domain: "document",
+    action: "Make a document: blank, from a template, or a copy (Documents, New; the viewer's Clone)",
+    tool: "create_document",
+  },
+  {
+    route: "POST /d/<id>/api/key",
+    domain: "document",
+    action: "The edit key the page's editor opens its socket with, on the pages origin (editor)",
+    exempt: `${SECRET}: a key that opens the document as the person, which only their own viewer holds`,
+  },
+  {
+    route: "POST /d/<id>/api/share",
+    domain: "document",
+    action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)",
+    exempt: SECRET,
+  },
 
   // ------------------------------------------------------------ the editor
 
