@@ -164,6 +164,8 @@ Found a new trap? Write it here, in the same change.
   name ends with the port. The homepage project's own page is `/_home`.
 - The homepage project's row has the owner `-home` (document/names.ts), which no account can be.
   Build a document's address with `addressOf`, never `/${owner}/${slug}`: its address is `/_home`.
+  A document's host keeps the owner it was made with, and nothing tells it of a new one. An access rule
+  takes the owner from the permissions (`Directory.decide`), never from the host's own copy.
 - The viewer, the editor and the homepage draw the same glass bars from one stylesheet,
   `client/inline/bars.css`. The homepage's copy is in a shadow root, where `html` and `body` match
   nothing: `SHADOW_BARS` (server/home/render.ts) rewrites them to `:host`, and stops the server

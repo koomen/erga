@@ -602,7 +602,10 @@ export class Directory {
     if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
     const login = who.login.toLowerCase();
     const best = permissions.reduce<Role | null>((b, p) => (p.login != login && p.login != ANYONE) || (b && RANK[b] >= RANK[p.role]) ? b : p.role, null);
-    const role = await this.homeLimit(who, doc, best);
+    // The owner as the permissions say: a host's copy of its owner is the one it was made with, and the homepage
+    // project's adoption (adoptHome) changes the owner only here, so its host still names the admin who had it.
+    const owner = permissions.find((p) => p.role == "owner")?.login ?? doc.owner;
+    const role = await this.homeLimit(who, { id: doc.id, owner }, best);
     // The access rules: someone without write opens their documents, and those shared with them, as a viewer.
     return (role == "owner" || role == "editor") && !(await this.mayWrite(login)) ? "viewer" : role;
   }
