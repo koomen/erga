@@ -1,4 +1,4 @@
-// The page editor's keys with no browser: the editor's own edit code (client/page-editor/), run on a source string,
+// The page editor's keys with no browser: the editor's own edit code (libs/text/), run on a source string,
 // with the parts that need a page (the DOM, the caret on screen, the marks) left out. The source shows the caret as
 // "|", and a selection as "[" (anchor) and "]" (head) or "]" … "[" for one made backwards.
 
