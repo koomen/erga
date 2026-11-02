@@ -8,6 +8,8 @@
    halved, so it still reads as a surface; on a dark page it is dark glass. Not a filter on a wrapper: a filter stops the
    blur. The agent and the editor's cards take the same glass (client/styles/glass.css). */
 :root {
+  /* The bars' bottom edge, from the window's top: a sticky header on a page that scrolls under the bars sticks here. */
+  --bars-top: max(8px, env(safe-area-inset-top)); --bars-height: 42px; --bars-bottom: calc(var(--bars-top) + var(--bars-height));
   --glass-pg: var(--band, var(--bg, #fff)); --glass-tint: 0; --glass-sh: 1;
   --glass-blur: blur(7px) saturate(1.8);
   --glass-tinted: linear-gradient(rgba(0, 0, 0, var(--glass-tint)), rgba(0, 0, 0, var(--glass-tint)));
@@ -16,7 +18,7 @@
 }
 html.page-white { --glass-tint: 0.035; --glass-sh: 0.5; }
 .erga-bar {
-  top: max(8px, env(safe-area-inset-top)); height: 42px; box-sizing: border-box; border-radius: 14px; border: 0.5px solid rgba(0, 0, 0, 0.07);
+  top: var(--bars-top); height: var(--bars-height); box-sizing: border-box; border-radius: 14px; border: 0.5px solid rgba(0, 0, 0, 0.07);
   -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
   background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%), var(--glass-tinted), color-mix(in srgb, var(--glass-pg) 76%, transparent);
   box-shadow: var(--glass-edge), var(--glass-shadow);
