@@ -21,11 +21,12 @@ export function mountBars(root: Document | ShadowRoot, on: HTMLElement) {
     keep: ".erga-bar-r, .erga-new-menu",
     on,
   });
-  // (Only a document's page has it.)
+  // (Every page has it; on the control Worker's pages it names the app's origin: data-app.)
   const share = bar.querySelector<HTMLElement>(".erga-agent-share");
   share?.addEventListener("click", async () => {
     const address = document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname;
-    if (!(await copyAgentPrompt(share, address))) return;
+    const app = share.dataset.app;
+    if (!(await copyAgentPrompt(share, address, app && new URL(app).origin))) return;
     // No clipboard: the button says so, where the person looks.
     share.dataset.tip = "Couldn't reach the clipboard";
     share.classList.add("copy-failed");

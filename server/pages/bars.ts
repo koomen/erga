@@ -19,6 +19,9 @@ export const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transf
 /** Share with an agent, as the editor's (client/editor.html, #btn-agent-share): it copies a one-line prompt (client/common/bars.ts). For anyone who can read the page. */
 export const AGENT_SHARE_BUTTON = `<button type="button" class="erga-view-button erga-agent-share" aria-label="Share with an agent: copy a prompt for it" data-tip="Share with an agent">${AGENT_ICON}</button>`;
 
+/** Share with an agent on a page served elsewhere (the control Worker's): its prompt names the app's origin, `app`. */
+const shareButton = (app: string) => (app ? AGENT_SHARE_BUTTON.replace("<button ", `<button data-app="${esc(app)}" `) : AGENT_SHARE_BUTTON);
+
 /** Documents, as the editor's (client/editor.html, #btn-docs), at `href`: for someone signed in who has documents. */
 export const docsButton = (href: string) =>
   `<a href="${esc(href)}" class="erga-view-button erga-docs-button" draggable="false" aria-label="Documents" data-tip="Documents"><svg viewBox="0 0 24 24" aria-hidden="true"><g stroke-width="1.5"><rect x="4.75" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="4.75" width="5.75" height="5.75" rx="1.25"/><rect x="4.75" y="13.5" width="5.75" height="5.75" rx="1.25"/><rect x="13.5" y="13.5" width="5.75" height="5.75" rx="1.25"/></g></svg></a>`;
@@ -75,14 +78,15 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
  * The header of the app's own pages (appPage: Documents, Settings, the admin pages, the start page, sign-in, the error
  * pages; the control Worker's too): erga › each step of `trail` (the last is this page, in a `here` tag: the admin
  * pages' is their <h1>), and the quick actions: New document, the page's own (`actions`), Documents (not on Documents
- * itself: `docs`), then who you are; `lead` goes before them all. The account corner goes in `corner`, or where the
+ * itself: `docs`), then who you are; `lead` goes before them all. Share with an agent is on every page, before
+ * Documents (`share`: a page's own, as the admin pages' with its admin token). The account corner goes in `corner`, or where the
  * Worker puts it (ACCOUNT_SLOT: withAccount). `home`: the app's origin, for a page served elsewhere (the control Worker's); its links go there.
  * Your agent comes with them, on the app's own origin (server/pages/agent.ts).
  */
 export function pageBars(
   session: Session | null,
   trail: Crumb[],
-  o: { here?: string; home?: string; lead?: string; actions?: string; docs?: boolean; corner?: string } = {}
+  o: { here?: string; home?: string; lead?: string; actions?: string; share?: string; docs?: boolean; corner?: string } = {}
 ): string {
   const home = (o.home ?? "").replace(/\/+$/, ""),
     here = o.here ?? "span";
@@ -95,7 +99,7 @@ export function pageBars(
     .join("");
   const mine = !!session && !session.agent && !session.test;
   const at = (path: string) => link(home + path, session);
-  const actions = `${o.lead ?? ""}${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${mine && o.docs !== false ? docsButton(at("/docs")) : ""}`;
+  const actions = `${o.lead ?? ""}${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? shareButton(home)}${mine && o.docs !== false ? docsButton(at("/docs")) : ""}`;
   return `<script>${PAGE_TONE}</script>${crumbsBar(session, home, steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.home ? "" : agentPanel(session)}`;
 }
 
