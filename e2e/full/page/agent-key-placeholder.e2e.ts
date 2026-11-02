@@ -10,5 +10,5 @@ test("a placeholder alone is no key: the agent is off, saying how to set one", a
   const { address } = await s.fixture("page");
   const off = (await (await fetch(`${new URL(address).origin}/api/agent`)).json()) as { enabled: boolean; reason?: string };
   expect(off.enabled).toBe(false);
-  expect(off.reason ?? "").toMatch(/ANTHROPIC_API_KEY is not set.*export/);
+  expect(off.reason ?? "").toMatch(/no API key is set.*export ANTHROPIC_API_KEY/);
 });

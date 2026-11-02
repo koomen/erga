@@ -11,7 +11,7 @@
 import { until, type Server } from "../../helpers/fixtures";
 import type { Page } from "playwright-core";
 import type { HomeState } from "../versions/versions";
-import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 import { runTool } from "../../helpers/tools";
 
 export type { HomeState };
@@ -84,8 +84,7 @@ export const redeploy = (server: Server, user?: string, origin?: string) =>
  */
 export async function adminToken(server: Server) {
   return until<string | undefined>(async () => {
-      const page = (await postForm(server.root, "/tokens/new", { label: "Home test", scope: "admin" })).page;
-    return /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1];
+      return (await newToken(server.root, { label: "Home test", scope: "admin" })).token || undefined;
   }, 10_000, "an admin token") as Promise<string>;
 }
 

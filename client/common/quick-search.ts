@@ -60,7 +60,9 @@ export function installQuickSearch(fromFrame: (e: MessageEvent) => boolean = () 
   let at = 0;
   // In local development the page's ?user= says who is signed in: the pages it opens keep it.
   const user = new URLSearchParams(location.search).get("user");
-  const href = (path: string) => (user ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(user)}` : path);
+  // "#settings" opens the Settings dialog on this page (client/agent/settings-dialog.ts): it keeps the page's address.
+  const href = (path: string) =>
+    path.startsWith("#") || !user ? path : `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(user)}`;
 
   const load = () =>
     (entries ??= Promise.all([

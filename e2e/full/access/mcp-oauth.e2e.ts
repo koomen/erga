@@ -126,8 +126,10 @@ test("an MCP app signs in through the browser: register, approve on Erga, trade 
     ) as { url: string };
     const read = await mcp(root, token, "tools/call", { name: "read", arguments: { document: made.url, path: "index.html" } });
     expect(read.result.content[0].text).toContain("Signed in over MCP");
-    // /tokens lists it, to revoke.
-    expect(await (await fetch(`${root}/tokens`)).text()).toContain("Claude Code (erga)");
+    // Settings lists it, to revoke (list_tokens, the dialog's list).
+    expect(JSON.stringify((await mcp(root, token, "tools/call", { name: "list_tokens", arguments: {} })).result)).toContain(
+      "Claude Code (erga)"
+    );
   } finally {
     app.close();
   }

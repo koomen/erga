@@ -28,7 +28,7 @@ test("on /docs, ⌘K opens it with Erga's pages and, for an admin, the admin one
   await page.goto(`${root}/docs`);
   await page.keyboard.press("ControlOrMeta+k");
   await expect.poll(async () => (await pane(page))?.groups).toEqual(expect.arrayContaining(["Pages", "Admin"]));
-  expect((await pane(page))!.rows).toEqual(expect.arrayContaining(["Settings/settings", "Users/admin/users"]));
+  expect((await pane(page))!.rows).toEqual(expect.arrayContaining(["Settings#settings", "Users/admin/users"]));
   await page.keyboard.type("admin");
   await expect.poll(async () => (await pane(page))?.groups).toEqual(["Admin"]);
   await page.keyboard.type(" au");
@@ -50,7 +50,7 @@ test("on /docs, ⌘K opens it with Erga's pages and, for an admin, the admin one
 test("for someone who isn't an admin, it has no admin pages", async ({ tab }) => {
   const page = tab.page,
     root = (await servers.main()).root;
-  await page.goto(`${root}/settings?user=Bo`);
+  await page.goto(`${root}/docs?user=Bo`);
   await page.keyboard.press("ControlOrMeta+k");
   await expect.poll(async () => (await pane(page))?.groups).toContain("Pages");
   const p = (await pane(page))!;

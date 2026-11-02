@@ -4,6 +4,7 @@
 import { expect, test } from "../../helpers/fixtures";
 import { freshLogin, person, servers, tools, type Person } from "./front";
 import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 
 await servers.script();
 
@@ -41,7 +42,7 @@ test("/llms.txt explains connecting over MCP, publishing and the tools, to anyon
   expect((await fetch(`${s.root}/llms.txt`, { headers: { Authorization: "Bearer erga_forged" } })).status).toBe(401);
 });
 
-test("an agent asks for a token; its person approves it on this site's own page; the agent collects it, once, and acts as them; /tokens and /settings list it", async () => {
+test("an agent asks for a token; its person approves it on this site's own page; the agent collects it, once, and acts as them; Settings lists it", async () => {
   const p = await person(await servers.script());
   const label = `Worker test agent ${p.login}`;
   const asked = (await (await fetch(`${p.base}/api/auth/request`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label }) })).json()) as { code: string; user_code: string; approve_url: string };
@@ -59,8 +60,8 @@ test("an agent asks for a token; its person approves it on this site's own page;
   const me = await tools(p.base, got.token!).call("whoami");
   expect(me.status).toBe(200);
   expect(me.data).toMatchObject({ login: p.login, token: { label } });
-  expect(await (await p.get("/tokens")).text()).toContain(label);
-  expect(await (await p.get("/settings")).text()).toContain(label);
+  // Settings lists it (list_tokens, the dialog's list).
+  expect(JSON.stringify((await tools(p.base, got.token!).call("list_tokens")).data)).toContain(label);
 });
 
 test("POST /api/publish makes a document of a folder at its title's address: images byte for byte, styles as text; it's listed, and doesn't expire", async () => {
@@ -184,10 +185,8 @@ test("a token made at /tokens is shown once, with how to use it; list_tokens lis
   const p = await person(await servers.script());
   const mine = await p.token("The agent's own"), t = tools(p.base, mine);
   await (await p.get(`/d/${await p.make()}/api/share`, { method: "POST", headers: { "Content-Type": "application/json", Origin: p.origin }, body: "{}" })).json();
-  const { page } = await postForm(p.base, "/tokens/new", { label: "Made by hand" }, p.cookie);
-  const handMade = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
+  const handMade = (await newToken(p.base, { label: "Made by hand" }, p.cookie)).token;
   expect(handMade).toBeTruthy();
-  expect(page).toContain("claude mcp add --transport http erga");
   const listed = (await t.call("list_tokens")).data as { id: string; label: string }[];
   expect(listed.map((x) => x.label)).toEqual(expect.arrayContaining(["Made by hand", "Share button", "The agent's own"]));
   expect((await t.call("revoke_token", { id: listed.find((x) => x.label == "Made by hand")!.id })).status).toBe(200);

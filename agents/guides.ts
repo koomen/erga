@@ -56,8 +56,8 @@ Any MCP app with MCP's standard sign-in (OAuth, with dynamic client
 registration) works the same way.
 
 The sign-in gives the \`documents\` scope: everything your person can do with
-documents, but no admin power. It works until your person revokes it at
-${origin}/tokens. Read this guide without a token (\`GET ${origin}/llms.txt\`);
+documents, but no admin power. It works until your person revokes it in
+Settings (${origin}/docs#settings). Read this guide without a token (\`GET ${origin}/llms.txt\`);
 the MCP server's tools are the ones listed below.
 
 ## Calling the tools
@@ -158,7 +158,7 @@ make_document, list_versions, read_version, restore_version and open_page.
 
 For the server's admins only, with an admin token: ${session ? (admin ? "yours is one, so the admin tools are listed for you and work while your person is an admin." : locked ? `${session.login} is an admin, but this token's scope is ${session.agent.scope}, so the admin tools aren't listed for it and are refused.` : `${session.login} isn't one, so the admin tools aren't listed for your token and are refused.`) : "they work only with an admin token."}
 The MCP sign-in never gives one. Your person makes one with Share with agent on
-any admin page (it lasts 12 hours), or at ${origin}/tokens (scope: Admin). It
+any admin page (it lasts 12 hours), or in Settings (${origin}/docs#settings, scope: Admin). It
 works only while they're an admin. With it you do what
 they do on the admin pages (${origin}/admin) and the Ops page, and each change
 goes in the logs under their name.

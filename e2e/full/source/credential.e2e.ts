@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../../helpers/fixtures";
-import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 
 const own = () => servers.of("ops-credential", { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", CLOUDFLARE_OAUTH_CLIENT_ID: "mock-client" } });
 await own();
@@ -18,9 +18,7 @@ test("a dead credential: Connect Cloudflare in a popup, then Retry, on the Ops p
       const el = document.querySelector<HTMLElement>(s);
       return !!el && !el.hidden && el.offsetParent != null;
     }, sel);
-  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(
-    (await postForm(server.root, "/tokens/new", { label: "Ops credential", scope: "admin" })).page
-  )?.[1];
+  const token = (await newToken(server.root, { label: "Ops credential", scope: "admin" })).token;
   expect(token).toBeTruthy();
   const repo = join(server.scratch, `ops-credential-${Date.now()}`);
   mkdirSync(repo);

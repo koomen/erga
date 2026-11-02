@@ -1,4 +1,4 @@
-// Live pages on the admin pages and /settings: a change made elsewhere (an agent with an admin token, another tab)
+// Live pages on the admin pages: a change made elsewhere (an agent with an admin token, another tab)
 // shows on the open page at once, in place, and nothing else on it moves (server/news/).
 import { expect, servers, test } from "../../helpers/fixtures";
 import { admin, freshLogin, person, resetting, tools } from "../front/front";
@@ -64,25 +64,4 @@ test("Users, Settings and the Change log follow an agent's changes as they're ma
   await a.call("remove_user", {
     person: ((await a.call("list_users")).data as { person?: number; handle?: string }[]).find((x) => x.handle == other)!.person,
   });
-});
-
-test("/settings lists a token made in another tab, and drops one an agent revokes, with no reload", async ({ tab }) => {
-  const p = await person(await servers.script());
-  const page = tab.page;
-  tab.strict = true;
-  await page.goto(`${p.base}/auth/github?as=${p.login}&next=/settings`);
-  await page.evaluate(`window.sameLoad = true`);
-  const titles = () =>
-    page.evaluate<string>(`[...document.querySelectorAll("ol.rows > li[data-live] .title")].map((t) => t.innerText).join(" | ")`);
-  expect(await titles()).toBe("");
-  const token = await p.token("Made in another tab");
-  await expect.poll(titles).toBe("Made in another tab");
-  const other = await p.token("Second token");
-  await expect.poll(titles).toBe("Second token | Made in another tab");
-  const t = tools(p.base, token);
-  const second = ((await t.call("list_tokens")).data as { id: string; label: string }[]).find((x) => x.label == "Second token")!;
-  expect((await t.call("revoke_token", { id: second.id })).status).toBe(200);
-  await expect.poll(titles).toBe("Made in another tab");
-  expect(other).toBeTruthy();
-  expect(await page.evaluate<boolean>(`window.sameLoad`)).toBe(true);
 });

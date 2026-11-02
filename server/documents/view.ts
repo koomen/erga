@@ -255,7 +255,13 @@ async function landingView(platform: Platform, request: Request, session: Sessio
 
 /** What the editor's menu on your avatar needs to know that the document doesn't: the links it offers. */
 const accountMeta = (session: Session, admin: boolean, deploy: boolean) => {
-  const links = { docs: link("/docs", session), settings: link("/settings", session), ...(deploy ? { deploy: link("/deploy", session) } : {}), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
+  const links = {
+    docs: link("/docs", session),
+    settings: "#settings",
+    ...(deploy ? { deploy: link("/deploy", session) } : {}),
+    ...(admin ? { admin: link("/admin", session) } : {}),
+    signOut: "/auth/logout",
+  };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
 };
 

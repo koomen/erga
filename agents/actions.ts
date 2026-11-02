@@ -141,10 +141,16 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // (The homepage's status and its deploy are operations: server/operations/home.ts. /admin's landing_document setting
   // chooses it.)
 
-  // ------------------------------------------------------------ /settings: the person's agent tokens
-  { route: "GET /settings", domain: "document", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_tokens" },
-  { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (/settings)", exempt: SECRET },
-  { route: "POST /tokens/approve", domain: "admin", action: "Approve an agent's request for a token (/settings)", exempt: `${SECRET} (it hands a new token to an outside agent)` },
+  // ------------------------------------------------------------ Settings (the dialog, on every page): the person's tokens
+  { route: "GET /tokens/approve", domain: "none", action: "An agent's request for a token, to approve or deny", exempt: SIGN_IN },
+  { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (Settings)", exempt: SECRET },
+  { route: "GET /tokens/test", domain: "admin", action: "The test token (Settings)", exempt: SECRET },
+  {
+    route: "POST /tokens/approve",
+    domain: "admin",
+    action: "Approve an agent's request for a token (/tokens/approve)",
+    exempt: `${SECRET} (it hands a new token to an outside agent)`,
+  },
 
   // ------------------------------------------------------------ /deploy: Erga on your own Cloudflare account (the control Worker's page)
   { route: "GET /deploy/auth/cloudflare", domain: "none", action: "Authorize with Cloudflare: consent on Cloudflare's own page, in the browser (/deploy)", exempt: "a credential: given on the page, through Cloudflare's consent screen, never in a conversation" },

@@ -72,7 +72,7 @@ export function accountMarkup(account: Account | null, here: string): string {
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
 <a href="${esc(link("/docs", s))}">Documents</a>
-<a href="${esc(link("/settings", s))}">Settings</a>
+<a href="#settings">Settings</a>
 ${account.deploy ? `<a href="${esc(link("/deploy", s))}">Deploy your own</a>` : ""}
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 <a href="/auth/logout">Sign out</a>

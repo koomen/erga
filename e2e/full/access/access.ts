@@ -6,7 +6,7 @@
 // a cookie, a token); each test makes its own people, documents and tokens.
 
 import { expect, settle, until, type Page } from "../../helpers/fixtures";
-import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 import { runTool, textOf } from "../../helpers/tools";
 
 /** A request to the server, its redirects not followed. */
@@ -72,10 +72,10 @@ export async function signIn(root: string, as: string | null): Promise<string> {
   return r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
 }
 
-/** Makes a token at /tokens (with a session cookie, else as DEV_LOGIN): the token, or "" and the page's error. */
+/** Makes a token as the Settings dialog does (with a session cookie, else as DEV_LOGIN): the token, or "" and the server's error (`page`). */
 export async function mint(root: string, cookie: string | null, fields: Record<string, string>): Promise<{ token: string; page: string }> {
-  const { page } = await postForm(root, "/tokens/new", fields, cookie);
-  return { token: /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "", page };
+  const { token, error } = await newToken(root, fields, cookie);
+  return { token, page: error };
 }
 
 /** Calls a tool with a token, as an outside agent does: its status, and its result as text (or the error). */
