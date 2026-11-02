@@ -18,6 +18,7 @@ import {
   barsHtml,
   crumbsFont,
   editButton,
+  inlineCall,
   inlineScript,
   inlineStyle,
   link,
@@ -103,9 +104,16 @@ function rewriteSrcset(srcset: string, to: (v: string) => string | null): string
  * where this deploy serves them (/_home-files/<gen>/<path>): every relative URL in
  * an attribute that loads something, in srcset, and in CSS, that names one of
  * the document's files. Links to its other pages stay relative (they're
- * served at the root too: serve.ts). Throws if the page isn't HTML.
+ * served at the root too: serve.ts). Its first script is window.ergaLLM, for document `doc` (home-llm.ts). Throws if
+ * the page isn't HTML.
  */
-export async function renderHome(opts: { index: string; files: Record<string, string | Uint8Array>; gen: string; title: string }): Promise<RenderedHome> {
+export async function renderHome(opts: {
+  index: string;
+  files: Record<string, string | Uint8Array>;
+  gen: string;
+  title: string;
+  doc: string;
+}): Promise<RenderedHome> {
   const { index, gen } = opts;
   if (!/\.html?$/i.test(index)) throw new Error(`The homepage's page is ${index}: only an HTML page can be served directly, so / shows it in the viewer.`);
   const raw = opts.files[index];
@@ -126,7 +134,8 @@ export async function renderHome(opts: { index: string; files: Record<string, st
   const head = /<head[\s>]/i.test(source);
   const headPart = source.slice(0, Math.max(0, source.search(/<body[\s>]/i)) || source.length);
   const titled = /<title[\s>]/i.test(headPart);
-  const extra = `${VIEWPORT}${STILL}${titled ? "" : `<title>${esc(opts.title)}</title>`}`;
+  // And first, window.ergaLLM, the page's model, before any script of its own (client/inline/home-llm.ts).
+  const extra = `${VIEWPORT}<script>${inlineCall("home-llm", opts.doc)}</script>${STILL}${titled ? "" : `<title>${esc(opts.title)}</title>`}`;
   let css = "", titleDone = false;
   const rewriter = new HTMLRewriter()
     .on("base[href]", { element(e) { try { base = new URL(e.getAttribute("href")!, base); } catch { /* not a URL */ } } })

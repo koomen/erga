@@ -24,6 +24,7 @@ const ROUTE_TABLES = [
   "cloudflare/index.ts",
   "cloudflare/dev.ts",
   "agents/person/sessions.ts",
+  "agents/page-llm.ts",
   "control/source/routes.ts",
   "cloudflare/deploy-routes.ts",
   "control/install/routes.ts",

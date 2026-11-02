@@ -50,6 +50,7 @@ import { type GithubLookup, People, type Person, personHandle } from "./people.t
 import { type Actor, NotAllowed, type User, type UserRole, Users } from "./users.ts";
 
 import { Credentials, PersonKeys } from "./api-keys.ts";
+import { PageLlm } from "./page-llm.ts";
 import { Identities, type Vouched, workspaceOf } from "./identities.ts";
 import { isDocKind, SLUG_MAX, slugify, type DocKind } from "../../document/pages.ts";
 import { addressOf, HOME_OWNER, HOME_SLUG, NameError, UNTITLED } from "../../document/names.ts";
@@ -105,6 +106,8 @@ export class Directory {
   readonly credentials: Credentials;
   /** Each person's own API keys, for their own agent. */
   readonly personKeys: PersonKeys;
+  /** Pages that call a model as their visitor: each document's setting, and the log of the calls. */
+  readonly pageLlm: PageLlm;
   /** How each account signs in (its GitHub and Google identities), and usernames. */
   readonly identities: Identities;
   /** Who may use the server, by group: the access rules (the Access page). */
@@ -157,6 +160,7 @@ export class Directory {
     this.users.pagesChanged = (keys) => this.adminChanged(keys);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.personKeys = new PersonKeys(sql, opts.credentialSecret ?? null);
+    this.pageLlm = new PageLlm(sql);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       defaults: opts.defaults,

@@ -33,6 +33,7 @@
 //   /_erga/...                 the editor's own files, each named by its content's hash (static assets, client/build.ts:
 //                              on Cloudflare served without the Worker, kept for a year); /logo.png, Erga's logo
 //   /erga/<name>/editor.js     an editing library (erga/text), at its one address: its newest build, which a page imports
+//   /api/llm                   a document's page calls a model as its signed-in visitor (agents/page-llm.ts)
 //   /api/news, /api/news/rows  live pages: an open page's socket, and the rows it asks for when they change
 //   GET /api/release           which of them this release has: open pages follow a redeploy with it,
 //                              and every page of the site's own gets live.js
@@ -46,6 +47,7 @@
 import * as Effect from "effect/Effect";
 import { adminGate, isAdminPath } from "./admin/index.ts";
 import { agentApi, isAgentPath } from "../agents/person/sessions.ts";
+import { isPageLlmPath, pageLlmApi } from "../agents/page-llm.ts";
 import { serverApi } from "./api.ts";
 import { adoptLanding, documentRoutes, isPagesSite } from "./documents/index.ts";
 import { serveHome, serveHomeFile, serveHomeRoot } from "./home/index.ts";
@@ -186,6 +188,8 @@ const route = (url: URL, outside: Outside): Route =>
     }
     // Each person's agent, its conversation and panel: before the server's API, which has the rest of /api/.
     if (isAgentPath(path)) return yield* agentApi;
+    // A page's model, called as its visitor (window.ergaLLM): before the server's API too.
+    if (isPageLlmPath(path)) return yield* pageLlmApi;
     // The build of each of the editor's files, for open pages to see a redeploy by: anyone may ask.
     if (path == "/api/release" && read) return yield* releaseApi;
     // Live pages: an open page's socket, and the rows it asks for when they change.

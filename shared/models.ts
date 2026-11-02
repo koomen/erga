@@ -81,3 +81,11 @@ export function fitModel(k: KeySetup, wanted: ModelChoice | null): ModelChoice |
   const all = usableModels(k).map((u) => u.choice);
   return wanted && all.includes(wanted) ? wanted : all.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : (all[0] ?? null);
 }
+
+/**
+ * The models a document's page may call as its visitor (window.ergaLLM: agents/page-llm.ts), with the server's keys:
+ * Anthropic's, which take a cap on the tokens they answer. Its owner chooses one (share_document page_llm); Haiku at first.
+ */
+export const PAGE_LLM_MODELS = (Object.keys(MODELS) as ModelChoice[]).filter((m) => MODELS[m].provider == "anthropic");
+export const DEFAULT_PAGE_LLM_MODEL: ModelChoice = "haiku";
+export const isPageLlmModel = (s: string): s is ModelChoice => (PAGE_LLM_MODELS as string[]).includes(s);

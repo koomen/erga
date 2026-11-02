@@ -276,7 +276,7 @@ export class HomeDeploys implements HomeObject {
       throw new Error("This test page asks for its deploy to fail.");
     }
     const gen = `${Date.now().toString(36)}${Array.from(crypto.getRandomValues(new Uint8Array(3)), (b) => b.toString(36)).join("")}`;
-    const rendered = await renderHome({ index: now.index, files: now.files, gen, title: doc.title });
+    const rendered = await renderHome({ index: now.index, files: now.files, gen, title: doc.title, doc: doc.id });
     const encoder = new TextEncoder();
     const entries = Object.entries(now.files).map(([path, data]) => [`${FILE}${gen}:${path}`, typeof data == "string" ? encoder.encode(data) : data] as const);
     for (let i = 0; i < entries.length; i += 64) await this.deps.storage.put(Object.fromEntries(entries.slice(i, i + 64)));

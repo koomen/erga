@@ -12,6 +12,7 @@ import { linkTarget, placeOf } from "../common/link-target";
 import { topRoom } from "../common/top-room";
 import { isAppShortcut } from "../common/app-keys";
 import { catchZoomGestures } from "../common/zoom";
+import { makeErgaLLM, type LlmAnswer, type LlmOp } from "../common/page-llm";
 
 /** The page's canvas, as it goes to the viewer (client/inline/viewer-band.ts draws it). */
 type Canvas = {
@@ -72,6 +73,36 @@ export default function reader(C: ReaderConfig): void {
   function editing() {
     return root.hasAttribute("data-erga-editing");
   }
+  // The page's model (client/common/page-llm.ts): each ask goes to the viewer, which calls Erga as the visitor
+  // (client/inline/viewer-llm.ts) and answers it. A viewer that never answers: off, or an error.
+  let llmId = 0;
+  const llmWaits = new Map<number, (a: LlmAnswer) => void>();
+  window.ergaLLM = makeErgaLLM(
+    (o) =>
+      new Promise((done) => {
+        const id = ++llmId;
+        llmWaits.set(id, done);
+        let m: LlmOp;
+        try {
+          m = JSON.parse(JSON.stringify(o));
+        } catch {
+          llmWaits.delete(id);
+          return done({ ok: false, error: "The ask isn't plain JSON.", code: "error" });
+        }
+        tell({ ...m, type: "erga-llm", id });
+        setTimeout(
+          () => {
+            if (!llmWaits.delete(id)) return;
+            done(
+              o.op == "ask"
+                ? { ok: false, error: "Erga didn't answer.", code: "error" }
+                : { ok: true, result: { on: false, model: null, signedIn: false } }
+            );
+          },
+          o.op == "ask" ? 120_000 : 10_000
+        );
+      })
+  );
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   // The viewer's own keys, pressed here. Reading, ⌘K (Ctrl+K off a Mac) opens the viewer's quick search
   // (client/common/quick-search.ts). Editing, each of the viewer's shortcuts goes to it (client/common/app-keys.ts),
@@ -583,7 +614,11 @@ export default function reader(C: ReaderConfig): void {
     if (e.source != P || e.origin != C.shell || !e.data) return;
     const type = e.data.type;
     const editor = C.editor;
-    if (type == "erga-step") step(e.data);
+    if (type == "erga-llm-answer" && llmWaits.has(e.data.id)) {
+      const done = llmWaits.get(e.data.id)!;
+      llmWaits.delete(e.data.id);
+      done(e.data.answer);
+    } else if (type == "erga-step") step(e.data);
     else if (type == "erga-step-image") stepImage(e.data);
     // The viewer's word on editing (libs/text/ui/bridge.ts, EditMode): kept for the editor, which loads on the first edit.
     else if (type == "erga-mode") {
