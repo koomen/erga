@@ -12,7 +12,7 @@ import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
 import { ROOT } from "../../helpers/env";
 import { expect, servers, type Server } from "../../helpers/fixtures";
-import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 import { runTool, textOf } from "../../helpers/tools";
 
 export { servers };
@@ -86,11 +86,10 @@ export async function person(s: Server, login = freshLogin()) {
     location: async (path: string) => { const r = await get(path); return r.status == 302 ? r.headers.get("location") : `(${r.status})`; },
     /** A document's row on the list (/docs), or "(not listed)". */
     row: (id: string, html: string) => html.split(/<li[ >]/).find((li) => li.includes(`value="${id}"`)) ?? "(not listed)",
-    /** An agent token of theirs, made at /tokens (scope: documents, or admin for an admin). */
+    /** An agent token of theirs, made as Settings makes one (scope: documents, or admin for an admin). */
     async token(label = "Test token", scope = "documents") {
-      const { page } = await postForm(base, "/tokens/new", { label, scope }, cookie);
-      const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
-      expect(token, page.slice(0, 300)).toBeTruthy();
+      const { token, error } = await newToken(base, { label, scope }, cookie);
+      expect(token, error).toBeTruthy();
       return token;
     },
   };

@@ -48,7 +48,7 @@
 //                                   (documents/edit-key.ts) names its person, who must be an admin at each socket
 //
 // Everything else needs an admin: documents and their sockets, /docs, the homepage and the homepage, /new, /deploy,
-// /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
+// /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
 // (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
 // (server/documents/pages-origin.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
 // (made before this guard, or by another server) is refused.
@@ -131,8 +131,10 @@ async function refusal(request: Request, base: Platform, url: URL) {
   if (adminsToken && !git && tokenPath(url.pathname)) return null;
 
   const signedIn = !!session && !session.agent;
-  const why = !session ? "Staging is for Erga's admins only: sign in as an admin, or send an admin-scope token (Authorization: Bearer erga_…)."
-    : adminsToken ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope at /tokens."
+  const why = !session
+    ? "Staging is for Erga's admins only: sign in as an admin, or send an admin-scope token (Authorization: Bearer erga_…)."
+    : adminsToken
+      ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope in Settings (/docs#settings)."
     : "Staging is for Erga's admins only.";
   if (git) {
     return text(`${why}\n`, session ? 403 : 401, session ? {} : { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"' });

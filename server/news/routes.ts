@@ -10,7 +10,6 @@
 import * as Effect from "effect/Effect";
 import { NotAllowed } from "../directory/index.ts";
 import { accessRows, agentSettingsRows, apiKeysRows, authRows, changesRows, settingsRows, usersRows } from "../admin/index.ts";
-import { tokensRows } from "../identity/index.ts";
 import { docsRows } from "../pages/index.ts";
 import { type LiveRows, whoOf } from "../platform.ts";
 import { call, ctx, fromWeb, json, text } from "../http.ts";
@@ -18,7 +17,6 @@ import { call, ctx, fromWeb, json, text } from "../http.ts";
 /** Each live list's rows, by its data-live-view: the page's own (each checks who may see them, as its page does). */
 const VIEWS: Record<string, LiveRows> = {
   docs: docsRows,
-  tokens: tokensRows,
   users: usersRows,
   settings: settingsRows,
   access: accessRows,

@@ -38,8 +38,19 @@ test("your avatar, far right of the editor's controls with your GitHub picture (
   // A press on the picture or the logo is a click: the browser doesn't drag either away.
   expect(await page.evaluate(() => { const img = document.querySelector<HTMLImageElement>("#me .avatar img")!, brand = document.getElementById("nav-brand")!; return { img: img.draggable, imgDrag: getComputedStyle(img).getPropertyValue("-webkit-user-drag"), brand: brand.draggable }; })).toEqual({ img: false, imgDrag: "none", brand: false });
   await clickOn(page, "#me .avatar");
-  const menu = () => page.evaluate(() => ({ hidden: document.getElementById("account")!.hidden, expanded: document.querySelector("#me .avatar")!.getAttribute("aria-expanded"), links: [...document.querySelectorAll<HTMLAnchorElement>("#account a:not([hidden])")].map((a) => a.textContent + " " + a.getAttribute("href")) }));
-  expect(await menu()).toEqual({ hidden: false, expanded: "true", links: ["Documents /docs", "Settings /settings", "Deploy your own /deploy", "Admin settings /admin", "Sign out /auth/logout"] });
+  const menu = () =>
+    page.evaluate(() => ({
+      hidden: document.getElementById("account")!.hidden,
+      expanded: document.querySelector("#me .avatar")!.getAttribute("aria-expanded"),
+      links: [...document.querySelectorAll<HTMLAnchorElement>("#account a:not([hidden])")].map(
+        (a) => a.textContent + " " + a.getAttribute("href")
+      ),
+    }));
+  expect(await menu()).toEqual({
+    hidden: false,
+    expanded: "true",
+    links: ["Documents /docs", "Settings #settings", "Deploy your own /deploy", "Admin settings /admin", "Sign out /auth/logout"],
+  });
   // Stays open: the same after the frames that follow the click (the old harness looked again 600 ms later; a pause has no place in the gate).
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
   expect((await menu()).hidden).toBe(false);

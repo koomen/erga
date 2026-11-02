@@ -9,7 +9,7 @@ import type * as Y from "yjs";
 import { Participant } from "../suite/client";
 import type { Doc } from "../suite/target";
 import { until, type Server } from "../../helpers/fixtures";
-import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 import { runTool, textOf } from "../../helpers/tools";
 
 export { Participant };
@@ -54,10 +54,9 @@ export async function person(server: Server, as: string) {
       runTool(server.root, "share_document", { document: id, login, role }, { cookie, origin }),
     /** An agent token of theirs (/tokens/new). */
     async token(label: string, scope?: string) {
-      const { page } = await postForm(server.root, "/tokens/new", { label, ...(scope ? { scope } : {}) }, cookie);
-      const t = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1];
-      if (!t) throw new Error(`no token: ${page.slice(0, 300)}`);
-      return t;
+      const { token, error } = await newToken(server.root, { label, ...(scope ? { scope } : {}) }, cookie);
+      if (!token) throw new Error(`no token: ${error}`);
+      return token;
     },
     /** Joins a document's room as an editor's tab does. */
     join: (id: string, name = as) => Participant.join(roomOf(server, id, { Cookie: cookie }), name),

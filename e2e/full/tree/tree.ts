@@ -11,7 +11,7 @@
 
 import type { Page } from "playwright-core";
 import { expect, settle, until, type Server, type Tab } from "../../helpers/fixtures";
-import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 import { runTool, textOf } from "../../helpers/tools";
 
 /** Evaluates an expression in the tab, its value as any (for expect.poll, whose matchers need a type). */
@@ -59,10 +59,9 @@ export async function multi(server: Server) {
 async function agentToken(server: Server) {
   const owner = await signIn(server, null);
   const page = await until(async () => {
-      const t = (await postForm(server.root, "/tokens/new", { label: "Tree test" }, owner)).page;
-    return t.includes('class="secret"') ? t : "";
+      return (await newToken(server.root, { label: "Tree test" }, owner)).token;
   }, 5000, "an agent token");
-  return /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)![1];
+  return page;
 }
 
 /** As someone who keeps the agent pane closed (it opens by itself in the editor otherwise, and takes the focus). */

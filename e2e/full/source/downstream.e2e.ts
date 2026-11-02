@@ -11,7 +11,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startServer, type Server } from "../../helpers/server";
 import { beforeTests, expect, servers, test } from "../../helpers/fixtures";
-import { postForm } from "../../helpers/form-post";
+import { newToken } from "../../helpers/new-token";
 
 const up = () => servers.of("downstream-up", { env: { ERGA_DEPLOY_MOCK: "1" } });
 let down: Server | undefined;
@@ -20,9 +20,7 @@ test.afterAll(() => { down?.dispose(); down = undefined; });
 
 /** An admin token of a server, and a git helper for a checkout of its repository. */
 async function admin(server: Server, label: string) {
-  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(
-    (await postForm(server.root, "/tokens/new", { label, scope: "admin" })).page
-  )?.[1];
+  const token = (await newToken(server.root, { label, scope: "admin" })).token;
   expect(token).toBeTruthy();
   const remote = `${server.root.replace("://", `://x:${token}@`)}/git/erga.git`;
   const api = (path: string, body: unknown) => fetch(`${server.root}${path}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });

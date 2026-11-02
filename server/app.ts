@@ -21,7 +21,7 @@
 //   /llms.txt, /api/..., /mcp  the server's one API (/api/tools), for the pages and every agent, and its guide
 //   /.well-known/oauth-..., /oauth/...
 //                              MCP's sign-in: an agent's app gets a token through its person's browser (server/identity/oauth.ts)
-//   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
+//   /tokens/...                approving an agent's request for a token; making one and the test token (the Settings dialog)
 //   /_home-files/<gen>/<path>  the homepage's files, as deployed
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP, and /git, /git/tree/... (its public page): the control Worker's (control/routes.ts), as are /admin/ops
 //                              and /api/events; `outside` answers them (a redirect to the control Worker, or itself in local development)
@@ -186,8 +186,7 @@ const route = (url: URL, outside: Outside): Route =>
     if (path == "/api/news" || path.startsWith("/api/news/")) return yield* newsRoutes;
     // The server's one API (the pages' and every agent's), its guide, and people's agent tokens.
     if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return yield* serverApi;
-    if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/"))
-      return yield* tokensRoutes;
+    if (path == "/tokens" || path.startsWith("/tokens/")) return yield* tokensRoutes;
     return yield* documentRoutes;
   });
 

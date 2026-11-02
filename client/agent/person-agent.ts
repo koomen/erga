@@ -521,3 +521,24 @@ window.ergaAgentPanel = {
   stopVoice,
   files: att,
 };
+
+// Settings (client/agent/settings-dialog.ts): a dialog on any page, loaded the first time it's asked for. The account
+// menu's Settings, and any link to "#settings", open it; so does an address that ends with #settings. A key saved or
+// removed there gives the agent other models: the panel reads them again.
+const settings = () => {
+  if (location.hash == "#settings") history.replaceState(history.state, "", location.pathname + location.search);
+  void import("./settings-dialog").then((m) => m.openSettings());
+};
+document.addEventListener(
+  "click",
+  (e) => {
+    const a = (e.target as Element | null)?.closest?.("a[href]");
+    if (!a || new URL((a as HTMLAnchorElement).href, location.href).hash != "#settings" || e.metaKey || e.ctrlKey) return;
+    e.preventDefault();
+    settings();
+  },
+  true
+);
+window.addEventListener("hashchange", () => location.hash == "#settings" && settings());
+if (location.hash == "#settings") settings();
+window.addEventListener("erga:agent-keys", () => void load());

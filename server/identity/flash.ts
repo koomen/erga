@@ -1,7 +1,7 @@
 // A note for the next page. A form's POST never answers with a page: it answers 303 See Other to a GET page, so Back
 // and Reload never send the form again. What that page shows of the POST (an error, which token was just made) goes
 // along in a cookie: signed, HttpOnly, for a minute, and read once (the page that reads it clears it). Never a
-// secret: a new token goes as its id, and the page makes the token again from it (tokens.ts, justMade).
+// secret.
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Effect from "effect/Effect";

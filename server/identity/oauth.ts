@@ -3,7 +3,7 @@
 // in its person's browser. The person signs in (if they aren't) and approves on /tokens/approve, the page that
 // approves a device flow's request (tokens-page.ts). The browser goes back to the app with a code, and the app trades
 // the code and its PKCE verifier for an ordinary agent token (documents scope) at /oauth/token. The token lasts until
-// the person revokes it at /tokens: there is no refresh token, as agent tokens have no other expiry.
+// the person revokes it in Settings (the dialog at their picture, client/agent/settings-dialog.ts): there is no refresh token, as agent tokens have no other expiry.
 //
 //   GET  /.well-known/oauth-protected-resource      /mcp's metadata (RFC 9728): the resource, and who signs in for it
 //   GET  /.well-known/oauth-protected-resource/mcp  the same, where a client looks for /mcp's own

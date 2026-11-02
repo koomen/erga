@@ -25,7 +25,7 @@ export const PAGE_OPERATIONS: Operation[] = [
       const deploy = mode == "users" || (mode == "admins" && deployer);
       return [
         { group: "Pages", label: "Documents", path: "/docs" },
-        { group: "Pages", label: "Settings", path: "/settings" },
+        { group: "Pages", label: "Settings", path: "#settings" },
         ...(deploy ? [{ group: "Pages", label: "Deploy your own", path: "/deploy" }] : []),
         { group: "Pages", label: "Source", path: "/git" },
         ...(admin ? ADMIN_PAGES.map((p) => ({ group: "Admin", label: p.label, path: p.path })) : []),
