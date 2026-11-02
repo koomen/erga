@@ -25,7 +25,7 @@
 // The machine paths (deploy/run.ts, deploy/setup.ts) keep using the person's
 // own cf CLI login, which is the same kind of grant.
 
-import { DeployError, OAUTH, type Fetch } from "./cloudflare-api";
+import { API, Cloudflare, DeployError, OAUTH, type Fetch } from "./cloudflare-api";
 import { open, seal, type Sealed } from "./seal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -80,8 +80,8 @@ export interface CredentialStatus {
 export interface Credential {
   token(): Promise<string>;
   status(): Promise<CredentialStatus>;
-  /** Cloudflare's API refused the token (401): the next token() checks the grant first. */
-  refused?(): Promise<void>;
+  /** Cloudflare's API refused this token (401): if it is still the stored one, the next token() checks the grant first. */
+  refused?(token: string): Promise<void>;
 }
 
 /** A token given outright (a machine's own, the tests'): the same interface. */
@@ -105,6 +105,35 @@ export function fixedCredential(token: string | null | undefined, by = "a fixed 
       };
     },
   };
+}
+
+/**
+ * Cloudflare's API with the credential's token (refreshed when it's about to expire; a DeployError says why not). A
+ * refresh ends the access token it replaces, at once, and a deploy holds its token for minutes: another use of the
+ * credential that refreshes in that time (the deploy's other side, the Ops page) leaves it with a dead one (staging,
+ * 2026-11-02). So a call the API refuses (401) goes again, once, with the credential's token now: the stored one when
+ * a refresh replaced it, else a refresh's. A refused refresh says whether the grant is revoked.
+ */
+export async function cloudflareWith(credential: Credential, net: Fetch): Promise<Cloudflare> {
+  const first = await credential.token();
+  let current = first;
+  const watched: Fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    // Only the credential's own calls: an upload's own token (`bearer`) isn't the credential's.
+    if (!String(input instanceof Request ? input.url : input).startsWith(API) || headers.get("Authorization") != `Bearer ${first}`)
+      return net(input, init);
+    const send = (token: string) => {
+      headers.set("Authorization", `Bearer ${token}`);
+      return net(input, { ...init, headers });
+    };
+    const used = current;
+    const r = await send(used);
+    if (r.status != 401) return r;
+    await credential.refused?.(used).catch(() => {});
+    current = await credential.token().catch(() => used);
+    return current == used ? r : send(current);
+  };
+  return new Cloudflare(first, watched);
 }
 
 const NONE = "The control Worker has no Cloudflare credential: an admin connects Cloudflare (a consent in a popup).";
@@ -215,12 +244,14 @@ export class OAuthCredential implements Credential {
   }
 
   /**
-   * Cloudflare's API refused the access token (401): the grant may be revoked. The next token() refreshes first,
-   * and only the refresh's answer says whether the grant is gone.
+   * Cloudflare's API refused this access token (401): the grant may be revoked. The next token() refreshes first,
+   * and only the refresh's answer says whether the grant is gone. A token a refresh already replaced says nothing
+   * of the grant (the refresh ended it): a refresh now would end the new one too.
    */
-  async refused(): Promise<void> {
+  async refused(token: string): Promise<void> {
     const g = await this.stored();
-    if (g && !g.error && !g.refusedAt) await this.deps.storage.put(KEY, { ...g, refusedAt: this.now() });
+    if (g && !g.error && !g.refusedAt && (await open(g.access, await this.deps.sealKey)) == token)
+      await this.deps.storage.put(KEY, { ...g, refusedAt: this.now() });
   }
 
   private async refresh(g: StoredGrant): Promise<string> {

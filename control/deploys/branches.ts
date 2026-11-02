@@ -60,13 +60,13 @@ import {
   type StepId,
   type Target,
 } from "./pipeline";
-import { API, Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
+import { Cloudflare, DeployError, Unhealthy, type Fetch } from "./cloudflare-api";
 import { checkHealth, liveVersion, rollbackTo, workerVersion } from "./account";
 import type { Release } from "./release-format";
 import { sourceFor, type Source } from "./build-source";
 import { CONTROL, CONTROL_ENTRYPOINT, PRODUCTION, TARGETS, type DeployName, type TargetSpec } from "../../deploy/targets";
 import { controlTarget } from "./control-worker";
-import type { Credential, CredentialStatus } from "./credential";
+import { cloudflareWith, type Credential, type CredentialStatus } from "./credential";
 import type { ChannelFile, ReleaseStore } from "./releases";
 import type { Fleet } from "./fleet";
 import { compareVersions, type UpdateResult } from "../source/index.ts";
@@ -222,18 +222,9 @@ export class BranchDeploys {
     return this.fleet.targetFor(name, this.deps.env, fresh);
   }
 
-  /**
-   * Cloudflare's API with the credential's token, fresh (refreshed when it's about to expire; a DeployError says why not).
-   * A 401 from the API tells the credential, so the next deploy's refresh says whether the grant is revoked.
-   */
-  async cf(): Promise<Cloudflare> {
-    const credential = this.deps.credential, net = this.deps.net;
-    const watched: Fetch = async (input, init) => {
-      const r = await net(input, init);
-      if (r.status == 401 && String(input instanceof Request ? input.url : input).startsWith(API)) await credential.refused?.().catch(() => {});
-      return r;
-    };
-    return new Cloudflare(await credential.token(), watched);
+  /** Cloudflare's API with the credential's token, fresh, and the next one when the API refuses it (`cloudflareWith`). */
+  cf(): Promise<Cloudflare> {
+    return cloudflareWith(this.deps.credential, this.deps.net);
   }
 
   /** The credential, as list_deploys and /install show it. */

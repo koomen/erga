@@ -18,9 +18,9 @@ const GENERATED = ["server/pages/inline-code.ts"];
 /** The files over the cap, and their size in bytes when listed. Split one when you next touch it. */
 const OVER: Record<string, number> = {
   "document/document.ts": 83687,
-  "dev/mock-cloudflare.ts": 63809,
+  "dev/mock-cloudflare.ts": 61295,
   "client/pages/pages-tree.ts": 57709,
-  "control/deploys/branches.ts": 54145,
+  "control/deploys/branches.ts": 53630,
 };
 
 /** The repo's tracked source files. */
