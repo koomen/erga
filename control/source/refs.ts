@@ -1,7 +1,7 @@
-// The repository's refs: its two branches, and the refs Erga keeps beside
-// them (a push's quarantine, the trackers of upstream and GitHub, the merges
-// that wait on conflicts, a merge's scratch refs); and the error every part
-// of the repository throws.
+// The repository's refs: its two branches, the feature branches anyone with
+// push rights makes, and the refs Erga keeps beside them (a push's quarantine,
+// the trackers of upstream and GitHub, the merges that wait on conflicts, a
+// merge's scratch refs); and the error every part of the repository throws.
 
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
@@ -22,6 +22,17 @@ export const isMergeBranch = (ref: string) => ref.startsWith(MERGE_BRANCH) || re
 export const GITHUB_TRACK = "refs/heads/erga-github/";
 /** Temporary refs a merge sets so Artifacts sends the trees it needs (a commit that isn't a branch's head can't be asked for). */
 export const SCRATCH = "refs/heads/erga-merge/";
+/** Erga's own branches beside staging and main: a push can't make, move or delete them. */
+const OWN = ["refs/heads/erga-", MERGE_BRANCH, GITHUB_MERGE_BRANCH];
+/**
+ * A feature branch's short name, for a ref that is one: any branch but staging, main and Erga's own. Its work goes
+ * into staging as one commit (features.ts); it never deploys.
+ */
+export function featureOf(ref: string): string | null {
+  if (!ref.startsWith("refs/heads/") || OWN.some((p) => ref.startsWith(p))) return null;
+  const name = ref.slice("refs/heads/".length);
+  return (BRANCHES as readonly string[]).includes(name) ? null : name;
+}
 /** How many commits each branch shows. */
 export const LOG = 100;
 

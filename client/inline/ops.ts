@@ -1,10 +1,12 @@
 // The Ops page's script (control/source/page.ts, adminSourcePage): the git log with each environment's deploys, Merge,
+// the feature branches (client/admin/ops-branches.ts),
 // Update from upstream, the domains, GitHub, and their live updates. It runs on the app's /admin/ops and on the
 // control Worker alike, inside the admin pages' one page (window.ergaView). Each action is an operation
 // (control/operations.ts), run over POST /api/tools/<name> where the page is: the same ones the admin agent has.
 
 import { esc as escText } from "../../shared/html";
 import { runTool } from "../common/tools";
+import { featureBranches } from "../admin/ops-branches";
 
 // The answers of the API are typed loosely (any): this page reads what the server sends and shows it.
 type Json = any;
@@ -153,8 +155,10 @@ export default function ops(): void {
     String(view?.upstream?.origin || "upstream")
       .replace(/^https?:\/\//, "")
       .replace(/^ops\./, "");
+  const renderFeatures = featureBranches(load);
   function render() {
     if (!view) return;
+    renderFeatures(view.features);
     const staging = view.branches.find((b: Json) => b.name == "staging"),
       main = view.branches.find((b: Json) => b.name == "main");
     const up = view.upstream || null;

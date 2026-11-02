@@ -161,8 +161,8 @@ describe("Erga's Git endpoint", () => {
     expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
     await must(src, "commit", "-q", "--amend", "-m", "Eighth, amended");
     expect((await git(src, "push", "--force", "erga", "HEAD:staging")).ok).toBe(true);
-    // Other branches, and deleting, are refused.
-    expect((await git(src, "push", "erga", "HEAD:feature")).err).toContain("two branches");
+    // Erga's own branches, and deleting staging, are refused (other names are feature branches: tests/source-features.test.ts).
+    expect((await git(src, "push", "erga", "HEAD:refs/heads/erga-merge/x")).err).toContain("that branch is Erga's own");
     expect((await git(src, "push", "erga", ":staging")).ok).toBe(false);
     // Merge: main moves to a chosen staging commit, then to staging's head; never anywhere else.
     const sixth = await must(src, "rev-parse", "HEAD~2");

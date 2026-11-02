@@ -4,12 +4,14 @@
 // Artifacts doesn't, and knows each time a branch moves (an event for the
 // Ops page, the deploy hook, the sync with GitHub).
 //
-// The model is strict: only two branches, ever; staging is always at or
+// The model is strict: two branches deploy, staging and main; staging is always at or
 // ahead of main; main only follows staging. A push to main must be one of
 // staging's commits (and forward of main); a push to staging must keep every
 // commit main has. Merging is moving main forward to staging's head, or to
 // one of staging's commits. So the two never diverge, and there are no merge
-// commits or conflicts between them.
+// commits or conflicts between them. Beside them, feature branches
+// (features.ts): any other name, never deployed, each merged into staging as
+// one commit from the Ops page.
 //
 // The repository's parts, each in a file of its own: Update from upstream
 // (upstream.ts), the merges that wait on conflicts (conflicts.ts), releases
@@ -31,12 +33,13 @@ import { emptyPack, isSha, isTreeMode, parseCommit, parseTree, readPack, subject
 import { fetchPack, lsRefs, receivePack, type Remote } from "./remote.ts";
 import { BrowseError, cleanPath, list, read, search, snapshotOf, view, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
 import type { GithubLink, PushEvent } from "./github.ts";
-import { BRANCHES, LOG, QUARANTINE, REF, SourceError, TAGS, type Branch } from "./refs.ts";
+import { BRANCHES, featureOf, LOG, QUARANTINE, REF, SourceError, TAGS, type Branch } from "./refs.ts";
 import { Upstream, type UpstreamSource, type UpstreamView } from "./upstream.ts";
 import { Conflicts, type MergeConflict } from "./conflicts.ts";
 import { Releases, type Released, type TagInfo } from "./releases.ts";
 import { Pushes } from "./receive.ts";
 import { GithubSync, type GithubStatus } from "./github-sync.ts";
+import { Features, type FeatureInfo } from "./features.ts";
 import { byLine } from "../../shared/attribution.ts";
 
 /** At most how many commits a task's card holds. */
@@ -122,6 +125,7 @@ export class SourceRepo {
   readonly releases = new Releases(this);
   readonly pushes = new Pushes(this);
   readonly github = new GithubSync(this);
+  readonly features = new Features(this);
 
   constructor(readonly deps: RepoDeps) {
     const db = deps.db;
@@ -258,14 +262,24 @@ export class SourceRepo {
 
   // ---- What the Ops page shows ---------------------------------------------
 
-  /** Each branch's head and its latest commits, which of them main has, GitHub's status, and the merge waiting on conflicts, if one. */
-  async branches(): Promise<{ branches: BranchInfo[]; github: GithubStatus; conflict: MergeConflict | null; moves: Move[]; tags: TagInfo[]; release: string | null; upstream?: UpstreamView }> {
+  /** Each branch's head and its latest commits, which of them main has, the feature branches, GitHub's status, and the merge waiting on conflicts, if one. */
+  async branches(): Promise<{
+    branches: BranchInfo[];
+    features: FeatureInfo[];
+    github: GithubStatus;
+    conflict: MergeConflict | null;
+    moves: Move[];
+    tags: TagInfo[];
+    release: string | null;
+    upstream?: UpstreamView;
+  }> {
     const remote = await this.deps.artifacts();
     const [{ refs }, { refs: tagRefs }] = await Promise.all([lsRefs(remote), lsRefs(remote, TAGS)]);
     const heads = Object.fromEntries(BRANCHES.map((b) => [b, refs.get(REF(b)) ?? null])) as Record<Branch, string | null>;
     let upstream: UpstreamView | undefined;
     await this.locked(async () => {
-      await this.sync(remote, BRANCHES.map((b) => heads[b]).filter((s): s is string => !!s));
+      const features = [...refs].filter(([r]) => featureOf(r)).map(([, s]) => s);
+      await this.sync(remote, [...BRANCHES.map((b) => heads[b]).filter((s): s is string => !!s), ...features]);
       this.setState("tips", Object.fromEntries(BRANCHES.filter((b) => heads[b]).map((b) => [b, heads[b]])));
       await this.releases.syncTags(remote, tagRefs);
       if (this.deps.upstream?.()) upstream = await this.upstream.upstreamView(heads.staging);
@@ -289,6 +303,7 @@ export class SourceRepo {
     });
     return {
       branches,
+      features: this.features.list(remote, refs),
       github: this.github.githubStatus(),
       conflict: this.state<MergeConflict>("conflict"),
       moves: this.moves(10),
@@ -436,7 +451,7 @@ export class SourceRepo {
 
   /**
    * What the admin's agent's source tools ask: a folder's listing, a file's lines, a search,
-   * or the log, at a branch (staging if none is named; also main, or a task's branch) or a commit. Read-only: it
+   * or the log, at a branch (staging if none is named; also main, or a feature branch) or a commit. Read-only: it
    * only lists refs and fetches, with a read token. Throws a SourceError the agent can act on.
    */
   async read(q: SourceRead): Promise<SourceAnswer> {
@@ -445,7 +460,7 @@ export class SourceRepo {
     try {
       if (q.op == "log") {
         if (!head)
-          throw new SourceError({ message: "The log starts at a branch: name one (staging, main or a task's branch), not a commit." });
+          throw new SourceError({ message: "The log starts at a branch: name one (staging, main or a feature branch), not a commit." });
         await this.locked(() => this.sync(remote, [commit]));
         const skip = Math.max(0, Math.floor(Number(q.skip) || 0)), limit = Math.max(1, Math.min(LOG, Math.floor(Number(q.limit) || 20)));
         const rows = this.log(commit, skip + limit).slice(skip);
@@ -530,7 +545,7 @@ export class SourceRepo {
     return s;
   }
 
-  // ---- The parts: upstream.ts, conflicts.ts, releases.ts, receive.ts, github-sync.ts --------
+  // ---- The parts: upstream.ts, conflicts.ts, releases.ts, receive.ts, github-sync.ts, features.ts --------
 
   update(who: Actor) {
     return this.upstream.update(who);
@@ -561,6 +576,12 @@ export class SourceRepo {
   }
   receive(body: Uint8Array, who: Actor) {
     return this.pushes.receive(body, who);
+  }
+  mergeFeature(who: Actor, name: string, message?: string) {
+    return this.features.merge(who, name, message);
+  }
+  deleteFeature(name: string) {
+    return this.features.remove(name);
   }
   githubLink() {
     return this.github.githubLink();

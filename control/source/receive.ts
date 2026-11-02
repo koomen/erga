@@ -1,5 +1,6 @@
 // Pushes: `git push` through Erga's /git endpoint. An admin pushes staging
-// and main, and release tags. A push is staged before it lands: its objects
+// and main, feature branches (any other name: made, moved, forced or deleted,
+// never deployed; features.ts), and release tags. A push is staged before it lands: its objects
 // go to Artifacts under a quarantine branch, Erga reads the new commits back
 // and checks them, and only then moves the real branches, each only from
 // where it was (Artifacts refuses a move whose old value is stale, so two
@@ -22,7 +23,7 @@ import {
   type GitObject,
 } from "./git.ts";
 import { lsRefs, receivePack, type RefUpdate } from "./remote.ts";
-import { BRANCHES, isMergeBranch, QUARANTINE, REF, TAGS, type Branch } from "./refs.ts";
+import { BRANCHES, featureOf, isMergeBranch, QUARANTINE, REF, TAGS, type Branch } from "./refs.ts";
 import { compareVersions, isReleaseTag } from "./releases.ts";
 import type { Actor, SourceRepo } from "./repo.ts";
 
@@ -30,14 +31,15 @@ export class Pushes {
   constructor(private repo: SourceRepo) {}
 
   /**
-   * The receive-pack advertisement Erga gives a pusher: only staging and main, and what Erga's receive-pack does.
+   * The receive-pack advertisement Erga gives a pusher: staging, main and the feature branches, the release tags, and
+   * what Erga's receive-pack does.
    */
   async advertise(): Promise<Uint8Array> {
     const remote = await this.repo.deps.artifacts();
     const { refs } = await lsRefs(remote);
     const { refs: tagRefs } = await lsRefs(remote, TAGS);
     const caps = "report-status side-band-64k quiet ofs-delta delete-refs agent=erga";
-    const names = BRANCHES.map(REF);
+    const names = [...BRANCHES.map(REF), ...[...refs.keys()].filter((r) => featureOf(r)).sort()];
     const lines = [...names.filter((r) => refs.has(r)).map((r) => `${refs.get(r)} ${r}`), ...[...tagRefs].map(([r, sha]) => `${sha} ${r}`)];
     if (!lines.length) lines.push(`${ZERO} capabilities^{}`);
     return concat([pkt("# service=git-receive-pack\n"), FLUSH, ...lines.map((l, i) => pkt(`${l}${i == 0 ? `\0${caps}` : ""}\n`)), FLUSH]);
@@ -45,8 +47,9 @@ export class Pushes {
 
   /**
    * A `git push`: the receive-pack request's body in, the report out (in side-band if the client asked).
-   * An admin pushes staging and main: only staging and main are Erga's branches. And release tags (vX.Y.Z, new, newer
-   * than the newest, on a commit of main after this push's own moves): each is a release cut.
+   * An admin pushes staging and main, which deploy; and feature branches, any other name but Erga's own, which don't.
+   * And release tags (vX.Y.Z, new, newer than the newest, on a commit of main after this push's own moves): each is a
+   * release cut.
    */
   async receive(body: Uint8Array, who: Actor): Promise<Uint8Array> {
     const { pkts, end } = readPkts(body, 0, (p) => p.kind == "flush");
@@ -64,22 +67,34 @@ export class Pushes {
     if (!commands.length) return new Uint8Array();
     const pack = body.subarray(end);
     const messages: string[] = [];
-    const { unpack, statuses } = await this.repo.locked(async () => {
+    const { unpack, statuses, synced } = await this.repo.locked(async () => {
       const remote = await this.repo.deps.artifacts();
       const { refs } = await lsRefs(remote);
       const { refs: tagRefs } = await lsRefs(remote, TAGS);
       const statuses = new Map<string, string>();
       const accepted: (RefUpdate & { branch: Branch })[] = [];
       const tagging: RefUpdate[] = [];
+      // Feature branches: made or moved (any way: a force push too) through the quarantine as the others; deleted at the end.
+      const features: RefUpdate[] = [],
+        dropping: RefUpdate[] = [];
       for (const c of commands) {
         const branch = BRANCHES.find((b) => REF(b) == c.ref);
+        const feature = featureOf(c.ref);
         if (c.ref.startsWith(TAGS)) {
           const name = c.ref.slice(TAGS.length);
           if (!isReleaseTag(name)) statuses.set(c.ref, "Erga takes release tags only: a version like v1.2.3 (numbers only, v first)");
           else if (c.new == ZERO || tagRefs.has(c.ref)) statuses.set(c.ref, "a release tag is never moved or deleted");
           else tagging.push(c);
-        }
-        else if (!branch) statuses.set(c.ref, isMergeBranch(c.ref) ? "that branch is Erga's own (the merge that conflicted): merge in your checkout and push the result to staging" : "Erga has two branches, staging and main: push to one of those");
+        } else if (feature) {
+          if ((refs.get(c.ref) ?? ZERO) != c.old) statuses.set(c.ref, "stale info: it moved since you fetched; fetch first");
+          else (c.new == ZERO ? dropping : features).push(c);
+        } else if (!branch)
+          statuses.set(
+            c.ref,
+            isMergeBranch(c.ref)
+              ? "that branch is Erga's own (the merge that conflicted): merge in your checkout and push the result to staging"
+              : "that branch is Erga's own: push to staging, main or a feature branch of another name"
+          );
         else if (c.new == ZERO) statuses.set(c.ref, `${branch} can't be deleted`);
         else if ((refs.get(c.ref) ?? ZERO) != c.old) statuses.set(c.ref, "stale info: it moved since you fetched; fetch first");
         else accepted.push({ ...c, branch });
@@ -87,13 +102,22 @@ export class Pushes {
       // Quarantine branches left by a push that stopped halfway go now too.
       const leftovers: RefUpdate[] = [...refs].filter(([r]) => r.startsWith(QUARANTINE)).map(([ref, sha]) => ({ ref, old: sha, new: ZERO }));
       let unpack = "ok";
-      if (accepted.length) {
+      let featured = 0,
+        synced = false;
+      if (accepted.length || features.length) {
         const id = crypto.randomUUID().slice(0, 8);
-        const staged = accepted.map((c) => ({ ...c, quarantine: `${QUARANTINE}${id}-${c.branch}` }));
-        const first = await receivePack(remote, staged.map((c) => ({ ref: c.quarantine, old: ZERO, new: c.new })), pack.length ? pack : await emptyPack());
+        const staged = [...accepted, ...features.map((c) => ({ ...c, branch: null }))].map((c, i) => ({
+          ...c,
+          quarantine: `${QUARANTINE}${id}-${c.branch ?? i}`,
+        }));
+        const first = await receivePack(
+          remote,
+          staged.map((c) => ({ ref: c.quarantine, old: ZERO, new: c.new })),
+          pack.length ? pack : await emptyPack()
+        );
         if (first.unpack != "ok") {
           unpack = first.unpack;
-          for (const c of staged) statuses.set(c.ref, `Artifacts couldn't take the objects: ${first.unpack}`);
+          for (const c of [...staged, ...dropping]) statuses.set(c.ref, `Artifacts couldn't take the objects: ${first.unpack}`);
         } else {
           const landed = staged.filter((c) => {
             const said = first.refs.get(c.quarantine) ?? "no answer";
@@ -104,31 +128,59 @@ export class Pushes {
             remote,
             landed.map((c) => c.new)
           );
-          const moving = this.allowed(landed, refs, statuses);
-          const drop = [...staged.filter((c) => first.refs.get(c.quarantine) == "ok").map((c) => ({ ref: c.quarantine, old: c.new, new: ZERO })), ...leftovers];
-          const final = await receivePack(remote, [...moving.map(({ ref, old, new: sha }) => ({ ref, old, new: sha })), ...drop], moving.length ? await emptyPack() : null);
+          const moving = [
+            ...this.allowed(
+              landed.filter((c): c is typeof c & { branch: Branch } => c.branch != null),
+              refs,
+              statuses
+            ),
+            ...landed.filter((c) => c.branch == null),
+          ];
+          const drop = [
+            ...staged.filter((c) => first.refs.get(c.quarantine) == "ok").map((c) => ({ ref: c.quarantine, old: c.new, new: ZERO })),
+            ...leftovers,
+          ];
+          const final = await receivePack(
+            remote,
+            [...moving.map(({ ref, old, new: sha }) => ({ ref, old, new: sha })), ...dropping, ...drop],
+            moving.length ? await emptyPack() : null
+          );
+          for (const c of dropping) featured += this.dropped(c, final.refs.get(c.ref) ?? final.unpack, statuses, messages);
           for (const c of moving) {
             const said = final.refs.get(c.ref) ?? final.unpack;
             statuses.set(c.ref, said);
-            if (said == "ok") {
-              this.repo.recordMove({
-                branch: c.branch,
-                old: c.old,
-                new: c.new,
-                how: "push",
-                by: who.login,
-                via: who.via ?? null,
-                at: this.repo.now(),
-              });
-              const before = c.old == ZERO ? null : this.repo.ancestors(c.old);
-              const count = before ? [...this.repo.ancestors(c.new)].filter((s) => !before.has(s)).length : null;
-              messages.push(`Erga: ${c.branch} is now ${c.new.slice(0, 7)}${count != null ? ` (${count} new commit${count == 1 ? "" : "s"})` : ""}.`);
+            if (said != "ok") continue;
+            const before = c.old == ZERO ? null : this.repo.ancestors(c.old);
+            const count = before ? [...this.repo.ancestors(c.new)].filter((s) => !before.has(s)).length : null;
+            if (!c.branch) {
+              featured++;
+              messages.push(
+                `Erga: the feature branch ${c.ref.slice("refs/heads/".length)} is now ${c.new.slice(0, 7)}. It doesn't deploy: merge it into staging on the Ops page (merge_feature_branch).`
+              );
+              continue;
             }
+            synced = true;
+            this.repo.recordMove({
+              branch: c.branch,
+              old: c.old,
+              new: c.new,
+              how: "push",
+              by: who.login,
+              via: who.via ?? null,
+              at: this.repo.now(),
+            });
+            messages.push(`Erga: ${c.branch} is now ${c.new.slice(0, 7)}${count != null ? ` (${count} new commit${count == 1 ? "" : "s"})` : ""}.`);
           }
         }
-      } else if (leftovers.length) {
-        await receivePack(remote, leftovers, null).catch(() => {});
+      } else if (leftovers.length || dropping.length) {
+        const r = await receivePack(remote, [...dropping, ...leftovers], null).catch((e: unknown) => ({
+          unpack: (e as Error).message,
+          refs: new Map<string, string>(),
+        }));
+        for (const c of dropping) featured += this.dropped(c, r.refs.get(c.ref) ?? r.unpack, statuses, messages);
       }
+      // A feature branch changed: the Ops page lists it (a staging or main move says so itself).
+      if (featured) this.repo.deps.changed();
       // Release tags, after the branches moved: each must mark a commit of main (as it is now), be a new version, and
       // come as an annotated tag in the pack or point straight at the commit.
       if (tagging.length && unpack == "ok") {
@@ -166,9 +218,9 @@ export class Pushes {
           messages.push(`Erga: release ${name} cut at ${commit.slice(0, 7)}.`);
         }
       }
-      return { unpack, statuses };
+      return { unpack, statuses, synced: synced || messages.some((m) => m.startsWith("Erga: release")) };
     });
-    if (messages.length && this.repo.github.githubLink()) messages.push("Erga: GitHub syncs in the background.");
+    if (synced && this.repo.github.githubLink()) messages.push("Erga: GitHub syncs in the background.");
     const report = concat([pkt(`unpack ${unpack}\n`), ...commands.map((c) => {
       const s = statuses.get(c.ref) ?? "not processed";
       return pkt(s == "ok" ? `ok ${c.ref}\n` : `ng ${c.ref} ${s}\n`);
@@ -176,6 +228,13 @@ export class Pushes {
     if (!caps.has("side-band-64k") && !caps.has("side-band")) return report;
     const max = caps.has("side-band-64k") ? 65515 : 995;
     return concat([...messages.flatMap((m) => toSideBand(utf8(`${m}\n`), 2, max)), ...toSideBand(report, 1, max), FLUSH]);
+  }
+  /** A feature branch's deletion, as Artifacts answered it: 1 when it went. */
+  private dropped(c: RefUpdate, said: string, statuses: Map<string, string>, messages: string[]): number {
+    statuses.set(c.ref, said);
+    if (said != "ok") return 0;
+    messages.push(`Erga: the feature branch ${c.ref.slice("refs/heads/".length)} is deleted (it was ${c.old.slice(0, 7)}).`);
+    return 1;
   }
   /**
    * The strict model: two branches, staging always at or ahead of main, main

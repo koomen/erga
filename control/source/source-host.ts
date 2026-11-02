@@ -132,6 +132,27 @@ export class SourceHost extends DurableObject<HostEnv> implements SourceObject {
     }
   }
 
+  /** A feature branch merged into staging as one commit, or deleted (merge_feature_branch, delete_feature_branch). */
+  async mergeFeature(
+    origin: string,
+    who: Actor,
+    name: string,
+    message?: string
+  ): Promise<{ commit: string; branch: string; commits: number } | { error: string; status: number }> {
+    try {
+      return await this.at(origin).mergeFeature(who, name, message);
+    } catch (e) {
+      return SourceHost.failed(e, "The merge");
+  }
+}
+async deleteFeature(origin: string, name: string): Promise<{ branch: string; commit: string } | { error: string; status: number }> {
+    try {
+      return await this.at(origin).deleteFeature(name);
+    } catch (e) {
+      return SourceHost.failed(e, "Deleting the branch");
+  }
+  }
+
   /** A release cut, as cut_release asks: the tag, or { error, status }. */
   async release(origin: string, who: Actor, o: { version?: string; notes?: string; commit?: string } = {}): Promise<Released | { error: string; status: number }> {
     try { return await this.at(origin).release(who, o); } catch (e) {

@@ -95,6 +95,25 @@
 #source-pane .box.conflict pre { margin: 4px 0 0; }
 #source-pane .box.conflict .buttons { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
 @container (max-width: 760px) {#source-pane .box.conflict .ways { grid-template-columns: 1fr; }}
+/* Feature branches: one row each, above the git log. */
+#source-pane .box.features { margin: 0 0 14px; padding: 10px 14px; }
+#source-pane .box.features[hidden] { display: none; }
+#source-pane .feature-list { list-style: none; margin: 8px 0 0; padding: 0; }
+#source-pane .feature, #source-pane .feature-none { padding: 8px 0; border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--soft); }
+#source-pane .feature { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; }
+#source-pane .feature .f-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+#source-pane .feature .f-name { font: 600 13px var(--font-mono); color: var(--fg-strong); overflow-wrap: anywhere; }
+#source-pane .feature .f-state { font-size: 12.5px; }
+#source-pane .feature .f-state.clean { color: var(--on-main); }
+#source-pane .feature .f-state.conflicts { color: var(--bad); overflow-wrap: anywhere; }
+#source-pane .feature .f-last { grid-column: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+#source-pane .feature .f-last .f-subject { color: var(--fg); }
+#source-pane .feature .f-actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 6px; }
+#source-pane .feature .f-actions button { height: 28px; font-size: 12.5px; padding: 0 12px; }
+#source-pane .feature .f-actions button:disabled { opacity: 0.4; cursor: default; }
+#source-pane .box.features .hint { margin: 6px 0 0; font-size: 13px; color: var(--soft); }
+#source-pane .box.features .hint.error { color: var(--bad); }
+#source-pane .box.features .hint:empty { display: none; }
 #source-pane #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
 #source-pane #merge-hint.error { color: var(--bad); }
 @container (max-width: 640px) {#source-pane .pane-head { flex-direction: column; align-items: stretch; gap: 10px; }
@@ -205,13 +224,14 @@
 #source-pane .rel .chan { font-weight: 500; color: var(--soft); }
 #source-pane .rel .chan.stable { color: #1f9d55; }
 #source-pane .rel.edge-only { color: var(--soft); font-weight: 500; }
-#source-pane #release-dlg label { display: block; margin: 0 0 12px; font-size: 13px; color: var(--soft); }
-#source-pane #release-dlg input, #source-pane #release-dlg textarea { display: block; width: 100%; margin-top: 4px; box-sizing: border-box; font: 14px var(--font-text); padding: 7px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg); }
+#source-pane #release-dlg label, #source-pane #feature-dlg label { display: block; margin: 0 0 12px; font-size: 13px; color: var(--soft); }
+#source-pane #release-dlg input, #source-pane #release-dlg textarea, #source-pane #feature-dlg textarea { display: block; width: 100%; margin-top: 4px; box-sizing: border-box; font: 14px var(--font-text); padding: 7px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg); }
 #source-pane #release-dlg input { font-family: var(--font-mono); }
 #source-pane #release-dlg textarea { min-height: 84px; resize: vertical; }
-#source-pane #release-dlg .buttons { display: flex; align-items: center; gap: 8px; }
-#source-pane #release-dlg .buttons span { flex: 1; font-size: 13px; color: var(--soft); }
-#source-pane #release-dlg .buttons .error { color: var(--bad); }
+#source-pane #feature-dlg textarea { min-height: 160px; resize: vertical; font: 13px var(--font-mono); }
+#source-pane #release-dlg .buttons, #source-pane #feature-dlg .buttons { display: flex; align-items: center; gap: 8px; }
+#source-pane #release-dlg .buttons span, #source-pane #feature-dlg .buttons span { flex: 1; font-size: 13px; color: var(--soft); }
+#source-pane #release-dlg .buttons .error, #source-pane #feature-dlg .buttons .error { color: var(--bad); }
 #source-pane dialog#deploy-log { width: min(820px, calc(100vw - 32px)); padding: 0; }
 #source-pane #deploy-log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
 #source-pane #deploy-log h2 { margin: 0; font-size: 15px; }
