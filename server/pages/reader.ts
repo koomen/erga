@@ -60,7 +60,10 @@ const LIVE_WATCH = inlineCall("page-live-watch");
  * from the page's first moment (its problems and its live log, the text guard, ergaEditor).
  */
 export function readerPage(html: string, o: { shell: string; prefix: string; src: string; editor: boolean }): string {
-  const editor = o.editor ? frameScripts(o.shell) : undefined;
+  // erga/text, unless the page brings its own editor: a library it imports itself (/erga/<name>/editor.js), or its own
+  // (<meta name="erga-editor" content="own">). Then the page's editor hears the viewer's word (erga-mode) itself.
+  const scripts = o.editor ? frameScripts(o.shell) : undefined;
+  const editor = scripts && bringsEditor(html) ? { ...scripts, src: "", preload: [] } : scripts;
   const head =
     (editor ? `<script type="importmap" data-erga>${jsonInScript({ imports: {}, integrity: editor.map })}</script>` : "") +
     `<script data-erga>${readerScript({ shell: o.shell, prefix: o.prefix, src: o.src, ...(editor ? { editor } : {}) })}</script>` +
@@ -69,6 +72,11 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
       : "");
   return insertHead(html, head);
 }
+
+/** Whether a page brings its own editor: it imports one of Erga's libraries itself, or says it has its own. */
+export const bringsEditor = (html: string) =>
+  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/[a-z]+\/editor\.js\b/i.test(html) ||
+  /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
 export const readerVersion = () =>

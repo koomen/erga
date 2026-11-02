@@ -17,7 +17,7 @@ export {
   withEdit,
 } from "./chrome.ts";
 export { docsPage, docsRows } from "./docs.ts";
-export { readerPage, readerVersion } from "./reader.ts";
+export { bringsEditor, readerPage, readerVersion } from "./reader.ts";
 export { startPage } from "./start.ts";
 export { editButton, RESTORE_KEY, VIEW_STYLE, viewerPage } from "./viewer.ts";
 export { AGENT_ICON, AGENT_SHARE_BUTTON, barsHtml, BARS_STYLE, confirmAction, page, pageBars, webPage } from "./bars.ts";
@@ -39,6 +39,8 @@ export {
   assetScripts,
   fontTags,
   isAssetPath,
+  libraryOf,
+  serveLibrary,
   loadAssets,
   remoteAssets,
   scriptTag,

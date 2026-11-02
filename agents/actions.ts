@@ -150,10 +150,36 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/events", domain: "none", action: "The Ops page's live updates", exempt: STREAM },
   { route: "GET /api/news", domain: "none", action: "An open page's live updates", exempt: STREAM },
   { route: "GET /api/news/rows", domain: "none", action: "The rows an open page shows, after they changed", exempt: STREAM },
-  { route: "GET /api/release", domain: "none", action: "An open page asks whether its code is still the server's (after a redeploy)", exempt: "the page's own check, not a person's action" },
-  { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },
-  { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },
-  { route: "GET /api/snapshot/blob/<sha-256>", domain: "none", action: "Staging reads a blob its copy of production's documents needs", exempt: "server to server (staging's blob store, cloudflare/blobs.ts)" },
+  {
+    route: "GET /erga/<name>/editor.js",
+    domain: "none",
+    action: "A document's page loads an editing library (erga/text)",
+    exempt: "the editor's own code, not a person's action",
+  },
+  {
+    route: "GET /api/release",
+    domain: "none",
+    action: "An open page asks whether its code is still the server's (after a redeploy)",
+    exempt: "the page's own check, not a person's action",
+  },
+  {
+    route: "GET /api/deploys/version",
+    domain: "none",
+    action: "The release this server runs",
+    exempt: "the deploy pipeline's, server to server",
+  },
+  {
+    route: "POST /api/snapshot/docs[/import]",
+    domain: "none",
+    action: "Staging copies production's documents",
+    exempt: "the deploy pipeline's, server to server",
+  },
+  {
+    route: "GET /api/snapshot/blob/<sha-256>",
+    domain: "none",
+    action: "Staging reads a blob its copy of production's documents needs",
+    exempt: "server to server (staging's blob store, cloudflare/blobs.ts)",
+  },
 
   // (The homepage's status and its deploy are operations: server/operations/home.ts. /admin's landing_document setting
   // chooses it.)

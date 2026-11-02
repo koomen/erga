@@ -194,7 +194,8 @@ export default function reader(C: ReaderConfig): void {
   let loading = false;
   function load() {
     const editor = C.editor;
-    if (loading || !editor) return;
+    // (A page that brings its own editor: it's there already, and hears the viewer's word itself.)
+    if (loading || !editor || !editor.src) return;
     loading = true;
     addScript(editor);
   }

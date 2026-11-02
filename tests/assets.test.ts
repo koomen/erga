@@ -5,10 +5,11 @@
 // nothing else under the same guard.
 
 import { afterAll, expect, test } from "bun:test";
+import * as Effect from "effect/Effect";
 import { HEADERS } from "../client/build.ts";
 import { adminsOnlyGate } from "../server/identity/admins-only.ts";
 import { runOn } from "../server/http.ts";
-import { asset, assetScripts, fontTags, scriptTag, serveAsset, useAssets } from "../server/pages/index.ts";
+import { asset, assetScripts, fontTags, scriptTag, serveAsset, serveLibrary, useAssets } from "../server/pages/index.ts";
 import { readerPage, readerVersion } from "../server/pages/reader.ts";
 import type { Platform } from "../server/platform.ts";
 import { ASSET_PREFIX, stemOf, type AssetManifest } from "../shared/assets.ts";
@@ -50,7 +51,20 @@ test("an editor's page names the editor's half at the app's origin, with the int
   expect(map.integrity).toEqual({ "https://erga.test/_erga/frame-bbbb2222.js": "sha384-frame", "https://erga.test/_erga/chunk-gggg7777.js": "sha384-chunk", "https://erga.test/_erga/chunk-hhhh8888.js": "sha384-later" });
   expect(page.indexOf('type="importmap"')).toBeLessThan(page.indexOf('src="app.js"'));
   const config = JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(page)![1]);
-  expect(config.editor).toMatchObject({ src: "https://erga.test/_erga/frame-bbbb2222.js", integrity: "sha384-frame", preload: ["https://erga.test/_erga/chunk-gggg7777.js"] });
+  // erga/text at its one address, its build and first chunk preloaded (each pinned by the map).
+  expect(config.editor).toMatchObject({
+    src: "https://erga.test/erga/text/editor.js",
+    integrity: "",
+    preload: ["https://erga.test/_erga/frame-bbbb2222.js", "https://erga.test/_erga/chunk-gggg7777.js"],
+  });
+  // A page that brings its own editor gets none added.
+  const own = readerPage(`<meta name="erga-editor" content="own"><p>x</p>`, {
+    shell: "https://erga.test",
+    prefix: "/t/x/",
+    src: "s",
+    editor: true,
+  });
+  expect(JSON.parse(/\((\{"shell":.*?\})\);<\/script>/.exec(own)![1]).editor).toMatchObject({ src: "", preload: [] });
   // A reader's page has none of the editor's.
   const reader = readerPage("<p>x</p>", { shell: "https://erga.test", prefix: "/t/x/", src: "s", editor: false });
   expect(reader).not.toContain("importmap");
@@ -60,6 +74,15 @@ test("an editor's page names the editor's half at the app's origin, with the int
   useAssets({ ...MANIFEST, files: { ...MANIFEST.files, "frame.js": "/_erga/frame-zzzz0000.js" } });
   expect(readerVersion()).not.toBe(before);
   useAssets(MANIFEST);
+});
+
+test("a library's address imports its newest build, asked for again each time, from any origin", async () => {
+  useAssets(MANIFEST);
+  const r = await respond(Effect.succeed(serveLibrary("text")), new Request("https://erga.test/erga/text/editor.js"), {} as Platform);
+  expect(await r.text()).toBe('import "/_erga/frame-bbbb2222.js";\n');
+  expect(r.headers.get("cache-control")).toBe("no-cache");
+  expect(r.headers.get("access-control-allow-origin")).toBe("*");
+  expect(r.headers.get("content-type")).toMatch(/^text\/javascript/);
 });
 
 test("served by the Worker (local development), a hashed file is kept a year and any origin may load it; a missing one is never kept", async () => {

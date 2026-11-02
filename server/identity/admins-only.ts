@@ -19,7 +19,8 @@
 //                                   sign-in page and an admin's frame on the pages origin load them without a session.
 //                                   On Cloudflare the Worker doesn't even run for /_erga/... (cloudflare.config.ts
 //                                   runWorkerFirst): they're served as they are, to anyone, with _headers' headers;
-//                                   so nothing but the client build's own output may ever go under /_erga/
+//                                   so nothing but the client build's own output may ever go under /_erga/; and an
+//                                   editing library's address, /erga/<name>/editor.js, one line that imports its build
 //   GET /api/deploys/version        the release and target, which the deploy pipeline waits on
 //   GET /api/health                 the health check the pipeline runs after (ok, the release, the checks: no data)
 //   /api/snapshot/...               the deploy copying production's documents in, and staging reading a blob its copy
@@ -57,7 +58,7 @@
 
 import * as Effect from "effect/Effect";
 import { isPagesSite, keyedPerson, pagesHost, readPagesClaims } from "../documents/index.ts";
-import { isAssetPath, page, safeNext } from "../pages/index.ts";
+import { isAssetPath, libraryOf, page, safeNext } from "../pages/index.ts";
 import { esc } from "../../shared/html.ts";
 import { whoOf, type Platform } from "../platform.ts";
 import { tokenPath } from "./token-paths.ts";
@@ -68,7 +69,7 @@ function exempt(request: Request, base: Platform, url: URL): boolean {
   const path = url.pathname;
   const method = request.method;
   if (path == "/auth/sign-in" || path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/google" || path == "/auth/google/callback" || path == "/auth/logout") return true;
-  if (isAssetPath(path) || path == "/logo.png") return method == "GET" || method == "HEAD";
+  if (isAssetPath(path) || path == "/logo.png" || libraryOf(path)) return method == "GET" || method == "HEAD";
   if (path == "/api/deploys/version" || path == "/api/health") return method == "GET" || method == "HEAD";
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/__erga/")) return true;
