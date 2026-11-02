@@ -240,3 +240,28 @@ test("the MCP sign-in gives the person's own power: an admin's app gets admin po
   const theirs = (await mcp(root, plain.token, "tools/list")).result.tools.map((t: { name: string }) => t.name);
   expect(theirs).not.toContain("list_deploys");
 });
+
+test("an admin can give the app documents only: the card offers the choice, and the token has no admin power", async ({ tab }) => {
+  const root = (await servers.main()).root;
+  const as = await discover(root);
+  const redirect = "http://127.0.0.1:9/callback";
+  const client = await register(as.registration_endpoint, redirect);
+  const { verifier, challenge } = await pkce();
+  const page = tab.page;
+  await page.goto(
+    `${as.authorization_endpoint}?${new URLSearchParams({ response_type: "code", client_id: client, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256" })}`
+  );
+  // Admin power is the default; the admin picks documents only, as a person does, and approves.
+  expect(await page.getByLabel(/Admin power/).isChecked()).toBe(true);
+  await page.getByLabel(/Documents only/).check();
+  const [sent] = await Promise.all([page.waitForRequest((r) => r.url().startsWith(redirect)), page.click("button[value=approve]")]);
+  const code = new URL(sent.url()).searchParams.get("code")!;
+  const got = await trade(as.token_endpoint, { code, client_id: client, redirect_uri: redirect, code_verifier: verifier });
+  expect((got.body as { scope?: string }).scope).toBe("documents");
+  expect(await whoami(root, got.body.access_token!)).toMatchObject({ adminPower: false, token: { scope: "documents" } });
+
+  // A person who isn't an admin sees no choice.
+  const { cookie } = await signIn(await servers.main(), freshLogin("mcp-plain"));
+  const plain = await signInOver(root, cookie);
+  expect(plain.card).not.toContain("Documents only");
+});

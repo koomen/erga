@@ -3,7 +3,7 @@
 // and Revoke are the operations list_tokens and revoke_token. And a token's expiry as given, which the API reads too.
 //
 //   GET  /tokens/approve      ?code=: an agent's request for a token, with Approve (if the person may give it) and Deny
-//   POST /tokens/approve      code, answer (approve or deny)
+//   POST /tokens/approve      code, answer (approve or deny), scope (documents: an admin request approved as documents only)
 //   POST /tokens/new          { label, scope, doc?, expires? }: a new token, answered once ({ token, info })
 //   GET  /tokens/test         { token, expires }: a token for running the test suite here, as test people
 
@@ -116,7 +116,7 @@ export const tokensRoutes: Route = Effect.gen(function* () {
         );
       return yield* back("/tokens/approve", { denied: waiting.label });
     }
-    const r = yield* scoped(() => platform.tokens.approve(code, who));
+    const r = yield* scoped(() => platform.tokens.approve(code, who, f.scope == "documents"));
     if ("refused" in r) return yield* back(`/tokens/approve?code=${encodeURIComponent(code)}`, { refused: r.refused });
     // MCP's sign-in: back to the app, with the code it trades for the token.
     if (r.value?.oauth)
@@ -130,7 +130,7 @@ export const tokensRoutes: Route = Effect.gen(function* () {
 });
 
 /** The approval page's form (a field that's missing is ""). */
-const ApproveForm = Schema.Struct({ code: Field, answer: Field });
+const ApproveForm = Schema.Struct({ code: Field, answer: Field, scope: Field });
 /** A new token, as the Settings dialog sends it (client/agent/settings-dialog.ts). */
 const NewToken = Schema.Struct({
   label: Schema.optionalKey(Schema.String),
@@ -161,9 +161,16 @@ async function approvalCard(
   const what = g.scope == "document" ? `one document: ${await docLabel(platform, g.docId)}. It can do there what you can do, and nothing anywhere else.`
     : g.scope == "documents" ? "all your documents: everything you can do with documents, but no admin power."
         : "all your documents, and admin power: everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.";
+  // An admin request the person may approve: they choose admin power (the default) or documents only.
+  const choose = g.scope == "admin" && !may;
+  const choice = choose
+    ? `<fieldset class="choice"><legend>Give it</legend>
+<label><input type="radio" name="scope" value="admin" checked><span><b>Admin power</b>: all your documents, and the server's settings, users, source and deploys</span></label>
+<label><input type="radio" name="scope" value="documents"><span><b>Documents only</b>: all your documents, but no admin power</span></label></fieldset>`
+    : "";
   return `<section class="card approve"><h2>An agent asks to act as you</h2>
 <p><b>${esc(waiting.label)}</b> wants a token for ${what}</p>
-<dl class="grant"><dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd><dt>Expires</dt><dd>${g.expires ? day(g.expires) : "Never (until you revoke it)"}</dd></dl>
+<dl class="grant">${choose ? "" : `<dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd>`}<dt>Expires</dt><dd>${g.expires ? day(g.expires) : "Never (until you revoke it)"}</dd></dl>
 ${
   waiting.oauth
     ? `<p>Approve only if you just added Erga to this app. Approve sends you back to <b>${esc(whereBack(waiting.oauth.redirectUri))}</b>, and the app gets the token.</p>`
@@ -171,7 +178,7 @@ ${
 <p class="code">${esc(code)}</p>`
 }
 ${may ? `<p class="notice error">${esc(may)}</p>` : ""}
-<form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></form></section>`;
+<form method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${choice}<div class="buttons">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></div></form></section>`;
 }
 
 /** /tokens/approve: the request's card, or what became of it. */
