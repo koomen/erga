@@ -1,4 +1,4 @@
-// The text guard (client/page-editor/text-guard.ts says what it does), while the editor is on the page (data-erga-editing):
+// The text guard (libs/text/ui/text-guard.ts says what it does), while the editor is on the page (data-erga-editing):
 // first in a document's page (server/pages/reader.ts), so its listeners on the window, in the capture phase, run before
 // any of the page's. (Indexed loops and forEach, as the page's own script may change other ways to go through a list.)
 

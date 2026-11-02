@@ -143,7 +143,7 @@ Found a new trap? Write it here, in the same change.
 - The person's tab may be in the background. Chrome runs a hidden tab's chained
   timers once a second, after 5 minutes once a minute, and draws no frames. Code
   that answers the agent from the tab (view_page's render) waits with
-  `client/page-editor/clock.ts`, never with `sleep` or requestAnimationFrame.
+  `libs/text/ui/clock.ts`, never with `sleep` or requestAnimationFrame.
 - A live list (`data-live-kind`, server/news/) gets new rows after the page loaded,
   and a changed row is a new element. Attach a row's listeners in its
   `wire(row)` (client/common/live-rows.ts), never in a loop over the rows at

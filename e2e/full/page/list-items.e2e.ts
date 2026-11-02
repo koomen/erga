@@ -1,4 +1,4 @@
-// An item with a list in it splits and joins as an item (client/page-editor/lists.ts): Enter at the end of its text
+// An item with a list in it splits and joins as an item (libs/text/api/lists.ts): Enter at the end of its text
 // makes a new item that takes the list, not a second paragraph in the item; Backspace gives the item back. Shift+Tab
 // with the caret at the end of an item's text keeps the caret there. A selection from a paragraph into a list, deleted,
 // joins the two, as in a list.

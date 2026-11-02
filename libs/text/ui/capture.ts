@@ -10,10 +10,10 @@ import {
   type StepShown,
   type ViewRequest,
   type ViewResult,
-} from "../../shared/agent-log";
-import { findStep, stepNumber, stepSpec } from "../../shared/steps";
+} from "../../../shared/agent-log";
+import { findStep, stepNumber, stepSpec } from "../../../shared/steps";
 import { FRAMES_BY_CLOCK, frames, wait } from "./clock";
-import { topRoom } from "../common/top-room";
+import { topRoom } from "../../../client/common/top-room";
 
 // The agent asks to see the page. This frame renders the latest version
 // (edits still waiting for the end of the agent's turn included) in a

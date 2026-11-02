@@ -6,7 +6,7 @@
 // half for whoever may edit.
 
 import type { ReaderConfig } from "../../shared/page-html";
-import { copyOf } from "../page-editor/clipboard-html";
+import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
 import { topRoom } from "../common/top-room";
 
@@ -198,7 +198,7 @@ export default function reader(C: ReaderConfig): void {
     },
     { capture: true, passive: true }
   );
-  // Links, reading (the editor follows its own: client/page-editor/frame.ts), read as Erga addresses
+  // Links, reading (the editor follows its own: libs/text/ui/frame.ts), read as Erga addresses
   // (client/common/link-target.ts). To another of the document's pages: in this frame, even when the link names it by
   // its Erga address or says "_top". Out of the document: a new tab, unless the link names its own target; "_self"
   // takes the whole tab. A ⌘-, Ctrl- or Shift-click, or the middle button: a new tab, at a page's public address (never

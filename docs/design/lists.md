@@ -8,7 +8,7 @@ their text in a `<p>` keeps it. Two lists of the same kind side by side join whe
 (items pasted right above a list). What follows is the design as it was decided first.
 
 Decision (2026-10-28): **refactor, but not as a rewrite.** All list edits now go
-through one module, `client/page-editor/lists.ts`. It has one model of a list
+through one module, `libs/text/api/lists.ts`. It has one model of a list
 item, the list operations as pure functions of the source, and one cleanup
 after every edit. A full model with a serializer that writes the whole list
 again is not used. The reasons are in "Not chosen" below.

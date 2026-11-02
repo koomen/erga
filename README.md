@@ -181,9 +181,13 @@ health checks and rollbacks work.
                   files (attach.ts), who did something (attribution.ts), a page's text and its source (manuscript.ts,
                   page-html.ts), the room's socket (room-socket.ts), ... The browser's bundles may have shared/, and of
                   document/ only content.ts, pages.ts, merge.ts and api.ts's types: tests/browser-imports.test.ts keeps it so
+    libs/         Erga's editing libraries, apart from Erga's code: each has an api/ (named edits on the page's HTML, with
+                  no browser: the layer of shared/) and a ui/ (keys, carets, the drawing: the browser's layer). The API never
+                  imports the UI
+      text/           erga/text, the page editor in the page (frame.js: ui/frame.ts): api/ has the editing rules (rules.ts,
+                      blocks.ts, lists.ts), the source's helpers (source.ts), the clipboard's blocks and the custom edits
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
       shell/          the editor's shell (page.js): main.ts, the room (collab.ts), the source view, the shell's parts
-      page-editor/    the page editor in the page (frame.js: frame.ts), and what the shell shares with it
       agent/          the agent panel both the editor and the admin pages use (agent-chat.ts, layout.ts, ...)
       admin/          the admin pages' scripts (admin-agent.ts, admin-nav.ts, admin-share.ts)
       pages/          the other pages' scripts: the settings, the pages tree
@@ -223,9 +227,9 @@ health checks and rollbacks work.
     .github/      the tests on each pull request and push (workflows/test.yml)
 
 The folders are layers. A file imports only its own layer and the layers
-below it, lowest first: `shared/`, `document/`, the areas of `server/`,
+below it, lowest first: `shared/` (and each library's `api/`), `document/`, the areas of `server/`,
 `control/`, `agents/`, `server/app.ts` and `server/api.ts`, `cloudflare/`.
-`client/` imports `shared/` and a few files of `document/`; `deploy/`,
+`client/` and each library's `ui/` import `shared/`, `libs/` and a few files of `document/`; `deploy/`,
 `dev/`, `tests/` and `e2e/` import anything. Each area of `server/`
 (directory, identity, documents, pages, home, admin, operations) is imported through
 its `index.ts`, its interface. Only `cloudflare/` and `control/` read the

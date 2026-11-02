@@ -1,4 +1,4 @@
-// The frame's text and the shell's stay in step (client/page-editor/bridge.ts). Pete saw "Applying change set to a
+// The frame's text and the shell's stay in step (libs/text/ui/bridge.ts). Pete saw "Applying change set to a
 // document with the wrong length" while he edited his deck: an edit from outside (the agent, the disk) that came while
 // the page loaded again went to the new page twice, once in its init and once more after it.
 import { expect, servers, test, until } from "../../helpers/fixtures";

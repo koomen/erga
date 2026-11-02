@@ -36,7 +36,7 @@ test("Shift-click extends a caret into another unit; a copy is the units' text a
   const m = await ed.selection();
   expect(m.text.startsWith("unch notes") && m.text.endsWith("Faster")).toBe(true);
   const copied = await ed.frame<{ text: string; html: string }>(`(() => { const d = new DataTransfer(); ${F}.body.dispatchEvent(new ClipboardEvent("copy", { clipboardData: d, bubbles: true, cancelable: true })); return { text: d.getData("text/plain"), html: d.getData("text/html") }; })()`);
-  // The plain text is Markdown (client/page-editor/clipboard-html.ts).
+  // The plain text is Markdown (libs/text/api/clipboard.ts).
   expect(copied.text).toBe(
     "# unch notes\n\nBuild *cool* things & ship them. This paragraph has [a link](https://example.com/) and `code`.\n\n**0**clicks\n\n## What changed\n\n- Faster"
   );

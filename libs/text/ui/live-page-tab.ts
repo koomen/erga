@@ -17,10 +17,10 @@
 import {
   ConsoleLog, EVENT_TYPES, liveWatch, Ring, fromTiming, mergeHooked, queryConsole, queryEvents, queryNetwork,
   type ActResult, type Activation, type ConsoleLevel, type Consumer, type EventEntry, type HookedRequest, type LiveRequest, type LiveResult, type NetworkEntry,
-} from "../../shared/live-page";
+} from "../../../shared/live-page";
 import { evaluateIn, toJSON } from "./evaluate";
-import { EVAL_MAX_JSON, evalTimeout } from "../../shared/agent-log";
-import { sleep } from "../../shared/time";
+import { EVAL_MAX_JSON, evalTimeout } from "../../../shared/agent-log";
+import { sleep } from "../../../shared/time";
 
 type LiveWindow = Window & typeof globalThis & { __ergaLiveInstalled?: boolean; __ergaLiveTake?: (sink: Sink) => void };
 type Sink = (kind: string, data: unknown) => void;

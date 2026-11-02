@@ -1,11 +1,11 @@
 // A document's page as its pages origin serves it (server/documents/pages-origin.ts), to readers and editors alike:
 // its own HTML as written, with first in its <head> the viewer's script (server/pages/reader.ts), and, for whoever may
 // edit, the scripts below. The page loads once: going into the editor loads the editor's half into it
-// (client/page-editor/frame.ts), which checks the page was made from the text it has (sourceDigest) and ties the page to
-// a parse of that text (client/page-editor/mirror.ts). Pure: the server makes the page with it, and the editor reads it
+// (libs/text/ui/frame.ts), which checks the page was made from the text it has (sourceDigest) and ties the page to
+// a parse of that text (libs/text/ui/mirror.ts). Pure: the server makes the page with it, and the editor reads it
 // back.
 //
-// Each script here goes in as a <script data-erga>: the editor's additions, which the editor's patch (client/page-editor/mirror.ts) leaves be.
+// Each script here goes in as a <script data-erga>: the editor's additions, which the editor's patch (libs/text/ui/mirror.ts) leaves be.
 
 /** What the script needs: the viewer's origin, where the document's files are (with the token), and its text's digest. */
 export interface ReaderConfig {
@@ -48,7 +48,7 @@ export function insertHead(html: string, inject: string): string {
   return doctype ? doctype[0] + inject + html.slice(doctype[0].length) : inject + html;
 }
 
-/** The mark the editor puts on each text block's element while it edits (client/page-editor/core.ts). */
+/** The mark the editor puts on each text block's element while it edits (libs/text/ui/core.ts). */
 export const TEXT_ATTR = "data-erga-text";
 /** Where a press is the editor's: in a text block that takes edits, not in a widget or a form field. */
 export const GUARD_TEXT = `[${TEXT_ATTR}]`;

@@ -17,16 +17,18 @@
 // resort (it loads again: onReload). IME composition is the one case where the browser edits the DOM
 // first; the text is read back into the model when it ends.
 
-// Its parts, each a layer of the class over the one before, are in client/page-editor/: core.ts (the state, and
+// Its parts, each a layer of the class over the one before, are in libs/text/ui/: core.ts (the state, and
 // positions between the source and the DOM), marks.ts (marks and other people's carets), render.ts (the page and
 // its patches), edit.ts (edits and history), format.ts (styles and links), markdown.ts (Markdown shortcuts),
-// clipboard.ts (paste and copy) and input.ts (keys, input, the pointer).
+// clipboard.ts (paste and copy) and input.ts (keys, input, the pointer). The rules that make each key's change to the
+// source are the library's API (libs/text/api/).
 
 import type { ChangeSet, EditorState } from "@codemirror/state";
-import * as M from "../../shared/manuscript";
-import { changesBetween } from "../../document/merge";
-import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageProblem, PageUpdate, Peer } from "./types";
-import { touched } from "./source";
+import * as M from "../../../shared/manuscript";
+import { changesBetween } from "../../../document/merge";
+import type { HeldInput, LinkEdit, LinkInfo, MarkAuthor, PageEditorConfig, PageProblem, PageUpdate, Peer } from "./types";
+import type { InlineStyle } from "../api/source";
+import { touched } from "../api/source";
 import { marksFor } from "./marks";
 import { noHistory } from "./core";
 import { EditorInput } from "./input";

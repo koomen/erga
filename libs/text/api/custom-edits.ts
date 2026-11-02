@@ -18,7 +18,7 @@
 // New HTML is indented to match the code around it. This module is pure and
 // runs in the browser and under bun.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 
 /** Where new or moved HTML goes, by an element of the page. */
 export type Where<R> = { before: R } | { after: R } | { into: R } | { prepend: R };

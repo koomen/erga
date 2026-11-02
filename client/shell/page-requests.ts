@@ -6,7 +6,7 @@ import { aimEdits, applySpans } from "../../shared/text-edits";
 import { cleanPath, isPage, resolvePage } from "../../document/pages";
 import { files } from "../../document/content";
 import { ConsoleLog, liveWatch, queryConsole, shownInTab, type ConsoleLevel, type LiveRequest, type LiveResult } from "../../shared/live-page";
-import { ms } from "../page-editor/timescale";
+import { ms } from "../../libs/text/ui/timescale";
 import { $, type Shell } from "./shell";
 
 // The editor's own console (this window's), from its first line: page_console gives it with the page's ("editor").

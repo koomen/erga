@@ -51,7 +51,7 @@ Two more decisions come with it:
 ## Status (2026-10-30)
 
 - Step 1 (the check in the tests): done.
-- Steps 2 and 3 (the binding, and reconcile): done together, in `client/page-editor/mirror.ts`. Two changes to the
+- Steps 2 and 3 (the binding, and reconcile): done together, in `libs/text/ui/mirror.ts`. Two changes to the
   plan below:
   1. `data-erga-id` stays on a unit's element as a mark, but its value never changes: an element gets one when it
      becomes a unit, and keeps it. The editor finds a unit from its element through a `WeakMap`, not by the number.
@@ -69,7 +69,7 @@ Two more decisions come with it:
   writes items the same way, and a list pasted right above a list of the same kind joins it.
 - Step 5 (undo steps): done. An edit that changes tags, and isn't typing, is an undo step of its own
   (`undoStep` in `edit.ts`); Enter over a selection is one step with the delete of the selection.
-- Step 6 (block rules): done, in `client/page-editor/blocks.ts`, with the table at its top. Each rule changes tags
+- Step 6 (block rules): done, in `libs/text/api/blocks.ts`, with the table at its top. Each rule changes tags
   only. Two changes to the plan, to keep behavior that tests and Pete's decisions document:
   1. Backspace at the start of a heading makes it a paragraph, and at the start of a top-level list's first item takes
      the bullet off (Pete's decision, after step 6). A later item joins the item above, and a nested item joins its
@@ -139,7 +139,7 @@ Pete's page "Erga editor mechanics" proposes four more changes. Their status:
   drawn (a stray end tag keeps the block locked). A composition no longer loads the page again. The page loads again
   only for a change the Mirror can't make in place: a `<script>`, a new `<style>`, or a change outside the `<body>`
   other than the text of a `<style>` or the `<title>` and an element's attributes.
-- Change 3 (the editing rules in one pure module): done, in `client/page-editor/rules.ts`. One function, `rules(page,
+- Change 3 (the editing rules in one pure module): done, in `libs/text/api/rules.ts`. One function, `rules(page,
   selection, intent)`, gives each key's step: its changes, the selection after them, and its undo step ("type" joins
   the typing before it, "own" is a step of its own; `undoOf` decides it for every other edit too). The intents: typing
   and a delete of a range (`type`), Backspace and Delete, Enter and Shift+Enter, Tab and Shift+Tab, and a paste of
@@ -165,7 +165,7 @@ Pete's page "Erga editor mechanics" proposes four more changes. Their status:
 ### 2.1 How the view works now
 
 - The model is the source text in a CodeMirror `EditorState`
-  (`client/page-editor/core.ts`).
+  (`libs/text/ui/core.ts`).
 - `shared/manuscript.ts` finds the **units**: leaf blocks with text. Each unit
   gets a number, `data-erga-id`, by its index in the page (`stamp`).
 - Each unit element is its own `contenteditable` host (`prepareUnit`).

@@ -1,9 +1,9 @@
 // The page editor's Markdown shortcuts: "# " makes a heading, "- " a list, "[ ] " a to-do item, **text** bold, and so
 // on, as you type.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { isolateHistory } from "@codemirror/commands";
-import { attrOf, escapeAttr, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "./source";
+import { attrOf, escapeAttr, setChecked, TODO_BOX, TODO_ITEM, textIn, todoBox } from "../api/source";
 import { EditorFormat } from "./format";
 
 export abstract class EditorMarkdown extends EditorFormat {

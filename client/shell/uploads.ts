@@ -1,4 +1,4 @@
-// Files dropped or pasted on the page in the editor (the page's editor sends them: client/page-editor/input.ts): each
+// Files dropped or pasted on the page in the editor (the page's editor sends them: libs/text/ui/input.ts): each
 // goes into the document's files at its top, an image in images/ and any other file in files/, under its own name or,
 // if a file has that name already, the name with -2, -3, ... before its extension. The page's editor then puts them on
 // the page where they were dropped: an image as an image, another file as a link to it.

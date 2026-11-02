@@ -19,7 +19,7 @@
 // listeners on the window, in the capture phase, run before any of theirs. It
 // guards only while the editor is on the page (data-erga-editing).
 
-import { GUARD_DOWN, GUARD_MOVE, GUARD_UP } from "../../shared/page-html";
+import { GUARD_DOWN, GUARD_MOVE, GUARD_UP } from "../../../shared/page-html";
 
 type Listener = (e: Event) => void;
 type OwnWindow = Window & { __ergaOwn?: Record<string, Listener[]> };

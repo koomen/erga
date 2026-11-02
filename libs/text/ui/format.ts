@@ -1,12 +1,13 @@
 // The page editor's styles and links: bold, italic and code on a selection, clearing them, and the links the link
 // bar shows and changes.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { EditorSelection, type SelectionRange, type ChangeSet, type Text } from "@codemirror/state";
-import type { InlineStyle, LinkEdit, LinkInfo } from "./types";
-import { attrOf, dropped, escapeAttr, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn } from "./source";
+import type { LinkEdit, LinkInfo } from "./types";
+import type { InlineStyle } from "../api/source";
+import { attrOf, dropped, escapeAttr, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn } from "../api/source";
 import { EditorEdit } from "./edit";
-import { editableAt, inlineAt, placeholderDrops } from "./rules";
+import { editableAt, inlineAt, placeholderDrops } from "../api/rules";
 
 export abstract class EditorFormat extends EditorEdit {
   /** A style shortcut: always handled, so the browser never applies its own; if it can't apply, say why. */

@@ -12,7 +12,7 @@
 // | code block | a new line; at the end, one that shows | joins | two spaces (rules.ts) |
 // | summary | at the end: a paragraph in the open details, or after the closed one | joins | nothing |
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { ChangeSet } from "@codemirror/state";
 import { attrOf, emptyIn, escapeAttr, HEADING, placeholderBr, setAttr, unitsIn } from "./source";
 import { elements, itemOf, type Change, type ListEdit } from "./lists";

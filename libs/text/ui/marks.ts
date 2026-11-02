@@ -2,10 +2,10 @@
 // other people's carets and selections; and blocks that flash where a change showed no text.
 
 import type { ChangeSet } from "@codemirror/state";
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { ms } from "./timescale";
 import type { MarkAuthor, Peer } from "./types";
-import { textIn, unitsIn } from "./source";
+import { textIn, unitsIn } from "../api/source";
 import { EditorCore } from "./core";
 
 export type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number; author?: MarkAuthor | null };

@@ -1,5 +1,5 @@
 // The page tools: view_page and evaluate_page, which render the page afresh in the person's tab (a hidden frame of
-// the page editor: client/page-editor/frame.ts, captureView), and the live page's (page_console ... page_key), which
+// the page editor: libs/text/ui/frame.ts, captureView), and the live page's (page_console ... page_key), which
 // read and act on the page as it runs there (shared/live-page.ts).
 
 import * as Schema from "effect/Schema";

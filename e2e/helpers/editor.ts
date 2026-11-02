@@ -35,7 +35,7 @@ const PAGE_AT = `({ left: 0, top: 0 })`;
 const RAW = { Home: 36, End: 35, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 } as const;
 const MOD: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8, ControlOrMeta: process.platform == "darwin" ? 4 : 2 };
 
-/** The editor's timers run at this fraction of real time in the tests (client/page-editor/editor.ts, `ms`). */
+/** The editor's timers run at this fraction of real time in the tests (libs/text/ui/editor.ts, `ms`). */
 export const TIMESCALE = 0.1;
 /**
  * How long an edit on disk may take to reach the tab, or the tab's to reach the disk: the file watcher, the dev server
@@ -68,7 +68,7 @@ export async function openEditor(tab: Tab, server: Server, fixture: string, opts
   await page.addInitScript(({ timescale, agent }) => {
     if (window.top != window) return;
     (window as any).__ergaTimescale = timescale;
-    // The page editor checks after each change that the page shows its HTML (client/page-editor/check.ts).
+    // The page editor checks after each change that the page shows its HTML (libs/text/ui/check.ts).
     (window as any).__ergaCheck = true;
     // Someone who keeps the agent pane closed (it opens by itself in the editor otherwise): set once, so the tab can still open it.
     if (!agent) try {

@@ -1,7 +1,7 @@
 // A document's page, as everyone sees it: one frame on the viewer (pages/viewer.ts), which holds the page on the
 // document's own pages origin (documents/pages-origin.ts), served with the source marks the editor needs
 // (shared/page-html.ts). It loads once: reading it, and editing it. Going into the editor loads the editor's half into the
-// page itself (client/page-editor/frame.ts, from the app's origin, pinned by its integrity), which finds the text there by its
+// page itself (libs/text/ui/frame.ts, from the app's origin, pinned by its integrity), which finds the text there by its
 // marks; going back out stops it, and the page stays as it is, its scripts and media carrying on.
 //
 // This script goes into the page first (before the page's own), and tells the viewer by postMessage what it needs:

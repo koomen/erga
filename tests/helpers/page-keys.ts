@@ -17,16 +17,16 @@ g.navigator ??= { platform: "MacIntel", userAgent: "bun" };
 import { mock } from "bun:test";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import * as M from "../../shared/manuscript";
-import * as standIn from "../../client/page-editor/frame-view";
-import type * as C from "../../client/page-editor/clipboard-html";
+import * as standIn from "../../libs/text/ui/frame-view";
+import type * as C from "../../libs/text/api/clipboard";
 // (The editor's globals, for the type check: frame.ts declares them.)
-import type {} from "../../client/page-editor/frame";
+import type {} from "../../libs/text/ui/frame";
 
 // The frame's build has a stand-in for @codemirror/view (client/build.ts FRAME_VIEW); so does this.
 mock.module("@codemirror/view", () => standIn);
 lend();
 const { history } = await import("@codemirror/commands");
-const { EditorInput } = await import("../../client/page-editor/input");
+const { EditorInput } = await import("../../libs/text/ui/input");
 giveBack();
 
 /** Marks the selection in `src`: "|" for a caret, else "[" at the anchor and "]" at the head. */

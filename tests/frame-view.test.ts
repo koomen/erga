@@ -1,4 +1,4 @@
-// The frame's build has an inert stand-in for @codemirror/view (client/page-editor/frame-view.ts,
+// The frame's build has an inert stand-in for @codemirror/view (libs/text/ui/frame-view.ts,
 // client/build.ts FRAME_VIEW): the frame keeps an EditorState and never a view. This
 // checks that the frame's bundle has none of the real view's code, and that what the
 // frame does with CodeMirror (a state with its history: edits, undo and redo; the state
@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FRAME_VIEW } from "../client/build.ts";
-import * as standIn from "../client/page-editor/frame-view.ts";
+import * as standIn from "../libs/text/ui/frame-view.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 
@@ -17,7 +17,7 @@ test("the frame's bundle has nothing of @codemirror/view but the stand-in", asyn
   const outdir = mkdtempSync(join(tmpdir(), "erga-frame-"));
   try {
     const built = await Bun.build({
-      entrypoints: [join(ROOT, "client/page-editor/frame.ts")],
+      entrypoints: [join(ROOT, "libs/text/ui/frame.ts")],
       outdir,
       splitting: true,
       target: "browser",
@@ -29,7 +29,7 @@ test("the frame's bundle has nothing of @codemirror/view but the stand-in", asyn
     const meta = (built as unknown as { metafile: { inputs: Record<string, unknown>; outputs: Record<string, { inputs: Record<string, unknown>; entryPoint?: string }> } }).metafile;
     const all = Object.keys(meta.inputs);
     expect(all.filter((p) => p.includes("@codemirror/view"))).toEqual([]);
-    expect(all.some((p) => p.endsWith("client/page-editor/frame-view.ts"))).toBe(true);
+    expect(all.some((p) => p.endsWith("libs/text/ui/frame-view.ts"))).toBe(true);
     // And the agent's screenshots load only when asked for: a chunk of their own, not the frame's script.
     const entry = Object.values(meta.outputs).find((o) => o.entryPoint)!;
     expect(Object.keys(entry.inputs).filter((p) => p.includes("modern-screenshot"))).toEqual([]);

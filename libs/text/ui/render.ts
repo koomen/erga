@@ -1,13 +1,13 @@
 // The page editor's rendering: it takes the page in the window, makes it afresh when it must, patches the DOM for each
 // change, and applies the page's own custom edits.
 
-import * as M from "../../shared/manuscript";
+import * as M from "../../../shared/manuscript";
 import { Transaction, MapMode, type ChangeSet, type TransactionSpec } from "@codemirror/state";
-import { sourceDigest, TEXT_ATTR } from "../../shared/page-html";
-import { planCustomEdits, type CustomEdit } from "./custom-edits";
+import { sourceDigest, TEXT_ATTR } from "../../../shared/page-html";
+import { planCustomEdits, type CustomEdit } from "../api/custom-edits";
 import { watchMoves } from "./moves";
 import { ms } from "./timescale";
-import { balanceWhitespace, same } from "./source";
+import { balanceWhitespace, same } from "../api/source";
 import { PAGE_STYLE } from "./page-style";
 import { describeProblem, type RawProblem } from "./problems";
 import { noHistory, pageOwnBox } from "./core";

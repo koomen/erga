@@ -1,7 +1,7 @@
 // What a structural key costs in the page editor, by document size: Enter at the end of a paragraph and the
 // Backspace that joins it back, Tab in a list item and the Shift+Tab that takes it back. Not a test of behaviour, and
 // in no suite (run it by name: `bun run test:e2e e2e/bench/structural.e2e.ts`). For each key, 20 times: the frame's
-// work for the key (median, ms), the DOM mutations it makes, and the time spent in the analysis and in reconcile (client/page-editor/mirror.ts).
+// work for the key (median, ms), the DOM mutations it makes, and the time spent in the analysis and in reconcile (libs/text/ui/mirror.ts).
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { servers, test } from "../helpers/fixtures";
@@ -33,7 +33,7 @@ for (const [name, bytes] of [
     const server = await servers.main();
     const { dir, address } = await server.fixture("page");
     writeFileSync(join(dir, "index.html"), documentOf(bytes));
-    // The check that the page shows its HTML, after each key (client/page-editor/check.ts): its reports are printed.
+    // The check that the page shows its HTML, after each key (libs/text/ui/check.ts): its reports are printed.
     await tab.page.addInitScript(() => {
       if (window.top == window) (window as { __ergaCheck?: boolean }).__ergaCheck = true;
     });

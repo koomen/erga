@@ -2,7 +2,7 @@
 // result as JSON: evaluate_page's in view_page's throwaway render (frame.ts),
 // page_inspect's in the live page (live-page.ts).
 
-import { EVAL_MAX_JSON } from "../../shared/agent-log";
+import { EVAL_MAX_JSON } from "../../../shared/agent-log";
 
 // evaluate_page: the agent's expression runs in the same throwaway render
 // view_page draws, so it sees computed styles, fonts and sizes as the page

@@ -15,7 +15,7 @@
 // view_page uses (POST /api/agent/view): a ViewRequest with `live`.
 //
 // Pure: the logs and the words for the agent are here, tested in tests/live-page.test.ts;
-// the tab's side is client/page-editor/live-page-tab.ts.
+// the tab's side is libs/text/ui/live-page-tab.ts.
 
 import { plural } from "./time";
 

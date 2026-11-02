@@ -19,11 +19,11 @@ import { Relay, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Sn
 import { catchZoomGestures, clampZoom } from "./zoom";
 import { captureView } from "./capture";
 import { LivePage } from "./live-page-tab";
-import { changesBetween } from "../../document/merge";
-import { baseName, encodePath } from "../../document/pages";
-import { sourceDigest } from "../../shared/page-html";
-import { linkTarget, placeOf } from "../common/link-target";
-import type { ViewResult } from "../../shared/agent-log";
+import { changesBetween } from "../../../document/merge";
+import { baseName, encodePath } from "../../../document/pages";
+import { sourceDigest } from "../../../shared/page-html";
+import { linkTarget, placeOf } from "../../../client/common/link-target";
+import type { ViewResult } from "../../../shared/agent-log";
 
 declare global {
   interface Window {
@@ -36,7 +36,7 @@ declare global {
 /**
  * What the frame's editor state needs: the history (undo, shared with the
  * source view). No language: the frame has no CodeMirror view to highlight
- * (its build has an inert stand-in for the view's module: client/page-editor/frame-view.ts),
+ * (its build has an inert stand-in for the view's module: libs/text/ui/frame-view.ts),
  * and the page is parsed by the page editor itself. The source view, in the
  * shell, has the HTML language. (Here, not in bridge.ts: the shell's main
  * script imports bridge.ts, and @codemirror/commands would bring the view.)
