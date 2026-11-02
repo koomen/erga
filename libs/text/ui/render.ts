@@ -2,7 +2,7 @@
 // change, and applies the page's own custom edits.
 
 import * as M from "../../../shared/manuscript";
-import { Transaction, MapMode, type ChangeSet, type TransactionSpec } from "@codemirror/state";
+import { ChangeSet, Transaction, MapMode, type TransactionSpec } from "@codemirror/state";
 import { sourceDigest, TEXT_ATTR } from "../../../shared/page-html";
 import { planCustomEdits, type CustomEdit } from "../api/custom-edits";
 import { watchMoves } from "./moves";
@@ -365,7 +365,7 @@ export abstract class EditorRender extends EditorMarks {
 
   protected applyChanges(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): void {
     if (!this.doc || this.rendering) return;
-    const how = this.reconcile(tr.changes, oldUnits, oldSrc);
+    const how = this.reconcile(tr.changes, oldUnits, oldSrc, this.src) || this.reconcileEach(tr.changes, oldSrc);
     if (how) {
       this.unshown = false;
       this.recheck(tr.changes, how == "region");
@@ -420,10 +420,9 @@ export abstract class EditorRender extends EditorMarks {
    * change. False, with nothing changed, if the change can't be made in place (a script or a style changed): only a
    * render shows it (unshown). Else which way it went: "text" or "region".
    */
-  protected reconcile(changes: ChangeSet, oldUnits: M.Unit[], oldSrc: string): "text" | "region" | false {
+  protected reconcile(changes: ChangeSet, oldUnits: M.Unit[], oldSrc: string, src: string): "text" | "region" | false {
     const mirror = this.mirror;
     if (!this.doc || !mirror || oldUnits != this.units) return false;
-    const src = this.src;
     const texts = this.textChanges(changes, oldSrc, src);
     if (texts) {
       for (const id of texts) this.setTexts(this.units[id], src);
@@ -514,6 +513,31 @@ export abstract class EditorRender extends EditorMarks {
       });
     }
     return "region";
+  }
+
+  /**
+   * A change of several parts that no one region holds (an agent's edit to a style rule and to a heading, at once):
+   * each part brought in on its own, in order, as if each were a change of its own. False if one can't be: the page
+   * then loads again (unshown), which shows them all.
+   */
+  private reconcileEach(changes: ChangeSet, oldSrc: string): "text" | "region" | false {
+    const parts: { from: number; to: number; insert: string }[] = [];
+    changes.iterChanges((from, to, _fb, _tb, inserted) => parts.push({ from, to, insert: inserted.toString() }));
+    if (parts.length < 2) return false;
+    let src = oldSrc,
+      shift = 0,
+      how: "text" | "region" = "text";
+    for (const p of parts) {
+      const from = p.from + shift,
+        to = p.to + shift;
+      const next = src.slice(0, from) + p.insert + src.slice(to);
+      const r = this.reconcile(ChangeSet.of({ from, to, insert: p.insert }, src.length), this.units, src, next);
+      if (!r) return false;
+      if (r == "region") how = "region";
+      src = next;
+      shift += p.insert.length - (p.to - p.from);
+    }
+    return how;
   }
 
   /**

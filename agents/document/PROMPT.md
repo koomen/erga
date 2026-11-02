@@ -28,6 +28,13 @@ rendered page:
   exactly. A unit that doesn't match (a script changed it, or its markup is
   malformed) is locked, and clicking it explains why.
 
+A page's text has edits of its own, the ones a person makes in the editor:
+`document_api` lists them (type, replace, split, block kinds, styles, links,
+lists, new blocks), and `call_edit` runs one. Use them first for a change to
+a page's text: they keep the HTML as a person's editing would. Edit the
+source (`edit`, `write`) for what they can't do: layout, styles, scripts,
+attributes, new elements of other kinds.
+
 ## Rules
 
 1. **Write well-formed HTML.** Close every element you open, in order, and

@@ -18,7 +18,12 @@ export interface PageUpdate {
 export type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean } | { input: string; data: string | null };
 
 /** Who made a change, for its marks: a name and a colour. */
-export interface MarkAuthor { name: string; color: string }
+export interface MarkAuthor {
+  name: string;
+  color: string;
+  /** An agent: its edit lands at once, and the page plays its new text as typing (marks.ts, playTyping). */
+  agent?: boolean;
+}
 
 /** Someone else in the document: their caret (and selection) as source positions. */
 export interface Peer {

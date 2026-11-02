@@ -8,8 +8,10 @@
 // apply. If the text the agent read has since changed under it (someone
 // typed there), the match fails cleanly and it reads again; that's what
 // makes an agent's stale picture of the file safe. Each tool call is
-// minimal deletes and inserts (streamed in steps, with a Pacer: one undo
-// step), so concurrent edits anywhere else in the file survive.
+// minimal deletes and inserts, landing at once in one transaction (one undo
+// step), so concurrent edits anywhere else in the file survive. Others see
+// it as typing: their editor plays it so, with the agent's caret (the
+// agent's caret goes to where its edit ends: `cursor`); the agent never waits.
 //
 // Each operation is an Effect that fails with a WorkspaceError: its reason
 // says what went wrong, its message says it to the model.
@@ -20,13 +22,15 @@ import * as Y from "yjs";
 import { changesBetween, rebase } from "../../document/merge";
 import { applyChanges, assets, files, folders, stamp, type Author } from "../../document/content";
 import { cleanPath } from "../../document/pages";
-import { aligned, pieces, type Piece } from "./typing";
+import { aligned, type Change } from "./minimal";
 import { aimEdits, type TextEdit } from "../../shared/text-edits";
 
 export interface Workspace {
   read(path: string): Effect.Effect<string, WorkspaceError>;
   edit(path: string, edits: readonly TextEdit[]): Effect.Effect<EditResult, WorkspaceError>;
   write(path: string, content: string): Effect.Effect<EditResult, WorkspaceError>;
+  /** Changes a page's own edit made (its API), against the text it was made from (`was`): nothing if that changed since. */
+  change(path: string, was: string, changes: Change[]): Effect.Effect<EditResult, WorkspaceError>;
   /** Every path, text and binary, sorted. */
   paths(): string[];
   /** The folders made as such (empty ones too), sorted; folders holding files are in `paths` too. */
@@ -58,32 +62,8 @@ export const EDITS = Schema.Array(
 /** Where an edit landed: the first changed position, for the agent's cursor. */
 export interface EditResult { path: string; at: number; summary: string }
 
-/**
- * How the agent's edits show while they apply (agents/document/session.ts): its
- * selection on the text each change replaces, then the new text streamed in
- * many small steps, as a model's answer is. Without one, an edit applies at once.
- */
-export interface Pacer {
-  /** Puts the agent's selection (head null: a caret) in the file, as positions that move with others' typing. */
-  cursor(path: string, anchor: Y.RelativePosition, head: Y.RelativePosition | null): void;
-  wait(ms: number): Promise<void>;
-  /** Takes back what this call applied so far (it's one undo step), when a later change of it can't land. */
-  revert(): void;
-}
-
-/** The pace of an edit: the selection on the old text, then the new text streamed in steps. */
-export const PACE = {
-  /** How long each change's selection shows, and at most all of them in one call. */
-  showMs: 150,
-  showBudgetMs: 600,
-  /** The time between steps, and the characters each second (a tag counts as one). */
-  stepMs: 33,
-  cps: 600,
-  /** A call's time: when its text wouldn't fit at `cps`, the rate rises so it does. */
-  budgetMs: 2000,
-  /** A call that inserts more characters than this applies at once. */
-  wholeChars: 20_000,
-};
+/** Puts the agent's caret (head null) or selection in a file, as positions that move with others' typing. */
+export type Cursor = (path: string, anchor: Y.RelativePosition, head: Y.RelativePosition | null) => void;
 
 export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
   reason: Schema.Literals([
@@ -131,8 +111,8 @@ export class YjsWorkspace implements Workspace {
     private only: string | null = null,
     /** Why a new file can't be made at a path (a document's second page), or null. */
     private refuse: (path: string) => string | null = () => null,
-    /** Shows each edit as it applies; without it, an edit applies at once. */
-    private pacer: Pacer | null = null
+    /** Shows where each edit ends, as the agent's caret. */
+    private cursor: Cursor = () => {}
   ) {}
 
   private text(path: string): Effect.Effect<Y.Text, WorkspaceError> {
@@ -197,7 +177,7 @@ export class YjsWorkspace implements Workspace {
       // Each as the smallest change that leaves tags whole: trim what old and new share at both ends.
       const minimal = aligned(current, spans);
       if (!minimal.length) return { path, at: spans[0].from, summary: `No change: the new text is the same as the old.` };
-      const at = self.pacer ? yield* self.paced(path, t, current, minimal, self.pacer) : self.apply(t, minimal);
+      const at = self.apply(path, t, minimal);
       // (What each replaced, as text: an edit by selector names it otherwise.)
       return self.edited(
         path,
@@ -213,8 +193,11 @@ export class YjsWorkspace implements Workspace {
     return typeof this.me == "function" ? this.me() : this.me;
   }
 
-  /** Applies changes that all landed in one transaction (`current`'s positions); returns where the last one ends. */
-  private apply(t: Y.Text, changes: { from: number; to: number; insert: string }[]): number {
+  /**
+   * Applies changes in one transaction (all in the current text's positions), and puts the agent's caret where the
+   * last one ends; returns that place.
+   */
+  private apply(path: string, t: Y.Text, changes: Change[]): number {
     this.doc.transact(() => {
       for (const c of [...changes].reverse()) {
         if (c.to > c.from) t.delete(c.from, c.to - c.from);
@@ -224,122 +207,35 @@ export class YjsWorkspace implements Workspace {
     }, this.origin);
     const last = changes[changes.length - 1];
     const shift = changes.slice(0, -1).reduce((n, c) => n + c.insert.length - (c.to - c.from), 0);
-    return last.from + shift + last.insert.length;
-  }
-  /**
-   * Applies the changes one by one, as a person would make them: the agent's
-   * selection on the text a change replaces for a moment, then its new text
-   * streamed in, a few characters at a time (typing.ts), with the caret
-   * after it. Each change aims by positions that move with others' typing,
-   * and checks before each step that its old text (then what it typed so
-   * far) is still there; if it isn't (someone typed in it), the call takes
-   * back what it applied and fails, as an edit against changed text does.
-   * The rate rises so a call's text fits its time; a very large one applies at once.
-   */
-  private paced(
-    path: string,
-    t: Y.Text,
-    current: string,
-    changes: { from: number; to: number; insert: string }[],
-    pacer: Pacer,
-    /** The call already changed the document (it made the file): a failure takes that back too. */
-    made = false
-  ): Effect.Effect<number, WorkspaceError> {
-    const self = this;
-    if (changes.reduce((n, c) => n + c.insert.length, 0) > PACE.wholeChars) {
-      return Effect.sync(() => {
-        const end = self.apply(t, changes);
-        pacer.cursor(path, Y.createRelativePositionFromTypeIndex(t, end, -1), null);
-        return end;
-      });
-    }
-    const rel = (i: number, assoc = 0) => Y.createRelativePositionFromTypeIndex(t, i, assoc);
-    const abs = (r: Y.RelativePosition) => Y.createAbsolutePositionFromRelativePosition(r, self.doc)?.index ?? -1;
-    // From the first character of the old text (or after the one before, for an insertion) to its last one.
-    const aims = changes.map((c) => ({
-      ...c,
-      old: current.slice(c.from, c.to),
-      start: c.to > c.from ? rel(c.from) : rel(c.from, -1),
-      end: rel(c.to, -1),
-      pieces: pieces(c.insert, current.slice(Math.max(0, c.from - 200), c.from)),
-    }));
-    // Characters per step: the base rate, or faster if the call's text wouldn't fit its time.
-    const weight = aims.reduce((n, a) => n + a.pieces.reduce((w, p) => w + p.weight, 0), 0);
-    const showMs = Math.min(PACE.showMs, PACE.showBudgetMs / aims.length);
-    const perStep = (Math.max(PACE.cps, weight / ((PACE.budgetMs - showMs * aims.length) / 1000)) * PACE.stepMs) / 1000;
-    return Effect.gen(function* () {
-      let applied = made,
-        caret = 0;
-      const wait = (ms: number) => Effect.promise(() => pacer.wait(ms));
-      /** Where the change's old text is now; null if it isn't there any more. */
-      const find = (a: (typeof aims)[number]) => {
-        const from = abs(a.start),
-          to = a.old ? abs(a.end) : from;
-        return from >= 0 && t.toString().slice(from, to) == a.old ? { from, to } : null;
-      };
-      const changed = (i: number) => {
-        if (applied) pacer.revert();
-        return fail(
-          "changed",
-          `The text of change ${i + 1} changed while you edited ${path} (someone typed there), so nothing was changed. Read ${path} again and retry.`
-        );
-      };
-      for (const [i, a] of aims.entries()) {
-        let at = find(a);
-        if (at) {
-          pacer.cursor(path, a.start, a.old ? a.end : null);
-          yield* wait(showMs);
-          at = find(a);
-        }
-        if (!at) return yield* changed(i);
-        // The new text so far, from `start` (its first character, once there is one); the caret is `typed` into it.
-        let start: Y.RelativePosition | null = null,
-          sofar = "",
-          typed = 0,
-          k = 0,
-          quota = 0;
-        do {
-          let from = at.from;
-          if (start) {
-            from = abs(start);
-            if (from < 0 || t.toString().slice(from, from + sofar.length) != sofar) return yield* changed(i);
-          }
-          // This step's pieces: at least one, and as many as its share of characters allows.
-          quota += perStep;
-          const step: Piece[] = [];
-          while (k < a.pieces.length && (!step.length || quota >= a.pieces[k].weight)) {
-            quota -= a.pieces[k].weight;
-            step.push(a.pieces[k++]);
-          }
-          const first = !start;
-          self.doc.transact(() => {
-            if (first && at!.to > at!.from) t.delete(at!.from, at!.to - at!.from);
-            for (const p of step) {
-              if (p.insert) t.insert(from + typed, p.insert);
-              sofar = sofar.slice(0, typed) + p.insert + sofar.slice(typed);
-              typed += p.advance;
-            }
-            if (!a.insert) stamp(self.doc, self.by());
-          }, self.origin);
-          applied = true;
-          if (sofar && !start) start = rel(from);
-          caret = from + typed;
-          pacer.cursor(path, caret > 0 ? rel(caret, -1) : rel(0), null);
-          if (k < a.pieces.length) yield* wait(PACE.stepMs);
-        } while (k < a.pieces.length);
-      }
-      return caret;
-    });
+    const end = last.from + shift + last.insert.length;
+    this.cursor(path, Y.createRelativePositionFromTypeIndex(t, end, -1), null);
+    return end;
   }
 
+  /**
+   * Changes to a page's text, made by one of the document's edits (its API: libs/text/api/edits.ts), against the text
+   * as it is now (`was`: the text they were made from; if it changed since, nothing is changed). Returns where they end.
+   */
+  change(path: string, was: string, changes: Change[]): Effect.Effect<EditResult, WorkspaceError> {
+    const self = this;
+    return Effect.gen(function* () {
+      path = yield* modelPath(path);
+      yield* self.mayEdit();
+      const t = yield* self.text(path);
+      const current = t.toString();
+      if (current != was) return yield* fail("changed", `${path} changed while the edit was made (someone typed there): call it again.`);
+      const minimal = aligned(
+        current,
+        [...changes].sort((a, b) => a.from - b.from)
+      );
+      if (!minimal.length) return { path, at: 0, summary: `No change to ${path}.` };
+      const at = self.apply(path, t, minimal);
+      self.see(path, t.toString());
+      return { path, at, summary: `Edited ${path} (${minimal.length} change${minimal.length > 1 ? "s" : ""}).` };
+    });
+  }
   /** The edit's result, and what the agent now believes the file says: what it saw, with its edits. */
-  private edited(
-    path: string,
-    t: Y.Text,
-    edits: { oldText: string; newText: string }[],
-    minimal: { from: number; to: number; insert: string }[],
-    at: number
-  ): EditResult {
+  private edited(path: string, t: Y.Text, edits: { oldText: string; newText: string }[], minimal: Change[], at: number): EditResult {
     let seen: string | null = this.seen.get(path) ?? null;
     for (const e of edits) seen = seen != null && seen.split(e.oldText).length == 2 ? seen.replace(e.oldText, () => e.newText) : null;
     this.see(path, seen ?? t.toString());
@@ -359,20 +255,19 @@ export class YjsWorkspace implements Workspace {
     });
   }
 
-  /** Creates the file, or merges the agent's version of it into the current text: streamed in, with a Pacer. */
+  /** Creates the file, or merges the agent's version of it into the current text, at once. */
   private merge(path: string, content: string): Effect.Effect<EditResult, WorkspaceError> {
     const self = this;
     return Effect.gen(function* () {
       let t = files(self.doc).get(path);
       if (!t) {
         self.see(path, content);
-        const paced = self.pacer && content.length <= PACE.wholeChars;
         self.doc.transact(() => {
           t = new Y.Text();
-          if (!paced) t.insert(0, content);
+          t.insert(0, content);
           files(self.doc).set(path, t);
         }, self.origin);
-        if (paced && content) yield* self.paced(path, t!, "", [{ from: 0, to: 0, insert: content }], self.pacer!, true);
+        self.cursor(path, Y.createRelativePositionFromTypeIndex(t!, content.length, -1), null);
         return { path, at: content.length, summary: `Created ${path}.` };
       }
       // Never a wholesale replace. The agent's change is what it did to the
@@ -383,15 +278,12 @@ export class YjsWorkspace implements Workspace {
       const changes = base != null ? rebase(base, current, content) : changesBetween(current, content);
       let at = 0;
       changes.iterChanges((_fa, _ta, _fb, toB) => { at = toB; });
-      if (self.pacer && !changes.empty) {
-        const list: { from: number; to: number; insert: string }[] = [];
-        changes.iterChanges((from, to, _fb, _tb, ins) => list.push({ from, to, insert: ins.sliceString(0, ins.length, "\n") }));
-        at = yield* self.paced(path, t, current, aligned(current, list), self.pacer);
-      } else {
+      if (!changes.empty) {
         self.doc.transact(() => {
           const { inserted, deleted } = applyChanges(t!, changes);
           if (deleted && !inserted) stamp(self.doc, self.by());
         }, self.origin);
+        self.cursor(path, Y.createRelativePositionFromTypeIndex(t, at, -1), null);
       }
       self.see(path, t.toString());
       return { path, at, summary: changes.empty ? `No change to ${path}.` : `Wrote ${path}.` };

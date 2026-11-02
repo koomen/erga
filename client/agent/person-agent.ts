@@ -45,6 +45,8 @@ const store = {
 const VERBS: Record<string, [string, string]> = {
   read: ["Reading", "Read"],
   edit: ["Editing", "Edited"],
+  document_api: ["Reading the page's edits", "Read the page's edits"],
+  call_edit: ["Editing the page", "Edited the page"],
   write: ["Writing", "Wrote"],
   ls: ["Listing", "Listed"],
   find: ["Finding files", "Found files"],

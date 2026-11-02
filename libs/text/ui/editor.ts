@@ -73,6 +73,7 @@ export class PageEditor extends EditorInput {
     // The view stays where the reader put it: a change off screen is marked, not followed (reveal finds a peer on request).
     const found = marksFor(changes, gone, this.units, 0, author);
     this.marks.push(...found.marks);
+    if (author?.agent) this.playTyping(found.marks);
     this.startFade();
     if (this.rendering) { this.pendingFlash = found.unmarked; return; }
     if (found.unmarked.length) this.flash(found.unmarked);

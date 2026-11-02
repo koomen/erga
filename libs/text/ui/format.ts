@@ -1,11 +1,14 @@
 // The page editor's styles and links: bold, italic and code on a selection, clearing them, and the links the link
-// bar shows and changes.
+// bar shows and changes. The changes themselves are the library's API's (libs/text/api/format.ts): this applies them
+// to the selection, with the editor's history.
 
 import * as M from "../../../shared/manuscript";
 import { EditorSelection, type SelectionRange, type ChangeSet, type Text } from "@codemirror/state";
 import type { LinkEdit, LinkInfo } from "./types";
 import type { InlineStyle } from "../api/source";
-import { attrOf, dropped, escapeAttr, FORMAT_TAGS, linkEnding, setAttr, STYLE_TAGS, textIn, unitsIn } from "../api/source";
+import { attrOf, dropped, linkEnding, STYLE_TAGS, textIn } from "../api/source";
+import * as F from "../api/format";
+import type { Change } from "../api/lists";
 import { EditorEdit } from "./edit";
 import { editableAt, inlineAt, placeholderDrops } from "../api/rules";
 
@@ -90,48 +93,10 @@ export abstract class EditorFormat extends EditorEdit {
    * covers (trimmed of surrounding spaces), so a selection may cross inline
    * elements and paragraphs. Or why it can't be styled.
    */
-  protected styleSegments(): { segments: { u: M.Unit; from: number; to: number }[]; why: string | null } {
+  /** The selection's stretches of text to style (api/format.ts), or why it can't be styled. */
+  protected styleSegments(): { segments: F.Segment[]; why: string | null } {
     const sel = this.currentSelection();
-    if (sel.empty) return { segments: [], why: "Select some text to style first." };
-    const segments: { u: M.Unit; from: number; to: number }[] = [];
-    let why: string | null = null;
-    for (const u of unitsIn(this.units, sel.from, sel.to)) {
-      if (u.tag == "pre") {
-        why = "Text in a code block can't be styled.";
-        continue;
-      }
-      if (!this.verify(u)) {
-        why = "That text is made by the page's script, so it can't be styled here.";
-        continue;
-      }
-      for (const r of u.runs) {
-        if (!r.editable) continue;
-        let a = M.runOffset(r, Math.max(sel.from, r.from)),
-          b = M.runOffset(r, Math.min(sel.to, r.to));
-        while (a < b && /\s/.test(r.text[a])) a++;
-        while (b > a && /\s/.test(r.text[b - 1])) b--;
-        if (a < b) segments.push({ u, from: M.runPos(r, a), to: M.runPos(r, b) });
-      }
-    }
-    return { segments, why: segments.length ? null : (why ?? "There's no text in the selection to style.") };
-  }
-
-  /** The element of one of `tags` that contains [from, to) of a unit, innermost first. */
-  protected enclosing(u: M.Unit, tags: string[], from: number, to: number): M.ElementNode | null {
-    let node = u.node,
-      found: M.ElementNode | null = null;
-    while (node) {
-      let next: M.ElementNode | undefined;
-      for (const c of node.children)
-        if (c.kind == "element" && !c.selfClosing && c.openTo <= from && to <= c.closeFrom) {
-          next = c;
-          break;
-        }
-      if (!next) break;
-      if (tags.includes(next.tag)) found = next;
-      node = next;
-    }
-    return found;
+    return F.styleSegments(this.page(), sel.from, sel.to);
   }
 
   /** Why the selection can't be styled, or null if it can (for the toolbar's disabled state). */
@@ -141,96 +106,28 @@ export abstract class EditorFormat extends EditorEdit {
 
   /** Whether the whole selection already has the style (for the toolbar's pressed state). */
   hasStyle(style: InlineStyle): boolean {
-    const { segments } = this.styleSegments();
-    if (!segments.length) return false;
-    return segments.every((g) => !!this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to));
+    const sel = this.currentSelection();
+    return F.hasStyle(this.page(), sel.from, sel.to, style);
   }
 
-  /**
-   * Bold, italic or code on the selection: removes the style if all of the
-   * selection has it, else adds it to every stretch of text in the selection.
-   * Removing it from part of an element splits the element. Returns
-   * null when done, or why it couldn't be done.
-   */
+  /** Bold, italic, code or underline on the selection (api/format.ts, toggleStyle). Returns null when done, or why not. */
   toggleStyle(style: InlineStyle): string | null {
-    const { segments, why } = this.styleSegments();
-    if (why) return why;
-    const src = this.src;
     const sel = this.state.selection.main;
-    const changes: { from: number; to?: number; insert?: string }[] = [];
-    const remove = this.hasStyle(style);
-    if (remove) {
-      // Group the stretches by the element that styles them, then take each element off them.
-      const byEl = new Map<M.ElementNode, { from: number; to: number }>();
-      for (const g of segments) {
-        const el = this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to)!;
-        const r = byEl.get(el);
-        byEl.set(el, r ? { from: Math.min(r.from, g.from), to: Math.max(r.to, g.to) } : { from: g.from, to: g.to });
-      }
-      for (const [el, r] of byEl) {
-        const open = src.slice(el.from, el.openTo),
-          close = src.slice(el.closeFrom, el.to);
-        const atStart = !/\S/.test(src.slice(el.openTo, r.from)),
-          atEnd = !/\S/.test(src.slice(r.to, el.closeFrom));
-        if (atStart && atEnd) changes.push({ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to });
-        else if (atStart) changes.push({ from: el.from, to: el.openTo }, { from: r.to, insert: open });
-        else if (atEnd) changes.push({ from: r.from, insert: close }, { from: el.closeFrom, to: el.to });
-        else changes.push({ from: r.from, insert: close }, { from: r.to, insert: open });
-      }
-    } else {
-      // One wrapper when the selection is a single well-formed stretch with
-      // none of the style inside, else one per stretch that lacks it.
-      const tag = STYLE_TAGS[style][0];
-      const first = segments[0],
-        last = segments[segments.length - 1];
-      const lacking = segments.filter((g) => !this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to));
-      const inside = new RegExp(`<(${STYLE_TAGS[style].join("|")})[\\s>]`, "i");
-      if (
-        first.u == last.u &&
-        lacking.length == segments.length &&
-        M.balanced(src, first.from, last.to) &&
-        !inside.test(src.slice(first.from, last.to))
-      ) {
-        changes.push({ from: first.from, insert: `<${tag}>` }, { from: last.to, insert: `</${tag}>` });
-      } else for (const g of lacking) changes.push({ from: g.from, insert: `<${tag}>` }, { from: g.to, insert: `</${tag}>` });
-    }
-    const set = this.state.changes(changes);
-    this.dispatch({
-      changes: set,
-      selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)),
-      userEvent: "input.format",
-    });
-    return null;
+    return this.format(F.toggleStyle(this.page(), sel.from, sel.to, style));
   }
 
-  /**
-   * Clear formatting: takes every inline style (bold, italic, code, links and
-   * the other styling elements) off the selection, splitting the ones it only
-   * partly covers, and turns headings it touches into paragraphs. Returns
-   * null when done, or why it couldn't be done.
-   */
+  /** Clear formatting on the selection (api/format.ts, clearStyles). Returns null when done, or why not. */
   clearStyles(): string | null {
-    const { segments, why } = this.styleSegments();
-    if (why) return why;
-    const src = this.src;
     const sel = this.state.selection.main;
-    // The selection within each paragraph it touches.
-    const spans = new Map<M.Unit, { from: number; to: number }>();
-    for (const g of segments) {
-      const r = spans.get(g.u);
-      spans.set(g.u, r ? { from: Math.min(r.from, g.from), to: Math.max(r.to, g.to) } : { from: g.from, to: g.to });
-    }
-    const { changes, inserts } = this.clearHtml(src, spans);
-    // Tags closed at one place close innermost first; tags reopened open outermost first.
-    inserts.sort((a, b) => a.at - b.at || a.order - b.order);
-    const all = [...changes, ...inserts.map((x) => ({ from: x.at, insert: x.insert }))];
-    if (!all.length) return null;
-    const set = this.state.changes(all);
-    const after = set.apply(this.state.doc).toString();
-    for (const u of spans.keys()) {
-      if (!M.balanced(after, set.mapPos(u.from, -1), set.mapPos(u.to, 1)))
-        return "That selection crosses other markup; select text inside it, or around all of it.";
-    }
+    return this.format(F.clearStyles(this.page(), sel.from, sel.to));
+  }
+
+  /** A style's changes, made, the selection still over the same text; or why there are none. */
+  private format(r: { changes: Change[] } | { why: string }): string | null {
+    if ("why" in r) return r.why;
+    if (!r.changes.length) return null;
+    const sel = this.state.selection.main;
+    const set = this.state.changes(r.changes);
     this.dispatch({
       changes: set,
       selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)),
@@ -239,60 +136,10 @@ export abstract class EditorFormat extends EditorEdit {
     return null;
   }
 
-  protected clearHtml(src: string, spans: Map<M.Unit, { from: number; to: number }>) {
-    const changes: { from: number; to: number; insert?: string }[] = [];
-    const inserts: { at: number; insert: string; order: number }[] = [];
-    const hasText = (from: number, to: number) => /\S/.test(src.slice(from, to).replace(/<[^>]*>/g, ""));
-    for (const [u, { from, to }] of spans) {
-      const walk = (node: M.ElementNode, depth: number) => {
-        for (const c of node.children) {
-          if (c.kind != "element" || c.selfClosing || c.closeFrom <= from || c.openTo >= to) continue;
-          if (FORMAT_TAGS.has(c.tag)) {
-            // Take the element off the selected stretch: drop a tag at an end the selection reaches, else close or reopen it there.
-            const s = Math.max(from, c.openTo),
-              e = Math.min(to, c.closeFrom);
-            if (hasText(c.openTo, s)) inserts.push({ at: s, insert: `</${c.tag}>`, order: -depth });
-            else changes.push({ from: c.from, to: c.openTo });
-            if (hasText(e, c.closeFrom)) inserts.push({ at: e, insert: src.slice(c.from, c.openTo), order: depth });
-            else changes.push({ from: c.closeFrom, to: c.to });
-          }
-          walk(c, depth + 1);
-        }
-      };
-      walk(u.node, 0);
-      if (
-        /^h[1-6]$/.test(u.tag) &&
-        /^<h[1-6]/i.test(src.slice(u.openFrom, u.openFrom + 3)) &&
-        /^<\/h[1-6]/i.test(src.slice(u.contentTo, u.contentTo + 4))
-      ) {
-        changes.push(
-          { from: u.openFrom + 1, to: u.openFrom + 3, insert: "p" },
-          { from: u.contentTo + 2, to: u.contentTo + 4, insert: "p" }
-        );
-      }
-    }
-    return { changes, inserts };
-  }
-
-  /**
-   * The link the link bar is for: the one around the selection or, for a
-   * caret, the one it's in or at either end of (where typing goes into it,
-   * see typeAtLinkEdge).
-   */
+  /** The link the link bar is for (api/format.ts, linkOf). */
   protected currentLink(): { u: M.Unit; el: M.ElementNode } | null {
     const sel = this.state.selection.main;
-    if (sel.empty) {
-      const u = M.unitAt(this.units, sel.from);
-      const el = u && (this.enclosing(u, ["a"], sel.from, sel.from) ?? linkEnding(u, sel.from));
-      return u && el ? { u, el } : null;
-    }
-    // The selection's text, without the spaces at its ends.
-    const { segments } = this.styleSegments();
-    const first = segments[0],
-      last = segments[segments.length - 1];
-    if (!first || first.u != last.u) return null;
-    const el = this.enclosing(first.u, ["a"], first.from, last.to);
-    return el ? { u: first.u, el } : null;
+    return F.linkOf(this.page(), sel.from, sel.to);
   }
 
   /** The link the selection or caret is in, if any (for the link bar): its address, text and rectangle in the frame. */
@@ -350,45 +197,15 @@ export abstract class EditorFormat extends EditorEdit {
 
   protected applyLink(edit: LinkEdit): { why: string | null; changes?: ChangeSet } {
     const sel = this.currentSelection();
-    const src = this.src;
-    const href = escapeAttr(edit.url);
-    const at = this.currentLink();
-    const changes: { from: number; to?: number; insert?: string }[] = [];
-    let textFrom: number, textTo: number;
-    if (at) {
-      const { u, el } = at;
-      if (!this.verify(u)) return { why: "That text is made by the page's script, so it can't be linked here." };
-      if (!edit.url) changes.push({ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to });
-      else {
-        let open = setAttr(src.slice(el.from, el.openTo), "href", href);
-        if (edit.self != null) open = setAttr(open, "target", edit.self ? "_self" : null);
-        changes.push({ from: el.from, to: el.openTo, insert: open });
-      }
-      [textFrom, textTo] = [el.openTo, el.closeFrom];
-    } else {
-      const { segments, why } = this.styleSegments();
-      if (why) return { why };
-      const first = segments[0],
-        last = segments[segments.length - 1];
-      if (first.u != last.u) return { why: "A link can't span paragraphs; select text within one." };
-      if (!edit.url) return { why: null };
-      if (!M.balanced(src, first.from, last.to))
-        return { why: "That selection crosses other styling; select text inside it, or around all of it." };
-      changes.push(
-        { from: first.from, insert: `<a href="${href}"${edit.self ? ' target="_self"' : ""}>` },
-        { from: last.to, insert: "</a>" }
-      );
-      [textFrom, textTo] = [first.from, last.to];
-    }
-    // New text replaces the link's (and any styling inside it).
-    const text = edit.text?.replace(/\s+/g, " ").trim();
-    const retext = !!edit.url && !!text && text != textIn(this.units, textFrom, textTo);
-    if (retext) changes.push({ from: textFrom, to: textTo, insert: M.escapeHtmlText(text) });
-    const set = this.state.changes(changes);
+    const r = F.applyLink(this.page(), sel.from, sel.to, edit);
+    if ("why" in r) return { why: r.why };
+    if (!r.changes.length) return { why: null };
+    const set = this.state.changes(r.changes);
+    const t = r.text;
     // A caret stays where it was, or goes to the end of new text; a selection covers the link's text.
     const selection = sel.empty
-      ? EditorSelection.cursor(retext ? set.mapPos(textTo, 1) : set.mapPos(sel.head, 1))
-      : EditorSelection.single(set.mapPos(retext ? textFrom : sel.from, 1), set.mapPos(retext ? textTo : sel.to, -1));
+      ? EditorSelection.cursor(t.replaced ? set.mapPos(t.to, 1) : set.mapPos(sel.head, 1))
+      : EditorSelection.single(set.mapPos(t.replaced ? t.from : sel.from, 1), set.mapPos(t.replaced ? t.to : sel.to, -1));
     this.dispatch({ changes: set, selection, userEvent: "input.format" });
     return { why: null, changes: set };
   }
@@ -402,7 +219,7 @@ export abstract class EditorFormat extends EditorEdit {
   protected typeAtLinkEdge(pos: number, text: string, userEvent: string): boolean {
     const u = M.unitAt(this.units, pos);
     if (!u || u.tag == "pre" || !this.verify(u) || !editableAt(u, pos)) return false;
-    const el = this.enclosing(u, ["a"], pos, pos) ?? linkEnding(u, pos);
+    const el = F.enclosing(u, ["a"], pos, pos) ?? linkEnding(u, pos);
     if (!el) return false;
     const end = pos == el.closeFrom || pos == el.to,
       start = pos == el.from || pos == el.openTo;

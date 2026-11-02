@@ -1,4 +1,4 @@
-// The document tools every agent has in a document (run in its host: agents/document/session.ts): the files' text (read, edit, write, find, grep), the page (page-tools.ts), and diff_versions.
+// The document tools every agent has in a document (run in its host: agents/document/session.ts): the files' text (read, edit, write, find, grep), a page's own edits (document_api, call_edit: its API, libs/text/api/edits.ts), the page (page-tools.ts), and diff_versions.
 // What a person does with the document as a whole (its name, pages, folders, files' list and versions) is an
 // operation (server/operations/editor.ts), which the agent has as a tool too.
 
@@ -16,6 +16,7 @@ import type { FilesAccess, OpenResult, VersionsAccess } from "../../document/age
 import { pageTools } from "./page-tools";
 import { readLines, type TextEdit } from "../../shared/text-edits";
 import { findInSource } from "../../shared/source-select";
+import { textApi } from "../../libs/text/api/edits";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -26,7 +27,7 @@ const IMAGE_READ_MAX = 3_750_000;
 const WRITE_BYTES_MAX = 25_000_000;
 
 /** The tools that change the document: someone who may only view it (and their agent, and their token) has none of them. */
-export const CHANGES = new Set(["edit", "write"]);
+export const CHANGES = new Set(["edit", "write", "call_edit"]);
 
 
 /** The agent's tools, over a workspace. */
@@ -157,7 +158,7 @@ export function makeTools(
       name: "edit",
       label: "Edit",
       description:
-        'Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn\'t found, the file changed since you read it: read it again. To replace a whole element, give its CSS selector instead of oldText ({"selector": "svg g#logo", "newText": "<g id=\\"logo\\">...</g>"}); to replace a whole CSS rule (in a stylesheet or a <style>), its selector as cssRule ({"cssRule": ".legible h2", "newText": ".legible h2 { color: navy; }"}). Either must name exactly one, in the source as written; read with selector or css_rule shows it first. Each call is one step to undo.',
+        'Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn\'t found, the file changed since you read it: read it again. To replace a whole element, give its CSS selector instead of oldText ({"selector": "svg g#logo", "newText": "<g id=\\"logo\\">...</g>"}); to replace a whole CSS rule (in a stylesheet or a <style>), its selector as cssRule ({"cssRule": ".legible h2", "newText": ".legible h2 { color: navy; }"}). Either must name exactly one, in the source as written; read with selector or css_rule shows it first. Each call is one step to undo. For a change to a page\'s text (words, blocks, styles, links, lists), use the page\'s own edits first (document_api, call_edit).',
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: "Path of the file to edit" }),
         edits: EDITS.annotate({ description: "One or more targeted replacements, each matched against the current file" }),
@@ -168,6 +169,40 @@ export function makeTools(
           throw new Error(r.reason == "changed" ? await changedSince(r.message, run(modelPath(p.path))) : r.message);
         opts.edited(r.path, r.at);
         return text(r.summary);
+      },
+    },
+    {
+      name: "document_api",
+      label: "Read the page's edits",
+      description:
+        "The edits a page has, as a person makes them in Erga's editor (its API: erga/text for a page that names no editor of its own): each one's name, what it does, and its input's JSON Schema. Run one with call_edit. Use them first for a change to a page's text, its blocks, styles, links and lists: they keep the HTML as a person's editing would. Edit the source with edit or write only for what they can't do (a page's layout, styles, scripts, attributes).",
+      parameters: Schema.Struct({ path: Schema.String.annotate({ description: 'Path of the page, e.g. "index.html"' }) }),
+      execute: async (_id, p: { path: string }) => {
+        const path = run(modelPath(p.path));
+        if (!/\.html?$/i.test(path)) throw new Error(`${path} isn't a page: its edits are the source's (edit, write).`);
+        run(ws.read(path));
+        return text(JSON.stringify({ api: textApi.name, description: textApi.description, edits: textApi.edits }, null, 1));
+      },
+    },
+    {
+      name: "call_edit",
+      label: "Edit the page",
+      description:
+        'Run one of a page\'s edits (document_api lists them, with their inputs): it lands in the page at once, as a person\'s editing would, and everyone sees it typed. E.g. {"path": "index.html", "edit": "replace_text", "input": {"selector": "h1", "find": "Draft", "text": "Final"}}. If it refuses, it says why: then edit the source with edit. Each call is one step to undo.',
+      parameters: Schema.Struct({
+        path: Schema.String.annotate({ description: 'Path of the page, e.g. "index.html"' }),
+        edit: Schema.String.annotate({ description: 'The edit\'s name, e.g. "replace_text"' }),
+        input: Schema.Record(Schema.String, Schema.Unknown).annotate({ description: "The edit's input, as its schema says" }),
+      }),
+      execute: async (_id, p: { path: string; edit: string; input: Record<string, unknown> }) => {
+        const path = run(modelPath(p.path));
+        const html = run(ws.read(path));
+        const r = textApi.apply(html, path, p.edit, p.input);
+        if ("refused" in r) throw new Error(r.refused);
+        if (!r.changes.length) return text(r.done);
+        const done = run(ws.change(path, html, r.changes));
+        opts.edited(done.path, done.at);
+        return text(`${r.done} ${done.summary}`);
       },
     },
     {

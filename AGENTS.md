@@ -193,6 +193,9 @@ Found a new trap? Write it here, in the same change.
   installation's settings, and Save stays off until something changes: it never comes back to Erga. So Connect GitHub
   authorizes first and uses the installation the person has (control/github-routes.ts); the pretend GitHub does the same.
   A Connect that sends a person to the install page again leaves Erga not connected, with no error.
+- An agent's edit lands in the room, and in each page, at once; the page plays its new text as typing, a visual effect
+  only (libs/text/ui/marks.ts, playTyping: the text not shown yet is the highlight `erga-unshown`). A test that reads the
+  page's text sees all of it at once. A page in the background shows it at once, unplayed.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 
