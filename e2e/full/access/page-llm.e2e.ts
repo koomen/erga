@@ -1,8 +1,8 @@
 // A page's model (window.ergaLLM, agents/page-llm.ts): off at first. Its owner turns it on in Document settings, and
 // the page's own script asks the model as its visitor (the scripted model: no real one). Signed out: "sign_in", and
-// signIn() goes to Erga's sign-in, back to the page. Over the visitor's hour: "limit".
+// the viewer shows its sign-in dialog (signIn() too), whose choices come back to the page. Over the visitor's hour: "limit".
 import { expect, servers, test, until, type Page } from "../../helpers/fixtures";
-import { clickOn, newDoc, unique } from "./access";
+import { clickOn, newDoc, signInState, unique } from "./access";
 import type {} from "../../../client/common/page-llm";
 
 type Result = { text?: string; code?: string; message?: string };
@@ -21,6 +21,7 @@ async function pageFrame(page: Page) {
 }
 
 /** What the page's own script gets from ergaLLM: status(), or ask() with one user message. */
+
 const status = async (page: Page) => (await pageFrame(page)).evaluate(() => window.ergaLLM!.status());
 const ask = async (page: Page, content: string) =>
   (await pageFrame(page)).evaluate(
@@ -70,7 +71,7 @@ test("off at first; the owner turns it on in Document settings, and the page's s
   expect((await ask(page, "Hi")).code).toBe("off");
 });
 
-test("signed out: sign_in, and signIn() goes to Erga's sign-in and back to the page", async ({ tab }) => {
+test("signed out: sign_in, and the viewer shows one sign-in dialog, which comes back to the page", async ({ tab }) => {
   const page = tab.page;
   const root = (await servers.script()).root;
   const made = await newDoc(root);
@@ -80,10 +81,24 @@ test("signed out: sign_in, and signIn() goes to Erga's sign-in and back to the p
   // Locally, a browser that signed out has this cookie (the dev server signs in every other one).
   const url = new URL(root);
   await page.context().addCookies([{ name: `erga_signed_out_${url.port}`, value: "1", domain: url.hostname, path: "/" }]);
-  await page.goto(root + path);
+  await page.goto(root + path + "#part");
   expect(await status(page)).toEqual({ on: true, model: "Haiku 5.5", signedIn: false });
+  // Three calls at once: each gets sign_in, and the viewer (not the page) shows one dialog.
+  const codes = await (await pageFrame(page)).evaluate(() =>
+    Promise.all([1, 2, 3].map(() => window.ergaLLM!.ask({ messages: [{ role: "user", content: "Hi" }] }).catch((e) => e.code)))
+  );
+  expect(codes).toEqual(["sign_in", "sign_in", "sign_in"]);
+  const open = { hosts: 1, open: true, choices: [["Continue with GitHub", `/auth/github?next=${encodeURIComponent(path + "#part")}`]] };
+  await expect.poll(() => signInState(page)).toEqual(open);
+  const isOpen = async () => (await signInState(page)).open;
+  // Escape closes it; so do its close button and a click outside it.
+  await page.keyboard.press("Escape");
+  await expect.poll(isOpen).toBe(false);
   expect((await ask(page, "Hi")).code).toBe("sign_in");
-  // The page's own button, clicked: Erga's sign-in, which comes back here.
+  await expect.poll(() => signInState(page)).toEqual(open);
+  await page.locator("erga-sign-in").getByRole("button", { name: "Close" }).click();
+  await expect.poll(isOpen).toBe(false);
+  // The page's own Sign in button: ergaLLM.signIn() shows the same dialog.
   const frame = await pageFrame(page);
   await frame.evaluate(() => {
     const b = document.body.appendChild(document.createElement("button"));
@@ -91,9 +106,16 @@ test("signed out: sign_in, and signIn() goes to Erga's sign-in and back to the p
     b.textContent = "Sign in";
     b.onclick = () => window.ergaLLM!.signIn();
   });
-  const signIn = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).pathname == "/auth/sign-in");
   await frame.locator("#sign-in-test").click();
-  expect(new URL((await signIn).url()).searchParams.get("next")).toBe(path);
+  await expect.poll(isOpen).toBe(true);
+  await page.mouse.click(5, page.viewportSize()!.height - 5);
+  await expect.poll(isOpen).toBe(false);
+  // Continue with GitHub: Erga's sign-in, which comes back to the same page and place.
+  await frame.locator("#sign-in-test").click();
+  await expect.poll(isOpen).toBe(true);
+  const signIn = page.waitForRequest((r) => r.isNavigationRequest() && new URL(r.url()).pathname == "/auth/github");
+  await page.locator("erga-sign-in a.provider.github").click();
+  expect(new URL((await signIn).url()).searchParams.get("next")).toBe(path + "#part");
 });
 
 test("a visitor over the hour's limit gets limit", async ({ tab }) => {
