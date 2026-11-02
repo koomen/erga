@@ -4,9 +4,11 @@
 //
 //   GET  /api/llm                 ?document=<id>: { on, model, signedIn }: whether the page may call the model now (on: the owner
 //                                 turned it on, the server's keys run the model, and the visitor may open it), its
-//                                 name, and whether the visitor is signed in
+//                                 name, and whether the visitor is signed in (signed out: and providers, as below)
 //   POST /api/llm                 { document, system?, messages: [{ role: "user" | "assistant", content }], max_tokens? }:
-//                                 { text }; or { error, code }: "sign_in" (401), "off" (403), "limit" (429), "error"
+//                                 { text }; or { error, code }: "sign_in" (401), "off" (403), "limit" (429), "error".
+//                                 "sign_in" has providers: [{ id, label }], the sign-in providers that are on, for the
+//                                 sign-in dialog (client/common/sign-in-dialog.ts)
 //
 // The pages origin never gets the session or a key: only this site's own pages may call this (their Origin), with the
 // visitor's cookie, for the one document they show. Each call is logged, and counted against the visitor's limits and
@@ -19,6 +21,8 @@ import { LanguageModel, Prompt } from "effect/ai";
 import { call, ctx, json, type Route } from "../server/http.ts";
 import { PAGE_LLM_LIMITS, roleMay, underLimit, type DocRow } from "../server/directory/index.ts";
 import { whoOf, type Platform, type Session } from "../server/platform.ts";
+import { PROVIDERS, providersOn, type Provider } from "../server/identity/index.ts";
+import type { SignInChoice } from "../shared/sign-in.ts";
 import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, MODELS, type ModelChoice } from "../shared/models.ts";
 import { modelError, pageModel } from "./models.ts";
 
@@ -36,6 +40,12 @@ type Ask = typeof Ask.Type;
 type Code = "sign_in" | "off" | "limit" | "error";
 const STATUS: Record<Code, number> = { sign_in: 401, off: 403, limit: 429, error: 400 };
 const fail = (code: Code, error: string, status = STATUS[code]) => json({ error, code }, status);
+
+/** The sign-in providers that are on, for the sign-in dialog. */
+async function signInChoices(p: Platform): Promise<SignInChoice[]> {
+  const on = await providersOn(p);
+  return (Object.keys(PROVIDERS) as Provider[]).filter((id) => on[id]).map((id) => ({ id, label: PROVIDERS[id].label }));
+}
 
 /** The visitor, in person: test people and agents' tokens have no model here. */
 const visitorOf = (s: Session | null) => (s && !s.test && !s.agent ? s : null);
@@ -80,7 +90,8 @@ export const pageLlmApi: Route = Effect.gen(function* () {
   if (request.method == "GET") {
     const id = url.searchParams.get("document") ?? "";
     const now = yield* call(() => decide(platform, id, visitor));
-    return json({ on: "model" in now, model: "model" in now ? MODELS[now.model].label : null, signedIn: !!visitor });
+    const providers = visitor ? {} : { providers: yield* call(() => signInChoices(platform)) };
+    return json({ on: "model" in now, model: "model" in now ? MODELS[now.model].label : null, signedIn: !!visitor, ...providers });
   }
   if (request.method != "POST") return fail("error", "GET or POST", 405);
   const ask = yield* call(() => request.text()).pipe(
@@ -88,7 +99,11 @@ export const pageLlmApi: Route = Effect.gen(function* () {
     Effect.orElseSucceed(() => null)
   );
   if (!ask) return fail("error", "The body must be { document, system?, messages: [{ role, content }], max_tokens? }.");
-  if (!visitor) return fail("sign_in", "Sign in to use this page's model.");
+  if (!visitor)
+    return json(
+      { error: "Sign in to use this page's model.", code: "sign_in", providers: yield* call(() => signInChoices(platform)) },
+      401
+    );
   const now = yield* call(() => decide(platform, ask.document, visitor));
   if ("off" in now) return fail("off", now.off);
   const wrong = tooBig(ask);

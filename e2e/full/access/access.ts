@@ -89,3 +89,15 @@ export async function publish(root: string, token: string, title: string) {
   const r = await fetch(`${root}/api/publish`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ title, files: { "index.html": `<h1>${title}</h1>` } }) });
   return await r.json() as { id: string; address: string };
 }
+
+/** The sign-in dialog (client/common/sign-in-dialog.ts), as the page shows it: how many, whether open, and its choices. */
+export const signInState = (page: Page) =>
+  page.evaluate(() => {
+    const hosts = document.querySelectorAll("erga-sign-in");
+    const d = hosts[0]?.shadowRoot?.querySelector("dialog");
+    return {
+      hosts: hosts.length,
+      open: !!d?.open,
+      choices: [...(d?.querySelectorAll<HTMLAnchorElement>("a.provider") ?? [])].map((a) => [a.textContent, a.getAttribute("href")]),
+    };
+  });
