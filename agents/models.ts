@@ -86,7 +86,7 @@ const modelFrom = (
   Effect.gen(function* () {
     const read = yield* Effect.result(settings.parse(provider));
     if (read._tag == "Success") return read.success;
-    // "ERGA_AGENT_MODEL should be "sonnet" or "opus-fast"", not the schema's own wording.
+    // "ERGA_AGENT_MODEL should be "opus-fast" or "opus" or ..."", not the schema's own wording.
     const m = /Expected (.+)\n\s*at \["(\w+)"\]/.exec(read.failure.message);
     return { missing: m ? `${m[2]} should be ${m[1].replaceAll(" | ", " or ")}` : read.failure.message };
   });

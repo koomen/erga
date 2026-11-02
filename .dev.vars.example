@@ -11,8 +11,8 @@ SESSION_SECRET=
 # wins, a placeholder doesn't.
 ANTHROPIC_API_KEY=
 # Optional: the model each person's agent starts on: opus-fast (Claude Opus
-# 5.5 in fast mode, the default) or sonnet (Claude Sonnet 5.5); each person
-# can switch from the agent panel. "script" is the free scripted model the
+# 5.5 in fast mode, the default), opus (Claude Opus 5.5), sonnet, haiku, or
+# another key of shared/models.ts; each person can switch from the agent panel. "script" is the free scripted model the
 # tests use.
 # ERGA_AGENT_MODEL=opus-fast
 
