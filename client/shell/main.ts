@@ -206,7 +206,24 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       top = document.querySelector<HTMLElement>(".chrome-top");
     if (!top || title.hidden) return;
     title.style.setProperty("--room", `${Math.max(0, barEdge(top, $("people")) - title.getBoundingClientRect().left - 8)}px`);
+    tighten(top);
   };
+  // On a phone at rest the others' stack takes room from the breadcrumbs: their middle, Documents, goes first (.tight),
+  // then the title ends in an ellipsis (client/styles/editor.css). Erga's logo stays whole. (Open, the quick actions
+  // hide the stack, and the breadcrumbs slide as before: client/common/quick.ts.)
+  const phone = matchMedia("(max-width: 759.98px)");
+  let backWidth = 0;
+  function tighten(top: HTMLElement) {
+    const nav = $("nav-docs"),
+      back = $("nav-back");
+    if (body.classList.contains("quick-open")) return;
+    if (!phone.matches || back.hidden) return void nav.classList.remove("tight");
+    const tight = nav.classList.contains("tight");
+    if (!tight) backWidth = back.offsetWidth;
+    const parts = [...nav.children].reduce((w, el) => w + (el as HTMLElement).offsetWidth, 0) + 16 + (tight ? backWidth : 0);
+    nav.classList.toggle("tight", parts > barEdge(top, $("people")) - nav.getBoundingClientRect().left - 8);
+  }
+  phone.addEventListener("change", navRoom);
   new ResizeObserver(navRoom).observe(document.querySelector(".chrome-top")!);
   new ResizeObserver(navRoom).observe($("people"));
   new ResizeObserver(navRoom).observe($("nav-docs"));

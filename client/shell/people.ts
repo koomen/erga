@@ -64,12 +64,16 @@ export function mountPeople(shell: Shell) {
   }
 
   // The others' stack (client/styles/editor.css, .people): its faces' size and overlap, and how many show at rest.
+  // (On a phone, two: the breadcrumbs need the room.)
   const FACE = 26,
     OVERLAP = 9,
-    SHOWN = 4;
+    phone = matchMedia("(max-width: 759.98px)");
+  const shown = () => (phone.matches ? 2 : 4);
+  phone.addEventListener("change", () => renderPeople());
   const people = $("people"),
     meSlot = $("me");
   function renderPeople() {
+    const SHOWN = shown();
     // One avatar per person: everyone else in a stack left of the buttons' bar, you
     // at its far right. A person's agent, once it has done
     // something, is a small badge on their avatar that spins while it works.

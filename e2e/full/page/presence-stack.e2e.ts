@@ -174,8 +174,41 @@ test("desktop: past four faces the stack ends in +N; the spread shows them all",
   );
 });
 
+/** On a phone, five others: the breadcrumbs and the stack, at rest. */
+async function phoneBand(a: Editor) {
+  const rest = await settled(a, 5);
+  const crumbs = await a.page.evaluate(() => {
+    const r = (id: string) => document.getElementById(id)!.getBoundingClientRect();
+    return { nav: r("nav-docs"), brand: r("nav-brand"), title: r("doc-title") };
+  });
+  return { rest, crumbs };
+}
+
+for (const width of [375, 320])
+  test(`phone at ${width}px: two faces and "+3", 10px from the bar; the breadcrumbs end 10px before them, the logo whole`, async ({
+    tab,
+  }) => {
+    await tab.page.setViewportSize({ width, height: 760 });
+    const a = await openEditor(tab, await servers.main(), "empty");
+    const names = ["Ada", "Bo", "Cy", "Di", "Ed"];
+    await share(a, names);
+    for (const n of names) await join(tab.page, a, n);
+    await a.page.mouse.move(200, 600);
+    const { rest, crumbs } = await phoneBand(a);
+    expect(rest.faces.filter((f) => f.shown).length).toBe(2);
+    expect(rest.more).toBe("+3");
+    expect(rest.inBar).toBe(false);
+    // (Boxes rounded to whole pixels: 10px is 9 to 11.)
+    expect(Math.abs(rest.bar.l - rest.stack!.r - 10)).toBeLessThanOrEqual(1);
+    expect(rest.stack!.l - Math.round(crumbs.nav.right)).toBeGreaterThanOrEqual(9);
+    // Erga's logo whole, in the breadcrumbs' bar, and the title in sight.
+    expect(crumbs.brand.left).toBeGreaterThanOrEqual(crumbs.nav.left);
+    expect(crumbs.title.right).toBeLessThanOrEqual(crumbs.nav.right);
+    expect(crumbs.title.width).toBeGreaterThan(30);
+  });
+
 test("phone: the stack sits left of your avatar, clear of the breadcrumbs; a tap spreads it", async ({ tab }) => {
-  await tab.page.setViewportSize({ width: 390, height: 760 });
+  await tab.page.setViewportSize({ width: 375, height: 760 });
   const a = await openEditor(tab, await servers.main(), "empty");
   await share(a, ["Ada", "Bo"]);
   await join(tab.page, a, "Ada");
