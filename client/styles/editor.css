@@ -154,7 +154,7 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
    outside its glass. It grows to the left, never over the bar. A hover, keyboard focus or a tap (.spread: people.ts) parts
    them so each face shows whole, and a face's name shows under it in its colour. Past four faces the stack ends in "+N"
    (.more), and the spread shows them all. (people.ts has the faces' size and overlap too, for the breadcrumbs' room.) */
-.chrome-top .people { position: absolute; right: calc(100% + 8px); top: 0; bottom: 0; display: flex; align-items: center; }
+.chrome-top .people { position: absolute; right: calc(100% + 10px); top: 0; bottom: 0; display: flex; align-items: center; }
 .people:empty { display: none; }
 .people > * { flex: none; transition: margin 240ms var(--agent-ease), width 240ms var(--agent-ease), opacity 180ms ease, visibility 240ms; }
 .people > * + * { margin-left: -9px; }
@@ -171,8 +171,14 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
   font-weight: 600; font-size: 11.5px; color: #fff; background: var(--c); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16); }
 .people .avatar:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
 .people .avatar:focus-visible::before { opacity: 1; }
-/* On a phone, open quick actions take the band: the stack steps out of their way. */
-@media (max-width: 759.98px) { body.quick-open .chrome-top .people { opacity: 0; pointer-events: none; } }
+/* On a phone, open quick actions take the band: the stack steps out of their way. At rest, where the stack leaves the
+   breadcrumbs too little room, Documents goes (.tight: main.ts, tighten) and the title ends in an ellipsis. */
+@media (max-width: 759.98px) {
+  body.quick-open .chrome-top .people { opacity: 0; pointer-events: none; }
+  body:not(.quick-open) .chrome-nav.tight { justify-content: flex-start; }
+  body:not(.quick-open) .chrome-nav.tight .nav-back { display: none; }
+  body:not(.quick-open) .chrome-nav.tight .nav-title { flex: 0 1 auto; }
+}
 @media (prefers-reduced-motion: reduce) { .people > * { transition: none; } }
 /* You, at the far right, apart from the others (.me-slot: client/inline/bars.css). */
 /* Your avatar is the size and place it is on every other page, so the eye here and the viewer's pencil swap in place. */
