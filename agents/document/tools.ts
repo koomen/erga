@@ -19,6 +19,7 @@ import { findInSource } from "../../shared/source-select";
 import { textApi, type DocumentApi } from "../../libs/text/api/edits";
 import { slidesApi } from "../../libs/slides/api/slides";
 import { bringsEditor, importedLibrary } from "../../shared/page-html";
+import { inputProblem } from "./edit-input";
 import { apiPathOf, applyPageEdit, describePageApi, type PageEdits, type Sandbox } from "../../document/page-api";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
@@ -217,7 +218,7 @@ export function makeTools(
     {
       name: "call_edit",
       label: "Edit the page",
-      description: "Run one of a page's edits (document_api lists them); if it refuses, edit the source.",
+      description: "Run one of a page's edits (document_api lists them, with their input's schema); if it refuses, edit the source.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: 'Path of the page, e.g. "index.html"' }),
         edit: Schema.String.annotate({
@@ -231,6 +232,9 @@ export function makeTools(
       execute: async (_id, p: { path: string; edit: string; input: Record<string, unknown> }) => {
         const path = run(modelPath(p.path));
         const { html, own, code, library } = await apisOf(path);
+        const schema = (own?.edits.find((e) => e.name == p.edit) ?? library?.edits.find((e) => e.name == p.edit))?.input;
+        const problem = schema && inputProblem(p.edit, schema, p.input);
+        if (problem) throw new Error(problem);
         if (own?.edits.some((e) => e.name == p.edit)) {
           const r = await applyPageEdit(opts.sandbox, code!, html, p.edit, p.input);
           if ("refused" in r) throw new Error(r.refused);
