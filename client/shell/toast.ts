@@ -65,8 +65,10 @@ export function mountToast(shell: Shell) {
   }
   /**
    * The fix button as the agent stands: off, and why, until it's on. The agent's state comes after the page can
-   * report a problem ("Connecting to the agent…" until then), so its arrival updates a button already up.
+   * report a problem ("Connecting to the agent…" until then), so its arrival (client/agent/person-agent.ts sends
+   * "erga:agent-state") updates a button already up.
    */
+  window.addEventListener("erga:agent-state", () => syncFix());
   function syncFix() {
     const b = toast.querySelector<HTMLButtonElement>(".toast-fix");
     if (!b) return;

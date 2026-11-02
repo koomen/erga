@@ -393,12 +393,11 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .msg-tool.retried::before { background: color-mix(in srgb, var(--chrome) 60%, transparent); }
 .msg-tool .detail { display: block; white-space: pre-wrap; font-size: 12px; opacity: 0.85; }
 /* The admin agent's panel, off for want of an Anthropic API key: the key, pasted in place. */
-.agent-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
-.agent-key input { flex: 1 1 180px; min-width: 0; height: 30px; padding: 0 9px; border: 1px solid var(--rule); border-radius: 7px; background: var(--bg); color: var(--fg); font: 13px var(--font-mono); }
-.agent-key button { height: 30px; padding: 0 12px; border: 1px solid var(--fg-strong); border-radius: 7px; background: var(--fg-strong); color: var(--bg); font: 550 12.5px var(--font-text); cursor: pointer; }
-.agent-key button:disabled { opacity: 0.5; }
-.agent-key-said { flex: 1 0 100%; font-size: 12px; color: var(--soft); }
-.agent-key-said:empty { display: none; }
+.agent-no-key a { color: var(--link); }
+.agent-connect { margin-top: 8px; font-size: 12.5px; }
+.agent-connect p { margin: 0 0 4px; color: var(--soft); }
+.agent-connect pre { margin: 0 0 6px; padding: 6px 8px; border-radius: 7px; background: var(--code-bg); font: 12px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-connect button { height: 28px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 7px; background: var(--bg); color: var(--fg); font: 550 12.5px var(--font-text); cursor: pointer; }
 /* A tool's offer: a button only the person clicks (Connect Cloudflare), and how it ended. */
 .msg-tool { flex-wrap: wrap; }
 .msg-tool > .offer { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-left: 13px; margin-top: 4px; }

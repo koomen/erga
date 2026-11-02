@@ -4,9 +4,12 @@
 
 import { showCopied } from "./copied";
 
+/** The line for the page at `address` (its path). */
+export const agentPrompt = (address: string) => `Add Erga's MCP server, ${location.origin}/mcp, then open ${location.origin}${address}.`;
+
 /** Copies the line for the document at `address` (its path); the button confirms. Answers the line if the clipboard can't be reached, else null. */
 export async function copyAgentPrompt(button: HTMLElement, address: string): Promise<string | null> {
-  const prompt = `Add Erga's MCP server, ${location.origin}/mcp, then open ${location.origin}${address}.`;
+  const prompt = agentPrompt(address);
   const ok = await navigator.clipboard.writeText(prompt).then(
     () => true,
     () => false

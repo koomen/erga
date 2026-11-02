@@ -103,11 +103,11 @@ declare module "../server/platform.ts" {
 
 /** What the agent pane says when the stored key doesn't open on this server. */
 export const UNREADABLE_KEY =
-  "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again in their agent's panel";
+  "the stored Anthropic API key doesn't open on this server: it was encrypted with another server's FACTORY_KEY. An admin pastes the key again on /admin/api-keys, or you add your own in Settings";
 
 /** What the agent pane says when no key runs any model. */
 const NO_KEY =
-  "no API key is set (an admin pastes the Anthropic API key in their agent's panel, or another provider's on /admin/api-keys; locally, export ANTHROPIC_API_KEY before bun start, or put it in .dev.vars)";
+  "no API key is set (add your own in Settings, or an admin sets one on /admin/api-keys; locally, export ANTHROPIC_API_KEY before bun start, or put it in .dev.vars)";
 const OWN_KEYS = "the admin asks each person to bring their own API key, and you have none yet. Add one in Settings, Agent";
 
 /** Where the server's keys and the admin's choices are read: the directory's stored keys and its settings. */

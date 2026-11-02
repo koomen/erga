@@ -19,6 +19,8 @@ import type { Log, LogEvent } from "../../shared/agent-log";
 import { backoff, live, transient } from "../live/client";
 import { restoredFor } from "../live/restore";
 import { sleep } from "../../shared/time";
+import { agentPrompt } from "../common/agent-prompt";
+import { showCopied } from "../common/copied";
 
 interface AgentState {
   enabled: boolean;
@@ -131,37 +133,53 @@ function renderBusy() {
         ? "Add to what the agent is doing…"
         : "Ask the agent…";
   // (Drawn again only when it changed: the key field below it keeps what's typed.)
-  if (off) { if (hint.dataset.off != off || hint.hidden) { showHint(off, true); hint.dataset.off = off; } keyField(); }
-  else if (hint.classList.contains("sticky")) hideHint();
+  if (off) {
+    if (hint.dataset.off != off || hint.hidden) {
+      showHint(off, true);
+      hint.dataset.off = off;
+    }
+    noKeyLinks();
+  } else if (hint.classList.contains("sticky")) hideHint();
 }
 
 /**
- * The agent is off for want of an Anthropic API key (none, or one this server can't open): the admin pastes it here,
- * in the panel, and the agent starts. The key goes to POST /admin/credentials, as on the API keys page; never into
- * the conversation.
+ * The agent is off for want of a key (none it can use, or one this server can't open): the panel says so, with two
+ * links. "add an LLM provider key" opens Settings (client/agent/settings-dialog.ts), where the person pastes their own;
+ * "connect your own agent" shows the one-line prompt for an outside agent (the same as Share with an agent), and copies it.
  */
-function keyField() {
-  if (!off || !/Anthropic API key/.test(off) || hint.querySelector("form")) return;
-  const form = document.createElement("form");
-  form.className = "agent-key";
-  const field = Object.assign(document.createElement("input"), { type: "password", name: "value", placeholder: "sk-ant-…", autocomplete: "off", required: true });
-  field.setAttribute("aria-label", "Anthropic API key");
-  const save = Object.assign(document.createElement("button"), { type: "submit", textContent: "Save key" });
-  const said = Object.assign(document.createElement("span"), { className: "agent-key-said" });
-  form.append(field, save, said);
-  form.addEventListener("submit", async (e) => {
+function noKeyLinks() {
+  if (!off || !/API key/.test(off) || hint.querySelector(".agent-no-key")) return;
+  hint.textContent = "";
+  hint.insertAdjacentHTML(
+    "beforeend",
+    `<span class="agent-no-key">To enable the agent, <a href="#settings">add an LLM provider key</a>. Or <a href="#connect" class="agent-connect-link">connect your own agent</a>.</span>`
+  );
+  hint.querySelector(".agent-connect-link")!.addEventListener("click", (e) => {
     e.preventDefault();
-    save.disabled = true;
-    said.textContent = "Saving…";
-    const r = await fetch(`/admin/credentials${location.search}`, { method: "POST", body: new URLSearchParams({ name: "anthropic", value: field.value }) }).catch(() => null);
-    const body = r ? ((await r.json().catch(() => null)) as { error?: string } | null) : null;
-    save.disabled = false;
-    if (!r?.ok) { said.textContent = body?.error ?? "Couldn't save it."; return; }
-    field.value = "";
-    said.textContent = "Saved. Starting the agent…";
-    void load();
+    const link = e.currentTarget as HTMLElement;
+    let box = hint.querySelector<HTMLElement>(".agent-connect");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "agent-connect";
+      box.innerHTML = `<p>Paste this into your agent (Claude Code, Codex, any MCP app). It signs you in, then works in Erga as you.</p><pre></pre><button type="button">Copy prompt</button>`;
+      const prompt = agentPrompt(document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? location.pathname);
+      box.querySelector("pre")!.textContent = prompt;
+      const copy = box.querySelector("button")!;
+      copy.addEventListener(
+        "click",
+        () =>
+          void navigator.clipboard.writeText(prompt).then(
+            () => showCopied(copy),
+            () => {}
+          )
+      );
+      hint.append(box);
+    }
+    void navigator.clipboard.writeText(box.querySelector("pre")!.textContent ?? "").then(
+      () => showCopied(link),
+      () => {}
+    );
   });
-  hint.append(form);
 }
 
 /** The page note: what the person has open (the breadcrumbs, the document's address; in the editor, the selection), so "this" means something. */
@@ -202,7 +220,15 @@ function sendNow() {
   const text = input.value.trim();
   const files = att.files;
   const why = blocker();
-  if (why || (!text && !files.length)) { showHint(why ?? "Type a message to send it.", !!off); input.focus(); return; }
+  if (why || (!text && !files.length)) {
+    // Off: the panel says why again (with its links, when a key is missing).
+    if (off) {
+      delete hint.dataset.off;
+      renderBusy();
+    } else showHint(why ?? "Type a message to send it.");
+    input.focus();
+    return;
+  }
   input.value = "";
   store.set(DRAFT, null);
   att.clear();
@@ -308,6 +334,8 @@ async function load(tries = 0): Promise<void> {
   const l = (await kept)?.log ?? a.log;
   if (heard != was && tries < 5) return load(tries + 1);
   off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
+  // The editor's buttons that ask the agent (the toast's fix: client/shell/toast.ts) follow its state.
+  window.dispatchEvent(new Event("erga:agent-state"));
   renderModel(a);
   if (l) { log.items = l.items; log.busy = l.busy; log.undoable = l.undoable; }
   talk.render();
