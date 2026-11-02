@@ -1,25 +1,35 @@
-// The multiplayer suite in real tabs: people typing on the page, their carets and
-// coloured marks, interleaved typing, ⌘Z undoing only your own, a join undone for all.
+// The multiplayer suite in real tabs: people typing on the page, their carets (and no
+// highlight on what they type), interleaved typing, ⌘Z undoing only your own, a join undone for all.
 import { Participant } from "./client";
 import { expect } from "./harness";
 import { until } from "../../helpers/fixtures";
-import { browserTest, caretIn, noErrors, openAs, peerNames } from "./suite";
+import { browserTest, caretIn, noErrors, openAs, peerNames, seenMarks, watchMarks } from "./suite";
 
 const FILE = "e2e/full/suite/browser-typing.e2e.ts";
 
-browserTest(FILE, "two people typing on the page see each other's edits and carets", {}, async (ctx, tab) => {
+browserTest(
+  FILE,
+  "two people typing on the page see each other's edits and carets, and nothing highlights the typed text",
+  {},
+  async (ctx, tab) => {
   const d = await ctx.doc();
   const a = await openAs(tab, ctx, d, "Ada"), b = await openAs(tab, ctx, d, "Bo");
   const tips = (t: typeof a) => t.eval<string[]>(`[...document.querySelectorAll(":is(#me, #people) .avatar")].map((e) => e.dataset.tip)`);
   await until(async () => (await tips(a)).some((t) => t.startsWith("Bo")) && (await tips(b)).some((t) => t.startsWith("Ada")), 5000, "each sees the other at the top", async () => [await tips(a), await tips(b)]);
   await b.frame(`${b.W}.__marker = 1`);
+  await watchMarks(b);
   await a.clickEnd("h1");
   await a.type(" (draft)");
   await until(async () => (await b.textOf("h1")) == (await a.textOf("h1")), 5000, "Bo's page shows Ada's typing");
   expect(await b.frame<boolean>(`${b.W}.__marker == 1`), "without a reload");
-  const m = await b.marks();
-  expect(m.added.join("").includes("(draft)") && m.names.every((n) => /^erga-a\d+-/.test(n)), "marked in Ada's colour", m);
-  await until(async () => (await peerNames(b)) == "Ada", 5000, "Ada's caret shows on Bo's page");
+  await until(
+    async () => (await peerNames(b)) == "Ada" && (await caretIn(b, "h1")),
+    5000,
+    "Ada's caret shows on Bo's page, in the heading"
+  );
+  // Pete: "I just want to see the cursor adding the letters." No highlight, no element, marks her text, then or later.
+  const seen = await seenMarks(b);
+  expect(seen.length == 0, "nothing marks Ada's typing on Bo's page", seen);
   noErrors(a, "Ada"); noErrors(b, "Bo");
 });
 

@@ -10,7 +10,7 @@
 
 import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { history, historyField } from "@codemirror/commands";
-import { PageEditor, type HeldInput, type MarkAuthor, type Peer } from "./editor";
+import { PageEditor, type HeldInput, type TypingAgent, type Peer } from "./editor";
 import { LOADING_AGAIN } from "./drop";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
@@ -159,9 +159,8 @@ try {
   /* no storage */
 }
 
-/** Someone else's author entry as the marks show it. */
-const markAuthor = (a: Author | null): MarkAuthor | null =>
-  a ? { name: a.kind == "disk" ? "Edited on disk" : a.name, color: a.color, ...(a.kind == "agent" ? { agent: true } : {}) } : null;
+/** An agent's edit plays as typing, behind its caret; anyone else's shows as it comes. */
+const typingAgent = (a: Author | null): TypingAgent | null => (a?.kind == "agent" ? { name: a.name, color: a.color } : null);
 
 /** Into the editor: the page's own socket and replica, then the editor on the page, from the room's text. */
 async function start() {
@@ -177,7 +176,7 @@ async function start() {
     onEvent: () => {},
     onRemote: (changes, author) => {
       if (!page) return;
-      page.applyExternal(changes, markAuthor(author));
+      page.applyExternal(changes, typingAgent(author));
       if (page.stale) refreshSoon();
       queuePeers();
     },

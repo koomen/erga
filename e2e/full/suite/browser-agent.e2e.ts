@@ -2,7 +2,7 @@
 // through its owner's tab, others see its edits as they happen, a message that can't be sent says so.
 import { expect } from "./harness";
 import { until } from "../../helpers/fixtures";
-import { browserTest, noErrors, openAs, peerNames } from "./suite";
+import { browserTest, marksNow, noErrors, openAs, peerNames, seenMarks, watchMarks } from "./suite";
 
 const FILE = "e2e/full/suite/browser-agent.e2e.ts";
 
@@ -28,7 +28,7 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
 /**
  * Bo's page while the agent edits, at each frame and at each change of the page (a busy machine paints few frames): the
  * agent's caret (its name, and where it is in the new paragraph's text), the heading, the new paragraph's text in the
- * page, and how much of it hasn't played yet (the page's erga-unshown highlight: libs/text/ui/marks.ts).
+ * page, and how much of it hasn't played yet (the transparent highlight erga-unshown: libs/text/ui/marks.ts).
  */
 const RECORD = `(() => {
   const F = document, seen = window.__seen = [];
@@ -49,12 +49,14 @@ const NEWS =
   '<p class="news">The <b>spring release</b> brings three things: faster pages, a new <a href="/docs">guide</a> for teams &amp; their agents, ' +
   "and <i>live</i> carets. Each of them took a season of work, and each shows on every page from today, for every reader and writer.</p>";
 
-const AS_IT_HAPPENS = "others see the agent's edit land at once, and their page plays it as typing, with the agent's caret";
+const AS_IT_HAPPENS =
+  "others see the agent's edit land at once, and their page plays it as typing, with the agent's caret and no highlight";
 browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) => {
   const d = await ctx.doc();
   const a = await openAs(tab, ctx, d, "Ada");
   const b = await openAs(tab, ctx, d, "Bo");
   await b.frame(RECORD);
+  await watchMarks(b);
   await a.openAgent();
   const script = JSON.stringify([
     { tool: "edit", args: { path: d.path, edits: [{ oldText: "<h1>Launch notes", newText: "<h1>Release notes for the spring" }] } },
@@ -97,6 +99,14 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
     "the agent's caret plays it, with its name",
     saidNews
   );
+  // Only the caret shows the edit: the text not typed yet is transparent (erga-unshown), and nothing marks it after.
+  const marked = await seenMarks(b);
+  expect(
+    marked.every((m) => m == "highlight erga-unshown"),
+    "nothing but the caret marks the agent's text",
+    marked
+  );
+  expect((await marksNow(b)).length == 0, "and nothing marks it once it has played", await marksNow(b));
   const idle = async () => !(await peerNames(b)).includes("Ada, via their agent");
   await until(idle, 12_000, "the caret goes once the agent is idle", async () => peerNames(b));
   noErrors(a, "Ada");

@@ -17,12 +17,10 @@ export interface PageUpdate {
 /** A key or input that came while the editor couldn't take it (see hold, render), to apply once it can. */
 export type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean } | { input: string; data: string | null };
 
-/** Who made a change, for its marks: a name and a colour. */
-export interface MarkAuthor {
+/** An agent whose edit the page plays as typing, behind its caret (marks.ts, playTyping): its name and colour. */
+export interface TypingAgent {
   name: string;
   color: string;
-  /** An agent: its edit lands at once, and the page plays its new text as typing (marks.ts, playTyping). */
-  agent?: boolean;
 }
 
 /** Someone else in the document: their caret (and selection) as source positions. */

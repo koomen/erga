@@ -10,11 +10,10 @@
 // where it holds nodes the editor drew: `bound`); and attributes that others changed (`theirs`: a slide's class, a
 // <details> a click opened, a pan's transform).
 
-/** The editor's own nodes in the page: its layers, its style, its authors' colours. */
+/** The editor's own nodes in the page: its layers and its style. */
 export const editors = (n: Node) =>
   n.nodeType == 1 &&
-  ((n as Element).id == "erga-authors" ||
-    (n as Element).hasAttribute("data-erga-caret") ||
+  ((n as Element).hasAttribute("data-erga-caret") ||
     (n as Element).hasAttribute("data-erga") ||
     (n as Element).localName.startsWith("erga-"));
 

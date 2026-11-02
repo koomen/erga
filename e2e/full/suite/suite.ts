@@ -209,3 +209,23 @@ export const peerNames = (p: Person) => p.frame<string>(`[...${p.F}.querySelecto
 export const caretIn = (p: Person, selector: string) => p.frame<boolean>(`(() => { const w = ${p.W}, r = ${p.F}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [...${p.F}.querySelectorAll("erga-peer")].some((c) => { const y = parseFloat(c.style.top) - w.scrollY; return y >= r.top - 2 && y < r.bottom; }); })()`);
 /** Fails unless the person's tab had no errors. */
 export const noErrors = (p: Person, who: string) => { if (p.errors.length) throw new Error(`page errors (${who}):\n${p.errors.join("\n")}`); };
+/**
+ * From now on, at each frame and each change of the page, records what marks changed text on a person's page: the CSS
+ * highlights by name, and any element or class that marks it. Read it with `seenMarks`.
+ */
+export const watchMarks = (p: Person) =>
+  p.frame<boolean>(`(() => {
+    const w = ${p.W}, F = ${p.F}, seen = w.__marks = new Set();
+    const look = () => {
+      for (const name of w.CSS.highlights.keys()) seen.add("highlight " + name);
+      for (const el of F.querySelectorAll("erga-marks, erga-del, .erga-flash, #erga-authors")) seen.add("element " + (el.id || el.localName + "." + el.className));
+    };
+    const frame = () => { look(); w.requestAnimationFrame(frame); };
+    frame();
+    new w.MutationObserver(look).observe(F.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+    return true;
+  })()`);
+/** What `watchMarks` has seen mark changed text so far. */
+export const seenMarks = (p: Person) => p.frame<string[]>(`[...(${p.W}.__marks ?? [])]`);
+/** The marks on a person's page now: the CSS highlights by name. */
+export const marksNow = (p: Person) => p.frame<string[]>(`[...${p.W}.CSS.highlights.keys()]`);
