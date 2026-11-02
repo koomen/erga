@@ -69,7 +69,11 @@ export function mountNaming(shell: Shell) {
     shell.people.toggleAccount(false);
     shell.docSettings?.toggle(false);
     slugTouched = false;
-    $("naming-prefix").textContent = `/${shell.docName!.owner}/`;
+    // The address as the server gives it, its slug in the field; the homepage project's (/_home) has no slug to change.
+    const n = shell.docName!,
+      free = n.address.endsWith(`/${n.slug}`);
+    $("naming-prefix").textContent = free ? n.address.slice(0, -n.slug.length) : n.address;
+    slugIn.hidden = !free;
     titleIn.value = shell.docName!.title;
     slugIn.value = shell.docName!.slug;
     namingHint();
