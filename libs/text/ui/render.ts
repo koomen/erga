@@ -322,18 +322,26 @@ export abstract class EditorRender extends EditorMarks {
     const r = await this.config.pageEdit(src, edit, input);
     if ("error" in r) return refuse(r.error);
     if (win != this.win || this.src != src) return refuse("the page changed while its edit was made. Try once more.");
-    if (!r.changes.length) return { ok: true };
-    const set = this.state.changes(r.changes);
-    const inserted = r.changes.find((c) => c.insert.trim());
-    const at = set.mapPos((inserted ?? r.changes[0]).from, -1);
-    this.dispatch({ changes: set, userEvent: "input.page" });
-    // The caret goes where the change is, so typing and undo go on from there: new text selected, to type over it.
+    this.make(r.changes);
+    return { ok: true };
+  }
+
+  /**
+   * Changes to the source from controls on the page (its own edits, a library's bar: libs/slides/ui/bar.ts), made as
+   * the person's own: one undo step, and the caret where the change is, so typing and undo go on from there; new text
+   * selected, to type over it.
+   */
+  make(changes: { from: number; to: number; insert: string }[], userEvent = "input.page"): void {
+    if (!changes.length) return;
+    const set = this.state.changes(changes);
+    const inserted = changes.find((c) => c.insert.trim());
+    const at = set.mapPos((inserted ?? changes[0]).from, -1);
+    this.dispatch({ changes: set, userEvent });
     const u = this.units.find((x) => x.to > at && x.runs.some((r) => r.editable)) ?? this.units.at(-1);
     if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
     // (The page's script draws its controls on the new elements: agents/document/PROMPT.md, "A page's own edits".)
     if (this.stale || this.unshown) this.render();
     this.focus();
-    return { ok: true };
   }
 
   /** Whether the page shows an older version of something outside the text blocks; render() fixes it. */

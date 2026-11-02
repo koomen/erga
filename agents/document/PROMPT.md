@@ -170,6 +170,26 @@ attributes, new elements of other kinds.
     A slide that builds up in parts names the part too: `#3.2` is the second
     part of slide 3, and `#3` its first.
 
+## Decks (erga/slides)
+
+For a slide deck, use Erga's slides library: the page imports it, and holds
+one `<section class="slide">` for each slide, as children of `<body>`, with a
+layout (`data-layout="title"`: a heading and a line, centred;
+`data-layout="content"`: a heading and points).
+
+```html
+<script type="module" src="https://erga.dev/erga/slides/editor.js"></script>
+<section class="slide" data-layout="title"><h1>Launch plan</h1><p>For the team</p></section>
+<section class="slide" data-layout="content"><h2>Steps</h2><ul><li>Write the notes</li></ul></section>
+```
+
+The library shows one 16:9 slide at a time, scaled to the window, and gives
+the page its steps (below): write no script for that. The page's own
+`<style>` changes the look. In the editor, people type in the slides and
+add, move or delete slides with the library's bar (⌘⇧Enter adds one).
+`document_api` lists erga/slides' edits (`add_slide`, `delete_slide`,
+`move_slide`, `set_layout`, and erga/text's for the text): use them.
+
 ## Presentations
 
 A page is a presentation when `window.ergaSteps` is an object with these

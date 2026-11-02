@@ -26,7 +26,8 @@ export interface ControlsPage {
   setPaused(on: boolean): boolean;
 }
 
-const STYLE = `
+/** The controls' look, which a library's own controls share (libs/slides/ui/bar.ts). */
+export const STYLE = `
 :host { all: initial; }
 .c { --bg: #ffffff; --fg: #1c1c1f; --soft: #6b6b73; --chrome: #a1a1a9; --chrome-hover: #3f3f46; --rule: #e6e6ea;
   --caret: #3b7cf0; --link: #2563c9; --panel-border: #e6e6ea; --shadow: 0 8px 30px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
