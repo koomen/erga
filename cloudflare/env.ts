@@ -26,6 +26,8 @@ export interface Env {
    * secrets admins store. Without it, a hosted server can't store them.
    */
   FACTORY_KEY?: string;
+  /** Starts the sandbox Workers a page's own API runs in (cloudflare/sandbox.ts). */
+  LOADER?: WorkerLoader;
   /** The server's database: users, settings and the directory of documents. */
   DB: D1Database;
   /** Documents' blobs, their files that aren't text (cloudflare/blobs.ts): the target's own bucket (FILES on erga is erga-files). */

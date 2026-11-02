@@ -19,6 +19,7 @@ import { joinLocal } from "../../document/room";
 import { files, introduce } from "../../document/content";
 import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
 import { documentAgents } from "../../agents/document/session";
+import { testSandbox } from "../../tests/helpers/sandbox";
 import { promised } from "../../tests/helpers/promised";
 
 const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
@@ -62,7 +63,7 @@ const storage = new Counted();
 const deps = (): DocumentDeps => ({
   storage, directory: dir,
   tabs: { count: () => 0, closeAll: () => {} },
-  agents: documentAgents({ settings: async () => ({ missing: "none" }) }),
+  agents: documentAgents({ settings: async () => ({ missing: "none" }), sandbox: testSandbox }),
   home: { forget: async () => {}, changed: async () => {} },
   timing: { idleMs: 3_600_000, maxMs: 3_600_000 },
   background: () => {}, log: () => {},

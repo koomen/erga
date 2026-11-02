@@ -112,7 +112,7 @@ export abstract class EditorInput extends EditorClipboard {
     });
     on("mousedown", (e) => this.mousedown(e));
     on("click", (e) => this.tick(e));
-    // What lets the page make custom edits (applyCustomEdits): the person's own clicks and keys, not a script's.
+    // What lets the page make its own edits (pageEdit): the person's own clicks and keys, not a script's.
     on(
       "pointerdown",
       (e) => {

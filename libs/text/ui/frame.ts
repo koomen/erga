@@ -327,6 +327,17 @@ function edit(c: Collab, m: Editing, back: Carry | null) {
       if (fix) (window as Window & { __ergaReport?: (p: unknown) => void }).__ergaReport?.({ kind: "notice", message, fix });
       else controls?.explain(message);
     },
+    async pageEdit(html, edit, input) {
+      if (!mode) return { error: "the editor is starting. Try once more." };
+      const r = await fetch(`${mode.doc}/api/page-edit?key=${encodeURIComponent(mode.key)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: mode.path, html, edit, input }),
+      }).catch(() => null);
+      const answer = (await r?.json().catch(() => null)) as { changes?: []; error?: string } | null;
+      if (r?.ok && answer?.changes) return { changes: answer.changes };
+      return { error: answer?.error ?? "the server didn't answer. Check the connection and try again." };
+    },
     onDropFiles(list, at, point) {
       // (Its state is on its way to the page that comes: what's dropped now would have nowhere to go in.)
       if (reloading || !mode || !collab) return page?.dropError(point, LOADING_AGAIN);

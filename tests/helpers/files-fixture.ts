@@ -9,6 +9,7 @@ import { MemoryBlobs, serveBlob } from "../../document/blobs";
 import { MemoryStorage } from "../../document/storage";
 import { Directory, type Param, type Sql } from "../../server/directory/index.ts";
 import { documentAgents } from "../../agents/document/session";
+import { testSandbox } from "./sandbox";
 import { promised } from "./promised";
 
 const MIGRATIONS = new URL("../../server/migrations/", import.meta.url).pathname;
@@ -31,7 +32,7 @@ export async function setup(o: { blobs?: boolean; test?: boolean } = {}) {
   const deps: DocumentDeps = {
     storage, directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
-    agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }) }),
+    agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
     home: { forget: async () => {}, changed: async () => {} },
     timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
     background: (w) => { void w.catch(() => {}); },

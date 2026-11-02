@@ -1,30 +1,59 @@
-// Custom edits: a document defines its own edits, beyond typing
-// (agents/document/PROMPT.md, "Custom edits"). In the editor, the page gets
-// `window.ergaEditor`; its own controls (buttons it draws) call
-// `ergaEditor.apply(edits)` with a list of custom edits to its elements: insert HTML before, after or into one, remove one,
-// move one, replace one, set or remove an attribute. The page names the
-// elements it sees on screen; the editor finds each in the source
-// and this module turns the list into one change to the source, or refuses
-// it whole, saying why. What it checks, so a page can't break itself:
+// A page's own API: the edits a document offers beyond Erga's (erga/text's: edits.ts), as one standard way. The page
+// names a module of its own files (<meta name="erga-api" content="api.js">) whose default export is its API: its name, a
+// description, its edits (each a name, a description and its input's JSON Schema), and `apply(html, edit, input)`,
+// which answers a list of operations on the page's elements, named by CSS selector as the source has them: insert HTML
+// before, after or into one, remove one, move one, replace one, set or remove an attribute. Or { refused: why }.
 //
-// - every element named is in the source, closed by its own end tag (or a
-//   void element), and not the page's html, head or body;
-// - new HTML is well-formed (every tag closed, no stray end tag) and has no
-//   script, no on* attribute and none of the editor's own (data-erga-*);
-// - all edits refer to the source as it is before the call, and none falls
-//   inside what another removes or replaces;
+// The module runs only in a sandbox: a Worker of its own, which the document's object loads for that code alone, with
+// no access to the network (cloudflare/sandbox.ts). It gets the page's HTML and the call's input, and answers
+// operations. The object turns them into one change to the source, or refuses them whole, saying why (planPageOps).
+// The same call serves an agent's call_edit (agents/document/tools.ts) and the page's own controls
+// (ergaEditor.call: POST /api/page-edit, document/host.ts, whose changes the page's editor makes as the person's own).
+// What the object checks, so a page can't break itself:
+//
+// - every selector names one element of the source, closed by its own end tag (or a void element), and not the page's
+//   html, head or body;
+// - new HTML is well-formed (every tag closed, no stray end tag) and has no script, no on* attribute and none of the
+//   editor's own (data-erga-*);
+// - all operations refer to the source as it is before the call, and none falls inside what another removes or
+//   replaces;
 // - the result has no more unclosed elements than before.
 //
-// New HTML is indented to match the code around it. This module is pure and
-// runs in the browser and under bun.
+// New HTML is indented to match the code around it. The planning is pure: no IO but the sandbox's.
 
-import * as M from "../../../shared/manuscript";
+import * as M from "../shared/manuscript";
+import { selectInSource } from "../shared/source-select";
+import { joinPath, parentOf } from "./pages";
+
+/**
+ * Runs a page's API module (its code) in a sandbox: the call goes to the module's default export, and the answer
+ * comes back as JSON (SANDBOX_MAIN). Throws with what went wrong in the module.
+ */
+export type Sandbox = (code: string, call: SandboxCall) => Promise<unknown>;
+export type SandboxCall = { op: "describe" } | { op: "apply"; html: string; edit: string; input: unknown };
+
+/** The sandbox's main module: it imports the page's module (api.js) and answers one call, as JSON. */
+export const SANDBOX_MAIN = `import api from "./api.js";
+export default {
+  async fetch(request) {
+    try {
+      const call = await request.json();
+      if (!api || typeof api != "object") throw new Error("the module has no default export: export default { name, edits, apply }");
+      if (call.op == "describe") return Response.json({ ok: true, value: { name: api.name, description: api.description, edits: api.edits } });
+      if (typeof api.apply != "function") throw new Error("the module's default export has no apply(html, edit, input)");
+      return Response.json({ ok: true, value: (await api.apply(call.html, call.edit, call.input)) ?? null });
+    } catch (e) {
+      return Response.json({ ok: false, error: String(e && e.message || e) });
+    }
+  },
+};
+`;
 
 /** Where new or moved HTML goes, by an element of the page. */
 export type Where<R> = { before: R } | { after: R } | { into: R } | { prepend: R };
 
-/** One custom edit, as the page writes it; R is how it names elements (DOM elements in the page, source elements here). */
-export type CustomEdit<R> =
+/** One operation, as a page's API answers it (R: a CSS selector), or as it's planned (R: the source element it names). */
+export type PageOp<R = string> =
   | ({ op: "insert"; html: string } & Where<R>)
   | ({ op: "move"; el: R } & Where<R>)
   | { op: "remove"; el: R }
@@ -177,13 +206,57 @@ function checkRef(src: string, el: M.ElementNode | null | undefined, what: strin
   return el;
 }
 
+/** The module a page names as its API (<meta name="erga-api" content="...">), as written; null if it names none. */
+export function apiModuleOf(html: string): string | null {
+  const meta = /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-api\b)[^>]*>/i.exec(html)?.[0];
+  return meta
+    ? /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i
+        .exec(meta)
+        ?.slice(1)
+        .find((v) => v != null)
+        ?.trim() || null
+    : null;
+}
+
 /**
- * Turns a page's custom edits into one change to the source: all of them, in the
- * order given, or none (an error that says why).
+ * Turns a page's operations into one change to the source: all of them, in the order given, or none (an error that
+ * says why). Each element is named by a CSS selector of the source, which must match one.
  */
-export function planCustomEdits(src: string, root: M.ElementNode, ops: CustomEdit<M.ElementNode | null>[]): { changes: Change[] } | { error: string } {
+export function planPageOps(src: string, ops: unknown): { changes: Change[] } | { error: string } {
   try {
-    if (!Array.isArray(ops) || !ops.length) refuse("apply takes a list of edits, e.g. [{ op: \"remove\", el }]");
+    if (!Array.isArray(ops) || !ops.length) refuse('an edit answers a list of operations, e.g. [{ op: "remove", el: "#old" }]');
+    const root = M.parseHtml(src);
+    const byStart = new Map<number, M.ElementNode>();
+    const index = (e: M.ElementNode) => {
+      for (const c of elements(e)) {
+        byStart.set(c.from, c);
+        index(c);
+      }
+    };
+    index(root);
+    const named = (sel: unknown, what: string): M.ElementNode | null => {
+      if (typeof sel != "string" || !sel.trim()) return refuse(`${what} is named by a CSS selector (a string)`);
+      const found = selectInSource(src, sel);
+      if (typeof found == "string") return refuse(`${what}: ${found}`);
+      if (found.length != 1) return refuse(`${what}, "${sel}", matches ${found.length} elements of the source: name one`);
+      return byStart.get(found[0].from) ?? null;
+    };
+    const resolved = (ops as Record<string, unknown>[]).map((op, i) => {
+      if (!op || typeof op != "object") return op;
+      const out: Record<string, unknown> = { ...op };
+      for (const k of ["el", "before", "after", "into", "prepend"]) if (k in out) out[k] = named(out[k], `edit ${i + 1}'s ${k}`);
+      return out;
+    }) as PageOp<M.ElementNode | null>[];
+    return plan(src, root, resolved);
+  } catch (e) {
+    if (e instanceof Refused) return { error: e.message };
+    throw e;
+  }
+}
+
+/** The operations, with their elements found, as one change to the source. */
+function plan(src: string, root: M.ElementNode, ops: PageOp<M.ElementNode | null>[]): { changes: Change[] } | { error: string } {
+  try {
     const changes: Change[] = [];
     /** Ranges that go (removed, replaced, moved away): nothing else may happen inside them. */
     const gone: { from: number; to: number; el: M.ElementNode }[] = [];
@@ -252,4 +325,64 @@ export function applyChanges(src: string, changes: Change[]): string {
     pos = Math.max(pos, c.to);
   }
   return out + src.slice(pos);
+}
+
+/** A page's own edits, as its module describes them. */
+export interface PageEdits {
+  name: string;
+  description: string;
+  edits: { name: string; description: string; input: Record<string, unknown> }[];
+}
+
+/** Where a page's API module is (relative to the document), from its meta; null if the page names none. */
+export function apiPathOf(page: string, html: string): string | null {
+  const ref = apiModuleOf(html);
+  if (!ref) return null;
+  const parts: string[] = [];
+  for (const part of (ref.startsWith("/") ? ref.slice(1) : joinPath(parentOf(page), ref.replace(/^\.\//, ""))).split("/"))
+    if (part == "..") parts.pop();
+    else if (part && part != ".") parts.push(part);
+  return parts.join("/");
+}
+
+/** What the page's module answered, or why it failed. */
+async function run(sandbox: Sandbox, code: string, call: SandboxCall): Promise<unknown> {
+  let answer: unknown;
+  try {
+    answer = await sandbox(code, call);
+  } catch (e) {
+    throw new Error(`The page's API didn't answer: ${(e as Error).message}`);
+  }
+  return answer;
+}
+
+/** The edits a page's module offers (its code), checked: a name, and each edit a name, a description and an input schema. */
+export async function describePageApi(sandbox: Sandbox, code: string): Promise<PageEdits> {
+  const a = (await run(sandbox, code, { op: "describe" })) as Partial<PageEdits> | null;
+  const bad = (why: string) => new Error(`The page's API module doesn't describe itself as Erga needs: ${why}.`);
+  if (!a || typeof a.name != "string" || !a.name) throw bad("its default export needs a name");
+  if (!Array.isArray(a.edits) || !a.edits.length) throw bad("its default export needs edits, a list");
+  for (const e of a.edits)
+    if (!e || typeof e.name != "string" || typeof e.description != "string" || !e.input || typeof e.input != "object")
+      throw bad("each edit needs a name, a description and its input's JSON Schema (input)");
+  return {
+    name: a.name,
+    description: typeof a.description == "string" ? a.description : "",
+    edits: a.edits.map((e) => ({ name: e.name, description: e.description, input: e.input })),
+  };
+}
+
+/** One of a page's own edits, on its HTML: the change to the source, or why it's refused. */
+export async function applyPageEdit(
+  sandbox: Sandbox,
+  code: string,
+  html: string,
+  edit: string,
+  input: unknown
+): Promise<{ changes: Change[] } | { refused: string }> {
+  const ops = await run(sandbox, code, { op: "apply", html, edit, input });
+  if (ops && typeof ops == "object" && !Array.isArray(ops) && "refused" in ops)
+    return { refused: String((ops as { refused: unknown }).refused) };
+  const plan = planPageOps(html, ops);
+  return "error" in plan ? { refused: `The page's edit ${edit} can't be made: ${plan.error}.` } : plan;
 }

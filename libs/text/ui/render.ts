@@ -1,10 +1,9 @@
 // The page editor's rendering: it takes the page in the window, makes it afresh when it must, patches the DOM for each
-// change, and applies the page's own custom edits.
+// change, and makes the page's own edits (ergaEditor.call).
 
 import * as M from "../../../shared/manuscript";
 import { ChangeSet, Transaction, MapMode, type TransactionSpec } from "@codemirror/state";
 import { sourceDigest, TEXT_ATTR } from "../../../shared/page-html";
-import { planCustomEdits, type CustomEdit } from "../api/custom-edits";
 import { watchMoves } from "./moves";
 import { ms } from "./timescale";
 import { balanceWhitespace, same } from "../api/source";
@@ -14,7 +13,7 @@ import { EditorMarks } from "./marks";
 import { differ, Ownership } from "./check";
 import { Mirror } from "./mirror";
 
-/** How long after the person's click or key the page may make a custom edit: as long as a browser's user activation lasts. */
+/** How long after the person's click or key the page may make one of its own edits: as long as a browser's user activation lasts. */
 const GESTURE_MS = 5000;
 
 export abstract class EditorRender extends EditorMarks {
@@ -64,7 +63,7 @@ export abstract class EditorRender extends EditorMarks {
     (doc.head ?? doc.documentElement).append(style);
     doc.documentElement.setAttribute("data-erga-editing", "");
     this.win.dispatchEvent(new Event("erga-editing"));
-    this.takeCustomEdits();
+    this.takePageEdits();
     this.mirror = this.tree ? Mirror.bind(doc, this.tree, src) : null;
     for (const u of this.units) {
       const el = this.elOf(u);
@@ -289,68 +288,53 @@ export abstract class EditorRender extends EditorMarks {
   /** When the person last clicked or pressed a key on the page (performance.now()). */
   protected lastGesture = -Infinity;
 
-  /** Takes the page's custom edits (`ergaEditor.apply`, see CUSTOM_EDITS_API): those it made before the editor was there, then each as it comes. */
-  protected takeCustomEdits(): void {
+  /** Takes the page's own edits (`ergaEditor.call`, client/inline/page-editing-api.ts): those it asked for before the editor was there, then each as it comes. */
+  protected takePageEdits(): void {
     type EditWindow = Window & {
-      __ergaApply?: (ops: unknown) => { ok: boolean; error?: string };
-      __ergaApplyQueue?: [unknown, (r: unknown) => void][];
+      __ergaCall?: (edit: unknown, input: unknown) => Promise<{ ok: boolean; error?: string }>;
+      __ergaCallQueue?: [unknown, unknown, (r: unknown) => void][];
     };
     const win = this.win as EditWindow | null;
     if (!win) return;
-    win.__ergaApply = (ops) => this.applyCustomEdits(win, ops);
-    for (const [ops, done] of win.__ergaApplyQueue?.splice(0) ?? []) done(win.__ergaApply(ops));
+    win.__ergaCall = (edit, input) => this.pageEdit(win, edit, input);
+    for (const [edit, input, done] of win.__ergaCallQueue?.splice(0) ?? []) void win.__ergaCall(edit, input).then(done);
   }
 
   /**
-   * A list of custom edits from the page's own controls, made to the source as one
-   * change (one undo step), or refused whole. Only right after the person
-   * clicks or types on the page: a page can't rewrite itself on its own (on
-   * load, on a timer), which with several people editing would never stop.
+   * One of the page's own edits, from its own controls: its API (in the document's sandbox) gives the change, which the
+   * editor makes to the source as the person's own (one undo step), or refuses whole. Only right after the person
+   * clicks or types on the page: a page can't rewrite itself on its own (on load, on a timer), which with several
+   * people editing would never stop.
    */
-  protected applyCustomEdits(win: Window, ops: unknown): { ok: boolean; error?: string } {
+  protected async pageEdit(win: Window, edit: unknown, input: unknown): Promise<{ ok: boolean; error?: string }> {
     const refuse = (error: string) => {
       this.config.onNotice?.(
-        `The page asked for a custom edit that can't be made: ${error}.`,
-        `The page's custom edits (ergaEditor.apply) asked for an edit the editor refused: “${error}”. Fix the page's script or markup so its custom edits work.`
+        `The page asked for an edit that can't be made: ${error}`,
+        `The page's own edit (ergaEditor.call) was refused: “${error}”. Fix the page's API module or its script so its edits work.`
       );
       return { ok: false, error };
     };
     if (performance.now() - this.lastGesture > ms(GESTURE_MS))
-      return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
-    if (win != this.win || this.rendering) return refuse("the page is being rendered again; try once more");
-    if (!Array.isArray(ops)) return refuse("apply takes a list of custom edits");
-    const mirror = this.mirror;
-    if (!mirror) return refuse("the page is being rendered again; try once more");
-    // The page's elements in the parse of the source the binding has (mirror.ts): an element the page's script made is in none.
+      return refuse("ergaEditor.call works only when the person has just clicked or pressed a key on the page.");
+    if (typeof edit != "string" || !edit) return refuse("ergaEditor.call takes the edit's name, then its input.");
+    if (!this.config.pageEdit) return refuse("this editor can't make the page's own edits.");
     const src = this.src;
-    const isEl = (x: unknown): x is Element => !!x && (x as Node).nodeType == 1;
-    const sourceOf = (el: Element) => {
-      const n = mirror.sourceOf(el);
-      return n?.kind == "element" ? n : null;
-    };
-    const resolved = ops.map((op) => {
-      if (!op || typeof op != "object") return op;
-      const out: Record<string, unknown> = { ...op };
-      for (const k of ["el", "before", "after", "into", "prepend"])
-        if (k in out) out[k] = isEl(out[k]) ? sourceOf(out[k] as Element) : null;
-      return out;
-    }) as CustomEdit<M.ElementNode | null>[];
-    const plan = planCustomEdits(src, mirror.root, resolved);
-    if ("error" in plan) return refuse(plan.error);
-    if (!plan.changes.length) return { ok: true };
-    const set = this.state.changes(plan.changes);
-    const inserted = plan.changes.find((c) => c.insert.trim());
-    const at = set.mapPos((inserted ?? plan.changes[0]).from, -1);
-    this.dispatch({ changes: set, userEvent: "input.custom" });
+    const r = await this.config.pageEdit(src, edit, input);
+    if ("error" in r) return refuse(r.error);
+    if (win != this.win || this.src != src) return refuse("the page changed while its edit was made. Try once more.");
+    if (!r.changes.length) return { ok: true };
+    const set = this.state.changes(r.changes);
+    const inserted = r.changes.find((c) => c.insert.trim());
+    const at = set.mapPos((inserted ?? r.changes[0]).from, -1);
+    this.dispatch({ changes: set, userEvent: "input.page" });
     // The caret goes where the change is, so typing and undo go on from there: new text selected, to type over it.
     const u = this.units.find((x) => x.to > at && x.runs.some((r) => r.editable)) ?? this.units.at(-1);
     if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
-    // (The page's script draws its controls on the new elements: agents/document/PROMPT.md, custom edits.)
+    // (The page's script draws its controls on the new elements: agents/document/PROMPT.md, "A page's own edits".)
     if (this.stale || this.unshown) this.render();
     this.focus();
     return { ok: true };
   }
-
 
   /** Whether the page shows an older version of something outside the text blocks; render() fixes it. */
   get stale(): boolean {

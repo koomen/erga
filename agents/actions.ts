@@ -236,6 +236,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
     tool: "edit",
   },
   {
+    route: "POST /d/<id>/api/page-edit",
+    domain: "document",
+    action: "One of a page's own edits, from its own controls (ergaEditor.call): the change its API gives (editor)",
+    tool: "call_edit",
+  },
+  {
     route: "GET /d/<id>/api/start",
     domain: "document",
     action: "Open the editor: the document's name, pages and text in one answer (editor)",

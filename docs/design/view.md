@@ -444,8 +444,8 @@ CodeMirror mapping applied to tree nodes. Nothing is guessed from similar
 shapes.
 
 **What uses it:** undo and redo (the inverse `ChangeSet`), an agent's edit, a
-merge from another tab, an edit on disk, the source view, a custom edit
-(`ergaEditor.apply`), paste, and a structural key that has no step of its own
+merge from another tab, an edit on disk, the source view, one of the page's own
+edits (`ergaEditor.call`), paste, and a structural key that has no step of its own
 (section 5.1). The fixes for class A come from this: redo no longer reloads,
 an extension's `<div>` no longer stops a morph, the `- [ ] ` change to the
 `<ul>`'s `style` attribute shows (an attribute change on `E` itself is a

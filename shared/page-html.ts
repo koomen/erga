@@ -75,3 +75,8 @@ export const GUARD_UP = ["pointerup", "pointercancel", "mouseup", "touchend", "t
 /** The release that ends a press: a mouse's (a pen's and a tap's come as mouse events too, last), or a touch's. */
 export const GUARD_END = ["mouseup", "touchend", "touchcancel"];
 
+
+/** Whether a page brings its own editor: it imports one of Erga's libraries itself, or says it has its own. */
+export const bringsEditor = (html: string) =>
+  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/[a-z]+\/editor\.js\b/i.test(html) ||
+  /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);

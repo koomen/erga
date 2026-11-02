@@ -27,6 +27,7 @@ import type { Who } from "../../server/directory/index.ts";
 import { askerFrom, type Role } from "../../document/access";
 import type { NamedRow } from "../../document/names";
 import { documentAgents } from "../../agents/document/session";
+import { sandboxOf } from "../sandbox";
 import { VIA } from "../../shared/attribution";
 import type { RestoreResult, VersionsState } from "../../document/versions";
 import type { DocSnapshot, Page } from "../../document/snapshot";
@@ -93,7 +94,7 @@ export class DocumentObject extends DurableObject<Env> {
         detach: () => this.tabs.detachAll(),
       },
       // Each person's agent's session here, and the key the versions' descriptions are written with.
-      agents: documentAgents({ settings: () => platform(env).agentSettings() }),
+      agents: documentAgents({ settings: () => platform(env).agentSettings(), sandbox: sandboxOf(env.LOADER) }),
       home: {
         forget: (docId) => env.HOME.getByName("home").forget(docId),
         // A new version: if it is the homepage, its next deploy is scheduled.

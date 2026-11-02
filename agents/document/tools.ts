@@ -1,4 +1,4 @@
-// The document tools every agent has in a document (run in its host: agents/document/session.ts): the files' text (read, edit, write, find, grep), a page's own edits (document_api, call_edit: its API, libs/text/api/edits.ts), the page (page-tools.ts), and diff_versions.
+// The document tools every agent has in a document (run in its host: agents/document/session.ts): the files' text (read, edit, write, find, grep), a page's edits (document_api, call_edit: its own API, run in a sandbox, document/page-api.ts, and erga/text's, libs/text/api/edits.ts), the page (page-tools.ts), and diff_versions.
 // What a person does with the document as a whole (its name, pages, folders, files' list and versions) is an
 // operation (server/operations/editor.ts), which the agent has as a tool too.
 
@@ -17,6 +17,8 @@ import { pageTools } from "./page-tools";
 import { readLines, type TextEdit } from "../../shared/text-edits";
 import { findInSource } from "../../shared/source-select";
 import { textApi } from "../../libs/text/api/edits";
+import { bringsEditor } from "../../shared/page-html";
+import { apiPathOf, applyPageEdit, describePageApi, type PageEdits, type Sandbox } from "../../document/page-api";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -49,11 +51,30 @@ export function makeTools(
     open?: (path: string) => Promise<OpenResult>;
     /** Every file's size, time and kind, PDFs' text, writes of bytes; without it, ls lists names, grep text files, and write takes text only. */
     files?: FilesAccess;
+    /** Runs a page's own API (document/page-api.ts). */
+    sandbox: Sandbox;
   }
 ): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
   const run = <T>(op: Effect.Effect<T, WorkspaceError>): T => Effect.runSync(Effect.mapError(op, (e) => new Error(e.message)));
+  /**
+   * A page's APIs: its own (its module, <meta name="erga-api">, described in the sandbox) and erga/text's, unless the
+   * page brings its own editor. Throws when it has neither.
+   */
+  const apisOf = async (path: string): Promise<{ html: string; own: PageEdits | null; code: string | null; text: boolean }> => {
+    if (!/\.html?$/i.test(path)) throw new Error(`${path} isn't a page: its edits are the source's (edit, write).`);
+    const html = run(ws.read(path));
+    const module = apiPathOf(path, html);
+    const code = module && ws.paths().includes(module) ? run(ws.read(module)) : null;
+    if (module && code == null)
+      throw new Error(`${path} names ${module} as its API (<meta name="erga-api">), but the document has no such file.`);
+    const own = code == null ? null : await describePageApi(opts.sandbox, code);
+    const erga = !bringsEditor(html);
+    if (!own && !erga)
+      throw new Error(`${path} has its own editor and names no API of its own (<meta name="erga-api">): edit its source (edit, write).`);
+    return { html, own, code, text: erga };
+  };
   /** An edit based on text the file no longer has: which restores changed it since the agent saw it, and the current version. */
   const changedSince = async (message: string, path: string): Promise<string> => {
     const s = opts.versions && await opts.versions.state({ limit: 20 }).catch(() => null);
@@ -174,29 +195,48 @@ export function makeTools(
     {
       name: "document_api",
       label: "Read the page's edits",
-      description:
-        "The edits a page has, as a person makes them in Erga's editor (its API: erga/text for a page that names no editor of its own): each one's name, what it does, and its input's JSON Schema. Run one with call_edit. Use them first for a change to a page's text, its blocks, styles, links and lists: they keep the HTML as a person's editing would. Edit the source with edit or write only for what they can't do (a page's layout, styles, scripts, attributes).",
-      parameters: Schema.Struct({ path: Schema.String.annotate({ description: 'Path of the page, e.g. "index.html"' }) }),
+      description: "List a page's edits (its own API's and erga/text's), with their inputs: use them first for a change to its text.",
+      parameters: Schema.Struct({
+        path: Schema.String.annotate({
+          description:
+            "Path of the page, e.g. \"index.html\". Its APIs: its own, if it names one (<meta name=\"erga-api\">), and erga/text's, unless it has an editor of its own. Each edit: its name, what it does, its input's JSON Schema. They keep the HTML as a person's editing would; edit the source (edit, write) only for what they can't do (layout, styles, scripts).",
+        }),
+      }),
       execute: async (_id, p: { path: string }) => {
-        const path = run(modelPath(p.path));
-        if (!/\.html?$/i.test(path)) throw new Error(`${path} isn't a page: its edits are the source's (edit, write).`);
-        run(ws.read(path));
-        return text(JSON.stringify({ api: textApi.name, description: textApi.description, edits: textApi.edits }, null, 1));
+        const { own, text: erga } = await apisOf(run(modelPath(p.path)));
+        const apis = [
+          own && { api: own.name, description: own.description, edits: own.edits },
+          erga && { api: textApi.name, description: textApi.description, edits: textApi.edits },
+        ];
+        return text(JSON.stringify({ apis: apis.filter(Boolean) }, null, 1));
       },
     },
     {
       name: "call_edit",
       label: "Edit the page",
-      description:
-        'Run one of a page\'s edits (document_api lists them, with their inputs): it lands in the page at once, as a person\'s editing would, and everyone sees it typed. E.g. {"path": "index.html", "edit": "replace_text", "input": {"selector": "h1", "find": "Draft", "text": "Final"}}. If it refuses, it says why: then edit the source with edit. Each call is one step to undo.',
+      description: "Run one of a page's edits (document_api lists them); if it refuses, edit the source.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({ description: 'Path of the page, e.g. "index.html"' }),
-        edit: Schema.String.annotate({ description: 'The edit\'s name, e.g. "replace_text"' }),
-        input: Schema.Record(Schema.String, Schema.Unknown).annotate({ description: "The edit's input, as its schema says" }),
+        edit: Schema.String.annotate({
+          description:
+            'The edit\'s name, e.g. "replace_text". It lands in the page at once, and everyone sees it typed. Each call is one step to undo.',
+        }),
+        input: Schema.Record(Schema.String, Schema.Unknown).annotate({
+          description: 'The edit\'s input, as its schema says, e.g. {"selector": "h1", "find": "Draft", "text": "Final"}',
+        }),
       }),
       execute: async (_id, p: { path: string; edit: string; input: Record<string, unknown> }) => {
         const path = run(modelPath(p.path));
-        const html = run(ws.read(path));
+        const { html, own, code, text: erga } = await apisOf(path);
+        if (own?.edits.some((e) => e.name == p.edit)) {
+          const r = await applyPageEdit(opts.sandbox, code!, html, p.edit, p.input);
+          if ("refused" in r) throw new Error(r.refused);
+          const done = run(ws.change(path, html, r.changes));
+          opts.edited(done.path, done.at);
+          return text(`Made ${own.name}'s ${p.edit}. ${done.summary}`);
+        }
+        if (!erga)
+          throw new Error(`${path}'s API${own ? `, ${own.name},` : ""} has no edit named "${p.edit}": document_api lists its edits.`);
         const r = textApi.apply(html, path, p.edit, p.input);
         if ("refused" in r) throw new Error(r.refused);
         if (!r.changes.length) return text(r.done);
@@ -354,6 +394,7 @@ export function documentToolSpecs(): { name: string; description: string; parame
     edited: none,
     versions,
     open: none,
+    sandbox: none,
   }).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters as Schema.Struct<Schema.Struct.Fields> }));
 }
 

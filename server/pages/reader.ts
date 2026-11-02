@@ -13,7 +13,7 @@
 // coming from the page). It sends nothing secret, and to the viewer's origin only. The page's origin holds nothing but
 // this one document: that's the boundary (PAGE_SANDBOX).
 
-import { insertHead, type ReaderConfig } from "../../shared/page-html.ts";
+import { bringsEditor, insertHead, type ReaderConfig } from "../../shared/page-html.ts";
 import { asset, frameScripts } from "./assets.ts";
 import { inlineCall } from "./inline.ts";
 import { jsonInScript } from "../../shared/html.ts";
@@ -72,11 +72,6 @@ export function readerPage(html: string, o: { shell: string; prefix: string; src
       : "");
   return insertHead(html, head);
 }
-
-/** Whether a page brings its own editor: it imports one of Erga's libraries itself, or says it has its own. */
-export const bringsEditor = (html: string) =>
-  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/[a-z]+\/editor\.js\b/i.test(html) ||
-  /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);
 
 /** The version of what the pages origin puts in a page: this script's and the editor's build's (frame.js's address names it). */
 export const readerVersion = () =>

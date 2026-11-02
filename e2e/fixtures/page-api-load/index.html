@@ -1,0 +1,11 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="erga-api" content="api.js"><title>A page's own edit on load</title></head>
+<body style="background: #fff">
+<p id="note">Nobody clicked.</p>
+<script>
+  // A page that tries one of its own edits as it loads: the editor refuses, as no one clicked.
+  if (window.ergaEditor) ergaEditor.call("remove_note").then((r) => { window.result = r; });
+</script>
+</body>
+</html>
