@@ -8,7 +8,15 @@ import type { MarkAuthor, Peer } from "./types";
 import { textIn, unitsIn } from "../api/source";
 import { EditorCore } from "./core";
 
-export type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number; author?: MarkAuthor | null };
+/** `shown`: an agent's added text that plays as typing shows up to there; the rest waits, unseen. */
+export type Mark = ({ kind: "add"; from: number; to: number; shown?: number } | { kind: "del"; pos: number; text: string }) & {
+  level?: number;
+  born?: number;
+  author?: MarkAuthor | null;
+};
+
+/** How an agent's edit plays as typing: characters a second, and at most this long for one edit (it goes faster). */
+const TYPING = { cps: 600, budgetMs: 2000, stepMs: 33 };
 
 /** Fill alphas for an added-text highlight as it fades (level 0 is fresh). */
 export const FADE = [0.3, 0.24, 0.18, 0.12, 0.07, 0.03];
@@ -63,8 +71,63 @@ export abstract class EditorMarks extends EditorCore {
       if (m.kind == "del") return [{ ...m, pos: changes.mapPos(m.pos, -1) }];
       const from = changes.mapPos(m.from, 1),
         to = changes.mapPos(m.to, -1);
-      return to > from ? [{ ...m, from, to }] : [];
+      return to > from
+        ? [{ ...m, from, to, ...(m.shown != null ? { shown: Math.min(to, Math.max(from, changes.mapPos(m.shown, -1))) } : {}) }]
+        : [];
     });
+  }
+
+  protected typingTimer = 0;
+  /**
+   * An agent's edit is in the page at once, as in the room. Its new text plays as typing, a visual effect only: it shows
+   * a few characters at a time, with the agent's caret after it, and the rest waits unseen. Its mark fades once it's all
+   * shown.
+   */
+  protected playTyping(marks: Mark[]): void {
+    // (A page out of sight shows it at once: nobody sees it play, and its timers run once a second.)
+    if (this.win?.document.hidden) return;
+    for (const m of marks)
+      if (m.kind == "add") {
+        m.shown = m.from;
+        m.born = Infinity;
+      }
+    if (this.typingTimer) return;
+    const step = ms(TYPING.stepMs);
+    this.typingTimer = window.setInterval(() => {
+      let playing = false;
+      for (const m of this.marks) {
+        if (m.kind != "add" || m.shown == null) continue;
+        const left = m.to - m.shown;
+        const per = Math.max((TYPING.cps * step) / 1000, ((m.to - m.from) * step) / ms(TYPING.budgetMs));
+        m.shown = Math.min(m.to, m.shown + Math.max(1, Math.round(Math.min(left, per))));
+        if (m.shown >= m.to) {
+          delete m.shown;
+          m.born = performance.now();
+        } else playing = true;
+      }
+      if (!playing) {
+        clearInterval(this.typingTimer);
+        this.typingTimer = 0;
+      }
+      this.paintMarks();
+    }, step);
+  }
+
+  /** The carets of agents whose edit plays as typing, where it's got to (each in place of that agent's own caret). */
+  protected typingCarets(): Peer[] {
+    const out: Peer[] = [];
+    for (const m of this.marks)
+      if (m.kind == "add" && m.shown != null && m.author)
+        out.push({
+          key: -1 - out.length,
+          name: m.author.name,
+          color: m.author.color,
+          anchor: m.shown,
+          head: null,
+          agent: true,
+          activity: null,
+        });
+    return out;
   }
 
   /** Brief marks hold for a moment, then fade out step by step. */
@@ -110,10 +173,16 @@ export abstract class EditorMarks extends EditorCore {
       const name = m.author ? `erga-a${this.authorStyle(m.author.color)}-${m.level ?? 0}` : `erga-add-${m.level ?? 0}`;
       let ranges = groups.get(name);
       if (!ranges) groups.set(name, (ranges = []));
-      ranges.push(...this.rangesIn(m.from, m.to));
+      ranges.push(...this.rangesIn(m.from, m.shown ?? m.to));
+      // Not shown yet (an agent's text, playing as typing): there, unseen.
+      if (m.shown != null && m.shown < m.to) {
+        let hidden = groups.get("erga-unshown");
+        if (!hidden) groups.set("erga-unshown", (hidden = []));
+        hidden.push(...this.rangesIn(m.shown, m.to));
+      }
     }
     if (registry && win.Highlight) {
-      for (const name of [...registry.keys()]) if (/^erga-(add|a\d+)-\d$/.test(name) && !groups.has(name)) registry.delete(name);
+      for (const name of [...registry.keys()]) if (/^erga-((add|a\d+)-\d|unshown)$/.test(name) && !groups.has(name)) registry.delete(name);
       for (const [name, ranges] of groups) registry.set(name, new win.Highlight!(...ranges));
     }
 
@@ -208,7 +277,10 @@ export abstract class EditorMarks extends EditorCore {
     const doc = this.doc,
       win = this.win;
     if (!doc || !win || this.rendering) return;
-    if (!this.peers.length) {
+    // An agent whose edit plays as typing: its caret where the typing has got to, not its own (at the edit's end).
+    const typing = this.typingCarets();
+    const peers = [...this.peers.filter((p) => !(p.agent && typing.some((t) => t.name == p.name))), ...typing];
+    if (!peers.length) {
       this.peerLayer?.remove();
       this.peerLayer = null;
       return;
@@ -220,7 +292,7 @@ export abstract class EditorMarks extends EditorCore {
     const layer = this.peerLayer;
     layer.textContent = "";
     const len = this.state.doc.length;
-    for (const p of this.peers) {
+    for (const p of peers) {
       const anchor = Math.min(p.anchor, len);
       if (p.head != null && p.head != anchor) {
         const from = Math.min(anchor, p.head),

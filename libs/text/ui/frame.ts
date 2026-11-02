@@ -161,7 +161,7 @@ try {
 
 /** Someone else's author entry as the marks show it. */
 const markAuthor = (a: Author | null): MarkAuthor | null =>
-  a ? { name: a.kind == "disk" ? "Edited on disk" : a.name, color: a.color } : null;
+  a ? { name: a.kind == "disk" ? "Edited on disk" : a.name, color: a.color, ...(a.kind == "agent" ? { agent: true } : {}) } : null;
 
 /** Into the editor: the page's own socket and replica, then the editor on the page, from the room's text. */
 async function start() {

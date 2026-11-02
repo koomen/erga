@@ -187,7 +187,8 @@ health checks and rollbacks work.
       text/           erga/text, the page editor in the page (frame.js: ui/frame.ts, with its own socket and replica of the
                       room, ui/collab.ts, opened with the edit key the shell gives it; its own controls, ui/controls.ts,
                       and uploads, ui/uploads.ts): api/ has the editing rules (rules.ts,
-                      blocks.ts, lists.ts), the source's helpers (source.ts), the clipboard's blocks and the custom edits
+                      blocks.ts, lists.ts), styles and links (format.ts), the source's helpers (source.ts), the clipboard's
+                      blocks, the custom edits, and erga/text's API (edits.ts: the named edits agents run with call_edit)
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
       shell/          the editor's shell (page.js): main.ts, its one word to the page's editor (page-frame.ts: edit, with the
                       edit key, or view), its replica of the room (libs/text/ui/collab.ts), the source view, the shell's parts

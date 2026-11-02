@@ -22,7 +22,7 @@ import { pageRefusal } from "../../document/pages";
 import { joinLocal } from "../../document/room";
 import type { AgentSession, DocumentAgents, SessionOptions, ToolContent } from "../../document/agent";
 import type { LogEvent } from "../../shared/agent-log";
-import { YjsWorkspace, type Pacer } from "./workspace";
+import { YjsWorkspace, type Cursor } from "./workspace";
 import type { AgentSettings } from "../models";
 import { CHANGES, makeTools, toolPath } from "./tools";
 
@@ -48,6 +48,8 @@ const TOOL_ACTIVITY: Record<string, string> = {
   open_page: "opening a page",
   read: "reading",
   edit: "editing",
+  document_api: "reading the page's edits",
+  call_edit: "editing",
   write: "writing",
   find: "looking for files",
   grep: "searching",
@@ -82,20 +84,9 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
   // One undo step per tool call: its steps merge until the call ends (edited, stopCapturing).
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: Infinity });
-  // Others see each edit as it applies: the agent's selection on the old text, then the new typed in (workspace.ts, Pacer).
-  const pacer: Pacer = {
-    cursor: (path, anchor, head) =>
-      presence({ cursor: { path, anchor: Y.relativePositionToJSON(anchor), head: head && Y.relativePositionToJSON(head) } }),
-    wait: (ms) => Effect.runPromise(Effect.sleep(ms)),
-    revert: () => {
-      doc.transact(() => {
-        undo.undo();
-        stamp(doc, acting);
-      }, undoOrigin);
-      undo.redoStack.pop();
-      undo.stopCapturing();
-    },
-  };
+  // Where each edit ends, as the agent's caret: others' editors play the edit as typing up to it (workspace.ts).
+  const cursor: Cursor = (path, anchor, head) =>
+    presence({ cursor: { path, anchor: Y.relativePositionToJSON(anchor), head: head && Y.relativePositionToJSON(head) } });
   const ws = new YjsWorkspace(
     doc,
     () => acting,
@@ -103,7 +94,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     origin,
     opts.only ?? null,
     (path) => (opts.kind ? pageRefusal(opts.kind(), path, opts.docName) : null),
-    pacer
+    cursor
   );
   const presence = (patch: Record<string, unknown>) => awareness.setLocalState({ ...awareness.getLocalState(), ...patch });
   // Working while an agent calls tools: during a call, and for a while after the last one, since it's thinking between

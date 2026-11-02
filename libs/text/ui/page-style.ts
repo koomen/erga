@@ -16,6 +16,8 @@ body[contenteditable] { outline: none; }
 ::highlight(erga-add-3) { background-color: rgba(34, 197, 94, 0.12); }
 ::highlight(erga-add-4) { background-color: rgba(34, 197, 94, 0.07); }
 ::highlight(erga-add-5) { background-color: rgba(34, 197, 94, 0.03); }
+/* An agent's new text that hasn't played yet (marks.ts, playTyping): there, unseen, until its typing gets to it. */
+::highlight(erga-unshown) { color: transparent; text-decoration-color: transparent; }
 erga-peers { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483646; pointer-events: none; }
 erga-peer-sel { all: initial; position: absolute; border-radius: 2px; }
 erga-peer { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--erga-peer); border-radius: 1px; }

@@ -26,18 +26,17 @@ browserTest(FILE, "the agent panel is per person, and the agent sees the page th
 });
 
 /**
- * Bo's page while the agent edits, at each frame and at each change of the page (a busy machine paints few frames):
- * its selection boxes, its caret's name and whether it's in the first paragraph, the heading, the new paragraph.
+ * Bo's page while the agent edits, at each frame and at each change of the page (a busy machine paints few frames): the
+ * agent's caret (its name, and where it is in the new paragraph's text), the heading, the new paragraph's text in the
+ * page, and how much of it hasn't played yet (the page's erga-unshown highlight: libs/text/ui/marks.ts).
  */
 const RECORD = `(() => {
   const F = document, seen = window.__seen = [];
   const look = () => {
-    const c = F.querySelector("erga-peer[data-agent]"), p = F.querySelector("p.lede")?.getBoundingClientRect();
+    const c = F.querySelector("erga-peer[data-agent]");
     const news = F.querySelector("p.news");
-    if (c) {
-      const y = parseFloat(c.style.top) - scrollY;
-      seen.push({ sel: F.querySelectorAll("erga-peer-sel").length, name: c.textContent, h1: F.querySelector("h1")?.textContent ?? "", inP: !!p && y >= p.top - 2 && y < p.bottom, t: performance.now(), news: news ? news.textContent : null, links: news ? news.querySelectorAll("a, b, i").length : 0 });
-    }
+    const hidden = [...(CSS.highlights.get("erga-unshown") ?? [])].reduce((n, r) => n + r.toString().length, 0);
+    if (c || news) seen.push({ name: c ? c.textContent : "", h1: F.querySelector("h1")?.textContent ?? "", t: performance.now(), news: news ? news.textContent : null, tags: news ? news.querySelectorAll("a, b, i").length : 0, hidden });
   };
   const frame = () => { look(); requestAnimationFrame(frame); };
   frame();
@@ -50,7 +49,7 @@ const NEWS =
   '<p class="news">The <b>spring release</b> brings three things: faster pages, a new <a href="/docs">guide</a> for teams &amp; their agents, ' +
   "and <i>live</i> carets. Each of them took a season of work, and each shows on every page from today, for every reader and writer.</p>";
 
-const AS_IT_HAPPENS = "others see the agent's edit as it happens: its selection on the old text, then its caret as the new text types in";
+const AS_IT_HAPPENS = "others see the agent's edit land at once, and their page plays it as typing, with the agent's caret";
 browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) => {
   const d = await ctx.doc();
   const a = await openAs(tab, ctx, d, "Ada");
@@ -59,7 +58,6 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
   await a.openAgent();
   const script = JSON.stringify([
     { tool: "edit", args: { path: d.path, edits: [{ oldText: "<h1>Launch notes", newText: "<h1>Release notes for the spring" }] } },
-    { tool: "edit", args: { path: d.path, edits: [{ oldText: '<p class="lede">', newText: '<p class="lede big">' }] } },
     {
       tool: "edit",
       args: { path: d.path, edits: [{ oldText: "<h2>What changed</h2>", newText: `${NEWS}\n\n    <h2>What changed</h2>` }] },
@@ -70,29 +68,37 @@ browserTest(FILE, AS_IT_HAPPENS, { needs: ["scriptedAgent"] }, async (ctx, tab) 
   await a.eval(`(() => { const i = document.getElementById("agent-input");
   i.value = ${message}; i.dispatchEvent(new Event("input")); })()`);
   await a.press("Enter");
+  // Bo watches (a page in the background shows an agent's edit at once: nobody sees it play).
+  await b.page.bringToFront();
   const done = () => a.eval<boolean>(`[...document.querySelectorAll(".msg-assistant")].some((e) => e.textContent == "Renamed.")`);
   await until(done, 10_000, "the agent is done");
   expect((await b.textOf("h1")).includes("Release notes for the spring"), "Bo's page shows the agent's edit");
-  type Seen = { sel: number; name: string; h1: string; inP: boolean; t: number; news: string | null; links: number };
+  await until(async () => (await b.frame<{ hidden: number }[]>(`window.__seen`)).at(-1)?.hidden === 0, 5000, "the edit has played");
+  type Seen = { name: string; h1: string; t: number; news: string | null; tags: number; hidden: number };
   const seen = await b.frame<Seen[]>(`window.__seen`);
-  const said = JSON.stringify(seen.slice(0, 40));
-  const selected = seen.some((s) => s.sel > 0 && s.h1.includes("Launch notes") && /Ada, via their agent/.test(s.name));
-  expect(selected, "Bo saw the agent's selection on the old heading, with its name", said);
-  const typing = new Set(seen.filter((s) => s.sel == 0 && !s.h1.includes("Launch")).map((s) => s.h1));
-  expect(typing.size >= 2, "and its caret as the new text came in, in steps", said);
-  const inP = seen.some((s) => s.inP);
-  expect(inP, "an edit in a tag puts the caret at the text of its paragraph", said);
-  // The new paragraph streams in over about half a second, in many steps, and never shows a half tag or entity.
+  // The paragraph is in Bo's page whole from its first moment: the edit landed at once, in the room and the page.
   const news = seen.filter((s) => s.news != null);
-  const steps = new Set(news.map((s) => s.news)).size;
-  const took = news.length ? [...news].reverse().find((s) => s.news!.length < news[news.length - 1].news!.length)!.t - news[0].t : 0;
-  const saidNews = JSON.stringify(news.map((s) => [Math.round(s.t - news[0].t), s.news!.length, s.links]));
-  expect(steps >= 8, `Bo saw the paragraph arrive in many steps (${steps})`, saidNews);
-  expect(took > 300 && took < 1500, `over about half a second (${Math.round(took)} ms)`, saidNews);
-  const half = news.filter((s) => /[<>]|&\w/.test(s.news!));
-  expect(!half.length, "and never a half tag or entity", JSON.stringify(half.slice(0, 3)));
+  const saidNews = JSON.stringify(news.map((s) => [Math.round(s.t - news[0].t), s.news!.length, s.tags, s.hidden]).slice(0, 40));
+  expect(
+    news.length > 0 && news.every((s) => s.news == news[0].news && s.tags == 3),
+    "the new paragraph is whole in the page at once",
+    saidNews
+  );
+  // And plays as typing: what hasn't played yet shrinks, in steps, to nothing, in about half a second.
+  const playing = news.filter((s) => s.hidden > 0);
+  const steps = new Set(playing.map((s) => s.hidden)).size;
+  expect(steps >= 5, `Bo saw it play in many steps (${steps})`, saidNews);
+  const took = playing.length ? playing[playing.length - 1].t - news[0].t : 0;
+  expect(took > 200 && took < 2500, `in about half a second (${Math.round(took)} ms)`, saidNews);
+  expect(news[news.length - 1].hidden == 0, "and all of it shows at the end", saidNews);
+  // With the agent's caret, its name on it, while it plays.
+  expect(
+    playing.some((s) => /Ada, via their agent/.test(s.name)),
+    "the agent's caret plays it, with its name",
+    saidNews
+  );
   const idle = async () => !(await peerNames(b)).includes("Ada, via their agent");
-  await until(idle, 10_000, "the caret goes once the agent is idle", async () => peerNames(b));
+  await until(idle, 12_000, "the caret goes once the agent is idle", async () => peerNames(b));
   noErrors(a, "Ada");
   noErrors(b, "Bo");
 });
