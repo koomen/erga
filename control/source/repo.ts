@@ -39,7 +39,7 @@ import { Conflicts, type MergeConflict } from "./conflicts.ts";
 import { Releases, type Released, type TagInfo } from "./releases.ts";
 import { Pushes } from "./receive.ts";
 import { GithubSync, type GithubStatus } from "./github-sync.ts";
-import { Features, type FeatureInfo } from "./features.ts";
+import { Features, type FeatureAction, type FeatureInfo } from "./features.ts";
 import { byLine } from "../../shared/attribution.ts";
 
 /** At most how many commits a task's card holds. */
@@ -93,8 +93,8 @@ export interface RepoDeps {
   released?(release: Released): void;
   /** A downstream: where upstream's repository is, and the channel followed (null, or absent: this is erga.dev's own). */
   upstream?(): UpstreamSource | null;
-  /** Something the Ops page shows changed (a branch, the sync's status). */
-  changed(): void;
+  /** Something the Ops page shows changed (a branch, the sync's status), or the event that says what (a feature branch's Merge or Delete). */
+  changed(event?: { type: string } & Record<string, unknown>): void;
   /** Work that outlives the request (the sync with GitHub). */
   background(work: Promise<unknown>): void;
   now?(): number;
@@ -266,6 +266,7 @@ export class SourceRepo {
   async branches(): Promise<{
     branches: BranchInfo[];
     features: FeatureInfo[];
+    featureActions: FeatureAction[];
     github: GithubStatus;
     conflict: MergeConflict | null;
     moves: Move[];
@@ -304,6 +305,7 @@ export class SourceRepo {
     return {
       branches,
       features: this.features.list(remote, refs),
+      featureActions: this.features.recent(),
       github: this.github.githubStatus(),
       conflict: this.state<MergeConflict>("conflict"),
       moves: this.moves(10),
@@ -580,8 +582,8 @@ export class SourceRepo {
   mergeFeature(who: Actor, name: string, message?: string) {
     return this.features.merge(who, name, message);
   }
-  deleteFeature(name: string) {
-    return this.features.remove(name);
+  deleteFeature(name: string, who: Actor) {
+    return this.features.remove(name, who);
   }
   githubLink() {
     return this.github.githubLink();

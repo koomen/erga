@@ -80,7 +80,7 @@ export const SOURCE_OPERATIONS: Operation[] = [
     label: "Read staging and main",
     admin: true,
     description:
-      "The Ops page's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), the feature branches (features: each one's head, its commits ahead of and behind staging, its last commit, whether it merges cleanly into staging, and the default message of its squash commit), the release tags, GitHub's status (github), a downstream's position against upstream (upstream), the merge waiting on conflicts, if one (conflict: from upstream or from GitHub), and the Git remote.",
+      "The Ops page's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), the feature branches (features: each one's head, its commits ahead of and behind staging, its last commit, whether it merges cleanly into staging, and the default message of its squash commit), each Merge and Delete of a feature branch running now or ended in the last 10 minutes (featureActions: branch, action, state running/done/failed, by, at, and the commit or the error), the release tags, GitHub's status (github), a downstream's position against upstream (upstream), the merge waiting on conflicts, if one (conflict: from upstream or from GitHub), and the Git remote.",
     parameters: Schema.Struct({}),
     run: run(async (o, origin, caller) => ({
       ...(await o.branches(origin)),
@@ -136,7 +136,7 @@ export const SOURCE_OPERATIONS: Operation[] = [
       "Deletes a feature branch, as Delete in the Ops page's Feature branches does. Its commits stay out of staging; the answer has its head (commit), and a push of that commit brings the branch back. Only when the admin asks in this conversation to delete the branch.",
     parameters: Schema.Struct({ branch: str("The feature branch's name, as list_branches lists it") }),
     run: async (a, caller) => {
-      const r = ok(await repo(caller).deleteFeature(originOf(caller), String(a.branch ?? "")));
+      const r = ok(await repo(caller).deleteFeature(originOf(caller), String(a.branch ?? ""), await actorOf(caller)));
       return { ...r, done: `${r.branch} is deleted; it was at ${r.commit.slice(0, 10)}` };
     },
   },

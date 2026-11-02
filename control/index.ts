@@ -70,8 +70,8 @@ export class App extends WorkerEntrypoint<ControlEnv> {
   mergeFeature(origin: string, who: Actor, name: string, message?: string) {
     return this.source.mergeFeature(origin, who, name, message);
   }
-  deleteFeature(origin: string, name: string) {
-    return this.source.deleteFeature(origin, name);
+  deleteFeature(origin: string, name: string, who: Actor) {
+    return this.source.deleteFeature(origin, name, who);
   }
   release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }) {
     return this.source.release(origin, who, o);

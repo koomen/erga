@@ -107,7 +107,7 @@ function controlSource(control: Service<App>): SourceService {
       read: (origin, q) => control.read(origin, q),
       merge: (origin, who, commit) => control.merge(origin, who, commit),
       mergeFeature: (origin, who, name, message) => control.mergeFeature(origin, who, name, message),
-      deleteFeature: (origin, name) => control.deleteFeature(origin, name),
+      deleteFeature: (origin, name, who) => control.deleteFeature(origin, name, who),
       release: (origin, who, o) => control.release(origin, who, o),
       update: (origin, who) => control.update(origin, who),
       resolveUpdate: (origin, who, path, content) => control.resolveUpdate(origin, who, path, content),

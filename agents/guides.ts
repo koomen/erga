@@ -188,7 +188,8 @@ with the header: it is then written for that token.
   work goes on a feature branch of its own (\`git push erga HEAD:<name>\`: any name
   but staging and main), which never deploys. merge_feature_branch puts a branch's
   work on staging as one commit, when your person asks; delete_feature_branch drops
-  one. Production (main) moves only when your person asks.
+  one. list_branches' featureActions says which of them runs now and how the last
+  ones ended. Production (main) moves only when your person asks.
 - The Ops page's deploys: list_deploys gives each environment (staging,
   production, control) and its last deploys, each with its state, commit, what
   started it, and why it failed (error); deploy_log gives one deploy's log.

@@ -27,7 +27,7 @@ import { gitHttp } from "./http.ts";
 import type { Remote } from "./remote.ts";
 import type { GithubLink, PushEvent } from "./github.ts";
 import type { Actor, BranchInfo } from "./repo.ts";
-import type { FeatureInfo } from "./features.ts";
+import type { FeatureAction, FeatureInfo } from "./features.ts";
 import type { GithubStatus } from "./github-sync.ts";
 import type { MergeConflict } from "./conflicts.ts";
 import type { Released, TagInfo } from "./releases.ts";
@@ -39,6 +39,8 @@ export interface SourceObject {
   branches(origin: string): Promise<{
     branches: BranchInfo[];
     features: FeatureInfo[];
+    /** The feature branches' Merges and Deletes, running or just ended (features.ts). */
+    featureActions?: FeatureAction[];
     github: GithubStatus;
     conflict: MergeConflict | null;
     tags?: TagInfo[];
@@ -63,7 +65,8 @@ export interface SourceObject {
     name: string,
     message?: string
   ): Promise<{ commit: string; branch: string; commits: number } | { error: string; status: number }>;
-  deleteFeature(origin: string, name: string): Promise<{ branch: string; commit: string } | { error: string; status: number }>;
+  /** `who` comes last: an app a release ahead of this Worker calls it so (AGENTS.md: the control Worker deploys from main). */
+  deleteFeature(origin: string, name: string, who: Actor): Promise<{ branch: string; commit: string } | { error: string; status: number }>;
   /** A release cut (a tag): the release, or { error, status }. */
   release(origin: string, who: Actor, o?: { version?: string; notes?: string; commit?: string }): Promise<Released | { error: string; status: number }>;
   /** A downstream's Update from upstream, and the ways out of a merge that conflicted: each the result, or { error, status }. */
