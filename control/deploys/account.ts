@@ -49,6 +49,8 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "artifacts") { if (target.artifacts) bindings.push({ type: "artifacts", name, namespace: target.artifacts }); }
     // A bucket of the target's own (documents' files: FILES), made before the upload if it isn't there (ensureBuckets).
     else if (b.type == "r2") bindings.push({ type: "r2_bucket", name, bucket_name: bucketName(target, name) });
+    // A Worker Loader: the Worker runs code it loads, in a sandbox of its own (a page's own API, for agents' calls).
+    else if (b.type == "worker-loader") bindings.push({ type: "worker_loader", name });
     else
       throw new DeployError({
         message: `This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`,
