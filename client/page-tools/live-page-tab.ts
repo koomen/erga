@@ -1,26 +1,26 @@
-// The live page, in the page itself (the editor runs there: frame.ts, on the
+// The live page, in the page itself (Erga's page tools run there: tools.ts, on the
 // document's own origin): the logs the agent's page_console, page_network and page_events
-// read, page_inspect's run in the page as it is, and page_click and page_key
+// read, page_inspect's facts, eval_in_page's run in the page as it is (live), and page_click and page_key
 // (shared/live-page.ts says what each one is).
 //
 // The page's first script (LIVE_WATCH, before the page's own) catches what happens from
 // the start: console calls, errors, the page's fetch and XHR, and who calls
 // preventDefault or stopPropagation on a pointer or key event. It keeps them
-// until the editor takes them (`__ergaLiveTake`), and hands each over as it
+// until the page tools take them (`__ergaLiveTake`), and hands each over as it
 // comes after. A frame inside the page, on this origin, gets the same once it
 // loads (what it logged before is missed); one on another origin is out of
 // reach, and the answers say so.
 //
 // Whose code consumed an event is read from the stack: a frame of the
-// editor's own script (frame.js) is the editor's, anything else the page's.
+// editor's own scripts (Erga's /_erga/: frame.js, tools.js) is the editor's, anything else the page's.
 
 import {
   ConsoleLog, EVENT_TYPES, liveWatch, Ring, fromTiming, mergeHooked, queryConsole, queryEvents, queryNetwork,
   type ActResult, type Activation, type ConsoleLevel, type Consumer, type EventEntry, type HookedRequest, type LiveRequest, type LiveResult, type NetworkEntry,
-} from "../../../shared/live-page";
+} from "../../shared/live-page";
 import { evaluateIn, toJSON } from "./evaluate";
-import { EVAL_MAX_JSON, evalTimeout } from "../../../shared/agent-log";
-import { sleep } from "../../../shared/time";
+import { EVAL_MAX_JSON, evalTimeout } from "../../shared/agent-log";
+import { sleep } from "../../shared/time";
 
 type LiveWindow = Window & typeof globalThis & { __ergaLiveInstalled?: boolean; __ergaLiveTake?: (sink: Sink) => void };
 type Sink = (kind: string, data: unknown) => void;
@@ -59,7 +59,7 @@ export class LivePage {
   /** What the page's own frame (the viewer's, on another origin) may do, as the viewer says. */
   pageFrame: { sandbox: string | null; allow: string | null } | null = null;
 
-  /** `editorScript`: the editor's own script's address (frame.js), how a stack shows the editor's code. */
+  /** `editorScript`: where Erga's own scripts are (frame.js, tools.js), how a stack shows the editor's code. */
   /** The address of the document's files (".../doc/"): a request there went to Erga's server. */
   private readonly docUrl: string;
   constructor(docBase: string, private readonly editorScript: string) { this.docUrl = new URL(docBase, location.href).href; }

@@ -7,6 +7,8 @@
 //                      year and never asks again (_headers): the scripts (ES modules, split in chunks that
 //                      load when they're needed), the stylesheet, the editor's page and the typeface
 //     main-<h>.js        page.js: the page editor's shell (main.ts), which the viewer adds when you edit
+//     tools-<h>.js       tools.js: Erga's page tools (client/page-tools/tools.ts: the agent's view_page and the live
+//                        page's tools), on each document's own origin too, built with frame.js
 //     frame-<h>.js       frame.js: the editor itself (frame.ts), which runs on each document's own origin, loaded
 //                        from here (one address for every document, so one copy in the browser's cache)
 //     settings-<h>.js    document settings (settings.ts), imported when the gear is reached for
@@ -48,6 +50,7 @@ const DIR = ASSET_PREFIX.slice(1, -1);
 export const ENTRIES: Record<string, string> = {
   "page.js": "client/shell/main.ts",
   "frame.js": "libs/text/ui/frame.ts",
+  "tools.js": "client/page-tools/tools.ts",
   "settings.js": "client/pages/settings.ts",
   "pages-tree.js": "client/pages/pages-tree.ts",
   "agent.js": "client/agent/person-agent.ts",
@@ -182,8 +185,12 @@ async function build(): Promise<void> {
       if (name) files[name] = url;
     }
   };
-  await scripts(["frame.js"], [FRAME_VIEW]);
-  await scripts(Object.keys(ENTRIES).filter((n) => n != "frame.js"), []);
+  const PAGE_SCRIPTS = ["frame.js", "tools.js"];
+  await scripts(PAGE_SCRIPTS, [FRAME_VIEW]);
+  await scripts(
+    Object.keys(ENTRIES).filter((n) => !PAGE_SCRIPTS.includes(n)),
+    []
+  );
   for (const name of Object.keys(ENTRIES)) if (!files[name]) throw new Error(`the build made no ${name}`);
   /** The scripts `url` imports, and theirs: only the static ones, or the later ones too. */
   const closure = (url: string, later: boolean) => {
@@ -235,7 +242,7 @@ async function build(): Promise<void> {
   const manifest: AssetManifest = {
     files: Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b))),
     deps,
-    frame: closure(files["frame.js"], true),
+    frame: [...new Set(PAGE_SCRIPTS.flatMap((n) => closure(files[n], true)))],
     integrity: Object.fromEntries([...made].filter(([u]) => u.endsWith(".js")).sort(([a], [b]) => a.localeCompare(b)).map(([u, b]) => [u, integrityOf(b)])),
     fonts: { css: fontCss, preload: latin },
     shell: editorShell(editor, new TextDecoder().decode(style)),

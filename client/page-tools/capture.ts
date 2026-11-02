@@ -1,5 +1,5 @@
-// The agent's look at the page (view_page, evaluate_page): the page editor's frame renders the latest version in a
-// hidden frame of its own, at a step and a time if asked, and answers with a picture or an expression's result.
+// The agent's look at the page (view_page, eval_in_page): Erga's page tools render the text the viewer sends in a
+// hidden frame of their own, at a step and a time if asked, and answers with a picture or an expression's result.
 
 import { evaluateIn } from "./evaluate";
 import {
@@ -10,10 +10,10 @@ import {
   type StepShown,
   type ViewRequest,
   type ViewResult,
-} from "../../../shared/agent-log";
-import { findStep, stepNumber, stepSpec } from "../../../shared/steps";
+} from "../../shared/agent-log";
+import { findStep, stepNumber, stepSpec } from "../../shared/steps";
 import { FRAMES_BY_CLOCK, frames, wait } from "./clock";
-import { topRoom } from "../../../client/common/top-room";
+import { topRoom } from "../common/top-room";
 
 // The agent asks to see the page. This frame renders the latest version
 // (edits still waiting for the end of the agent's turn included) in a

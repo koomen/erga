@@ -25,7 +25,9 @@ test("the viewer shows a nested page, its relative stylesheets applying, and its
   expect(await p.evaluate(() => (window as any).__same)).toBe(true);
 });
 
-test("the pencil opens the page shown in the editor, rendered with its folder's stylesheet; typing edits that file; evaluate_page reads it, read-only, with a time limit", async ({ tab }) => {
+test("the pencil opens the page shown in the editor, rendered with its folder's stylesheet; typing edits that file; eval_in_page reads it, read-only, with a time limit", async ({
+  tab,
+}) => {
   const server = await servers.short();
   const s = await site(server, { pages: true });
   // (Strict: a page in a folder once asked for its relative files at the document's root first, 404s at every render, libs/text/ui/frame.ts.)
@@ -41,18 +43,20 @@ test("the pencil opens the page shown in the editor, rendered with its folder's 
   const rendered = () => ed.frame<{ h1: string; color: string } | null>(`(() => { const h = ${F}?.querySelector("h1"); return h ? { h1: h.textContent, color: getComputedStyle(h).color } : null; })()`);
   await expect.poll(async () => (await rendered())?.h1).toBe("Blog");
   expect((await rendered())!.color).toBe("rgb(180, 40, 30)");
-  // evaluate_page: the agent's expression runs in that page as the editor renders it, and changes nothing.
-  const evaluated = await s.tool("evaluate_page", { expression: `({ color: getComputedStyle(document.querySelector("h1")).color, h1: document.querySelector("h1").getBoundingClientRect().height > 0 })` });
+  // eval_in_page: the agent's expression runs in that page as the editor renders it, and changes nothing.
+  const evaluated = await s.tool("eval_in_page", {
+    expression: `({ color: getComputedStyle(document.querySelector("h1")).color, h1: document.querySelector("h1").getBoundingClientRect().height > 0 })`,
+  });
   expect(evaluated.ok).toBe(true);
   expect(evaluated.text.startsWith('{"color":"rgb(180, 40, 30)","h1":true}')).toBe(true);
   const before = await (await s.get(`/d/${s.id}/doc/blog/index.html`)).text();
-  const meddled = await s.tool("evaluate_page", { expression: `document.querySelector("h1").textContent = "Meddled"` });
+  const meddled = await s.tool("eval_in_page", { expression: `document.querySelector("h1").textContent = "Meddled"` });
   expect(meddled.ok).toBe(true);
   expect(meddled.text.startsWith('"Meddled"')).toBe(true);
   await ed.settle();
   expect(await (await s.get(`/d/${s.id}/doc/blog/index.html`)).text()).toBe(before);
   expect((await rendered())?.h1).toBe("Blog");
-  const stuck = await s.tool("evaluate_page", { expression: "new Promise(() => {})", timeout: 200 });
+  const stuck = await s.tool("eval_in_page", { expression: "new Promise(() => {})", timeout: 200 });
   expect(stuck.ok).toBe(false);
   expect(stuck.text).toMatch(/didn't finish within 200 ms/);
   // Typing on the page edits blog/index.html.

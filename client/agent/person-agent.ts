@@ -50,7 +50,7 @@ const VERBS: Record<string, [string, string]> = {
   find: ["Finding files", "Found files"],
   grep: ["Searching", "Searched"],
   view_page: ["Looking at the page", "Looked at the page"],
-  evaluate_page: ["Inspecting the page", "Inspected the page"],
+  eval_in_page: ["Running code in the page", "Ran code in the page"],
   page_console: ["Reading the page's console", "Read the page's console"],
   page_network: ["Reading the page's requests", "Read the page's requests"],
   page_events: ["Reading the page's events", "Read the page's events"],

@@ -1,6 +1,6 @@
-// A presentation's steps, as the agent names them (view_page's and evaluate_page's `step`): its number as the steps'
+// A presentation's steps, as the agent names them (view_page's and eval_in_page's `step`): its number as the steps'
 // list shows it ("3.2": slide 3, its second part; "4": slide 4, or its first part), or a hash ("#3.2"). agents/document/PROMPT.md, "Presentations", has the page's side. Pure: the hidden
-// render (libs/text/ui/capture.ts) asks the page for its count and slides, and this finds the step.
+// render (client/page-tools/capture.ts) asks the page for its count and slides, and this finds the step.
 
 /** Step i's number, as the list shows it: "3.2" for the second part of slide 3, "4" for a slide in one step. */
 export function stepNumber(i: number, slides: number[] | null): string {

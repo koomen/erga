@@ -6,6 +6,7 @@
 // half for whoever may edit.
 
 import type { ReaderConfig } from "../../shared/page-html";
+import type { ToolAsk } from "../common/reader-api";
 import { copyOf } from "../../libs/text/ui/clipboard-read";
 import { linkTarget, placeOf } from "../common/link-target";
 import { topRoom } from "../common/top-room";
@@ -76,7 +77,24 @@ export default function reader(C: ReaderConfig): void {
       keepRoom();
       placed();
     },
+    tools: (answer) => {
+      toolsAnswer = answer;
+      for (const ask of asks.splice(0)) answer(ask);
+    },
   };
+  // Erga's page tools (the agent's view_page, eval_in_page and the live page's), loaded when the viewer first asks for
+  // one (only for whoever may edit: the editor's config names them); the asks wait for them meanwhile.
+  let toolsAnswer: ((ask: ToolAsk) => void) | null = null,
+    toolsLoading = false;
+  const asks: ToolAsk[] = [];
+  function askTools(ask: ToolAsk) {
+    if (toolsAnswer) return toolsAnswer(ask);
+    asks.push(ask);
+    const tools = C.editor && C.editor.tools;
+    if (toolsLoading || !tools) return;
+    toolsLoading = true;
+    addScript(tools);
+  }
   tell({ type: "erga-hello" });
   // Which of the document's pages this is ("" for its own page).
   let page = location.pathname.indexOf(C.prefix) == 0 ? location.pathname.slice(C.prefix.length) : "";
@@ -148,22 +166,27 @@ export default function reader(C: ReaderConfig): void {
     const editor = C.editor;
     if (loading || !editor) return;
     loading = true;
-    const head = document.head || root;
-    editor.preload.forEach((href) => {
+    addScript(editor);
+  }
+  /** One of Erga's scripts into this page, with its chunks (their integrity is the import map's, before this script). */
+  function addScript(script: { src: string; integrity: string; preload: string[] }) {
+    const head = document.head || root,
+      map = C.editor ? C.editor.map : {};
+    script.preload.forEach((href) => {
       const l = document.createElement("link");
       l.rel = "modulepreload";
       l.href = href;
       l.crossOrigin = "anonymous";
       l.setAttribute("data-erga", "");
-      if (editor.map[href]) l.integrity = editor.map[href];
+      if (map[href]) l.integrity = map[href];
       head.append(l);
     });
     const s = document.createElement("script");
     s.type = "module";
     s.crossOrigin = "anonymous";
-    s.src = editor.src;
+    s.src = script.src;
     s.setAttribute("data-erga", "");
-    if (editor.integrity) s.integrity = editor.integrity;
+    if (script.integrity) s.integrity = script.integrity;
     head.append(s);
   }
   if (/[?&]erga-edit(=|&|$)/.test(location.search)) load();
@@ -503,6 +526,9 @@ export default function reader(C: ReaderConfig): void {
     if (type == "erga-step") step(e.data);
     else if (type == "erga-step-image") stepImage(e.data);
     else if (type == "erga-edit") load();
+    else if ((type == "erga-capture" && typeof e.data.text == "string") || type == "erga-live") {
+      if (typeof e.data.id == "number") askTools(e.data as ToolAsk);
+    }
     else if (type == "erga-room" && typeof e.data.px == "number" && e.data.px >= 0 && e.data.px <= 400) {
       room.room = e.data.px;
       dirty();

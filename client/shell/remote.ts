@@ -19,8 +19,6 @@ import {
   type ToFrame,
 } from "../../libs/text/ui/bridge";
 import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, PageProblem, Peer } from "../../libs/text/ui/editor";
-import { EVAL_MAX_JSON, FRAMES, viewWait, type ViewRequest, type ViewResult } from "../../shared/agent-log";
-import type { LiveRequest, LiveResult } from "../../shared/live-page";
 import { changesBetween } from "../../document/merge";
 import { clampZoom, type ZoomBy } from "../../libs/text/ui/zoom";
 import { sleep } from "../../shared/time";
@@ -201,7 +199,6 @@ export class RemotePage {
           ...(this.carry ? { carry: this.carry, ...(this.carryDrops?.length ? { drops: this.carryDrops } : {}) } : {}),
           ...(this.carryView ? { view: this.carryView } : {}),
           ...(this.sink ? { held: this.held, focus: true } : {}),
-          frame: { sandbox: this.frame.getAttribute("sandbox"), allow: this.frame.getAttribute("allow") },
           ...(this.snapshot.paused ? { paused: true } : {}),
         });
         this.carry = null;
@@ -304,7 +301,9 @@ export class RemotePage {
         this.held.unshift(...keys.slice(0, 1000));
         return;
       }
-      case "detached": case "styled": case "captured": case "lived": case "stopped":
+      case "detached":
+      case "styled":
+      case "stopped":
         this.waiting.get(m.id)?.(m);
         this.waiting.delete(m.id);
         return;
@@ -466,68 +465,6 @@ export class RemotePage {
   private async style(op: { op: "toggle"; style: InlineStyle } | { op: "clear" } | { op: "link"; edit: LinkEdit }): Promise<string | null> {
     const reply = await this.request<Extract<FromFrame, { type: "styled" }>>({ type: "style", id: this.nextId++, ...op } as ToFrame & { id: number }, 3000);
     return reply && typeof reply.why == "string" ? reply.why.slice(0, 500) : null;
-  }
-
-  /** The agent's request to the live page (shared/live-page.ts): the frame answers from its logs, or acts. */
-  async live(req: LiveRequest, wait: number): Promise<LiveResult> {
-    const reply = await this.request<Extract<FromFrame, { type: "lived" }>>({ type: "live", id: this.nextId++, req }, wait);
-    const r = reply?.result;
-    // (The page could have sent anything: it goes to the agent as data, cut to size by the host.)
-    return r && typeof r == "object" ? r : { error: "The page didn't answer in time." };
-  }
-
-  /** The page's text as this tab has it now. */
-  source(): string {
-    return this.config.room.text();
-  }
-
-  /**
-   * The agent's look at the page: the frame renders it, with `text` if given (a preview, or another page) or if the
-   * source view has newer. `dir`: another page's folder in the document, for its files' addresses.
-   */
-  async capture(req: ViewRequest, text?: string, dir?: string): Promise<ViewResult> {
-    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>(
-      {
-        type: "capture",
-        id: this.nextId++,
-        req,
-        ...(text != null || this.detached ? { text: text ?? this.config.room.text() } : {}),
-        ...(dir != null ? { dir } : {}),
-      },
-      viewWait(req)
-    );
-    const r = reply?.result;
-    if (!r) return { width: 0, height: 0, errors: [], error: "The page didn't send a picture back in time." };
-    return {
-      ...(typeof r.png == "string" ? { png: r.png } : {}),
-      width: Number(r.width) || 0, height: Number(r.height) || 0,
-      errors: Array.isArray(r.errors) ? r.errors.filter((e): e is string => typeof e == "string").slice(0, 50) : [],
-      ...(r.viewport && Number.isFinite(r.viewport.width) && Number.isFinite(r.viewport.height) ? { viewport: { width: Number(r.viewport.width), height: Number(r.viewport.height) } } : {}),
-      ...(r.colorScheme == "light" || r.colorScheme == "dark" ? { colorScheme: r.colorScheme } : {}),
-      ...(Array.isArray(r.fonts) ? { fonts: r.fonts.filter((f) => f && typeof f.family == "string").slice(0, 10).map((f) => ({ family: f.family.slice(0, 100), ...(typeof f.wanted == "string" ? { wanted: f.wanted.slice(0, 100) } : {}), elements: Number(f.elements) || 0, tags: Array.isArray(f.tags) ? f.tags.filter((t): t is string => typeof t == "string").slice(0, 5) : [] })) } : {}),
-      ...(Array.isArray(r.pending) && r.pending.length ? { pending: r.pending.filter((p): p is string => typeof p == "string").slice(0, 20).map((p) => p.slice(0, 200)) } : {}),
-      ...(typeof r.note == "string" ? { note: r.note } : {}),
-      ...(typeof r.error == "string" ? { error: r.error } : {}),
-      ...(typeof r.value == "string" ? { value: r.value.slice(0, EVAL_MAX_JSON * FRAMES.count + 1000) } : {}),
-      ...(Array.isArray(r.shots)
-        ? {
-            shots: r.shots
-              .filter((x) => x && typeof x.png == "string" && Number.isFinite(x.at))
-              .slice(0, FRAMES.count)
-              .map((x) => ({ at: Number(x.at), png: x.png })),
-          }
-        : {}),
-      ...(r.step && Number.isInteger(r.step.index) && typeof r.step.number == "string"
-        ? {
-            step: {
-              index: r.step.index,
-              number: r.step.number.slice(0, 20),
-              count: Number(r.step.count) || 0,
-              ...(typeof r.step.label == "string" ? { label: r.step.label.slice(0, 200) } : {}),
-            },
-          }
-        : {}),
-    };
   }
 }
 

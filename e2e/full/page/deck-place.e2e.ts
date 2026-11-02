@@ -83,7 +83,7 @@ test("a page with no hash logic: a reload keeps the address as it was, with no h
   expect(await again.eval<string>(`location.search`)).toBe("?edit");
 });
 
-// view_page and evaluate_page render the page in a frame of their own: about:srcdoc, with a <base> at the page's real
+// view_page and eval_in_page render the page in a frame of their own: about:srcdoc, with a <base> at the page's real
 // address. Rule 14's example, as written, must run there too: a hash-only address is the page's own, not the base's.
 type Ev = { value?: string; error?: string; errors: string[] };
 const ev = (ed: Editor, expr: string) => ed.eval<Ev>(`ergaPage.captureView({ evaluate: ${JSON.stringify(expr)} })`);

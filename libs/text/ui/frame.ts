@@ -17,19 +17,17 @@ import { watchMoves } from "./moves";
 import { listenAsEditor } from "./text-guard";
 import { Relay, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { catchZoomGestures, clampZoom } from "./zoom";
-import { captureView } from "./capture";
-import { LivePage } from "./live-page-tab";
 import { changesBetween } from "../../../document/merge";
 import { baseName, encodePath } from "../../../document/pages";
 import { sourceDigest } from "../../../shared/page-html";
 import { linkTarget, placeOf } from "../../../client/common/link-target";
-import type { ViewResult } from "../../../shared/agent-log";
+// (window.__ergaReader: the page's first script, which loads this one.)
+import type {} from "../../../client/common/reader-api";
 
 declare global {
   interface Window {
-    ergaFrame?: unknown; __ergaTimescale?: number;
-    /** The viewer's script in the page (server/pages/reader.ts): its config, and what tells it the page's steps may have changed. */
-    __ergaReader?: { config: { shell: string; prefix: string; src: string; address?: string }; changed?(): void; placed?(): void };
+    ergaFrame?: unknown;
+    __ergaTimescale?: number;
   }
 }
 
@@ -56,11 +54,6 @@ const HERE = location.pathname.slice(0, location.pathname.lastIndexOf("/") + 1);
 let shown = reader.src;
 
 const post = (m: FromFrame) => window.parent.postMessage(m, SHELL);
-
-// The live page, for the agent's page_console, page_network, page_events, page_inspect, page_click and page_key
-// (live-page.ts). A stack frame of a script from where this one is (the app's /_erga/: this module and its chunks) is the editor's code.
-const SELF = new URL(".", import.meta.url).href;
-const live = new LivePage(BASE, SELF);
 
 let page: PageEditor | null = null;
 /** Files dropped or pasted on the page that the shell is adding to the document's files: where they go in (mapped through the edits meanwhile). */
@@ -111,11 +104,6 @@ window.addEventListener("message", (e: MessageEvent) => {
   if (m.type == "init") return start(m);
   if (m.type == "stop") return stop(m.id);
   if (m.type == "reload") { goAgain?.(); return; }
-  if (m.type == "live") {
-    const answer = page ? live.answer(m.req).catch((e: Error) => ({ error: `The page couldn't answer: ${e.message}` })) : Promise.resolve({ error: "The editor hasn't started in this tab yet." });
-    answer.then((result) => post({ type: "lived", id: m.id, result }));
-    return;
-  }
   if (!page || !relay) return;
   switch (m.type) {
     case "external": {
@@ -210,15 +198,6 @@ window.addEventListener("message", (e: MessageEvent) => {
       else if (m.error) page.dropError(d.point, m.error);
       return;
     }
-    case "capture":
-      // Another page of the document (dir: its folder) renders at its own address, at its start.
-      (async () =>
-        m.dir != null
-          ? captureView(m.req, page!.renderedHtml(m.text, BASE + encodePath(m.dir)), "")
-          : captureView(m.req, page!.renderedHtml(m.text), location.hash))()
-        .catch((err: Error): ViewResult => ({ width: 0, height: 0, errors: [], error: `Couldn't capture the page: ${err.message}` }))
-        .then((result) => post({ type: "captured", id: m.id, result }));
-      return;
   }
 });
 
@@ -245,7 +224,6 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     };
     setTimeout(again, 100);
   }
-  if (m.frame) live.pageFrame = m.frame;
   relay = new Relay(m.version, (version, changes) => post({ type: "push", version, changes: changes.toJSON() }));
   // The state this page's editor had (with its undo history), brought to the room's text: before the page loaded again,
   // or before the editor stopped (out of the editor and back). Else the one the shell sent.
@@ -296,7 +274,6 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
       // (The editor takes the page as it's made: once it's this frame's.)
       if (u.rendered) queueMicrotask(() => {
         if (!page) return;
-        live.attach(window);
         unwatch.push(drawCaret(window as Window & typeof globalThis, () => zoom));
         watchPage();
         watchBackdrop();

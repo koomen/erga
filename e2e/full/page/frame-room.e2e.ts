@@ -54,7 +54,7 @@ test("the viewer, the editor and view_page show a scrolling page's first line at
   await openTab(tab, `${address}?edit`);
   await editorReady(page);
   await expect.poll(async () => Math.abs((await inTab()) - viewing)).toBeLessThan(0.5);
-  // view_page's render (evaluate_page runs in it) at the same size.
+  // view_page's render (eval_in_page runs in it) at the same size.
   const render = await page.evaluate<{ value?: string }>(
     `ergaPage.captureView({ evaluate: 'document.querySelector("h1").getBoundingClientRect().top' })`
   );

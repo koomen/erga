@@ -16,6 +16,7 @@ import { HttpServerResponse } from "effect/http";
 import { call, ctx, fromWeb } from "../http.ts";
 import { ASSET_PREFIX, type AssetManifest } from "../../shared/assets.ts";
 import type { Platform } from "../platform.ts";
+import type { ReaderConfig } from "../../shared/page-html.ts";
 
 let manifest: AssetManifest | null = null;
 /** The origin the files are at, for pages served elsewhere ("" on the app's own origin). */
@@ -90,18 +91,20 @@ export const styleTag = () => `<link rel="stylesheet" href="${asset("style.css")
 
 /**
  * The editor's half for a document's own page (pages/reader.ts), at the app's origin `shell`: its address, its chunks,
- * and the integrity of every script it may load, which an editor's page gives the browser (an import map), so a script
+ * Erga's page tools (tools.js) and theirs, and the integrity of every script they may load, which an editor's page gives the browser (an import map), so a script
  * that isn't this build's doesn't run there.
  */
-export function frameScripts(shell: string): { src: string; integrity: string; preload: string[]; map: Record<string, string> } {
+export function frameScripts(shell: string): NonNullable<ReaderConfig["editor"]> {
   const at = (u: string) => `${shell}${u}`;
   const m = manifest;
-  const src = m?.files["frame.js"] ?? `${ASSET_PREFIX}frame.js`;
+  const script = (name: string) => {
+    const src = m?.files[name] ?? `${ASSET_PREFIX}${name}`;
+    return { src: at(src), integrity: m?.integrity[src] ?? "", preload: (m?.deps[name] ?? []).map(at) };
+  };
   return {
-    src: at(src),
-    integrity: m?.integrity[src] ?? "",
-    preload: (m?.deps["frame.js"] ?? []).map(at),
+    ...script("frame.js"),
     map: Object.fromEntries((m?.frame ?? []).filter((u) => m?.integrity[u]).map((u) => [at(u), m!.integrity[u]])),
+    tools: script("tools.js"),
   };
 }
 

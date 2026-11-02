@@ -52,7 +52,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   find: "looking for files",
   grep: "searching",
   view_page: "looking at the page",
-  evaluate_page: "inspecting the page",
+  eval_in_page: "running code in the page",
   page_console: "reading the page's console",
   page_network: "reading the page's requests",
   page_events: "reading the page's events",

@@ -32,12 +32,12 @@ test("read by selector gives the element; edit by selector and by cssRule replac
   await until(() => ed.disk().includes("<h1>The middle slide</h1>"), DISK_MS, "the file has the new heading");
   expect(ed.disk()).toContain("background: rgb(0, 0, 200); }");
   expect(ed.disk()).not.toContain("Second slide");
-  const page = await tool("evaluate_page", {
+  const page = await tool("eval_in_page", {
     expression: `[document.querySelectorAll("h1")[1].textContent, getComputedStyle(document.getElementById("progress")).backgroundColor]`,
   });
   expect(page.text.split("\n")[0]).toBe('["The middle slide","rgb(0, 0, 200)"]');
   // A preview by selector, too: the copy changes, the file doesn't.
-  const preview = await tool("evaluate_page", {
+  const preview = await tool("eval_in_page", {
     expression: `document.querySelectorAll("h1")[1].textContent`,
     edits: [{ selector: "section:nth-of-type(2) h1", newText: "<h1>Only in the preview</h1>" }],
   });

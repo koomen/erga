@@ -19,8 +19,6 @@
 
 import { ChangeSet, EditorSelection, type EditorState } from "@codemirror/state";
 import type { HeldInput, InlineStyle, LinkEdit, LinkInfo, MarkAuthor, Peer } from "./editor";
-import type { ViewRequest, ViewResult } from "../../../shared/agent-log";
-import type { LiveRequest, LiveResult } from "../../../shared/live-page";
 import { zoomKey, type ZoomBy } from "./zoom";
 
 /** The parts of a keydown the shell's shortcuts look at. */
@@ -88,7 +86,6 @@ export type ToFrame =
       view?: { pos: number; top: number };
       held?: HeldInput[];
       focus?: boolean;
-      frame?: { sandbox: string | null; allow: string | null };
       paused?: boolean;
       check?: boolean;
     }
@@ -117,9 +114,6 @@ export type ToFrame =
   | { type: "style"; id: number; op: "toggle"; style: InlineStyle }
   | { type: "style"; id: number; op: "clear" }
   | { type: "style"; id: number; op: "link"; edit: LinkEdit }
-  | { type: "capture"; id: number; req: ViewRequest; text?: string; dir?: string }
-  /** The agent's request to the live page (shared/live-page.ts). */
-  | { type: "live"; id: number; req: LiveRequest }
   /** The files the frame sent (upload) are in the document's files at these paths, in order; `error` says why the others aren't. */
   | { type: "uploaded"; id: number; paths: string[]; error: string | null };
 
@@ -157,8 +151,6 @@ export type FromFrame =
   /** Keys typed on the page as it was about to load again (after `reloading`): before the ones the shell held since. */
   | { type: "held"; held: HeldInput[] }
   | { type: "styled"; id: number; why: string | null }
-  | { type: "captured"; id: number; result: ViewResult }
-  | { type: "lived"; id: number; result: LiveResult }
   /** A link to another of the document's pages, followed on the page: the shell goes to it. */
   | { type: "open"; path: string }
   /** Files dropped or pasted on the page (at most 50), for the shell to add to the document's files. */
