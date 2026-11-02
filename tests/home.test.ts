@@ -15,7 +15,7 @@ const files = {
   "fonts/x.woff2": new Uint8Array([0]),
 };
 const render = (index: string, more: Record<string, string | Uint8Array> = {}) =>
-  renderHome({ index: "index.html", files: { ...files, ...more, "index.html": index }, gen: "g1", title: "The Title" });
+  renderHome({ index: "index.html", files: { ...files, ...more, "index.html": index }, gen: "g1", title: "The Title", doc: "abcd1234" });
 
 test("its files point at the deploy's addresses; everything else stays as it is", async () => {
   const r = await render(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=500"><title>Own</title>
@@ -66,7 +66,9 @@ test("a <base> moves where its URLs resolve; a page that isn't HTML can't be ser
   const r = await render(`<!doctype html><head><base href="img/"></head><body><img src="bg.png"><img src="../style.css"></body>`);
   expect(r.before).toContain('src="/_home-files/g1/img/bg.png"');
   expect(r.before).toContain('src="/_home-files/g1/style.css"');
-  await expect(renderHome({ index: "index.md", files: { "index.md": "# Hi" }, gen: "g", title: "t" })).rejects.toThrow(/only an HTML page/);
+  await expect(renderHome({ index: "index.md", files: { "index.md": "# Hi" }, gen: "g", title: "t", doc: "abcd1234" })).rejects.toThrow(
+    /only an HTML page/
+  );
 });
 
 test("the controls: in a declarative shadow root, Edit only when given", () => {

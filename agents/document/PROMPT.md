@@ -295,3 +295,34 @@ How to write the controls:
 ```
 
 `e2e/fixtures/page-api/` (`index.html` and `api.js`) is a fuller example.
+
+## A page's model (window.ergaLLM)
+
+A page may call a model as its signed-in visitor, when its owner turns it
+on in Document settings (`share_document` with `page_llm`, and `page_llm_model`: Haiku at first).
+The server's API keys pay, so each visitor has an hour's limit, and so has
+the server. The page's script has `window.ergaLLM` (in the viewer, and on
+the homepage):
+
+- `ergaLLM.status()` answers a Promise of `{ on, model, signedIn }`. Show
+  the page's model controls only when `on` is true.
+- `ergaLLM.ask({ system, messages, max_tokens })` answers a Promise of
+  `{ text }`. `messages` is `[{ role: "user" | "assistant", content }]`,
+  with text only, ending with the user's. At most 1024 tokens come back,
+  and the system prompt and messages hold at most 24,000 characters.
+- When it fails, the Error has a `code`: `"sign_in"` (the visitor isn't
+  signed in), `"off"` (the owner turned it off, or the server can't run
+  the model), `"limit"` (the visitor or the server reached the hour's
+  limit), or `"error"`.
+- `ergaLLM.signIn()` opens Erga's sign-in and comes back to the page. Call
+  it from a click: on `"sign_in"`, show a button that does.
+
+```js
+try {
+  const { text } = await ergaLLM.ask({ system: "Answer in one line.", messages: [{ role: "user", content: q }], max_tokens: 300 });
+  out.textContent = text;
+} catch (e) {
+  if (e.code == "sign_in") showSignInButton(() => ergaLLM.signIn());
+  else out.textContent = e.message;
+}
+```

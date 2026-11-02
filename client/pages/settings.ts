@@ -9,7 +9,8 @@
 //     it can't be a document yet.
 //   - Readers, for its owner only (their state from ls's access): whether the people who view it, and can't edit
 //     it, see Erga's bars over it (share_document's reader_bars; on at first), and whether they may use their own agent
-//     on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it.
+//     on it (reader_agent). The agent is off, and not to be turned on, while anyone with the link may open it. And
+//     whether its page may call a model as its visitor, and which (page_llm, page_llm_model: window.ergaLLM).
 //   - Homepage, only on the homepage: a note that says so, how its deploy is
 //     going, and Redeploy now (admins). The homepage is chosen on /admin
 //     (the landing_document setting), never here.
@@ -27,6 +28,7 @@ import { ago, clock, RECENT, type Version, type Versions } from "./versions";
 import { runTool } from "../common/tools";
 import { esc } from "../../shared/html";
 import { plural } from "../../shared/time";
+import { MODELS, PAGE_LLM_MODELS } from "../../shared/models";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
 /** ls's homepage: on the homepage only. */
@@ -40,7 +42,7 @@ interface Tree {
 }
 interface Doc extends Tree {
   homepage?: Home;
-  access?: { readerAgent: boolean; readerBars: boolean; permissions: { login: string }[] };
+  access?: { readerAgent: boolean; readerBars: boolean; pageLlm: { on: boolean; model: string }; permissions: { login: string }[] };
 }
 
 export interface SettingsHost {
@@ -124,6 +126,7 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
 .ds-check:has(input:disabled) { opacity: 0.55; cursor: default; }
 .ds-explain + .ds-check { margin-top: 12px; }
+.ds-llm-model { margin: 6px 0 0 23px; font: inherit; font-size: 13px; }
 /* The homepage: a note, only on the homepage. */
 .ds-home-note { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13.5px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .ds-home-note svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -180,6 +183,9 @@ function mount(host: SettingsHost): Settings {
       <p class="ds-explain">People who can't edit it see the page alone when this is off, as a site of its own.</p>
       <label class="ds-check"><input type="checkbox" id="ds-agent-on" aria-describedby="ds-agent-explain">Readers can use their agent here</label>
       <p class="ds-explain" id="ds-agent-explain"></p>
+      <label class="ds-check"><input type="checkbox" id="ds-llm-on">The page can call a model for its visitors</label>
+      <select class="ds-llm-model" id="ds-llm-model" aria-label="The page's model">${PAGE_LLM_MODELS.map((m) => `<option value="${m}">${MODELS[m].label}</option>`).join("")}</select>
+      <p class="ds-explain">Its script's window.ergaLLM asks the model as the visitor, who signs in first. The server's keys pay, with an hour's limit for each visitor.</p>
       <p class="ds-error" id="ds-agent-error" role="alert"></p>
     </section>
     <section class="ds-home" id="ds-home" hidden aria-labelledby="ds-home-note">
@@ -217,7 +223,9 @@ function mount(host: SettingsHost): Settings {
     agentOn = $<HTMLInputElement>("ds-agent-on"),
     agentExplain = $("ds-agent-explain"),
     agentError = $("ds-agent-error"),
-    barsOn = $<HTMLInputElement>("ds-bars-on");
+    barsOn = $<HTMLInputElement>("ds-bars-on"),
+    llmOn = $<HTMLInputElement>("ds-llm-on"),
+    llmModel = $<HTMLSelectElement>("ds-llm-model");
 
   // ------------------------------------------------------------ the server
 
@@ -294,11 +302,13 @@ function mount(host: SettingsHost): Settings {
   }
 
   /** ls's access, as far as Readers need it. */
-  type Answer = { readerAgent: boolean; readerBars: boolean; permissions: { login: string }[] };
-  type Access = { readerAgent: boolean; readerBars: boolean; open: boolean };
+  type PageLlm = { on: boolean; model: string };
+  type Answer = { readerAgent: boolean; readerBars: boolean; pageLlm: PageLlm; permissions: { login: string }[] };
+  type Access = { readerAgent: boolean; readerBars: boolean; pageLlm: PageLlm; open: boolean };
   const accessOf = (a: Answer): Access => ({
     readerAgent: a.readerAgent,
     readerBars: a.readerBars,
+    pageLlm: a.pageLlm,
     open: a.permissions.some((p) => p.login == "*"),
   });
   function renderAgent() {
@@ -307,26 +317,32 @@ function mount(host: SettingsHost): Settings {
     agentOn.checked = access.readerAgent;
     barsOn.checked = access.readerBars;
     barsOn.disabled = agentBusy;
+    llmOn.checked = access.pageLlm.on;
+    llmModel.value = access.pageLlm.model;
+    llmOn.disabled = llmModel.disabled = agentBusy;
     agentOn.disabled = access.open || agentBusy;
     agentExplain.textContent = access.open
       ? "Anyone with the link can open it, so readers have no agent here. Editors always have theirs."
       : "People you share it with as viewers can ask their own agent about it. Their agent can read it, never change it.";
   }
-  /** One of the two switches: the server's answer says what holds now. */
-  async function setReader(option: "reader_agent" | "reader_bars", on: boolean) {
+  /** One of the switches (share_document's options): the server's answer says what holds now. */
+  async function setReader(options: Record<string, boolean | string>) {
     agentBusy = true;
     agentError.textContent = "";
     renderAgent();
     try {
-      access = accessOf(await runTool<Answer>("share_document", { document: host.docId, [option]: on }));
+      access = accessOf(await runTool<Answer>("share_document", { document: host.docId, ...options }));
     } catch (e) {
       agentError.textContent = `Couldn't change it: ${(e as Error).message}`;
     }
     agentBusy = false;
     renderAgent();
   }
-  agentOn.addEventListener("change", () => setReader("reader_agent", agentOn.checked));
-  barsOn.addEventListener("change", () => setReader("reader_bars", barsOn.checked));
+  agentOn.addEventListener("change", () => setReader({ reader_agent: agentOn.checked }));
+  barsOn.addEventListener("change", () => setReader({ reader_bars: barsOn.checked }));
+  const setLlm = () => setReader({ page_llm: llmOn.checked, page_llm_model: llmModel.value });
+  llmOn.addEventListener("change", setLlm);
+  llmModel.addEventListener("change", setLlm);
 
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
   let restoring: string | null = null;

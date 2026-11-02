@@ -192,6 +192,23 @@ export function languageModel(cfg: AgentConfig, choice: ModelChoice | null): Lay
 }
 
 /**
+ * The model a document's page calls as its visitor (agents/page-llm.ts): Claude with the server's key, answering at most
+ * `maxTokens`, with no thinking and no tools; or the scripted model. Null: the server's keys don't run `choice` now.
+ */
+export function pageModel(cfg: AgentConfig, choice: ModelChoice, maxTokens: number): Layer.Layer<LanguageModel.LanguageModel> | null {
+  if (isScript(cfg)) return scriptModel(MODELS[choice].label);
+  const u = usable(cfg).find((x) => x.choice == choice && x.key == "server");
+  const apiKey = u && cfg.server[u.provider];
+  if (!apiKey || MODELS[choice].provider != "anthropic") return null;
+  const config = { max_tokens: maxTokens, structuredOutputs: false } as unknown as AnthropicConfig;
+  return AnthropicLanguageModel.layer({ model: MODELS[choice].id, config }).pipe(
+    Layer.provide(AnthropicClient.layer({ apiKey })),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, ((input, init) => globalThis.fetch(input, init)) as typeof fetch))
+  );
+}
+
+/**
  * The messages as the model of `choice` takes them. Anthropic takes a tool call's id only in letters, digits, _ and
  * -; another provider's (OpenAI's "call_…|fc_…") is rewritten the same way in the call and its result. Pi does the
  * same for the providers it calls.
@@ -237,6 +254,7 @@ export const modelError = (e: unknown): string => (AiError.isAiError(e) ? e.reas
  *   { "error": "overloaded" }             fail the request
  *   { "inputs": true }                    reply with what the scripted message carried: {"images":["image/png"],"files":["a.csv"]}
  *   { "model": true }                     reply with the name of the model the person is on
+ *   { "text": "Hi", "tokens": 5000 }      ... and say it used that many output tokens (a test of the limits)
  *
  * Any step may add "delay": ms, to wait before answering (so a test can act
  * between two tool calls). Once the steps run out it says "(script done)".
@@ -249,15 +267,16 @@ const Step = Schema.Struct({
   delay: Schema.optionalKey(Schema.Finite),
   inputs: Schema.optionalKey(Schema.Boolean),
   model: Schema.optionalKey(Schema.Boolean),
+  tokens: Schema.optionalKey(Schema.Finite),
 });
 const Steps = Schema.fromJsonString(Schema.Array(Step));
 type Part = Response.StreamPartEncoded;
 
-const said = (text: string): Part[] => [
+const said = (text: string, tokens?: number): Part[] => [
   { type: "text-start", id: "t" },
   { type: "text-delta", id: "t", delta: text },
   { type: "text-end", id: "t" },
-  { type: "finish", reason: "stop", usage: { inputTokens: {}, outputTokens: {} } },
+  { type: "finish", reason: "stop", usage: { inputTokens: {}, outputTokens: tokens == null ? {} : { total: tokens } } },
 ];
 
 const scriptStep = Effect.fnUntraced(function* (prompt: Prompt.Prompt, model: string) {
@@ -295,7 +314,7 @@ const scriptStep = Effect.fnUntraced(function* (prompt: Prompt.Prompt, model: st
         files: [...text.matchAll(/<file name="([^"]*)">/g)].map((x) => x[1]),
     }));
   }
-  return said(step.text ?? "");
+  return said(step.text ?? "", step.tokens);
 });
 
 /** The scripted model, standing in for `model` (its name, for the step "model"). */

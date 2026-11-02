@@ -91,6 +91,9 @@ export const BARS_STYLE = `<style>${inlineStyle("bars")}</style>`;
 /** The bars' quick actions on a phone, and Share with an agent (client/inline/viewer-bars.ts). */
 export const BARS_BOOT = inlineCall("viewer-bars");
 
+/** The page's model (window.ergaLLM), asked of the viewer by the page in its frame (client/inline/viewer-llm.ts). */
+export const LLM_BOOT = inlineCall("viewer-llm");
+
 /** The controls and the breadcrumbs on the band (client/inline/viewer.css). */
 export const VIEW_STYLE = `<style>${inlineStyle("viewer")}</style>`;
 
@@ -149,7 +152,7 @@ ${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(sessio
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
   const after = `
-${bars}${o.agent ? agentPanel(session) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${bars}${o.agent ? agentPanel(session) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${LLM_BOOT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }

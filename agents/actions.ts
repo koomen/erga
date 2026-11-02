@@ -93,6 +93,18 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "DELETE /api/agent/conversation", domain: "none", action: "A new conversation with your agent", exempt: PANEL },
   { route: "GET /api/agent/prefs", domain: "none", action: "Your agent's panel, as you left it", exempt: PANEL },
   { route: "PUT /api/agent/prefs", domain: "none", action: "Keep your agent's panel layout", exempt: PANEL },
+  {
+    route: "GET /api/llm",
+    domain: "none",
+    action: "Whether a document's page may call a model as its visitor (window.ergaLLM.status)",
+    exempt: "the page's own script, as its visitor; an agent has a model of its own",
+  },
+  {
+    route: "POST /api/llm",
+    domain: "none",
+    action: "A document's page calls a model as its visitor (window.ergaLLM.ask)",
+    exempt: "the page's own script, as its visitor; an agent has a model of its own",
+  },
   { route: "POST /api/agent/keys", domain: "none", action: "Add or replace your own API key (Settings, Agent)", exempt: SECRET },
 
   // ------------------------------------------------------------ /admin/ops: the Ops page, source and deploys. Its actions are

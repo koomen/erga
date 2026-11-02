@@ -28,6 +28,7 @@ import {
 } from "./operation.ts";
 import { sitePages } from "./pages.ts";
 import { addressOf } from "../../document/names.ts";
+import { DEFAULT_PAGE_LLM_MODEL, isPageLlmModel, PAGE_LLM_MODELS } from "../../shared/models.ts";
 
 /** Files as a caller gives them: by path, each text or base64. */
 const FILES = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Struct({ base64: Schema.String })])).annotate({
@@ -244,7 +245,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
     label: "Share the document",
     activity: "sharing the document",
     ui: "Share (the documents list and the editor): give someone a role, change it, or stop sharing; Document settings (the editor): Readers",
-    description: "Gives someone editor, viewer or none; sets the readers' agent and bars (owner only).",
+    description: "Gives someone editor, viewer or none; sets the readers' agent and bars, and the page's model (owner only).",
     parameters: Schema.Struct({
       document: DOCUMENT,
       login: Schema.optionalKey(
@@ -253,6 +254,12 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       role: Schema.optionalKey(Schema.Literals(["editor", "viewer", "none"]).annotate({ description: "none stops sharing with them" })),
       reader_agent: bool('Viewers may ask their own agent about it (read only); never while shared with "*"'),
       reader_bars: bool("Viewers see Erga's bars over it (on at first); off, the page fills the window"),
+      page_llm: bool(
+        "Its page's script may call a model as its signed-in visitor (window.ergaLLM), on the server's keys, within each visitor's and the server's hourly limits"
+      ),
+      page_llm_model: Schema.optionalKey(
+        Schema.Literals(PAGE_LLM_MODELS).annotate({ description: `The page's model (${DEFAULT_PAGE_LLM_MODEL} at first)` })
+      ),
     }),
     run: async (args, caller) => {
       const doc = await findDocument(caller, args.document, "share");
@@ -260,8 +267,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
       const login = String(args.login ?? "")
         .trim()
         .replace(/^@/, "");
-      if (!login && args.reader_agent == null && args.reader_bars == null)
-        throw new OperationError({ message: "Give a login and a role, reader_agent or reader_bars.", status: 400 });
+      if (!login && args.reader_agent == null && args.reader_bars == null && args.page_llm == null && args.page_llm_model == null)
+        throw new OperationError({
+          message: "Give a login and a role, reader_agent, reader_bars, page_llm or page_llm_model.",
+          status: 400,
+        });
       if (!login != !args.role)
         throw new OperationError({ message: "Give a login and its role (editor, viewer or none) together.", status: 400 });
       if (login) {
@@ -275,6 +285,11 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
         });
       if (args.reader_agent != null) await dir.setReaderOption(doc.id, "agent", args.reader_agent === true);
       if (args.reader_bars != null) await dir.setReaderOption(doc.id, "bars", args.reader_bars === true);
+      if (args.page_llm != null || args.page_llm_model != null) {
+        const had = await dir.pageLlm.setting(doc.id);
+        const model = args.page_llm_model ?? (had.model && isPageLlmModel(had.model) ? had.model : DEFAULT_PAGE_LLM_MODEL);
+        await dir.pageLlm.set(doc.id, args.page_llm == null ? had.on : args.page_llm === true, String(model));
+      }
       return { document: described(doc, caller), ...(await accessOf(caller, doc)) };
     },
   },
@@ -342,7 +357,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
 /** Who a document is shared with, as the Share dialogs show it, and the readers' options: ls's `access`. */
 export async function accessOf(caller: Caller, doc: DocRow) {
   const { dir } = caller;
-  const [permissions, readers] = await Promise.all([dir.permissions(doc.id), dir.readerOptions(doc.id)]);
+  const [permissions, readers, llm] = await Promise.all([dir.permissions(doc.id), dir.readerOptions(doc.id), dir.pageLlm.setting(doc.id)]);
   const notUsers = (
     await Promise.all(permissions.map(async (p) => (p.login == ANYONE || (await dir.users.allowed(p.login)) ? null : p.login)))
   ).filter((l) => l != null);
@@ -359,6 +374,7 @@ export async function accessOf(caller: Caller, doc: DocRow) {
     publicSharing: await dir.config.get("public_sharing"),
     readerAgent: readers.agent,
     readerBars: readers.bars,
+    pageLlm: { on: llm.on, model: llm.model ?? DEFAULT_PAGE_LLM_MODEL },
   };
 }
 
