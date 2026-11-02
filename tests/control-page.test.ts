@@ -67,3 +67,16 @@ test("the sidebar has one Ops link, in place of Source and Cloudflare: here on t
   expect(labels).not.toContain("Cloudflare");
   expect(side).toMatch(/<a href="\/" aria-current="page">/);
 });
+
+test("the Ops page has the person's agent, as every page has: the app's, which it talks to (data-app)", async () => {
+  const session = { login: "ada", name: "Ada" } as unknown as Session;
+  const html = await adminSourcePage({
+    session,
+    admin: true,
+    ready: true,
+    origin: "https://ops.erga.test",
+    layout: controlLayout("https://erga.test"),
+  }).text();
+  expect(html).toContain('<aside id="agent" data-app="https://erga.test" class="agent"');
+  expect(html).toMatch(/<script type="module" src="[^"]*agent[^"]*\.js"><\/script>/);
+});

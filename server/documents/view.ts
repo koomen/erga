@@ -38,6 +38,7 @@ import {
   accountHtml,
   accountOf,
   editButton,
+  hasAgent,
   link,
   OWN_ACCOUNT,
   page,
@@ -297,6 +298,8 @@ async function render(
   const here = pageAddress(d.file) ? `${address}/${pageAddress(d.file).split("/").map(encodeURIComponent).join("/")}` : address;
   const edit = canEdit ? editButton(withEdit(link(here, session)), false) : "";
   const canShare = canEdit && !!session && !session.test && roleMay(d.role, "share");
+  // The person's agent: an editor's always; a reader's (signed in, with a role here) when its owner lets readers use theirs.
+  const agent = hasAgent(session) && (canEdit || (roleMay(d.role, "open") && (await dir.readerAgent(d.id))));
   const meta = `<meta name="erga-address" content="${esc(address)}"><meta name="erga-page" content="${esc(d.file)}"><meta name="erga-pages" content="${esc(files)}">` + (canEdit && session
       ? `<meta name="erga-base" content="/d/${d.id}">${canShare ? `<meta name="erga-share" content="owner">` : ""}${accountMeta(session, admin && !session.agent, deploy)}`
     : "");
@@ -307,6 +310,7 @@ async function render(
     meta,
     session,
     editable: canEdit,
+    agent,
     editing,
     landing,
     clone,

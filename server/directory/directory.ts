@@ -740,6 +740,24 @@ export class Directory {
     return Number(row?.n ?? 0) > 0;
   }
 
+  /**
+   * Whether the people who may read a document may use their own agent on it, in the viewer: its owner turned it on
+   * (setReaderAgent), and it isn't shared with anyone with the link ("*"), which turns it off while it is.
+   */
+  async readerAgent(id: string): Promise<boolean> {
+    const [row] = await this.sql.all<{ allowed: number; open: number }>(
+      "SELECT d.reader_agent AS allowed, EXISTS (SELECT 1 FROM permissions p WHERE p.doc_id = d.id AND p.login = ?2) AS open FROM documents d WHERE d.id = ?1",
+      id,
+      ANYONE
+    );
+    return !!row?.allowed && !row.open;
+  }
+
+  /** Lets a document's readers use their own agent on it, or stops it (set_reader_agent checks who may, and that it isn't open to anyone). */
+  async setReaderAgent(id: string, on: boolean): Promise<void> {
+    await this.sql.run("UPDATE documents SET reader_agent = ?2 WHERE id = ?1", id, on ? 1 : 0);
+  }
+
   /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
   async may(who: Who | null, action: Action, doc: { id: string; owner: string; test: boolean }): Promise<boolean> {
     return roleMay(await this.access(who, doc), action);

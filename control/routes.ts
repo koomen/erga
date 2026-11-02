@@ -532,7 +532,7 @@ function installBody(s: CredentialStatus, c: Control, url: URL, ops: string): st
  * The control Worker's own page shell: the admin pages' look (server/admin/layout.ts), their one stylesheet (admin.css) too. The bars
  * (Erga › Admin › the page; the wordmark and Admin go to the app), the same sidebar (its
  * links to the app's admin pages, Ops here), and the page in a column, or the whole width (Ops).
- * No agent: the admin's agent lives in the app.
+ * The person's agent too, the app's (server/pages/agent.ts): it talks to the app.
  */
 export function controlLayout(app: string): (o: AdminLayout) => Response {
   return (o) => {

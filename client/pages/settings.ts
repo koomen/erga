@@ -8,6 +8,9 @@
 //     with its own address), a switch (the tree's make_project and
 //     make_document). A project with more than one page says, in place, why
 //     it can't be a document yet.
+//   - Readers' agents, for its owner only: whether the people it's shared with as viewers may use their own agent on it
+//     (set_reader_agent; its state from document_access). Off, and not to be turned on, while anyone with the link may
+//     open it.
 //   - Homepage, only on the homepage: a note that says so, how its deploy is
 //     going, and Redeploy now (admins). The homepage is chosen on /admin
 //     (the landing_document setting), never here.
@@ -17,7 +20,7 @@
 //     focus, makes a copy of a version the current one (restore_version).
 //
 // It runs the operations (server/operations/: list_versions, restore_version, list_pages, make_project,
-// make_document, homepage_status, deploy_homepage; over POST /api/tools/<name>), and refreshes on the event channel's
+// make_document, homepage_status, deploy_homepage, document_access, set_reader_agent; over POST /api/tools/<name>), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "tree" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only.
 
@@ -109,6 +112,10 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-kind button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .ds-kind button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
 .ds-kind button[aria-disabled="true"]:hover { color: var(--soft); }
+/* Readers' agents: one switch, for the owner. */
+.ds-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
+.ds-check input { margin: 0; width: 15px; height: 15px; accent-color: var(--caret); cursor: inherit; }
+.ds-check:has(input:disabled) { opacity: 0.55; cursor: default; }
 /* The homepage: a note, only on the homepage. */
 .ds-home-note { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13.5px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .ds-home-note svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--caret); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -159,6 +166,12 @@ function mount(host: SettingsHost): Settings {
       <p class="ds-explain" id="ds-kind-explain"></p>
       <p class="ds-error" id="ds-kind-error" role="alert"></p>
     </section>
+    <section class="ds-agent" id="ds-agent" hidden aria-labelledby="ds-agent-title">
+      <h3 id="ds-agent-title">Readers' agents</h3>
+      <label class="ds-check"><input type="checkbox" id="ds-agent-on" aria-describedby="ds-agent-explain">Readers can use their agent here</label>
+      <p class="ds-explain" id="ds-agent-explain"></p>
+      <p class="ds-error" id="ds-agent-error" role="alert"></p>
+    </section>
     <section class="ds-home" id="ds-home" hidden aria-labelledby="ds-home-note">
       <p class="ds-home-note" id="ds-home-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11 12 4l8.5 7"/><path d="M6 9.5V20h12V9.5"/></svg>This is the homepage</p>
       <p class="ds-explain" id="ds-home-explain"></p>
@@ -176,10 +189,24 @@ function mount(host: SettingsHost): Settings {
     </section>`;
   document.body.append(pop);
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => pop.querySelector<T>(`#${id}`)!;
-  const list = $("ds-list"), totalEl = $("ds-total"), foot = $("ds-foot"), footText = $("ds-foot-text"), olderBtn = $("ds-older"), histError = $("ds-hist-error");
-  const homeSec = $("ds-home"), homeExplain = $("ds-home-explain");
-  const statusEl = $("ds-status"), redeploy = $("ds-redeploy"), homeError = $("ds-home-error");
-  const kindBox = $("ds-kind"), kindExplain = $("ds-kind-explain"), kindError = $("ds-kind-error");
+  const list = $("ds-list"),
+    totalEl = $("ds-total"),
+    foot = $("ds-foot"),
+    footText = $("ds-foot-text"),
+    olderBtn = $("ds-older"),
+    histError = $("ds-hist-error");
+  const homeSec = $("ds-home"),
+    homeExplain = $("ds-home-explain");
+  const statusEl = $("ds-status"),
+    redeploy = $("ds-redeploy"),
+    homeError = $("ds-home-error");
+  const kindBox = $("ds-kind"),
+    kindExplain = $("ds-kind-explain"),
+    kindError = $("ds-kind-error");
+  const agentSec = $("ds-agent"),
+    agentOn = $<HTMLInputElement>("ds-agent-on"),
+    agentExplain = $("ds-agent-explain"),
+    agentError = $("ds-agent-error");
 
   // ------------------------------------------------------------ the server
 
@@ -196,6 +223,10 @@ function mount(host: SettingsHost): Settings {
   let tree: Tree | null = null;
   /** The kind being switched to, while the server does it. */
   let kindBusy: DocKind | null = null;
+  /** Readers' agents, for the owner (document_access answers no one else): on or off, and whether anyone with the link may open it. */
+  let access: { readerAgent: boolean; open: boolean } | null = null;
+  let accessSeq = 0,
+    agentBusy = false;
 
   const add = (vs: Version[]) => { for (const v of vs) loaded.set(v.n, v); };
   /** The loaded versions, newest first. */
@@ -255,6 +286,45 @@ function mount(host: SettingsHost): Settings {
     if (t) { tree = t; if (t.kind) host.onKind(t.kind); }
     renderKind();
   }
+
+  /** document_access's answer, as far as Readers' agents need it. */
+  const accessOf = (a: { readerAgent: boolean; permissions: { login: string }[] }) => ({
+    readerAgent: a.readerAgent,
+    open: a.permissions.some((p) => p.login == "*"),
+  });
+  async function loadAccess() {
+    // (Only its owner may ask: the page says so, meta erga-share, as for Share.)
+    if (!document.querySelector('meta[name="erga-share"]')) return;
+    const seq = ++accessSeq;
+    const a = await runTool<{ readerAgent: boolean; permissions: { login: string }[] }>("document_access", { document: host.docId }).catch(
+      () => null
+    );
+    if (seq != accessSeq) return;
+    access = a && accessOf(a);
+    renderAgent();
+  }
+  function renderAgent() {
+    agentSec.hidden = !access;
+    if (!access) return;
+    agentOn.checked = access.readerAgent;
+    agentOn.disabled = access.open || agentBusy;
+    agentExplain.textContent = access.open
+      ? "Anyone with the link can open it, so readers have no agent here. Editors always have theirs."
+      : "People you share it with as viewers can ask their own agent about it. Their agent can read it, never change it.";
+  }
+  agentOn.addEventListener("change", async () => {
+    const on = agentOn.checked;
+    agentBusy = true;
+    agentError.textContent = "";
+    renderAgent();
+    try {
+      access = accessOf(await runTool("set_reader_agent", { document: host.docId, on }));
+    } catch (e) {
+      agentError.textContent = `Couldn't change it: ${(e as Error).message}`;
+    }
+    agentBusy = false;
+    renderAgent();
+  });
 
   /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
   let restoring: string | null = null;
@@ -427,12 +497,15 @@ function mount(host: SettingsHost): Settings {
     homeError.textContent = "";
     histError.textContent = "";
     kindError.textContent = "";
+    agentError.textContent = "";
     render();
     renderHome();
     renderKind();
+    renderAgent();
     loadVersions();
     loadHome();
     loadTree();
+    loadAccess();
     // Relative times ("4 min ago", "in 3 minutes") move on while it's open, every 30 seconds.
     ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
     pop.tabIndex = -1;
