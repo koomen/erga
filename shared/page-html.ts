@@ -76,7 +76,10 @@ export const GUARD_UP = ["pointerup", "pointercancel", "mouseup", "touchend", "t
 export const GUARD_END = ["mouseup", "touchend", "touchcancel"];
 
 
+/** The one of Erga's libraries a page imports itself (<script src=".../erga/<name>/editor.js">), or null. */
+export const importedLibrary = (html: string): string | null =>
+  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/([a-z]+)\/editor\.js\b/i.exec(html)?.[1].toLowerCase() ?? null;
+
 /** Whether a page brings its own editor: it imports one of Erga's libraries itself, or says it has its own. */
 export const bringsEditor = (html: string) =>
-  /<script\b[^>]*\bsrc\s*=\s*["']?[^"'\s>]*\/erga\/[a-z]+\/editor\.js\b/i.test(html) ||
-  /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);
+  importedLibrary(html) != null || /<meta\b(?=[^>]*\bname\s*=\s*["']?erga-editor\b)(?=[^>]*\bcontent\s*=\s*["']?own\b)[^>]*>/i.test(html);

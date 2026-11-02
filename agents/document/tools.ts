@@ -16,8 +16,9 @@ import type { FilesAccess, OpenResult, VersionsAccess } from "../../document/age
 import { pageTools } from "./page-tools";
 import { readLines, type TextEdit } from "../../shared/text-edits";
 import { findInSource } from "../../shared/source-select";
-import { textApi } from "../../libs/text/api/edits";
-import { bringsEditor } from "../../shared/page-html";
+import { textApi, type DocumentApi } from "../../libs/text/api/edits";
+import { slidesApi } from "../../libs/slides/api/slides";
+import { bringsEditor, importedLibrary } from "../../shared/page-html";
 import { apiPathOf, applyPageEdit, describePageApi, type PageEdits, type Sandbox } from "../../document/page-api";
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
@@ -59,10 +60,12 @@ export function makeTools(
   /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
   const run = <T>(op: Effect.Effect<T, WorkspaceError>): T => Effect.runSync(Effect.mapError(op, (e) => new Error(e.message)));
   /**
-   * A page's APIs: its own (its module, <meta name="erga-api">, described in the sandbox) and erga/text's, unless the
-   * page brings its own editor. Throws when it has neither.
+   * A page's APIs: its own (its module, <meta name="erga-api">, described in the sandbox) and its library's: the one it
+   * imports (erga/slides), else erga/text, unless it has an editor of its own. Throws when it has neither.
    */
-  const apisOf = async (path: string): Promise<{ html: string; own: PageEdits | null; code: string | null; text: boolean }> => {
+  const apisOf = async (
+    path: string
+  ): Promise<{ html: string; own: PageEdits | null; code: string | null; library: DocumentApi | null }> => {
     if (!/\.html?$/i.test(path)) throw new Error(`${path} isn't a page: its edits are the source's (edit, write).`);
     const html = run(ws.read(path));
     const module = apiPathOf(path, html);
@@ -70,10 +73,10 @@ export function makeTools(
     if (module && code == null)
       throw new Error(`${path} names ${module} as its API (<meta name="erga-api">), but the document has no such file.`);
     const own = code == null ? null : await describePageApi(opts.sandbox, code);
-    const erga = !bringsEditor(html);
-    if (!own && !erga)
+    const library = importedLibrary(html) == "slides" ? slidesApi : bringsEditor(html) ? null : textApi;
+    if (!own && !library)
       throw new Error(`${path} has its own editor and names no API of its own (<meta name="erga-api">): edit its source (edit, write).`);
-    return { html, own, code, text: erga };
+    return { html, own, code, library };
   };
   /** An edit based on text the file no longer has: which restores changed it since the agent saw it, and the current version. */
   const changedSince = async (message: string, path: string): Promise<string> => {
@@ -195,18 +198,18 @@ export function makeTools(
     {
       name: "document_api",
       label: "Read the page's edits",
-      description: "List a page's edits (its own API's and erga/text's), with their inputs: use them first for a change to its text.",
+      description: "List a page's edits (its own API's and its library's), with their inputs: use them first for a change to its text.",
       parameters: Schema.Struct({
         path: Schema.String.annotate({
           description:
-            "Path of the page, e.g. \"index.html\". Its APIs: its own, if it names one (<meta name=\"erga-api\">), and erga/text's, unless it has an editor of its own. Each edit: its name, what it does, its input's JSON Schema. They keep the HTML as a person's editing would; edit the source (edit, write) only for what they can't do (layout, styles, scripts).",
+            "Path of the page, e.g. \"index.html\". Its APIs: its own, if it names one (<meta name=\"erga-api\">), and its library's (the one it imports, erga/slides; else erga/text, unless it has an editor of its own). Each edit: its name, what it does, its input's JSON Schema. They keep the HTML as a person's editing would; edit the source (edit, write) only for what they can't do (layout, styles, scripts).",
         }),
       }),
       execute: async (_id, p: { path: string }) => {
-        const { own, text: erga } = await apisOf(run(modelPath(p.path)));
+        const { own, library } = await apisOf(run(modelPath(p.path)));
         const apis = [
           own && { api: own.name, description: own.description, edits: own.edits },
-          erga && { api: textApi.name, description: textApi.description, edits: textApi.edits },
+          library && { api: library.name, description: library.description, edits: library.edits },
         ];
         return text(JSON.stringify({ apis: apis.filter(Boolean) }, null, 1));
       },
@@ -227,7 +230,7 @@ export function makeTools(
       }),
       execute: async (_id, p: { path: string; edit: string; input: Record<string, unknown> }) => {
         const path = run(modelPath(p.path));
-        const { html, own, code, text: erga } = await apisOf(path);
+        const { html, own, code, library } = await apisOf(path);
         if (own?.edits.some((e) => e.name == p.edit)) {
           const r = await applyPageEdit(opts.sandbox, code!, html, p.edit, p.input);
           if ("refused" in r) throw new Error(r.refused);
@@ -235,9 +238,9 @@ export function makeTools(
           opts.edited(done.path, done.at);
           return text(`Made ${own.name}'s ${p.edit}. ${done.summary}`);
         }
-        if (!erga)
+        if (!library)
           throw new Error(`${path}'s API${own ? `, ${own.name},` : ""} has no edit named "${p.edit}": document_api lists its edits.`);
-        const r = textApi.apply(html, path, p.edit, p.input);
+        const r = library.apply(html, path, p.edit, p.input);
         if ("refused" in r) throw new Error(r.refused);
         if (!r.changes.length) return text(r.done);
         const done = run(ws.change(path, html, r.changes));

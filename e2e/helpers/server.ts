@@ -10,11 +10,18 @@
 // need the documents flushed to disk on the way out.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanEnv, ROOT } from "./env";
+
+/** A fixture's page that imports one of Erga's libraries names it at erga.dev: in its copy at `dir`, at the server at `root`. */
+export function localLibraries(dir: string, root: string) {
+  const index = join(dir, "index.html");
+  const html = existsSync(index) ? readFileSync(index, "utf8") : "";
+  if (html.includes("https://erga.dev/erga/")) writeFileSync(index, html.replaceAll("https://erga.dev/erga/", `${root}/erga/`));
+}
 
 /** Settings the Worker reads from .dev.vars; anything else in `env` goes to the server's environment. */
 const DEV_VARS = new Set(["DEV_LOGIN", "SESSION_SECRET", "ANTHROPIC_API_KEY", "ERGA_AGENT_MODEL", "GITHUB_CLIENT_SECRET"]);
@@ -130,6 +137,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     async fixture(name) {
       const dir = join(scratch, "docs", `${name}-${++fixtures}`);
       cpSync(join(ROOT, "e2e/fixtures", name), dir, { recursive: true });
+      localLibraries(dir, server.root);
       return { dir, address: await server.open(dir) };
     },
     stop() {
