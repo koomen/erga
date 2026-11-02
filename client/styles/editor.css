@@ -150,9 +150,30 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 :root:not(:has(meta[name="erga-share"])) #btn-share:hover { background: transparent; color: var(--chrome); }
 :root:not(:has(meta[name="erga-share"])) #btn-share svg { opacity: 0.4; }
 
-/* Who's here: you, then everyone else and their agents, in their colours. */
-.people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
+/* Who else is here, and their agents, in their colours: a stack of their avatars just left of the buttons' bar, in its band,
+   outside its glass. It grows to the left, never over the bar. A hover, keyboard focus or a tap (.spread: people.ts) parts
+   them so each face shows whole, and a face's name shows under it in its colour. Past four faces the stack ends in "+N"
+   (.more), and the spread shows them all. (people.ts has the faces' size and overlap too, for the breadcrumbs' room.) */
+.chrome-top .people { position: absolute; right: calc(100% + 8px); top: 0; bottom: 0; display: flex; align-items: center; }
 .people:empty { display: none; }
+.people > * { flex: none; transition: margin 240ms var(--agent-ease), width 240ms var(--agent-ease), opacity 180ms ease, visibility 240ms; }
+.people > * + * { margin-left: -9px; }
+.people > .person { width: 26px; }
+.people:is(:hover, :has(:focus-visible), .spread) > * + * { margin-left: 5px; }
+.people .avatar { box-shadow: 0 0 0 2px var(--bg), 0 1px 4px rgba(0, 0, 0, 0.14); }
+.people > .extra, .people:is(:hover, :has(:focus-visible), .spread) > .more { width: 0; margin-left: 0; opacity: 0; visibility: hidden; }
+.people:is(:hover, :has(:focus-visible), .spread) > .extra { width: 26px; margin-left: 5px; opacity: 1; visibility: visible; }
+.people .more { position: relative; display: grid; place-items: center; box-sizing: border-box; width: 26px; height: 26px; padding: 0 2px; border-radius: 13px;
+  font: 600 10.5px/1 var(--font-text); letter-spacing: -0.02em; color: var(--fg); background: color-mix(in srgb, var(--chrome) 28%, var(--bg));
+  box-shadow: 0 0 0 2px var(--bg), 0 1px 4px rgba(0, 0, 0, 0.14); overflow: hidden; }
+/* A face's name: under it, in a label of its colour, as its caret's in the text. */
+.people .avatar[data-tip]::before { left: 50%; top: calc(100% + 9px); transform: translateX(-50%); padding: 2px 7px; border-radius: 6px;
+  font-weight: 600; font-size: 11.5px; color: #fff; background: var(--c); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16); }
+.people .avatar:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
+.people .avatar:focus-visible::before { opacity: 1; }
+/* On a phone, open quick actions take the band: the stack steps out of their way. */
+@media (max-width: 759.98px) { body.quick-open .chrome-top .people { opacity: 0; pointer-events: none; } }
+@media (prefers-reduced-motion: reduce) { .people > * { transition: none; } }
 /* You, at the far right, apart from the others (.me-slot: client/inline/bars.css). */
 /* Your avatar is the size and place it is on every other page, so the eye here and the viewer's pencil swap in place. */
 .me-slot .avatar { width: 30px; height: 30px; font-size: 13px; }
@@ -233,8 +254,6 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
    the title takes the room the breadcrumbs' bar has. */
 @media (max-width: 759.98px) { .nav-title { max-width: none; } }
 @media (max-width: 520px) {
-  .people { gap: 0; }
-  .people > * + * { margin-left: -5px; }
   .toast { bottom: calc(max(var(--agent-inset), env(safe-area-inset-bottom)) + var(--agent-fab) + 12px); }
   #source .cm-scroller { padding-top: 24px; padding-left: 16px; }
 }

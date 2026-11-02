@@ -54,6 +54,7 @@ export function mountChrome(shell: Shell) {
     me: $("me"),
     nav: $("nav-docs"),
     bar: document.querySelector<HTMLElement>(".chrome-top")!,
+    stack: $("people"),
     // (After the avatar's own click, which opened or closed its menu: people.ts.)
     menuOpen: () => (shell.people.accountLinks ? !$("account").hidden : undefined),
     keep: ".erga-bar-r, .help, .ds-menu, .erga-new-menu",

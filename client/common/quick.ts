@@ -19,6 +19,8 @@ export function mountQuick(o: {
   keep: string;
   /** What carries the class: the body, or the homepage's controls' host. */
   on?: HTMLElement;
+  /** The others' stack left of the bar (the editor's #people), if there is one. */
+  stack?: HTMLElement;
 }) {
   const phone = matchMedia("(max-width: 759.98px)"),
     body = o.on ?? document.body;
@@ -36,9 +38,23 @@ export function mountQuick(o: {
   document.addEventListener("pointerdown", (e) => {
     if (body.classList.contains("quick-open") && !e.composedPath().some((n) => n instanceof Element && n.matches(o.keep))) toggle(false);
   });
+  // (Open, the quick actions hide the stack: client/styles/editor.css.)
   const navRoom = () =>
-    o.nav.style.setProperty("--nav-room", `${Math.max(0, o.bar.getBoundingClientRect().left - o.nav.getBoundingClientRect().left - 8)}px`);
+    o.nav.style.setProperty(
+      "--nav-room",
+      `${Math.max(0, barEdge(o.bar, body.classList.contains("quick-open") ? undefined : o.stack) - o.nav.getBoundingClientRect().left - 8)}px`
+    );
   new ResizeObserver(navRoom).observe(o.bar);
+  if (o.stack) new ResizeObserver(navRoom).observe(o.stack);
   addEventListener("resize", navRoom);
   return toggle;
+}
+
+/**
+ * Where the buttons' bar starts, with the others' stack left of it (8px apart) at its width at rest (people.ts, data-w):
+ * the stack spread by a hover goes over the breadcrumbs for a moment, and they don't move for it.
+ */
+export function barEdge(bar: HTMLElement, stack?: HTMLElement | null): number {
+  const w = Number(stack?.dataset.w) || 0;
+  return bar.getBoundingClientRect().left - (w ? w + 8 : 0);
 }
