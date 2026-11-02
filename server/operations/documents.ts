@@ -123,7 +123,7 @@ export const DOCUMENT_OPERATIONS: Operation[] = [
           id: d.id,
           title: d.title,
           address: addressOf(d),
-          ...(caller.origin ? { url: `${caller.origin}/${d.owner}/${d.slug}` } : {}),
+          ...(caller.origin ? { url: caller.origin + addressOf(d) } : {}),
           owner: d.owner,
           role: d.role,
           modified: iso(d.modified),

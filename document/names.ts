@@ -53,19 +53,18 @@ export interface Naming {
   set(patch: { title?: string | null; slug?: string | null }): Effect.Effect<DocName, NameError>;
 }
 
-/** What naming asks the directory: a document's row, whether someone may rename it, and the rename. */
-export interface NamesDirectory<Who> {
-  get(id: string): Promise<(NamedRow & { test: boolean }) | null>;
-  may(who: Who, action: "rename", doc: { id: string; owner: string; test: boolean }): Promise<boolean>;
+/** What naming asks the directory: a document's row, and the rename. */
+export interface NamesDirectory {
+  get(id: string): Promise<NamedRow | null>;
   rename(id: string, patch: { title?: string | null; slug?: string | null }, pageTitle: string | null): Promise<{ doc: NamedRow }>;
 }
 
 /**
- * A document's naming for its host: reads and renames go to the directory,
- * as `who` (whom `may` must allow), with the page's own title for going back
- * to following it.
+ * A document's naming for its host: reads and renames go to the directory, with the page's own title for going back
+ * to following it. Who may rename it, the app decides before it asks (rename_document, as the directory's `may`): the
+ * host's person has no admin power, so the host can't decide it for the homepage project, which only admins edit.
  */
-export function namingFor<Who>(dir: NamesDirectory<Who>, id: string, pageTitle: () => string | null) {
+export function namingFor(dir: NamesDirectory, id: string, pageTitle: () => string | null): Naming {
   // The directory's failures (its own NameError, or a database's) as a NameError: what the person reads.
   const ask = <A>(f: () => Promise<A>) =>
     Effect.tryPromise({
@@ -76,13 +75,12 @@ export function namingFor<Who>(dir: NamesDirectory<Who>, id: string, pageTitle: 
     ask(() => dir.get(id)),
     (doc) => (doc ? Effect.succeed(doc) : Effect.fail(new NameError({ message: "This document isn't in the directory." })))
   );
-  return (who: Who): Naming => ({
+  return {
     get: () => Effect.map(row, nameOf),
     set: (patch) =>
-      Effect.gen(function* () {
-        const doc = yield* row;
-        if (!(yield* ask(() => dir.may(who, "rename", doc)))) return yield* new NameError({ message: "You can't rename this document." });
-        return nameOf((yield* ask(() => dir.rename(id, patch, pageTitle()))).doc);
-      }),
-  });
+      Effect.map(
+        ask(() => dir.rename(id, patch, pageTitle())),
+        (r) => nameOf(r.doc)
+      ),
+  };
 }

@@ -66,7 +66,14 @@ test(
     );
     // Signed out, anyone views it.
     const out = await get(server, "/_home", { headers: signedOut(server) });
-    expect({ status: out.status, old: (await out.text()).includes("The old homepage") }).toEqual({ status: 200, old: true });
+    // It is the old document, now called "Erga Homepage" (adoptLanding renames it).
+    const outText = await out.text();
+    const title = /<iframe id="frame"[^>]* title="([^"]*)"/.exec(outText)?.[1];
+    expect({ status: out.status, doc: frameOf(outText)?.[1], title }).toEqual({
+      status: 200,
+      doc: made.result!.id,
+      title: "Erga Homepage",
+    });
     // The admin edits it, as the editor does: publishing a file into it.
     const wrote = await runTool(server.root, "write", {
       document: "/_home",

@@ -96,7 +96,7 @@ export interface Person {
  * permissions and the rule that decides them, which document is the homepage,
  * and the settings it reads.
  */
-export interface DocumentDirectory extends NamesDirectory<Asker> {
+export interface DocumentDirectory extends NamesDirectory {
   add(row: {
     id: string;
     owner: string;
@@ -1488,8 +1488,8 @@ export class Document {
       canEdit: (person) => this.editors.get(person.id) ?? false,
       mayPublish: (req) => req.headers["x-erga-access"] == "edit",
       avatarOf: this.deps.avatarOf,
-      // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
-      naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
+      // Its title and address (the app decided who may rename it: rename_document).
+      naming: () => naming,
       // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
       turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await Effect.runPromise(this.versions.latest)))?.id ?? null),
       versions: {
@@ -1519,17 +1519,14 @@ export class Document {
     });
     // Its name from its record once the directory has said it; a rename goes to the directory, and what it answers is kept.
     const named = namingFor(this.directory, info.id, () => titleOf(room.text(info.index) ?? ""));
-    const naming = (who: Asker): Naming => {
-      const n = named(who);
-      const remember = (name: DocName) => Effect.promise(() => this.rememberName(name));
-      return {
-        get: () =>
-          Effect.flatMap(
-            Effect.promise(() => this.readInfo()),
-            (i) => (i?.name ? Effect.succeed(i.name) : Effect.flatMap(n.get(), remember))
-          ),
-        set: (patch) => Effect.flatMap(n.set(patch), remember),
-      };
+    const remember = (name: DocName) => Effect.promise(() => this.rememberName(name));
+    const naming: Naming = {
+      get: () =>
+        Effect.flatMap(
+          Effect.promise(() => this.readInfo()),
+          (i) => (i?.name ? Effect.succeed(i.name) : Effect.flatMap(named.get(), remember))
+        ),
+      set: (patch) => Effect.flatMap(named.set(patch), remember),
     };
 
     const opened: Opened = {
