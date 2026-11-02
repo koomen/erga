@@ -1,5 +1,5 @@
 // GitHub on the Ops page, end to end against the pretend GitHub the dev server serves (dev/github-mock.ts): the
-// card says nothing is connected; Connect GitHub opens the App's install page in a popup, Install there comes back
+// card says nothing is connected; Connect GitHub opens GitHub's authorize page in a popup, then the App's install page; Install comes back
 // through the callback, the popup tells the page and closes, and the card turns connected, in place. A push to the
 // repository on GitHub comes back through the webhook: the log shows the commit, the card says who pushed. Sync
 // now, then Disconnect, in place too. The page's screenshot, for the report: ERGA_SHOTS names the folder.
@@ -46,9 +46,12 @@ test("Connect GitHub in a popup, a push on GitHub synced back, Sync now and Disc
   expect(await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("#env-github a[href]")].filter((a) => !a.hidden).length)).toBe(0);
   await page.evaluate(() => { (window as unknown as { kept: number }).kept = 1; });
 
-  // Connect: the pretend GitHub's install page in a popup; Install; the popup tells the page and closes; the card turns connected.
+  // Connect: the pretend GitHub's authorize page in a popup, then its install page (no installation yet); Install; the
+  // popup tells the page and closes; the card turns connected.
   const [popup] = await Promise.all([page.waitForEvent("popup"), page.click("#github-connect")]);
   await popup.waitForLoadState();
+  await expect.poll(() => popup.evaluate(() => document.body.innerText)).toContain("Authorize erga-editor");
+  await popup.click("#authorize");
   await expect.poll(() => popup.evaluate(() => document.querySelector("h1")?.textContent ?? "")).toContain("Install erga-editor");
   expect(await popup.evaluate(() => [...document.querySelectorAll("label")].map((l) => l.textContent?.trim()))).toContain("ada/erga");
   await popup.click("#install");

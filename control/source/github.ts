@@ -169,6 +169,15 @@ export type PushEvent = typeof PushEvent.Type;
 
 // ---------------------------------------------------------------- the consent: sign-in, and Connect GitHub
 
+/** Where the browser goes to authorize the App (Connect GitHub, first): GitHub comes back to `redirect` with a code. */
+export function githubAuthorizeUrl(app: GithubApp, state: string, redirect: string): string {
+  const u = new URL(`${app.www}/login/oauth/authorize`);
+  u.searchParams.set("client_id", app.clientId);
+  u.searchParams.set("redirect_uri", redirect);
+  u.searchParams.set("state", state);
+  return u.toString();
+}
+
 /** Where the browser goes to install the App (Connect GitHub): GitHub asks which account and repositories, then comes back to the App's callback. */
 export function installUrl(app: GithubApp, state: string): string {
   const u = new URL(`${app.www}/apps/${app.slug}/installations/new`);
@@ -269,11 +278,13 @@ const Installations = Schema.Struct({
   ),
 });
 
+/** The App's installations the person reaches: on their account, and on their organizations'. */
+export const userInstallations = (app: GithubApp, token: string, net?: Net) =>
+  api(app, token, "GET", "/user/installations?per_page=100", undefined, net, Installations).then((r) => r.installations ?? []);
+
 /** The installation, as its person sees it: whose account, and whether it covers all repositories or a selection. */
 export const installationOf = (app: GithubApp, token: string, id: number, net?: Net) =>
-  api(app, token, "GET", "/user/installations?per_page=100", undefined, net, Installations).then(
-    (r) => r.installations?.find((i) => i.id == id) ?? null
-  );
+  userInstallations(app, token, net).then((all) => all.find((i) => i.id == id) ?? null);
 
 /** The repositories the installation reaches that the person reaches too (what they picked on GitHub's page). */
 export const installationRepos = (app: GithubApp, token: string, id: number, net?: Net) =>

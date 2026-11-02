@@ -1,6 +1,6 @@
 // Erga's GitHub App (control/source/github.ts) against the pretend GitHub (dev/github-mock.ts), on a port: the App's
 // JWT and installation tokens, the webhook's signature, the relay's sealing; and the control Worker's routes
-// (control/routes.ts): Connect GitHub from the popup to the repository linked (one repository, a pick, a new one),
+// (control/github-routes.ts): Connect GitHub from the popup to the repository linked (one repository, a pick, a new one),
 // the consent relayed for an install, the sign-in relayed, and the webhook (a good signature taken, a bad one refused).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -125,18 +125,30 @@ describe("the App itself", () => {
   });
 });
 
-describe("Connect GitHub (control/routes.ts)", () => {
-  test("the popup goes to the App's install page; GitHub comes back with the installation; the one repository is linked and the page told", async () => {
+/** GitHub's authorize page, as the person clicks Authorize: the browser sent back to the callback with a code. */
+async function authorizeOnGithub(to: URL) {
+  expect(`${to.origin}${to.pathname}`).toBe(`${www}/login/oauth/authorize`);
+  const page = await (await gh.fetch(new Request(to.toString())))!.text();
+  return new URL(/id="authorize" href="([^"]+)"/.exec(page)![1].replaceAll("&amp;", "&"));
+}
+
+describe("Connect GitHub (control/github-routes.ts)", () => {
+  test("the popup authorizes, then goes to the App's install page; GitHub comes back with the installation; the one repository is linked and the page told", async () => {
     gh.state.installations.length = 0;
     const { go, linked } = control();
     const start = await go(OPS, "/github/connect?popup=1");
     expect(start.status).toBe(302);
-    const to = new URL(start.headers.get("location")!);
-    expect(`${to.origin}${to.pathname}`).toBe(`${www}/apps/erga-editor/installations/new`);
-    const state = to.searchParams.get("state")!;
-    expect(relayOrigin(state)).toBeNull();
     const cookie = cookieOf(start);
     expect(cookie).toStartWith("erga_github=");
+    const authorized = await authorizeOnGithub(new URL(start.headers.get("location")!));
+    // No installation yet: the install page, with the same consent.
+    const next = await go(OPS, authorized.pathname + authorized.search, { cookie });
+    expect(next.status).toBe(302);
+    const to = new URL(next.headers.get("location")!);
+    expect(`${to.origin}${to.pathname}`).toBe(`${www}/apps/erga-editor/installations/new`);
+    const state = to.searchParams.get("state")!;
+    expect(state).toBe(authorized.searchParams.get("state")!);
+    expect(relayOrigin(state)).toBeNull();
     const back = await installOnGithub(state);
     expect(back.origin + back.pathname).toBe(`${OPS}/auth/github/callback`);
     expect(back.searchParams.get("setup_action")).toBe("install");
@@ -149,6 +161,28 @@ describe("Connect GitHub (control/routes.ts)", () => {
     expect(linked[0]).toMatchObject({ installationId: Number(back.searchParams.get("installation_id")), account: { login: "ada" }, repo: { fullName: "ada/erga", cloneUrl: `${www}/ada/erga.git` }, by: "ada" });
     // The cookie is cleared with the answer.
     expect(done.headers.get("set-cookie")).toContain("erga_github=; Max-Age=0; Path=/");
+  });
+
+  test("the App already installed: GitHub's install page only shows its settings and never comes back, so Connect finds the installation and links it", async () => {
+    gh.state.repos.splice(1);
+    gh.state.installations.length = 0;
+    gh.state.installations.push({
+      id: 777,
+      account: { login: "ada", type: "User" },
+      selection: "selected",
+      repoIds: [gh.state.repos[0].id],
+    });
+    // GitHub's install page, for an account that has the App: Install changes nothing, and nothing goes back.
+    const form = new URLSearchParams({ state: "s", account: "ada", selection: "selected", repo: String(gh.state.repos[0].id) });
+    expect((await gh.fetch(new Request(`${www}/apps/erga-editor/installations/new`, { method: "POST", body: form })))!.status).toBe(200);
+    const { go, linked } = control();
+    const start = await go(OPS, "/github/connect?popup=1");
+    const back = await authorizeOnGithub(new URL(start.headers.get("location")!));
+    expect(back.origin + back.pathname).toBe(`${OPS}/auth/github/callback`);
+    const done = await go(OPS, back.pathname + back.search, { cookie: cookieOf(start) });
+    expect(await done.text()).toContain("GitHub is connected: ada/erga.");
+    expect(linked).toHaveLength(1);
+    expect(linked[0]).toMatchObject({ installationId: 777, account: { login: "ada" }, repo: { fullName: "ada/erga" }, by: "ada" });
   });
 
   test("no cookie, or another state: refused in place; no admin: refused", async () => {
@@ -164,10 +198,12 @@ describe("Connect GitHub (control/routes.ts)", () => {
 
   test("several repositories: the pick page, then the one picked; or a new one Erga makes, and refused in place when the App may not", async () => {
     gh.state.repos.push({ id: 4242, owner: "ada", name: "notes", private: true });
+    // The person gives the installation the second repository on GitHub's settings page.
+    gh.state.installations.find((i) => i.account.login == "ada")!.repoIds.push(4242);
     const { go, linked } = control();
     const start = await go(OPS, "/github/connect?popup=1");
-    const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
-    const back = await installOnGithub(state);
+    const back = await authorizeOnGithub(new URL(start.headers.get("location")!));
+    const state = back.searchParams.get("state")!;
     const pick = await go(OPS, back.pathname + back.search, { cookie: cookieOf(start) });
     const html = await pick.text();
     expect(pick.status).toBe(200);
@@ -181,8 +217,8 @@ describe("Connect GitHub (control/routes.ts)", () => {
     expect(linked[0]).toMatchObject({ repo: { fullName: "ada/notes", private: true } });
     // A new repository, made with the person's token and added to the installation.
     const again = await go(OPS, "/github/connect?popup=1");
-    const state2 = new URL(again.headers.get("location")!).searchParams.get("state")!;
-    const back2 = await installOnGithub(state2);
+    const back2 = await authorizeOnGithub(new URL(again.headers.get("location")!));
+    const state2 = back2.searchParams.get("state")!;
     const pick2 = await go(OPS, back2.pathname + back2.search, { cookie: cookieOf(again) });
     const made = await go(OPS, "/github/connect/pick", { method: "POST", cookie: cookieOf(pick2), body: new URLSearchParams({ state: state2, name: "erga-source", private: "on" }) });
     expect(await made.text()).toContain("GitHub is connected: ada/erga-source.");
@@ -191,8 +227,8 @@ describe("Connect GitHub (control/routes.ts)", () => {
     // Without the Administration permission GitHub refuses: the pick page says so, and says what to do.
     gh.app.administration = false;
     const third = await go(OPS, "/github/connect?popup=1");
-    const state3 = new URL(third.headers.get("location")!).searchParams.get("state")!;
-    const back3 = await installOnGithub(state3);
+    const back3 = await authorizeOnGithub(new URL(third.headers.get("location")!));
+    const state3 = back3.searchParams.get("state")!;
     const pick3 = await go(OPS, back3.pathname + back3.search, { cookie: cookieOf(third) });
     const refused = await go(OPS, "/github/connect/pick", { method: "POST", cookie: cookieOf(pick3), body: new URLSearchParams({ state: state3, name: "another" }) });
     expect(refused.status).toBe(400);
@@ -270,7 +306,7 @@ describe("Connect GitHub (control/routes.ts)", () => {
   });
 });
 
-describe("the webhook (control/routes.ts)", () => {
+describe("the webhook (control/github-routes.ts)", () => {
   const push = (ref: string) => JSON.stringify({ ref, before: "0".repeat(40), after: "1".repeat(40), repository: { id: 1, full_name: "ada/erga" }, installation: { id: 5 }, sender: { login: "bo" } });
   const send = (go: ReturnType<typeof control>["go"], body: string, headers: Record<string, string>) => go(OPS, "/github/webhook", { method: "POST", body, headers: { "Content-Type": "application/json", "X-GitHub-Event": "push", ...headers } });
 

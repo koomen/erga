@@ -99,11 +99,28 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // operations (control/operations.ts), at the end with the others; these are the routes that stay routes.
   { route: "GET /git", domain: "admin", action: "Read Erga's source and its recent commits (the public page, for anyone)", tool: "list_source" },
   { route: "GET /git/tree/<ref>/<path>", domain: "admin", action: "Read a folder or a file of Erga's source (the public page, for anyone)", tool: "read_source" },
-  // GitHub (control/source/github.ts; control/routes.ts): Erga's GitHub App, connected to one repository. Connect is a consent on
-  // GitHub's install page, in a popup; the agent reads the state, syncs, disconnects, and offers the button.
-  { route: "GET /github/connect", domain: "none", action: "Connect GitHub: the App's install page on GitHub, in a popup (Ops, the GitHub card; the button under the agent's github_status)", exempt: "a secret: the consent gives Erga's GitHub App access to the person's repositories, only on GitHub's own page in their browser, never in a conversation (the agent offers the button)" },
-  { route: "POST /github/connect/pick", domain: "none", action: "Pick the repository, or have Erga make one, in the popup after GitHub's install page", exempt: "the consent's own pages: it acts with the person's GitHub token, which only the popup holds" },
-  { route: "POST /github/webhook", domain: "none", action: "GitHub tells Erga of a push (the App's webhook): the repository syncs in", exempt: "server to server: GitHub's, signed with the webhook secret (or relayed from upstream, signed with the fork's secret)" },
+  // GitHub (control/source/github.ts; control/github-routes.ts): Erga's GitHub App, connected to one repository. Connect is a consent on
+  // GitHub's authorize and install pages, in a popup; the agent reads the state, syncs, disconnects, and offers the button.
+  {
+    route: "GET /github/connect",
+    domain: "none",
+    action:
+      "Connect GitHub: GitHub's authorize page, then the App's install page when it has no installation yet, in a popup (Ops, the GitHub card; the button under the agent's github_status)",
+    exempt:
+      "a secret: the consent gives Erga's GitHub App access to the person's repositories, only on GitHub's own page in their browser, never in a conversation (the agent offers the button)",
+  },
+  {
+    route: "POST /github/connect/pick",
+    domain: "none",
+    action: "Pick the repository, or have Erga make one, in the popup after GitHub's install page",
+    exempt: "the consent's own pages: it acts with the person's GitHub token, which only the popup holds",
+  },
+  {
+    route: "POST /github/webhook",
+    domain: "none",
+    action: "GitHub tells Erga of a push (the App's webhook): the repository syncs in",
+    exempt: "server to server: GitHub's, signed with the webhook secret (or relayed from upstream, signed with the fork's secret)",
+  },
   // A downstream's control Worker, with its fork's secret (control/routes.ts): its repository's token, and builds of its commits.
   { route: "POST /forks/<id>/token", domain: "none", action: "A downstream's control Worker gets a token for its fork's repository", exempt: "server to server, with the fork's secret" },
   { route: "POST /forks/<id>/builder/build|cancel", domain: "none", action: "A downstream's control Worker has one of its commits built here", exempt: "server to server, with the fork's secret" },
