@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import { FileStore, Room, StateStore, joinLocal } from "../document/room";
 import * as Effect from "effect/Effect";
 import { YjsWorkspace, type Cursor, type WorkspaceError } from "../agents/document/workspace";
-import { authorOf, files, introduce, type Author } from "../document/content";
+import { authorOf, files, introduce, roomInfo, type Author } from "../document/content";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */
 function memoryStore(init: Record<string, string>) {
@@ -40,11 +40,11 @@ async function peer(room: Room, me: Author) {
   const doc = new Y.Doc();
   const aw = new Awareness(doc);
   aw.setLocalState({ user: me });
-  joinLocal(room, doc, aw);
+  const joined = joinLocal(room, doc, aw);
   await tick();
   introduce(doc, me);
   await tick();
-  return { doc, aw, text: (p = "index.html") => files(doc).get(p)! };
+  return { doc, aw, joined, text: (p = "index.html") => files(doc).get(p)! };
 }
 
 test("participants converge and the room writes files back", async () => {
@@ -241,5 +241,31 @@ test("an agent's edit lands at once, in one undo step, keeps others' edits, and 
     expect(undo.undoStack.length).toBe(1);
     undo.undo();
     expect(agent.text().toString()).toBe(start + "<p>Ada's line.</p>\n");
+  });
+});
+
+test("the lock for source edits: only its holder's edits land; everyone sees whose it is; let go, the others' edits come", async () => {
+  await withRoom(memoryStore({ "index.html": "<p>One</p>\n" }), async (room) => {
+    const ada = await peer(room, person("Ada"));
+    const agent = await peer(room, { user: "bo", name: "Bo’s agent", color: "#12a594", kind: "agent" });
+    expect(agent.joined.lock("Bo’s agent")).toBeNull();
+    await tick();
+    // Everyone sees it, and another can't take it.
+    expect(roomInfo(ada.doc).get("lock")).toBe("Bo’s agent");
+    expect(ada.joined.lock("Ada")).toBe("Bo’s agent");
+    expect(ada.joined.lockedBy()).toBe("Bo’s agent");
+    // The holder's edit lands; Ada's, meanwhile, doesn't reach the room.
+    agent.text().insert(0, "<h1>Notes</h1>\n");
+    ada.text().insert(ada.text().length, "<p>Ada's</p>\n");
+    await tick();
+    await tick();
+    expect(files(room.doc).get("index.html")!.toString()).toBe("<h1>Notes</h1>\n<p>One</p>\n");
+    // Let go: everyone may edit again, and what Ada typed meanwhile comes in, merged.
+    agent.joined.unlock();
+    await tick();
+    for (let i = 0; i < 5; i++) await tick();
+    expect(roomInfo(ada.doc).get("lock")).toBeUndefined();
+    expect(files(room.doc).get("index.html")!.toString()).toBe("<h1>Notes</h1>\n<p>One</p>\n<p>Ada's</p>\n");
+    expect(agent.text().toString()).toBe(ada.text().toString());
   });
 });

@@ -19,10 +19,11 @@ import { argumentsSchema } from "../run";
 import { colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "../../document/content";
 import { byLine, VIA } from "../../shared/attribution";
 import { pageRefusal } from "../../document/pages";
-import { joinLocal } from "../../document/room";
+import { joinLocal, LOCK_IDLE_MS } from "../../document/room";
 import type { AgentSession, DocumentAgents, SessionOptions, ToolContent } from "../../document/agent";
 import type { LogEvent } from "../../shared/agent-log";
 import { YjsWorkspace, type Cursor } from "./workspace";
+import { cleanPath } from "../../document/pages";
 import type { AgentSettings } from "../models";
 import { CHANGES, makeTools, toolPath } from "./tools";
 
@@ -77,7 +78,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
   awareness.setLocalState({ user: me, busy: false, activity: null, cursor: null });
-  const leave = joinLocal(opts.room, doc, awareness);
+  const room = joinLocal(opts.room, doc, awareness);
   await Effect.runPromise(Effect.sleep(0)); // the in-process sync is microtasks: done by now
   introduce(doc, me);
 
@@ -105,8 +106,9 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   let lastTurn: Promise<string | null> = Promise.resolve(null);
   const syncBusy = (activity?: string | null) => {
     const on = busy.calls > 0 || busy.timer != null;
-    // A run of calls just ended: the document cuts a version of it.
+    // A run of calls just ended: the document cuts a version of it, and the lock for source edits goes, if it had it.
     if (wasBusy && !on) {
+      room.unlock();
       const at = opts.turnEnded?.();
       if (at) { const before = lastTurn; lastTurn = at.catch(() => before); }
     }
@@ -142,6 +144,12 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       if (t) presence({ cursor: { path, anchor: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(t, at)), head: null } });
     },
   });
+  /** Whether a person has the file open, their caret in it (the page's editor, or the source view: their presence). */
+  const someoneHas = (path: string) =>
+    [...opts.room.awareness.getStates().values()].some((st) => {
+      const p = st as { user?: { kind?: string }; cursor?: { path?: string } | null };
+      return p.user?.kind == "person" && p.cursor?.path == path;
+    });
   /** The tools as the person may use them now: someone who may only view the document has none that change it. */
   const mine = () => (opts.canEdit() ? tools : tools.filter((t) => !CHANGES.has(t.name)));
 
@@ -149,7 +157,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     close() {
       if (busy.timer) Effect.runFork(Fiber.interrupt(busy.timer));
       listeners.clear();
-      leave();
+      room.leave();
       awareness.destroy();
     },
     undo() {
@@ -191,6 +199,22 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
         throw new Error(`Validation failed for tool "${name}":\n${(e as Error).message}`);
       }
       const path = toolPath(params);
+      // An edit to the source locks the document for this agent's run of them: no one else's edit lands meanwhile, and
+      // the tabs show the page read-only (document/room.ts). Any edit while another has it says so.
+      if (CHANGES.has(name)) {
+        // (Only an edit of a page that's there, or of a file someone has open in the source view: a new file, or a
+        // stylesheet nobody has open, can't be in anyone's typing.)
+        const clean = path != null ? cleanPath(path) : null;
+        const page = !!clean && /\.html?$/i.test(clean) && files(doc).has(clean);
+        const open = !!clean && someoneHas(clean);
+        // (Named as its edits are: a shared agent's under its person, via its token's label.)
+        const who = via ? byLine(owner.name, via) : me.name;
+        const other = name == "call_edit" || !(page || open) ? room.lockedBy() : room.lock(who);
+        if (other)
+          throw new Error(
+            `${other} is editing this document's source just now, so nothing was changed. The lock ends when their turn ends, or ${LOCK_IDLE_MS / 1000} seconds after their last edit: wait, then try again.`
+          );
+      }
       busy.calls++;
       // A shared agent's edits are its person's, via it, under the token's label ("Ada, via a shared agent (CI)"); the cursor says so too.
       if (via) actAs({ ...me, name: byLine(owner.name, via), via });
