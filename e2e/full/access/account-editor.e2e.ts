@@ -91,7 +91,7 @@ test("its owner adds someone, sees them listed with their role and picture, and 
   );
   const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden])")].map((e) => e.id).join(" "));
   // New document (+), full screen, then the editor's own (pause, share, document settings), edit, share with an agent, Documents.
-  expect(order).toBe("btn-new btn-full btn-pause btn-share btn-settings btn-edit btn-agent-share btn-docs");
+  expect(order).toBe("btn-new btn-full btn-share btn-settings btn-edit btn-agent-share btn-docs");
   await page.keyboard.press("Escape");
 });
 

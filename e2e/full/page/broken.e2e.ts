@@ -52,7 +52,7 @@ test("a problem closes with its × button and with Escape, and doesn't come back
   await ed.press("Escape");
   await expect.poll(async () => (await toast(ed)).shown).toBe(false);
   // The page made afresh: its script throws again, and its stylesheet fails again. Neither shows again.
-  await ed.eval(`window.ergaPage.page.render()`);
+  await ed.frame(`ergaFrame.page.render()`);
   await ed.loaded();
   // The new page's editor has taken its problems (client/inline/page-problems.ts), and the tab has heard them.
   await until(() => ed.frame<boolean>(`!!window.__ergaReport && document.readyState == "complete"`), 5000, "the page reports its problems");

@@ -8,7 +8,7 @@
    halved, so it still reads as a surface; on a dark page it is dark glass. Not a filter on a wrapper: a filter stops the
    blur. The agent and the editor's cards take the same glass (client/styles/glass.css). */
 :root {
-  --glass-pg: var(--page-bg, var(--band, var(--bg, #fff))); --glass-tint: 0; --glass-sh: 1;
+  --glass-pg: var(--band, var(--bg, #fff)); --glass-tint: 0; --glass-sh: 1;
   --glass-blur: blur(7px) saturate(1.8);
   --glass-tinted: linear-gradient(rgba(0, 0, 0, var(--glass-tint)), rgba(0, 0, 0, var(--glass-tint)));
   --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(255, 255, 255, 0.6);

@@ -1,18 +1,23 @@
-// Pausing the page: one that defines window.ergaPause stops answering clicks, so its text can be edited; one that doesn't says so ("Pausing the page").
+// Pausing the page: one that defines window.ergaPause stops answering clicks, so its text can be edited; the editor's
+// pause button is on the page (libs/text/ui/controls.ts), and a page that can't pause has none ("Pausing the page").
 import { expect, servers, test } from "../../helpers/fixtures";
 import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.main();
 
-const btn = (ed: Editor) => ed.eval<{ disabled: string | null; pressed: string | null }>(`(() => { const b = document.getElementById("btn-pause"); return { disabled: b.getAttribute("aria-disabled"), pressed: b.getAttribute("aria-pressed") }; })()`);
+const btn = async (ed: Editor) =>
+  (await ed.controls<{ shown: boolean; pressed: string | null }>(
+    `(() => { const b = C.getElementById("pause-btn"); return { shown: !C.getElementById("pause").hidden, pressed: b.getAttribute("aria-pressed") }; })()`
+  )) ?? { shown: false, pressed: null };
+const click = (ed: Editor) => ed.controls(`C.getElementById("pause-btn").click()`);
 const slide = (ed: Editor) => ed.frame<number>(`${F}.defaultView.slide`);
 
 test("a page with ergaPause can be paused: live, a click drives it; paused, a click places the caret, the page stays put, and the text edits", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "pause");
-  expect((await btn(ed)).disabled).toBe("false");
+  await expect.poll(async () => (await btn(ed)).shown).toBe(true);
   await ed.clickEnd("h1");
   await expect.poll(() => slide(ed)).toBe(2);
-  await ed.eval(`document.getElementById("btn-pause").click()`);
+  await click(ed);
   expect((await btn(ed)).pressed).toBe("true");
   await ed.clickEnd("h1");
   await ed.type("!");
@@ -22,33 +27,25 @@ test("a page with ergaPause can be paused: live, a click drives it; paused, a cl
 
 test("a page rendered afresh stays paused; resuming hands clicks back to it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "pause");
-  await ed.eval(`document.getElementById("btn-pause").click()`);
+  await expect.poll(async () => (await btn(ed)).shown).toBe(true);
+  await click(ed);
   expect((await btn(ed)).pressed).toBe("true");
   // A render from scratch starts the page's script over, at slide 1.
-  await ed.eval(`window.ergaPage.page.render()`);
+  await ed.frame(`ergaFrame.page.render()`);
   await expect.poll(() => slide(ed)).toBe(1);
+  await ed.settle();
   await ed.clickEnd("h1");
   await ed.settle();
   expect((await btn(ed)).pressed).toBe("true");
   expect(await slide(ed)).toBe(1);
-  await ed.eval(`document.getElementById("btn-pause").click()`);
+  await click(ed);
   await ed.clickEnd("h1");
   expect((await btn(ed)).pressed).toBe("false");
   await expect.poll(() => slide(ed)).toBe(2);
 });
 
-test("a page without ergaPause can't be paused: hovering the button explains, with a fix button off while the agent is; clicking pauses nothing; Escape closes the card", async ({ tab }) => {
+test("a page without ergaPause has no pause button", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "noedit");
-  const card = () => ed.eval<{ shown: boolean; text: string; fixDisabled: string | null; fixTitle: string }>(`(() => { const c = document.getElementById("pause-card"), f = document.getElementById("pause-fix"); return { shown: !c.hidden, text: c.textContent, fixDisabled: f.getAttribute("aria-disabled"), fixTitle: f.title }; })()`);
-  expect((await btn(ed)).disabled).toBe("true");
-  await ed.eval(`document.getElementById("btn-pause").dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }))`);
-  const c = await card();
-  expect(c.shown).toBe(true);
-  expect(c.text).toMatch(/can't be paused/);
-  expect(c.fixDisabled).toBe("true");
-  expect(c.fixTitle).toMatch(/agent is off/i);
-  await ed.eval(`document.getElementById("btn-pause").click()`);
-  expect((await btn(ed)).pressed).toBe("false");
-  await ed.press("Escape");
-  await expect.poll(async () => (await card()).shown).toBe(false);
+  await expect.poll(() => ed.controls<boolean>(`!!C.getElementById("fmt")`)).toBe(true);
+  expect((await btn(ed)).shown).toBe(false);
 });

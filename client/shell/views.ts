@@ -77,7 +77,6 @@ export function mountViews(shell: Shell) {
       shell.page.focus();
     }
     shell.people.queuePeers();
-    shell.fmt.queueFmt();
   }
   /** ⌘⇧P: between the page and the file's own source. */
   const toggleSource = (force?: boolean) => setMode((typeof force == "boolean" ? force : shell.mode == "text") ? "html" : "text");

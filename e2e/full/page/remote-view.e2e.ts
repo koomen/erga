@@ -101,12 +101,16 @@ test("the agent edits above the view as it works: each edit shows at once and th
   await until(() => ed.frame<boolean>(`!!${F}.getElementById("added") && ${F}.getElementById("s2").textContent.endsWith("renamed")`), 10_000, "the agent's edits show as it makes them");
   expect(await ed.frame<boolean>(`${W}.__marker == 1`), "without a render").toBe(true);
   // The script waits for the end of its turn.
-  await until(() => ed.eval<boolean>(`!document.getElementById("refresh-pill").hidden`), 10_000, "the pill says a change waits for the agent");
+  await until(
+    async () => !!(await ed.controls<boolean>(`!C.getElementById("refresh-pill").hidden`)),
+    10_000,
+    "the pill says a change waits for the agent"
+  );
   expect(await ed.frame<string>(`${F}.getElementById("count").textContent`)).toBe("0");
   await until(() => ed.frame<boolean>(`${F}.getElementById("count")?.textContent == "ran"`), 15_000, "the page renders afresh once the agent finishes, and the new script runs");
   await ed.settle();
   still(await reading(), true);
-  expect(await ed.eval<boolean>(`document.getElementById("refresh-pill").hidden`)).toBe(true);
+  expect(await ed.controls<boolean>(`C.getElementById("refresh-pill").hidden`)).toBe(true);
   expect(await ed.eval<number>(`document.querySelectorAll("iframe").length`), "one page frame").toBe(1);
   expect(await ed.frame<boolean>(`!!${F}.querySelector("style[data-erga-caret]")`), "the new page draws your caret too (caret.ts)").toBe(true);
 });

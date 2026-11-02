@@ -4,7 +4,7 @@
 
 import type { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { RemotePage } from "./remote";
+import type { PageFrame } from "./page-frame";
 import type { Collab } from "../../libs/text/ui/collab";
 import type { Author } from "../../document/content";
 import type { DocInfo, DocName } from "../../document/api";
@@ -15,10 +15,8 @@ import type { People } from "./people";
 import type { Chrome } from "./chrome";
 import type { Sharing } from "./sharing";
 import type { Toast } from "./toast";
-import type { StyleBar } from "./style-bar";
 import type { Views } from "./views";
 import type { PageRequests } from "./page-requests";
-import type { Pause } from "./pause";
 
 /**
  * Where this document's host answers: "/d/<id>", which the app puts
@@ -68,7 +66,7 @@ export interface Shell {
   docName: DocName | null;
   /** Which of the document's pages this tab edits. */
   pagePath: string;
-  page: RemotePage;
+  page: PageFrame;
   mode: Mode;
   sourceView: EditorView | null;
   /** The source view's code, once loaded. */
@@ -91,8 +89,6 @@ export interface Shell {
   chrome: Chrome;
   sharing: Sharing;
   toast: Toast;
-  fmt: StyleBar;
   views: Views;
   requests: PageRequests;
-  pause: Pause;
 }

@@ -9,7 +9,6 @@ import { watchMoves } from "./moves";
 import { ms } from "./timescale";
 import { balanceWhitespace, same } from "../api/source";
 import { PAGE_STYLE } from "./page-style";
-import { describeProblem, type RawProblem } from "./problems";
 import { noHistory, pageOwnBox } from "./core";
 import { EditorMarks } from "./marks";
 import { differ, Ownership } from "./check";
@@ -65,7 +64,6 @@ export abstract class EditorRender extends EditorMarks {
     (doc.head ?? doc.documentElement).append(style);
     doc.documentElement.setAttribute("data-erga-editing", "");
     this.win.dispatchEvent(new Event("erga-editing"));
-    this.watchProblems();
     this.takeCustomEdits();
     this.mirror = this.tree ? Mirror.bind(doc, this.tree, src) : null;
     for (const u of this.units) {
@@ -198,9 +196,7 @@ export abstract class EditorRender extends EditorMarks {
     for (const el of doc.querySelectorAll(`[${TEXT_ATTR}]`)) el.removeAttribute(TEXT_ATTR);
     doc.documentElement.removeAttribute("data-erga-editing");
     this.win.dispatchEvent(new Event("erga-editing"));
-    const w = this.win as Window & { __ergaReport?: unknown; __ergaApply?: unknown };
-    delete w.__ergaReport;
-    delete w.__ergaApply;
+    delete (this.win as Window & { __ergaApply?: unknown }).__ergaApply;
     this.doc = null;
   }
 
@@ -288,22 +284,6 @@ export abstract class EditorRender extends EditorMarks {
     }
     const rects = [...range.getClientRects()].filter((r) => r.height > 0);
     return rects.length ? rects[at.offset < len ? 0 : rects.length - 1].top : null;
-  }
-
-  /** Hands the page's problems (client/inline/page-problems.ts) to the shell, as they happen. */
-  protected watchProblems(): void {
-    const win = this.win as (Window & { __ergaProblems?: RawProblem[]; __ergaReport?: (p: RawProblem) => void }) | null;
-    if (!win) return;
-    const seen = new Set<string>();
-    const report = (raw: RawProblem) => {
-      const p = describeProblem(raw, this.config.base);
-      if (!p || seen.has(p.key)) return;
-      seen.add(p.key);
-      this.config.onProblem?.(p);
-    };
-    win.__ergaReport = report;
-    this.reportRaw = report;
-    for (const raw of win.__ergaProblems ?? []) report(raw);
   }
 
   /** When the person last clicked or pressed a key on the page (performance.now()). */

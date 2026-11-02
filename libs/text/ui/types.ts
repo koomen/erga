@@ -14,15 +14,6 @@ export interface PageUpdate {
   remote: boolean;
 }
 
-/** Something wrong with the document that the user can see, and how the agent could fix it. */
-export interface PageProblem {
-  /** Identifies the problem across renders (the same error, the same missing file). */
-  key: string;
-  message: string;
-  /** A prompt asking the agent to fix it. */
-  fix: string;
-}
-
 /** A key or input that came while the editor couldn't take it (see hold, render), to apply once it can. */
 export type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean } | { input: string; data: string | null };
 
@@ -53,19 +44,12 @@ export interface PageEditorConfig {
   onUpdate?: (u: PageUpdate) => void;
   /** Unhandled keydowns inside the page (for app-level shortcuts). */
   onKey?: (e: KeyboardEvent) => boolean;
-  /** A pointer moved inside the page. */
-  onPointer?: (e: MouseEvent) => void;
   /**
    * Something the user asked for couldn't be done; say why. When the
    * document itself is at fault, `fix` is a prompt that asks the agent to
-   * repair it, and the shell offers it as a button.
+   * repair it, which the viewer offers as a button.
    */
   onNotice?: (message: string, fix?: string) => void;
-  /**
-   * The page looks broken without anyone asking: its script threw, or a
-   * file it refers to didn't load. Reported once per render per problem.
-   */
-  onProblem?: (problem: PageProblem) => void;
   /**
    * Files dropped or pasted on the text, at source position `at` (`point`: where, in the page's coordinates): the
    * caller adds them to the document's files, then puts them on the page (insertFiles), or says why not (dropError).

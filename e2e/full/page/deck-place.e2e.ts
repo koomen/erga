@@ -37,7 +37,7 @@ test("at slide 3, the editor's own reload of the page keeps slide 3, and the car
   `);
   await ed.frame(`window.__before = true`);
   // The page made afresh, as for a change the editor can't patch in: it loads again, in a new window.
-  await ed.eval(`window.ergaPage.page.render()`);
+  await ed.frame(`ergaFrame.page.render()`);
   await expect.poll(() => ed.frame<boolean>(`!window.__before`)).toBe(true);
   await ed.idle();
   await ed.shows(`

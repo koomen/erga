@@ -17,7 +17,6 @@ export function mountPeople(shell: Shell) {
     return shell.collab.others().filter((p) => p.user.kind == "agent" && p.busy).map((p) => p.user.name);
   }
   function presenceChanged() {
-    shell.room.setAgentBusy(busyAgents().length > 0 || !!window.ergaAgentPanel?.busy);
     renderPeople();
     queuePeers();
   }
@@ -161,15 +160,28 @@ export function mountPeople(shell: Shell) {
   function pictureOf(user: Author): string | null {
     return safeAvatar(user.avatar);
   }
-  /** Clicking a participant scrolls to their caret; with none yet, the button says so. */
+  /** Clicking a participant scrolls the source view to their caret (the page's editor shows theirs where it is). */
   function revealOnClick(b: HTMLElement, p: Presence, none: string) {
     const at = shell.collab.positions(p);
-    if (at) b.addEventListener("click", () => { shell.page.reveal(at.head ?? at.anchor); });
-    else { b.setAttribute("aria-disabled", "true"); b.dataset.tip += none; }
+    if (at && shell.sourceView)
+      b.addEventListener("click", () => shell.sourceView?.dispatch({ selection: { anchor: at.head ?? at.anchor }, scrollIntoView: true }));
+    else if (!at) {
+      b.setAttribute("aria-disabled", "true");
+      b.dataset.tip += none;
+    }
   }
   return {
-    accountLinks, busyAgents, presenceChanged, queuePeers, queueCursor, renderPeople, toggleAccount, pictureOf,
-    get accountBtn() { return accountBtn; },
+    accountLinks,
+    busyAgents,
+    presenceChanged,
+    queuePeers,
+    queueCursor,
+    renderPeople,
+    toggleAccount,
+    pictureOf,
+    get accountBtn() {
+      return accountBtn;
+    },
   };
 }
 

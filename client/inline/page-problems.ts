@@ -1,19 +1,34 @@
-// Catches the page's script errors and files that fail to load, from before its first script, and hands them to the
-// editor once it's there (window.__ergaReport: libs/text/ui/render.ts, watchProblems). In a document's page, for
-// whoever may edit (server/pages/reader.ts).
+// Catches the page's script errors and files that fail to load, from before its first script, and tells the viewer
+// each (erga-problem: client/shell/problems.ts says it in words). The viewer asks again for those it may have missed
+// as it goes into the editor (its word, erga-mode). window.__ergaReport reports one more (the editor's: a page's
+// ergaPause that throws). In a document's page, for whoever may edit (server/pages/reader.ts).
 
 type Problem =
   | { kind: "resource"; tag: string; url: string }
-  | { kind: "script"; message: string; file: string; line: number; stack?: string };
-type ProblemWindow = Window & { __ergaProblems?: Problem[]; __ergaReport?: (p: Problem) => void };
+  | { kind: "script"; message: string; file: string; line: number; stack?: string }
+  | { kind: "notice"; message: string; fix: string };
+type ProblemWindow = Window & { __ergaReport?: (p: Problem) => void };
 
 export default function pageProblems(): void {
   const w = window as ProblemWindow;
-  const q: Problem[] = (w.__ergaProblems = []);
+  const all: Problem[] = [];
+  // (The viewer's origin: the page's first script, before this one, has it.)
+  const shell = (w as Window & { __ergaReader?: { config: { shell: string } } }).__ergaReader?.config.shell;
+  const here = location.pathname.slice(0, location.pathname.lastIndexOf("/") + 1);
+  const tell = (p: Problem) => {
+    if (shell && parent != window)
+      try {
+        parent.postMessage({ type: "erga-problem", problem: p, base: here }, shell);
+      } catch {}
+  };
   function r(p: Problem) {
-    if (w.__ergaReport) w.__ergaReport(p);
-    else q.push(p);
+    if (all.length < 100) all.push(p);
+    tell(p);
   }
+  w.__ergaReport = r;
+  addEventListener("message", (e) => {
+    if (e.source == parent && e.origin == shell && e.data?.type == "erga-mode" && e.data.mode == "edit") all.forEach(tell);
+  });
   addEventListener(
     "error",
     (e: ErrorEvent) => {

@@ -21,7 +21,12 @@ test("clicking a no-edit part says why, typing there changes nothing, and the re
   const before = await ed.source();
   const r = await ed.rectOf(".fixed p", 0.3);
   await ed.click(r.x, r.y);
-  await expect.poll(async () => { const t = await ed.toast(); return t.shown && /not editable by hand/.test(t.text); }).toBe(true);
+  // (The editor's own note, on the page.)
+  await expect
+    .poll(() =>
+      ed.controls<boolean>(`!C.getElementById("note").hidden && /not editable by hand/.test(C.getElementById("note").textContent)`)
+    )
+    .toBe(true);
   await ed.type("xyz");
   await ed.settle();
   expect(await ed.source()).toBe(before);

@@ -124,7 +124,6 @@ export abstract class EditorInput extends EditorClipboard {
       },
       { capture: true }
     );
-    on("mousemove", (e) => this.config.onPointer?.(e));
     // A caret the browser put outside the text goes into it before the next paint (see snapCaret).
     on("mouseup", () => this.win.requestAnimationFrame(() => this.snapCaret(true)));
     on("keydown", () => this.win.requestAnimationFrame(() => this.snapCaret(false)));

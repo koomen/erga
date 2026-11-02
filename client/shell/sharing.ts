@@ -100,7 +100,12 @@ export function mountSharing(shell: Shell) {
     sharing.hidden = !open;
     shareBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    shell.chrome.showChrome(); shell.chrome.toggleHelp(false); shell.naming.toggleNaming(false); shell.naming.togglePages(false); shell.people.toggleAccount(false); shell.docSettings?.toggle(false); shell.pause.showPauseCard(false);
+    shell.chrome.showChrome();
+    shell.chrome.toggleHelp(false);
+    shell.naming.toggleNaming(false);
+    shell.naming.togglePages(false);
+    shell.people.toggleAccount(false);
+    shell.docSettings?.toggle(false);
     if (!shareAt) return;
     sharingAdd.reset();
     tellSharing("Loading…");

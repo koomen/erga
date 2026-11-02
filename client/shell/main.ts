@@ -1,25 +1,22 @@
-// The page editor's shell: joins the document's room (its Durable Object,
-// cloudflare/objects/document.ts) as one participant among others, renders the document in the
-// page editor, sends every edit to the room as you type and applies everyone
-// else's (people and their agents) as they land, shows who's here and where
-// their carets are, and offers quiet chrome:
-// shortcuts and a toggle to the source, which shares the document state and
-// undo history. It also hosts the agent panel (⌘J): your agent runs in the
-// host, its conversation is yours alone (your other tabs show it too), and
-// its edits arrive through the room like anyone's.
+// The page editor's shell: the controls around the document's page while editing, and its one word to the editor in
+// the page (edit, with the edit key, or view: page-frame.ts). The editor is the page's own (libs/text/ui/frame.ts): it
+// joins the document's room itself. The shell joins it too, for what it shows: who's here, the source view (⌘⇧P, with
+// its own undo history), the pages and the name, and your agent's events (your agent runs in its own object; its
+// conversation is yours alone, and its edits arrive through the room like anyone's).
 //
 // This file loads the document and wires the shell's parts (client/shell/), which share one object (shell.ts).
 
 import { Collab, type EarlySocket, type SocketEvent } from "../../libs/text/ui/collab";
 import { EditorSelection, EditorState } from "@codemirror/state";
-import { RemotePage } from "./remote";
-import type { Backdrop, Keys } from "../../libs/text/ui/bridge";
+import { mountPageFrame } from "./page-frame";
+import type { Keys } from "../common/app-keys";
+import { describeProblem } from "./problems";
 import { colorFor, files, type Author } from "../../document/content";
 import type { Attachment } from "../../shared/attach";
 import { isPage, pageUrl } from "../../document/pages";
 import { live } from "../live/client";
 import { restoredFor } from "../live/restore";
-import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../../libs/text/ui/zoom";
+import { applyZoom, catchZoomGestures, clampZoom, zoomFactor, zoomKey, type ZoomBy } from "../common/zoom";
 import { fastClick } from "../common/fast-click";
 import { mountLayout } from "../agent/layout";
 import { BASE, $, editing, isMac, store, type Shell } from "./shell";
@@ -29,13 +26,9 @@ import { mountPeople } from "./people";
 import { mountChrome } from "./chrome";
 import { mountSharing } from "./sharing";
 import { mountToast } from "./toast";
-import { mountStyleBar } from "./style-bar";
 import { mountViews } from "./views";
 import { mountPageRequests } from "./page-requests";
 import { editorContext } from "./agent-context";
-import { mountPause } from "./pause";
-import { addFiles } from "./uploads";
-import { sleep } from "../../shared/time";
 
 declare global {
   interface Window {
@@ -85,37 +78,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   /** The parts of the shell, and what they share: filled in below, as each is ready. */
   const shell = { settings, saveSettings, mode: "text", sourceView: null, source: null, docSettings: null, docName: null, docKind: "project" } as Partial<Shell> as Shell;
 
-  // ---------------------------------------------------------------- colours
-
-  // There is no dark mode: the documents shown here are rendered as their
-  // authors made them, and most don't support one. The shell is always
-  // light (data-theme="light" pins style.css). The
-  // floating cards are the editor's light cards, or its dark ones on a dark
-  // page: never a colour of the page's. The header's text and
-  // icons turn light on a dark page too.
-  // The shell paints its canvas with the page's background colour (and its
-  // gradient or image over that: server/pages/viewer.ts, BAND_BOOT), so opening the agent
-  // never reveals a strip of a different colour. The page's background is its
-  // root's, or its body's when the root has none, as the browser itself would
-  // paint it. The page reports its colour: for one that's only a
-  // gradient, the gradient's colour at the top.
-  // Each lands at once: the band above the page shows it too, and must keep up with the page.
-  function applyBackdrop(b: Backdrop) {
-    if (!shell.info) return;
-    const color = b.color && CSS.supports("color", b.color) ? b.color : "#ffffff";
-    const root = document.documentElement.style;
-    root.setProperty("--page-bg", color);
-    const rgb = color == "#ffffff" ? [255, 255, 255] : color.match(/[\d.]+/g)?.map(Number);
-    const lum = rgb && rgb.length >= 3 ? (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 : 1;
-    const dark = lum < 0.45;
-    document.documentElement.classList.toggle("page-dark", dark);
-    document.documentElement.classList.toggle("page-light", !dark);
-    // On a white or near-white page the glass of the bars and the agent is tinted, and its shadow halved (client/styles/glass.css).
-    document.documentElement.classList.toggle("page-white", lum > 0.95);
-    // Remembered so the next load paints it before the page arrives, not white first.
-    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, tone: dark ? "page-dark" : "page-light" }));
-  }
-
   // ---------------------------------------------------------------- load
 
   const frame = $("frame") as HTMLIFrameElement;
@@ -133,7 +95,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // whole text. Presence, connection news and events before the shell is set up are picked up once it is (`started`).
   let started = false;
   const pending: SocketEvent[] = [];
-  const dropped = new Set<string>();
   const early = window.ergaSocket, start = window.ergaStart;
   window.ergaSocket = window.ergaStart = undefined;
   const collab: Collab = new Collab({
@@ -152,11 +113,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       // This person's own edit, made on the page (its editor has a replica of its own): the controls fade, as for typing.
       if (started && author?.kind == "person" && author.user == shell.me.user) shell.chrome.hideChrome();
     },
-    // Another page of the document is no part of this one (a page frames another only rarely): its edits leave this one be.
-    // Nor do the files this tab adds for a drop or paste (`dropped`): the page doesn't use them until its editor puts them in.
-    onFiles: (paths) => {
-      if (paths.filter((p) => !/\.(html?|md)$/i.test(p) && !dropped.delete(p)).length) shell.room.needRefresh();
-    },
+    // (The page's editor makes the page again for a change to another file: frame.ts, refreshSoon.)
+    onFiles: () => {},
     onPresence: () => {
       if (started) shell.people.presenceChanged();
     },
@@ -310,62 +268,55 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // The page editor runs in the page, in the frame, on the document's own origin: under the address the app gave
   // this page (with the token that opens the document's files there).
   const pagesUrl = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')?.content ?? "";
-  const page = shell.page = new RemotePage({
+  const pagesOrigin = new URL(pagesUrl, location.href).origin;
+  const page = (shell.page = mountPageFrame({
     frame,
-    origin: new URL(pagesUrl, location.href).origin,
+    origin: pagesOrigin,
     files: pagesUrl,
     edit: async () => {
       const key = await editKey();
-      return key ? { room: `${location.origin}${BASE}/api/room`, key, me, path: shell.pagePath, tab } : null;
-    },
-    onSelection() {
-      shell.fmt.queueFmt();
-    },
-    onUpdate(rendered) {
-      syncZoom();
-      if (rendered) {
-        shell.pause.syncPause();
-        const t = page.title().slice(0, 200);
-        document.title = shell.docName?.title ?? (t ? `${t} · ${shell.info.name}` : shell.info.name);
-        // Not out of the agent panel or an open card (the pages and their menus, the title and address): the page rendering again mustn't take focus from them.
-        if (!$("agent").contains(document.activeElement) && !document.activeElement?.closest(".help, .et-menu") && shell.mode == "text") page.focus();
-        shell.people.queuePeers();
-      }
-      shell.fmt.queueFmt();
+      return key ? { doc: `${location.origin}${BASE}`, key, me, path: shell.pagePath, tab } : null;
     },
     onKey: (keys) => {
       appShortcut(keys, true);
     },
-    onNotice: (m, fix) => shell.toast.explain(m, fix),
-    // Each problem once, until someone asks the agent to fix it (if it's still broken after, it says so again).
-    onProblem: (p) => { if (shell.room.shownProblems.has(p.key)) return; shell.room.shownProblems.add(p.key); shell.toast.reportProblem(p.message, p.fix, p.key); },
-    onPointer: (kind, x, y) => {
-      if (kind == "move") { shell.chrome.pointerMoved(new MouseEvent("mousemove", { clientX: x, clientY: y })); return; }
-      if (kind == "up") { shell.fmt.released(); return; }
-      // A click on the page: as one anywhere else in the shell would.
+    // A notice the agent can fix (the editor's, through the page's problem watch), or the page's own problem: each once,
+    // until someone asks the agent to fix it (if it's still broken after, it says so again).
+    onProblem: (raw, base) => {
+      if (raw.kind == "notice") {
+        shell.toast.explain(raw.message, raw.fix);
+        return;
+      }
+      const p = describeProblem(raw, base, pagesOrigin);
+      if (!p || shell.room.shownProblems.has(p.key)) return;
+      shell.room.shownProblems.add(p.key);
+      shell.toast.reportProblem(p.message, p.fix, p.key);
+    },
+    onPointer: (x, y) => shell.chrome.pointerMoved(new MouseEvent("mousemove", { clientX: x, clientY: y })),
+    // A press on the page: as one anywhere else in the shell would.
+    onPress: () => {
       shell.toast.dismissExplanation(null);
       activate();
-      shell.fmt.pressed();
       if (!$("help").hidden) shell.chrome.toggleHelp(false);
       if (!$("naming").hidden) shell.naming.toggleNaming(false);
       if (!$("pages").hidden) shell.naming.togglePages(false);
       if (!$("sharing").hidden) shell.sharing.toggleSharing(false);
       if (shell.docSettings?.isOpen()) shell.docSettings.toggle(false);
-      shell.pause.showPauseCard(false);
       shell.people.toggleAccount(false);
       shell.chrome.toggleQuick(false);
     },
     onActivity: (kind) => {
       activate();
-      if (kind == "key") live((l) => l.activity());
-      if (kind == "key") { shell.chrome.keyPressed(); shell.toast.dismissExplanation(null); }
+      if (kind == "key") {
+        live((l) => l.activity());
+        shell.chrome.keyPressed();
+        shell.toast.dismissExplanation(null);
+      }
     },
-    onBackdrop: (b) => applyBackdrop(b),
-    onStale: () => shell.room.needRefresh(),
     onOpen: (path) => openPage(path),
-    onFiles: (files) => addFiles(shell.docId, api, files, (path) => dropped.add(path)),
     onZoom: (by) => zoomPage(by),
-  });
+    onZooms: () => syncZoom(),
+  }));
   // The page's editor opens its socket with an edit key (server/documents/edit-key.ts), which this tab asks for and
   // gives it, and again before it ends: a key is checked only as a socket opens (the editor's next, if it reconnects).
   let key: { key: string; expires: number } | null = null;
@@ -380,7 +331,11 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   setInterval(() => {
     if (key && key.expires - Date.now() <= 5 * 60_000) page.renew();
   }, 60_000);
-  if (editing()) page.start();
+  if (editing()) {
+    page.start();
+    // The page has the focus, for its editor (nothing else in the tab has it yet).
+    if (!document.activeElement || document.activeElement == document.body) page.focus();
+  }
   performance.mark("erga:frame-asked");
   // A file dropped on the shell around the page (not the agent's panel, which takes it) never opens in its place.
   for (const type of ["dragover", "drop"] as const)
@@ -415,7 +370,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   }
   catchZoomGestures(window, zoomPage, editing);
 
-  shell.fmt = mountStyleBar(shell);
   shell.views = mountViews(shell);
   shell.requests = mountPageRequests(shell);
   // Your agent (server/pages/agent.ts: the page has it, viewing and editing): here, where it sits around the page, and how wide.
@@ -438,10 +392,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       window.ergaAgent?.show(!window.ergaAgent.open());
       return true;
     }
-    if (mod && e.shiftKey && key == "k" && shell.mode == "text") {
-      shell.fmt.openLink();
-      return true;
-    }
     if (mod && !e.shiftKey && key == "k") {
       window.ergaQuickSearch?.();
       return true;
@@ -453,7 +403,6 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     const zoom = zoomKey(e, isMac);
     if (zoom) { if (zoom == "reset") { if (page.zoomsItself) page.zoomItself(0); else setZoomLevel(1); } else zoomPage({ step: zoom }); return true; }
     if (mod && !e.shiftKey && key == "s") { shell.toast.flash(shell.room.connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
-    if (e.key == "Escape" && shell.fmt.linking) { shell.fmt.closeLink(); return true; }
     if (e.key == "Escape" && shell.toast.closeProblem()) return true;
     if (e.key == "Escape") {
       // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs to cancel.
@@ -471,13 +420,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       else if (!$("sharing").hidden) {
         shell.sharing.toggleSharing(false);
         if (shell.mode == "text") page.focus();
-      } else if (!$("pause-card").hidden) shell.pause.showPauseCard(false);
-      else if (shell.mode != "text") shell.views.setMode("text");
-      else {
-        shell.chrome.hideChrome();
-        // Nothing else to close: the focus leaves the text, so the page's own keys work (a deck's arrows).
-        if (fromPage) page.leaveText();
-      }
+      } else if (shell.mode != "text") shell.views.setMode("text");
+      // Nothing else to close: the controls fade (in the page, the editor takes the focus off the text itself).
+      else shell.chrome.hideChrome();
       return true;
     }
     return false;
@@ -495,26 +440,24 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   );
 
   // Full screen (client/inline/viewer-full.ts) is for showing the page, not editing it: the page, not its source, and the
-  // focus off the text, as after Escape, so the page's own keys work (a deck's arrows). It stays off after: a click on
-  // text puts the caret back.
+  // editor in it stops, so the page's own keys work (a deck's arrows); it starts again after.
   addEventListener("erga-full", (e) => {
-    if (!editing() || !(e as CustomEvent<{ on: boolean }>).detail.on) return;
-    if (shell.mode != "text") shell.views.setMode("text");
-    shell.fmt.hideFmt();
-    page.leaveText();
+    if (!editing()) return;
+    if ((e as CustomEvent<{ on: boolean }>).detail.on) {
+      if (shell.mode != "text") shell.views.setMode("text");
+      page.stop();
+    } else if (shell.mode == "text") page.start();
   });
 
-  shell.pause = mountPause(shell);
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
-  // The controls act as the press starts (client/common/fast-click.ts): the top bar's, the title, the agent's open and close,
-  // the text style bar (all but its link that opens a new tab) and Refresh. The agent's undo and reset keep their click.
-  fastClick(document, `.chrome-top button, #doc-title, #agent-fab, #agent-close, #fmt button:not([data-link="open"]), #refresh-pill`);
+  // The controls act as the press starts (client/common/fast-click.ts): the top bar's, the title, the agent's open and
+  // close. The agent's undo and reset keep their click.
+  fastClick(document, `.chrome-top button, #doc-title, #agent-fab, #agent-close`);
   document.addEventListener("mousedown", (e) => {
     const at = e.target as Node;
     if (!$("help").hidden && !$("help").contains(at)) shell.chrome.toggleHelp(false);
     if (!$("sharing").hidden && !$("sharing").contains(at) && !$("btn-share").contains(at)) shell.sharing.toggleSharing(false);
     if (!$("account").hidden && !$("account").contains(at) && !shell.people.accountBtn?.contains(at)) shell.people.toggleAccount(false);
-    if (!$("pause-card").hidden && !$("pause-card").contains(at) && !$("btn-pause").contains(at)) shell.pause.showPauseCard(false);
   });
 
   // Out of the editor and back in, without leaving the page: the
@@ -529,15 +472,13 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
       return;
     }
     if (shell.mode != "text") shell.views.setMode("text");
-    void page.stop();
+    page.stop();
     shell.chrome.toggleHelp(false);
     shell.sharing.toggleSharing(false);
     shell.naming.toggleNaming(false);
     shell.naming.togglePages(false);
     shell.people.toggleAccount(false);
     shell.chrome.toggleQuick(false);
-    shell.pause.showPauseCard(false);
-    shell.fmt.hideFmt();
     shell.chrome.showChrome();
   }
   if (!editing()) setEditing(false);
@@ -552,15 +493,7 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // before this script has loaded.
   live((l) => {
     l.flush(() => collab.flushed());
-    l.hold(() =>
-      shell.fmt.pointerDown
-        ? "a pointer is down on the page"
-        : agentPanel()?.voice
-          ? "voice mode is on"
-          : agentPanel()?.files.reading
-            ? "files are being read"
-            : null
-    );
+    l.hold(() => (agentPanel()?.voice ? "voice mode is on" : agentPanel()?.files.reading ? "files are being read" : null));
     l.keep(
       "editor",
       (): EditorKept => ({
@@ -600,8 +533,8 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
   // ---------------------------------------------------------------- another page
 
   // Another of the document's pages, opened while editing (the pages card, a link on the page, your agent's open_page),
-  // opens in place: the room holds every page already, so the editor takes the new page's text, and the frame goes to the
-  // new page (RemotePage.load), whose editor starts from it. The frame's address changes in place (no entry in the tab's
+  // opens in place: the room holds every page already, so the frame goes to the new page (page-frame.ts, load), whose
+  // editor starts from its text. The frame's address changes in place (no entry in the tab's
   // history: Back would go through it first). The controls, the agent's pane and its conversation, and the cards stay as they are. The
   // address changes as it would have (a new entry in the history), and Back and Forward go between the pages the same way.
   // Anything else (viewing, a page the room hasn't got yet, a folder's address) is a page load.
@@ -624,9 +557,9 @@ const SHELL_PARTS = ["nav-docs", "people", "btn-docs", "btn-edit", "me"];
     // What was said of the last page was of it alone.
     shell.room.shownProblems.clear();
     shell.toast.clearProblems();
-    shell.room.dropRefresh();
-    shell.fmt.hideFmt();
     shell.naming.togglePages(false);
+    // The new page has the focus for its editor, unless the agent's box has it.
+    if (!$("agent").contains(document.activeElement)) page.focus();
     let meta = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]');
     if (!meta) meta = document.head.appendChild(Object.assign(document.createElement("meta"), { name: "erga-page" }));
     meta.content = path;

@@ -77,7 +77,10 @@ test("the format bar follows selected text as the board pans", async ({ tab }) =
   await tab.page.setViewportSize({ width: 1200, height: 760 });
   const ed = await openEditor(tab, await servers.main(), "pan");
   await ed.selectChars(".card p.note", 8);
-  const bar = () => ed.eval<{ shown: boolean; left: number; top: number }>(`(() => { const b = document.getElementById("fmt"); return { shown: !b.hidden, left: parseFloat(b.style.left), top: parseFloat(b.style.top) }; })()`);
+  const bar = async () =>
+    (await ed.controls<{ shown: boolean; left: number; top: number }>(
+      `(() => { const b = C.getElementById("fmt"); return { shown: !b.hidden, left: parseFloat(b.style.left), top: parseFloat(b.style.top) }; })()`
+    )) ?? { shown: false, left: 0, top: 0 };
   await expect.poll(async () => (await bar()).shown).toBe(true);
   const before = await bar();
   const p = await onPage(ed, 40, 380);

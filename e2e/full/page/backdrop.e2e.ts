@@ -6,8 +6,14 @@ import { F, openEditor, type Editor } from "../../helpers/editor";
 
 await servers.script();
 
-/** The shell's colour: what the band and the room beside the page are painted, and whether the header's controls are drawn for a dark page. */
-const shell = (ed: Editor) => ed.eval<string>(`(() => { const r = document.documentElement; return getComputedStyle(r).getPropertyValue("--page-bg").trim() + (r.classList.contains("page-dark") ? " dark" : ""); })()`);
+/**
+ * The shell's colour: what the band and the room beside the page are painted (--band: client/inline/viewer-band-head.ts;
+ * none for a page with no colour of its own, white), and whether the header's controls are drawn for a dark page.
+ */
+const shell = (ed: Editor) =>
+  ed.eval<string>(
+    `(() => { const r = document.documentElement; return getComputedStyle(r).getPropertyValue("--band").trim() + (r.classList.contains("page-dark") ? " dark" : ""); })()`
+  );
 const page = (ed: Editor) => ed.frame<string>(`getComputedStyle(${F}.body).backgroundColor`);
 
 /** The page turns `color`, and the shell with it. */
@@ -25,14 +31,14 @@ async function agent(ed: Editor, steps: object[]) {
 test("the header follows the page's background: the agent's edit to a style rule and its undo, a script change, a change typed in the source view", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.script(), "long");
   await ed.openAgent();
-  await expect.poll(() => shell(ed)).toBe("#ffffff");
+  await expect.poll(() => shell(ed)).toBe("");
 
   await agent(ed, [{ tool: "edit", args: { path: "index.html", edits: [{ oldText: "<style>body {", newText: "<style>body { background: rgb(20, 20, 30);" }] } }]);
   await follows(ed, "rgb(20, 20, 30)", true, "the agent's edit to a style rule");
   await until(() => ed.eval<boolean>(`document.getElementById("agent-undo").getAttribute("aria-disabled") == "false"`), 10_000, "the agent's turn ends");
   await ed.eval(`document.getElementById("agent-undo").click()`);
   await until(async () => (await page(ed)) == "rgba(0, 0, 0, 0)", 15_000, "its undo: the page is white again");
-  await expect.poll(() => shell(ed), { message: "its undo: the shell follows" }).toBe("#ffffff");
+  await expect.poll(() => shell(ed), { message: "its undo: the shell follows" }).toBe("");
 
   // A rule for a class, and the script that sets it: the page renders afresh in a new frame.
   await agent(ed, [{ tool: "edit", args: { path: "index.html", edits: [

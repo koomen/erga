@@ -156,7 +156,7 @@ Found a new trap? Write it here, in the same change.
   loads the frame again takes the address from `ergaFrames.src()`, never a copy made at load.
 - The frame has its own history. Back after a link in the frame loads the frame's old address
   again, with its `?erga-edit` if the editor was on then, and that page asks for the editor by
-  itself. Only the shell decides "editing" (`client/shell/remote.ts`: `active`); the frame's
+  itself. Only the shell decides "editing" (`client/shell/page-frame.ts`: `active`); the frame's
   address never does.
 - `/` sends anyone signed in to /docs (server/app.ts), and the dev server signs in every request
   without a cookie as DEV_LOGIN. A test of the served homepage opens it signed out: `front(server)`
@@ -186,7 +186,9 @@ Found a new trap? Write it here, in the same change.
 - The page's editor has its own socket and replica of the room (libs/text/ui/frame.ts), apart from the shell's. An
   edit typed on the page reaches the shell's replica only through the room, a moment later. A test that reads the
   shell's text waits for it (`ed.source()`); one that reads the editor's selection reads the frame's (`ed.selection()`).
-  The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before it clicks.
+  The editor starts a round trip after the pencil: a test waits for `window.ergaFrame.page` before it clicks. The
+  editor's own controls (the style bar, the link bar, pause, its note, the refresh pill) are in a shadow root on the
+  page (libs/text/ui/controls.ts): a test reaches them with `ed.controls`, never in the shell's document.
 - `e2e/full/page/agent-live.e2e.ts` calls the real model and costs money.
   It runs only with `ERGA_LIVE_AGENT=1`. Ask before you run it.
 

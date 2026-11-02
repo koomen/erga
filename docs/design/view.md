@@ -150,7 +150,7 @@ Pete's page "Erga editor mechanics" proposes four more changes. Their status:
   state is gone. `tests/editing-rules.test.ts` runs it with no browser and no editor. Not in it yet: the Markdown rules
   (`markdown.ts`: they run after a key, as steps of their own), the styles (`format.ts`) and stored styles, which
   still build their changes in the editor's classes.
-- Change 4 (no Source copy in the shell): done. `RemotePage` (`client/shell/remote.ts`) keeps no text: it checks each
+- Change 4 (no Source copy in the shell): done. `RemotePage` (the shell's remote.ts then, gone since the page's editor joins the room itself) kept no text: it checks each
   push against the tab's Yjs replica (`room.length()`), and the replica takes it (`collab.push`). It keeps only the
   page's selection, mapped through each change. A frame's start and a resync get a state made then from the replica's
   text. `agree()` is gone: with one copy of the text, nothing can drift. The shell's readers ask `currentSelection()`

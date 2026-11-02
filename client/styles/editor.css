@@ -23,14 +23,14 @@ body { overflow: hidden; }
    the page; its gradient or image, .erga-canvas, above), so the band and
    the space the agent opens up are the same surface as the page, with no
    seam. In the source view it's the editor's again. */
-html { background: var(--page-bg, var(--band, var(--bg))); }
+html { background: var(--band, var(--bg)); }
 body { background: transparent; }
 html:has(body.source) { background: var(--bg); }
 
-/* The floating cards (the style bar, the menus and cards under the controls) take the editor's light text, or on a dark
-   page its dark theme's (style.css). The bars, the agent and the cards are glass of the page's own colour (below); the
-   style bar and the notes are the editor's own cards, with no colour of the page's. */
-html.page-dark body:not(.source) :is(.agent, .fmt, .refresh-pill, .ds-menu, .help) {
+/* The floating cards (the menus and cards under the controls) take the editor's light text, or on a dark page its dark
+   theme's (style.css). The bars, the agent and the cards are glass of the page's own colour (below); the notes are the
+   editor's own cards, with no colour of the page's. (The style bar is the page's editor's: libs/text/ui/controls.ts.) */
+html.page-dark body:not(.source) :is(.agent, .ds-menu, .help) {
   --bg: #18181b; --fg: #cacad2; --fg-strong: #ececf1; --mark: #55555e; --list-mark: #6c6c75; --soft: #8f8f99;
   --chrome: #6c6c75; --chrome-hover: #d4d4da; --rule: #2c2c31; --code-bg: #232327; --caret: #6aa1ff; --link: #7aa9ff;
   --selection: rgba(106, 161, 255, 0.24); --panel-bg: rgba(32, 32, 36, 0.94); --panel-border: #2f2f35;
@@ -39,7 +39,7 @@ html.page-dark body:not(.source) :is(.agent, .fmt, .refresh-pill, .ds-menu, .hel
 }
 /* (The controls' tones on the page's colour are client/inline/bars.css's.) */
 /* (Your avatar's ring, which parts it from the others', is the page's colour.) */
-html:is(.page-light, .page-dark) body:not(.source) .chrome { --bg: var(--page-bg, var(--band)); }
+html:is(.page-light, .page-dark) body:not(.source) .chrome { --bg: var(--band); }
 body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 #source { position: fixed; top: var(--top-clear); bottom: var(--kb, 0px); left: var(--safe-l); right: var(--safe-r); }
 #source[hidden] { display: none; }
@@ -51,12 +51,6 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 #welcome[hidden] { display: none; }
 #welcome.blocking { z-index: 100; background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--fg); }
 #welcome button { font: 600 14px var(--font-text); padding: 8px 16px; border-radius: 10px; border: 0; background: var(--fg-strong); color: var(--bg); cursor: pointer; }
-.refresh-pill {
-  position: fixed; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 12;
-  display: flex; align-items: center; gap: 8px; border: 1px solid var(--panel-border); border-radius: 999px; padding: 6px 14px 6px 10px;
-  background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font: 12.5px/1.3 var(--font-text); cursor: pointer;
-}
-.refresh-pill[hidden] { display: none; }
 /* The agent's use of the live page: each page_inspect, page_click or page_key, for a moment.
    Under the controls, over the page and the agent panel (wherever it's docked), in sight. */
 .agent-live {
@@ -66,11 +60,6 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 }
 .agent-live[hidden] { display: none; }
 .agent-live span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.refresh-pill svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; animation: agent-spin 1.6s linear infinite; }
-.refresh-pill b { font-weight: 600; color: var(--caret); }
-/* Pausing the page: the button shows what clicking it does (pause, or play to resume). */
-#btn-pause[aria-disabled="true"] { opacity: 0.4; cursor: default; }
-#btn-pause[aria-disabled="true"]:hover { background: transparent; color: var(--chrome); }
 /* The breadcrumbs, top left: Erga › Documents › the title, as on every page (server/pages/chrome.ts, crumbs; the viewer's, VIEW_STYLE,
    sit just here). Documents is hidden for test people, who have none. */
 /* Its bar starts 14px right of a panel on the left (or 6px from the window's edge); the text inside where it was without one. */
@@ -93,14 +82,6 @@ body.source :is(#frame, .erga-canvas) { visibility: hidden; }
 .nav-back:hover { color: var(--fg-strong, var(--fg)); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
 :is(.nav-brand, .nav-back):focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .nav-back svg { display: none; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-/* A paused page stays in sight (its button) while the rest of the controls hide. */
-body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) { opacity: 1; }
-body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) :is(.me-slot, .quick-inner > :not(.edit-group)),
-body.chrome-hidden .chrome-top:has(#btn-pause[aria-pressed="true"]) .edit-group-inner > :not(#btn-pause) { opacity: 0; pointer-events: none; }
-.pause-card { width: min(340px, calc(100vw - 32px)); }
-.pause-card h2 { margin: 0 0 6px; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
-.pause-card p { margin: 0; color: var(--soft); }
-.pause-card .toast-fix { margin-top: 12px; }
 
 /* The agent floats beside the page as a panel of glass. Collapsed, it is the
    round "e" button in the lower corner on its side; the same element grows
@@ -117,8 +98,6 @@ html.erga-zoomed #frame { width: calc((100% - var(--frame-l) - var(--frame-r)) /
 .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding var(--agent-ms) var(--agent-ease); padding-left: var(--cb-l); padding-right: var(--cb-r); }
 /* The buttons' bar and its cards keep clear of a panel on the right, 14px from it, as the breadcrumbs' bar on the left. */
 .chrome-top { right: max(8px, var(--safe-r), calc(var(--frame-r) - 2px)); padding: 0 5px 0 7.5px; transition: opacity var(--show-ms) var(--ease), right var(--agent-ms) var(--agent-ease); }
-/* Narrower, the agent covers the page instead, and the style bar with it. */
-@media (max-width: 759.98px) { body.agent-open .fmt { display: none; } }
 /* The agent's circle and panel (#agent) are client/style.css's: every page has them. */
 
 /* Resizing and docking (layout.ts; the grip, the ghost and the drag's look are style.css's): the editor's parts. */
@@ -147,64 +126,8 @@ body.erga-editing .erga-steps-panel.erga-docked {
 @starting-style { body.erga-editing .erga-steps-panel.erga-docked:not(.erga-docked-right) { opacity: 0; transform: translateX(-12px); } }
 body.erga-editing .erga-steps-panel.erga-docked .erga-steps-head { padding: 13px 16px 4px; font-size: 13px; }
 
-/* The style bar floats over a selection in the page. */
-.fmt {
-  position: fixed; z-index: 30; padding: 4px;
-  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 10px; box-shadow: var(--shadow);
-  transform: translate(-50%, calc(-100% - 8px)); transition: opacity 120ms ease;
-  font: 13px/1 var(--font-text); color: var(--fg);
-}
-.fmt.below { transform: translate(-50%, 8px); }
-.fmt[hidden] { display: none; }
-.fmt button {
-  width: 30px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--chrome-hover);
-  display: grid; place-items: center; cursor: pointer; font: inherit; padding: 0;
-}
-.fmt button:hover { background: color-mix(in srgb, var(--chrome) 14%, transparent); }
-.fmt button[aria-pressed="true"] { background: color-mix(in srgb, var(--caret) 16%, transparent); color: var(--caret); }
-.fmt button[aria-disabled="true"] { opacity: 0.35; cursor: not-allowed; }
-.fmt button b { font-weight: 700; font-size: 14px; }
-.fmt button i { font-family: Georgia, serif; font-size: 15px; }
-.fmt svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.fmt .sep { width: 1px; height: 16px; background: var(--rule); margin: 0 2px; flex: none; }
-.fmt button { flex: none; }
-.fmt button[hidden] { display: none; }
-.fmt button:focus-visible { outline: 2px solid var(--caret); outline-offset: -2px; }
-/* Two panes, the style buttons and the link's: one shows. Between them both float, centred on the edge next to
-   the text, while the bar's box grows or shrinks around them; the link icon goes from its button to its row. */
-.fmt-panes { position: relative; }
-.fmt-pane { display: flex; align-items: center; gap: 2px; }
-.fmt-pane[hidden] { display: none; }
-.fmt.morphing .fmt-panes { overflow: hidden; transition: width var(--morph-ms) var(--ease), height var(--morph-ms) var(--ease); }
-.fmt.morphing .fmt-pane { display: flex; position: absolute; left: 50%; bottom: 0; translate: -50% 0; }
-.fmt.morphing.below .fmt-pane { bottom: auto; top: 0; }
-.fmt.morphing .fmt-pane.out { opacity: 0; scale: 0.96; transition: opacity calc(var(--morph-ms) * 0.5) ease, scale var(--morph-ms) var(--ease); pointer-events: none; }
-.fmt.morphing .fmt-pane.in { animation: fmt-pane-in var(--morph-ms) var(--ease) both; animation-delay: calc(var(--morph-ms) * 0.25); }
-@keyframes fmt-pane-in { from { opacity: 0; scale: 0.97; } }
-.fmt.appear { animation: fmt-appear 140ms ease both; }
-@keyframes fmt-appear { from { opacity: 0; } }
-:root { --morph-ms: 240ms; }
-/* The link pane: its text and close; its address, open and remove; where it opens. */
-.fmt-link { flex-direction: column; align-items: stretch; gap: 0; width: 300px; }
-.fmt-row { display: flex; align-items: center; gap: 2px; height: 32px; }
-.fmt-row + .fmt-row { border-top: 1px solid var(--rule); }
-.fmt-lead { width: 30px; height: 28px; display: grid; place-items: center; color: var(--chrome); flex: none; }
-.fmt-lead.t { font: 600 13px var(--font-text); letter-spacing: -0.02em; }
-.fmt-row input { flex: 1; min-width: 0; height: 28px; border: 0; outline: none; background: transparent; color: var(--fg); font: 13px var(--font-text); padding: 0 6px 0 2px; }
-.fmt-row input::placeholder { color: var(--chrome); }
-.fmt-row input[type=url] { color: var(--link); }
-.fmt button.fmt-x { color: var(--chrome); }
-.fmt button.fmt-x:hover { color: var(--chrome-hover); }
-.fmt button.fmt-tab { width: 100%; height: 28px; display: flex; align-items: center; justify-content: flex-start; gap: 2px; padding: 0 6px 0 0; }
-.fmt-tab .fmt-label { flex: 1; text-align: left; color: var(--soft); }
-.fmt-switch { width: 28px; height: 16px; border-radius: 999px; background: var(--rule); position: relative; flex: none; transition: background 140ms ease; }
-.fmt-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: translate 160ms var(--ease); }
-.fmt-tab[aria-checked="true"] .fmt-switch { background: var(--caret); }
-.fmt-tab[aria-checked="true"] .fmt-switch::after { translate: 12px 0; }
 @media (prefers-reduced-motion: reduce) {
   :root { --agent-ms: 1ms; }
-  .fmt.morphing .fmt-panes { transition: none; }
-  .fmt.morphing .fmt-pane.in { animation: fmt-appear 120ms ease both; }
 }
 /* The agent panel's insides (its head, the conversation, the box) are style.css's: the admin pages' panel has them too. */
 
@@ -308,7 +231,6 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
 @media (max-width: 520px) {
   .people { gap: 0; }
   .people > * + * { margin-left: -5px; }
-  .refresh-pill { top: calc(var(--top-clear) - 6px); left: 16px; right: 16px; width: fit-content; max-width: none; margin: 0 auto; transform: none; }
   .toast { bottom: calc(max(var(--agent-inset), env(safe-area-inset-bottom)) + var(--agent-fab) + 12px); }
   #source .cm-scroller { padding-top: 24px; padding-left: 16px; }
 }
@@ -320,11 +242,7 @@ body:not(.erga-editing) .chrome-top .people, body.erga-closing .chrome-top .peop
   :is(.icon-btn, .nav-back, .nav-brand)::before, .nav-title::after { content: ""; position: absolute; inset: -5px -1px; }
   .naming-input, .naming-addr { font-size: 16px; }
   .avatar::after { content: ""; position: absolute; inset: -8px -3px; }
-  .fmt button { width: 38px; height: 36px; }
-  .fmt-row { height: 40px; }
-  .fmt button.fmt-tab { height: 36px; }
-  .fmt-link { width: min(340px, calc(100vw - 48px)); }
-  .fmt-row input, .agent-compose textarea { font-size: 16px; }
+  .agent-compose textarea { font-size: 16px; }
 }
 
 /* Other people's carets in the source view. */

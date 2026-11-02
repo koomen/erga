@@ -114,10 +114,12 @@ test("the agent reads the live page and clicks play: the audio plays, and the co
   expect(net.text).not.toMatch(/\/t\/ey/); // the token in the files' address stays in the tab
   expect(net.text).toMatch(/via erga/);
 
-  // A key the editor takes for itself (⌘S / Ctrl+S, its own save): the events say the editor consumed it.
+  // A key Erga takes for itself (⌘S / Ctrl+S, its own save): the events say Erga's page script consumed it, first.
   const key = await tool("page_key", { key: "s", meta: true, ctrl: true, selector: "p" });
   expect(key.text).toMatch(/Pressed a key on <p>: keydown \(default prevented\), keyup\./);
-  expect((await tool("page_events", { since: "10s" })).text).toMatch(/keydown on <p>, sent by the agent, untrusted: the editor called preventDefault \(its listener on document, bubble phase\)/);
+  expect((await tool("page_events", { since: "10s" })).text).toMatch(
+    /keydown on <p>, sent by the agent, untrusted: the editor called preventDefault \(its listener on window, capture phase\)/
+  );
 
   // The owner's own agent has the same tools, in the document open on their page.
   const turn = await owner.get("/api/agent", {
