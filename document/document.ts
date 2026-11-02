@@ -667,10 +667,10 @@ export class Document {
    * title, which follows its first heading until someone sets it (and the
    * slug the title). Every open tab hears of a new title or address.
    */
-  private async syncDirectory(): Promise<void> {
+  private async syncDirectory(fromDisk = false): Promise<void> {
     const info = await this.readInfo();
     if (!info) return;
-    const text = await this.pageText(info);
+    const text = await this.pageText(info, fromDisk);
     const r = await this.directory.edited(info.id, {
       modified: info.modified ?? null,
       pageTitle: text != null ? titleOf(text) : null,
@@ -697,13 +697,18 @@ export class Document {
 
   /**
    * The page's text: from the room while it's open (storage has it a little
-   * later), else from storage; for a document on disk only from its room
-   * (once it's open; never waited for, since opening waits for the dev
-   * server, which may be linking it just then).
+   * later), else from storage. For a document on disk, from disk only when
+   * `fromDisk` (the dev server is connected); else only from its room, since
+   * reading disk waits for the dev server, which may be linking it just then.
    */
-  private async pageText(info: DocumentInfo): Promise<string | null> {
+  private async pageText(info: DocumentInfo, fromDisk = false): Promise<string | null> {
     const open = this.opened?.room.text(info.index);
-    if (open != null || info.disk) return open ?? null;
+    if (open != null) return open;
+    if (info.disk) {
+      if (!fromDisk || !this.deps.disk) return null;
+      const bytes = await this.deps.disk.storage(info.disk.only ? info.index : null).get<Uint8Array>(FILE + info.index);
+      return bytes ? new TextDecoder().decode(bytes) : null;
+    }
     await this.closing;
     const bytes = await this.storage.get<Uint8Array>(FILE + info.index);
     return bytes ? new TextDecoder().decode(bytes) : null;
@@ -750,18 +755,27 @@ export class Document {
     );
   }
 
-  /** A file on disk changed (the dev server says which): the room takes it. */
+  /** A file on disk changed (the dev server says which): the room takes it; closed, the page's title comes from disk. */
   diskChanged(path: string): Effect.Effect<void, StoreError> {
     return Effect.flatMap(
       io(async () => this.open && (await this.open)),
-      (o) => (o ? o.room.fileChanged(path) : Effect.void)
+      (o) =>
+        o
+          ? o.room.fileChanged(path)
+          : io(async () => {
+              if (path == (await this.readInfo())?.index) await this.syncDirectory(true);
+            })
     );
   }
 
-  /** The dev server is back: every file there, and every one the room holds, is looked at again. */
+  /**
+   * The dev server is connected (again): every file there, and every one the room holds, is looked at again. With no
+   * room open, the row takes the page's title from disk (linked, the row had none: the files weren't reachable yet).
+   */
   diskConnected(): Effect.Effect<void, StoreError> {
     return io(async () => {
-      await (await this.open)?.catchUp();
+      const open = this.open && (await this.open);
+      await (open ? open.catchUp() : this.syncDirectory(true));
     });
   }
 
