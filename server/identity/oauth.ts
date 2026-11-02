@@ -2,8 +2,10 @@
 // adds <origin>/mcp and gets a 401 that names this server's metadata. It registers itself, and opens /oauth/authorize
 // in its person's browser. The person signs in (if they aren't) and approves on /tokens/approve, the page that
 // approves a device flow's request (tokens-page.ts). The browser goes back to the app with a code, and the app trades
-// the code and its PKCE verifier for an ordinary agent token (documents scope) at /oauth/token. The token lasts until
-// the person revokes it in Settings (the dialog at their picture, client/agent/settings-dialog.ts): there is no refresh token, as agent tokens have no other expiry.
+// the code and its PKCE verifier for an ordinary agent token at /oauth/token, with the person's own power: an admin's is
+// admin scope, anyone else's documents scope. The token lasts until the person revokes it in Settings (the dialog at
+// their picture, client/agent/settings-dialog.ts): there is no refresh token, as agent tokens have no other expiry. An
+// admin token's admin power is checked on each request (Users.actsAsAdmin): a person no longer an admin loses it at once.
 //
 //   GET  /.well-known/oauth-protected-resource      /mcp's metadata (RFC 9728): the resource, and who signs in for it
 //   GET  /.well-known/oauth-protected-resource/mcp  the same, where a client looks for /mcp's own
@@ -24,8 +26,8 @@ import { call, ctx, Field, form, json, query, redirect, text, type Route } from 
 import { sign, unsign } from "./session.ts";
 import { LABEL_MAX } from "./tokens.ts";
 
-/** The scope an app gets: all the person's documents, no admin power (as the editor's Share button gives). */
-const SCOPE = "documents";
+/** The scopes an app can get: the person's own power, admin for an admin, else documents (all their documents). */
+const SCOPES = ["documents", "admin"];
 
 /** Where /mcp's metadata is: the 401 from /mcp names it (server/api.ts). */
 export const resourceMetadataUrl = (origin: string) => `${origin}/.well-known/oauth-protected-resource`;
@@ -34,7 +36,7 @@ export const resourceMetadataUrl = (origin: string) => `${origin}/.well-known/oa
 export const resourceMetadata = (origin: string) => ({
   resource: `${origin}/mcp`,
   authorization_servers: [origin],
-  scopes_supported: [SCOPE],
+  scopes_supported: SCOPES,
   bearer_methods_supported: ["header"],
   resource_name: "Erga",
   resource_documentation: `${origin}/llms.txt`,
@@ -46,7 +48,7 @@ export const serverMetadata = (origin: string) => ({
   authorization_endpoint: `${origin}/oauth/authorize`,
   token_endpoint: `${origin}/oauth/token`,
   registration_endpoint: `${origin}/oauth/register`,
-  scopes_supported: [SCOPE],
+  scopes_supported: SCOPES,
   response_types_supported: ["code"],
   response_modes_supported: ["query"],
   grant_types_supported: ["authorization_code"],
@@ -184,7 +186,7 @@ export const oauthRoutes: Route = Effect.gen(function* () {
         grant_types: ["authorization_code"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
-        scope: SCOPE,
+        scope: SCOPES.join(" "),
       },
       201,
       CORS
@@ -211,10 +213,11 @@ export const oauthRoutes: Route = Effect.gen(function* () {
     if (!session) return signInFirst(url.pathname + url.search);
     if (session.agent || session.test)
       return page("Sign in as yourself", "Only a person, signed in as themselves, can let an app act for them.", 403);
+    const admin = yield* call(() => platform.directory.users.isAdmin(session.login));
     const asked = yield* call(() =>
       platform.tokens.request(
         client.name,
-        { scope: SCOPE },
+        { scope: admin ? "admin" : "documents" },
         { client: q.client_id, redirectUri, challenge: q.code_challenge, state: q.state || null }
       )
     );

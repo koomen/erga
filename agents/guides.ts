@@ -55,8 +55,10 @@ token: it never goes through the conversation, and you never need to see it.
 Any MCP app with MCP's standard sign-in (OAuth, with dynamic client
 registration) works the same way.
 
-The sign-in gives the \`documents\` scope: everything your person can do with
-documents, but no admin power. It works until your person revokes it in
+The sign-in gives your person's own power: an admin's app gets the \`admin\`
+scope (the admin tools below too, while they're an admin), anyone else's the
+\`documents\` scope (everything they can do with documents, but no admin
+power). It works until your person revokes it in
 Settings (${origin}/docs#settings). Read this guide without a token (\`GET ${origin}/llms.txt\`);
 the MCP server's tools are the ones listed below.
 
@@ -158,8 +160,8 @@ make_document, list_versions, read_version, restore_version and open_page.
 ## Admin
 
 For the server's admins only, with an admin token: ${session ? (admin ? "yours is one, so the admin tools are listed for you and work while your person is an admin." : locked ? `${session.login} is an admin, but this token's scope is ${session.agent.scope}, so the admin tools aren't listed for it and are refused.` : `${session.login} isn't one, so the admin tools aren't listed for your token and are refused.`) : "they work only with an admin token."}
-The MCP sign-in never gives one. Your person makes one with Share with agent on
-any admin page (it lasts 12 hours), or in Settings (${origin}/docs#settings, scope: Admin). It
+An admin's MCP sign-in gives one. Your person can also make one with Share with
+agent on any admin page (it lasts 12 hours), or in Settings (${origin}/docs#settings, scope: Admin). It
 works only while they're an admin. With it you do what
 they do on the admin pages (${origin}/admin) and the Ops page, and each change
 goes in the logs under their name.
@@ -186,6 +188,9 @@ with the header: it is then written for that token.
   but staging and main), which never deploys. merge_feature_branch puts a branch's
   work on staging as one commit, when your person asks; delete_feature_branch drops
   one. Production (main) moves only when your person asks.
+- The Ops page's deploys: list_deploys gives each environment (staging,
+  production, control) and its last deploys, each with its state, commit, what
+  started it, and why it failed (error); deploy_log gives one deploy's log.
 - No token can make or approve another token, and a secret (an API key) is set
   only on its page, never here: you may clear one.
 

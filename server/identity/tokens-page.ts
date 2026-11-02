@@ -160,7 +160,7 @@ async function approvalCard(
   const may = await platform.tokens.check({ login: session.login, name: session.name }, g).then(() => null, (e) => (e instanceof ScopeError ? e.message : "This request can't be approved."));
   const what = g.scope == "document" ? `one document: ${await docLabel(platform, g.docId)}. It can do there what you can do, and nothing anywhere else.`
     : g.scope == "documents" ? "all your documents: everything you can do with documents, but no admin power."
-    : "everything you can do in Erga, admin power included (the server's settings, its users, pushes to its source).";
+        : "all your documents, and admin power: everything you can do in Erga, the server's settings, users, source and deploys included, while you're an admin.";
   return `<section class="card approve"><h2>An agent asks to act as you</h2>
 <p><b>${esc(waiting.label)}</b> wants a token for ${what}</p>
 <dl class="grant"><dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd><dt>Expires</dt><dd>${g.expires ? day(g.expires) : "Never (until you revoke it)"}</dd></dl>

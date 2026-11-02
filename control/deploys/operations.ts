@@ -52,7 +52,7 @@ export const DEPLOY_OPERATIONS: Operation[] = [
     label: "Read the deploys",
     admin: true,
     description:
-      "Every deploy target (staging, production, control): what it runs, its deploy now (state, commit, steps) and its last deploys, newest first (history: how many, default 5, at most 100), and the Cloudflare credential every deploy uses (credential).",
+      "Every deploy target (staging, production, control): what it runs, its deploy now (state, commit, steps) and its last deploys, newest first, each with its state, commit, trigger and error (why it failed) (history: how many, default 5, at most 100), and the Cloudflare credential every deploy uses (credential).",
     parameters: Schema.Struct({
       history: Schema.optionalKey(Schema.Int.annotate({ description: "How many past deploys of each target (default 5)" })),
     }),
