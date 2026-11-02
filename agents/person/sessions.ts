@@ -39,7 +39,8 @@ import type { Platform } from "../../server/platform.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
-import { call, ctx, fromWeb, json, type Route } from "../../server/http.ts";
+import { call, ctx, fromWeb, json, text, type Route } from "../../server/http.ts";
+import { HttpServerResponse } from "effect/http";
 
 const enc = new TextEncoder();
 
@@ -324,8 +325,30 @@ const body = <S extends Schema.Top>(request: Request, schema: S, fallback: S["Ty
     Effect.orElseSucceed(() => fallback)
   );
 
-/** /api/agent...: the person's own agent panel. */
+/**
+ * /api/agent...: the person's own agent panel, on this site's pages and on the Ops pages (the control Worker's, at
+ * platform.control: the same site, so the person's cookie comes along). Only those two origins may talk to it, or listen.
+ */
 export const agentApi: Route = Effect.gen(function* () {
+  const { request, url, platform } = yield* ctx;
+  const from = request.headers.get("origin");
+  const ops = platform.control ? new URL(platform.control.url).origin : null;
+  if (!from || from == url.origin) return yield* agentRoutes(url.origin);
+  if (from != ops) return json({ error: "Forbidden" }, 403);
+  const cors = {
+    "Access-Control-Allow-Origin": from,
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE",
+    "Access-Control-Allow-Headers": "Content-Type",
+    Vary: "Origin",
+  };
+  if (request.method == "OPTIONS") return text("", 204, cors);
+  return HttpServerResponse.setHeaders(yield* agentRoutes(from), cors);
+});
+
+/** The panel's routes, for a page at `origin` (this site's, or the Ops pages'). */
+const agentRoutes = (origin: string): Route =>
+  Effect.gen(function* () {
   const { request, url, platform } = yield* ctx;
   if (/^Bearer\s/i.test(request.headers.get("authorization") ?? ""))
     return json(
@@ -335,7 +358,7 @@ export const agentApi: Route = Effect.gen(function* () {
   const me = yield* personOf(platform, request);
   if (!me)
     return json({ error: "Sign in as yourself to talk to your agent." }, (yield* call(() => platform.sessionOf(request))) ? 403 : 401);
-  if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  if (request.method != "GET" && request.headers.get("origin") != origin) return json({ error: "Forbidden" }, 403);
   const h = platform.personAgent(me.login),
     path = url.pathname.replace(/\/$/, ""),
     m = request.method;

@@ -81,7 +81,7 @@ export const FULL_BUTTON = `<button type="button" class="erga-view-button erga-f
  * itself: `docs`), then who you are; `lead` goes before them all. Share with an agent is on every page, before
  * Documents (`share`: a page's own, as the admin pages' with its admin token). The account corner goes in `corner`, or where the
  * Worker puts it (ACCOUNT_SLOT: withAccount). `home`: the app's origin, for a page served elsewhere (the control Worker's); its links go there.
- * Your agent comes with them, on the app's own origin (server/pages/agent.ts).
+ * Your agent comes with them, the same on a page served elsewhere: there it talks to the app at `home` (server/pages/agent.ts).
  */
 export function pageBars(
   session: Session | null,
@@ -100,7 +100,7 @@ export function pageBars(
   const mine = !!session && !session.agent && !session.test;
   const at = (path: string) => link(home + path, session);
   const actions = `${o.lead ?? ""}${session?.agent ? "" : newDocButton("erga-view-button")}${o.actions ?? ""}${o.share ?? shareButton(home)}${mine && o.docs !== false ? docsButton(at("/docs")) : ""}`;
-  return `<script>${PAGE_TONE}</script>${crumbsBar(session, home, steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${o.home ? "" : agentPanel(session)}`;
+  return `<script>${PAGE_TONE}</script>${crumbsBar(session, home, steps)}${buttonsBar(actions, o.corner ?? ACCOUNT_SLOT)}${session?.agent ? "" : newDocMenu(at)}${NEW_DOC_STYLE}${BARS_STYLE}${session?.agent ? "" : inlineScript("new-doc")}${inlineScript("page-bars")}${agentPanel(session, o.home)}`;
 }
 
 /**

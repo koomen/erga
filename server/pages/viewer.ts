@@ -13,7 +13,7 @@ import { asset, assetScripts, editorShell, styleTag } from "./assets.ts";
 import { inlineCall, inlineFunction, inlineScript, inlineStyle } from "./inline.ts";
 import { crumbsFont, link } from "./chrome.ts";
 import { barsHtml } from "./bars.ts";
-import { agentPanel, hasAgent } from "./agent.ts";
+import { agentPanel } from "./agent.ts";
 import { esc } from "../../shared/html.ts";
 import { EDITOR_ALLOW, PAGE_ALLOW, PAGE_SANDBOX } from "./reader.ts";
 import { NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
@@ -107,6 +107,8 @@ export function viewerPage(o: {
   meta: string;
   session: Session | null;
   editable: boolean;
+  /** The person's agent: an editor's, or a reader's where the document's owner lets readers use theirs (documents/view.ts). */
+  agent: boolean;
   editing: boolean;
   landing: boolean;
   /** Your own copy's address: the New menu's last item. */
@@ -140,12 +142,12 @@ export function viewerPage(o: {
 ${FAVICON_LINK}
 <link rel="preconnect" href="${esc(o.pages)}">
 <meta name="erga-doc" content="${esc(o.docId)}">
-${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${hasAgent(session) ? styleTag() : ""}<style>${BAND_STYLE}</style>${opening}
-<body>${hasAgent(session) ? `<script>${AGENT_LAYOUT}</script>` : ""}${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
+${o.meta}<script>${framesScript(o.pages)}</script>${backdrop}${crumbsFont(session, true)}${o.agent ? styleTag() : ""}<style>${BAND_STYLE}</style>${opening}
+<body>${o.agent ? `<script>${AGENT_LAYOUT}</script>` : ""}${o.editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}<script>${frameSrc(editing)}</script>`;
   const bars = barsHtml({ session, title: o.landing ? null : o.title, project: !!o.project, full: true, edit: o.edit, corner: o.corner });
   const after = `
-${bars}${agentPanel(session)}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
+${bars}${o.agent ? agentPanel(session) : ""}${newDocMenu((path) => link(path, session), o.clone)}${VIEW_STYLE}${NEW_DOC_STYLE}${BARS_STYLE}${inlineScript("new-doc")}<script>${BARS_BOOT}</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FULL_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${o.editable ? `<script>${editBoot()}</script>` : ""}${o.live ? `<script>${inlineCall("viewer-live", `/d/${o.docId}`, o.live)}</script>` : ""}${o.project && session && !o.landing ? `<script>${inlineCall("viewer-tree", asset("pages-tree.js"), o.docId, o.project, o.title, session.as ? `?user=${encodeURIComponent(session.as)}` : "")}</script>` : ""}
 `;
   return { before, after };
 }
