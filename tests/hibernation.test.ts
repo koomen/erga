@@ -20,6 +20,7 @@ import { files } from "../document/content";
 import { decodeStart } from "../shared/room-socket";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
+import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
 import type { AgentSettings } from "../agents/models";
 
@@ -84,7 +85,7 @@ class World {
         attach: (opened) => this.tabs.attachAll(opened),
         detach: () => this.tabs.detachAll(),
       },
-      agents: documentAgents({ settings: this.settings }),
+      agents: documentAgents({ settings: this.settings, sandbox: testSandbox }),
       home: { forget: async () => {}, changed: async () => {} },
       timing: { idleMs: 20, maxMs: 2000, writeDelay: 5, fileDelay: 30, closeIdleMs: 60 },
       background: () => {}, log: () => {},

@@ -1,7 +1,8 @@
 // Erga's editing libraries (libs/): each at one address, /erga/<name>/editor.js, its newest build; Erga adds erga/text to
 // a page that brings no editor of its own (server/pages/reader.ts).
 import { expect, test } from "bun:test";
-import { bringsEditor, libraryOf } from "../server/pages/index.ts";
+import { libraryOf } from "../server/pages/index.ts";
+import { bringsEditor } from "../shared/page-html.ts";
 
 test("a library's address names one of Erga's libraries", () => {
   expect(libraryOf("/erga/text/editor.js")).toBe("text");

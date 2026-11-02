@@ -98,6 +98,8 @@ export default defineConfig(({ mode }) => ({
       // `bun run db:local` applies the migrations to.
       DB: bindings.d1({ name: PROD.database, ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
       ASSETS: bindings.assets(),
+      // Starts the sandbox Workers a page's own API runs in, one for each module's code (cloudflare/sandbox.ts).
+      LOADER: bindings.workerLoader(),
       // Documents' blobs: their files that aren't text, by sha-256 (cloudflare/blobs.ts). Each target has a bucket of its
       // own, named after its Worker (the pipeline binds erga-staging-files on staging); locally, Miniflare's R2.
       FILES: bindings.r2({ name: `${PROD.worker}-files` }),

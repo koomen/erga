@@ -134,6 +134,7 @@ health checks and rollbacks work.
       blobs.ts        the files that are not text, by their sha-256
       merge.ts        an outside edit, as a small change to the open document
       pdf.ts          PDFs for the agents: their pages and their text
+      page-api.ts     a page's own API: its module, run in a sandbox, and its answer checked and made a change
       disk.ts         local development: a document's files in a folder on disk, through the dev server
       api.ts          the document API's contract (document/host.ts has its routes)
     server/       the app: web Requests in, Responses out (the unit tests run it under bun)
@@ -188,7 +189,7 @@ health checks and rollbacks work.
                       room, ui/collab.ts, opened with the edit key the shell gives it; its own controls, ui/controls.ts,
                       and uploads, ui/uploads.ts): api/ has the editing rules (rules.ts,
                       blocks.ts, lists.ts), styles and links (format.ts), the source's helpers (source.ts), the clipboard's
-                      blocks, the custom edits, and erga/text's API (edits.ts: the named edits agents run with call_edit)
+                      blocks, and erga/text's API (edits.ts: the named edits agents run with call_edit)
     client/       the browser side: editor.html, style.css, fonts/, and the scripts build.ts bundles into .build/
       shell/          the editor's shell (page.js): main.ts, its one word to the page's editor (page-frame.ts: edit, with the
                       edit key, or view), its replica of the room (libs/text/ui/collab.ts), the source view, the shell's parts
@@ -204,7 +205,7 @@ health checks and rollbacks work.
       common/         what the inline scripts and the bundles share: fast-click.ts, new-doc.ts, bars.ts, quick.ts, ...
       styles/         admin.css and ops.css, which the build writes as the admin pages' one stylesheet
     cloudflare/   only what runs on Cloudflare: the Worker's entry (index.ts), the Platform from its bindings
-                  (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the app's Durable Objects (objects/:
+                  (platform.ts; env.ts types them), D1 (d1.ts), R2 (blobs.ts), the sandbox for pages' own APIs (sandbox.ts), the app's Durable Objects (objects/:
                   each gives its logic in server/, agents/ or document/ storage, alarms and sockets, and decides
                   nothing), what the deploy pipeline asks of the app (deploy-routes.ts), the dev server's routes
                   (dev.ts, dev-entry.ts)

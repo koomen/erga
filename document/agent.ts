@@ -6,6 +6,7 @@
 
 import type { LogEvent, ViewRequest, ViewResult } from "../shared/agent-log.ts";
 import type { DocKind } from "./pages.ts";
+import type { Sandbox } from "./page-api.ts";
 import type { Room } from "./room.ts";
 import type { RestoreResult, Version, VersionsState } from "./versions.ts";
 
@@ -102,4 +103,6 @@ export interface DocumentAgents {
   changes: ReadonlySet<string>;
   /** The key the versions' descriptions are written with ("" for none: a plain description). */
   descriptionKey(): Promise<string>;
+  /** Runs a page's own API (page-api.ts): for the agents' call_edit, and for the page's own controls (POST /api/page-edit). */
+  sandbox: Sandbox;
 }

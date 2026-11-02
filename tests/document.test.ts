@@ -9,6 +9,7 @@ import { Document, type DocumentDeps } from "../document/document";
 import { KEYS, MemoryStorage } from "../document/storage";
 import { Directory, type Param, type Sql } from "../server/directory/index.ts";
 import { documentAgents } from "../agents/document/session";
+import { testSandbox } from "./helpers/sandbox";
 import { sleep } from "../shared/time";
 import { promised, type Promised } from "./helpers/promised";
 
@@ -35,7 +36,7 @@ function setup(dir = new Directory(memory(), { admins: ["ada"] })) {
     get storage() { return storage; },
     directory: dir,
     tabs: { count: () => 0, closeAll: () => {} },
-    agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }) }),
+    agents: documentAgents({ settings: async () => ({ missing: "no key in the tests" }), sandbox: testSandbox }),
     home: { forget: async (id) => { forgotten.push(id); }, changed: async () => {} },
     timing: { idleMs: 40, maxMs: 400, writeDelay: 10 },
     background: () => {},

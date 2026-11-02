@@ -60,6 +60,15 @@ export interface PageEditorConfig {
    * caller adds them to the document's files, then puts them on the page (insertFiles), or says why not (dropError).
    */
   onDropFiles?: (files: File[], at: number, point: { x: number; y: number }) => void;
+  /**
+   * One of the page's own edits (ergaEditor.call), on `html`: the change its API gives (POST /api/page-edit, run in the
+   * document's sandbox: document/page-api.ts), or why not.
+   */
+  pageEdit?: (
+    html: string,
+    edit: string,
+    input: unknown
+  ) => Promise<{ changes: { from: number; to: number; insert: string }[] } | { error: string }>;
   /** The page is paused (it loaded again while it was: setPaused). */
   paused?: boolean;
   /** Checks after each change that the page shows its HTML, and logs a difference as an error (the tests: check.ts). */

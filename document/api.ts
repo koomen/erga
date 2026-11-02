@@ -56,6 +56,11 @@ export class ExplainBadRequests extends HttpApiMiddleware.Service<ExplainBadRequ
 
 const Ok = Schema.Struct({ ok: Schema.Literal(true) });
 
+/** One of a page's own edits, from its own controls (POST /api/page-edit): the page's text as its editor has it, and the call. */
+const PageEditCall = Schema.Struct({ path: Schema.String, html: Schema.String, edit: Schema.String, input: Schema.Unknown });
+const Change = Schema.Struct({ from: Schema.Number, to: Schema.Number, insert: Schema.String });
+const PageEditDone = Schema.Struct({ ok: Schema.Literal(true), changes: Schema.Array(Change) });
+
 /** What the document is called: its title, and its address, /<owner>/<slug>. */
 export const DocName = Schema.Struct({
   id: Schema.String,
@@ -106,6 +111,8 @@ export interface Hello {
 export const Api = HttpApi.make("erga")
   .add(HttpApiGroup.make("doc")
     .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
+    /** Its module runs in the sandbox (document/page-api.ts); the answer is the change, which the person's editor makes. */
+    .add(HttpApiEndpoint.post("pageEdit", "/api/page-edit", { payload: PageEditCall, success: PageEditDone, error: [ToolFailed] }))
     .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("agent")
     /** A tab's answer to the agent's view_page request. */

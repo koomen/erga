@@ -1,5 +1,6 @@
-// Custom edits (agents/document/PROMPT.md, "Custom edits"): in the editor a page's script draws buttons, and a click sends
-// custom edits (ergaEditor.apply) that the editor makes to the source as one undo step.
+// A page's own edits (agents/document/PROMPT.md, "A page's own edits"): in the editor a page's script draws buttons, and
+// a click calls one of its edits (ergaEditor.call). Its API (api.js) runs in the document's sandbox, and the editor makes
+// the change to the source as the person's own, one undo step.
 import { expect, servers, test } from "../../helpers/fixtures";
 import { F, W, openEditor, type Editor } from "../../helpers/editor";
 
@@ -21,7 +22,7 @@ async function press(ed: Editor, name: string, button: string) {
 }
 
 test("the page's buttons edit its source: add, delete, move, add under; each is one undo; the buttons take no caret", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "custom-edits");
+  const ed = await openEditor(tab, await servers.main(), "page-api");
   expect(await views(ed)).toEqual(["Front page", "Documents", "New document", "Document", "Page", "Editor", "Settings", "Admin"]);
   expect(await ed.frame<boolean>(`${F}.documentElement.hasAttribute("data-erga-editing") && ${W}.ergaEditor.editing`)).toBe(true);
 
@@ -48,8 +49,8 @@ test("the page's buttons edit its source: add, delete, move, add under; each is 
   await expect.poll(() => views(ed)).toEqual(["Front page", "Admin", "Documents", "New document", "Document", "Page", "Editor", "Billing"]);
 });
 
-test("a page can't make custom edits when nobody clicked: as it loads, say", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "custom-edits-load");
+test("a page can't make its own edits when nobody clicked: as it loads, say", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page-api-load");
   await expect.poll(() => ed.frame<{ ok: boolean; error: string } | undefined>(`${W}.result`)).toBeTruthy();
   const r = await ed.frame<{ ok: boolean; error: string }>(`${W}.result`);
   expect(r.ok).toBe(false);

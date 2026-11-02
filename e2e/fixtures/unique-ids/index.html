@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="erga-api" content="api.js">
 <title>Unique ids</title>
 <style>
   /* Blocks with ids, and cards with buttons that copy and move them (e2e/full/page/unique-ids.e2e.ts). */
@@ -24,7 +25,7 @@
   </section>
 </main>
 <script>
-  // In the editor, each card gets a "Copy" and an "Up" button: custom edits (ergaEditor.apply).
+  // In the editor, each card gets a "Copy" and an "Up" button: the page's own edits (api.js, ergaEditor.call).
   (() => {
     const editor = window.ergaEditor;
     if (!editor) return;
@@ -41,10 +42,11 @@
       const b = e.target.closest(".card button");
       if (!b) return;
       const card = b.closest(".card");
-      const edits = b.classList.contains("copy")
-        ? [{ op: "insert", after: card, html: `<article class="card" id="${card.id}">\n  <h3>${card.querySelector("h3").textContent} (copy)</h3>\n</article>` }]
-        : card.previousElementSibling ? [{ op: "move", el: card, before: card.previousElementSibling }] : null;
-      if (edits) editor.apply(edits).then((r) => { if (!r.ok) console.warn(r.error); });
+      const n = [...card.parentElement.children].indexOf(card) + 1;
+      const call = b.classList.contains("copy")
+        ? ["copy_card", { card: n, id: card.id, title: card.querySelector("h3").textContent }]
+        : n > 1 ? ["move_up", { card: n }] : null;
+      if (call) editor.call(...call).then((r) => { if (!r.ok) console.warn(r.error); });
     });
     decorate();
     new MutationObserver(decorate).observe(document.querySelector(".cards"), { childList: true, subtree: true });

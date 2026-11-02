@@ -25,15 +25,18 @@ import type { LogEvent } from "../../shared/agent-log";
 import { YjsWorkspace, type Cursor } from "./workspace";
 import { cleanPath } from "../../document/pages";
 import type { AgentSettings } from "../models";
+import type { Sandbox } from "../../document/page-api";
 import { CHANGES, makeTools, toolPath } from "./tools";
 
 /**
  * A document's agents, as the server gives them to it (DocumentDeps.agents): each person's session, and the key the
- * versions' descriptions are written with (`settings`: the Anthropic key an admin stored, else the Worker's).
+ * versions' descriptions are written with (`settings`: the Anthropic key an admin stored, else the Worker's), and the
+ * sandbox a page's own API runs in.
  */
-export function documentAgents(o: { settings: () => Promise<AgentSettings> }): DocumentAgents {
+export function documentAgents(o: { settings: () => Promise<AgentSettings>; sandbox: Sandbox }): DocumentAgents {
   return {
-    start: startSession,
+    start: (opts) => startSession(opts, o.sandbox),
+    sandbox: o.sandbox,
     changes: CHANGES,
     async descriptionKey() {
       const cfg = await o.settings();
@@ -65,7 +68,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   diff_versions: "comparing versions",
 };
 
-export async function startSession(opts: SessionOptions): Promise<AgentSession> {
+async function startSession(opts: SessionOptions, sandbox: Sandbox): Promise<AgentSession> {
   const { owner } = opts;
   // Its work is its person's, via it: "Ada, via their agent".
   const me: Author = { user: owner.id, name: byLine(owner.name, VIA.agent), color: colorFor(owner.id, true), kind: "agent", via: VIA.agent };
@@ -136,6 +139,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     caughtUp,
     open: opts.open,
     files: opts.files,
+    sandbox,
     edited: (path, at) => {
       // One undo step per tool call, and the agent's cursor where it last wrote.
       undo.stopCapturing();

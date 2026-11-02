@@ -132,14 +132,15 @@ attributes, new elements of other kinds.
     except while someone types in the page's text. A slide that builds up in
     parts has a step for each part ("3.2 / 12"). See "Presentations" below.
 
-12. **Give a page custom edits.** A document can define its own custom
-    edits: changes people make by more than typing (add a card, delete a
-    row, move a node of a tree). In the editor, the page's script draws
-    buttons for them, and a click sends the custom edit to the source through
-    `window.ergaEditor.apply`. Erga makes it as one change, one undo step,
-    and refuses any that would break the page. Offer custom edits when you
-    make such a page, or when someone asks to make one editable. See "Custom
-    edits" below.
+12. **Give a page its own edits.** A page can have its own API: the edits
+    it offers beyond typing (add a card, delete a row, move a node of a
+    tree), in a module of its own files. In the editor, the page's script
+    draws buttons for them, and a click calls one with
+    `window.ergaEditor.call`. Agents call the same edits with `call_edit`.
+    Erga runs the module in a sandbox, makes its answer one change, one undo
+    step, and refuses any that would break the page. Offer them when you
+    make such a page, or when someone asks to make one editable. See "A
+    page's own edits" below.
 
 13. **Let a page with its own zoom take the editor's.** In the editor, the
     zoom keys (⌘+, ⌘−, ⌘0) zoom the whole page, 50% to 300%. A page that
@@ -252,95 +253,93 @@ the person's own view stays where it is.
 `e2e/fixtures/steps/index.html` is a fuller example, and
 `e2e/fixtures/builds/index.html` a deck whose slides build up in parts.
 
-## Custom edits
+## A page's own edits
 
-A document can define its own custom edits: the changes its page offers
-beyond typing, each with its own control on the page, and each made to the
-source by Erga. In the editor, and only there, a page has `window.ergaEditor` (before its
-first script runs) and its `<html>` element has the attribute
-`data-erga-editing`. Outside the editor neither exists, so the page shows as
-it always does, controls and all left out.
+A page names its API module in its `<head>`:
+`<meta name="erga-api" content="api.js">` (a path from the page). The
+module's default export is the API:
 
-| Member | What it does |
+```js
+export default {
+  name: "cards",
+  description: "The page's cards.",
+  edits: [
+    { name: "add_card", description: "Adds a card at the end", input: { type: "object", properties: {} } },
+    { name: "delete_card", description: "Deletes a card", input: { type: "object", properties: { n: { type: "integer", description: "1 is the first card" } }, required: ["n"] } },
+  ],
+  apply(html, edit, input) {
+    if (edit == "add_card") return [{ op: "insert", into: ".cards", html: '<article class="card"><h3>New card</h3></article>' }];
+    if (edit == "delete_card") return [{ op: "remove", el: `.cards > article:nth-child(${input.n})` }];
+    return { refused: `no edit named ${edit}` };
+  },
+};
+```
+
+`apply` gets the page's HTML as written and the call's input, and answers a
+list of operations, or `{ refused: why }`. Each operation names elements by
+a CSS selector of the source as written (tags, `#id`, `.class`,
+`[attr]`, `:nth-child()`, `>` and the other combinators), which must match
+exactly one element:
+
+| Operation | What it does |
 |---|---|
-| `editing` | `true`. |
-| `apply(edits)` | Makes a list of custom edits to the page's source, all of them or none. Answers a Promise of `{ ok: true }` or `{ ok: false, error }`, the error saying why. |
+| `{ op: "insert", html, after: sel }` | Puts new HTML after the element; or `before`, `into` (last in it), `prepend` (first in it). |
+| `{ op: "remove", el: sel }` | Removes the element, with everything in it. |
+| `{ op: "move", el: sel, after: sel }` | Moves the element; `before`, `into` and `prepend` too. |
+| `{ op: "replace", el: sel, html }` | Puts new HTML in the place of the element. |
+| `{ op: "attr", el: sel, name, value }` | Sets an attribute; `value: null` removes it. |
 
-Each custom edit names elements of the page as the script sees them:
+The module runs in a sandbox: no DOM, no network, nothing but its
+arguments. It may not import other files. What Erga makes sure of, so the
+page can't break itself:
 
-| Edit | What it does |
-|---|---|
-| `{ op: "insert", html, after: el }` | Puts new HTML after `el`; or `before: el`, `into: el` (last in it), `prepend: el` (first in it). |
-| `{ op: "remove", el }` | Removes `el`, with everything in it. |
-| `{ op: "move", el, after: other }` | Moves `el`; `before`, `into` and `prepend` too. |
-| `{ op: "replace", el, html }` | Puts new HTML in the place of `el`. |
-| `{ op: "attr", el, name, value }` | Sets an attribute of `el`; `value: null` removes it. |
-
-What Erga makes sure of, so the page can't break itself:
-
-- Every element named is in the source. One the script made isn't, and the
-  custom edit is refused.
 - New HTML is well-formed (every tag closed), with no `<script>`, no `on…`
   attribute and no `data-erga` attribute. Erga indents it to match the code
   around it, so it can be written on one line.
-- All the custom edits in one call refer to the source as it was before the call,
-  and none may fall inside an element another removes or replaces.
-- Custom edits come only right after the person clicks or presses a key on the
-  page: a page can't change itself as it loads, or on a timer.
-- When Erga refuses, it says why to the person and offers to ask the agent
-  to fix the page.
+- All the operations of one call refer to the source as it was before the
+  call, and none may fall inside an element another removes or replaces.
+- An id is unique in the page: new HTML from the page's buttons loses an id
+  (or a link's `name`) that the page has already. Name elements by place or
+  class, not by an id you copy.
 
-How to write the controls for custom edits:
+In the editor, and only there, the page's `<html>` has the attribute
+`data-erga-editing`, and `window.ergaEditor.editing` is `true`. Outside it,
+the page shows as it always does, controls left out.
+`ergaEditor.call(edit, input)` answers a Promise of `{ ok: true }` or
+`{ ok: false, error }`. It works only right after the person clicks or
+presses a key on the page: a page can't change itself as it loads, or on a
+timer. When Erga refuses, it says why to the person and offers to ask the
+agent to fix the page. Erga selects the new text, so people type over its
+placeholder.
+
+How to write the controls:
 
 - Make every control a `<button>`. Erga never puts a caret in a button, and a
-  click on one is the page's. Style it (`cursor: pointer`) so it looks like
-  one. Text in a `div` or `span` is text to edit, not a control.
-- Draw the controls from the page's script, only when `window.ergaEditor`
-  exists, so the source holds only what readers see. Put them in elements of
-  their own (a `div` of buttons in a card, an `li` for an add button at the
-  end of a list), never inside a paragraph or heading (rule 5).
-- After a custom edit the page may render again, so draw the controls in a
+  click on one is the page's. Text in a `div` or `span` is text to edit.
+- Draw the controls from the page's script, only when
+  `document.documentElement.hasAttribute("data-erga-editing")` (and again
+  on the window's `erga-editing` event), so the source holds only what
+  readers see. Put them in elements of their own, never inside a paragraph
+  or heading (rule 5).
+- After an edit the page may render again, so draw the controls in a
   function you can run more than once, and run it on a `MutationObserver` as
   well as at the start. Handle clicks with one listener on `document`.
-- Keep a new item's markup in a `<template>` and insert its `innerHTML`.
-  Erga selects the new text, so people type over its placeholder.
-- An id is unique in the page: if new HTML has an id (or a link's `name`)
-  that the page has already, Erga leaves it out of the new element. A moved
-  element keeps its id. Find elements by class, not by an id you copy.
-
-A tree of views with custom edits:
 
 ```html
-<ul class="tree">
-  <li><div class="card"><h3>Front page</h3><p class="url">/</p></div></li>
-  <li><div class="card"><h3>Settings</h3><p class="url">/settings</p></div></li>
-</ul>
-<template id="new-card">
-  <li><div class="card"><h3>New view</h3><p class="url">/path</p></div></li>
-</template>
 <script>
-  const editor = window.ergaEditor;
-  if (editor) {
-    const fresh = () => document.getElementById("new-card").innerHTML;
-    const items = (ul) => [...ul.children].filter((li) => !li.classList.contains("add"));
-    function draw() {
-      for (const card of document.querySelectorAll(".card:not(:has(> .ctl))"))
-        card.insertAdjacentHTML("beforeend", `<div class="ctl"><button class="up">↑</button><button class="del">Delete</button></div>`);
-      for (const ul of document.querySelectorAll("ul.tree:not(:has(> li.add))"))
-        ul.insertAdjacentHTML("beforeend", `<li class="add"><button class="new">+ New view</button></li>`);
-    }
-    document.addEventListener("click", (e) => {
-      const b = e.target.closest("button");
-      if (!b) return;
-      const li = b.closest("li"), list = items(li.parentElement), i = list.indexOf(li);
-      if (b.matches(".new")) editor.apply([list.length ? { op: "insert", after: list.at(-1), html: fresh() } : { op: "insert", into: li.parentElement, html: fresh() }]);
-      if (b.matches(".del")) editor.apply([{ op: "remove", el: li }]);
-      if (b.matches(".up") && i > 0) editor.apply([{ op: "move", el: li, before: list[i - 1] }]);
-    });
-    draw();
-    new MutationObserver(draw).observe(document.body, { childList: true, subtree: true });
-  }
+  const draw = () => {
+    if (!document.documentElement.hasAttribute("data-erga-editing")) return;
+    document.querySelectorAll(".card:not(:has(> .ctl))").forEach((card) =>
+      card.insertAdjacentHTML("beforeend", `<div class="ctl"><button class="del">Delete</button></div>`));
+  };
+  document.addEventListener("click", (e) => {
+    const card = e.target.closest(".ctl .del")?.closest(".card");
+    if (card) ergaEditor.call("delete_card", { n: [...card.parentElement.children].indexOf(card) + 1 });
+  });
+  addEventListener("erga-editing", draw);
+  draw();
+  new MutationObserver(draw).observe(document.body, { childList: true, subtree: true });
 </script>
 ```
 
-`e2e/fixtures/custom-edits/index.html` is a fuller example.
+`e2e/fixtures/page-api/` (`index.html` and `api.js`) is a fuller example.

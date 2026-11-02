@@ -79,7 +79,7 @@ export abstract class EditorEdit extends EditorRender {
   protected dispatch(spec: TransactionSpec | Transaction, undo?: Step["undo"]): void {
     if (!(spec instanceof Transaction) && spec.changes) spec = this.undoStep(spec, undo);
     let tr = spec instanceof Transaction ? spec : this.state.update(spec);
-    // An id is unique in the page: an element an edit here adds (Enter, a custom edit) loses an id the page has already.
+    // An id is unique in the page: an element an edit here adds (Enter, one of the page's own edits) loses an id the page has already.
     // Edits from elsewhere (the source, an agent, the disk) and undo (a Transaction) stay as they are.
     if (!(spec instanceof Transaction) && tr.docChanged && !tr.isUserEvent("external")) {
       const added: [number, number][] = [];

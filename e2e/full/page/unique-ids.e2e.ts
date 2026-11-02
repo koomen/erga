@@ -1,4 +1,4 @@
-// An id is unique in the page: an element an edit in the editor adds (Enter, a custom edit) loses an id (or a link's
+// An id is unique in the page: an element an edit in the editor adds (Enter, one of the page's own edits) loses an id (or a link's
 // name) that the page has already. The element that was there keeps it ("An id is unique in the page").
 import { expect, servers, test } from "../../helpers/fixtures";
 import { F, openEditor, type Editor } from "../../helpers/editor";
@@ -69,7 +69,9 @@ async function press(ed: Editor, card: string, button: string) {
   await ed.settle();
 }
 
-test("a custom edit that copies a card: the copy loses the id, the original keeps it; a move keeps the id; undo brings back the page", async ({ tab }) => {
+test("a page's own edit that copies a card: the copy loses the id, the original keeps it; a move keeps the id; undo brings back the page", async ({
+  tab,
+}) => {
   const ed = await openEditor(tab, await servers.main(), "unique-ids");
   const original = await ed.source();
   await press(ed, "#card-1", "copy");

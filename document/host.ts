@@ -62,6 +62,7 @@ import { encodeStart } from "../shared/room-socket";
 import { blobPointer, byteRange, type BlobStore } from "./blobs";
 import { sha256Hex } from "../shared/bytes";
 import { pdfText } from "./pdf";
+import { apiPathOf, applyPageEdit } from "./page-api";
 import * as Y from "yjs";
 
 export interface HostOptions {
@@ -349,9 +350,42 @@ export function makeHost(opts: HostOptions) {
   /** The document's details as a person sees them (GET /api/doc, and a tab's hello). */
   const infoFor = async (user: { id: string; name: string }): Promise<DocInfo> => {
     const docName = await Effect.runPromise(nameFor(user));
-    return { name: doc.name, path: doc.path, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
+    return {
+      name: doc.name,
+      path: doc.path,
+      dir: doc.dir,
+      user: user.name,
+      userId: user.id,
+      avatar: opts.avatarOf?.(user),
+      writeDelay: room.writeDelay,
+      canEdit: opts.canEdit?.(user) ?? true,
+      docName,
+    };
   };
-  const docApi = HttpApiBuilder.group(Api, "doc", (h) => h.handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user)))));
+  const docApi = HttpApiBuilder.group(Api, "doc", (h) =>
+    h
+      .handle("info", () => Person.use((user) => Effect.promise(() => infoFor(user))))
+      .handle("pageEdit", ({ payload: p }) =>
+        Person.use((user) =>
+          Effect.gen(function* () {
+            const refuse = (error: string) => new ToolFailed({ ok: false, error });
+            if (!(opts.canEdit?.(user) ?? true)) return yield* refuse(`${user.name} can only view this document.`);
+            const module = isPage(p.path) ? apiPathOf(p.path, p.html) : null;
+            const code = module && room.text(module);
+            if (code == null)
+              return yield* refuse(
+                `${p.path} names no API module of its own (<meta name="erga-api" content="api.js">) that the document has.`
+              );
+            const r = yield* Effect.tryPromise({
+              try: () => applyPageEdit(agents.sandbox, code, p.html, p.edit, p.input),
+              catch: (e) => refuse((e as Error).message),
+            });
+            if ("refused" in r) return yield* refuse(r.refused);
+            return { ok: true as const, changes: r.changes };
+          })
+        )
+      )
+  );
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
     .handle("view", ({ payload: { id, errors, fonts, pending, shots, ...result } }) =>
